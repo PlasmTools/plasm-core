@@ -111,7 +111,10 @@ async fn open_langitem_session(
     let symbols =
         plasm_agent_core::plasm_plan_run::symbol_map_for_plasm_surface_parse(&session, None);
     let entity = symbols.entity_sym_for("langmatrix", "LangItem");
-    assert!(entity.starts_with('e'), "use served opaque symbol: {entity}");
+    assert!(
+        entity.starts_with('e'),
+        "use served opaque symbol: {entity}"
+    );
     (created.prompt_hash, created.session, entity)
 }
 
@@ -126,7 +129,10 @@ async fn plan_dry_run_mints_plan_commit_ref() {
         .uri(&uri)
         .header("accept", "application/json")
         .header("content-type", "text/plain; charset=utf-8")
-        .body(Body::from(matrix_program(&entity, ".aggregate(n=agg.count())")))
+        .body(Body::from(matrix_program(
+            &entity,
+            ".aggregate(n=agg.count())",
+        )))
         .unwrap();
     let res = app.oneshot(run).await.unwrap();
     assert_eq!(res.status(), StatusCode::OK);
@@ -160,7 +166,10 @@ async fn live_blocked_without_force_returns_plan_requires_review() {
         .method("POST")
         .uri(&uri)
         .header("accept", "application/json")
-        .body(Body::from(matrix_program(&entity, ".aggregate(n=agg.count())")))
+        .body(Body::from(matrix_program(
+            &entity,
+            ".aggregate(n=agg.count())",
+        )))
         .unwrap();
     let res = app.oneshot(run).await.unwrap();
     assert_eq!(res.status(), StatusCode::BAD_REQUEST);
@@ -194,9 +203,17 @@ async fn wait_unknown_handle_is_400() {
     let failure: plasm_runtime::ExecutionFailure =
         serde_json::from_value(doc["failure"].clone()).expect("typed operation failure");
     assert_eq!(failure.cause, plasm_runtime::FailureCause::Program);
-    assert_eq!(failure.recovery, plasm_runtime::RecoveryDisposition::RepairProgram);
-    assert_eq!(failure.code, plasm_agent_core::operation_error::OperationError::CODE_UNKNOWN);
-    assert!(failure.diagnostic().contains("unknown operation handle `o999`"));
+    assert_eq!(
+        failure.recovery,
+        plasm_runtime::RecoveryDisposition::RepairProgram
+    );
+    assert_eq!(
+        failure.code,
+        plasm_agent_core::operation_error::OperationError::CODE_UNKNOWN
+    );
+    assert!(failure
+        .diagnostic()
+        .contains("unknown operation handle `o999`"));
 }
 
 #[tokio::test]
@@ -210,7 +227,10 @@ async fn review_plan_auto_async_without_wait_false() {
         .uri(&plan_uri)
         .header("accept", "application/json")
         .header("content-type", "text/plain; charset=utf-8")
-        .body(Body::from(matrix_program(&entity, ".aggregate(n=agg.count())")))
+        .body(Body::from(matrix_program(
+            &entity,
+            ".aggregate(n=agg.count())",
+        )))
         .unwrap();
     let plan_res = app.clone().oneshot(plan_req).await.unwrap();
     assert_eq!(plan_res.status(), StatusCode::OK);
@@ -237,7 +257,10 @@ async fn review_plan_auto_async_without_wait_false() {
         .method("POST")
         .uri(&live_uri)
         .header("accept", "application/json")
-        .body(Body::from(matrix_program(&entity, ".aggregate(n=agg.count())")))
+        .body(Body::from(matrix_program(
+            &entity,
+            ".aggregate(n=agg.count())",
+        )))
         .unwrap();
     let live_res = app.oneshot(live_req).await.unwrap();
     assert_eq!(live_res.status(), StatusCode::OK);
@@ -266,7 +289,10 @@ async fn parallel_async_live_runs_accept_distinct_handles() {
         .method("POST")
         .uri(&start_uri)
         .header("accept", "application/json")
-        .body(Body::from(matrix_program(&entity, ".page_size(1).take(10)")))
+        .body(Body::from(matrix_program(
+            &entity,
+            ".page_size(1).take(10)",
+        )))
         .unwrap();
     let first_res = app.clone().oneshot(first_req).await.unwrap();
     assert_eq!(first_res.status(), StatusCode::OK);

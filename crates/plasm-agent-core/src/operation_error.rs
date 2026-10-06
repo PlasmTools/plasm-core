@@ -137,7 +137,10 @@ mod operation_error_tests {
         let diagnostic = error.detail();
         let failure = plasm_runtime::ExecutionFailure::from(error);
         assert_eq!(failure.cause, plasm_runtime::FailureCause::Program);
-        assert_eq!(failure.recovery, plasm_runtime::RecoveryDisposition::RepairProgram);
+        assert_eq!(
+            failure.recovery,
+            plasm_runtime::RecoveryDisposition::RepairProgram
+        );
         assert_eq!(failure.code, OperationError::CODE_UNKNOWN);
         assert_eq!(failure.diagnostic(), diagnostic);
     }

@@ -725,7 +725,11 @@ async fn slack_native_directory_and_memberships_decode_without_invented_profiles
                 assert_eq!(row.fields["name"].to_value(), Value::String("alice".into()));
             } else {
                 assert!(!row.fields.contains_key("name"));
-                assert!(row.fields.contains_key("user"), "{entity}: observed fields {:?}", row.fields.keys().collect::<Vec<_>>());
+                assert!(
+                    row.fields.contains_key("user"),
+                    "{entity}: observed fields {:?}",
+                    row.fields.keys().collect::<Vec<_>>()
+                );
                 assert_eq!(row.fields["user"].to_value(), row.fields["id"].to_value());
             }
         }
@@ -733,18 +737,27 @@ async fn slack_native_directory_and_memberships_decode_without_invented_profiles
             // Storage captures decoded scalar values; the CGS owns the target
             // type. Exercise actual FK navigation instead of assuming an
             // internal TypedFieldValue variant at this storage boundary.
-            let users = engine.execute(
-                &Expr::Chain(plasm_core::ChainExpr::auto_get(Expr::Query(query), "user")),
-                &cgs,
-                &mut SessionMaterialization::new(),
-                None,
-                StreamConsumeOpts { fetch_all: true, ..Default::default() },
-                ExecuteOptions::for_catalog(&cgs).unwrap(),
-            ).await.unwrap();
+            let users = engine
+                .execute(
+                    &Expr::Chain(plasm_core::ChainExpr::auto_get(Expr::Query(query), "user")),
+                    &cgs,
+                    &mut SessionMaterialization::new(),
+                    None,
+                    StreamConsumeOpts {
+                        fetch_all: true,
+                        ..Default::default()
+                    },
+                    ExecuteOptions::for_catalog(&cgs).unwrap(),
+                )
+                .await
+                .unwrap();
             assert_eq!(users.entities().len(), expected.len());
             for user in users.entities() {
                 assert_eq!(user.reference.entity_type, "User");
-                assert_eq!(user.fields["name"].to_value(), Value::String("observed profile".into()));
+                assert_eq!(
+                    user.fields["name"].to_value(),
+                    Value::String("observed profile".into())
+                );
             }
         }
     }

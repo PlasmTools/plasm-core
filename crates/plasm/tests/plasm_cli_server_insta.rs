@@ -32,7 +32,10 @@ fn routing(intent: String) -> RoutingReceipt {
         matching: CapabilityMatchReceipt { matches: vec![] },
         closure: Some(PrerequisiteClosure {
             acquisitions: vec![],
-            business: vec![CapabilityRef { catalog: "matrix".into(), capability: "read".into() }],
+            business: vec![CapabilityRef {
+                catalog: "matrix".into(),
+                capability: "read".into(),
+            }],
             input_sources: vec![],
             prerequisites: vec![],
             edges: vec![],
