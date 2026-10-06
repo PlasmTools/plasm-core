@@ -53,12 +53,10 @@ impl ReturnRejection {
 
     fn inference(self, error: &InferenceError) -> bool {
         match (self, error) {
-            (Self::Diagnostic(code), InferenceError::Diagnostics { diagnostics }) => {
-                diagnostics
-                    .entries
-                    .iter()
-                    .any(|entry| entry.diagnostic.code == code)
-            }
+            (Self::Diagnostic(code), InferenceError::Diagnostics { diagnostics }) => diagnostics
+                .entries
+                .iter()
+                .any(|entry| entry.diagnostic.code == code),
             (
                 Self::DictionaryKeyNotString,
                 InferenceError::Graph(InferenceGraphError::DictionaryKeyNotString),
@@ -69,7 +67,11 @@ impl ReturnRejection {
 }
 
 fn assert_return_failure(error: &plasm_runtime::ExecutionFailure, code: &str) {
-    assert_eq!(error.cause, plasm_runtime::FailureCause::Program, "{error:?}");
+    assert_eq!(
+        error.cause,
+        plasm_runtime::FailureCause::Program,
+        "{error:?}"
+    );
     assert_eq!(error.code, code, "{error:?}");
 }
 struct Server(tokio::task::JoinHandle<()>);
@@ -361,22 +363,49 @@ async fn typed_return_structures_and_effect_gate() {
     }
     // Both static type errors and unknown boundary types fail before review.
     for (annotation, expression, rejection) in [
-        ("int", "row.text", ReturnRejection::Diagnostic("invalid-return-type")),
-        ("Row.date", "'2026-02-31'", ReturnRejection::Diagnostic("invalid-return-type")),
+        (
+            "int",
+            "row.text",
+            ReturnRejection::Diagnostic("invalid-return-type"),
+        ),
+        (
+            "Row.date",
+            "'2026-02-31'",
+            ReturnRejection::Diagnostic("invalid-return-type"),
+        ),
         (
             "Row.timestamp",
             "'not-a-time'",
             ReturnRejection::Diagnostic("invalid-return-type"),
         ),
-        ("Row.state", "'invalid'", ReturnRejection::Diagnostic("invalid-return-type")),
-        ("Any", "row.text", ReturnRejection::Diagnostic("unresolved-reference")),
-        ("dict[int, int]", "{1: 2}", ReturnRejection::DictionaryKeyNotString),
-        ("v99999", "row.text", ReturnRejection::Diagnostic("unresolved-reference")),
+        (
+            "Row.state",
+            "'invalid'",
+            ReturnRejection::Diagnostic("invalid-return-type"),
+        ),
+        (
+            "Any",
+            "row.text",
+            ReturnRejection::Diagnostic("unresolved-reference"),
+        ),
+        (
+            "dict[int, int]",
+            "{1: 2}",
+            ReturnRejection::DictionaryKeyNotString,
+        ),
+        (
+            "v99999",
+            "row.text",
+            ReturnRejection::Diagnostic("unresolved-reference"),
+        ),
     ] {
         let (es, _, token) = super::recursive_values::fixture_context(base.clone());
         let source = format!("class Invalid(Program):\n    @compute\n    def produce(self, row: Row) -> {annotation}:\n        return {expression}\n    def build(self):\n        return self.produce({token}.get('000123'))\n");
         let error = compile_python_program(&es, &source).await.unwrap_err();
-        assert!(rejection.matches(&error), "{source}\nexpected {rejection:?}: {error:?}");
+        assert!(
+            rejection.matches(&error),
+            "{source}\nexpected {rejection:?}: {error:?}"
+        );
     }
     for (annotation, expression) in [
         ("Row.uuid", "row.text"),
