@@ -15,7 +15,11 @@ import {
   buildDefaultSystemLiturgy,
   overlayWorkflowCompletion,
 } from "../src/prompts/index.js";
-import { createHarnessTools } from "../src/tools/harness-tools.js";
+import {
+  COMPLETE_TASK_TOOL_DESCRIPTION,
+  SUBMIT_ANSWER_TOOL_DESCRIPTION,
+  createHarnessTools,
+} from "../src/tools/harness-tools.js";
 
 const NO_TOOL_CALL = /Stop with no tool call/;
 
@@ -88,5 +92,14 @@ assert.equal("submit_answer" in productTools, false);
 const evalTools = createHarnessTools({ includeEvalTerminals: true });
 assert.equal("complete_task" in evalTools, true);
 assert.equal("submit_answer" in evalTools, true);
+const completeTool = evalTools.complete_task;
+const answerTool = evalTools.submit_answer;
+assert.ok(completeTool);
+assert.ok(answerTool);
+assert.equal(completeTool.description, COMPLETE_TASK_TOOL_DESCRIPTION);
+assert.equal(answerTool.description, SUBMIT_ANSWER_TOOL_DESCRIPTION);
+assert.match(COMPLETE_TASK_TOOL_DESCRIPTION, /observations establish its requested effect/);
+assert.match(COMPLETE_TASK_TOOL_DESCRIPTION, /Exhausted exposed options/);
+assert.match(SUBMIT_ANSWER_TOOL_DESCRIPTION, /observations establish the requested value/);
 
 console.log("PASS: eval-terminal liturgy is Voice B; product liturgy does not invent terminals");

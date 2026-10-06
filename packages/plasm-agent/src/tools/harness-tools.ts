@@ -19,16 +19,14 @@ const submitAnswerInputSchema = z.object({
 
 /** Domain-general AppWorld complete_task — successful call grades explicit null. */
 export const COMPLETE_TASK_TOOL_DESCRIPTION =
-  "End the task when the instruction asked for no reportable value. " +
-  "Call this after the work is done and nothing must be reported " +
-  "(no number, name, amount, or other asked-for value). " +
-  "A successful call grades explicit null. Do not pass an answer field. " +
-  "Do not call this when the instruction asked you to report a value. " +
-  "Requires an initial plasm_context discovery for this workflow first.";
+  "End a no-value task only after observations establish its requested effect or an explicit " +
+  "condition authorizes no action. Exhausted exposed options, failed attempts, and unresolved " +
+  "writes are not completion; continue or extend discovery. Success grades null. No answer " +
+  "field. Use submit_answer for a requested value. Initial plasm_context discovery required.";
 
 /** Domain-general AppWorld submit_answer — verbatim asked-for value, then terminate. */
 export const SUBMIT_ANSWER_TOOL_DESCRIPTION =
-  "End the task when the instruction asked for a reportable value. " +
+  "End a value-reporting task only after observations establish the requested value. " +
   "`answer` is that value exactly as requested — a number, name, or other exact string. " +
   "Pass it verbatim. When the answer is a monetary value, submit only the numeric part — no currency symbols or comma groupings. " +
   "When the instruction asks how much, how many, a total, a count, or another single value, submit exactly one bare scalar; do not provide a breakdown, labels, units, or multiple values. " +
