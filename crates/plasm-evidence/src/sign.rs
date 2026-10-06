@@ -6,6 +6,19 @@ use crate::jcs;
 use crate::verify::EvidenceError;
 #[cfg(feature = "signatures")]
 use ed25519_dalek::{Signature, Signer, SigningKey, Verifier, VerifyingKey};
+use thiserror::Error;
+
+#[cfg(feature = "signatures")]
+#[derive(Debug, Error)]
+pub enum SigningKeyParseError {
+    #[error("signing key seed is not valid hexadecimal: {source}")]
+    InvalidHex {
+        #[source]
+        source: hex::FromHexError,
+    },
+    #[error("PLASM_EVIDENCE_SIGNING_KEY must be 32-byte hex; got {actual} decoded bytes")]
+    InvalidLength { actual: usize },
+}
 
 #[cfg(feature = "signatures")]
 pub fn signable_head_bytes(bundle: &EvidenceBundle) -> Result<Vec<u8>, EvidenceError> {
@@ -70,10 +83,13 @@ pub fn verify_bundle_signature_trusted(
 }
 
 #[cfg(feature = "signatures")]
-pub fn signing_key_from_seed_hex(seed_hex: &str) -> Result<SigningKey, String> {
-    let bytes = hex::decode(seed_hex.trim()).map_err(|e| format!("invalid seed hex: {e}"))?;
+pub fn signing_key_from_seed_hex(seed_hex: &str) -> Result<SigningKey, SigningKeyParseError> {
+    let bytes = hex::decode(seed_hex.trim())
+        .map_err(|source| SigningKeyParseError::InvalidHex { source })?;
     if bytes.len() != 32 {
-        return Err("PLASM_EVIDENCE_SIGNING_KEY must be 32-byte hex".into());
+        return Err(SigningKeyParseError::InvalidLength {
+            actual: bytes.len(),
+        });
     }
     let mut seed = [0u8; 32];
     seed.copy_from_slice(&bytes);

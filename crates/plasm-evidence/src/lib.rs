@@ -15,7 +15,7 @@ pub mod sign;
 
 pub use bundle::{EvidenceAnchors, EvidenceBundle, EvidenceSignature};
 pub use chain::{ChainBuilder, EvidenceChain, CHAIN_BUILDER_DEFAULT_CAPACITY};
-pub use digest::{ChainHead, FingerprintHex, IntentDigest, SegmentDigest};
+pub use digest::{ChainHead, FingerprintHex, FingerprintHexError, IntentDigest, SegmentDigest};
 pub use run_seal::{
     run_bundle_digest_from_run_id_wire, run_id_wire_from_digest, run_seal_inputs_from_artifact,
     RunArtifactForSeal, RUN_ARTIFACT_WIRE_PREFIX,

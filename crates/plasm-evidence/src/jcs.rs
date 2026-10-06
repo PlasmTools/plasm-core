@@ -1,21 +1,27 @@
 //! RFC 8785 JSON Canonicalization Scheme (JCS) for evidence segment hashing.
 
-use crate::verify::EvidenceError;
+use crate::verify::{EvidenceError, JcsOperation};
 
 /// Canonical UTF-8 bytes for a JSON value per [RFC 8785](https://www.rfc-editor.org/rfc/rfc8785).
 pub fn canonical_bytes(value: &serde_json::Value) -> Result<Vec<u8>, EvidenceError> {
-    let json = serde_json::to_string(value).map_err(|e| EvidenceError::Serde(e.to_string()))?;
-    let canonical = jcs_canonicalize::canonicalize(&json)
-        .map_err(|e| EvidenceError::Serde(format!("jcs canonicalize: {e}")))?;
+    let json = serde_json::to_string(value)?;
+    let canonical = jcs_canonicalize::canonicalize(&json).map_err(|error| {
+        EvidenceError::JcsCanonicalization {
+            operation: JcsOperation::Canonicalize,
+            source: error.into_boxed_dyn_error(),
+        }
+    })?;
     Ok(canonical.into_bytes())
 }
 
 /// Lowercase hex SHA-256 of JCS-canonical bytes (golden-vector helper).
 #[allow(dead_code)]
 pub fn sha256_jcs_hex(value: &serde_json::Value) -> Result<String, EvidenceError> {
-    let json = serde_json::to_string(value).map_err(|e| EvidenceError::Serde(e.to_string()))?;
-    jcs_canonicalize::sha256_jcs_hex(&json)
-        .map_err(|e| EvidenceError::Serde(format!("jcs sha256: {e}")))
+    let json = serde_json::to_string(value)?;
+    jcs_canonicalize::sha256_jcs_hex(&json).map_err(|error| EvidenceError::JcsCanonicalization {
+        operation: JcsOperation::Hash,
+        source: error.into_boxed_dyn_error(),
+    })
 }
 
 #[cfg(test)]

@@ -1,5 +1,14 @@
 use serde::{Deserialize, Serialize};
 use std::fmt;
+use thiserror::Error;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Error)]
+pub enum FingerprintHexError {
+    #[error("fingerprint must contain exactly 64 hexadecimal characters")]
+    InvalidLength,
+    #[error("fingerprint contains a non-hexadecimal character")]
+    InvalidCharacter,
+}
 
 /// SHA256 digest of a canonical evidence segment body.
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug, Serialize, Deserialize)]
@@ -52,10 +61,13 @@ impl IntentDigest {
 }
 
 impl FingerprintHex {
-    pub fn parse(s: impl AsRef<str>) -> Result<Self, String> {
+    pub fn parse(s: impl AsRef<str>) -> Result<Self, FingerprintHexError> {
         let s = s.as_ref().trim();
-        if s.len() != 64 || !s.bytes().all(|b| b.is_ascii_hexdigit()) {
-            return Err(format!("invalid fingerprint hex: {s}"));
+        if s.len() != 64 {
+            return Err(FingerprintHexError::InvalidLength);
+        }
+        if !s.bytes().all(|b| b.is_ascii_hexdigit()) {
+            return Err(FingerprintHexError::InvalidCharacter);
         }
         Ok(Self(s.to_ascii_lowercase()))
     }
@@ -71,6 +83,27 @@ impl fmt::Display for SegmentDigest {
             write!(f, "{b:02x}")?;
         }
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{FingerprintHex, FingerprintHexError};
+
+    #[test]
+    fn fingerprint_parser_reports_semantic_shape_failures() {
+        assert_eq!(
+            FingerprintHex::parse("abc").unwrap_err(),
+            FingerprintHexError::InvalidLength
+        );
+        assert_eq!(
+            FingerprintHex::parse(format!("{}g", "0".repeat(63))).unwrap_err(),
+            FingerprintHexError::InvalidCharacter
+        );
+        assert_eq!(
+            FingerprintHex::parse("AB".repeat(32)).unwrap().as_str(),
+            "ab".repeat(32)
+        );
     }
 }
 

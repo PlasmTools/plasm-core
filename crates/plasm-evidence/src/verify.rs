@@ -1,11 +1,13 @@
 use crate::bundle::EvidenceBundle;
-use crate::canonical::{compute_run_bundle_digest, hash_segment_body, segment_body_for_hash};
+use crate::canonical::{
+    compute_run_bundle_digest, hash_segment_body, segment_body_for_hash, CanonicalError,
+};
 use crate::digest::ChainHead;
 use crate::segment::EvidenceKind;
 use plasm_core::expr_parser::ParsedExpr;
 use thiserror::Error;
 
-#[derive(Debug, Error, PartialEq, Eq)]
+#[derive(Debug, Error)]
 pub enum EvidenceError {
     #[error("evidence chain is empty")]
     EmptyChain,
@@ -23,8 +25,22 @@ pub enum EvidenceError {
     StepTopoMismatch { index: usize },
     #[error("signature verification failed")]
     SignatureInvalid,
-    #[error("serde: {0}")]
-    Serde(String),
+    #[error("JSON serialization failed: {0}")]
+    Serde(#[from] serde_json::Error),
+    #[error(transparent)]
+    Canonical(#[from] CanonicalError),
+    #[error("JCS {operation:?} failed: {source}")]
+    JcsCanonicalization {
+        operation: JcsOperation,
+        #[source]
+        source: Box<dyn std::error::Error + Send + Sync>,
+    },
+}
+
+#[derive(Debug, Clone, Copy)]
+pub enum JcsOperation {
+    Canonicalize,
+    Hash,
 }
 
 pub struct RunSealInputs<'a> {
@@ -221,8 +237,7 @@ impl DefaultChainVerifier {
             inputs.source_line,
             inputs.parsed,
             inputs.request_fingerprints,
-        )
-        .map_err(|e| EvidenceError::Serde(e.to_string()))?;
+        )?;
         if computed != *run_bundle_digest {
             return Err(EvidenceError::RunSealMismatch {
                 run_id: run_id.to_string(),

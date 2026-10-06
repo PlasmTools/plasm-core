@@ -54,12 +54,7 @@ fn signing_seed_hex_from_env_uncached() -> Result<Option<String>, EvidenceEmitEr
     if seed.is_empty() {
         return Ok(None);
     }
-    let bytes = hex::decode(seed)
-        .map_err(|e| EvidenceEmitError::SigningKeyInvalid(format!("invalid seed hex: {e}")))?;
-    if bytes.len() != 32 {
-        return Err(EvidenceEmitError::SigningKeyInvalid(
-            "PLASM_EVIDENCE_SIGNING_KEY must be 32-byte hex".into(),
-        ));
-    }
+    plasm_evidence::sign::signing_key_from_seed_hex(seed)
+        .map_err(EvidenceEmitError::SigningKeyInvalid)?;
     Ok(Some(seed.to_string()))
 }
