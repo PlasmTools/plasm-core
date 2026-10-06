@@ -1,4 +1,4 @@
-version: 16
+version: 17
 http_backend: https://gmail.googleapis.com
 data_classes:
   untrusted:
@@ -232,7 +232,7 @@ entities:
         value_ref: nv_attachment_id
       messageId:
         required: false
-        value_ref: nv_attachment_message_id
+        value_ref: nv_message_id
       size:
         required: false
         value_ref: nv_attachment_size
@@ -408,7 +408,7 @@ capabilities:
       input_type:
         type: object
         fields:
-        - name: from
+        - name: sender
           value_ref: nv_message_send_simple_from
           required: true
         - name: to
@@ -439,7 +439,7 @@ capabilities:
       input_type:
         type: object
         fields:
-        - name: from
+        - name: sender
           value_ref: nv_message_reply_from
           required: true
         - name: plainBody

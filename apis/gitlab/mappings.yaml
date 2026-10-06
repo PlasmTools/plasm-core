@@ -168,8 +168,10 @@ issue_for_project_query:
         type: const
         value: issue_for_project
     then_expr:
-      type: const
-      value: api/v4/projects/{project_id}/issues
+      type: format
+      template: api/v4/projects/{project_id}/issues
+      vars:
+        project_id: {type: var, name: project_id}
     else_expr:
       type: const
       value: api/v4/issues
@@ -177,17 +179,6 @@ issue_for_project_query:
   query:
     type: object
     fields:
-    - - project_id
-      - type: if
-        condition:
-          type: exists
-          var: project_id
-        then_expr:
-          type: var
-          name: project_id
-        else_expr:
-          type: const
-          value: null
     - - state
       - type: if
         condition:
@@ -210,6 +201,16 @@ issue_for_project_query:
         else_expr:
           type: const
           value: null
+    - - order_by
+      - type: if
+        condition: {type: exists, var: order_by}
+        then_expr: {type: var, name: order_by}
+        else_expr: {type: const, value: null}
+    - - sort
+      - type: if
+        condition: {type: exists, var: sort}
+        then_expr: {type: var, name: sort}
+        else_expr: {type: const, value: null}
     - - scope
       - type: if
         condition:
@@ -258,8 +259,10 @@ merge_request_for_project_query:
         type: const
         value: merge_request_for_project
     then_expr:
-      type: const
-      value: api/v4/projects/{project_id}/merge_requests
+      type: format
+      template: api/v4/projects/{project_id}/merge_requests
+      vars:
+        project_id: {type: var, name: project_id}
     else_expr:
       type: const
       value: api/v4/merge_requests
@@ -267,17 +270,6 @@ merge_request_for_project_query:
   query:
     type: object
     fields:
-    - - project_id
-      - type: if
-        condition:
-          type: exists
-          var: project_id
-        then_expr:
-          type: var
-          name: project_id
-        else_expr:
-          type: const
-          value: null
     - - state
       - type: if
         condition:
@@ -300,6 +292,16 @@ merge_request_for_project_query:
         else_expr:
           type: const
           value: null
+    - - order_by
+      - type: if
+        condition: {type: exists, var: order_by}
+        then_expr: {type: var, name: order_by}
+        else_expr: {type: const, value: null}
+    - - sort
+      - type: if
+        condition: {type: exists, var: sort}
+        then_expr: {type: var, name: sort}
+        else_expr: {type: const, value: null}
   pagination:
     params:
       page:

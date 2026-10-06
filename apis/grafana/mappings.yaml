@@ -428,10 +428,10 @@ datasource_query_run:
       - type: if
         condition:
           type: exists
-          var: from
+          var: start_time
         then_expr:
           type: var
-          name: from
+          name: start_time
         else_expr:
           type: const
           value: null
@@ -460,10 +460,10 @@ annotation_query:
       - type: if
         condition:
           type: exists
-          var: from
+          var: start_time
         then_expr:
           type: var
-          name: from
+          name: start_time
         else_expr:
           type: const
           value: null
@@ -727,10 +727,10 @@ alert_rule_create:
       - type: if
         condition:
           type: exists
-          var: for
+          var: pending_for
         then_expr:
           type: var
-          name: for
+          name: pending_for
         else_expr:
           type: const
           value: null
@@ -798,10 +798,10 @@ alert_rule_update:
       - type: if
         condition:
           type: exists
-          var: for
+          var: pending_for
         then_expr:
           type: var
-          name: for
+          name: pending_for
         else_expr:
           type: const
           value: null
@@ -1560,10 +1560,10 @@ rbac_role_create:
       - type: if
         condition:
           type: exists
-          var: global
+          var: is_global
         then_expr:
           type: var
-          name: global
+          name: is_global
         else_expr:
           type: const
           value: null
@@ -1614,10 +1614,10 @@ rbac_role_update:
       - type: if
         condition:
           type: exists
-          var: global
+          var: is_global
         then_expr:
           type: var
-          name: global
+          name: is_global
         else_expr:
           type: const
           value: null
@@ -1681,10 +1681,10 @@ org_user_role_assign:
       - type: if
         condition:
           type: exists
-          var: global
+          var: is_global
         then_expr:
           type: var
-          name: global
+          name: is_global
         else_expr:
           type: const
           value: null
@@ -1709,10 +1709,10 @@ org_user_roles_set:
       - type: if
         condition:
           type: exists
-          var: global
+          var: is_global
         then_expr:
           type: var
-          name: global
+          name: is_global
         else_expr:
           type: const
           value: null
@@ -1736,10 +1736,10 @@ org_user_role_revoke:
       - type: if
         condition:
           type: exists
-          var: global
+          var: is_global
         then_expr:
           type: var
-          name: global
+          name: is_global
         else_expr:
           type: const
           value: null
@@ -1834,10 +1834,10 @@ datasource_prometheus_label_names_query:
       - type: if
         condition:
           type: exists
-          var: from
+          var: start_time
         then_expr:
           type: var
-          name: from
+          name: start_time
         else_expr:
           type: const
           value: null
@@ -1882,10 +1882,10 @@ datasource_prometheus_label_values_query:
       - type: if
         condition:
           type: exists
-          var: from
+          var: start_time
         then_expr:
           type: var
-          name: from
+          name: start_time
         else_expr:
           type: const
           value: null
@@ -1930,10 +1930,10 @@ datasource_prometheus_metric_names_query:
       - type: if
         condition:
           type: exists
-          var: from
+          var: start_time
         then_expr:
           type: var
-          name: from
+          name: start_time
         else_expr:
           type: const
           value: null
@@ -1987,10 +1987,10 @@ datasource_loki_label_names_query:
       - type: if
         condition:
           type: exists
-          var: from
+          var: start_time
         then_expr:
           type: var
-          name: from
+          name: start_time
         else_expr:
           type: const
           value: null
@@ -2037,10 +2037,10 @@ datasource_loki_label_values_query:
       - type: if
         condition:
           type: exists
-          var: from
+          var: start_time
         then_expr:
           type: var
-          name: from
+          name: start_time
         else_expr:
           type: const
           value: null
@@ -2086,10 +2086,10 @@ datasource_loki_patterns_query:
       - type: if
         condition:
           type: exists
-          var: from
+          var: start_time
         then_expr:
           type: var
-          name: from
+          name: start_time
         else_expr:
           type: const
           value: null
@@ -2148,10 +2148,10 @@ datasource_loki_stats_query:
       - type: if
         condition:
           type: exists
-          var: from
+          var: start_time
         then_expr:
           type: var
-          name: from
+          name: start_time
         else_expr:
           type: const
           value: null
@@ -2205,10 +2205,10 @@ datasource_clickhouse_query_run:
       - type: if
         condition:
           type: exists
-          var: from
+          var: start_time
         then_expr:
           type: var
-          name: from
+          name: start_time
         else_expr:
           type: const
           value: null
@@ -2253,10 +2253,20 @@ datasource_clickhouse_table_query:
                 - type: var
                   name: id
           - - rawSql
-            - type: const
-              value: SELECT database, name, engine, total_rows, total_bytes FROM system.tables
-                WHERE database NOT IN ('system', 'INFORMATION_SCHEMA', 'information_schema')
-                ORDER BY database, name LIMIT 500
+            - type: if
+              condition: {type: exists, var: database}
+              then_expr:
+                type: format
+                template: SELECT database, name, engine, total_rows, total_bytes FROM system.tables WHERE database = base64Decode('{database}') ORDER BY database, name LIMIT 500
+                vars:
+                  database:
+                    type: base64
+                    value: {type: var, name: database}
+              else_expr:
+                type: const
+                value: SELECT database, name, engine, total_rows, total_bytes FROM system.tables
+                  WHERE database NOT IN ('system', 'INFORMATION_SCHEMA', 'information_schema')
+                  ORDER BY database, name LIMIT 500
           - - format
             - type: const
               value: 1
@@ -2371,10 +2381,10 @@ panel_query_run:
       - type: if
         condition:
           type: exists
-          var: from
+          var: start_time
         then_expr:
           type: var
-          name: from
+          name: start_time
         else_expr:
           type: const
           value: null
@@ -2444,10 +2454,10 @@ panel_render_query:
       - type: if
         condition:
           type: exists
-          var: from
+          var: start_time
         then_expr:
           type: var
-          name: from
+          name: start_time
         else_expr:
           type: const
           value: null

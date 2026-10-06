@@ -1,4 +1,4 @@
-version: 5
+version: 6
 http_backend: https://api.tavily.com
 data_classes:
   untrusted:
@@ -169,7 +169,7 @@ capabilities:
     - name: urls
       selection_effect: filter
       value_ref: nv_url_extract_urls
-      required: true
+      required: false
     - name: query
       selection_effect: other
       value_ref: nv_wire_str_short

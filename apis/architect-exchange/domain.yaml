@@ -1,4 +1,4 @@
-version: 12
+version: 13
 http_backend: https://gateway.architect.exchange
 data_classes:
   untrusted:
@@ -88,7 +88,7 @@ entities:
     fields:
       id:
         required: true
-        value_ref: nv_account_id
+        value_ref: nv_account_id_elem
       name:
         required: false
         value_ref: nv_account_name
@@ -273,7 +273,7 @@ entities:
         value_ref: nv_account_id
       symbol:
         required: true
-        value_ref: nv_instrument_symbol
+        value_ref: nv_instrument_symbol_key
       signed_quantity:
         required: true
         value_ref: nv_signed_quantity
@@ -297,7 +297,7 @@ entities:
     fields:
       account_id:
         required: true
-        value_ref: nv_account_id
+        value_ref: nv_account_id_elem
       timestamp_ns:
         required: true
         value_ref: nv_created_at
@@ -375,7 +375,7 @@ entities:
     fields:
       symbol:
         required: true
-        value_ref: nv_instrument_symbol
+        value_ref: nv_instrument_symbol_key
       product:
         required: false
         value_ref: nv_product
@@ -494,7 +494,7 @@ entities:
       symbol:
         required: true
         path: s
-        value_ref: nv_instrument_symbol
+        value_ref: nv_instrument_symbol_key
       mark_price:
         required: true
         path: m
@@ -569,7 +569,7 @@ entities:
       symbol:
         required: true
         path: s
-        value_ref: nv_instrument_symbol
+        value_ref: nv_instrument_symbol_key
       bids:
         required: true
         path: b
@@ -606,7 +606,7 @@ entities:
       symbol:
         required: true
         path: s
-        value_ref: nv_instrument_symbol
+        value_ref: nv_instrument_symbol_key
       price:
         required: true
         path: p
@@ -765,7 +765,7 @@ entities:
     fields:
       symbol:
         required: true
-        value_ref: nv_instrument_symbol
+        value_ref: nv_instrument_symbol_key
       status:
         required: true
         value_ref: nv_estimated_funding_status
@@ -877,7 +877,7 @@ entities:
     fields:
       symbol:
         required: false
-        value_ref: nv_instrument_symbol
+        value_ref: nv_instrument_symbol_key
       filled_quantity:
         required: true
         value_ref: nv_quantity
@@ -1065,7 +1065,7 @@ entities:
   VolumeStat:
     abstract: true
     implicit_request_identity: true
-    id_field: volume
+    id_field: request_key
     description: Traded contract volume for a user or account over a time range.
     discovery:
       names:
@@ -1088,7 +1088,7 @@ entities:
       order_id:
         required: true
         path: oid
-        value_ref: nv_order_id
+        value_ref: nv_order_id_elem
       client_order_id:
         required: false
         path: cid
@@ -1179,7 +1179,7 @@ entities:
     fields:
       symbol:
         required: false
-        value_ref: nv_instrument_symbol
+        value_ref: nv_instrument_symbol_key
       im_pct:
         required: true
         value_ref: nv_decimal_pct
@@ -1198,7 +1198,7 @@ entities:
   InitialMarginQuote:
     abstract: true
     implicit_request_identity: true
-    id_field: im
+    id_field: request_key
     description: Initial margin that would be reserved if the order were accepted.
     discovery:
       names:
@@ -1225,7 +1225,7 @@ entities:
     fields:
       order_id:
         required: true
-        value_ref: nv_order_id
+        value_ref: nv_order_id_elem
       symbol:
         required: true
         value_ref: nv_instrument_symbol
@@ -1259,7 +1259,7 @@ entities:
     fields:
       account_id:
         required: true
-        value_ref: nv_account_id
+        value_ref: nv_account_id_elem
       username:
         required: false
         value_ref: nv_username
@@ -1303,7 +1303,7 @@ entities:
     fields:
       symbol:
         required: true
-        value_ref: nv_instrument_symbol
+        value_ref: nv_instrument_symbol_key
       category:
         required: false
         value_ref: nv_instrument_category
@@ -1334,7 +1334,7 @@ entities:
     fields:
       order_id:
         required: true
-        value_ref: nv_order_id
+        value_ref: nv_order_id_elem
       state:
         required: false
         value_ref: nv_order_state
@@ -2407,6 +2407,8 @@ auth:
   scheme: bearer_token
   env: ARCHITECT_EXCHANGE_TOKEN
 values:
+  nv_instrument_symbol_key:
+    type: string
   nv_wire_bool:
     type: boolean
   nv_wire_int:

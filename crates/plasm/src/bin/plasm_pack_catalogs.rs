@@ -673,10 +673,96 @@ mod tests {
     }
 
     #[test]
+    fn compound_relation_queries_use_scalar_identity_components() {
+        for (catalog, parent, relation_name) in [
+            ("google-drive", "DriveComment", "replies"),
+            ("vultr", "KubernetesNodePool", "vke_labels"),
+            ("vultr", "KubernetesNodePool", "vke_taints"),
+        ] {
+            let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../apis");
+            let cgs = prepare_cgs_for_catalog(&root.join(catalog), catalog).unwrap();
+            let entity = cgs.get_entity(parent).unwrap();
+            let relation = entity.relations.get(relation_name).unwrap();
+            let Some(plasm_core::RelationMaterialization::QueryScopedBindings {
+                capability,
+                bindings,
+            }) = relation.materialize.as_ref()
+            else {
+                panic!("expected compound relation bindings for {catalog}/{relation_name}");
+            };
+            cgs.validate_relation_materialize_bindings(
+                parent,
+                relation_name,
+                entity,
+                capability,
+                bindings,
+            )
+            .unwrap();
+            assert_eq!(bindings.len(), 2, "{catalog}/{relation_name}");
+        }
+        assert_eq!(
+            request(
+                "google-drive",
+                "replies_list",
+                &[("fileId", "file-1"), ("commentId", "comment-1")]
+            )["path"],
+            "/files/file-1/comments/comment-1/replies"
+        );
+        assert_eq!(
+            request(
+                "vultr",
+                "kubernetesnodepoollabel_query",
+                &[("vke_id", "cluster-1"), ("nodepool_id", "pool-1")]
+            )["path"],
+            "/v2/kubernetes/clusters/cluster-1/node-pools/pool-1/labels"
+        );
+    }
+
+    #[test]
+    fn repaired_catalog_inputs_preserve_wire_semantics() {
+        let issue = request(
+            "gitlab",
+            "issue_for_project_query",
+            &[
+                ("shelf", "issue_for_project"),
+                ("project_id", "42"),
+                ("order_by", "updated_at"),
+                ("sort", "desc"),
+            ],
+        );
+        assert_eq!(issue["path"], "/api/v4/projects/42/issues");
+        assert_eq!(issue["query"]["order_by"], "updated_at");
+        assert_eq!(issue["query"]["sort"], "desc");
+        assert!(issue["query"].get("project_id").is_none());
+        let tables = request(
+            "grafana",
+            "datasource_clickhouse_table_query",
+            &[
+                ("id", "ds-1"),
+                ("ds_type", "grafana-clickhouse-datasource"),
+                ("database", "db' OR 1=1 --"),
+            ],
+        );
+        let sql = tables["body"]["queries"][0]["rawSql"].as_str().unwrap();
+        assert!(sql.contains("base64Decode('"));
+        assert!(!sql.contains("OR 1=1"));
+        let comment = request_with_inputs(
+            "figma",
+            "comment_create",
+            serde_json::json!({
+                "file_key": "file-1", "input": {"message": "Review", "comment_id": "parent-1", "client_meta": {"x": 1, "y": 2}}
+            }),
+        );
+        assert_eq!(comment["path"], "/v1/files/file-1/comments");
+        assert_eq!(comment["body"]["comment_id"], "parent-1");
+        assert_eq!(comment["body"]["client_meta"]["x"], 1);
+    }
+
+    #[test]
     fn gmail_generic_mail_mapping_is_deterministic() {
         use base64::Engine as _;
         let inputs = [
-            ("from", "sender@example.test"),
+            ("sender", "sender@example.test"),
             ("to", "recipient@example.test"),
             ("subject", "A subject"),
             ("plainBody", "A body"),
@@ -698,7 +784,7 @@ mod tests {
             "gmail",
             "message_reply",
             &[
-                ("from", "sender@example.test"),
+                ("sender", "sender@example.test"),
                 ("plainBody", "Reply body"),
                 ("parent_headerFrom", "recipient@example.test"),
                 ("parent_headerSubject", "A subject"),

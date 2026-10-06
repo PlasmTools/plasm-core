@@ -1,4 +1,4 @@
-version: 7
+version: 8
 http_backend: https://your-domain.atlassian.net
 data_classes:
   untrusted:
@@ -219,6 +219,13 @@ entities:
           kind: query_scoped
           capability: changelog_query
           param: issueIdOrKey
+      watchers:
+        target: User
+        cardinality: many
+        materialize:
+          kind: query_scoped
+          capability: issue_watcher_query
+          param: issueIdOrKey
       remotelinks:
         target: RemoteLink
         cardinality: many
@@ -298,7 +305,8 @@ entities:
           param: projectIdOrKey
   User:
     id_field: accountId
-    primary_query: user_myself
+    primary_read: user_get
+    primary_query: issue_watcher_query
     description: A Jira user account.
     fields:
       accountId:
@@ -1046,9 +1054,9 @@ capabilities:
     - timeZone
     - accountType
   user_myself:
-    kind: query
+    kind: singleton
     entity: User
-    description: List User by shelf (user_myself | issue_watcher).
+    description: The authenticated Jira user.
     provides:
     - accountId
     - displayName
@@ -1056,17 +1064,18 @@ capabilities:
     - active
     - timeZone
     - accountType
+  issue_watcher_query:
+    kind: query
+    entity: User
+    description: Users watching this issue.
+    provides:
+    - accountId
+    - displayName
+    - active
     scope:
     - name: issueIdOrKey
       value_ref: nv_issue_watcher_query_issue_id_or_key
-      required: false
-    selection:
-    - name: shelf
-      selection_effect: source
-      value_ref: nv_user_query_shelf
       required: true
-      description: user_myself | issue_watcher
-    controls: []
   user_search:
     kind: search
     entity: User
@@ -1867,7 +1876,7 @@ oauth:
       issue_createmeta_get:
         any_of:
         - read:jira-work
-      user_myself:
+      issue_watcher_query:
         any_of:
         - read:jira-work
       issue_watcher_add:
@@ -1949,6 +1958,9 @@ oauth:
         any_of:
         - read:jira-work
       Issue.changelog:
+        any_of:
+        - read:jira-work
+      Issue.watchers:
         any_of:
         - read:jira-work
       Issue.remotelinks:
@@ -2207,9 +2219,3 @@ values:
     items:
       value_ref: nv_wire_str_short
     description: Event types to deliver (repeat --events).
-  nv_user_query_shelf:
-    type: enum
-    enum:
-    - user_myself
-    - issue_watcher
-    description: User query shelf

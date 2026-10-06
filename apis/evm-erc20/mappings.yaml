@@ -49,7 +49,7 @@ transfer_query:
     log_index:
       type: log_meta
       key: log_index
-    from:
+    sender:
       type: topic
       index: 0
     to:

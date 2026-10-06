@@ -61,21 +61,8 @@ channel_history:
     items: messages
   method: GET
   path:
-  - type: if
-    condition:
-      type: equals
-      left:
-        type: var
-        name: shelf
-      right:
-        type: const
-        value: channel_replies
-    then_expr:
-      type: const
-      value: conversations.replies
-    else_expr:
-      type: const
-      value: conversations.history
+  - type: literal
+    value: conversations.history
   query:
     type: object
     fields:
@@ -126,54 +113,6 @@ channel_history:
     stop_when:
       field: has_more
       eq: false
-    strategy: cursor
-channel_members:
-  response:
-    items: members
-  method: GET
-  path:
-  - type: if
-    condition:
-      type: equals
-      left:
-        type: var
-        name: shelf
-      right:
-        type: const
-        value: user
-    then_expr:
-      type: const
-      value: users.list
-    else_expr:
-      type: if
-      condition:
-        type: equals
-        left:
-          type: var
-          name: shelf
-        right:
-          type: const
-          value: usergroup_member
-      then_expr:
-        type: const
-        value: usergroups.users.list
-      else_expr:
-        type: const
-        value: conversations.members
-  query:
-    type: object
-    fields:
-    - - channel
-      - type: var
-        name: channel
-  pagination:
-    params:
-      cursor:
-        from_response: response_metadata.next_cursor
-      limit:
-        fixed: 200
-        role: page_size
-    location: query
     strategy: cursor
 channel_create:
   response: single
@@ -502,7 +441,8 @@ message_react_remove:
         name: name
 user_info:
   response:
-    items: user
+    single: true
+    items_path: [user]
   method: GET
   path:
   - type: literal
@@ -515,7 +455,8 @@ user_info:
         name: id
 user_lookup_by_email:
   response:
-    items: user
+    single: true
+    items_path: [user]
   method: GET
   path:
   - type: literal
@@ -1110,3 +1051,154 @@ auth_test:
   path:
   - type: literal
     value: auth.test
+workspace_users_query:
+  method: GET
+  path:
+  - type: literal
+    value: users.list
+  response:
+    items: members
+  query:
+    type: object
+    fields:
+    - - include_locale
+      - type: if
+        condition:
+          type: exists
+          var: include_locale
+        then_expr:
+          type: var
+          name: include_locale
+        else_expr:
+          type: const
+          value: null
+  pagination:
+    location: query
+    strategy: cursor
+    response_prefix:
+    - response_metadata
+    params:
+      cursor:
+        from_response: next_cursor
+      limit:
+        fixed: 200
+        role: page_size
+channel_members_query:
+  method: GET
+  path:
+  - type: literal
+    value: conversations.members
+  query:
+    type: object
+    fields:
+    - - channel
+      - type: var
+        name: channel
+  response:
+    items: members
+    response_preprocess:
+      kind: string_ids_to_field_objects
+      path:
+      - members
+      field: id
+  pagination:
+    location: query
+    strategy: cursor
+    response_prefix:
+    - response_metadata
+    params:
+      cursor:
+        from_response: next_cursor
+      limit:
+        fixed: 200
+        role: page_size
+usergroup_members_query:
+  method: GET
+  path:
+  - type: literal
+    value: usergroups.users.list
+  query:
+    type: object
+    fields:
+    - - usergroup
+      - type: var
+        name: usergroup
+    - - include_disabled
+      - type: if
+        condition:
+          type: exists
+          var: include_disabled
+        then_expr:
+          type: var
+          name: include_disabled
+        else_expr:
+          type: const
+          value: null
+  response:
+    items: users
+    response_preprocess:
+      kind: string_ids_to_field_objects
+      path:
+      - users
+      field: id
+thread_messages_query:
+  response:
+    items: messages
+  method: GET
+  path:
+  - type: literal
+    value: conversations.replies
+  query:
+    type: object
+    fields:
+    - - channel
+      - type: var
+        name: channel
+    - - ts
+      - type: var
+        name: ts
+    - - oldest
+      - type: if
+        condition:
+          type: exists
+          var: oldest
+        then_expr:
+          type: var
+          name: oldest
+        else_expr:
+          type: const
+          value: null
+    - - latest
+      - type: if
+        condition:
+          type: exists
+          var: latest
+        then_expr:
+          type: var
+          name: latest
+        else_expr:
+          type: const
+          value: null
+    - - inclusive
+      - type: if
+        condition:
+          type: exists
+          var: inclusive
+        then_expr:
+          type: var
+          name: inclusive
+        else_expr:
+          type: const
+          value: null
+  pagination:
+    params:
+      cursor:
+        from_response: response_metadata.next_cursor
+      limit:
+        fixed: 100
+        role: page_size
+    location: query
+    stop_when:
+      field: has_more
+      eq: false
+    strategy: cursor

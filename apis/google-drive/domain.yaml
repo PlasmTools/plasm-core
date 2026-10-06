@@ -1,4 +1,4 @@
-version: 6
+version: 7
 http_backend: https://www.googleapis.com/drive/v3
 data_classes:
   untrusted:
@@ -264,7 +264,7 @@ entities:
         value_ref: nv_wire_str_short
       fileId:
         required: true
-        value_ref: nv_drive_permission_file_id
+        value_ref: nv_wire_str_short
       type:
         required: false
         value_ref: nv_wire_str_short
@@ -305,7 +305,7 @@ entities:
         value_ref: nv_wire_str_short
       fileId:
         required: true
-        value_ref: nv_drive_comment_file_id
+        value_ref: nv_wire_str_short
       content:
         required: false
         value_ref: nv_wire_str_markdown
@@ -367,7 +367,7 @@ entities:
         value_ref: nv_wire_str_short
       fileId:
         required: true
-        value_ref: nv_drive_reply_file_id
+        value_ref: nv_wire_str_short
       commentId:
         required: true
         value_ref: nv_wire_str_short
@@ -406,7 +406,7 @@ entities:
         value_ref: nv_wire_str_short
       fileId:
         required: true
-        value_ref: nv_drive_revision_file_id
+        value_ref: nv_wire_str_short
       mimeType:
         required: false
         value_ref: nv_wire_str_short
@@ -1402,8 +1402,8 @@ values:
     type: json
     description: Reply resource body.
   nv_replies_list_file_id:
-    type: entity_ref
-    target: File
+    type: string
+    description: File identity component inherited from the parent comment's compound key.
   nv_replies_update_action:
     type: string
     description: Optional resolve or reopen action (defaults to preflight parent action).

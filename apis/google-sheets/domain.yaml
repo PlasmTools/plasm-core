@@ -1,4 +1,4 @@
-version: 3
+version: 4
 http_backend: https://sheets.googleapis.com
 data_classes:
   untrusted:
@@ -57,7 +57,7 @@ entities:
     fields:
       spreadsheetId:
         required: true
-        value_ref: nv_sheet_spreadsheet_id
+        value_ref: nv_wire_str_short
       sheetId:
         required: true
         path: properties.sheetId
@@ -96,7 +96,7 @@ entities:
     fields:
       spreadsheetId:
         required: true
-        value_ref: nv_value_range_spreadsheet_id
+        value_ref: nv_wire_str_short
       range:
         required: true
         value_ref: nv_value_range_range
@@ -117,7 +117,7 @@ entities:
     fields:
       spreadsheetId:
         required: true
-        value_ref: nv_developer_metadata_spreadsheet_id
+        value_ref: nv_wire_str_short
       metadataId:
         required: true
         value_ref: nv_wire_int

@@ -1,4 +1,4 @@
-version: 7
+version: 8
 http_backend: https://gitlab.com
 data_classes:
   untrusted:
@@ -91,6 +91,10 @@ entities:
       - gitlab issue
       - ticket
     fields:
+      project:
+        required: true
+        path: project_id
+        value_ref: nv_issue_project_id
       id:
         required: true
         value_ref: nv_wire_int
@@ -99,7 +103,7 @@ entities:
         value_ref: nv_wire_int
       project_id:
         required: true
-        value_ref: nv_issue_project_id
+        value_ref: nv_wire_int
       title:
         required: true
         value_ref: nv_wire_str_short
@@ -157,7 +161,7 @@ entities:
           kind: query_scoped_bindings
           capability: issue_note_for_issue_query
           bindings:
-            project_id: project_id
+            project_id: project
             iid: iid
   MergeRequest:
     id_field: id
@@ -172,6 +176,10 @@ entities:
       - mr
       - gitlab merge request
     fields:
+      project:
+        required: true
+        path: project_id
+        value_ref: nv_merge_request_project_id
       id:
         required: true
         value_ref: nv_wire_int
@@ -180,7 +188,7 @@ entities:
         value_ref: nv_wire_int
       project_id:
         required: true
-        value_ref: nv_merge_request_project_id
+        value_ref: nv_wire_int
       title:
         required: true
         value_ref: nv_wire_str_short
@@ -244,7 +252,7 @@ entities:
           kind: query_scoped_bindings
           capability: merge_request_note_for_mr_query
           bindings:
-            project_id: project_id
+            project_id: project
             iid: iid
   IssueNote:
     id_field: id
@@ -261,7 +269,7 @@ entities:
     fields:
       project_id:
         required: true
-        value_ref: nv_issue_note_project_id
+        value_ref: nv_wire_int
       iid:
         required: true
         value_ref: nv_wire_int
@@ -296,7 +304,7 @@ entities:
     fields:
       project_id:
         required: true
-        value_ref: nv_merge_request_note_project_id
+        value_ref: nv_wire_int
       iid:
         required: true
         value_ref: nv_wire_int
@@ -323,7 +331,7 @@ entities:
     fields:
       project_id:
         required: true
-        value_ref: nv_issue_award_emoji_project_id
+        value_ref: nv_wire_int
       iid:
         required: true
         value_ref: nv_wire_int
@@ -349,7 +357,7 @@ entities:
     fields:
       project_id:
         required: true
-        value_ref: nv_merge_request_award_emoji_project_id
+        value_ref: nv_wire_int
       iid:
         required: true
         value_ref: nv_wire_int

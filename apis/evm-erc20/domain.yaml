@@ -1,4 +1,4 @@
-version: 1
+version: 2
 auth:
   scheme: none
 http_backend: http://127.0.0.1:8545
@@ -27,7 +27,7 @@ entities:
       log_index:
         required: true
         value_ref: nv_transfer_log_index
-      from:
+      sender:
         required: true
         value_ref: nv_transfer_from
       to:

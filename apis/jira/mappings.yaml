@@ -234,22 +234,20 @@ user_get:
 user_myself:
   method: GET
   path:
-  - type: if
-    condition:
-      type: equals
-      left:
-        type: var
-        name: shelf
-      right:
-        type: const
-        value: issue_watcher
-    then_expr:
-      type: const
-      value: rest/api/3/issue/{issueIdOrKey}/watchers
-    else_expr:
-      type: const
-      value: rest/api/3/myself
+  - type: literal
+    value: rest/api/3/myself
   response: single
+issue_watcher_query:
+  method: GET
+  path:
+  - type: literal
+    value: rest/api/3/issue
+  - type: var
+    name: issueIdOrKey
+  - type: literal
+    value: watchers
+  response:
+    items: watchers
 user_search:
   method: GET
   path:

@@ -1,4 +1,4 @@
-version: 4
+version: 5
 http_backend: https://api.x.com
 data_classes:
   untrusted:
@@ -57,31 +57,31 @@ entities:
     relations:
       tweets:
         description: Posts authored by this user (reverse-chronological when paginated).
-        target: Tweet
+        target: AuthoredPost
         cardinality: many
         materialize:
           kind: query_scoped
-          capability: tweet_timeline_query
-          param: id
+          capability: user_posts_query
+          param: user
       mentions:
         description: Posts that mention this user.
-        target: Tweet
+        target: MentionedPost
         cardinality: many
         materialize:
           kind: query_scoped
-          capability: tweet_timeline_query
-          param: id
+          capability: user_mentions_query
+          param: user
       liked_tweets:
         description: Posts this user has liked.
-        target: Tweet
+        target: LikedPost
         cardinality: many
         materialize:
           kind: query_scoped
-          capability: tweet_timeline_query
-          param: id
+          capability: user_liked_posts_query
+          param: user
   Tweet:
     id_field: id
-    primary_query: tweet_timeline_query
+    primary_query: tweet_lookup_query
     description: A post on X (tweet), including text, author, and reply metadata.
     fields:
       id:
@@ -171,12 +171,248 @@ entities:
         cardinality: one
       tweets:
         description: Posts from accounts that are members of this list.
-        target: Tweet
+        target: ListPost
         cardinality: many
         materialize:
           kind: query_scoped
-          capability: tweet_timeline_query
-          param: id
+          capability: list_posts_query
+          param: list
+  AuthoredPost:
+    id_field: id
+    primary_query: user_posts_query
+    primary_read: user_posts_get
+    description: Posts authored by a user.
+    fields:
+      id:
+        required: true
+        value_ref: nv_wire_str_short
+      text:
+        required: false
+        value_ref: nv_wire_str_markdown
+        data_class: untrusted
+      author_id:
+        required: false
+        value_ref: nv_tweet_author_id
+      created_at:
+        required: false
+        value_ref: nv_wire_date_rfc3339
+      conversation_id:
+        required: false
+        value_ref: nv_tweet_conversation_id
+      in_reply_to_user_id:
+        required: false
+        value_ref: nv_tweet_in_reply_to_user_id
+      lang:
+        required: false
+        value_ref: nv_wire_str_short
+      possibly_sensitive:
+        required: false
+        value_ref: nv_wire_bool
+      reply_count:
+        required: false
+        path: public_metrics.reply_count
+        value_ref: nv_wire_int
+      retweet_count:
+        required: false
+        path: public_metrics.retweet_count
+        value_ref: nv_wire_int
+      like_count:
+        required: false
+        path: public_metrics.like_count
+        value_ref: nv_wire_int
+      quote_count:
+        required: false
+        path: public_metrics.quote_count
+        value_ref: nv_wire_int
+      impression_count:
+        required: false
+        path: public_metrics.impression_count
+        value_ref: nv_wire_int
+      bookmark_count:
+        required: false
+        path: public_metrics.bookmark_count
+        value_ref: nv_wire_int
+    relations:
+      author:
+        target: User
+        cardinality: one
+  MentionedPost:
+    id_field: id
+    primary_query: user_mentions_query
+    primary_read: user_mentions_get
+    description: Posts mentioning a user.
+    fields:
+      id:
+        required: true
+        value_ref: nv_wire_str_short
+      text:
+        required: false
+        value_ref: nv_wire_str_markdown
+        data_class: untrusted
+      author_id:
+        required: false
+        value_ref: nv_tweet_author_id
+      created_at:
+        required: false
+        value_ref: nv_wire_date_rfc3339
+      conversation_id:
+        required: false
+        value_ref: nv_tweet_conversation_id
+      in_reply_to_user_id:
+        required: false
+        value_ref: nv_tweet_in_reply_to_user_id
+      lang:
+        required: false
+        value_ref: nv_wire_str_short
+      possibly_sensitive:
+        required: false
+        value_ref: nv_wire_bool
+      reply_count:
+        required: false
+        path: public_metrics.reply_count
+        value_ref: nv_wire_int
+      retweet_count:
+        required: false
+        path: public_metrics.retweet_count
+        value_ref: nv_wire_int
+      like_count:
+        required: false
+        path: public_metrics.like_count
+        value_ref: nv_wire_int
+      quote_count:
+        required: false
+        path: public_metrics.quote_count
+        value_ref: nv_wire_int
+      impression_count:
+        required: false
+        path: public_metrics.impression_count
+        value_ref: nv_wire_int
+      bookmark_count:
+        required: false
+        path: public_metrics.bookmark_count
+        value_ref: nv_wire_int
+    relations:
+      author:
+        target: User
+        cardinality: one
+  LikedPost:
+    id_field: id
+    primary_query: user_liked_posts_query
+    primary_read: user_liked_posts_get
+    description: Posts liked by a user.
+    fields:
+      id:
+        required: true
+        value_ref: nv_wire_str_short
+      text:
+        required: false
+        value_ref: nv_wire_str_markdown
+        data_class: untrusted
+      author_id:
+        required: false
+        value_ref: nv_tweet_author_id
+      created_at:
+        required: false
+        value_ref: nv_wire_date_rfc3339
+      conversation_id:
+        required: false
+        value_ref: nv_tweet_conversation_id
+      in_reply_to_user_id:
+        required: false
+        value_ref: nv_tweet_in_reply_to_user_id
+      lang:
+        required: false
+        value_ref: nv_wire_str_short
+      possibly_sensitive:
+        required: false
+        value_ref: nv_wire_bool
+      reply_count:
+        required: false
+        path: public_metrics.reply_count
+        value_ref: nv_wire_int
+      retweet_count:
+        required: false
+        path: public_metrics.retweet_count
+        value_ref: nv_wire_int
+      like_count:
+        required: false
+        path: public_metrics.like_count
+        value_ref: nv_wire_int
+      quote_count:
+        required: false
+        path: public_metrics.quote_count
+        value_ref: nv_wire_int
+      impression_count:
+        required: false
+        path: public_metrics.impression_count
+        value_ref: nv_wire_int
+      bookmark_count:
+        required: false
+        path: public_metrics.bookmark_count
+        value_ref: nv_wire_int
+    relations:
+      author:
+        target: User
+        cardinality: one
+  ListPost:
+    id_field: id
+    primary_query: list_posts_query
+    primary_read: list_posts_get
+    description: Posts from accounts included in a list.
+    fields:
+      id:
+        required: true
+        value_ref: nv_wire_str_short
+      text:
+        required: false
+        value_ref: nv_wire_str_markdown
+        data_class: untrusted
+      author_id:
+        required: false
+        value_ref: nv_tweet_author_id
+      created_at:
+        required: false
+        value_ref: nv_wire_date_rfc3339
+      conversation_id:
+        required: false
+        value_ref: nv_tweet_conversation_id
+      in_reply_to_user_id:
+        required: false
+        value_ref: nv_tweet_in_reply_to_user_id
+      lang:
+        required: false
+        value_ref: nv_wire_str_short
+      possibly_sensitive:
+        required: false
+        value_ref: nv_wire_bool
+      reply_count:
+        required: false
+        path: public_metrics.reply_count
+        value_ref: nv_wire_int
+      retweet_count:
+        required: false
+        path: public_metrics.retweet_count
+        value_ref: nv_wire_int
+      like_count:
+        required: false
+        path: public_metrics.like_count
+        value_ref: nv_wire_int
+      quote_count:
+        required: false
+        path: public_metrics.quote_count
+        value_ref: nv_wire_int
+      impression_count:
+        required: false
+        path: public_metrics.impression_count
+        value_ref: nv_wire_int
+      bookmark_count:
+        required: false
+        path: public_metrics.bookmark_count
+        value_ref: nv_wire_int
+    relations:
+      author:
+        target: User
+        cardinality: one
 capabilities:
   user_get:
     kind: get
@@ -225,44 +461,6 @@ capabilities:
     - name: until_id
       selection_effect: filter
       value_ref: nv_wire_str_short
-      required: false
-  tweet_timeline_query:
-    kind: query
-    entity: Tweet
-    description: List Tweet by shelf (tweet_lookup | tweet_timeline | tweet_mentions | user_liked_tweets | list_tweets).
-    scope:
-    - name: id
-      value_ref: nv_tweet_timeline_query_id
-      required: false
-    selection:
-    - name: shelf
-      selection_effect: source
-      value_ref: nv_tweet_query_shelf
-      required: true
-      description: tweet_lookup | tweet_timeline | tweet_mentions | user_liked_tweets | list_tweets
-    - name: start_time
-      selection_effect: filter
-      value_ref: nv_wire_date_rfc3339
-      required: false
-    - name: end_time
-      selection_effect: filter
-      value_ref: nv_wire_date_rfc3339
-      required: false
-    - name: since_id
-      selection_effect: filter
-      value_ref: nv_wire_str_short
-      required: false
-    - name: until_id
-      selection_effect: filter
-      value_ref: nv_wire_str_short
-      required: false
-    - name: ids
-      selection_effect: filter
-      value_ref: nv_tweet_lookup_query_ids
-      required: false
-    controls:
-    - name: exclude
-      value_ref: nv_tweet_timeline_query_exclude
       required: false
   tweet_create:
     kind: create
@@ -321,6 +519,97 @@ capabilities:
     output:
       type: side_effect
       description: Deletes the list when the authenticated user owns it.
+  tweet_lookup_query:
+    kind: query
+    entity: Tweet
+    description: Resolve known posts by their identifiers.
+    selection:
+    - name: ids
+      selection_effect: filter
+      value_ref: nv_tweet_lookup_query_ids
+      required: true
+  user_posts_query:
+    kind: query
+    entity: AuthoredPost
+    description: Posts authored by a user.
+    scope:
+    - name: user
+      value_ref: nv_tweet_timeline_query_id
+      required: true
+    selection:
+    - name: start_time
+      selection_effect: filter
+      value_ref: nv_wire_date_rfc3339
+      required: false
+    - name: end_time
+      selection_effect: filter
+      value_ref: nv_wire_date_rfc3339
+      required: false
+    - name: since_id
+      selection_effect: filter
+      value_ref: nv_wire_str_short
+      required: false
+    - name: until_id
+      selection_effect: filter
+      value_ref: nv_wire_str_short
+      required: false
+    controls:
+    - name: exclude
+      value_ref: nv_tweet_timeline_query_exclude
+      required: false
+  user_posts_get:
+    kind: get
+    entity: AuthoredPost
+  user_mentions_query:
+    kind: query
+    entity: MentionedPost
+    description: Posts mentioning a user.
+    scope:
+    - name: user
+      value_ref: nv_tweet_timeline_query_id
+      required: true
+    selection:
+    - name: start_time
+      selection_effect: filter
+      value_ref: nv_wire_date_rfc3339
+      required: false
+    - name: end_time
+      selection_effect: filter
+      value_ref: nv_wire_date_rfc3339
+      required: false
+    - name: since_id
+      selection_effect: filter
+      value_ref: nv_wire_str_short
+      required: false
+    - name: until_id
+      selection_effect: filter
+      value_ref: nv_wire_str_short
+      required: false
+  user_mentions_get:
+    kind: get
+    entity: MentionedPost
+  user_liked_posts_query:
+    kind: query
+    entity: LikedPost
+    description: Posts liked by a user.
+    scope:
+    - name: user
+      value_ref: nv_tweet_timeline_query_id
+      required: true
+  user_liked_posts_get:
+    kind: get
+    entity: LikedPost
+  list_posts_query:
+    kind: query
+    entity: ListPost
+    description: Posts from accounts included in a list.
+    scope:
+    - name: list
+      value_ref: nv_tweet_timeline_query_list
+      required: true
+  list_posts_get:
+    kind: get
+    entity: ListPost
 oauth:
   provider: twitter
   scopes:
@@ -424,34 +713,8 @@ oauth:
           - tweet.read
         - any_of:
           - users.read
-      tweet_timeline_query:
-        all_of:
-        - any_of:
-          - tweet.read
-        - any_of:
-          - users.read
       tweet_search:
         all_of:
-        - any_of:
-          - tweet.read
-        - any_of:
-          - users.read
-      tweet_timeline_query:
-        all_of:
-        - any_of:
-          - tweet.read
-        - any_of:
-          - users.read
-      tweet_timeline_query:
-        all_of:
-        - any_of:
-          - tweet.read
-        - any_of:
-          - users.read
-      tweet_timeline_query:
-        all_of:
-        - any_of:
-          - like.read
         - any_of:
           - tweet.read
         - any_of:
@@ -498,10 +761,60 @@ oauth:
           - tweet.read
         - any_of:
           - users.read
-      tweet_timeline_query:
+      tweet_lookup_query:
         all_of:
         - any_of:
+          - tweet.read
+        - any_of:
+          - users.read
+      user_posts_query:
+        all_of:
+        - any_of:
+          - tweet.read
+        - any_of:
+          - users.read
+      user_posts_get:
+        all_of:
+        - any_of:
+          - tweet.read
+        - any_of:
+          - users.read
+      user_mentions_query:
+        all_of:
+        - any_of:
+          - tweet.read
+        - any_of:
+          - users.read
+      user_mentions_get:
+        all_of:
+        - any_of:
+          - tweet.read
+        - any_of:
+          - users.read
+      user_liked_posts_query:
+        all_of:
+        - any_of:
+          - tweet.read
+        - any_of:
+          - users.read
+        - any_of:
+          - like.read
+      user_liked_posts_get:
+        all_of:
+        - any_of:
+          - tweet.read
+        - any_of:
+          - users.read
+      list_posts_query:
+        all_of:
+        - any_of:
+          - tweet.read
+        - any_of:
+          - users.read
+        - any_of:
           - list.read
+      list_posts_get:
+        all_of:
         - any_of:
           - tweet.read
         - any_of:
@@ -537,6 +850,30 @@ oauth:
         all_of:
         - any_of:
           - list.read
+        - any_of:
+          - tweet.read
+        - any_of:
+          - users.read
+      AuthoredPost.author:
+        all_of:
+        - any_of:
+          - tweet.read
+        - any_of:
+          - users.read
+      MentionedPost.author:
+        all_of:
+        - any_of:
+          - tweet.read
+        - any_of:
+          - users.read
+      LikedPost.author:
+        all_of:
+        - any_of:
+          - tweet.read
+        - any_of:
+          - users.read
+      ListPost.author:
+        all_of:
         - any_of:
           - tweet.read
         - any_of:
@@ -591,6 +928,9 @@ values:
   nv_tweet_timeline_query_id:
     type: entity_ref
     target: User
+  nv_tweet_timeline_query_list:
+    type: entity_ref
+    target: List
   nv_user_liked_tweets_query_id:
     type: entity_ref
     target: User
@@ -615,12 +955,3 @@ values:
     type: array
     items:
       value_ref: nv_wire_str_short
-  nv_tweet_query_shelf:
-    type: enum
-    enum:
-    - tweet_lookup
-    - tweet_timeline
-    - tweet_mentions
-    - user_liked_tweets
-    - list_tweets
-    description: Tweet query shelf

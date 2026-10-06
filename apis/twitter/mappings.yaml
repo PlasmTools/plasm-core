@@ -142,137 +142,6 @@ tweet_search:
       next_token:
         from_response: next_token
     strategy: cursor
-tweet_timeline_query:
-  method: GET
-  path:
-  - type: if
-    condition:
-      type: equals
-      left:
-        type: var
-        name: shelf
-      right:
-        type: const
-        value: tweet_timeline
-    then_expr:
-      type: const
-      value: 2/users/{id}/tweets
-    else_expr:
-      type: if
-      condition:
-        type: equals
-        left:
-          type: var
-          name: shelf
-        right:
-          type: const
-          value: tweet_mentions
-      then_expr:
-        type: const
-        value: 2/users/{id}/mentions
-      else_expr:
-        type: if
-        condition:
-          type: equals
-          left:
-            type: var
-            name: shelf
-          right:
-            type: const
-            value: user_liked_tweets
-        then_expr:
-          type: const
-          value: 2/users/{id}/liked_tweets
-        else_expr:
-          type: if
-          condition:
-            type: equals
-            left:
-              type: var
-              name: shelf
-            right:
-              type: const
-              value: list_tweets
-          then_expr:
-            type: const
-            value: 2/lists/{id}/tweets
-          else_expr:
-            type: const
-            value: 2/tweets
-  response:
-    items: data
-  query:
-    type: object
-    fields:
-    - - exclude
-      - type: if
-        condition:
-          type: exists
-          var: exclude
-        then_expr:
-          type: join
-          sep: ','
-          expr:
-            type: var
-            name: exclude
-        else_expr:
-          type: const
-          value: null
-    - - start_time
-      - type: if
-        condition:
-          type: exists
-          var: start_time
-        then_expr:
-          type: var
-          name: start_time
-        else_expr:
-          type: const
-          value: null
-    - - end_time
-      - type: if
-        condition:
-          type: exists
-          var: end_time
-        then_expr:
-          type: var
-          name: end_time
-        else_expr:
-          type: const
-          value: null
-    - - since_id
-      - type: if
-        condition:
-          type: exists
-          var: since_id
-        then_expr:
-          type: var
-          name: since_id
-        else_expr:
-          type: const
-          value: null
-    - - until_id
-      - type: if
-        condition:
-          type: exists
-          var: until_id
-        then_expr:
-          type: var
-          name: until_id
-        else_expr:
-          type: const
-          value: null
-  pagination:
-    location: query
-    response_prefix:
-    - meta
-    params:
-      max_results:
-        fixed: 25
-        role: page_size
-      pagination_token:
-        from_response: next_token
-    strategy: cursor
 tweet_create:
   method: POST
   path:
@@ -385,3 +254,273 @@ list_delete:
     value: lists
   - type: var
     name: id
+tweet_lookup_query:
+  method: GET
+  path:
+  - type: literal
+    value: 2/tweets
+  query:
+    type: object
+    fields:
+    - - ids
+      - type: join
+        sep: ','
+        expr:
+          type: var
+          name: ids
+  response:
+    items: data
+user_posts_get:
+  method: GET
+  path:
+  - type: literal
+    value: '2'
+  - type: literal
+    value: tweets
+  - type: var
+    name: id
+  response:
+    single: true
+    items_path:
+    - data
+user_posts_query:
+  method: GET
+  path:
+  - type: literal
+    value: 2/users
+  - type: var
+    name: user
+  - type: literal
+    value: tweets
+  response:
+    items: data
+  query:
+    type: object
+    fields:
+    - - exclude
+      - type: if
+        condition:
+          type: exists
+          var: exclude
+        then_expr:
+          type: join
+          sep: ','
+          expr:
+            type: var
+            name: exclude
+        else_expr:
+          type: const
+          value: null
+    - - start_time
+      - type: if
+        condition:
+          type: exists
+          var: start_time
+        then_expr:
+          type: var
+          name: start_time
+        else_expr:
+          type: const
+          value: null
+    - - end_time
+      - type: if
+        condition:
+          type: exists
+          var: end_time
+        then_expr:
+          type: var
+          name: end_time
+        else_expr:
+          type: const
+          value: null
+    - - since_id
+      - type: if
+        condition:
+          type: exists
+          var: since_id
+        then_expr:
+          type: var
+          name: since_id
+        else_expr:
+          type: const
+          value: null
+    - - until_id
+      - type: if
+        condition:
+          type: exists
+          var: until_id
+        then_expr:
+          type: var
+          name: until_id
+        else_expr:
+          type: const
+          value: null
+  pagination:
+    location: query
+    response_prefix:
+    - meta
+    params:
+      max_results:
+        fixed: 25
+        role: page_size
+      pagination_token:
+        from_response: next_token
+    strategy: cursor
+user_mentions_get:
+  method: GET
+  path:
+  - type: literal
+    value: '2'
+  - type: literal
+    value: tweets
+  - type: var
+    name: id
+  response:
+    single: true
+    items_path:
+    - data
+user_mentions_query:
+  method: GET
+  path:
+  - type: literal
+    value: 2/users
+  - type: var
+    name: user
+  - type: literal
+    value: mentions
+  response:
+    items: data
+  query:
+    type: object
+    fields:
+    - - start_time
+      - type: if
+        condition:
+          type: exists
+          var: start_time
+        then_expr:
+          type: var
+          name: start_time
+        else_expr:
+          type: const
+          value: null
+    - - end_time
+      - type: if
+        condition:
+          type: exists
+          var: end_time
+        then_expr:
+          type: var
+          name: end_time
+        else_expr:
+          type: const
+          value: null
+    - - since_id
+      - type: if
+        condition:
+          type: exists
+          var: since_id
+        then_expr:
+          type: var
+          name: since_id
+        else_expr:
+          type: const
+          value: null
+    - - until_id
+      - type: if
+        condition:
+          type: exists
+          var: until_id
+        then_expr:
+          type: var
+          name: until_id
+        else_expr:
+          type: const
+          value: null
+  pagination:
+    location: query
+    response_prefix:
+    - meta
+    params:
+      max_results:
+        fixed: 25
+        role: page_size
+      pagination_token:
+        from_response: next_token
+    strategy: cursor
+user_liked_posts_get:
+  method: GET
+  path:
+  - type: literal
+    value: '2'
+  - type: literal
+    value: tweets
+  - type: var
+    name: id
+  response:
+    single: true
+    items_path:
+    - data
+user_liked_posts_query:
+  method: GET
+  path:
+  - type: literal
+    value: 2/users
+  - type: var
+    name: user
+  - type: literal
+    value: liked_tweets
+  response:
+    items: data
+  query:
+    type: object
+    fields: []
+  pagination:
+    location: query
+    response_prefix:
+    - meta
+    params:
+      max_results:
+        fixed: 25
+        role: page_size
+      pagination_token:
+        from_response: next_token
+    strategy: cursor
+list_posts_get:
+  method: GET
+  path:
+  - type: literal
+    value: '2'
+  - type: literal
+    value: tweets
+  - type: var
+    name: id
+  response:
+    single: true
+    items_path:
+    - data
+list_posts_query:
+  method: GET
+  path:
+  - type: literal
+    value: 2/lists
+  - type: var
+    name: list
+  - type: literal
+    value: tweets
+  response:
+    items: data
+  query:
+    type: object
+    fields: []
+  pagination:
+    location: query
+    response_prefix:
+    - meta
+    params:
+      max_results:
+        fixed: 25
+        role: page_size
+      pagination_token:
+        from_response: next_token
+    strategy: cursor

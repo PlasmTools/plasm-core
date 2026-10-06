@@ -1,4 +1,4 @@
-version: 3
+version: 4
 http_backend: https://api.figma.com
 data_classes:
   untrusted:
@@ -343,12 +343,51 @@ capabilities:
     payload:
       input_type:
         type: object
-        additional_fields: true
+        additional_fields: false
         fields:
         - name: message
           value_ref: nv_comment_message
           required: true
           sink_class: external_publish
+        - name: comment_id
+          value_ref: nv_wire_str_short
+          required: false
+        - name: client_meta
+          required: false
+          input_type:
+            type: object
+            additional_fields: false
+            fields:
+            - name: x
+              input_type: {type: value, field_type: number}
+              required: false
+            - name: y
+              input_type: {type: value, field_type: number}
+              required: false
+            - name: node_id
+              value_ref: nv_wire_str_short
+              required: false
+            - name: node_offset
+              required: false
+              input_type:
+                type: object
+                additional_fields: false
+                fields:
+                - name: x
+                  input_type: {type: value, field_type: number}
+                  required: true
+                - name: y
+                  input_type: {type: value, field_type: number}
+                  required: true
+            - name: region_height
+              input_type: {type: value, field_type: number}
+              required: false
+            - name: region_width
+              input_type: {type: value, field_type: number}
+              required: false
+            - name: comment_pin_corner
+              value_ref: nv_wire_str_short
+              required: false
     provides:
     - id
     - file_key

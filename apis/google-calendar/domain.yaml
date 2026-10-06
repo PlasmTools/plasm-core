@@ -1,4 +1,4 @@
-version: 6
+version: 7
 http_backend: https://www.googleapis.com/calendar/v3
 data_classes:
   untrusted:
@@ -84,7 +84,7 @@ entities:
     fields:
       calendarId:
         required: true
-        value_ref: nv_event_calendar_id
+        value_ref: nv_wire_str_short
       id:
         required: true
         value_ref: nv_wire_str_short

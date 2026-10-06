@@ -1,4 +1,4 @@
-version: 15
+version: 16
 http_backend: https://api.cloudflare.com/client/v4
 entities:
   Zone:
@@ -73,7 +73,7 @@ entities:
     fields:
       zone_id:
         required: true
-        value_ref: nv_cloudflare_zone_id
+        value_ref: nv_wire_str_short
       ruleset_id:
         required: true
         path: id
@@ -113,7 +113,7 @@ entities:
     fields:
       zone_id:
         required: true
-        value_ref: nv_cloudflare_zone_id
+        value_ref: nv_wire_str_short
       ruleset_phase:
         required: true
         value_ref: nv_wire_sel_zone_ruleset_entrypoint_phase
@@ -148,7 +148,7 @@ entities:
     fields:
       zone_id:
         required: true
-        value_ref: nv_cloudflare_zone_id
+        value_ref: nv_wire_str_short
       id:
         required: true
         value_ref: nv_wire_str_short
@@ -170,7 +170,7 @@ entities:
     fields:
       zone_id:
         required: true
-        value_ref: nv_cloudflare_zone_id
+        value_ref: nv_wire_str_short
       zone_name:
         required: false
         value_ref: nv_wire_str_short

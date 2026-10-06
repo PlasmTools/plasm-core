@@ -24,34 +24,8 @@ member_me_get:
 ugc_post_query_for_member:
   method: GET
   path:
-  - type: if
-    condition:
-      type: equals
-      left:
-        type: var
-        name: shelf
-      right:
-        type: const
-        value: ugc_post_query_for_member
-    then_expr:
-      type: const
-      value: v2/ugcPosts
-    else_expr:
-      type: if
-      condition:
-        type: equals
-        left:
-          type: var
-          name: shelf
-        right:
-          type: const
-          value: ugc_post_query_for_organization
-      then_expr:
-        type: const
-        value: v2/ugcPosts
-      else_expr:
-        type: const
-        value: v2/ugcPosts
+  - type: literal
+    value: v2/ugcPosts
   response:
     items: elements
   query:
@@ -87,7 +61,12 @@ ugc_post_query_for_member:
         fixed: 10
         role: page_size
     strategy: offset
-  headers: *id001
+  headers:
+    type: object
+    fields:
+    - - X-Restli-Protocol-Version
+      - type: const
+        value: 2.0.0
 ugc_post_get:
   method: GET
   path:
@@ -262,3 +241,151 @@ media_upload_register:
                 - type: const
                   value: urn:li:userGeneratedContent
   headers: *id001
+ugc_posts_query:
+  method: GET
+  path:
+  - type: literal
+    value: v2/ugcPosts
+  response:
+    items: elements
+  query:
+    type: object
+    fields:
+    - - q
+      - type: const
+        value: authors
+    - - authors
+      - type: var
+        name: authors
+    - - sortBy
+      - type: if
+        condition:
+          type: exists
+          var: sortBy
+        then_expr:
+          type: var
+          name: sortBy
+        else_expr:
+          type: const
+          value: null
+  pagination:
+    params:
+      start:
+        counter: 0
+        step: 10
+      count:
+        fixed: 10
+        role: page_size
+    strategy: offset
+  headers:
+    type: object
+    fields:
+    - - X-Restli-Protocol-Version
+      - type: const
+        value: 2.0.0
+ugc_post_query_for_member_get:
+  method: GET
+  path:
+  - type: literal
+    value: v2
+  - type: literal
+    value: ugcPosts
+  - type: var
+    name: id
+  response: single
+  query:
+    type: object
+    fields:
+    - - viewContext
+      - type: if
+        condition:
+          type: exists
+          var: viewContext
+        then_expr:
+          type: var
+          name: viewContext
+        else_expr:
+          type: const
+          value: AUTHOR
+  headers:
+    type: object
+    fields:
+    - - X-Restli-Protocol-Version
+      - type: const
+        value: 2.0.0
+organization_posts_query:
+  method: GET
+  path:
+  - type: literal
+    value: v2/ugcPosts
+  response:
+    items: elements
+  query:
+    type: object
+    fields:
+    - - q
+      - type: const
+        value: authors
+    - - authors
+      - type: format
+        template: List(urn%3Ali%3Aorganization%3A{id})
+        vars:
+          id:
+            type: var
+            name: organization
+    - - sortBy
+      - type: if
+        condition:
+          type: exists
+          var: sortBy
+        then_expr:
+          type: var
+          name: sortBy
+        else_expr:
+          type: const
+          value: null
+  pagination:
+    params:
+      start:
+        counter: 0
+        step: 10
+      count:
+        fixed: 10
+        role: page_size
+    strategy: offset
+  headers:
+    type: object
+    fields:
+    - - X-Restli-Protocol-Version
+      - type: const
+        value: 2.0.0
+organization_posts_query_get:
+  method: GET
+  path:
+  - type: literal
+    value: v2
+  - type: literal
+    value: ugcPosts
+  - type: var
+    name: id
+  response: single
+  query:
+    type: object
+    fields:
+    - - viewContext
+      - type: if
+        condition:
+          type: exists
+          var: viewContext
+        then_expr:
+          type: var
+          name: viewContext
+        else_expr:
+          type: const
+          value: AUTHOR
+  headers:
+    type: object
+    fields:
+    - - X-Restli-Protocol-Version
+      - type: const
+        value: 2.0.0

@@ -1,4 +1,4 @@
-version: 8
+version: 9
 http_backend: http://localhost:3000/api
 data_classes:
   untrusted:
@@ -325,7 +325,8 @@ entities:
       condition:
         required: false
         value_ref: nv_wire_str_short
-      for:
+      pending_for:
+        path: for
         required: false
         value_ref: nv_grafana_duration
       is_paused:
@@ -573,7 +574,8 @@ entities:
       version:
         required: false
         value_ref: nv_wire_int
-      global:
+      is_global:
+        path: global
         required: false
         value_ref: nv_wire_bool
       permissions_json:
@@ -668,13 +670,13 @@ entities:
         value_ref: nv_grafana_url
       dashboard_uid:
         required: false
-        value_ref: nv_grafana_dashboard_uid
+        value_ref: nv_grafana_uid
       panel_id:
         required: false
         value_ref: nv_wire_int
       datasource_uid:
         required: false
-        value_ref: nv_grafana_datasource_uid
+        value_ref: nv_grafana_uid
       queries_json:
         required: false
         value_ref: nv_grafana_json_text
@@ -683,7 +685,7 @@ entities:
         required: false
         value_ref: nv_grafana_json_text
         description: Extra dashboard/panel URL query parameters as a JSON object.
-      from:
+      start_time:
         required: false
         value_ref: nv_grafana_time_range
       to:
@@ -698,7 +700,7 @@ entities:
     fields:
       dashboard_uid:
         required: true
-        value_ref: nv_grafana_dashboard_uid
+        value_ref: nv_grafana_uid
       panel_id:
         required: false
         value_ref: nv_wire_int
@@ -1113,7 +1115,7 @@ capabilities:
           value_ref: nv_wire_str_short
         - name: instant
           value_ref: nv_wire_bool
-        - name: from
+        - name: start_time
           value_ref: nv_grafana_time_range
         - name: to
           value_ref: nv_grafana_time_range
@@ -1129,7 +1131,7 @@ capabilities:
     kind: query
     entity: Annotation
     selection:
-    - name: from
+    - name: start_time
       selection_effect: filter
       value_ref: nv_wire_int
     - name: to
@@ -1221,7 +1223,7 @@ capabilities:
     - folder_uid
     - rule_group
     - condition
-    - for
+    - pending_for
     - is_paused
     - no_data_state
     - exec_err_state
@@ -1248,7 +1250,7 @@ capabilities:
         - name: data
           value_ref: nv_grafana_json_text
           required: true
-        - name: for
+        - name: pending_for
           value_ref: nv_grafana_duration
         - name: noDataState
           value_ref: nv_grafana_alert_state
@@ -1277,7 +1279,7 @@ capabilities:
         - name: data
           value_ref: nv_grafana_json_text
           required: true
-        - name: for
+        - name: pending_for
           value_ref: nv_grafana_duration
         - name: noDataState
           value_ref: nv_grafana_alert_state
@@ -1664,7 +1666,7 @@ capabilities:
     - name
     - description
     - version
-    - global
+    - is_global
     - permissions_json
   rbac_role_create:
     description: Create a custom RBAC role with permissions.
@@ -1681,7 +1683,7 @@ capabilities:
           value_ref: nv_grafana_description
         - name: uid
           value_ref: nv_grafana_role_uid
-        - name: global
+        - name: is_global
           value_ref: nv_wire_bool
         - name: permissions
           value_ref: nv_grafana_json_value
@@ -1701,7 +1703,7 @@ capabilities:
         - name: version
           value_ref: nv_wire_int
           required: true
-        - name: global
+        - name: is_global
           value_ref: nv_wire_bool
         - name: permissions
           value_ref: nv_grafana_json_value
@@ -1738,7 +1740,7 @@ capabilities:
           value_ref: nv_grafana_role_ref
           required: true
           sink_class: permission_grant
-        - name: global
+        - name: is_global
           value_ref: nv_wire_bool
     output:
       type: side_effect
@@ -1755,7 +1757,7 @@ capabilities:
           value_ref: nv_grafana_tags
           required: true
           sink_class: permission_grant
-        - name: global
+        - name: is_global
           value_ref: nv_wire_bool
     output:
       type: side_effect
@@ -1772,7 +1774,7 @@ capabilities:
         - name: role_uid
           value_ref: nv_grafana_role_ref
           required: true
-        - name: global
+        - name: is_global
           value_ref: nv_wire_bool
     output:
       type: side_effect
@@ -1865,7 +1867,7 @@ capabilities:
       input_type:
         type: object
         fields:
-        - name: from
+        - name: start_time
           value_ref: nv_grafana_time_range
         - name: to
           value_ref: nv_grafana_time_range
@@ -1888,7 +1890,7 @@ capabilities:
         - name: label_name
           value_ref: nv_grafana_label_name
           required: true
-        - name: from
+        - name: start_time
           value_ref: nv_grafana_time_range
         - name: to
           value_ref: nv_grafana_time_range
@@ -1908,7 +1910,7 @@ capabilities:
       input_type:
         type: object
         fields:
-        - name: from
+        - name: start_time
           value_ref: nv_grafana_time_range
         - name: to
           value_ref: nv_grafana_time_range
@@ -1930,7 +1932,7 @@ capabilities:
       input_type:
         type: object
         fields:
-        - name: from
+        - name: start_time
           value_ref: nv_grafana_time_range
         - name: to
           value_ref: nv_grafana_time_range
@@ -1953,7 +1955,7 @@ capabilities:
         - name: label_name
           value_ref: nv_grafana_label_name
           required: true
-        - name: from
+        - name: start_time
           value_ref: nv_grafana_time_range
         - name: to
           value_ref: nv_grafana_time_range
@@ -1976,7 +1978,7 @@ capabilities:
         - name: logql
           value_ref: nv_grafana_logql
           required: true
-        - name: from
+        - name: start_time
           value_ref: nv_grafana_time_range
         - name: to
           value_ref: nv_grafana_time_range
@@ -2001,7 +2003,7 @@ capabilities:
         - name: logql
           value_ref: nv_grafana_logql
           required: true
-        - name: from
+        - name: start_time
           value_ref: nv_grafana_time_range
         - name: to
           value_ref: nv_grafana_time_range
@@ -2024,7 +2026,7 @@ capabilities:
         - name: query
           value_ref: nv_grafana_sql
           required: true
-        - name: from
+        - name: start_time
           value_ref: nv_grafana_time_range
         - name: to
           value_ref: nv_grafana_time_range
@@ -2107,7 +2109,7 @@ capabilities:
     - name: query_params_json
       selection_effect: other
       value_ref: nv_grafana_json_text
-    - name: from
+    - name: start_time
       selection_effect: filter
       value_ref: nv_grafana_time_range
     - name: to
@@ -2122,7 +2124,7 @@ capabilities:
     - datasource_uid
     - queries_json
     - query_params_json
-    - from
+    - start_time
     - to
   panel_render_query:
     description: Fetch a PNG render of a dashboard panel (requires image renderer).
@@ -2142,7 +2144,7 @@ capabilities:
     - name: height
       selection_effect: filter
       value_ref: nv_wire_int
-    - name: from
+    - name: start_time
       selection_effect: filter
       value_ref: nv_grafana_time_range
     - name: to
@@ -2166,11 +2168,7 @@ capabilities:
         - name: expr
           value_ref: nv_wire_str_short
           required: true
-        - name: dashboard_uid
-          value_ref: nv_grafana_dashboard_uid
-        - name: panel_id
-          value_ref: nv_wire_int
-        - name: from
+        - name: start_time
           value_ref: nv_grafana_time_range
         - name: to
           value_ref: nv_grafana_time_range
@@ -2460,7 +2458,7 @@ views:
       value_ref: nv_grafana_json_text
     - name: query_params_json
       value_ref: nv_grafana_json_text
-    - name: from
+    - name: start_time
       value_ref: nv_grafana_time_range
     - name: to
       value_ref: nv_grafana_time_range
@@ -2491,9 +2489,9 @@ views:
       query_params_json:
         kind: scope
         param: query_params_json
-      from:
+      start_time:
         kind: scope
-        param: from
+        param: start_time
       to:
         kind: scope
         param: to
@@ -2503,17 +2501,17 @@ views:
 
           {%- if resource_type == ''dashboard'' -%}
 
-          {{ base }}/d/{{ dashboard_uid }}{% if from or to or query_params_json %}?{%
-          endif %}{% if from %}from={{ from }}{% endif %}{%
-          if from and to %}&{% endif %}{% if to %}to={{ to
+          {{ base }}/d/{{ dashboard_uid }}{% if start_time or to or query_params_json %}?{%
+          endif %}{% if start_time %}from={{ start_time }}{% endif %}{%
+          if start_time and to %}&{% endif %}{% if to %}to={{ to
           }}{% endif %}{% if query_params_json %}{{ query_params_json | wire_query_suffix
           }}{% endif %}
 
           {%- elif resource_type == ''panel'' -%}
 
-          {{ base }}/d/{{ dashboard_uid }}?viewPanel={{ panel_id }}{% if from or to
-          or query_params_json %}&{% endif %}{% if from %}from={{ from
-          }}{% endif %}{% if from and to %}&{% endif %}{% if to %}to={{ to
+          {{ base }}/d/{{ dashboard_uid }}?viewPanel={{ panel_id }}{% if start_time or to
+          or query_params_json %}&{% endif %}{% if start_time %}from={{ start_time
+          }}{% endif %}{% if start_time and to %}&{% endif %}{% if to %}to={{ to
           }}{% endif %}{% if query_params_json %}{{ query_params_json | wire_query_suffix
           }}{% endif %}
 
@@ -2527,18 +2525,18 @@ views:
 
           {%- endif -%}
 
-          {%- if from or to -%}
+          {%- if start_time or to -%}
 
           {%- set left = left ~ '',"range":{'' -%}
 
-          {%- if from -%}
+          {%- if start_time -%}
 
-          {%- set left = left ~ ''"from":'' ~ (from | json_encode)
+          {%- set left = left ~ ''"from":'' ~ (start_time | json_encode)
           -%}
 
           {%- endif -%}
 
-          {%- if from and to -%}
+          {%- if start_time and to -%}
 
           {%- set left = left ~ '','' -%}
 

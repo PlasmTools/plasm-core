@@ -1,4 +1,4 @@
-version: 4
+version: 5
 http_backend: https://slack.com/api
 data_classes:
   untrusted:
@@ -77,24 +77,23 @@ entities:
         description: Message history in this channel.
         target: Message
         cardinality: many
-        discovery:
+        discovery: null
         materialize:
           kind: query_scoped
           capability: channel_history
           param: channel
       members:
-        description: Members of this channel.
-        target: User
+        target: ChannelMember
         cardinality: many
         materialize:
           kind: query_scoped
-          capability: channel_members
+          capability: channel_members_query
           param: channel
       pins:
         description: Pinned items in this channel.
         target: Pin
         cardinality: many
-        discovery:
+        discovery: null
         materialize:
           kind: query_scoped
           capability: pin_list
@@ -159,7 +158,7 @@ entities:
   User:
     id_field: id
     primary_read: user_info
-    primary_query: channel_members
+    primary_query: workspace_users_query
     description: A Slack workspace member.
     fields:
       id:
@@ -267,7 +266,14 @@ entities:
       user_count:
         required: false
         value_ref: nv_user_group_user_count
-    relations: {}
+    relations:
+      members:
+        target: UserGroupMember
+        cardinality: many
+        materialize:
+          kind: query_scoped
+          capability: usergroup_members_query
+          param: usergroup
   Team:
     id_field: id
     description: A Slack workspace.
@@ -391,6 +397,69 @@ entities:
         required: false
         value_ref: nv_scheduled_message_text
     relations: {}
+  ChannelMember:
+    id_field: id
+    primary_query: channel_members_query
+    description: A user included in a conversation.
+    fields:
+      id:
+        value_ref: nv_user_id
+        required: true
+      user:
+        value_ref: nv_membership_user
+        path: id
+        required: true
+    relations: {}
+  UserGroupMember:
+    id_field: id
+    primary_query: usergroup_members_query
+    description: A user included in a user group.
+    fields:
+      id:
+        value_ref: nv_user_id
+        required: true
+      user:
+        value_ref: nv_membership_user
+        path: id
+        required: true
+    relations: {}
+  ThreadMessage:
+    id_field: ts
+    primary_query: thread_messages_query
+    description: A message in a conversation thread, including its parent message.
+    fields:
+      ts:
+        required: true
+        value_ref: nv_message_ts
+      type:
+        required: false
+        value_ref: nv_message_type
+      text:
+        required: false
+        value_ref: nv_message_text
+        data_class: untrusted
+      subtype:
+        required: false
+        value_ref: nv_message_subtype
+      thread_ts:
+        required: false
+        value_ref: nv_message_thread_ts
+      reply_count:
+        required: false
+        value_ref: nv_message_reply_count
+      latest_reply:
+        required: false
+        value_ref: nv_message_latest_reply
+      permalink:
+        required: false
+        value_ref: nv_message_permalink
+      channel:
+        required: false
+        value_ref: nv_message_channel
+      user:
+        required: false
+        value_ref: nv_message_user
+    relations: {}
 capabilities:
   channel_list:
     description: List all channels (conversations) in the workspace.
@@ -439,7 +508,7 @@ capabilities:
     - purpose
     - created
   channel_history:
-    description: List Message by shelf (channel_history | channel_history).
+    description: Read messages in a conversation.
     kind: query
     entity: Message
     provides:
@@ -453,16 +522,6 @@ capabilities:
     - permalink
     - channel
     - user
-    selection:
-    - name: shelf
-      selection_effect: source
-      value_ref: nv_message_query_shelf
-      required: true
-      description: channel_history | channel_history
-    - name: ts
-      selection_effect: filter
-      value_ref: nv_channel_replies_ts
-      required: false
     controls:
     - name: oldest
       value_ref: nv_channel_history_oldest
@@ -477,31 +536,6 @@ capabilities:
     - name: channel
       value_ref: nv_channel_history_channel
       required: true
-  channel_members:
-    description: List User by shelf (channel_members | user | usergroup_member).
-    kind: query
-    entity: User
-    selection:
-    - name: shelf
-      selection_effect: source
-      value_ref: nv_user_query_shelf
-      required: true
-      description: channel_members | user | usergroup_member
-    - name: usergroup
-      selection_effect: filter
-      value_ref: nv_usergroup_member_list_usergroup
-      required: false
-    scope:
-    - name: channel
-      value_ref: nv_channel_members_channel
-      required: true
-    controls:
-    - name: include_locale
-      value_ref: nv_wire_bool
-      required: false
-    - name: include_disabled
-      value_ref: nv_wire_bool
-      required: false
   channel_create:
     description: Create a new channel.
     kind: create
@@ -1219,6 +1253,74 @@ capabilities:
     description: Test the authentication token and get caller identity.
     kind: singleton
     entity: User
+  workspace_users_query:
+    kind: query
+    entity: User
+    description: List workspace user profiles.
+    controls:
+    - name: include_locale
+      value_ref: nv_wire_bool
+      required: false
+  channel_members_query:
+    kind: query
+    entity: ChannelMember
+    description: List the users who belong to a conversation.
+    scope:
+    - name: channel
+      value_ref: nv_channel_members_channel
+      required: true
+    provides:
+    - id
+    - user
+  usergroup_members_query:
+    kind: query
+    entity: UserGroupMember
+    description: List the users who belong to a workspace user group.
+    scope:
+    - name: usergroup
+      value_ref: nv_usergroup_member_list_usergroup
+      required: true
+    provides:
+    - id
+    - user
+    controls:
+    - name: include_disabled
+      value_ref: nv_wire_bool
+      required: false
+  thread_messages_query:
+    description: Read the parent and replies in a conversation thread.
+    kind: query
+    entity: ThreadMessage
+    provides:
+    - ts
+    - type
+    - text
+    - subtype
+    - thread_ts
+    - reply_count
+    - latest_reply
+    - permalink
+    - channel
+    - user
+    controls:
+    - name: oldest
+      value_ref: nv_channel_history_oldest
+      required: false
+    - name: latest
+      value_ref: nv_channel_history_latest
+      required: false
+    - name: inclusive
+      value_ref: nv_wire_bool
+      required: false
+    scope:
+    - name: channel
+      value_ref: nv_channel_history_channel
+      required: true
+    selection:
+    - name: ts
+      selection_effect: filter
+      value_ref: nv_channel_replies_ts
+      required: true
 oauth:
   provider: slack
   scopes:
@@ -1373,16 +1475,6 @@ oauth:
         - groups:history
         - im:history
         - mpim:history
-      channel_history:
-        any_of:
-        - channels:history
-        - groups:history
-        - im:history
-        - mpim:history
-      channel_members:
-        any_of:
-        - channels:read
-        - groups:read
       channel_create:
         any_of:
         - channels:manage
@@ -1453,9 +1545,6 @@ oauth:
       message_react_remove:
         any_of:
         - reactions:write
-      channel_members:
-        any_of:
-        - users:read
       user_info:
         any_of:
         - users:read
@@ -1501,9 +1590,6 @@ oauth:
       usergroup_disable:
         any_of:
         - usergroups:write
-      channel_members:
-        any_of:
-        - usergroups:read
       team_info:
         any_of:
         - team:read
@@ -1555,6 +1641,22 @@ oauth:
       scheduledmessage_delete:
         any_of:
         - chat:write
+      workspace_users_query:
+        any_of:
+        - users:read
+      channel_members_query:
+        any_of: &id001
+        - channels:read
+        - groups:read
+      usergroup_members_query:
+        any_of: &id002
+        - usergroups:read
+      thread_messages_query:
+        any_of:
+        - channels:history
+        - groups:history
+        - im:history
+        - mpim:history
     relations:
       Channel.messages:
         any_of:
@@ -1563,9 +1665,7 @@ oauth:
         - im:history
         - mpim:history
       Channel.members:
-        any_of:
-        - channels:read
-        - groups:read
+        any_of: *id001
       Channel.pins:
         any_of:
         - pins:read
@@ -1575,6 +1675,8 @@ oauth:
       Channel.scheduled_messages:
         any_of:
         - chat:write
+      UserGroup.members:
+        any_of: *id002
 auth:
   scheme: bearer_token
   env: SLACK_BOT_TOKEN
@@ -2027,16 +2129,6 @@ values:
     type: markdown
   nv_wire_str_short:
     type: string
-  nv_message_query_shelf:
-    type: enum
-    enum:
-    - channel_history
-    - channel_history
-    description: Message query shelf
-  nv_user_query_shelf:
-    type: enum
-    enum:
-    - channel_members
-    - user
-    - usergroup_member
-    description: User query shelf
+  nv_membership_user:
+    type: entity_ref
+    target: User

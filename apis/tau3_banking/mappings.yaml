@@ -37,11 +37,19 @@ get_user_information_by_email:
       type: const
       value: v1/tau3/banking/get_user_information_by_email
   body:
-    type: object
-    fields:
-    - - email
-      - name: email
-        type: var
+    type: if
+    condition:
+      type: equals
+      left: {type: var, name: shelf}
+      right: {type: const, value: by_name}
+    then_expr:
+      type: object
+      fields:
+      - [customer_name, {type: var, name: customer_name}]
+    else_expr:
+      type: object
+      fields:
+      - [email, {type: var, name: email}]
   response:
     items: result
     single: true
@@ -230,6 +238,16 @@ AgentToolkit_example_noop:
   body:
     type: object
     fields: []
+CreditCardTransactionLocked_list_by_user:
+  method: POST
+  path:
+  - {type: literal, value: v1/tau3/banking/get_credit_card_transactions_by_user}
+  body:
+    type: object
+    fields:
+    - [user_id, {type: var, name: user_id}]
+  response:
+    items: result
 CreditCardTransaction_update_rewards:
   method: POST
   path:

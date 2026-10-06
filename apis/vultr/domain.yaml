@@ -1,4 +1,4 @@
-version: 21
+version: 22
 http_backend: https://api.vultr.com
 data_classes:
   pii_email:
@@ -661,7 +661,7 @@ entities:
         value_ref: nv_wire_str_short
       firewall_group_id:
         required: true
-        value_ref: nv_firewall_rule_firewall_group_id
+        value_ref: nv_wire_str_short
       kind:
         required: false
         path: type
@@ -865,7 +865,7 @@ entities:
         value_ref: nv_wire_str_short
       domain:
         required: true
-        value_ref: nv_dns_record_domain
+        value_ref: nv_wire_str_short
       type:
         required: false
         value_ref: nv_wire_sel_c7fc16b95f0ae0a7
@@ -1263,12 +1263,16 @@ entities:
     - id
     description: A worker node pool belonging to a managed VKE cluster.
     fields:
+      nodepool_id:
+        required: true
+        path: id
+        value_ref: nv_wire_str_short
       id:
         required: true
         value_ref: nv_wire_str_short
       vke_id:
         required: true
-        value_ref: nv_kubernetes_node_pool_vke_id
+        value_ref: nv_wire_str_short
       date_created:
         required: false
         value_ref: nv_wire_date_rfc3339
@@ -1312,6 +1316,14 @@ entities:
         path: taints
         value_ref: nv_kubernetes_node_pool_taints
     relations:
+      worker_nodes:
+        target: KubernetesNodePoolNode
+        cardinality: many
+        materialize:
+          kind: from_parent_get
+          path:
+          - key: nodes
+          - wildcard: true
       vke_labels:
         target: KubernetesNodePoolLabel
         cardinality: many
@@ -1343,7 +1355,7 @@ entities:
         value_ref: nv_wire_str_short
       vke_id:
         required: true
-        value_ref: nv_kubernetes_node_pool_label_vke_id
+        value_ref: nv_wire_str_short
       nodepool_id:
         required: true
         value_ref: nv_wire_str_short
@@ -1367,7 +1379,7 @@ entities:
         value_ref: nv_wire_str_short
       vke_id:
         required: true
-        value_ref: nv_kubernetes_node_pool_taint_vke_id
+        value_ref: nv_wire_str_short
       nodepool_id:
         required: true
         value_ref: nv_wire_str_short
@@ -1395,7 +1407,7 @@ entities:
         value_ref: nv_wire_str_short
       vke_id:
         required: true
-        value_ref: nv_kubernetes_node_pool_node_vke_id
+        value_ref: nv_wire_str_short
       nodepool_id:
         required: true
         value_ref: nv_wire_str_short
@@ -1435,7 +1447,7 @@ entities:
         value_ref: nv_wire_str_short
       push_zone_id:
         required: true
-        value_ref: nv_cdn_push_zone_file_push_zone_id
+        value_ref: nv_wire_str_short
       size:
         required: false
         value_ref: nv_wire_int
@@ -1456,7 +1468,7 @@ entities:
     fields:
       id:
         required: true
-        value_ref: nv_vke_resource_inventory_id
+        value_ref: nv_wire_str_short
       resources:
         required: false
         path: resources
@@ -1469,7 +1481,7 @@ entities:
     fields:
       id:
         required: true
-        value_ref: nv_vke_kubeconfig_id
+        value_ref: nv_wire_str_short
       content:
         required: true
         mime_type_hint: application/x-yaml
@@ -1492,7 +1504,7 @@ entities:
         value_ref: nv_wire_str_short
       vke_id:
         required: true
-        value_ref: nv_vke_available_upgrade_vke_id
+        value_ref: nv_wire_str_short
     relations: {}
   BareMetalIpV4:
     id_field: ip
@@ -1507,7 +1519,7 @@ entities:
         value_ref: nv_wire_str_short
       bare_metal_id:
         required: true
-        value_ref: nv_bare_metal_ip_v4_bare_metal_id
+        value_ref: nv_wire_str_short
       netmask:
         required: false
         value_ref: nv_wire_str_short
@@ -1533,7 +1545,7 @@ entities:
         value_ref: nv_wire_str_short
       bare_metal_id:
         required: true
-        value_ref: nv_bare_metal_ip_v6_bare_metal_id
+        value_ref: nv_wire_str_short
       network:
         required: false
         value_ref: nv_wire_str_short
@@ -1551,7 +1563,7 @@ entities:
     fields:
       id:
         required: true
-        value_ref: nv_bare_metal_bandwidth_id
+        value_ref: nv_wire_str_short
       series:
         required: false
         path: bandwidth
@@ -1564,7 +1576,7 @@ entities:
     fields:
       id:
         required: true
-        value_ref: nv_bare_metal_user_data_id
+        value_ref: nv_wire_str_short
       data:
         required: false
         path:
@@ -1580,7 +1592,7 @@ entities:
     fields:
       id:
         required: true
-        value_ref: nv_bare_metal_upgrade_catalog_id
+        value_ref: nv_wire_str_short
       upgrades:
         required: false
         path: upgrades
@@ -1595,10 +1607,10 @@ entities:
     fields:
       id:
         required: true
-        value_ref: nv_bare_metal_vpc_attachment_id
+        value_ref: nv_wire_str_short
       bare_metal_id:
         required: true
-        value_ref: nv_bare_metal_vpc_attachment_bare_metal_id
+        value_ref: nv_wire_str_short
       mac_address:
         required: false
         value_ref: nv_wire_str_short
@@ -1616,10 +1628,10 @@ entities:
     fields:
       id:
         required: true
-        value_ref: nv_bare_metal_vpc2_attachment_id
+        value_ref: nv_wire_str_short
       bare_metal_id:
         required: true
-        value_ref: nv_bare_metal_vpc2_attachment_bare_metal_id
+        value_ref: nv_wire_str_short
       mac_address:
         required: false
         value_ref: nv_wire_str_short
@@ -3349,14 +3361,14 @@ values:
     type: entity_ref
     target: KubernetesCluster
   nv_kubernetesnodepoollabel_query_vke_id:
-    type: entity_ref
-    target: KubernetesCluster
+    type: string
+    description: Cluster identity component inherited from the parent node pool's compound key.
   nv_kubernetesnodepooltaint_create_vke_id:
     type: entity_ref
     target: KubernetesCluster
   nv_kubernetesnodepooltaint_query_vke_id:
-    type: entity_ref
-    target: KubernetesCluster
+    type: string
+    description: Cluster identity component inherited from the parent node pool's compound key.
   nv_load_balancer_forwarding_rules:
     type: json
   nv_load_balancer_generic_info:

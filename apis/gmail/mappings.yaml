@@ -182,7 +182,7 @@ message_send_simple:
             fields:
             - - From
               - type: var
-                name: from
+                name: sender
             - - To
               - type: var
                 name: to
@@ -259,7 +259,7 @@ message_reply:
               fields:
               - - From
                 - type: var
-                  name: from
+                  name: sender
               - - To
                 - type: var
                   name: to

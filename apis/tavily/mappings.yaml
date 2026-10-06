@@ -208,77 +208,34 @@ url_extract:
   response:
     items: results
   body:
-    type: object
-    fields:
-    - - urls
-      - type: var
-        name: urls
-    - - query
-      - type: if
-        condition:
-          type: exists
-          var: query
-        then_expr:
-          type: var
-          name: query
-        else_expr:
-          type: const
-          value: null
-    - - extract_depth
-      - type: if
-        condition:
-          type: exists
-          var: extract_depth
-        then_expr:
-          type: var
-          name: extract_depth
-        else_expr:
-          type: const
-          value: null
-    - - format
-      - type: if
-        condition:
-          type: exists
-          var: format
-        then_expr:
-          type: var
-          name: format
-        else_expr:
-          type: const
-          value: null
-    - - chunks_per_source
-      - type: if
-        condition:
-          type: exists
-          var: chunks_per_source
-        then_expr:
-          type: var
-          name: chunks_per_source
-        else_expr:
-          type: const
-          value: null
-    - - include_images
-      - type: if
-        condition:
-          type: exists
-          var: include_images
-        then_expr:
-          type: var
-          name: include_images
-        else_expr:
-          type: const
-          value: null
-    - - include_favicon
-      - type: if
-        condition:
-          type: exists
-          var: include_favicon
-        then_expr:
-          type: var
-          name: include_favicon
-        else_expr:
-          type: const
-          value: null
+    type: if
+    condition:
+      type: equals
+      left: {type: var, name: shelf}
+      right: {type: const, value: site_crawl}
+    then_expr:
+      type: object
+      fields:
+      - [url, {type: var, name: url}]
+      - [instructions, {type: if, condition: {type: exists, var: instructions}, then_expr: {type: var, name: instructions}, else_expr: {type: const, value: null}}]
+      - [max_depth, {type: if, condition: {type: exists, var: max_depth}, then_expr: {type: var, name: max_depth}, else_expr: {type: const, value: null}}]
+      - [max_breadth, {type: if, condition: {type: exists, var: max_breadth}, then_expr: {type: var, name: max_breadth}, else_expr: {type: const, value: null}}]
+      - [limit, {type: if, condition: {type: exists, var: limit}, then_expr: {type: var, name: limit}, else_expr: {type: const, value: null}}]
+      - [extract_depth, {type: if, condition: {type: exists, var: extract_depth}, then_expr: {type: var, name: extract_depth}, else_expr: {type: const, value: null}}]
+      - [format, {type: if, condition: {type: exists, var: format}, then_expr: {type: var, name: format}, else_expr: {type: const, value: null}}]
+      - [chunks_per_source, {type: if, condition: {type: exists, var: chunks_per_source}, then_expr: {type: var, name: chunks_per_source}, else_expr: {type: const, value: null}}]
+      - [include_images, {type: if, condition: {type: exists, var: include_images}, then_expr: {type: var, name: include_images}, else_expr: {type: const, value: null}}]
+      - [include_favicon, {type: if, condition: {type: exists, var: include_favicon}, then_expr: {type: var, name: include_favicon}, else_expr: {type: const, value: null}}]
+    else_expr:
+      type: object
+      fields:
+      - [urls, {type: var, name: urls}]
+      - [query, {type: if, condition: {type: exists, var: query}, then_expr: {type: var, name: query}, else_expr: {type: const, value: null}}]
+      - [extract_depth, {type: if, condition: {type: exists, var: extract_depth}, then_expr: {type: var, name: extract_depth}, else_expr: {type: const, value: null}}]
+      - [format, {type: if, condition: {type: exists, var: format}, then_expr: {type: var, name: format}, else_expr: {type: const, value: null}}]
+      - [chunks_per_source, {type: if, condition: {type: exists, var: chunks_per_source}, then_expr: {type: var, name: chunks_per_source}, else_expr: {type: const, value: null}}]
+      - [include_images, {type: if, condition: {type: exists, var: include_images}, then_expr: {type: var, name: include_images}, else_expr: {type: const, value: null}}]
+      - [include_favicon, {type: if, condition: {type: exists, var: include_favicon}, then_expr: {type: var, name: include_favicon}, else_expr: {type: const, value: null}}]
 research_create:
   method: POST
   path:
