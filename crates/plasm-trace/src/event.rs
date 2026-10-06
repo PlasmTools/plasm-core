@@ -1,12 +1,25 @@
 //! Wall-clock envelope for each segment (SSE patches + durable replay ordering).
 
 use serde::{Deserialize, Serialize};
+use thiserror::Error;
 
 use crate::TraceSegment;
 
 /// Historical payload key nested by older agents beside a flattened [`TraceEvent`].
 /// New emits never write this; decode strips it so lake rows remain readable.
 const LEGACY_PLASM_AUDIT_PAYLOAD_KEY: &str = "_plasm_audit";
+
+#[derive(Debug, Error)]
+pub enum TraceEventDecodeError {
+    #[error("trace-event payload does not match the event schema")]
+    InvalidPayload(#[source] serde_json::Error),
+}
+
+#[derive(Debug, Error)]
+pub enum TraceEventEncodeError {
+    #[error("trace event could not be serialized")]
+    Serialization(#[source] serde_json::Error),
+}
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct TraceEvent {
@@ -27,16 +40,18 @@ impl TraceEvent {
     ///
     /// Strips the legacy `_plasm_audit` nest (correlation now lives on
     /// [`plasm_trace_wire::AuditEvent::logical_session_id`]).
-    pub fn from_payload_json(mut payload: serde_json::Value) -> Result<Self, String> {
+    pub fn from_payload_json(
+        mut payload: serde_json::Value,
+    ) -> Result<Self, TraceEventDecodeError> {
         if let serde_json::Value::Object(ref mut map) = payload {
             map.remove(LEGACY_PLASM_AUDIT_PAYLOAD_KEY);
         }
-        serde_json::from_value(payload).map_err(|e| format!("TraceEvent deserialize: {e}"))
+        serde_json::from_value(payload).map_err(TraceEventDecodeError::InvalidPayload)
     }
 
     /// Serialize for durable projection / HTTP detail records.
-    pub fn to_detail_record_value(&self) -> Result<serde_json::Value, String> {
-        serde_json::to_value(self).map_err(|e| format!("TraceEvent serialize: {e}"))
+    pub fn to_detail_record_value(&self) -> Result<serde_json::Value, TraceEventEncodeError> {
+        serde_json::to_value(self).map_err(TraceEventEncodeError::Serialization)
     }
 }
 

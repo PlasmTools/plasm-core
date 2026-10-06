@@ -16,7 +16,7 @@ pub use contract::{
     MCP_RESOURCE_READ_SOURCE_RUN_EXPLORER_UI,
 };
 
-pub use event::TraceEvent;
+pub use event::{TraceEvent, TraceEventDecodeError, TraceEventEncodeError};
 pub use plasm_trace_wire::RunArtifactArchiveRef;
 pub use segment::{CodePlanRunArtifactRef, PlasmLineTraceMeta, TraceSegment};
 pub use session::{

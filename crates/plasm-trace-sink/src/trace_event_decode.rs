@@ -9,7 +9,9 @@ use crate::metrics::record_trace_event_deserialize_failed;
 use crate::model::AuditEvent;
 
 /// Decode a raw payload object as [`TraceEvent`].
-pub(crate) fn decode_audit_payload(payload: serde_json::Value) -> Result<TraceEvent, String> {
+pub(crate) fn decode_audit_payload(
+    payload: serde_json::Value,
+) -> Result<TraceEvent, plasm_trace::TraceEventDecodeError> {
     TraceEvent::from_payload_json(payload)
 }
 

@@ -11,4 +11,5 @@ plasm-trace-wire = { path = "../plasm-trace-wire" }
 plasm-runtime = { path = "../plasm-runtime" }
 serde = { workspace = true }
 serde_json = { workspace = true }
+thiserror = { workspace = true }
 uuid = { workspace = true, features = ["serde"] }
