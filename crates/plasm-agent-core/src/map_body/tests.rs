@@ -24,6 +24,40 @@ mod support;
 use support::*;
 
 #[test]
+fn map_body_relation_materialization_canonical_contract() {
+    on_runtime(async {
+        use plasm_core::RelationMaterialization;
+        let (es, _, calls) = fixture(0);
+        let mut relation = es.cgs.get_entity("Item").unwrap().relations["tags"].clone();
+        let different = relation.materialize.clone().unwrap();
+        // Make an abstract singleton edge; omission and explicit Unavailable
+        // both lower to the same representation. No completeness is asserted.
+        relation.cardinality = plasm_core::Cardinality::One;
+        relation.materialize = None;
+        let lowered = relation
+            .materialize
+            .clone()
+            .unwrap_or(RelationMaterialization::Unavailable);
+        assert!(
+            super::validate_relation_materialization(relation.materialize.as_ref(), &lowered)
+                .is_ok()
+        );
+
+        relation.materialize = Some(RelationMaterialization::Unavailable);
+        assert!(
+            super::validate_relation_materialization(relation.materialize.as_ref(), &lowered)
+                .is_ok()
+        );
+
+        assert!(matches!(
+            super::validate_relation_materialization(relation.materialize.as_ref(), &different),
+            Err(super::ScopeContractError::RelationMaterializationMismatch)
+        ));
+        assert!(calls.lock().unwrap().is_empty());
+    });
+}
+
+#[test]
 fn map_body_parent_composition_runs_as_one_comp() {
     on_runtime(async {
         let (es, host, calls) = fixture(3);

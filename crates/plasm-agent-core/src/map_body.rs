@@ -411,9 +411,10 @@ pub(crate) fn validate(
             .get_entity(source_owner.entity.as_str())
             .and_then(|e| e.relations.get(relation.relation.relation.as_str()))
             .ok_or(ScopeContractError::RelationCatalogEntryMissing)?;
-        if declared.materialize != Some(relation.relation.materialize.clone()) {
-            return Err(ScopeContractError::RelationMaterializationMismatch.into());
-        }
+        validate_relation_materialization(
+            declared.materialize.as_ref(),
+            &relation.relation.materialize,
+        )?;
     }
     crate::map_body_schema::output_schema(es, body).map_err(|_| MapSchemaError::Invalid)?;
     crate::plan_session_provisions::validate(es, map.plan.nodes(), &body.body.bind)?;
@@ -422,6 +423,17 @@ pub(crate) fn validate(
 
 #[cfg(test)]
 mod tests;
+
+fn validate_relation_materialization(
+    declared: Option<&plasm_core::RelationMaterialization>,
+    lowered: &plasm_core::RelationMaterialization,
+) -> Result<(), ScopeContractError> {
+    let declared = declared.unwrap_or(&plasm_core::RelationMaterialization::Unavailable);
+    if declared != lowered {
+        return Err(ScopeContractError::RelationMaterializationMismatch);
+    }
+    Ok(())
+}
 
 /// Catalog authority survives row-preserving operations, never object derivation.
 fn capture_owner<'a>(
