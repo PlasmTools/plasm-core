@@ -8,7 +8,7 @@ use std::sync::Arc;
 
 use axum::body::Body;
 use axum::http::{Request, StatusCode};
-use axum::{Extension, Router};
+use axum::Extension;
 use plasm_agent_core::http::{build_plasm_host_state, PlasmHostBootstrap};
 use plasm_agent_core::http_flow_policy::flow_policy_routes;
 use plasm_agent_core::server_state::CatalogBootstrap;
@@ -48,11 +48,49 @@ fn matrix_host() -> plasm_agent_core::server_state::PlasmHostState {
     .expect("valid catalog fixture")
 }
 
-fn app() -> Router {
-    flow_policy_routes().layer(Extension(matrix_host()))
+async fn taught_delete_program(st: &plasm_agent_core::server_state::PlasmHostState) -> String {
+    let context = plasm_agent_core::http_execute::apply_capability_seeds(
+        st,
+        None,
+        None,
+        vec![plasm_agent_core::http_execute::CapabilitySeed {
+            entry_id: "langmatrix".into(),
+            entity: "LangItem".into(),
+        }],
+        None,
+        None,
+        None,
+        "http contract happy",
+    )
+    .await
+    .expect("serve matrix symbols");
+    let session = st
+        .get_execute_session(&context.prompt_hash, &context.session_id)
+        .await
+        .expect("seeded session");
+    let symbols =
+        plasm_agent_core::plasm_plan_run::symbol_map_for_plasm_surface_parse(&session, None);
+    let entity = symbols.entity_sym_for("langmatrix", "LangItem");
+    let delete = symbols.method_sym_for("langmatrix", "LangItem", "langitem_delete");
+    assert!(
+        entity.starts_with('e') && delete.starts_with('m'),
+        "use served opaque symbols"
+    );
+    let program = format!("class DeleteItem(Program):\n    def build(self):\n        return {entity}.get(\"i2\").{delete}()\n");
+    st.sessions
+        .remove_by_strs(&context.prompt_hash, &context.session_id)
+        .await;
+    program
 }
 
 async fn post_simulate(body: Value) -> (StatusCode, Value) {
+    post_simulate_with_host(matrix_host(), body).await
+}
+
+async fn post_simulate_with_host(
+    host: plasm_agent_core::server_state::PlasmHostState,
+    body: Value,
+) -> (StatusCode, Value) {
     let req = Request::builder()
         .method("POST")
         .uri("/internal/flow-policy/v1/simulate")
@@ -60,7 +98,11 @@ async fn post_simulate(body: Value) -> (StatusCode, Value) {
         .header("x-plasm-control-plane-secret", DEV_SECRET)
         .body(Body::from(body.to_string()))
         .unwrap();
-    let res = app().oneshot(req).await.unwrap();
+    let res = flow_policy_routes()
+        .layer(Extension(host))
+        .oneshot(req)
+        .await
+        .unwrap();
     let status = res.status();
     let bytes = axum::body::to_bytes(res.into_body(), usize::MAX)
         .await
@@ -71,24 +113,29 @@ async fn post_simulate(body: Value) -> (StatusCode, Value) {
 
 #[tokio::test]
 async fn simulate_http_happy_ephemeral_deny() {
-    let (status, body) = post_simulate(json!({
-        "tenant_id": "t1",
-        "workspace_slug": "ws",
-        "project_slug": "proj",
-        "policy_arm": "draft",
-        "seeds": [{"api": "langmatrix", "entity": "LangItem"}],
-        "program": "LangItem(\"i2\").delete()",
-        "intent": "http contract happy",
-        "policy": {
-            "default_posture": "allow",
-            "forbidden": [],
-            "capability_gates": [{
-                "pattern": {"capability": "delete", "entity": "LangItem"},
-                "enforcement": "deny"
-            }],
-            "sanitizers": []
-        }
-    }))
+    let host = matrix_host();
+    let program = taught_delete_program(&host).await;
+    let (status, body) = post_simulate_with_host(
+        host,
+        json!({
+            "tenant_id": "t1",
+            "workspace_slug": "ws",
+            "project_slug": "proj",
+            "policy_arm": "draft",
+            "seeds": [{"api": "langmatrix", "entity": "LangItem"}],
+            "program": program,
+            "intent": "http contract happy",
+            "policy": {
+                "default_posture": "allow",
+                "forbidden": [],
+                "capability_gates": [{
+                    "pattern": {"capability": "langitem_delete", "entity": "LangItem"},
+                    "enforcement": "deny"
+                }],
+                "sanitizers": []
+            }
+        }),
+    )
     .await;
 
     assert_eq!(status, StatusCode::OK, "body={body}");

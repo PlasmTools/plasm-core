@@ -468,6 +468,15 @@ fn g_a4_inactive_labeled_flow_is_clean() {
 #[test]
 fn g_a5_control_param_taint_voids_sanitizer_clearance() {
     let catalog = flow_matrix_view();
+    let body_hole = plasm_core::Value::PlasmInputRef(plasm_core::PlasmInputRef::node_output(
+        "messages",
+        vec!["body".into()],
+    ));
+    let key = QualifiedCapabilityKey::from_parts("flow", "Redactor", "redact");
+    assert_eq!(
+        catalog.control_params_for(&key),
+        BTreeSet::from(["keep_patterns".into()])
+    );
     let plan_json = serde_json::json!({
         "version": 1,
         "kind": "program",
@@ -495,20 +504,8 @@ fn g_a5_control_param_taint_voids_sanitizer_clearance() {
                         "capability": "redact",
                         "target": { "entity_type": "Redactor", "key": { "id": "r1" } },
                         "input": {
-                            "payload": {
-                                "__plasm_hole": {
-                                    "kind": "node_input",
-                                    "alias": "messages",
-                                    "path": ["body"]
-                                }
-                            },
-                            "keep_patterns": {
-                                "__plasm_hole": {
-                                    "kind": "node_input",
-                                    "alias": "messages",
-                                    "path": ["body"]
-                                }
-                            }
+                            "payload": body_hole.clone(),
+                            "keep_patterns": body_hole.clone()
                         }
                     }
                 }
@@ -516,6 +513,18 @@ fn g_a5_control_param_taint_voids_sanitizer_clearance() {
         ],
         "return": { "kind": "node", "node": "redact" }
     });
+    // Exercise the same expression codec as plan admission. A hand-written stale
+    // hole can otherwise deserialize as ordinary JSON and hide its dependency.
+    let template: plasm_core::Expr =
+        serde_json::from_value(plan_json["nodes"][1]["ir_template"]["expr"].clone())
+            .expect("decode redact expression");
+    let Some(plasm_core::Value::Object(input)) =
+        plasm_core::operand_binding::invocation_input(&template)
+    else {
+        panic!("redact must retain its object input");
+    };
+    assert_eq!(input["payload"], body_hole);
+    assert_eq!(input["keep_patterns"], body_hole);
     let validated = parse_and_validate_plan_json(&plan_json).expect("validate plan");
     let topo = vec!["messages".to_string(), "redact".to_string()];
     let checked = verify_plan_flow(

@@ -317,15 +317,60 @@ mod live_dry_run {
         .expect("valid catalog fixture")
     }
 
+    async fn taught_matrix_program(
+        st: &plasm_agent_core::server_state::PlasmHostState,
+        delete: bool,
+        intent: &str,
+    ) -> String {
+        let context = plasm_agent_core::http_execute::apply_capability_seeds(
+            st,
+            None,
+            None,
+            vec![CapabilitySeed {
+                entry_id: "langmatrix".into(),
+                entity: "LangItem".into(),
+            }],
+            None,
+            None,
+            None,
+            intent,
+        )
+        .await
+        .expect("serve matrix symbols");
+        let session = st
+            .get_execute_session(&context.prompt_hash, &context.session_id)
+            .await
+            .expect("seeded session");
+        let symbols =
+            plasm_agent_core::plasm_plan_run::symbol_map_for_plasm_surface_parse(&session, None);
+        let entity = symbols.entity_sym_for("langmatrix", "LangItem");
+        assert!(entity.starts_with('e'), "use served entity symbol");
+        let expression = if delete {
+            let method = symbols.method_sym_for("langmatrix", "LangItem", "langitem_delete");
+            assert!(method.starts_with('m'), "use served method symbol");
+            format!("{entity}.get(\"i2\").{method}()")
+        } else {
+            format!("{entity}.get(\"i2\")")
+        };
+        let program = format!(
+            "class SimulateItem(Program):\n    def build(self):\n        return {expression}\n"
+        );
+        st.sessions
+            .remove_by_strs(&context.prompt_hash, &context.session_id)
+            .await;
+        program
+    }
+
     #[tokio::test]
     async fn ephemeral_deny_gate_returns_deny_dry_verdict() {
         let st = matrix_host();
+        let program = taught_matrix_program(&st, true, "matrix deny golden").await;
         let policy = FlowPolicy {
             capability_gates: vec![CapabilityGateRule {
                 pattern: CapabilityGatePattern {
                     entry_id: None,
                     entity: Some("LangItem".into()),
-                    capability: "delete".into(),
+                    capability: "langitem_delete".into(),
                 },
                 enforcement: OperatorDisposition::Deny,
             }],
@@ -340,7 +385,7 @@ mod live_dry_run {
                 entry_id: "langmatrix".into(),
                 entity: "LangItem".into(),
             }],
-            r#"LangItem("i2").delete()"#,
+            &program,
             "matrix deny golden",
             SimulateOptions {
                 ephemeral_policy: Some(policy),
@@ -355,6 +400,7 @@ mod live_dry_run {
     #[tokio::test]
     async fn ephemeral_empty_allow_read_returns_ok() {
         let st = matrix_host();
+        let program = taught_matrix_program(&st, false, "matrix ok golden").await;
         let result = simulate_flow_policy_with_options(
             &st,
             &empty_row(),
@@ -363,7 +409,7 @@ mod live_dry_run {
                 entry_id: "langmatrix".into(),
                 entity: "LangItem".into(),
             }],
-            r#"LangItem("i2")"#,
+            &program,
             "matrix ok golden",
             SimulateOptions {
                 ephemeral_policy: Some(FlowPolicy::empty_allow()),

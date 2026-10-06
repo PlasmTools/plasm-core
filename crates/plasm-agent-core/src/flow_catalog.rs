@@ -210,6 +210,12 @@ fn ingest_capability(
         .control_params()
         .iter()
         .map(|f| f.name.clone())
+        // Transport lanes do not determine whether a value steers a sanitizer.
+        // Preserve behavior-control classification for body and non-body arguments.
+        .chain(
+            cap.invocation_input_schemas()
+                .flat_map(plasm_core::flow_control_param_names),
+        )
         .collect();
     if !control_params.is_empty() {
         view.capability_control_params.insert(key, control_params);
@@ -220,6 +226,42 @@ fn ingest_capability(
 mod tests {
     use super::*;
     use plasm_core::load_schema_dir_unvalidated;
+
+    #[test]
+    fn sanitizer_behavior_controls_survive_each_typed_input_lane() {
+        let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../fixtures/schemas/flow_matrix");
+        let original = load_schema_dir_unvalidated(&dir).expect("flow_matrix fixture");
+        let key = QualifiedCapabilityKey::from_parts("flow", "Redactor", "redact");
+        for lane in ["payload", "arguments", "controls"] {
+            let mut cgs = original.clone();
+            let cap = cgs.capabilities.get_mut("redact").unwrap();
+            if lane == "arguments" {
+                cap.inputs.arguments = cap.inputs.payload.take();
+            } else if lane == "controls" {
+                let mut configuration = cap
+                    .invocation_object_fields()
+                    .find(|field| field.name == "keep_patterns")
+                    .unwrap()
+                    .clone();
+                // Explicit controls are authoritative even without a conventional name.
+                configuration.name = "redaction_configuration".into();
+                cap.inputs.controls.0.push(configuration);
+            }
+            let view = FlowCatalogView::from_cgs("flow", &cgs);
+            let controls = view.control_params_for(&key);
+            let expected = if lane == "controls" {
+                BTreeSet::from(["keep_patterns".into(), "redaction_configuration".into()])
+            } else {
+                BTreeSet::from(["keep_patterns".into()])
+            };
+            assert_eq!(controls, expected, "behavior controls lost from {lane}");
+            assert!(
+                !controls.contains("payload"),
+                "payload content is not a control"
+            );
+        }
+    }
 
     #[test]
     fn from_cgs_uses_typed_sink_and_output_helpers() {
