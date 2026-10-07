@@ -683,6 +683,14 @@ pub fn plan_run_from_stage(
 
 impl From<ProgramStageError> for plasm_runtime::ExecutionFailure {
     fn from(error: ProgramStageError) -> Self {
+        if let ProgramStageError::Plan { error: plan } = &error {
+            if let PlanStageError::DryValidation(
+                crate::plasm_plan_run::DryPlanValidationError::SurfacePolicy { source, .. },
+            ) = plan.as_ref()
+            {
+                return source.clone().into();
+            }
+        }
         Self::new(
             plasm_runtime::FailureCause::Program,
             "program_admission",

@@ -92,16 +92,13 @@ async fn dry_stub_materialize_io(
         IoStep::Surface(surface) => {
             let federated = es.contexts_by_entry.len() > 1;
             match crate::plan_surface_policy::surface_qualified_entity_policy_err(
+                    es,
                     surface.id.as_str(),
                     surface,
                     federated,
                 )
-                .map_err(|diagnostic| ExecutionFailure::new(
-                    plasm_runtime::FailureCause::Program,
-                    "dry_staging_surface_entity_invalid",
-                    diagnostic.to_string(),
-                ))? {
-                    crate::plan_surface_policy::SurfaceQualifiedEntityPolicy::PageWithoutEntity
+                .map_err(ExecutionFailure::from)? {
+                    crate::plan_surface_policy::SurfaceQualifiedEntityPolicy::StoredPage(_)
                     | crate::plan_surface_policy::SurfaceQualifiedEntityPolicy::EntityOptional => {
                         Ok(None)
                     }

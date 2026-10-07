@@ -634,11 +634,21 @@ pub(crate) fn ensure_node_dispatchable(
         return Ok(());
     };
     match crate::plan_surface_policy::surface_qualified_entity_policy(
+        es,
         surface,
         es.contexts_by_entry.len() > 1,
     ) {
-        Ok(crate::plan_surface_policy::SurfaceQualifiedEntityPolicy::PageWithoutEntity)
-        | Ok(crate::plan_surface_policy::SurfaceQualifiedEntityPolicy::EntityOptional) => Ok(()),
+        Ok(crate::plan_surface_policy::SurfaceQualifiedEntityPolicy::StoredPage(origin)) => {
+            if !es.contexts_by_entry.contains_key(&origin.entry_id) {
+                return Err(DryPlanValidationError::QualifiedEntityCatalogNotLoaded {
+                    index,
+                    entry_id: origin.entry_id,
+                }
+                .into());
+            }
+            Ok(())
+        }
+        Ok(crate::plan_surface_policy::SurfaceQualifiedEntityPolicy::EntityOptional) => Ok(()),
         Ok(crate::plan_surface_policy::SurfaceQualifiedEntityPolicy::RequiresQualifiedEntity(
             q,
         )) => {

@@ -813,7 +813,10 @@ impl AgentEngine {
                     Ok(bundle) => bundle,
                     Err(failure) => return Ok(RunPlanResult::failure(failure)),
                 };
-                let dry = evaluate_plasm_comp_dry(&es, &bundle).map_err(AgentEngineError::from)?;
+                let dry = match evaluate_plasm_comp_dry(&es, &bundle) {
+                    Ok(dry) => dry,
+                    Err(error) => return Ok(RunPlanResult::failure(error.into())),
+                };
                 (bundle, dry)
             }
             Err(_) => {
@@ -1976,6 +1979,11 @@ mod tests {
     #[tokio::test]
     async fn native_complete_computed_rowset_uses_the_same_paging_protocol() {
         assert_native_paging("e1.query().select('id', 'n')", true).await;
+    }
+
+    #[tokio::test]
+    async fn native_synthetic_projection_pages_preserve_typed_rows() {
+        assert_native_paging("e1.query().select('id', n='n')", true).await;
     }
 
     async fn assert_native_paging(expression: &str, complete_source: bool) {

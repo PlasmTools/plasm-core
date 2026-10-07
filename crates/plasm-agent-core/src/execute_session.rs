@@ -373,6 +373,7 @@ pub enum SyntheticPageKind {
 
 /// Session-owned storage for the same continuation protocol used by execution.
 pub trait PagingContinuationStore {
+    fn resolve_paging_continuation(&self, handle: &PagingHandle) -> Option<PagingResume>;
     fn register_synthetic_paging_continuation(
         &self,
         cursor: SyntheticPageCursor,
@@ -381,6 +382,13 @@ pub trait PagingContinuationStore {
 }
 
 impl PagingContinuationStore for ExecuteSession {
+    fn resolve_paging_continuation(&self, handle: &PagingHandle) -> Option<PagingResume> {
+        self.paging_resume_by_handle
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .get(handle)
+            .cloned()
+    }
     fn register_synthetic_paging_continuation(
         &self,
         cursor: SyntheticPageCursor,
@@ -409,6 +417,40 @@ pub enum PagingResume {
         resume: QueryPaginationResumeData,
     },
     Synthetic(SyntheticPageCursor),
+}
+
+/// Admission follows the recorded continuation, never a guessed entity-name convention.
+pub enum ContinuationAdmission<'a> {
+    Provider {
+        origin: &'a crate::plasm_plan::QualifiedEntityKey,
+        query: &'a QueryPaginationResumeData,
+    },
+    Stored {
+        origin: &'a crate::plasm_plan::QualifiedEntityKey,
+        collection: &'a plasm_runtime::execution::ExecutionCollection,
+    },
+}
+
+pub trait PagingContinuation {
+    fn admission(&self) -> ContinuationAdmission<'_>;
+}
+
+impl PagingContinuation for PagingResume {
+    fn admission(&self) -> ContinuationAdmission<'_> {
+        match self {
+            Self::Query {
+                qualified_entity,
+                resume,
+            } => ContinuationAdmission::Provider {
+                origin: qualified_entity,
+                query: resume,
+            },
+            Self::Synthetic(cursor) => ContinuationAdmission::Stored {
+                origin: &cursor.qualified_entity,
+                collection: &cursor.collection,
+            },
+        }
+    }
 }
 
 #[derive(Debug)]
@@ -830,15 +872,10 @@ impl ExecuteSession {
         &self,
         handle: &PagingHandle,
     ) -> Option<crate::plasm_plan::QualifiedEntityKey> {
-        self.paging_resume_by_handle
-            .lock()
-            .unwrap_or_else(|e| e.into_inner())
-            .get(handle)
-            .map(|resume| match resume {
-                PagingResume::Query {
-                    qualified_entity, ..
-                } => qualified_entity.clone(),
-                PagingResume::Synthetic(cursor) => cursor.qualified_entity.clone(),
+        self.resolve_paging_continuation(handle)
+            .map(|resume| match resume.admission() {
+                ContinuationAdmission::Provider { origin, .. }
+                | ContinuationAdmission::Stored { origin, .. } => origin.clone(),
             })
     }
 
