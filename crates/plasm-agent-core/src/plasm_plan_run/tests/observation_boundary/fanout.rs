@@ -37,6 +37,7 @@ async fn map_body_plan_displays_its_typed_write_per_source_row() {
 }
 struct FanoutTransport {
     rows: usize,
+    read_delay: Option<std::time::Duration>,
     bad_response: bool,
     state: Arc<Mutex<State>>,
     reject: Option<String>,
@@ -50,6 +51,11 @@ impl HttpTransport for FanoutTransport {
         req: &CompiledRequest,
         _: Option<ResolvedAuth>,
     ) -> Result<(serde_json::Value, Option<String>), RuntimeError> {
+        if req.path == "/counter" {
+            if let Some(delay) = self.read_delay {
+                tokio::time::sleep(delay).await;
+            }
+        }
         let mut state = self.state.lock().unwrap();
         let body = match req.path.as_str() {
             "/counters" => {
@@ -173,6 +179,7 @@ enum FanoutShape {
     Direct,
     Captured,
     Nested,
+    ParallelReads,
 }
 
 async fn check_one(
@@ -194,6 +201,8 @@ async fn check_one(
         },
         Arc::new(FanoutTransport {
             rows,
+            read_delay: matches!(shape, FanoutShape::ParallelReads)
+                .then_some(std::time::Duration::from_secs(6)),
             bad_response,
             state: state.clone(),
             reject: reject.clone(),
@@ -222,7 +231,17 @@ async fn check_one(
     let counter = symbols.entity_sym_for("matrix", "Counter");
     let advance = symbols.method_sym_for("matrix", "Counter", "advance");
     let apply = symbols.method_sym_for("matrix", "Counter", "apply_item");
-    let bundle = if matches!(shape, FanoutShape::Nested) {
+    let bundle = if matches!(shape, FanoutShape::ParallelReads) {
+        let queries = (0..5)
+            .map(|i| format!("        q{i} = {wire}.get(\"r{i}\")\n"))
+            .collect::<String>();
+        crate::plasm_compile::compile_python_program(
+            &es,
+            &format!("class ParallelReads(Program):\n    def build(self):\n{queries}        return q0, q1, q2, q3, q4\n"),
+        )
+        .await
+        .unwrap()
+    } else if matches!(shape, FanoutShape::Nested) {
         crate::plasm_compile::compile_python_program(&es, &format!("class Nested(Program):\n    def build(self):\n        rows = {wire}.query()\n        effects = rows.flat_map(lambda parent: rows.flat_map(lambda child: {counter}.{advance}(id=child.id)))\n        after = {wire}.get(\"r3\")\n        return effects, after\n")).await.unwrap()
     } else if captured {
         crate::plasm_compile::compile_python_program(&es, &format!("class Captured(Program):\n    def build(self):\n        target = {counter}.get(\"target\")\n        rows = {wire}.query()\n        before = rows.flat_map(lambda row: {wire}.get(row.id))\n        effects = rows.flat_map(lambda row: target.{apply}(item=row.id))\n        after = {wire}.get(\"target\")\n        return before, effects, after\n")).await.unwrap()
@@ -322,6 +341,15 @@ async fn check_one(
         return;
     }
     let result = result.unwrap();
+    if matches!(shape, FanoutShape::ParallelReads) {
+        assert_eq!(result.return_steps.len(), 5);
+        assert_eq!(state.calls.len(), 5);
+        assert!(state
+            .calls
+            .iter()
+            .all(|call| matches!(call, Call::Read(_, 0))));
+        return;
+    }
     let before = result
         .return_steps
         .iter()
@@ -502,4 +530,27 @@ fn python_nested_fanout_failure_stops_inner_and_outer_suffixes() {
             .join()
             .unwrap();
     }
+}
+
+#[test]
+fn python_host_parallel_reads_do_not_exhaust_workers_while_waiting_for_io() {
+    std::thread::Builder::new()
+        .stack_size(16 * 1024 * 1024)
+        .spawn(|| {
+            tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+                .unwrap()
+                .block_on(check_one(
+                    5,
+                    None,
+                    None,
+                    true,
+                    FanoutShape::ParallelReads,
+                    false,
+                ));
+        })
+        .unwrap()
+        .join()
+        .unwrap();
 }

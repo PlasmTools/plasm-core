@@ -535,6 +535,14 @@ Monty. The compute pool exposes only its declared input values and exact-money
 functions; undeclared host/OS interactions fail. Print output is discarded. Each
 invocation owns isolated execution state and successful workers are reset.
 
+Reviewed host operations release their Python execution worker while awaiting
+provider IO. The host parks the exact suspension with Monty's snapshot codec,
+returns the reset worker to the bounded pool, and consumes the private snapshot
+when restoring the continuation. Restoration verifies the original host-call
+identity before delivering its receipt; it never re-executes the host operation.
+Cancellation discards a parked snapshot without retaining worker capacity.
+Failures after completed IO retain the operation receipts and do not retry effects.
+
 Callback calls now obtain argument binding from the upstream Python call binder.
 Reachable blocks, branch successors, early returns and implicit `None` come from
 `monty-analysis::function_flow`, backed by the semantic index. Plasm consumes these

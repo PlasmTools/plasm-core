@@ -104,6 +104,13 @@ pub(crate) enum PythonReturnValueError {
 }
 
 const MAX_OUTPUT: usize = 1_048_576;
+/// A single-call host suspension encoded by Monty, with no live worker lease.
+/// Private bytes and consuming restoration prevent untrusted snapshots and
+/// duplicate continuation ownership from entering the execution path.
+pub(crate) struct SuspendedPythonHostCall {
+    state: Vec<u8>,
+}
+
 #[derive(Default)]
 pub struct PythonPool {
     binary: Option<PathBuf>,
@@ -147,6 +154,24 @@ impl PythonPool {
     }
     pub(crate) async fn checkout(&self) -> Result<Checkout, ExecutionFailure> {
         self.checkout_with_suspensions(1).await
+    }
+    pub(crate) async fn suspend_host_call(
+        mut session: Checkout,
+    ) -> Result<SuspendedPythonHostCall, ExecutionFailure> {
+        let state = session.dump().await.map_err(pool_failure)?;
+        session.finish().await.map_err(pool_failure)?;
+        Ok(SuspendedPythonHostCall { state })
+    }
+    pub(crate) async fn restore_host_call(
+        &self,
+        suspended: SuspendedPythonHostCall,
+    ) -> Result<(Checkout, Option<TurnEvent>), ExecutionFailure> {
+        let mut session = self.checkout().await?;
+        let (event, _) = session
+            .restore(suspended.state, vec![], &mut on_print_sync(|_, _| {}))
+            .await
+            .map_err(pool_failure)?;
+        Ok((session, event))
     }
     async fn checkout_with_suspensions(
         &self,

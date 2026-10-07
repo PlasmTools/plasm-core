@@ -6,6 +6,26 @@ use monty_pool::{on_print_sync, ResumeValue, TurnEvent};
 use monty_types::MontyObject;
 use std::collections::BTreeMap;
 
+/// Both initial admission and restoration must recognize the same sealed call.
+fn reviewed_host_call_id(event: TurnEvent) -> Option<u32> {
+    match event {
+        TurnEvent::FunctionCall {
+            call_id,
+            function_name,
+            args,
+            object_id: None,
+            allow_eager_await: true,
+            ..
+        } if function_name == "__plasm_call"
+            && args.args().len() == 0
+            && args.kwargs().len() == 0 =>
+        {
+            Some(call_id)
+        }
+        _ => None,
+    }
+}
+
 pub(super) async fn materialize(
     ctx: &PlanStepMaterializeCtx<'_>,
     io: &IoStep,
@@ -29,30 +49,21 @@ pub(super) async fn materialize(
             .map_err(crate::python_pool::pool_failure)
     })
     .await?;
-    let call_id = match event {
-        TurnEvent::FunctionCall {
-            call_id,
-            function_name,
-            args,
-            object_id,
-            allow_eager_await,
-            ..
-        } if function_name == "__plasm_call"
-            && object_id.is_none()
-            && args.args().len() == 0
-            && args.kwargs().len() == 0
-            && allow_eager_await =>
-        {
-            call_id
-        }
-        _ => {
-            return Err(ExecutionFailure::new(
-                plasm_runtime::FailureCause::Runtime,
-                "python_host_suspend_contract_mismatch",
-                "Python host did not suspend on the reviewed operation",
-            ))
-        }
-    };
+    let call_id = reviewed_host_call_id(event).ok_or_else(|| {
+        ExecutionFailure::new(
+            plasm_runtime::FailureCause::Runtime,
+            "python_host_suspend_contract_mismatch",
+            "Python host did not suspend on the reviewed operation",
+        )
+    })?;
+    // Waiting for provider IO must not consume a Python execution worker.
+    // Monty's existing snapshot codec retains this exact trusted suspension;
+    // restoring it does not re-feed Python or replay the host operation.
+    let suspended = await_checked(
+        ctx.execution_scope,
+        crate::python_pool::PythonPool::suspend_host_call(session),
+    )
+    .await?;
     if let Some(scope) = ctx.execution_scope {
         scope.check()?;
     }
@@ -87,6 +98,18 @@ pub(super) async fn materialize(
     let continuation: Result<(), ExecutionFailure> = async {
         if let Some(scope) = ctx.execution_scope {
             scope.check()?;
+        }
+        let (mut session, event) = await_checked(
+            ctx.execution_scope,
+            ctx.st.python_pool.restore_host_call(suspended),
+        )
+        .await?;
+        if event.and_then(reviewed_host_call_id) != Some(call_id) {
+            return Err(ExecutionFailure::new(
+                plasm_runtime::FailureCause::Runtime,
+                "python_host_restore_contract_mismatch",
+                "Restored Python host suspension differs from the reviewed operation; operation is not retried",
+            ));
         }
         let handle = MontyObject::class_instance(
             MontyObject::class_type("Rowset", crate::python_pool::fresh_uuid(), true, false, []),

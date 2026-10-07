@@ -232,6 +232,29 @@ async fn pool_cancelled_checkout_and_waiter_do_not_leak_capacity() {
         .unwrap();
     pool.close().await;
 }
+
+#[tokio::test]
+async fn parked_host_suspension_returns_capacity_and_can_be_cancelled() {
+    let pool = PythonPool::with_binary(binary());
+    let mut session = pool.checkout().await.unwrap();
+    let event = session
+        .feed(
+            "await call()",
+            vec![("call".into(), MontyObject::function("call", None))],
+            vec![],
+            true,
+            &mut on_print_sync(|_, _| {}),
+        )
+        .await
+        .unwrap();
+    assert!(matches!(event, TurnEvent::FunctionCall { .. }));
+    let suspended = PythonPool::suspend_host_call(session).await.unwrap();
+    assert_eq!(pool.get().await.unwrap().idle_workers(), 1);
+    drop(suspended);
+    assert_eq!(pool.get().await.unwrap().idle_workers(), 1);
+    healthy(pool.get().await.unwrap()).await;
+    pool.close().await;
+}
 #[cfg(unix)]
 #[tokio::test]
 async fn pool_cancellation_during_inflight_turn_discards_worker() {
