@@ -1,4 +1,4 @@
-version: 18
+version: 19
 entry_id: file_system
 auth:
   scheme: none
@@ -380,6 +380,7 @@ capabilities:
         - name: recursive
           value_ref: nv_bool
           required: false
+          description: "Whether to create missing parent directories recursively. If omitted, false."
     output:
       type: side_effect
       description: Creates a directory at directory_path.
@@ -499,9 +500,11 @@ capabilities:
         - name: delete_directory
           value_ref: nv_bool
           required: false
+          description: "Whether to delete the source directory after compression. If omitted, false."
         - name: overwrite
           value_ref: nv_bool
           required: false
+          description: "Whether to overwrite an existing compressed file. If omitted, false."
     provides:
     - compressed_file_path
     output:
@@ -578,6 +581,7 @@ capabilities:
         - name: overwrite
           value_ref: nv_bool
           required: false
+          description: "Whether to overwrite an existing file. If omitted, false."
     provides:
     - path
   file_update:
@@ -713,6 +717,7 @@ capabilities:
         - name: delete_compressed_file
           value_ref: nv_bool
           required: false
+          description: "Whether to delete the source compressed file after decompression. If omitted, false."
     provides:
     - decompressed_directory_path
     output:

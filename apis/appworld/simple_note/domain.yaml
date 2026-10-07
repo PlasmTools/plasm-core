@@ -1,4 +1,4 @@
-version: 13
+version: 14
 entry_id: simple_note
 auth:
   scheme: none
@@ -342,7 +342,7 @@ capabilities:
     - created_at
     - updated_at
   note_create:
-    description: Create a new note.
+    description: "Create a new independent note from the supplied attributes."
     kind: create
     entity: Note
     payload:
@@ -364,6 +364,7 @@ capabilities:
         - name: pinned
           value_ref: nv_bool
           required: false
+          description: "Whether to pin the new note for quick access. If omitted, false; creating a note does not inherit another note's pin state."
     provides:
     - note_id
   note_update:

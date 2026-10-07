@@ -1,4 +1,4 @@
-version: 17
+version: 18
 entry_id: todoist
 auth:
   scheme: none
@@ -951,7 +951,7 @@ capabilities:
         - name: is_favorite
           value_ref: nv_bool
           required: false
-          description: Whether this project is a favorite.
+          description: "Whether the new project is a favorite. If omitted, false."
         - name: access_token
           value_ref: nv_access_token
           required: true
@@ -961,9 +961,11 @@ capabilities:
         - name: color
           value_ref: nv_todoist_color
           required: false
+          description: "Color of the new project. If omitted, \"charcoal\"."
         - name: description
           value_ref: nv_str
           required: false
+          description: "Description of the new project. If omitted, empty."
   project_update:
     description: Update a project.
     kind: update
@@ -1103,7 +1105,7 @@ capabilities:
         - name: order_index
           value_ref: nv_int
           required: false
-          description: Position within the containing collection.
+          description: "Insertion position in the task list: zero is first; negative positions count from the end. If omitted, -1 (append at the end)."
         - name: project_id
           value_ref: nv_project_id
           required: true
@@ -1116,12 +1118,14 @@ capabilities:
         - name: description
           value_ref: nv_str
           required: false
+          description: "Description of the new task. If omitted, empty."
         - name: due_date
           value_ref: nv_due_date
           required: false
         - name: priority
           value_ref: nv_task_priority
           required: false
+          description: "Priority of the new task. If omitted, \"medium\"."
         - name: duration
           value_ref: nv_duration_amount
           required: false
@@ -1241,6 +1245,7 @@ capabilities:
         - name: color
           value_ref: nv_todoist_color
           required: false
+          description: "Color of the new label. If omitted, \"charcoal\"."
   label_delete:
     description: Delete a label.
     kind: delete
@@ -1312,7 +1317,7 @@ capabilities:
         - name: order_index
           value_ref: nv_int
           required: false
-          description: Position within the containing collection.
+          description: "Insertion position in the section list: zero is first; negative positions count from the end. If omitted, -1 (append at the end)."
         - name: project_id
           value_ref: nv_project_id
           required: true
@@ -1502,11 +1507,11 @@ capabilities:
         - name: priority
           value_ref: nv_task_priority
           required: false
-          description: Priority of this sub-task.
+          description: "Priority of the new sub-task. If omitted, \"medium\"."
         - name: order_index
           value_ref: nv_int
           required: false
-          description: Position within the parent task.
+          description: "Insertion position among the parent task's sub-tasks: zero is first; negative positions count from the end. If omitted, -1 (append at the end)."
         - name: duration_unit
           value_ref: nv_duration_unit
           required: false
@@ -1522,7 +1527,7 @@ capabilities:
         - name: description
           value_ref: nv_task_description
           required: false
-          description: Details of this sub-task.
+          description: "Description of the new sub-task. If omitted, empty."
         - name: task_id
           value_ref: nv_task_id
           required: true

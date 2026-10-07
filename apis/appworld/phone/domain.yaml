@@ -1,4 +1,4 @@
-version: 19
+version: 20
 entry_id: phone
 auth:
   scheme: none
@@ -618,12 +618,15 @@ capabilities:
         - name: enabled
           value_ref: nv_bool
           required: false
+          description: "Whether the new alarm is enabled. If omitted, true."
         - name: snooze_minutes
           value_ref: nv_int
           required: false
+          description: "Snooze duration in minutes; zero disables snooze. If omitted, 15 minutes."
         - name: vibration
           value_ref: nv_bool
           required: false
+          description: "Whether the new alarm vibrates. If omitted, true."
     provides:
     - alarm_id
   alarm_update:

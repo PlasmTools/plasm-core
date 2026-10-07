@@ -1,4 +1,4 @@
-version: 38
+version: 39
 entry_id: spotify
 auth:
   scheme: none
@@ -1647,6 +1647,7 @@ capabilities:
         - name: is_public
           value_ref: nv_bool
           required: false
+          description: "Whether the new playlist is public. If omitted, false (private)."
     provides:
     - playlist_id
   playlist_update:
@@ -2620,9 +2621,11 @@ capabilities:
         - name: title
           value_ref: nv_review_title
           required: false
+          description: "Review title. If omitted, the title is empty."
         - name: text
           value_ref: nv_review_text
           required: false
+          description: "Review text. If omitted, the text is empty."
     provides:
     - song_review_id
   song_review_update:
@@ -2676,9 +2679,11 @@ capabilities:
         - name: title
           value_ref: nv_review_title
           required: false
+          description: "Review title. If omitted, the title is empty."
         - name: text
           value_ref: nv_review_text
           required: false
+          description: "Review text. If omitted, the text is empty."
     provides:
     - album_review_id
   album_review_update:
@@ -2732,9 +2737,11 @@ capabilities:
         - name: title
           value_ref: nv_review_title
           required: false
+          description: "Review title. If omitted, the title is empty."
         - name: text
           value_ref: nv_review_text
           required: false
+          description: "Review text. If omitted, the text is empty."
     provides:
     - playlist_review_id
   playlist_review_update:

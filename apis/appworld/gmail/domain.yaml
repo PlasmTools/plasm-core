@@ -1,4 +1,4 @@
-version: 17
+version: 18
 entry_id: gmail
 auth:
   scheme: none
@@ -1212,6 +1212,7 @@ capabilities:
         - name: overwrite
           value_ref: nv_bool
           required: false
+          description: "Whether to overwrite an existing attachment. If omitted, false."
         - name: file_system_access_token
           value_ref: nv_file_access_token
           required: true

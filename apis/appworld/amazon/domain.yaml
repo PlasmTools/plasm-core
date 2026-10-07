@@ -1,4 +1,4 @@
-version: 21
+version: 22
 entry_id: amazon
 auth:
   scheme: none
@@ -1890,9 +1890,11 @@ capabilities:
         - name: title
           value_ref: nv_str
           required: false
+          description: "Review title. If omitted, the title is empty."
         - name: text
           value_ref: nv_body
           required: false
+          description: "Review text. If omitted, the text is empty."
     provides:
     - review_id
   product_review_update:

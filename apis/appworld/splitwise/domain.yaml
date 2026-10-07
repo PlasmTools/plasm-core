@@ -1,4 +1,4 @@
-version: 24
+version: 25
 entry_id: splitwise
 auth:
   scheme: none
@@ -1451,7 +1451,7 @@ capabilities:
     - deleted
     - created_at
   payment_create:
-    description: Record a payment from one member to another.
+    description: "Record a payment from one member to another on Splitwise. This records a payment; it does not move real money."
     kind: create
     entity: Payment
     payload:
@@ -1472,20 +1472,25 @@ capabilities:
         - name: payer_email
           value_ref: nv_email
           required: true
+          description: "Email of the person who made the payment."
         - name: receiver_email
           value_ref: nv_email
           required: true
+          description: "Email of the person who received the payment."
         - name: amount
           value_ref: nv_number
           required: true
           sink_class: external_settle
+          description: "Amount of the payment being recorded."
         - name: group_id
           value_ref: nv_group_ref
           required: false
+          description: "Group in which to record the payment."
         - name: description
           value_ref: nv_body
           required: false
           sink_class: external_settle
+          description: "Short note or description stored on the payment itself; separate payment comments are discussion records."
     provides:
     - payment_id
   payment_delete:
@@ -1613,6 +1618,7 @@ capabilities:
           value_ref: nv_body
           required: false
           sink_class: external_settle
+          description: "Note or description stored on the settlement payment. If omitted, \"Settle up balance.\"."
     output:
       type: side_effect
       description: Creates settlement payments to zero out balances.

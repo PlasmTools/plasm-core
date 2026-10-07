@@ -1,4 +1,4 @@
-version: 31
+version: 32
 entry_id: venmo
 data_classes:
   untrusted:
@@ -1317,11 +1317,13 @@ capabilities:
         - name: description
           value_ref: nv_description
           sink_class: external_pay
+          description: "Note or description stored on the transaction itself. If omitted, empty."
         - name: payment_card_id
           value_ref: nv_payment_card_id
           description: Linked Venmo card ID, not its card number; omit to spend the Venmo balance. Card balances are not exposed. An insufficient-funds rejection transfers nothing; another unexpired linked card may be tried.
         - name: private
           value_ref: nv_private
+          description: "Whether the transaction is private. If omitted, false."
     provides:
     - transaction_id
   payment_request_query:
@@ -1406,8 +1408,10 @@ capabilities:
         - name: description
           value_ref: nv_description
           sink_class: external_pay
+          description: "Note or description stored on the payment request itself. If omitted, empty."
         - name: private
           value_ref: nv_private
+          description: "Whether the resulting transaction is private when the payment request is approved. If omitted, false."
     provides:
     - payment_request_id
   payment_request_approve:
