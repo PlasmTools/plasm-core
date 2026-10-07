@@ -7,33 +7,6 @@ use crate::output::{InBandSummaryReport, LossySummaryFieldNames};
 
 use super::PublishedResultStep;
 
-/// How one return step is rendered in MCP tool Markdown.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum StepInBandMode {
-    Full,
-    CappedInline { shown: usize },
-}
-
-impl StepInBandMode {
-    pub(crate) fn resolve(step: &PublishedResultStep, policy: &McpResultTransportPolicy) -> Self {
-        let row_count = step.result.count();
-        if policy.exceeds_in_band(row_count) {
-            Self::CappedInline {
-                shown: policy.in_band_entity_rows.max(1),
-            }
-        } else {
-            Self::Full
-        }
-    }
-
-    pub(crate) fn max_entity_rows(self) -> Option<usize> {
-        match self {
-            StepInBandMode::Full => None,
-            StepInBandMode::CappedInline { shown } => Some(shown),
-        }
-    }
-}
-
 #[derive(Debug, Clone)]
 pub(crate) struct StepFormatOutcome {
     pub formatted: McpFormattedExecuteResult,
@@ -49,34 +22,15 @@ pub(crate) struct ResolvedStepPublish {
     pub count_label: String,
     pub coverage: plasm_runtime::ResultCoverage,
     pub continue_handle: Option<String>,
-    pub mode: StepInBandMode,
+    pub source_rows: usize,
+    pub delivery_range: std::ops::Range<usize>,
     pub artifact: Option<crate::run_artifacts::RunArtifactHandle>,
     pub format: Option<StepFormatOutcome>,
 }
 
 impl ResolvedStepPublish {
-    pub(crate) fn resolve(step: &PublishedResultStep, policy: &McpResultTransportPolicy) -> Self {
-        Self {
-            label: crate::mcp_run_markdown::return_label_for_step(
-                step.name.as_deref(),
-                step.node_id.as_deref(),
-            ),
-            row_count: step.result.count(),
-            count_label: crate::mcp_run_markdown::slim_result_count_label(&step.result),
-            coverage: step.result.coverage(),
-            continue_handle: step
-                .result
-                .paging_handle
-                .as_ref()
-                .map(|h| h.as_str().to_string()),
-            mode: StepInBandMode::resolve(step, policy),
-            artifact: step.artifact.clone(),
-            format: None,
-        }
-    }
-
     pub(crate) fn is_truncated_for_transport(&self) -> bool {
-        !matches!(self.mode, StepInBandMode::Full)
+        self.row_count < self.source_rows
             || self
                 .format
                 .as_ref()
@@ -87,18 +41,64 @@ impl ResolvedStepPublish {
 pub(crate) struct PublishPlan {
     pub resolved: Vec<ResolvedStepPublish>,
     pub artifact_access: crate::mcp_run_markdown::ArtifactAccessMode,
-    pub inline_text_budget_bytes: usize,
 }
 
 impl PublishPlan {
-    pub(crate) fn build(steps: &[PublishedResultStep], policy: &McpResultTransportPolicy) -> Self {
-        Self {
-            resolved: steps
-                .iter()
-                .map(|step| ResolvedStepPublish::resolve(step, policy))
-                .collect(),
-            artifact_access: policy.artifact_access,
-            inline_text_budget_bytes: policy.inline_text_budget_bytes,
+    pub(crate) fn build(
+        store: &impl crate::execute_session::PagingContinuationStore,
+        logical_session_ref: Option<&str>,
+        steps: &[PublishedResultStep],
+        cgs: Option<&plasm_core::CGS>,
+        policy: &McpResultTransportPolicy,
+    ) -> Result<(Vec<PublishedResultStep>, Self), super::page::ResultPublicationError> {
+        let mut delivered = Vec::with_capacity(steps.len());
+        let mut resolved = Vec::with_capacity(steps.len());
+        for source in steps {
+            let page = super::page::PublishedPage::prepare(
+                store,
+                logical_session_ref,
+                source,
+                cgs,
+                policy,
+            )?;
+            let (step, observation) = page.into_parts();
+            let formatted = McpFormattedExecuteResult {
+                tsv_body: observation.tsv,
+                reference_only_omitted: OmittedReferenceOnlyFields::default(),
+                lossy_summary_fields: LossySummaryFieldNames::default(),
+                in_band_report: observation.fidelity,
+            };
+            resolved.push(ResolvedStepPublish {
+                label: crate::mcp_run_markdown::return_label_for_step(
+                    step.name.as_deref(),
+                    step.node_id.as_deref(),
+                ),
+                row_count: observation.shown,
+                source_rows: step.result.count(),
+                delivery_range: step.result.collection.delivery_range(),
+                count_label: format!("{} rows", observation.shown),
+                coverage: observation.coverage,
+                continue_handle: step
+                    .result
+                    .paging_handle
+                    .as_ref()
+                    .map(|h| h.as_str().to_owned()),
+                artifact: step.artifact.clone(),
+                format: Some(StepFormatOutcome {
+                    omitted: formatted.reference_only_omitted.clone(),
+                    lossy: formatted.lossy_summary_fields.clone(),
+                    in_band: formatted.in_band_report.clone(),
+                    formatted,
+                }),
+            });
+            delivered.push(step);
         }
+        Ok((
+            delivered,
+            Self {
+                resolved,
+                artifact_access: policy.artifact_access,
+            },
+        ))
     }
 }

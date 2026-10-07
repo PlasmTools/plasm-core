@@ -12,7 +12,8 @@ pub fn step_error_from_runtime(err: &RuntimeError, cgs: &CGS) -> StepError {
         RuntimeError::RequestIdentityAuthOpaque => {
             StepError::new(StepErrorCategory::Config, err.to_string(), None)
         }
-        RuntimeError::RequestIdentityCardinality { .. } => {
+        RuntimeError::RequestIdentityCardinality { .. }
+        | RuntimeError::DeclaredOutputCardinality { .. } => {
             StepError::new(StepErrorCategory::Runtime, err.to_string(), None)
         }
         RuntimeError::Evm(_) => StepError::new(StepErrorCategory::Runtime, err.to_string(), None),

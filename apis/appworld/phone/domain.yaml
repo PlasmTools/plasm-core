@@ -679,7 +679,7 @@ capabilities:
       selection_effect: source
       value_ref: nv_message_shelf
       required: true
-      description: list | window
+      description: list ranks across contacts and has no datetime filtering; window requires phone_number and admits datetime bounds but no ranked search.
     - name: query
       selection_effect: rank
       value_ref: nv_str
@@ -703,13 +703,28 @@ capabilities:
       selection_effect: filter
       value_ref: nv_datetime
       required: false
-    controls:
     - name: sort_by
+      selection_effect: order
       value_ref: nv_str
       required: false
     - name: pagination_order
+      selection_effect: order
       value_ref: nv_pagination_order
       required: false
+    input_validation:
+      cross_field_rules:
+      - when: {field: shelf, equals: list}
+        rule_type: forbidden
+        fields: [min_datetime, max_datetime, pagination_order]
+        error_message: List reads do not support datetime bounds or pagination_order; use window with phone_number.
+      - when: {field: shelf, equals: window}
+        rule_type: required_all
+        fields: [phone_number]
+        error_message: Window reads require phone_number.
+      - when: {field: shelf, equals: window}
+        rule_type: forbidden
+        fields: [query, only_latest_per_contact, sort_by]
+        error_message: Window reads do not support ranked search, latest-per-contact or sort_by; apply content predicates to returned rows.
     provides:
     - text_message_id
     - message
@@ -782,7 +797,7 @@ capabilities:
       selection_effect: source
       value_ref: nv_message_shelf
       required: true
-      description: list | window
+      description: list ranks across contacts and has no datetime filtering; window requires phone_number and admits datetime bounds but no ranked search.
     - name: query
       selection_effect: rank
       value_ref: nv_str
@@ -806,13 +821,28 @@ capabilities:
       selection_effect: filter
       value_ref: nv_datetime
       required: false
-    controls:
     - name: sort_by
+      selection_effect: order
       value_ref: nv_str
       required: false
     - name: pagination_order
+      selection_effect: order
       value_ref: nv_pagination_order
       required: false
+    input_validation:
+      cross_field_rules:
+      - when: {field: shelf, equals: list}
+        rule_type: forbidden
+        fields: [min_datetime, max_datetime, pagination_order]
+        error_message: List reads do not support datetime bounds or pagination_order; use window with phone_number.
+      - when: {field: shelf, equals: window}
+        rule_type: required_all
+        fields: [phone_number]
+        error_message: Window reads require phone_number.
+      - when: {field: shelf, equals: window}
+        rule_type: forbidden
+        fields: [query, only_latest_per_contact, sort_by]
+        error_message: Window reads do not support ranked search, latest-per-contact or sort_by; apply content predicates to returned rows.
     provides:
     - voice_message_id
     - message

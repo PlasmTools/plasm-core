@@ -14,6 +14,8 @@ pub enum PayloadResidency {
 
 #[derive(Debug, Clone)]
 pub struct ExecutionCollection {
+    delivery_start: usize,
+    delivery_source: Option<std::sync::Arc<Self>>,
     membership: RecordedCollection<Ref>,
     entities: SharedRows<CachedEntity>,
     graph_backed: bool,
@@ -58,6 +60,8 @@ impl ExecutionCollection {
         Ok(Self {
             membership,
             entities,
+            delivery_start: 0,
+            delivery_source: None,
             graph_backed: false,
         })
     }
@@ -66,6 +70,8 @@ impl ExecutionCollection {
         Self {
             membership,
             entities: Vec::new().into(),
+            delivery_start: 0,
+            delivery_source: None,
             graph_backed: true,
         }
     }
@@ -81,6 +87,14 @@ impl ExecutionCollection {
     }
     pub fn count(&self) -> usize {
         self.membership.observed().len()
+    }
+    /// Physical delivery coordinates within the immutable observed sequence.
+    pub fn delivery_range(&self) -> std::ops::Range<usize> {
+        self.delivery_start..self.delivery_start + self.entities.len()
+    }
+    /// Immutable semantic source, independent of continuation cursor lifetime.
+    pub fn computation_source(&self) -> &Self {
+        self.delivery_source.as_deref().unwrap_or(self)
     }
     pub fn coverage(&self) -> ResultCoverage {
         self.membership.coverage()
@@ -153,9 +167,22 @@ impl ExecutionCollection {
     /// A delivery window retains the full logical proof. It cannot satisfy a
     /// physical materialization demand until all occurrences are resident.
     pub fn delivery(&self, range: std::ops::Range<usize>) -> Result<Self, CollectionFault> {
-        self.materialize(Demand::Observed)?;
+        if range.start > range.end || range.end > self.entities.len() {
+            return Err(CollectionFault::Conservation);
+        }
+        let start = range.start;
         let entities = self.entities.select(range)?;
+        let delivery_start = self
+            .delivery_start
+            .checked_add(start)
+            .ok_or(CollectionFault::Conservation)?;
         Ok(Self {
+            delivery_start,
+            delivery_source: Some(
+                self.delivery_source
+                    .clone()
+                    .unwrap_or_else(|| std::sync::Arc::new(self.clone())),
+            ),
             graph_backed: entities.len() != self.count(),
             entities,
             membership: self.membership.clone(),
@@ -185,6 +212,23 @@ impl ExecutionCollection {
         &self,
         mut project: impl FnMut(&mut indexmap::IndexMap<String, plasm_core::TypedFieldValue>),
     ) -> Self {
+        if let Some(source) = &self.delivery_source {
+            let source = std::sync::Arc::new(source.map_fields(project));
+            return Self {
+                membership: self.membership.clone(),
+                entities: source
+                    .entities
+                    .iter()
+                    .skip(self.delivery_start)
+                    .take(self.entities.len())
+                    .cloned()
+                    .collect::<Vec<_>>()
+                    .into(),
+                delivery_start: self.delivery_start,
+                graph_backed: self.graph_backed,
+                delivery_source: Some(source),
+            };
+        }
         let entities = self
             .entities
             .iter()
@@ -198,6 +242,8 @@ impl ExecutionCollection {
         Self {
             membership: self.membership.clone(),
             entities,
+            delivery_start: self.delivery_start,
+            delivery_source: None,
             graph_backed: self.graph_backed,
         }
     }
@@ -292,6 +338,44 @@ mod tests {
             0,
             crate::EntityCompleteness::Complete,
         )
+    }
+
+    #[test]
+    fn delivery_can_be_rebudgeted_without_losing_source_coordinates() {
+        let source = ExecutionCollection::observe(
+            identity(),
+            vec![row("a"), row("b"), row("c"), row("d")],
+            Observation::ExactOutput { decoded: 4 },
+        )
+        .unwrap();
+        let delivered = source.delivery(1..4).unwrap().delivery(1..2).unwrap();
+        assert_eq!(delivered.delivery_range(), 2..3);
+        assert_eq!(delivered.count(), 4);
+        assert_eq!(delivered.computation_source().resident_entities().len(), 4);
+        assert!(delivered
+            .computation_source()
+            .materialize(Demand::Observed)
+            .is_ok());
+        let projected = delivered.map_fields(|fields| {
+            fields.insert("projected".into(), plasm_core::Value::Bool(true).into());
+        });
+        assert_eq!(projected.delivery_range(), 2..3);
+        assert!(projected
+            .computation_source()
+            .resident_entities()
+            .iter()
+            .all(|row| row.fields["projected"].to_value() == plasm_core::Value::Bool(true)));
+        assert_eq!(
+            delivered.membership().identity(),
+            source.membership().identity()
+        );
+        assert_eq!(
+            delivered.resident_entities()[0].reference,
+            row("c").reference
+        );
+        assert!(delivered.materialize(Demand::Observed).is_err());
+        assert!(source.delivery(usize::MAX..usize::MAX).is_err());
+        assert_eq!(source.delivery_range(), 0..4);
     }
     fn complete(collection: ExecutionCollection) -> ExecutionResult {
         ExecutionResult {

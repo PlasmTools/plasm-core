@@ -102,38 +102,50 @@ pub(crate) fn parse_plasm_line_for_session(
     Ok(parsed)
 }
 
-fn synthetic_page_result(
+pub(crate) fn synthetic_page_result(
     sess: &ExecuteSession,
     handle: &PagingHandle,
     mut cursor: crate::execute_session::SyntheticPageCursor,
     trace: Option<&PlasmTraceContext>,
 ) -> Result<ExecutionResult, plasm_runtime::RuntimeError> {
-    let start = cursor.offset.min(cursor.collection.count());
-    let end = start
-        .saturating_add(cursor.page_size)
-        .min(cursor.collection.count());
-    // An explicit page expression selects occurrences from the stored result.
-    // Unlike an implicit presentation window, it is a new bounded rowset.
-    // Derivation retains the source proof; it never mints completeness from size.
-    let retained: Vec<_> = (start..end).collect();
-    let collection =
-        cursor
-            .collection
-            .filter(&("page", &cursor.node_id, start, end), &retained, &[])?;
+    let available = match cursor.kind {
+        crate::execute_session::SyntheticPageKind::Expression => cursor.collection.count(),
+        crate::execute_session::SyntheticPageKind::Delivery { .. } => {
+            cursor.collection.resident_entities().len()
+        }
+    };
+    let start = cursor.offset.min(available);
+    let end = start.saturating_add(cursor.page_size).min(available);
+    let collection = match &cursor.kind {
+        crate::execute_session::SyntheticPageKind::Expression => {
+            let retained: Vec<_> = (start..end).collect();
+            cursor
+                .collection
+                .filter(&("page", &cursor.node_id, start, end), &retained, &[])?
+        }
+        crate::execute_session::SyntheticPageKind::Delivery { .. } => {
+            cursor.collection.delivery(start..end)?
+        }
+    };
     cursor.offset = end;
-    let has_more = cursor.offset < cursor.collection.count();
+    let has_more = cursor.offset < available;
     let request_fingerprints = cursor.request_fingerprints.clone();
     let paging_handle = if has_more {
         sess.upsert_synthetic_paging_resume(handle, cursor);
         Some(handle.clone())
     } else {
         sess.remove_paging_resume(handle);
-        None
+        match cursor.kind {
+            crate::execute_session::SyntheticPageKind::Expression => None,
+            crate::execute_session::SyntheticPageKind::Delivery { continuation, .. } => {
+                continuation
+            }
+        }
     };
     let _ = trace;
     Ok(ExecutionResult {
         collection,
-        has_more,
+        has_more: paging_handle.is_some(),
         pagination_resume: None,
         paging_handle,
         source: ExecutionSource::Cache,
@@ -222,6 +234,8 @@ pub(crate) async fn run_parsed_plasm_line(
             let entry_id = cursor.qualified_entity.entry_id.clone();
             let result =
                 synthetic_page_result(sess, key, cursor, trace).map_err(RunLineError::from)?;
+            let mut archive = result.clone();
+            archive.collection = result.collection.computation_source().clone();
             let artifact = persist_execute_run(PersistExecuteRunInput {
                 st,
                 sess,
@@ -230,7 +244,7 @@ pub(crate) async fn run_parsed_plasm_line(
                 source_line: line,
                 display_lines: vec![line.to_string()],
                 parsed: &parsed,
-                result: &result,
+                result: &archive,
                 trace,
             })
             .await?;

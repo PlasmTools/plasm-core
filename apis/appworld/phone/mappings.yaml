@@ -291,12 +291,12 @@ text_message_query:
     - - min_datetime
       - type: if
         condition: { type: exists, var: min_datetime }
-        then_expr: { type: var, name: min_datetime }
+        then_expr: { type: datetime_format, wire: iso8601_naive_datetime, value: { type: var, name: min_datetime }, format: "%Y-%m-%d|%H:%M:%S" }
         else_expr: { type: const, value: null }
     - - max_datetime
       - type: if
         condition: { type: exists, var: max_datetime }
-        then_expr: { type: var, name: max_datetime }
+        then_expr: { type: datetime_format, wire: iso8601_naive_datetime, value: { type: var, name: max_datetime }, format: "%Y-%m-%d|%H:%M:%S" }
         else_expr: { type: const, value: null }
     - - sort_by
       - type: if
@@ -374,12 +374,12 @@ voice_message_query:
     - - min_datetime
       - type: if
         condition: { type: exists, var: min_datetime }
-        then_expr: { type: var, name: min_datetime }
+        then_expr: { type: datetime_format, wire: iso8601_naive_datetime, value: { type: var, name: min_datetime }, format: "%Y-%m-%d|%H:%M:%S" }
         else_expr: { type: const, value: null }
     - - max_datetime
       - type: if
         condition: { type: exists, var: max_datetime }
-        then_expr: { type: var, name: max_datetime }
+        then_expr: { type: datetime_format, wire: iso8601_naive_datetime, value: { type: var, name: max_datetime }, format: "%Y-%m-%d|%H:%M:%S" }
         else_expr: { type: const, value: null }
     - - sort_by
       - type: if

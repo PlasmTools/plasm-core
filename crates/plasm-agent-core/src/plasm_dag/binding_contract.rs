@@ -88,13 +88,15 @@ pub(in crate::plasm_dag) fn program_binding_contract_for_source(
                 matches!(result_shape, crate::plasm_plan::ResultShape::MutationResult);
             let read_get = matches!(kind, PlanNodeKind::Get) || matches!(parsed.expr, Expr::Get(_));
             let read_list = matches!(kind, PlanNodeKind::Query | PlanNodeKind::Search);
+            let list_output = matches!(result_shape, crate::plasm_plan::ResultShape::List);
             let row_surface = read_get
                 || read_list
                 || mutation_result
+                || list_output
                 || matches!(parsed.expr, Expr::Query(_) | Expr::Chain(_));
             let row_cardinality = if read_get || mutation_result || *view_singleton {
                 RowCardinalityProof::StaticSingleton
-            } else if read_list {
+            } else if read_list || list_output {
                 RowCardinalityProof::StaticPlural
             } else {
                 RowCardinalityProof::RuntimeChecked

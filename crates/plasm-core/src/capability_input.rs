@@ -930,6 +930,52 @@ pub(crate) fn validate_named_value_domain(
     })
 }
 
+pub(crate) fn validate_query_source_constraints(
+    capability: &CapabilitySchema,
+    input: &Value,
+    cgs: &CGS,
+) -> Result<(), TypeError> {
+    if let Value::Object(object) = input {
+        let mut checked = std::collections::HashSet::new();
+        for condition in capability
+            .inputs
+            .input_validation
+            .cross_field_rules
+            .iter()
+            .filter_map(|rule| rule.when.as_ref())
+        {
+            if !checked.insert(&condition.field) {
+                continue;
+            }
+            if let Some(value) = object.get(&condition.field) {
+                let field = capability
+                    .query_surface_fields()
+                    .find(|field| field.name == condition.field)
+                    .ok_or_else(|| TypeError::FieldNotFound {
+                        field: condition.field.clone(),
+                        entity: capability.domain.to_string(),
+                    })?;
+                match &field.wire {
+                    crate::InputFieldWire::Registry(_) => {
+                        let named =
+                            field
+                                .named_value(cgs)
+                                .map_err(|_| TypeError::FieldNotFound {
+                                    field: condition.field.clone(),
+                                    entity: capability.domain.to_string(),
+                                })?;
+                        validate_concrete_named_value(value, named, &condition.field, cgs)?;
+                    }
+                    crate::InputFieldWire::Inline(ty) => {
+                        validate_input_type(value, ty, &condition.field, cgs)?
+                    }
+                }
+            }
+        }
+    }
+    validate_input_constraints(input, &capability.inputs.input_validation)
+}
+
 /// Validate input constraints
 fn validate_input_constraints(
     input: &Value,
@@ -959,8 +1005,36 @@ fn validate_cross_field_rule(
     object: &indexmap::IndexMap<String, Value>,
     rule: &crate::CrossFieldRule,
 ) -> Result<(), TypeError> {
-    // Teaching-surface `$` placeholders count as absent (same spirit as value-domain constraints).
-    // When every listed field is absent or still a placeholder, defer the rule to execute time.
+    if let Some(condition) = &rule.when {
+        match object.get(&condition.field) {
+            None | Some(Value::Null) => {
+                return Err(TypeError::FieldNotFound {
+                    field: condition.field.clone(),
+                    entity: "required input discriminator".into(),
+                })
+            }
+            Some(value) if value.is_domain_example_placeholder() => return Ok(()),
+            Some(value) => {
+                let field_type = match condition.equals {
+                    Value::Bool(_) => FieldType::Boolean,
+                    Value::Integer(_) => FieldType::Integer,
+                    _ => FieldType::String,
+                };
+                let value =
+                    crate::coerce_value_for_field_type(&field_type, None, None, value.clone())
+                        .map_err(|source| TypeError::CoercionFailure {
+                            field: condition.field.clone(),
+                            source,
+                        })?;
+                if value != condition.equals {
+                    return Ok(());
+                }
+            }
+        }
+    }
+    // A teaching placeholder has unresolved presence. Reject only violations
+    // established by concrete inputs; check the remaining obligation when the
+    // placeholders become concrete rather than treating them as absent.
     let concretely_present: Vec<_> = rule
         .fields
         .iter()
@@ -970,33 +1044,37 @@ fn validate_cross_field_rule(
             Some(_) => true,
         })
         .collect();
-    let any_placeholder = rule
+    let unresolved_count = rule
         .fields
         .iter()
-        .any(|field| matches!(object.get(field), Some(v) if v.is_domain_example_placeholder()));
-    if concretely_present.is_empty() && any_placeholder {
-        return Ok(());
-    }
+        .filter(|field| matches!(object.get(*field), Some(v) if v.is_domain_example_placeholder()))
+        .count();
 
     let present_fields = concretely_present;
+    let possible_present = present_fields.len() + unresolved_count;
 
     let valid = match rule.rule_type {
-        crate::CrossFieldRuleType::AtLeastOne => !present_fields.is_empty(),
-        crate::CrossFieldRuleType::ExactlyOne => present_fields.len() == 1,
+        crate::CrossFieldRuleType::AtLeastOne => possible_present != 0,
+        crate::CrossFieldRuleType::ExactlyOne => present_fields.len() <= 1 && possible_present != 0,
         crate::CrossFieldRuleType::AllOrNone => {
-            present_fields.is_empty() || present_fields.len() == rule.fields.len()
+            present_fields.is_empty() || possible_present == rule.fields.len()
         }
         crate::CrossFieldRuleType::Implies => {
             // If first field is concretely present, second must be too
             if rule.fields.len() >= 2 {
                 let first_present = present_fields.iter().any(|f| *f == &rule.fields[0]);
                 let second_present = present_fields.iter().any(|f| *f == &rule.fields[1]);
-                !first_present || second_present
+                let second_unresolved = object
+                    .get(&rule.fields[1])
+                    .is_some_and(Value::is_domain_example_placeholder);
+                !first_present || second_present || second_unresolved
             } else {
                 true
             }
         }
         crate::CrossFieldRuleType::MutuallyExclusive => present_fields.len() <= 1,
+        crate::CrossFieldRuleType::RequiredAll => possible_present == rule.fields.len(),
+        crate::CrossFieldRuleType::Forbidden => present_fields.is_empty(),
     };
 
     if !valid {
@@ -1016,6 +1094,141 @@ mod tests {
     use crate::value_domain::{Constraints, KernelKind, ValueDomain};
     use crate::Value;
     use indexmap::IndexMap;
+
+    #[test]
+    fn conditional_source_rules_fail_at_typecheck_and_survive_codec() {
+        let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../fixtures/schemas/conditional_source_inputs");
+        let loaded = crate::load_schema_dir(&dir).unwrap();
+        let cgs: crate::CGS =
+            serde_json::from_slice(&serde_json::to_vec(&loaded).unwrap()).unwrap();
+        for (source, valid) in [
+            (r#"Record{mode="ranked",terms="needle"}"#, true),
+            (
+                r#"Record{mode="bounded",owner="a",lower="start",upper="end"}"#,
+                true,
+            ),
+            (r#"Record{mode="ranked",lower="start"}"#, false),
+            (r#"Record{mode="ranked",upper="end"}"#, false),
+            (r#"Record{mode="bounded",owner="a",terms="needle"}"#, false),
+            (r#"Record{mode="bounded",lower="start"}"#, false),
+            (r#"Record{mode="unknown"}"#, false),
+            (r#"Record{terms="needle"}"#, false),
+        ] {
+            let parsed = crate::expr_parser::parse_session_line(source, &cgs, None).unwrap();
+            assert_eq!(
+                crate::type_checker::type_check_expr(&parsed.expr, &cgs).is_ok(),
+                valid,
+                "{source}"
+            );
+            if let crate::Expr::Query(query) = &parsed.expr {
+                assert_eq!(
+                    crate::rowset::normalize_query_expr_to_rowset(query, &cgs, "fixture").is_ok(),
+                    valid,
+                    "source admission: {source}"
+                );
+            }
+        }
+        let mut broken = cgs.clone();
+        broken
+            .capabilities
+            .get_mut("record_query")
+            .unwrap()
+            .inputs
+            .input_validation
+            .cross_field_rules[0]
+            .when
+            .as_mut()
+            .unwrap()
+            .field = "missing".into();
+        assert!(broken.validate().is_err());
+        let mut broken = cgs;
+        broken
+            .capabilities
+            .get_mut("record_query")
+            .unwrap()
+            .inputs
+            .input_validation
+            .cross_field_rules[0]
+            .when
+            .as_mut()
+            .unwrap()
+            .equals = Value::String("unknown".into());
+        assert!(broken.validate().is_err());
+    }
+
+    #[test]
+    fn conditional_rules_use_canonical_scalar_coercion_and_defer_placeholders() {
+        let rule: crate::CrossFieldRule = serde_json::from_value(serde_json::json!({
+            "when": {"field": "enabled", "equals": true},
+            "rule_type": "forbidden", "fields": ["terms"],
+            "error_message": "Enabled mode forbids terms."
+        }))
+        .unwrap();
+        for (discriminator, valid) in [
+            (Value::Bool(true), false),
+            (Value::String("true".into()), false),
+            (Value::Bool(false), true),
+            (Value::String("$".into()), true),
+        ] {
+            let Value::Object(input) = obj(&[
+                ("enabled", discriminator),
+                ("terms", Value::String("needle".into())),
+            ]) else {
+                unreachable!()
+            };
+            assert_eq!(validate_cross_field_rule(&input, &rule).is_ok(), valid);
+        }
+        assert!(validate_cross_field_rule(&IndexMap::new(), &rule).is_err());
+    }
+
+    #[test]
+    fn conditional_presence_rules_defer_only_unresolved_obligations() {
+        use crate::CrossFieldRuleType::*;
+        let present = Some(Value::String("concrete".into()));
+        let unknown = Some(Value::String("$".into()));
+        for (kind, first, second, valid) in [
+            (RequiredAll, present.clone(), unknown.clone(), true),
+            (RequiredAll, present.clone(), None, false),
+            (RequiredAll, unknown.clone(), None, false),
+            (ExactlyOne, present.clone(), unknown.clone(), true),
+            (ExactlyOne, present.clone(), present.clone(), false),
+            (ExactlyOne, None, None, false),
+            (AtLeastOne, None, unknown.clone(), true),
+            (AtLeastOne, None, None, false),
+            (AllOrNone, present.clone(), unknown.clone(), true),
+            (AllOrNone, present.clone(), None, false),
+            (AllOrNone, None, unknown.clone(), true),
+            (Implies, present.clone(), unknown.clone(), true),
+            (Implies, present.clone(), None, false),
+            (Implies, unknown.clone(), None, true),
+            (MutuallyExclusive, present.clone(), unknown.clone(), true),
+            (MutuallyExclusive, present.clone(), present.clone(), false),
+            (Forbidden, None, unknown.clone(), true),
+            (Forbidden, present.clone(), unknown.clone(), false),
+        ] {
+            let rule = crate::CrossFieldRule {
+                when: Some(crate::InputValueCondition {
+                    field: "mode".into(),
+                    equals: Value::String("bounded".into()),
+                }),
+                rule_type: kind,
+                fields: vec!["owner".into(), "lower".into()],
+                error_message: "invalid presence combination".into(),
+            };
+            let mut input = IndexMap::from([("mode".into(), Value::String("bounded".into()))]);
+            for (name, value) in [("owner", first), ("lower", second)] {
+                if let Some(value) = value {
+                    input.insert(name.into(), value);
+                }
+            }
+            assert_eq!(
+                validate_cross_field_rule(&input, &rule).is_ok(),
+                valid,
+                "{rule:?}: {input:?}"
+            );
+        }
+    }
 
     fn revenue_nv_min_zero() -> crate::NamedValueSchema {
         crate::NamedValueSchema::from_domain(
@@ -1148,6 +1361,7 @@ mod tests {
         cap.domain = "Item".into();
         cap.mapping = None;
         cap.inputs = crate::CapabilityInputs {
+            input_validation: Default::default(),
             receiver: None,
             scope: Default::default(),
             selection: Default::default(),

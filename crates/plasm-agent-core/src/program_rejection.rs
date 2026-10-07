@@ -238,7 +238,7 @@ pub enum PythonSourceError {
     DuplicateWriteArgument { argument: String },
     #[error("Python source is invalid: expected a field dependency")]
     ExpectedFieldDependency,
-    #[error("Python source is invalid: field input requires a proven singleton")]
+    #[error("Python source is invalid: field input requires a proven singleton; binding `{binding}` has no singleton proof. Use row transforms or map for plural rows; establish a singleton before scalar extraction.")]
     FieldInputNeedsSingleton { binding: String },
     #[error("Python source is invalid: session method kind differs from pinned catalog")]
     SessionMethodKindMismatch { method: String },

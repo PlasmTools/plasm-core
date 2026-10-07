@@ -9,6 +9,7 @@ import {
   PLASM_TOOL_DESCRIPTION,
 } from "./descriptions.js";
 import { toolInput } from "./tool-input.js";
+import { logicalSessionRefSchema } from "../runtime/session-contract.js";
 
 const plasmContextInputSchema = z.object({
   intent: z
@@ -23,16 +24,14 @@ const plasmContextInputSchema = z.object({
     .describe(
       'Use "new" once per workflow; "extend" on later turns with the same logical_session_ref. Defaults to new when omitted.',
     ),
-  logical_session_ref: z
-    .string()
+  logical_session_ref: logicalSessionRefSchema
     .optional()
-    .describe("Required continuity handle on session_mode extend (from plasm_context)."),
+    .describe("Required on session_mode extend. Copy the logical_session_ref from plasm_context verbatim; do not reconstruct or abbreviate it."),
 }).strict();
 
 const plasmInputSchema = z.object({
-  logical_session_ref: z
-    .string()
-    .describe("Same logical_session_ref returned by plasm_context"),
+  logical_session_ref: logicalSessionRefSchema
+    .describe("Copy the logical_session_ref returned by plasm_context verbatim; do not reconstruct or abbreviate it."),
   program: z
     .string()
     .min(1)
@@ -44,9 +43,8 @@ const plasmInputSchema = z.object({
 });
 
 const plasmRunInputSchema = z.object({
-  logical_session_ref: z
-    .string()
-    .describe("Same logical_session_ref returned by plasm_context"),
+  logical_session_ref: logicalSessionRefSchema
+    .describe("Copy the logical_session_ref returned by plasm_context verbatim; do not reconstruct or abbreviate it."),
   run_ref: z
     .string()
     .describe("pcN from plasm dry-run, or page handle from a prior plasm_run more-pages line"),

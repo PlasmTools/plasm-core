@@ -9,6 +9,129 @@ use std::sync::{
 };
 
 #[tokio::test]
+async fn phone_message_variant_contracts_dispatch_only_supported_parameters() {
+    let count = Arc::new(AtomicUsize::new(0));
+    let seen = count.clone();
+    let app = axum::Router::new().route(
+        "/phone/messages/{*path}",
+        axum::routing::get(
+            move |axum::extract::Path(path): axum::extract::Path<String>,
+                  axum::extract::Query(q): axum::extract::Query<
+                std::collections::HashMap<String, String>,
+            >| {
+                let seen = seen.clone();
+                async move {
+                    let supported = if path.ends_with("/window") {
+                        assert_eq!(q["phone_number"], "+15551234567");
+                        assert_eq!(q["min_datetime"], "2030-01-02|00:00:00");
+                        assert_eq!(q["pagination_order"], "ascending");
+                        vec![
+                            "phone_number",
+                            "min_datetime",
+                            "max_datetime",
+                            "pagination_order",
+                            "page_index",
+                            "page_limit",
+                        ]
+                    } else {
+                        assert_eq!(q["query"], "invitation");
+                        assert_eq!(q["sort_by"], "-created_at");
+                        vec![
+                            "phone_number",
+                            "query",
+                            "only_latest_per_contact",
+                            "sort_by",
+                            "page_index",
+                            "page_limit",
+                        ]
+                    };
+                    assert!(q.keys().all(|key| supported.contains(&key.as_str())));
+                    seen.fetch_add(1, Ordering::SeqCst);
+                    axum::Json(serde_json::json!([]))
+                }
+            },
+        ),
+    );
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let url = format!("http://{}", listener.local_addr().unwrap());
+    let server = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+    let cgs = plasm_core::load_schema_dir(
+        &std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../apis/appworld/phone"),
+    )
+    .unwrap();
+    let catalog = plasm_compile::compile_cgs_capability_templates(&cgs).unwrap();
+    let compiled = Arc::new(
+        plasm_compile::CompiledCatalog::decode_artifact(
+            &serde_json::to_vec(&catalog).unwrap(),
+            &cgs,
+        )
+        .unwrap(),
+    );
+    let engine = ExecutionEngine::new(ExecutionConfig {
+        base_url: Some(url),
+        ..Default::default()
+    })
+    .unwrap();
+    for entity in ["TextMessage", "VoiceMessage"] {
+        for source in [
+            format!(
+                r#"{entity}{{access_token="fixture",shelf="list",query="invitation",sort_by="-created_at"}}"#
+            ),
+            format!(
+                r#"{entity}{{access_token="fixture",shelf="window",phone_number="+15551234567",min_datetime="2030-01-02T00:00:00",pagination_order="ascending"}}"#
+            ),
+        ] {
+            let expr = plasm_core::expr_parser::parse_session_line(&source, &cgs, None)
+                .unwrap()
+                .expr;
+            engine
+                .execute(
+                    &expr,
+                    &cgs,
+                    &mut SessionMaterialization::new(),
+                    None,
+                    StreamConsumeOpts::default(),
+                    ExecuteOptions {
+                        compiled_catalog: Some(compiled.clone()),
+                        ..Default::default()
+                    },
+                )
+                .await
+                .unwrap();
+        }
+        for source in [
+            format!(
+                r#"{entity}{{access_token="fixture",shelf="list",min_datetime="2030-01-02T00:00:00"}}"#
+            ),
+            format!(
+                r#"{entity}{{access_token="fixture",shelf="window",phone_number="+15551234567",query="invitation"}}"#
+            ),
+            format!(r#"{entity}{{access_token="fixture",shelf="window"}}"#),
+        ] {
+            let expr = plasm_core::expr_parser::parse_session_line(&source, &cgs, None)
+                .unwrap()
+                .expr;
+            assert!(engine
+                .execute(
+                    &expr,
+                    &cgs,
+                    &mut SessionMaterialization::new(),
+                    None,
+                    StreamConsumeOpts::default(),
+                    ExecuteOptions {
+                        compiled_catalog: Some(compiled.clone()),
+                        ..Default::default()
+                    },
+                )
+                .await
+                .is_err());
+        }
+    }
+    assert_eq!(count.load(Ordering::SeqCst), 4);
+    server.abort();
+}
+
+#[tokio::test]
 async fn todoist_assignment_survives_query_and_get_wire_shapes() {
     let count = Arc::new(AtomicUsize::new(0));
     let seen = count.clone();

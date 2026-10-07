@@ -177,6 +177,14 @@ pub enum RuntimeError {
     RequestIdentityAuthOpaque,
     #[error("request-owned identity for {entity} requires one response row, got {rows}")]
     RequestIdentityCardinality { entity: String, rows: usize },
+    #[error(
+        "capability {capability} declares one output entity {entity}, got {rows} response rows"
+    )]
+    DeclaredOutputCardinality {
+        capability: String,
+        entity: String,
+        rows: usize,
+    },
     #[error("response narrowing failed: {0}")]
     ResponseNarrowing(#[from] ResponseNarrowError),
     #[error("host transport failed: {source}")]

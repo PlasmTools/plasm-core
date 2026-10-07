@@ -1,6 +1,8 @@
 //! MCP run markdown / `_meta` step publishing.
 
 mod meta;
+mod page;
+pub use page::ResultPublicationError;
 mod policy;
 mod render;
 
@@ -10,7 +12,7 @@ pub(crate) use meta::{build_mcp_run_tool_meta, tool_meta_from_handles};
 
 use meta::build_ui_steps;
 use policy::PublishPlan;
-use render::{build_inline_bodies, format_resolved_steps};
+use render::build_inline_bodies;
 use serde_json::json;
 
 use super::{ExecuteRunToolOutput, PublishedResultStep, *};
@@ -18,11 +20,15 @@ use crate::mcp_plasm_meta::PlasmMetaIndex;
 use crate::mcp_run_markdown::McpResultTransportPolicy;
 
 pub fn publish_plasm_result_steps(
+    store: &impl crate::execute_session::PagingContinuationStore,
+    logical_session_ref: Option<&str>,
     cgs: Option<&CGS>,
     meta_index: Option<&mut PlasmMetaIndex>,
     steps: &[PublishedResultStep],
-) -> ExecuteRunToolOutput {
+) -> Result<ExecuteRunToolOutput, ResultPublicationError> {
     publish_plasm_result_steps_with_policy(
+        store,
+        logical_session_ref,
         cgs,
         meta_index,
         steps,
@@ -31,16 +37,17 @@ pub fn publish_plasm_result_steps(
 }
 
 pub fn publish_plasm_result_steps_with_policy(
+    store: &impl crate::execute_session::PagingContinuationStore,
+    logical_session_ref: Option<&str>,
     cgs: Option<&CGS>,
     meta_index: Option<&mut PlasmMetaIndex>,
     steps: &[PublishedResultStep],
     policy: &McpResultTransportPolicy,
-) -> ExecuteRunToolOutput {
-    let mut plan = PublishPlan::build(steps, policy);
-    format_resolved_steps(steps, &mut plan, cgs);
-    let inline = build_inline_bodies(steps, &plan, steps.len());
+) -> Result<ExecuteRunToolOutput, ResultPublicationError> {
+    let (steps, plan) = PublishPlan::build(store, logical_session_ref, steps, cgs, policy)?;
+    let inline = build_inline_bodies(&steps, &plan, steps.len());
     let markdown = inline.sections.clone();
-    let all_ui_steps = build_ui_steps(steps, &plan, cgs);
+    let all_ui_steps = build_ui_steps(&steps, &plan, cgs);
     let paging_for_meta = (!inline.paging.is_empty()).then_some(inline.paging.as_slice());
     let mut tool_meta = build_mcp_run_tool_meta(
         meta_index,
@@ -53,36 +60,44 @@ pub fn publish_plasm_result_steps_with_policy(
             plasm.insert("result_delivery".into(), json!("inline"));
         }
     }
-    ExecuteRunToolOutput {
+    Ok(ExecuteRunToolOutput {
+        delivered_steps: steps,
         markdown,
         tool_meta,
-    }
+    })
 }
 
-/// Lock a shared MCP meta index for one publish call (live plan worker pool path).
-#[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
-#[error("meta_index lock poisoned")]
-pub struct MetaIndexPoisoned;
-
+/// Publish using the session-owned continuation store and shared metadata index.
 pub(crate) fn publish_with_shared_meta_index(
+    store: &impl crate::execute_session::PagingContinuationStore,
+    logical_session_ref: Option<&str>,
     cgs: Option<&CGS>,
     meta_index: Option<Arc<Mutex<PlasmMetaIndex>>>,
     steps: &[PublishedResultStep],
     policy: &McpResultTransportPolicy,
-) -> Result<ExecuteRunToolOutput, MetaIndexPoisoned> {
+) -> Result<ExecuteRunToolOutput, ResultPublicationError> {
     match meta_index {
         Some(arc) => {
-            let mut guard = arc.lock().map_err(|_| MetaIndexPoisoned)?;
-            Ok(publish_plasm_result_steps_with_policy(
+            let mut guard = arc
+                .lock()
+                .map_err(|_| ResultPublicationError::MetaIndexPoisoned)?;
+            publish_plasm_result_steps_with_policy(
+                store,
+                logical_session_ref,
                 cgs,
                 Some(&mut *guard),
                 steps,
                 policy,
-            ))
+            )
         }
-        None => Ok(publish_plasm_result_steps_with_policy(
-            cgs, None, steps, policy,
-        )),
+        None => publish_plasm_result_steps_with_policy(
+            store,
+            logical_session_ref,
+            cgs,
+            None,
+            steps,
+            policy,
+        ),
     }
 }
 
@@ -98,6 +113,292 @@ mod tests {
         synthetic_published_result_step, synthetic_published_result_step_with_paging,
     };
     use plasm_core::PagingHandle;
+
+    fn paging_session() -> crate::execute_session::ExecuteSession {
+        let cgs = Arc::new(
+            plasm_core::load_schema_dir(
+                &std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+                    .join("../../fixtures/schemas/plasm_language_matrix"),
+            )
+            .unwrap(),
+        );
+        crate::test_support::graph_fixtures::test_execute_session(cgs, "publish-pages")
+    }
+
+    fn publish_plasm_result_steps(
+        cgs: Option<&CGS>,
+        index: Option<&mut PlasmMetaIndex>,
+        steps: &[PublishedResultStep],
+    ) -> ExecuteRunToolOutput {
+        super::publish_plasm_result_steps(&paging_session(), None, cgs, index, steps).unwrap()
+    }
+
+    fn publish_plasm_result_steps_with_policy(
+        cgs: Option<&CGS>,
+        index: Option<&mut PlasmMetaIndex>,
+        steps: &[PublishedResultStep],
+        policy: &McpResultTransportPolicy,
+    ) -> ExecuteRunToolOutput {
+        super::publish_plasm_result_steps_with_policy(
+            &paging_session(),
+            None,
+            cgs,
+            index,
+            steps,
+            policy,
+        )
+        .unwrap()
+    }
+
+    #[test]
+    fn row_26_has_a_presentation_continuation() {
+        let step = synthetic_published_result_step(27, None);
+        let out = publish_plasm_result_steps(None, None, &[step]);
+        assert!(out.markdown.contains("more pages"), "{}", out.markdown);
+        assert!(out.tool_meta.unwrap()["plasm"]["paging"][0]["next_run_ref"].is_string());
+    }
+
+    #[test]
+    fn an_orphaned_delivery_window_is_a_typed_publication_failure() {
+        let session = paging_session();
+        let mut source = synthetic_published_result_step(27, None);
+        let mut result = source.result.as_ref().clone();
+        result.collection = result.collection.delivery(0..25).unwrap();
+        source.result = Arc::new(result);
+        let error =
+            super::publish_plasm_result_steps(&session, None, None, None, &[source]).unwrap_err();
+        assert!(matches!(
+            error,
+            ResultPublicationError::Collection(
+                plasm_core::collection_codec::CollectionFault::NotResident
+            )
+        ));
+    }
+
+    #[test]
+    fn presentation_pages_preserve_membership_and_reach_row_26() {
+        let session = paging_session();
+        let source = synthetic_published_result_step(27, None);
+        let identity = source.result.collection.membership().identity().clone();
+        let first =
+            super::publish_plasm_result_steps(&session, None, None, None, &[source.clone()])
+                .unwrap();
+        assert_eq!(source.result.entities().len(), 27);
+        assert_eq!(first.delivered_steps[0].result.entities().len(), 25);
+        let handle = first.delivered_steps[0]
+            .result
+            .paging_handle
+            .as_ref()
+            .unwrap();
+        let cursor = session.peek_synthetic_paging_resume(handle).unwrap();
+        let second =
+            super::super::run_line::synthetic_page_result(&session, handle, cursor, None).unwrap();
+        assert_eq!(second.entities().len(), 2);
+        assert_eq!(
+            second.entities()[0].fields["id"].to_value(),
+            plasm_core::Value::String("m25".into())
+        );
+        assert_eq!(second.collection.membership().identity(), &identity);
+        assert_eq!(second.coverage(), source.result.coverage());
+        assert_eq!(second.collection.delivery_range(), 25..27);
+        assert!(second.paging_handle.is_none());
+        assert_eq!(second.stats.network_requests, 0);
+        assert!(second.operations.is_empty());
+        assert!(
+            second
+                .collection
+                .materialize(plasm_core::collection_codec::Demand::Observed)
+                .is_err(),
+            "a delivery window must not masquerade as a fully resident computation input"
+        );
+    }
+
+    #[tokio::test]
+    async fn exhausted_delivery_tail_can_be_rebudgeted_through_public_execution() {
+        use crate::http::{build_plasm_host_state, PlasmHostBootstrap};
+        use crate::server_state::CatalogBootstrap;
+        use crate::test_support::graph_fixtures::{
+            berry_entity, load_pokeapi_mini_cgs, test_execute_session,
+        };
+        use plasm_core::collection_codec::Observation;
+        use plasm_core::discovery::CgsRegistry;
+        use plasm_runtime::{ExecutionConfig, ExecutionEngine, ExecutionMode};
+
+        let cgs = load_pokeapi_mini_cgs();
+        let session = test_execute_session(cgs.clone(), "tail-rebudget");
+        let host = build_plasm_host_state(PlasmHostBootstrap {
+            engine: ExecutionEngine::new(ExecutionConfig::default()).unwrap(),
+            mode: ExecutionMode::Live,
+            registry: Arc::new(CgsRegistry::from_pairs(vec![(
+                "default".into(),
+                "Matrix".into(),
+                vec![],
+                cgs.clone(),
+            )])),
+            catalog_bootstrap: CatalogBootstrap::Fixed,
+            incoming_auth: None,
+            run_artifacts: Arc::new(crate::run_artifacts::RunArtifactStore::memory()),
+            session_graph_persistence: None,
+            oss_local_filesystem_defaults: false,
+        })
+        .unwrap();
+        let mut source = synthetic_published_result_step(27, None);
+        let mut result = source.result.as_ref().clone();
+        result.collection = plasm_runtime::execution::ExecutionCollection::observe(
+            result.collection.membership().identity().clone(),
+            (0..27)
+                .map(|i| berry_entity(&format!("berry-{i}")))
+                .collect(),
+            Observation::ExactOutput { decoded: 27 },
+        )
+        .unwrap();
+        source.result = Arc::new(result);
+        source.entry_id = Some("default".into());
+        source.entity = Some("Berry".into());
+        source.cgs = Some(cgs);
+        source.display = "Berry[name]".into();
+        source.projection = Some(vec!["name".into()]);
+        let first =
+            super::publish_plasm_result_steps(&session, None, None, None, &[source]).unwrap();
+        let handle = first.delivered_steps[0]
+            .result
+            .paging_handle
+            .as_ref()
+            .unwrap();
+        let cursor = session.peek_synthetic_paging_resume(handle).unwrap();
+        let tail =
+            super::super::run_line::synthetic_page_result(&session, handle, cursor, None).unwrap();
+        assert!(session.peek_synthetic_paging_resume(handle).is_none());
+        assert!(tail.paging_handle.is_none());
+        assert_eq!(tail.collection.delivery_range(), 25..27);
+        let tail_step = PublishedResultStep {
+            result: Arc::new(tail),
+            ..first.delivered_steps[0].clone()
+        };
+        let clipped = super::publish_plasm_result_steps_with_policy(
+            &session,
+            None,
+            None,
+            None,
+            &[tail_step],
+            &McpResultTransportPolicy {
+                inline_text_budget_bytes: 1,
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        assert_eq!(
+            clipped.delivered_steps[0]
+                .result
+                .collection
+                .delivery_range(),
+            25..26
+        );
+        let next = clipped.delivered_steps[0]
+            .result
+            .paging_handle
+            .as_ref()
+            .unwrap();
+        let bundle = crate::mcp_server::compile_page_continuation(&session, next, 0).unwrap();
+        let final_page = crate::plasm_plan_run::run_plasm_comp(
+            &session,
+            &host,
+            &session.prompt_hash,
+            "tail-rebudget-session",
+            &bundle,
+            true,
+            None,
+            None,
+            None,
+            None,
+        )
+        .await
+        .unwrap();
+        let final_result = &final_page.return_steps[0].result;
+        assert_eq!(final_result.collection.delivery_range(), 26..27);
+        assert_eq!(
+            final_result.entities()[0].reference,
+            berry_entity("berry-26").reference
+        );
+        assert_eq!(
+            final_result
+                .collection
+                .computation_source()
+                .resident_entities()
+                .len(),
+            27
+        );
+        assert_eq!(final_result.stats.network_requests, 0);
+        assert!(final_result.operations.is_empty());
+        assert!(final_result.paging_handle.is_none());
+    }
+
+    #[test]
+    fn byte_budget_pages_drain_before_the_backend_continuation() {
+        let session = paging_session();
+        let backend = PagingHandle::mint_monotonic(900);
+        let source = synthetic_published_result_step_with_paging(27, None, Some(backend.clone()));
+        let policy = McpResultTransportPolicy {
+            inline_text_budget_bytes: 1,
+            ..Default::default()
+        };
+        let mut out = super::publish_plasm_result_steps_with_policy(
+            &session,
+            None,
+            None,
+            None,
+            &[source],
+            &policy,
+        )
+        .unwrap();
+        let mut ids = Vec::new();
+        for _ in 0..30 {
+            let delivered = &out.delivered_steps[0];
+            ids.extend(
+                delivered
+                    .result
+                    .entities()
+                    .iter()
+                    .map(|row| row.reference.clone()),
+            );
+            let next = delivered
+                .result
+                .paging_handle
+                .as_ref()
+                .expect("backend continuation must survive");
+            if next == &backend {
+                break;
+            }
+            let cursor = session.peek_synthetic_paging_resume(next).unwrap();
+            let result =
+                super::super::run_line::synthetic_page_result(&session, next, cursor, None)
+                    .unwrap();
+            assert_eq!(result.stats.network_requests, 0);
+            assert!(result.operations.is_empty());
+            let step = PublishedResultStep {
+                result: Arc::new(result),
+                ..delivered.clone()
+            };
+            out = super::publish_plasm_result_steps_with_policy(
+                &session,
+                None,
+                None,
+                None,
+                &[step],
+                &policy,
+            )
+            .unwrap();
+        }
+        assert_eq!(ids.len(), 27);
+        assert_eq!(
+            ids.iter().collect::<std::collections::HashSet<_>>().len(),
+            27
+        );
+        assert_eq!(
+            out.delivered_steps[0].result.paging_handle.as_ref(),
+            Some(&backend)
+        );
+    }
 
     #[test]
     fn publish_includes_artifact_meta_when_result_not_truncated() {
@@ -203,7 +504,7 @@ mod tests {
             out.markdown
         );
         assert!(
-            out.markdown.contains("25/49 rows shown"),
+            out.markdown.contains("25/49 rows delivered"),
             "must report the actual displayed prefix: {}",
             out.markdown
         );
@@ -218,8 +519,7 @@ mod tests {
             out.markdown
         );
         assert!(
-            out.markdown
-                .contains("run_ref: \"l_AAAAAAAAQACAAAAAAAAAAQ_pg1\""),
+            out.markdown.contains("more pages"),
             "a stored snapshot must not hide continuation: {}",
             out.markdown
         );
@@ -313,7 +613,7 @@ mod tests {
             out.markdown
         );
         assert!(
-            out.markdown.contains("25/40 rows shown"),
+            out.markdown.contains("25/40 rows delivered"),
             "expected row-limit note: {}",
             out.markdown
         );
@@ -455,11 +755,11 @@ mod tests {
         assert!(out.markdown.contains("\"m0\""), "{}", out.markdown);
         assert!(!out.markdown.contains("\"m10\""), "{}", out.markdown);
         assert!(
-            out.markdown.contains("10/600 rows shown"),
+            out.markdown.contains("10/600 rows delivered"),
             "{}",
             out.markdown
         );
-        assert!(out.markdown.contains("Preview only"), "{}", out.markdown);
+        assert!(out.markdown.contains("more pages"), "{}", out.markdown);
     }
 
     #[test]
@@ -509,7 +809,7 @@ mod tests {
                     }
                     if count > 0 {
                         assert_eq!(out.markdown.matches("\"m0\"").count(), 2);
-                        assert!(!out.markdown.contains(&format!("0/{count} rows shown")));
+                        assert!(!out.markdown.contains(&format!("0/{count} rows delivered")));
                         // A string that fits a cell is exact, even when the aggregate table is too large.
                         assert!(out.markdown.contains(&"é".repeat(500)));
                     } else {
@@ -603,7 +903,7 @@ mod tests {
             out.markdown
         );
         assert!(
-            out.markdown.contains("2/10 rows shown"),
+            out.markdown.contains("2/10 rows delivered"),
             "CappedInline should report shown/total: {}",
             out.markdown
         );
@@ -765,8 +1065,8 @@ mod tests {
             &policy,
         );
         assert!(
-            out.markdown.contains("Preview only"),
-            "expected bounded preview body: {}",
+            out.markdown.contains("more pages"),
+            "expected bounded resumable page: {}",
             out.markdown
         );
         assert!(

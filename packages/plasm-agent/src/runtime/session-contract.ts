@@ -28,7 +28,7 @@ export function deriveIntent(ancestry: IntentProvenance | undefined, intent: Wor
   return intentProvenanceSchema.parse({ nodes: [...nodes, { parent: nodes.length ? nodes.length - 1 : null, intent }] });
 }
 
-export const logicalSessionRefSchema = z.string().refine((value) => {
+export const logicalSessionRefSchema = z.string().regex(/^l_[A-Za-z0-9_-]{21}[AQgw]$/, "expected a canonical logical session ref").refine((value) => {
   try {
     return formatLogicalSessionWireRef(parseLogicalSessionWireRef(value)) === value;
   } catch { return false; }

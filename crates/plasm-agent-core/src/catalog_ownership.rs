@@ -263,6 +263,7 @@ mod tests {
         let mut session = session_with_contexts("origin", cgs.clone(), vec![], None);
         let handle = session.register_synthetic_paging_continuation(
             crate::execute_session::SyntheticPageCursor {
+                kind: crate::execute_session::SyntheticPageKind::Expression,
                 node_id: "rows".into(),
                 qualified_entity: QualifiedEntityKey {
                     entry_id: "origin".into(),

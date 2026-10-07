@@ -1,0 +1,38 @@
+version: 1
+auth: {scheme: none}
+http_backend: http://localhost:1080
+entities:
+  Record:
+    id_field: id
+    primary_query: record_query
+    fields:
+      id: {value_ref: record_id, required: true}
+capabilities:
+  record_query:
+    kind: query
+    entity: Record
+    selection:
+    - {name: mode, value_ref: source_mode, required: true, selection_effect: source}
+    - {name: owner, value_ref: text, required: false, selection_effect: filter}
+    - {name: lower, value_ref: text, required: false, selection_effect: filter}
+    - {name: upper, value_ref: text, required: false, selection_effect: filter}
+    - {name: terms, value_ref: text, required: false, selection_effect: rank}
+    input_validation:
+      cross_field_rules:
+      - when: {field: mode, equals: ranked}
+        rule_type: forbidden
+        fields: [lower, upper]
+        error_message: Ranked source has no range filtering.
+      - when: {field: mode, equals: bounded}
+        rule_type: required_all
+        fields: [owner]
+        error_message: Bounded source requires an owner.
+      - when: {field: mode, equals: bounded}
+        rule_type: forbidden
+        fields: [terms]
+        error_message: Bounded source does not rank terms.
+    provides: [id]
+values:
+  record_id: {type: integer}
+  source_mode: {type: enum, enum: [ranked, bounded]}
+  text: {type: string}

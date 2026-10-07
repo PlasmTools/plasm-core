@@ -9,7 +9,6 @@
 
 use crate::output::{InBandSummaryReport, LossySummaryFieldNames};
 use crate::run_artifacts::RunArtifactHandle;
-use plasm_runtime::ExecutionResult;
 use std::collections::BTreeSet;
 
 /// Target byte budget for each returned table; at least one bounded row stays visible.
@@ -84,12 +83,6 @@ impl ArtifactAccessMode {
             "\n\n_Snapshot ({}; not a Plasm expression):_ `{uri}`\n",
             self.artifact_read_instruction()
         )
-    }
-}
-
-impl McpResultTransportPolicy {
-    pub fn exceeds_in_band(&self, row_count: usize) -> bool {
-        row_count > self.in_band_entity_rows
     }
 }
 
@@ -193,7 +186,7 @@ pub(crate) fn format_coverage_preview_note(
 ) -> String {
     let mut line = if shown < snapshot_rows {
         format!(
-            "{shown}/{snapshot_rows} rows shown · {} coverage for this expression.",
+            "{shown}/{snapshot_rows} rows delivered · {} coverage for this expression.",
             coverage.as_str()
         )
     } else {
@@ -202,13 +195,6 @@ pub(crate) fn format_coverage_preview_note(
             coverage.as_str()
         )
     };
-    if shown < snapshot_rows {
-        if artifact_access == ArtifactAccessMode::DagCompute {
-            line.push_str(" Preview only; use typed `@compute` over all rows before deciding.");
-        } else {
-            line.push_str(" Preview only; inspect the full result before deciding.");
-        }
-    }
     if artifact_access != ArtifactAccessMode::DagCompute && has_snapshot {
         if let Some(uri) = snapshot_uri {
             line.push_str(&format!(
@@ -216,7 +202,7 @@ pub(crate) fn format_coverage_preview_note(
                 artifact_access.artifact_read_instruction()
             ));
         }
-    } else if !has_snapshot && shown < snapshot_rows {
+    } else if !has_snapshot && shown < snapshot_rows && continue_handle.is_none() {
         line.push_str(" (no run snapshot stored)");
     }
     if let Some(handle) = continue_handle {
@@ -257,10 +243,6 @@ pub(crate) fn return_label_for_step(name: Option<&str>, node_id: Option<&str>) -
         .unwrap_or_else(|| "result".to_string())
 }
 
-pub(crate) fn slim_result_count_label(result: &ExecutionResult) -> String {
-    format!("{} rows", result.count())
-}
-
 pub(crate) fn slim_result_section_header_label(
     level: &str,
     label: &str,
@@ -284,7 +266,7 @@ mod tests {
             Some("l_page1"),
         );
         assert!(
-            note.contains("10/25 rows shown · partial coverage for this expression."),
+            note.contains("10/25 rows delivered · partial coverage for this expression."),
             "{note}"
         );
         assert!(note.contains("Details:"), "{note}");
@@ -299,7 +281,7 @@ mod tests {
             None,
         );
         assert!(
-            complete.contains("10/80 rows shown · complete coverage for this expression."),
+            complete.contains("10/80 rows delivered · complete coverage for this expression."),
             "{complete}"
         );
         assert!(!complete.contains("Continue:"), "{complete}");
@@ -449,7 +431,7 @@ mod dag_compute_delivery_tests {
             Some("plasm://test"),
             None,
         )] {
-            assert!(text.contains("DAG") || text.contains("@compute"));
+            assert!(text.contains("coverage for this expression") || text.is_empty());
             for absent in [
                 "plasm_read_run_artifact",
                 "plasm_artefact_transform",

@@ -224,8 +224,19 @@ async fn run_source_case(
         Some(super::super::evaluate_plasm_comp_dry(&es, &bundle).unwrap()),
         None,
     ))
-    .await;
-    result
+    .await?;
+    let mut result = result;
+    for step in &mut result.return_steps {
+        let full = crate::test_support::execution_fixtures::drain_presentation_pages(
+            &es,
+            &host,
+            "boundary",
+            &step.result,
+        )
+        .await?;
+        step.result = Arc::new(full);
+    }
+    Ok(result)
 }
 #[test]
 fn boundary_relation_hydration_preserves_provision_and_wire_identity() {

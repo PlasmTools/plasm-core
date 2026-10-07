@@ -1,0 +1,43 @@
+item_query:
+  method: GET
+  path: [{type: literal, value: items}]
+item_export:
+  method: POST
+  path: [{type: literal, value: export}]
+artifact_get:
+  method: GET
+  path: [{type: literal, value: artifacts}, {type: var, name: id}]
+item_export_many:
+  method: POST
+  path: [{type: literal, value: exports}]
+tag_query:
+  method: GET
+  path:
+    - {type: literal, value: items}
+    - {type: var, name: item_id}
+    - {type: literal, value: tags}
+
+item_get:
+  method: GET
+  path:
+    - {type: literal, value: items}
+    - {type: var, name: id}
+
+item_touch:
+  method: POST
+  path: [{type: literal, value: touch}]
+
+item_publish:
+  method: POST
+  path: [{type: literal, value: publish}]
+  body:
+    type: object
+    fields:
+      - - content
+        - {type: var, name: content}
+
+item_mark:
+  method: POST
+  path:
+    - {type: literal, value: marks}
+    - {type: var, name: id}

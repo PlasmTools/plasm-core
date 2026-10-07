@@ -366,7 +366,33 @@ pub struct SessionRunSummary {
 }
 
 #[derive(Clone, Debug)]
+pub enum SyntheticPageKind {
+    Expression,
+    Delivery { continuation: Option<PagingHandle> },
+}
+
+/// Session-owned storage for the same continuation protocol used by execution.
+pub trait PagingContinuationStore {
+    fn register_synthetic_paging_continuation(
+        &self,
+        cursor: SyntheticPageCursor,
+        logical_session_ref: Option<&str>,
+    ) -> PagingHandle;
+}
+
+impl PagingContinuationStore for ExecuteSession {
+    fn register_synthetic_paging_continuation(
+        &self,
+        cursor: SyntheticPageCursor,
+        logical_session_ref: Option<&str>,
+    ) -> PagingHandle {
+        ExecuteSession::register_synthetic_paging_continuation(self, cursor, logical_session_ref)
+    }
+}
+
+#[derive(Clone, Debug)]
 pub struct SyntheticPageCursor {
+    pub kind: SyntheticPageKind,
     pub node_id: String,
     pub qualified_entity: crate::plasm_plan::QualifiedEntityKey,
     pub collection: plasm_runtime::execution::ExecutionCollection,

@@ -546,6 +546,29 @@ impl Renderer<'_> {
             })?;
             let mut meaning = String::new();
             comment(&mut meaning, "", &cap.description);
+            for rule in &cap.inputs.input_validation.cross_field_rules {
+                let condition = rule
+                    .when
+                    .as_ref()
+                    .map(|when| {
+                        format!(
+                            " when {}={}",
+                            when.field,
+                            serde_json::to_string(&when.equals).unwrap_or_default()
+                        )
+                    })
+                    .unwrap_or_default();
+                comment(
+                    &mut meaning,
+                    "",
+                    &format!(
+                        "Input contract{condition}: {:?}({}). {}",
+                        rule.rule_type,
+                        rule.fields.join(", "),
+                        rule.error_message,
+                    ),
+                );
+            }
             let result = self.signature(cgs, entry, symbol, cap);
             let signature = result.as_ref().ok().cloned();
             let unavailable = match result {
