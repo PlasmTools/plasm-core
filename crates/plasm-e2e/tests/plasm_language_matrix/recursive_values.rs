@@ -147,12 +147,31 @@ async fn case(field: &str, expression: &str, expected: &str, presence: Presence,
     .await;
     if matches!(presence, Presence::Absent) && !observed {
         let error = run.expect_err("a constructed field cannot fabricate an absent value");
-        assert!(
-            error.diagnostic().contains("unobserved")
-                || error.diagnostic().contains("missing")
-                || error.diagnostic().contains("has no field"),
-            "{field}: {error}"
+        assert_eq!(
+            error.cause,
+            plasm_runtime::FailureCause::Program,
+            "{field}: {error:?}"
         );
+        assert_eq!(
+            error.recovery,
+            plasm_runtime::RecoveryDisposition::RepairProgram,
+            "{field}: {error:?}"
+        );
+        assert_eq!(
+            error.code, "plan_derive_evaluation_failed",
+            "{field}: {error:?}"
+        );
+        assert!(
+            error
+                .node
+                .as_deref()
+                .is_some_and(|node| node.starts_with("boxed/")),
+            "{field}: {error:?}"
+        );
+        assert_eq!(error.occurrence_path, vec![0], "{field}: {error:?}");
+        assert!(error.effects.is_empty(), "{field}: {error:?}");
+        assert!(error.dispatches.is_empty(), "{field}: {error:?}");
+        assert!(!error.effects_unresolved, "{field}: {error:?}");
         return;
     }
     let run = run.unwrap_or_else(|e| panic!("{field}/{presence:?}/{observed}: {e}\n{source}"));
@@ -200,6 +219,16 @@ pub(super) async fn run() -> usize {
     }
     assert_eq!(count, 80);
     count
+}
+
+#[tokio::test]
+async fn absent_text_cannot_be_fabricated_by_recursive_construction() {
+    case("text", "VALUE", "plain", Presence::Absent, false).await;
+}
+
+#[tokio::test]
+async fn recursive_value_domains_preserve_presence_and_null_contracts() {
+    assert_eq!(run().await, 80);
 }
 
 pub(super) fn fixture_context(
