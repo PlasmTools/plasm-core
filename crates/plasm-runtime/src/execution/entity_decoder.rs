@@ -7,6 +7,22 @@ use plasm_compile::{
 };
 use plasm_core::{Cardinality, FieldType, RelationMaterialization, CGS};
 
+pub(crate) fn validate_declared_output_cardinality(
+    capability: &plasm_core::CapabilitySchema,
+    rows: usize,
+) -> Result<(), crate::RuntimeError> {
+    if let Some((entity, Cardinality::One)) = capability.declared_entity_output() {
+        if rows != 1 {
+            return Err(crate::RuntimeError::DeclaredOutputCardinality {
+                capability: capability.name.to_string(),
+                entity: entity.to_string(),
+                rows,
+            });
+        }
+    }
+    Ok(())
+}
+
 pub(crate) fn create_entity_decoder_for_capability(
     declared_entity: &str,
     cgs: &CGS,
@@ -51,6 +67,19 @@ pub(crate) fn mutating_capability_response_decoder(
     identity_ambient: &IndexMap<String, String>,
     request_identity: Option<&str>,
 ) -> EntityDecoder {
+    if let Some((output_entity, cardinality)) = cgs
+        .get_capability(capability_name)
+        .and_then(|capability| capability.declared_entity_output())
+    {
+        let same_entity = output_entity == entity_type;
+        return create_entity_decoder_inner(
+            output_entity,
+            cgs,
+            (cardinality == Cardinality::Many).then(|| PathExpr::new(vec![PathSegment::Wildcard])),
+            same_entity.then_some(request_identity).flatten(),
+            same_entity.then_some(identity_ambient),
+        );
+    }
     create_entity_decoder_for_capability(
         entity_type,
         cgs,
@@ -232,6 +261,56 @@ fn create_entity_decoder_inner(
 mod tests {
     use super::*;
     use plasm_core::loader::load_schema_dir;
+
+    #[test]
+    fn declared_output_cardinality_distinguishes_entity_and_collection() {
+        let cgs = load_schema_dir(
+            &std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+                .join("../../fixtures/schemas/python_action_output"),
+        )
+        .unwrap();
+        let single = cgs.get_capability("item_export").unwrap();
+        let many = cgs.get_capability("item_export_many").unwrap();
+        assert!(validate_declared_output_cardinality(single, 1).is_ok());
+        for rows in [0, 2] {
+            assert!(matches!(validate_declared_output_cardinality(single, rows),
+                Err(crate::RuntimeError::DeclaredOutputCardinality { rows: actual, .. }) if actual == rows));
+            assert!(validate_declared_output_cardinality(many, rows).is_ok());
+        }
+    }
+
+    #[test]
+    fn action_decoder_uses_declared_output_entity_without_receiver_identity() {
+        let cgs = load_schema_dir(
+            &std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+                .join("../../fixtures/schemas/python_action_output"),
+        )
+        .unwrap();
+        let ambient = IndexMap::from([("id".into(), "source-item".into())]);
+        for capability in ["item_export", "item_export_many"] {
+            let decoder = mutating_capability_response_decoder(
+                "Item",
+                capability,
+                &cgs,
+                &ambient,
+                Some("source-item"),
+            );
+            assert_eq!(decoder.entity, "Artifact");
+            let response = serde_json::json!({"id":"document", "path":"/documents/export.txt"});
+            let response = if capability == "item_export_many" {
+                serde_json::json!([response])
+            } else {
+                response
+            };
+            let rows =
+                plasm_compile::decode_entities_with_cgs(&decoder, &response, Some(&cgs)).unwrap();
+            assert_eq!(rows[0].reference.entity_type.as_str(), "Artifact");
+            assert_eq!(
+                rows[0].fields["path"],
+                plasm_core::Value::String("/documents/export.txt".into())
+            );
+        }
+    }
 
     fn assert_embed_decoders_are_leaf(decoder: &EntityDecoder) {
         for rel in &decoder.relations {

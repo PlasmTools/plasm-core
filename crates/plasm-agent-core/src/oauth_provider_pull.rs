@@ -1,6 +1,6 @@
 //! Load outbound OAuth link **runtime** provider metadata from Postgres (`oauth_provider_apps`),
 //! same rows Phoenix Ops writes. Replaces the in-memory runtime map on each refresh so agent
-//! restarts stay aligned with the database. Client secrets remain in auth-framework KV at
+//! restarts stay aligned with the database. Client secrets remain in Plasm credential KV at
 //! `client_secret_key` (unchanged).
 
 use std::sync::Arc;

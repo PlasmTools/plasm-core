@@ -1,6 +1,8 @@
 # Cargo build output at any workspace depth
 target/
-Cargo.lock
+# Application workspace lockfile is versioned; generated nested locks are not.
+**/Cargo.lock
+!/Cargo.lock
 
 # Local build artifacts (optional)
 .build/

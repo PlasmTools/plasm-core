@@ -4,11 +4,11 @@
 //! - `POST /v1/incoming-auth/device/poll` — public; CLI polls with `device_code`.
 //! - `POST /internal/incoming-auth/v1/device/complete` — control-plane; Phoenix after GitHub sign-in.
 //!
-//! Sessions are stored in auth-framework KV (`AuthStorage`) so multi-replica `plasm-mcp` works.
+//! Sessions are stored in Plasm credential KV (`SecretStore`) so multi-replica `plasm-mcp` works.
 
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
-use auth_framework::storage::core::AuthStorage;
+use crate::secret_store::SecretStore;
 use axum::extract::Extension;
 use axum::http::StatusCode;
 use axum::routing::post;
@@ -22,7 +22,7 @@ use crate::server_state::PlasmHostState;
 const DEFAULT_DEVICE_TTL_SECS: u64 = 900;
 const DEFAULT_POLL_INTERVAL_SECS: u64 = 5;
 
-/// Marker type — device sessions live in [`AuthStorage`], not in-process maps.
+/// Marker type — device sessions live in [`SecretStore`], not in-process maps.
 #[derive(Clone, Copy, Debug, Default)]
 pub struct IncomingAuthDeviceStore;
 
@@ -108,19 +108,19 @@ fn storage_unavailable() -> (StatusCode, Json<serde_json::Value>) {
         StatusCode::SERVICE_UNAVAILABLE,
         Json(serde_json::json!({
             "error": "device_auth_storage_unavailable",
-            "message": "device login requires auth-framework KV (PLASM_AUTH_STORAGE_URL)",
+            "message": "device login requires Plasm credential KV (PLASM_AUTH_STORAGE_URL)",
         })),
     )
 }
 
 fn require_auth_storage(
     st: &PlasmHostState,
-) -> Result<&std::sync::Arc<dyn AuthStorage>, (StatusCode, Json<serde_json::Value>)> {
+) -> Result<&std::sync::Arc<dyn SecretStore>, (StatusCode, Json<serde_json::Value>)> {
     st.auth_storage().ok_or_else(storage_unavailable)
 }
 
 async fn store_session(
-    storage: &dyn AuthStorage,
+    storage: &dyn SecretStore,
     device_code: &str,
     user_code: &str,
     sess: &StoredDeviceSession,
@@ -147,7 +147,7 @@ async fn store_session(
 }
 
 async fn load_session(
-    storage: &dyn AuthStorage,
+    storage: &dyn SecretStore,
     device_code: &str,
 ) -> Result<Option<StoredDeviceSession>, (StatusCode, Json<serde_json::Value>)> {
     let row = storage
@@ -163,7 +163,7 @@ async fn load_session(
 }
 
 async fn save_session(
-    storage: &dyn AuthStorage,
+    storage: &dyn SecretStore,
     device_code: &str,
     user_code: &str,
     sess: &StoredDeviceSession,

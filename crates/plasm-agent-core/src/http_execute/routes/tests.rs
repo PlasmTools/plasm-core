@@ -71,7 +71,17 @@ fn capability_exposure_plan_is_invariant_to_seed_order() {
 
 #[test]
 fn plasm_plan_publication_renders_named_output_owner() {
+    let cgs = Arc::new(
+        plasm_core::load_schema_dir(
+            &std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+                .join("../../fixtures/schemas/plasm_language_matrix"),
+        )
+        .unwrap(),
+    );
+    let session = crate::test_support::graph_fixtures::test_execute_session(cgs, "publication");
     let out = publish_plasm_result_steps(
+        &session,
+        None,
         None,
         None,
         &[PublishedResultStep {
@@ -104,6 +114,7 @@ fn plasm_plan_publication_renders_named_output_owner() {
             artifact: None,
         }],
     );
+    let out = out.unwrap();
     assert!(out.markdown.contains("## sorted (0 rows)"));
     assert!(!out.markdown.contains("output:"));
     assert!(!out.markdown.contains("owner:"));

@@ -1,24 +1,22 @@
+use super::records::{ClientMetadata, RegisteredClient};
+use crate::secret_store::SecretStore;
 use std::net::IpAddr;
-use std::time::Duration;
-
-use auth_framework::server::core::client_registration::{
-    ClientRegistrationConfig, ClientRegistrationManager, ClientRegistrationRequest,
+use std::{
+    collections::HashMap,
+    sync::OnceLock,
+    time::{Duration, Instant},
 };
 
-use super::error::{map_auth_error, McpOAuthError};
-use super::types::{McpOAuthRegisterResponse, OAUTH_REGISTER_PATH, OAUTH_SCOPE};
+use super::error::McpOAuthError;
+use super::types::{McpOAuthRegisterResponse, OAUTH_SCOPE};
 
 pub struct DcrHandle<'a> {
-    dcr: &'a ClientRegistrationManager,
-    canonical_resource: &'a str,
+    dcr: &'a dyn SecretStore,
 }
 
 impl<'a> DcrHandle<'a> {
-    pub fn new(dcr: &'a ClientRegistrationManager, canonical_resource: &'a str) -> Self {
-        Self {
-            dcr,
-            canonical_resource,
-        }
+    pub fn new(dcr: &'a dyn SecretStore) -> Self {
+        Self { dcr }
     }
 
     pub async fn register_client(
@@ -26,10 +24,16 @@ impl<'a> DcrHandle<'a> {
         body: &str,
         client_ip: Option<IpAddr>,
     ) -> Result<McpOAuthRegisterResponse, McpOAuthError> {
-        let payload: ClientRegistrationRequest =
-            serde_json::from_str(body.trim()).map_err(|_| {
-                McpOAuthError::bad_request("invalid_request", "invalid registration JSON")
-            })?;
+        enforce_registration_rate(client_ip).await?;
+        if body.len() > 65536 {
+            return Err(McpOAuthError::bad_request(
+                "invalid_client_metadata",
+                "registration body exceeds 64 KiB",
+            ));
+        }
+        let payload: ClientMetadata = serde_json::from_str(body.trim()).map_err(|_| {
+            McpOAuthError::bad_request("invalid_request", "invalid registration JSON")
+        })?;
 
         if payload
             .redirect_uris
@@ -99,47 +103,110 @@ impl<'a> DcrHandle<'a> {
         request.grant_types = Some(normalized_grant_types.clone());
         request.response_types = Some(normalized_response_types.clone());
 
-        let registered = self
-            .dcr
-            .register_client(request, client_ip)
+        if body.len() > 65536 {
+            return Err(McpOAuthError::bad_request(
+                "invalid_client_metadata",
+                "registration body exceeds 64 KiB",
+            ));
+        }
+        let uris = request
+            .redirect_uris
+            .as_ref()
+            .expect("validated redirect list");
+        if uris.len() > 10 || uris.iter().any(|uri| !valid_redirect(uri)) {
+            return Err(McpOAuthError::bad_request(
+                "invalid_redirect_uri",
+                "redirect URIs must use HTTPS or HTTP loopback and contain no fragments",
+            ));
+        }
+        if request
+            .scope
+            .as_deref()
+            .is_some_and(|scope| scope != OAUTH_SCOPE)
+        {
+            return Err(McpOAuthError::bad_request(
+                "invalid_scope",
+                "only mcp:tools is supported",
+            ));
+        }
+        request.scope = Some(OAUTH_SCOPE.into());
+        let client_id = format!("plasm_client_{}", uuid::Uuid::new_v4().simple());
+        let now = chrono::Utc::now();
+        let registered = RegisteredClient {
+            client_id: client_id.clone(),
+            client_secret_hash: None,
+            registration_access_token_hash: String::new(),
+            metadata: request,
+            registered_at: now,
+            updated_at: now,
+            client_secret_expires_at: None,
+            is_active: true,
+        };
+        self.dcr
+            .store_kv(
+                &super::client::registration_key(&client_id),
+                &serde_json::to_vec(&registered).map_err(McpOAuthError::from)?,
+                None,
+            )
             .await
-            .map_err(map_auth_error)?;
+            .map_err(McpOAuthError::from)?;
 
         let scope = registered
+            .metadata
             .scope
             .clone()
             .unwrap_or_else(|| OAUTH_SCOPE.to_string());
 
         Ok(McpOAuthRegisterResponse {
             client_id: registered.client_id,
-            client_secret: registered.client_secret.unwrap_or_default(),
-            client_id_issued_at: registered.client_id_issued_at.unwrap_or(0) as u64,
-            client_secret_expires_at: registered.client_secret_expires_at.unwrap_or(0) as u64,
-            redirect_uris: registered.redirect_uris.unwrap_or_default(),
+            client_id_issued_at: now.timestamp() as u64,
+            redirect_uris: registered.metadata.redirect_uris.unwrap_or_default(),
             token_endpoint_auth_method: "none".to_string(),
             grant_types: normalized_grant_types,
             response_types: normalized_response_types,
             scope,
-            registration_client_uri: format!("{}{}", self.canonical_resource, OAUTH_REGISTER_PATH),
-            registration_access_token: registered.registration_access_token,
         })
     }
 }
 
-pub fn dcr_config(base_url: &str) -> ClientRegistrationConfig {
-    ClientRegistrationConfig {
-        base_url: base_url.to_string(),
-        require_authentication: false,
-        default_secret_expiration: Some(86400 * 365),
-        max_redirect_uris: 10,
-        allowed_grant_types: vec![
-            "authorization_code".to_string(),
-            "refresh_token".to_string(),
-        ],
-        allowed_response_types: vec!["code".to_string()],
-        allowed_auth_methods: vec!["none".to_string()],
-        allow_public_clients: true,
-        rate_limit_per_ip: 1000,
-        rate_limit_window: Duration::from_secs(3600),
+pub(super) fn valid_redirect(uri: &str) -> bool {
+    let Ok(url) = url::Url::parse(uri) else {
+        return false;
+    };
+    if url.fragment().is_some() || !url.username().is_empty() || url.password().is_some() {
+        return false;
     }
+    match url.scheme() {
+        "https" => url.host_str().is_some(),
+        "http" => url.host_str().is_some_and(|host| {
+            host == "localhost"
+                || host.parse::<IpAddr>().is_ok_and(|ip| ip.is_loopback())
+                || host
+                    .trim_matches(['[', ']'])
+                    .parse::<IpAddr>()
+                    .is_ok_and(|ip| ip.is_loopback())
+        }),
+        _ => false,
+    }
+}
+
+async fn enforce_registration_rate(ip: Option<IpAddr>) -> Result<(), McpOAuthError> {
+    type RegistrationAttempts = HashMap<Option<IpAddr>, (Instant, u32)>;
+    static LIMITS: OnceLock<tokio::sync::Mutex<RegistrationAttempts>> = OnceLock::new();
+    let mut limits = LIMITS.get_or_init(Default::default).lock().await;
+    let now = Instant::now();
+    limits.retain(|_, (started, _)| now.duration_since(*started) < Duration::from_secs(3600));
+    if limits.len() >= 10000 && !limits.contains_key(&ip) {
+        return Err(McpOAuthError::RateLimited {
+            description: "registration rate capacity reached".into(),
+        });
+    }
+    let (_, count) = limits.entry(ip).or_insert((now, 0));
+    if *count >= 1000 {
+        return Err(McpOAuthError::RateLimited {
+            description: "registration rate limit exceeded".into(),
+        });
+    }
+    *count += 1;
+    Ok(())
 }

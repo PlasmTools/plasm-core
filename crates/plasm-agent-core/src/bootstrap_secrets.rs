@@ -1,5 +1,5 @@
 //! MCP bootstrap secrets: **load** material (files or policy), then **install** into `std::env`
-//! for upstream crates that still read `std::env::var` (`auth-framework`, `sqlx`, etc.).
+//! for upstream crates that still read `std::env::var` (`sqlx`, etc.).
 //!
 //! ## Ordering vs `dotenv_safe`
 //!

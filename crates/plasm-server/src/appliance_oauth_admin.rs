@@ -3,7 +3,6 @@
 use std::sync::Arc;
 use std::time::Duration;
 
-use auth_framework::storage::AuthStorage;
 use plasm_agent_core::mcp_config_repository::McpConfigRepository;
 use plasm_agent_core::oauth_binding_kv::{oauth_binding_kv_key, write_oauth_binding_pointer};
 use plasm_agent_core::oauth_link_catalog::OauthLinkCatalog;
@@ -12,6 +11,7 @@ use plasm_agent_core::oauth_provider_repository;
 use plasm_agent_core::oauth_runtime_source::{
     apply_runtime_source_to_catalog, PostgresOauthRuntimeProviderSource,
 };
+use plasm_agent_core::secret_store::SecretStore;
 use plasm_runtime::{
     build_oauth_token_http_client, parse_outbound_oauth_kv_v1, poll_oauth_device_token_once,
     request_oauth_device_authorization, OAuthDeviceTokenPoll, OutboundOAuthKvV1,
@@ -50,7 +50,7 @@ pub enum AdminError {
     #[error("KV client secret write failed: {source}")]
     ClientSecretWrite {
         #[source]
-        source: Box<auth_framework::AuthError>,
+        source: Box<plasm_agent_core::secret_store::SecretStoreError>,
     },
     #[error("OAuth HTTP client initialization failed: {source}")]
     HttpClient {
@@ -88,7 +88,7 @@ pub enum AdminError {
     TokenWrite {
         key: String,
         #[source]
-        source: Box<auth_framework::AuthError>,
+        source: Box<plasm_agent_core::secret_store::SecretStoreError>,
     },
     #[error("OAuth binding pointer write failed for `{entry_id}`: {source}")]
     BindingPointerWrite {
@@ -100,7 +100,7 @@ pub enum AdminError {
     BindingRead {
         key: String,
         #[source]
-        source: Box<auth_framework::AuthError>,
+        source: Box<plasm_agent_core::secret_store::SecretStoreError>,
     },
     #[error("OAuth binding pointer corrupt for `{entry_id}`: {source}")]
     BindingPointerParse {
@@ -125,7 +125,7 @@ pub enum AdminError {
     #[error("auth storage initialization failed: {source}")]
     AuthInitialization {
         #[source]
-        source: Box<auth_framework::AuthError>,
+        source: Box<plasm_agent_core::secret_store::SecretStoreError>,
     },
     #[error("appliance database initialization failed: {source}")]
     RepositoryInitialization {
@@ -166,7 +166,7 @@ pub enum AdminError {
     OutboundSecretWrite {
         key: String,
         #[source]
-        source: Box<auth_framework::AuthError>,
+        source: Box<plasm_agent_core::secret_store::SecretStoreError>,
     },
     #[error("binding values invalid for `{entry_id}`: {source}")]
     BindingValues {
@@ -253,7 +253,7 @@ pub struct ApplianceOauthUpsert {
 pub async fn appliance_oauth_upsert_provider(
     repo: Option<&McpConfigRepository>,
     catalog: &OauthLinkCatalog,
-    storage: &Arc<dyn AuthStorage>,
+    storage: &Arc<dyn SecretStore>,
     u: ApplianceOauthUpsert,
 ) -> Result<(), AdminError> {
     let entry_id = u.entry_id.trim();
@@ -351,7 +351,7 @@ pub struct OAuthBindingStatus {
 }
 
 pub async fn oauth_binding_status(
-    storage: &Arc<dyn AuthStorage>,
+    storage: &Arc<dyn SecretStore>,
     entry_id: &str,
 ) -> Result<OAuthBindingStatus, AdminError> {
     let key = oauth_binding_kv_key(entry_id);
@@ -453,7 +453,7 @@ pub struct DeviceBindOutcome {
 pub async fn appliance_oauth_device_bind(
     entry_id: &str,
     catalog: &OauthLinkCatalog,
-    storage: &Arc<dyn AuthStorage>,
+    storage: &Arc<dyn SecretStore>,
     scopes: &[String],
     max_wait: Duration,
     on_start: impl FnOnce(&DeviceBindPrompt),
@@ -574,7 +574,7 @@ pub async fn appliance_oauth_device_bind(
 #[cfg(test)]
 mod admin_error_tests {
     use super::*;
-    use auth_framework::storage::MemoryStorage;
+    use plasm_agent_core::secret_store::MemorySecretStore;
     use std::error::Error;
 
     #[test]
@@ -610,9 +610,7 @@ mod admin_error_tests {
 
     #[test]
     fn boxed_auth_write_preserves_key_display_and_nested_storage_source() {
-        let source = auth_framework::AuthError::Storage(
-            auth_framework::errors::StorageError::BackendUnavailable,
-        );
+        let source = plasm_agent_core::secret_store::SecretStoreError::BackendUnavailable;
         let display = format!("OAuth token write failed for `fixture-key`: {source}");
         let error = AdminError::TokenWrite {
             key: "fixture-key".into(),
@@ -622,33 +620,29 @@ mod admin_error_tests {
         let source = error
             .source()
             .unwrap()
-            .downcast_ref::<Box<auth_framework::AuthError>>()
+            .downcast_ref::<Box<plasm_agent_core::secret_store::SecretStoreError>>()
             .unwrap()
             .as_ref();
         assert!(matches!(
             source,
-            auth_framework::AuthError::Storage(
-                auth_framework::errors::StorageError::BackendUnavailable
-            )
+            plasm_agent_core::secret_store::SecretStoreError::BackendUnavailable
         ));
-        assert!(source
-            .source()
-            .unwrap()
-            .is::<auth_framework::errors::StorageError>());
+        assert!(source.source().is_none());
         let AdminError::TokenWrite { key, source } = error else {
             panic!("expected token write error");
         };
         assert_eq!(key, "fixture-key");
-        assert!(matches!(*source, auth_framework::AuthError::Storage(_)));
+        assert!(matches!(
+            *source,
+            plasm_agent_core::secret_store::SecretStoreError::BackendUnavailable
+        ));
     }
 
     #[test]
     fn boxed_binding_store_preserves_entry_and_concrete_cause_chain() {
         use plasm_agent_core::binding_store::BindingStoreError;
         let source = BindingStoreError::KvStore {
-            source: auth_framework::AuthError::Storage(
-                auth_framework::errors::StorageError::BackendUnavailable,
-            ),
+            source: plasm_agent_core::secret_store::SecretStoreError::BackendUnavailable,
         };
         let display = format!("binding store failed for `fixture`: {source}");
         let error = AdminError::BindingStore {
@@ -665,12 +659,9 @@ mod admin_error_tests {
         let auth = source
             .source()
             .unwrap()
-            .downcast_ref::<auth_framework::AuthError>()
+            .downcast_ref::<plasm_agent_core::secret_store::SecretStoreError>()
             .unwrap();
-        assert!(auth
-            .source()
-            .unwrap()
-            .is::<auth_framework::errors::StorageError>());
+        assert!(auth.source().is_none());
         let AdminError::BindingStore { entry_id, source } = error else {
             panic!("expected binding store error");
         };
@@ -680,7 +671,7 @@ mod admin_error_tests {
 
     #[tokio::test]
     async fn absent_binding_is_data_but_corrupt_pointer_preserves_parse_cause() {
-        let storage = Arc::new(MemoryStorage::new()) as Arc<dyn AuthStorage>;
+        let storage = Arc::new(MemorySecretStore::new()) as Arc<dyn SecretStore>;
         let status = oauth_binding_status(&storage, "matrix").await.unwrap();
         assert!(!status.bound);
         assert!(status.warning.is_none());
@@ -701,7 +692,7 @@ mod admin_error_tests {
 
     #[tokio::test]
     async fn incomplete_pointer_is_semantic_and_invalid_token_keeps_bound_status() {
-        let storage = Arc::new(MemoryStorage::new()) as Arc<dyn AuthStorage>;
+        let storage = Arc::new(MemorySecretStore::new()) as Arc<dyn SecretStore>;
         storage
             .store_kv(&oauth_binding_kv_key("matrix"), b"{}", None)
             .await

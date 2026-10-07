@@ -594,8 +594,8 @@ pub(super) async fn live_materialize_io(
             // Backend acquisition is bounded by host_page above. Do not apply that
             // implicit budget a second time to an already-materialized collection:
             // it hides rows from downstream algebra and mislabels a page Complete.
-            // Presentation previews belong to the renderer; only an explicit
-            // page_size requests a synthetic cursor over these acquired rows.
+            // Presentation paging happens after execution, through typed publication.
+            // Only an explicit page_size changes this execution-stage observation.
             if let Some(cap) = surface.page_size.filter(|_| {
                 !matches!(
                     surface.pushed_read_budget,
@@ -625,11 +625,13 @@ pub(super) async fn live_materialize_io(
                 ctx.session_id,
                 scoped_es.cgs.as_ref(),
             );
+            let mut computation_source = result.clone();
+            computation_source.collection = result.collection.computation_source().clone();
             let row_source = rehydrator
-                .materialize_surface_rows(entity_type, &result)
+                .materialize_surface_rows(entity_type, &computation_source)
                 .await;
             let identity_entities = rehydrator
-                .resolve_source_parents(entity_type, &result)
+                .resolve_source_parents(entity_type, &computation_source)
                 .await
                 .map_err(|diagnostic| {
                     step_failure("surface_identity_resolution_failed", diagnostic.to_string())

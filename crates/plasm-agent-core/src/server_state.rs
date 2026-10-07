@@ -4,7 +4,7 @@
 //!
 //! The surface is split for OSS vs hosted SaaS: [`PlasmOssHostState`] is the data-plane / executor
 //! (discovery, execute, traces, optional incoming-auth for execute identity). [`PlasmSaaSHostExtension`]
-//! holds MCP policy sqlx + transport API keys and (when hosted) auth-framework + tenant binding.
+//! holds MCP policy sqlx + transport API keys and (when hosted) credential storage + tenant binding.
 //! OSS `plasm-mcp` may populate **only** the MCP repository + API key registry. Outbound OAuth KV/catalog live on
 //! [`PlasmOssHostState`] so OSS HTTP can expose the same routes without pulling in Phoenix.
 
@@ -23,14 +23,13 @@ use crate::oauth_link_catalog::OauthLinkCatalog;
 use crate::operation_persist::OperationPersistScheduler;
 use crate::operation_progress::OperationProgressHub;
 use crate::run_artifacts::RunArtifactStore;
+use crate::secret_store::SecretStore;
 use crate::session_coordination::SessionCoordination;
 use crate::session_graph_persistence::SessionGraphPersistence;
 use crate::session_identity::LogicalSessionRegistry;
 use crate::tenant_binding::TenantBindingStore;
 use crate::trace_hub::{TraceHub, TraceHubConfig};
 use crate::trace_sink_emit::TraceIngestClient;
-use auth_framework::storage::AuthStorage;
-use auth_framework::AuthFramework;
 use dashmap::DashMap;
 use plasm_runtime::{EnvSecretProvider, ExecutionEngine, ExecutionMode, SecretProvider};
 use std::ops::Deref;
@@ -67,7 +66,7 @@ pub struct PlasmOssHostState {
     pub session_graph_persistence: Option<Arc<SessionGraphPersistence>>,
     /// When set, HTTP routes run [`crate::incoming_auth::incoming_auth_http_middleware`].
     pub incoming_auth: Option<Arc<IncomingAuthVerifier>>,
-    /// CLI device-login marker ([`crate::incoming_auth_device`] sessions live in auth-framework KV).
+    /// CLI device-login marker ([`crate::incoming_auth_device`] sessions live in Plasm credential KV).
     pub incoming_auth_device: Arc<IncomingAuthDeviceStore>,
     /// MCP transport session traces (demo/debug; in-memory).
     pub trace_hub: Arc<TraceHub>,
@@ -88,7 +87,7 @@ pub struct PlasmOssHostState {
     /// Reused HTTP client for trace sink read proxy (`GET /v1/traces*`).
     pub trace_sink_http: reqwest::Client,
     /// Auth-framework KV store for outbound OAuth pending sessions and `hosted_kv` secrets (optional on OSS).
-    pub auth_storage: Option<Arc<dyn AuthStorage>>,
+    pub auth_storage: Option<Arc<dyn SecretStore>>,
     /// OAuth2 catalog for outbound account linking (`/internal/oauth-link/...`, `/oauth/link/callback`).
     pub oauth_link_catalog: Option<Arc<OauthLinkCatalog>>,
     /// Hosted KV + catalog outbound resolver for `hosted_kv` in CGS.
@@ -111,11 +110,9 @@ pub struct PlasmOssHostState {
 /// Hosted / control-plane state: same process as [`PlasmOssHostState`], but injected after OSS bootstrap.
 #[derive(Clone)]
 pub struct PlasmSaaSHostExtension {
-    /// Initialized in HTTP/MCP mode when the hosted bundle is enabled.
-    pub auth_framework: Option<Arc<tokio::sync::Mutex<AuthFramework>>>,
     /// Tenant MCP configuration (sqlx Postgres). When `None`, MCP bind/policy is disabled.
     pub mcp_config_repository: Option<Arc<McpConfigRepository>>,
-    /// Streamable HTTP MCP: API key verification (backed by [`AuthStorage`]).
+    /// Streamable HTTP MCP: API key verification (backed by [`SecretStore`]).
     pub mcp_transport_auth: Option<Arc<dyn McpTransportAuth>>,
     /// Incoming-auth subject → tenant + workspace/project slugs (Postgres).
     pub tenant_binding: Option<Arc<TenantBindingStore>>,
@@ -209,12 +206,8 @@ impl PlasmHostState {
         self.saas.as_ref()?.mcp_transport_auth.as_ref()
     }
 
-    pub fn auth_storage(&self) -> Option<&Arc<dyn AuthStorage>> {
+    pub fn auth_storage(&self) -> Option<&Arc<dyn SecretStore>> {
         self.oss.auth_storage.as_ref()
-    }
-
-    pub fn auth_framework(&self) -> Option<&Arc<tokio::sync::Mutex<AuthFramework>>> {
-        self.saas.as_ref()?.auth_framework.as_ref()
     }
 
     /// OAuth account-linking catalog when outbound OAuth is wired on [`PlasmOssHostState`].

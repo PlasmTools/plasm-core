@@ -15,7 +15,7 @@ pub use in_band_fidelity::{InBandSummaryReport, SummaryFidelityLoss};
 use presentation_fields::lossy_summary_field_names;
 pub(crate) use presentation_fields::LossySummaryFieldNames;
 mod observation;
-pub(crate) use observation::{render_observation, RowObservation};
+pub(crate) use observation::{render_observation, RenderedObservation, RowObservation};
 #[cfg(test)]
 use summary::format_result_tsv_with_cgs;
 
@@ -143,6 +143,12 @@ pub fn http_execute_results_value(result: &ExecutionResult) -> serde_json::Value
         "rows": rows,
         "operations": operations,
         "coverage": result.coverage().as_str(),
+        "delivery": {
+            "start": result.collection.delivery_range().start,
+            "end": result.collection.delivery_range().end,
+            "observed_rows": result.collection.count(),
+            "next_run_ref": result.paging_handle.as_ref().map(|handle| handle.as_str()),
+        },
     })
 }
 

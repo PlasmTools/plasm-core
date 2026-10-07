@@ -109,6 +109,10 @@ impl ExecutionEngine {
                     None,
                 );
                 let decoded = decode_entities_with_cgs(&decoder, &response, Some(cgs))?;
+                super::entity_decoder::validate_declared_output_cardinality(
+                    capability,
+                    decoded.len(),
+                )?;
 
                 let timestamp = current_timestamp();
                 let entities: Vec<CachedEntity> = decoded
@@ -419,7 +423,9 @@ impl ExecutionEngine {
                     &identity_ambient,
                     rid,
                 );
-                let decoded = if capability.provides.is_empty() {
+                let decoded = if capability.provides.is_empty()
+                    && capability.declared_entity_output().is_none()
+                {
                     // True side-effect Actions may return empty/opaque bodies.
                     decode_entities_with_cgs(&decoder, &response, Some(cgs)).unwrap_or_default()
                 } else {
@@ -427,6 +433,10 @@ impl ExecutionEngine {
                     // access_token) for downstream hole fill / CML env — never swallow decode failure.
                     decode_entities_with_cgs(&decoder, &response, Some(cgs))?
                 };
+                super::entity_decoder::validate_declared_output_cardinality(
+                    capability,
+                    decoded.len(),
+                )?;
                 if let Some(identity) = &request_identity {
                     identity.validate_rows(invoke.target.entity_type.as_str(), decoded.len())?;
                 }

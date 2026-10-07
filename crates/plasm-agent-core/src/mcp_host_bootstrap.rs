@@ -325,7 +325,7 @@ pub async fn attach_outbound_oauth_if_enabled_oss(state: &mut PlasmHostState) {
     if !outbound_oauth_enabled_from_env() {
         return;
     }
-    match crate::auth_framework_host::init_standalone_auth_storage().await {
+    match crate::secret_store_host::init_standalone_auth_storage().await {
         Ok(storage) => {
             let catalog = Arc::new(crate::oauth_link_catalog::OauthLinkCatalog::from_env());
             let outbound = Arc::new(
@@ -361,27 +361,27 @@ pub struct OssHostBootstrap {
     pub mcp_policy_attach: McpPolicyAttachOutcome,
 }
 
-/// Ensure encrypted auth KV, [`auth_framework::AuthFramework`], and MCP API-key registry (idempotent).
-pub async fn ensure_auth_framework_on_host(
+/// Ensure credential storage and the MCP API-key registry (idempotent).
+pub async fn ensure_secret_store_on_host(
     state: &mut PlasmHostState,
-) -> Result<(), auth_framework::AuthError> {
-    if state.auth_framework().is_some() {
+) -> Result<(), crate::secret_store::SecretStoreError> {
+    if state.auth_storage().is_some()
+        && state
+            .saas
+            .as_ref()
+            .is_some_and(|extension| extension.mcp_transport_auth.is_some())
+    {
         return Ok(());
     }
-    let (storage, framework, mcp_api_keys) = match state.oss.auth_storage.clone() {
-        Some(existing) => {
-            let framework =
-                crate::auth_framework_host::init_auth_framework_on_storage(existing.clone())
-                    .await?;
-            let mcp_api_keys = Arc::new(crate::mcp_api_key_registry::McpApiKeyRegistry::new(
-                existing.clone(),
-            ));
-            (existing, framework, mcp_api_keys)
-        }
-        None => crate::auth_framework_host::init_standalone_auth_bundle().await?,
+    let storage = match state.oss.auth_storage.clone() {
+        Some(storage) => storage,
+        None => crate::secret_store_host::init_standalone_auth_storage().await?,
     };
+    let registry = Arc::new(crate::mcp_api_key_registry::McpApiKeyRegistry::new(
+        storage.clone(),
+    ));
     state.oss.auth_storage = Some(storage);
-    attach_auth_framework_to_host(state, framework, mcp_api_keys);
+    attach_secret_store_to_host(state, registry);
     Ok(())
 }
 
@@ -402,10 +402,10 @@ pub async fn attach_oss_mcp_policy_store(state: &mut PlasmHostState) -> McpPolic
         }
     };
 
-    if let Err(e) = ensure_auth_framework_on_host(state).await {
+    if let Err(e) = ensure_secret_store_on_host(state).await {
         tracing::warn!(
             error = %e,
-            "OSS plasm-mcp: auth-framework init failed; MCP policy attached but /v1/auth/status will return 503"
+            "OSS plasm-mcp: credential storage init failed; MCP authentication remains unavailable"
         );
     }
 
@@ -416,11 +416,8 @@ pub async fn attach_oss_mcp_policy_store(state: &mut PlasmHostState) -> McpPolic
         }
         None => {
             let mut saas = crate::server_state::PlasmSaaSHostExtension {
-                auth_framework: None,
                 mcp_config_repository: Some(Arc::new(repo)),
-                mcp_transport_auth: Some(
-                    crate::auth_framework_host::mcp_api_key_registry_memory_only(),
-                ),
+                mcp_transport_auth: None,
                 tenant_binding: None,
                 flow_policy_repository: None,
             };
@@ -434,20 +431,17 @@ pub async fn attach_oss_mcp_policy_store(state: &mut PlasmHostState) -> McpPolic
     McpPolicyAttachOutcome::Attached
 }
 
-/// Wire [`AuthFramework`] (and refresh MCP API-key registry) on an existing host.
-pub fn attach_auth_framework_to_host(
+/// Attach the MCP API-key registry to a host.
+pub fn attach_secret_store_to_host(
     state: &mut PlasmHostState,
-    framework: Arc<tokio::sync::Mutex<auth_framework::AuthFramework>>,
     mcp_api_keys: Arc<crate::mcp_api_key_registry::McpApiKeyRegistry>,
 ) {
     match &mut state.saas {
         Some(saas) => {
-            saas.auth_framework = Some(framework);
             saas.mcp_transport_auth = Some(mcp_api_keys);
         }
         None => {
             state.saas = Some(crate::server_state::PlasmSaaSHostExtension {
-                auth_framework: Some(framework),
                 mcp_config_repository: None,
                 mcp_transport_auth: Some(mcp_api_keys),
                 tenant_binding: None,
@@ -506,10 +500,10 @@ pub async fn bootstrap_plasm_host_state_oss(
     .await?;
     attach_outbound_oauth_if_enabled_oss(&mut app_state).await;
     let mcp_policy_attach = attach_oss_mcp_policy_store(&mut app_state).await;
-    if let Err(e) = ensure_auth_framework_on_host(&mut app_state).await {
+    if let Err(e) = ensure_secret_store_on_host(&mut app_state).await {
         tracing::warn!(
             error = %e,
-            "OSS host bootstrap: auth-framework init failed; /v1/auth/status will return 503"
+            "OSS host bootstrap: credential storage init failed; /v1/auth/status will return 503"
         );
     }
     Ok(OssHostBootstrap {

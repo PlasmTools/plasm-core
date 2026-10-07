@@ -82,6 +82,18 @@ pub fn normalize_query_expr_to_rowset(
         .filter(|s| !s.is_empty())
         .unwrap_or(entry_id);
 
+    let input = crate::Value::Object(
+        selection
+            .0
+            .iter()
+            .map(|binding| (binding.slot.to_string(), binding.value.to_value()))
+            .collect(),
+    );
+    crate::capability_input::validate_query_source_constraints(cap, &input, cgs).map_err(
+        |source| RowsetNormalizeError::InputContract {
+            source: Box::new(source),
+        },
+    )?;
     Ok(ResolvedRowset {
         source: RowSource::External {
             qualified_entity: QualifiedEntityKey::new(effective_entry, query.entity.clone()),

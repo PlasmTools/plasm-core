@@ -113,12 +113,23 @@ pub fn hydrate_plan_run_from_artifact_formatted(
         request_fingerprints: doc.request_fingerprints.clone(),
     };
     let step = published_step_from_artifact_doc(doc, es, Some(artifact))?;
-    let node_results = doc
-        .entities
+    let out = publish_plasm_result_steps(
+        es,
+        None,
+        Some(es.cgs.as_ref()),
+        None,
+        std::slice::from_ref(&step),
+    )
+    .map_err(|error| OperationError::OperationFailed {
+        handle: String::new(),
+        error: error.into(),
+    })?;
+    let node_results = out.delivered_steps[0]
+        .result
+        .entities()
         .iter()
         .map(CachedEntity::payload_to_json)
         .collect();
-    let out = publish_plasm_result_steps(Some(es.cgs.as_ref()), None, std::slice::from_ref(&step));
     Ok((out, node_results))
 }
 

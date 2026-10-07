@@ -1791,9 +1791,18 @@ mod tests {
     }
     #[tokio::test]
     async fn native_paging_preserves_origin_and_rows_after_federation_expands() {
+        assert_native_paging("e1.query()", false).await;
+    }
+
+    #[tokio::test]
+    async fn native_complete_computed_rowset_uses_the_same_paging_protocol() {
+        assert_native_paging("e1.query().select('id', 'n')", true).await;
+    }
+
+    async fn assert_native_paging(expression: &str, complete_source: bool) {
         use async_trait::async_trait;
         use plasm_compile::CompiledRequest;
-        struct Pages;
+        struct Pages(Arc<std::sync::atomic::AtomicUsize>);
         #[async_trait]
         impl HttpTransport for Pages {
             async fn send_compiled_http(
@@ -1808,6 +1817,7 @@ mod tests {
                     "https://origin.example",
                     "continuation dispatched to wrong catalog"
                 );
+                self.0.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
                 let offset = request
                     .query
                     .as_ref()
@@ -1860,14 +1870,18 @@ mod tests {
                 }],
             )
             .unwrap();
+        let dispatches = Arc::new(std::sync::atomic::AtomicUsize::new(0));
         let dry = engine
-            .dry_run("class Read(Program):\n    def build(self):\n        return e1.query()\n")
+            .dry_run(&format!(
+                "class Read(Program):\n    def build(self):\n        return {expression}\n"
+            ))
             .await
             .unwrap();
         let first = engine
-            .run_plan_live(&dry.plan_commit_ref, Arc::new(Pages))
+            .run_plan_live(&dry.plan_commit_ref, Arc::new(Pages(dispatches.clone())))
             .await
             .unwrap();
+        assert!(first.ok, "{} {:?}", first.message, first.failure_json);
         let meta: serde_json::Value =
             serde_json::from_str(first.meta_json.as_deref().unwrap()).unwrap();
         assert!(meta["plasm"]["paging"][0]["next_run_ref"].is_string());
@@ -1880,6 +1894,7 @@ mod tests {
                 }],
             )
             .unwrap();
+        let initial_dispatches = dispatches.load(std::sync::atomic::Ordering::SeqCst);
         let mut current = first;
         let mut rows = Vec::new();
         let mut completed = false;
@@ -1890,17 +1905,31 @@ mod tests {
             let meta: serde_json::Value =
                 serde_json::from_str(current.meta_json.as_deref().unwrap()).unwrap();
             let next = meta["plasm"]["paging"][0]["next_run_ref"].as_str();
-            if page["coverage"] == "complete" {
-                assert!(
-                    next.is_none(),
-                    "complete results must not advertise more pages"
-                );
+            if next.is_none() {
+                assert_eq!(page["coverage"], "complete");
                 completed = true;
                 break;
             }
-            assert_eq!(page["coverage"], "partial");
-            let next = next.expect("every partial backend page must publish its continuation");
-            current = engine.run_plan_live(next, Arc::new(Pages)).await.unwrap();
+            assert_eq!(
+                page["coverage"],
+                if complete_source {
+                    "complete"
+                } else {
+                    "partial"
+                }
+            );
+            let next = next.expect("every undelivered page must publish its continuation");
+            current = engine
+                .run_plan_live(next, Arc::new(Pages(dispatches.clone())))
+                .await
+                .unwrap();
+        }
+        if complete_source {
+            assert_eq!(
+                dispatches.load(std::sync::atomic::Ordering::SeqCst),
+                initial_dispatches,
+                "delivery continuation must not re-execute acquisition"
+            );
         }
         assert!(
             completed,

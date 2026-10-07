@@ -1009,7 +1009,9 @@ pub fn capability_is_zero_arity_invoke(cap: &CapabilitySchema) -> bool {
                 && !schema.validation.cross_field_rules.iter().any(|rule| {
                     matches!(
                         rule.rule_type,
-                        CrossFieldRuleType::AtLeastOne | CrossFieldRuleType::ExactlyOne
+                        CrossFieldRuleType::AtLeastOne
+                            | CrossFieldRuleType::ExactlyOne
+                            | CrossFieldRuleType::RequiredAll
                     )
                 })
         })
@@ -1564,13 +1566,24 @@ impl<'de> Deserialize<'de> for InputValidation {
 
 /// Cross-field validation rules
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct CrossFieldRule {
+    /// Apply this rule only when the discriminator has this concrete value.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub when: Option<InputValueCondition>,
     /// Type of cross-field validation
     pub rule_type: CrossFieldRuleType,
     /// Fields involved in this rule
     pub fields: Vec<String>,
     /// Error message if rule fails
     pub error_message: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct InputValueCondition {
+    pub field: String,
+    pub equals: crate::Value,
 }
 
 /// Types of cross-field validation rules
@@ -1587,6 +1600,10 @@ pub enum CrossFieldRuleType {
     Implies,
     /// Fields are mutually exclusive
     MutuallyExclusive,
+    /// Every listed field must be present.
+    RequiredAll,
+    /// No listed field may be present.
+    Forbidden,
 }
 
 fn default_empty_json_object() -> serde_json::Value {
@@ -1647,7 +1664,7 @@ pub enum OutputType {
 ///
 /// For each secret-bearing slot on other variants, declare **at least one** non-empty source:
 /// - `env` — environment variable name (local dev / operator-managed)
-/// - `hosted_kv` — auth-framework `kv_store` key path (must start with `plasm:outbound:`)
+/// - `hosted_kv` — Plasm credential `kv_store` key path (must start with `plasm:outbound:`)
 ///
 /// For `api_key_header`, `api_key_query`, `bearer_token`, and `oauth_bearer`, **both** may be set: the runtime
 /// prefers a non-empty `hosted_kv` value (e.g. set from `plasm-server`) and falls back to `env`
@@ -1666,7 +1683,7 @@ pub enum AuthScheme {
         /// Name of the environment variable holding the key value
         #[serde(default)]
         env: Option<String>,
-        /// auth-framework KV key for the stored secret
+        /// Plasm credential KV key for the stored secret
         #[serde(default)]
         hosted_kv: Option<String>,
     },
@@ -1678,7 +1695,7 @@ pub enum AuthScheme {
         /// Name of the environment variable holding the key value
         #[serde(default)]
         env: Option<String>,
-        /// auth-framework KV key for the stored secret
+        /// Plasm credential KV key for the stored secret
         #[serde(default)]
         hosted_kv: Option<String>,
     },
@@ -1688,7 +1705,7 @@ pub enum AuthScheme {
         /// Name of the environment variable holding the bearer token
         #[serde(default)]
         env: Option<String>,
-        /// auth-framework KV key for the stored token
+        /// Plasm credential KV key for the stored token
         #[serde(default)]
         hosted_kv: Option<String>,
         /// When `true`, allows omitting both `env` and `hosted_kv` in the catalog — operators rely on a
@@ -1715,13 +1732,13 @@ pub enum AuthScheme {
         /// Env var holding the OAuth2 client ID
         #[serde(default)]
         client_id_env: Option<String>,
-        /// auth-framework KV key for the client ID
+        /// Plasm credential KV key for the client ID
         #[serde(default)]
         client_id_hosted_kv: Option<String>,
         /// Env var holding the OAuth2 client secret
         #[serde(default)]
         client_secret_env: Option<String>,
-        /// auth-framework KV key for the client secret
+        /// Plasm credential KV key for the client secret
         #[serde(default)]
         client_secret_hosted_kv: Option<String>,
         /// Optional list of scopes to request
@@ -3741,6 +3758,96 @@ impl CGS {
 
     fn validate_capability_input_lanes(&self) -> Result<(), SchemaError> {
         for (cap_name, cap) in &self.capabilities {
+            if !matches!(cap.kind, CapabilityKind::Query | CapabilityKind::Search)
+                && !cap.inputs.input_validation.cross_field_rules.is_empty()
+            {
+                return Err(crate::error::SchemaConstraintError::InputRule {
+                    capability: cap_name.to_string(),
+                    reason: "source input_validation requires query/search; invocation rules belong on arguments/payload".into(),
+                }.into());
+            }
+            let source_schema = InputSchema {
+                input_type: InputType::Object {
+                    fields: cap.query_surface_fields().cloned().collect(),
+                    additional_fields: false,
+                },
+                validation: cap.inputs.input_validation.clone(),
+                description: None,
+                examples: vec![],
+            };
+            for schema in cap
+                .invocation_input_schemas()
+                .chain(std::iter::once(&source_schema))
+            {
+                let fields = input_schema_top_level_fields(schema);
+                for rule in &schema.validation.cross_field_rules {
+                    let invalid = |reason: String| -> SchemaError {
+                        crate::error::SchemaConstraintError::InputRule {
+                            capability: cap_name.to_string(),
+                            reason,
+                        }
+                        .into()
+                    };
+                    if rule.fields.is_empty() {
+                        return Err(invalid("rule fields must be nonempty".into()));
+                    }
+                    for name in &rule.fields {
+                        if !fields.iter().any(|f| f.name == *name) {
+                            return Err(invalid(format!(
+                                "rule names undeclared lane input `{name}`"
+                            )));
+                        }
+                    }
+                    if let Some(condition) = &rule.when {
+                        let field = fields
+                            .iter()
+                            .find(|f| f.name == condition.field)
+                            .ok_or_else(|| {
+                                invalid(format!(
+                                    "condition names undeclared lane input `{}`",
+                                    condition.field
+                                ))
+                            })?;
+                        if !field.required {
+                            return Err(invalid("condition discriminator must be required".into()));
+                        }
+                        if !matches!(
+                            condition.equals,
+                            crate::Value::String(_)
+                                | crate::Value::Bool(_)
+                                | crate::Value::Integer(_)
+                        ) {
+                            return Err(invalid(
+                                "condition equals must be a concrete string, boolean or integer"
+                                    .into(),
+                            ));
+                        }
+                        match &field.wire {
+                            InputFieldWire::Registry(_) => {
+                                let named = field
+                                    .named_value(self)
+                                    .map_err(|e| invalid(e.to_string()))?;
+                                crate::capability_input::validate_concrete_named_value(
+                                    &condition.equals,
+                                    named,
+                                    &condition.field,
+                                    self,
+                                )
+                                .map_err(|e| invalid(e.to_string()))?;
+                            }
+                            InputFieldWire::Inline(ty) => {
+                                crate::capability_input::validate_input_type(
+                                    &condition.equals,
+                                    ty,
+                                    &condition.field,
+                                    self,
+                                )
+                                .map_err(|e| invalid(e.to_string()))?;
+                            }
+                        }
+                    }
+                }
+            }
             if matches!(cap.kind, CapabilityKind::Query | CapabilityKind::Search)
                 && (cap.inputs.arguments.is_some() || cap.inputs.payload.is_some())
             {
@@ -5838,6 +5945,14 @@ impl CGS {
 }
 
 impl CapabilitySchema {
+    /// Entity authority and cardinality explicitly declared for an operation result.
+    pub fn declared_entity_output(&self) -> Option<(&str, Cardinality)> {
+        match &self.output_schema.as_ref()?.output_type {
+            OutputType::Entity { entity_type } => Some((entity_type, Cardinality::One)),
+            OutputType::Collection { entity_type, .. } => Some((entity_type, Cardinality::Many)),
+            _ => None,
+        }
+    }
     /// Whether this capability is a deterministic transform (default true when unset).
     pub fn is_deterministic(&self) -> bool {
         self.deterministic.unwrap_or(true)

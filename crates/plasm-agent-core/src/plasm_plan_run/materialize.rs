@@ -179,6 +179,7 @@ pub(crate) async fn materialize_synthetic_node(
         let first = full_result.collection.delivery(0..page_size)?;
         let handle = es.register_synthetic_paging_continuation(
             crate::execute_session::SyntheticPageCursor {
+                kind: crate::execute_session::SyntheticPageKind::Expression,
                 node_id: node.id().as_str().to_string(),
                 qualified_entity: crate::plasm_plan::QualifiedEntityKey {
                     entry_id: entry_id.to_string(),

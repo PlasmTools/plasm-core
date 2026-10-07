@@ -6,7 +6,7 @@
 use std::collections::{BTreeSet, HashMap, HashSet};
 use std::sync::Arc;
 
-use auth_framework::errors::AuthError;
+use crate::secret_store::SecretStoreError;
 use plasm_core::discovery::{CgsCatalog, CgsRegistry};
 use plasm_core::{
     catalog_connect_profile, AuthScheme, CatalogAuthCapability, CatalogConnectProfile,
@@ -63,7 +63,7 @@ pub enum McpConfigAdminError {
     #[error(transparent)]
     Repo(#[from] McpConfigRepositoryError),
     #[error(transparent)]
-    Auth(#[from] AuthError),
+    Auth(#[from] SecretStoreError),
     #[error("entry_id must be non-empty")]
     EmptyEntryId,
     #[error("detail.id missing")]

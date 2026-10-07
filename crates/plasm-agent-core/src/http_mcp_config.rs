@@ -3,7 +3,7 @@
 //! Mounted from OSS HTTP when [`super::server_state::PlasmHostState::mcp_config_repository`] is set,
 //! and from the hosted router (`plasm-saas`). Authenticated with [`super::control_plane_http`].
 
-use auth_framework::errors::AuthError;
+use crate::secret_store::SecretStoreError;
 use axum::extract::{Extension, Path, Query};
 use axum::http::StatusCode;
 use axum::routing::{get, post};
@@ -268,10 +268,10 @@ fn require_mcp_key_name(s: String) -> Result<String, StatusCode> {
     Ok(t.chars().take(128).collect())
 }
 
-fn map_mcp_key_err(e: AuthError) -> StatusCode {
+fn map_mcp_key_err(e: SecretStoreError) -> StatusCode {
     match e {
-        AuthError::UserNotFound => StatusCode::NOT_FOUND,
-        AuthError::InvalidInput(_) | AuthError::InvalidRequest(_) => StatusCode::BAD_REQUEST,
+        SecretStoreError::NotFound => StatusCode::NOT_FOUND,
+        SecretStoreError::InvalidInput(_) => StatusCode::BAD_REQUEST,
         _ => StatusCode::INTERNAL_SERVER_ERROR,
     }
 }

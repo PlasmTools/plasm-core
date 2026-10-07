@@ -601,6 +601,20 @@ Plasm does **not** synthesize an implicit get-by-id from `id_field` alone — ob
 
 #### API shape rules (vendor XOR / exclusivity)
 
+Query/search capabilities declare `input_validation.cross_field_rules` over their
+source inputs. A rule may have `when: {field: mode, equals: bounded}` to condition
+it on a required discriminator. CGS validates the discriminator value against its
+declared type/domain and rejects undeclared rule fields. `required_all` requires
+every listed field; `forbidden` rejects any supplied listed field. Existing
+presence rules may also use `when`. Conditions require concrete string, boolean,
+or integer values. Teaching placeholders defer validation; concrete source
+combinations are checked during admission and again before execution.
+
+For example, a source with `mode: ranked | bounded` can forbid `[lower, upper]`
+when ranked, require `[owner]` when bounded, and forbid `[terms]` when bounded.
+These are CGS type contracts, not transport instructions to silently discard
+unsupported inputs. The served Python teaching includes each source contract.
+
 When an upstream API rejects a **static** parameter combination (GitHub `pr_create` refuses `title` together with `issue`), stamp that in the catalog — do **not** special-case it in the host.
 
 1. Keep the conflicting slots on the appropriate **lanes** (`selection` / `arguments` / `payload`; both typically `required: false`).

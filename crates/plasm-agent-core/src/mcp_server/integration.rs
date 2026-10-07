@@ -1116,6 +1116,7 @@ async fn execute_mcp_live_run_page_handle_synthetic_continuation() {
         ));
     }
     let cursor = SyntheticPageCursor {
+        kind: crate::execute_session::SyntheticPageKind::Expression,
         node_id: "items".into(),
         qualified_entity: crate::plasm_plan::QualifiedEntityKey {
             entry_id: fx.es.entry_id.clone(),
@@ -1321,6 +1322,7 @@ async fn plasm_run_page_handle_through_handler() {
         ));
     }
     let cursor = SyntheticPageCursor {
+        kind: crate::execute_session::SyntheticPageKind::Expression,
         node_id: "items".into(),
         qualified_entity: crate::plasm_plan::QualifiedEntityKey {
             entry_id: es.entry_id.clone(),

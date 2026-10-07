@@ -657,6 +657,10 @@ pub(crate) async fn run_executable_plan_phased(
             });
         }
         let out = crate::http_execute::publish_with_shared_meta_index(
+            es,
+            trace
+                .as_ref()
+                .and_then(|t| t.logical_session_ref.as_deref()),
             es.cgs.as_ref().into(),
             meta_index_for_publish,
             &steps,
@@ -664,13 +668,7 @@ pub(crate) async fn run_executable_plan_phased(
                 .as_ref()
                 .unwrap_or(&crate::mcp_run_markdown::McpResultTransportPolicy::default()),
         )
-        .map_err(|diagnostic| {
-            ExecutionFailure::new(
-                plasm_runtime::FailureCause::Runtime,
-                "plan_result_publication_failed",
-                diagnostic.to_string(),
-            )
-        })?;
+        .map_err(ExecutionFailure::from)?;
         let comp = crate::plasm_comp_wire::trace_comp_wire_from_dry(&dry);
         let mut code_plan_run_artifacts = Vec::new();
         let mut evidence_run_ids = Vec::new();
@@ -745,7 +743,7 @@ pub(crate) async fn run_executable_plan_phased(
             code_plan_run_artifacts,
             run_markdown: Some(run_markdown),
             run_plasm_meta,
-            return_steps: steps,
+            return_steps: out.delivered_steps,
             inline_plan_ui: None,
         })
     }

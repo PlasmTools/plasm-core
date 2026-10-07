@@ -1,0 +1,7 @@
+record_query:
+  method: GET
+  path: [{type: literal, value: records}]
+  query:
+    type: object
+    fields:
+    - [mode, {type: var, name: mode}]

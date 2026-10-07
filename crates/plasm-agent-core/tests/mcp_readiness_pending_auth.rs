@@ -7,11 +7,11 @@ mod support;
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
-use auth_framework::storage::{AuthStorage, MemoryStorage};
 use plasm_agent_core::binding_store::entry_secret_present_for_upsert;
 use plasm_agent_core::mcp_config_readiness::catalog_entry_readiness_gaps;
 use plasm_agent_core::mcp_config_repository::McpConfigRepository;
 use plasm_agent_core::mcp_runtime_config::McpRuntimeConfig;
+use plasm_agent_core::secret_store::{MemorySecretStore, SecretStore};
 use plasm_agent_core::traced_pg::PgPool;
 use support::postgres::{integration_postgres_url, INTEGRATION_POSTGRES_URL_ENV};
 use uuid::Uuid;
@@ -145,7 +145,7 @@ async fn pending_auth_config_secret_readiness_succeeds_without_binding_row() {
 
     seed_connected_account(repo.pool(), auth_config_id, &kv_key, owner).await;
 
-    let storage: Arc<dyn AuthStorage> = Arc::new(MemoryStorage::new());
+    let storage: Arc<dyn SecretStore> = Arc::new(MemorySecretStore::new());
     storage
         .store_kv(&kv_key, b"test-api-key-secret", None)
         .await
@@ -183,7 +183,7 @@ async fn pending_auth_config_secret_readiness_fails_without_connected_account() 
 
     let config_id = Uuid::new_v4();
     let auth_config_id = Uuid::new_v4();
-    let storage: Arc<dyn AuthStorage> = Arc::new(MemoryStorage::new());
+    let storage: Arc<dyn SecretStore> = Arc::new(MemorySecretStore::new());
     let cfg = runtime_cfg(config_id, auth_config_id, true);
 
     assert!(
@@ -228,7 +228,7 @@ async fn graph_binding_join_still_resolves_secret_when_binding_row_exists() {
         .await
         .expect("seed config with binding row");
 
-    let storage: Arc<dyn AuthStorage> = Arc::new(MemoryStorage::new());
+    let storage: Arc<dyn SecretStore> = Arc::new(MemorySecretStore::new());
     storage
         .store_kv(&kv_key, b"bound-secret", None)
         .await

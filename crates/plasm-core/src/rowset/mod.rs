@@ -16,6 +16,11 @@ use thiserror::Error;
 
 #[derive(Debug, Clone, PartialEq, Eq, Error)]
 pub enum RowsetNormalizeError {
+    #[error("capability input contract: {source}")]
+    InputContract {
+        #[source]
+        source: Box<crate::TypeError>,
+    },
     #[error(transparent)]
     Capability(Box<crate::query_resolve::QueryCapabilityResolveError>),
     #[error(transparent)]

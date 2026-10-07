@@ -2,6 +2,87 @@ use super::*;
 use crate::plasm_compile::compile_python_program;
 
 #[test]
+fn python_action_output_entity_feeds_a_later_write_without_provides() {
+    on_runtime(async {
+        let (es, host, calls) = fixture_with_export_count(1);
+        let symbols = es.teaching_exposure.as_ref().unwrap().to_symbol_map();
+        let item = symbols.entity_sym_for("fixture", "Item");
+        let export = symbols.method_sym_for("fixture", "Item", "export");
+        let publish = symbols.method_sym_for("fixture", "Item", "publish");
+        let source = format!(
+            "class Export(Program):\n    def build(self):\n        document = {item}.{export}()\n        return {item}.{publish}(content=document.path)\n"
+        );
+        let bundle = compile_python_program(&es, &source).await.unwrap();
+        assert!(
+            calls.lock().unwrap().is_empty(),
+            "admission must not dispatch"
+        );
+        execute(&es, &host, &bundle).await.unwrap();
+        assert_eq!(
+            *calls.lock().unwrap(),
+            vec!["/export", "/publish:/documents/export.txt"]
+        );
+    });
+}
+
+#[test]
+fn python_action_output_collection_executes_as_rows() {
+    on_runtime(async {
+        let (es, host, calls) = fixture_with_export_count(1);
+        let symbols = es.teaching_exposure.as_ref().unwrap().to_symbol_map();
+        let item = symbols.entity_sym_for("fixture", "Item");
+        let export = symbols.method_sym_for("fixture", "Item", "export-many");
+        let source = format!(
+            "class Export(Program):\n    def build(self):\n        return {item}.{export}()\n"
+        );
+        let bundle = compile_python_program(&es, &source).await.unwrap();
+        execute(&es, &host, &bundle).await.unwrap();
+        assert_eq!(*calls.lock().unwrap(), vec!["/exports"]);
+    });
+}
+
+#[test]
+fn python_action_output_collection_does_not_prove_a_singleton() {
+    on_runtime(async {
+        let (es, _, calls) = fixture_with_export_count(1);
+        let symbols = es.teaching_exposure.as_ref().unwrap().to_symbol_map();
+        let item = symbols.entity_sym_for("fixture", "Item");
+        let export = symbols.method_sym_for("fixture", "Item", "export-many");
+        let publish = symbols.method_sym_for("fixture", "Item", "publish");
+        let source = format!(
+            "class Export(Program):\n    def build(self):\n        documents = {item}.{export}()\n        return {item}.{publish}(content=documents.path)\n"
+        );
+        let error = compile_python_program(&es, &source).await.unwrap_err();
+        assert!(error.to_string().contains("binding `documents`"));
+        assert!(calls.lock().unwrap().is_empty());
+    });
+}
+
+#[test]
+fn python_action_output_single_entity_rejects_wrong_row_count_before_downstream_write() {
+    on_runtime(async {
+        for count in [0, 2] {
+            let (es, host, calls) = fixture_with_export_count(count);
+            let symbols = es.teaching_exposure.as_ref().unwrap().to_symbol_map();
+            let item = symbols.entity_sym_for("fixture", "Item");
+            let export = symbols.method_sym_for("fixture", "Item", "export");
+            let publish = symbols.method_sym_for("fixture", "Item", "publish");
+            let source = format!("class Export(Program):\n    def build(self):\n        document = {item}.{export}()\n        return {item}.{publish}(content=document.path)\n");
+            let bundle = compile_python_program(&es, &source).await.unwrap();
+            let error = execute(&es, &host, &bundle).await.unwrap_err();
+            assert_eq!(error.cause, plasm_runtime::FailureCause::ResponseContract);
+            assert_eq!(
+                error.recovery,
+                plasm_runtime::RecoveryDisposition::ReconcileEffects
+            );
+            assert!(error.effects_unresolved);
+            assert_eq!(error.dispatches.len(), 1);
+            assert_eq!(*calls.lock().unwrap(), vec!["/export"]);
+        }
+    });
+}
+
+#[test]
 fn declared_compute_requires_a_lowered_callsite() {
     on_runtime(async {
         let (es, _, calls) = fixture(1);

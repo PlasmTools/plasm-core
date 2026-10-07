@@ -11,6 +11,72 @@ use plasm_runtime::{
 
 use crate::http_execute::PublishedResultStep;
 
+/// Reassemble presentation pages through the public execution protocol for tests
+/// of complete acquisition, hydration and mutation laws. Do not rerun the plan.
+pub async fn drain_presentation_pages(
+    session: &crate::execute_session::ExecuteSession,
+    host: &crate::server_state::PlasmHostState,
+    session_id: &str,
+    source: &ExecutionResult,
+) -> Result<ExecutionResult, plasm_runtime::ExecutionFailure> {
+    let Some(handle) = source.paging_handle.as_ref() else {
+        return Ok(source.clone());
+    };
+    if !matches!(
+        session
+            .peek_synthetic_paging_resume(handle)
+            .map(|cursor| cursor.kind),
+        Some(crate::execute_session::SyntheticPageKind::Delivery { .. })
+    ) {
+        return Ok(source.clone());
+    }
+    let mut rows = source.entities().iter().cloned().collect::<Vec<_>>();
+    let mut next = Some(handle.clone());
+    for _ in 0..source.count().saturating_add(1) {
+        let Some(handle) = next.take() else {
+            break;
+        };
+        let bundle =
+            crate::mcp_server::compile_page_continuation(session, &handle, 0).map_err(|error| {
+                plasm_runtime::ExecutionFailure::new(
+                    plasm_runtime::FailureCause::Program,
+                    "test_page_compile_failed",
+                    error.to_string(),
+                )
+            })?;
+        let page = crate::plasm_plan_run::run_plasm_comp(
+            session,
+            host,
+            &session.prompt_hash,
+            session_id,
+            &bundle,
+            true,
+            None,
+            None,
+            None,
+            None,
+        )
+        .await?;
+        let result = &page.return_steps[0].result;
+        assert!(
+            result.operations.is_empty(),
+            "continuation must not replay mutation receipts"
+        );
+        assert_eq!(
+            result.stats.network_requests, 0,
+            "presentation must not reacquire rows"
+        );
+        rows.extend(result.entities().iter().cloned());
+        next = result.paging_handle.clone();
+    }
+    assert!(next.is_none(), "presentation paging must terminate");
+    let mut full = source.clone();
+    full.collection = source.collection.with_materialization(rows.into())?;
+    full.paging_handle = None;
+    full.has_more = false;
+    Ok(full)
+}
+
 pub fn synthetic_published_result_step(
     row_count: usize,
     artifact: Option<crate::run_artifacts::RunArtifactHandle>,

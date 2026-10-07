@@ -269,7 +269,7 @@ impl From<crate::RuntimeError> for ExecutionFailure {
         }
         let (cause, code) = match &error {
             FieldUnavailable { .. } => (FailureCause::ResponseContract, "field_unavailable"),
-            DecodeError { .. } => (
+            DecodeError { .. } | DeclaredOutputCardinality { .. } => (
                 FailureCause::ResponseContract,
                 "response_contract_violation",
             ),

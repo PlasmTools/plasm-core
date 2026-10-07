@@ -699,7 +699,7 @@ pub(crate) fn update_normal_key(
                             "No hosted API secret slot",
                             format!(
                                 "{entry_id} declares API auth via `env:` only (no `hosted_kv:` in domain.yaml). \
-The control station stores secrets in auth-framework KV, so there is nowhere to write a key until the catalogue adds a `hosted_kv` path (you can keep `env` for shells — runtime uses KV when set, else env)."
+The control station stores secrets in Plasm credential KV, so there is nowhere to write a key until the catalogue adds a `hosted_kv` path (you can keep `env` for shells — runtime uses KV when set, else env)."
                             ),
                         )
                         .with_action_hint(

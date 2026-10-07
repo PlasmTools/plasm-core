@@ -46,6 +46,9 @@ pub enum QuerySourceInputLane {
 /// on [`crate::loader::DomainCapability`]'s `deny_unknown_fields`.
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 pub struct CapabilityInputs {
+    /// Cross-field source contracts, checked before a query/search is dispatched.
+    #[serde(default, skip_serializing_if = "source_validation_is_empty")]
+    pub input_validation: super::InputValidation,
     /// Omission follows operation-kind semantics: Get/Update/Delete use their
     /// domain entity; Query/Search/Create/Action have no receiver.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -62,6 +65,10 @@ pub struct CapabilityInputs {
     /// Create/update/action body payload.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub payload: Option<InputSchema>,
+}
+
+fn source_validation_is_empty(v: &super::InputValidation) -> bool {
+    !v.allow_null && v.cross_field_rules.is_empty()
 }
 
 impl CapabilityInputs {

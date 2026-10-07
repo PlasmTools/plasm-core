@@ -256,6 +256,8 @@ pub enum ViewMappingError {
 
 #[derive(Debug, Clone, Error)]
 pub enum SchemaConstraintError {
+    #[error("capability '{capability}': invalid input rule: {reason}")]
+    InputRule { capability: String, reason: String },
     #[error("capability '{capability}': query/search inputs may only use scope, selection, and controls")]
     QueryInputLane { capability: String },
     #[error("capability '{capability}': selection is only valid on query/search capabilities")]

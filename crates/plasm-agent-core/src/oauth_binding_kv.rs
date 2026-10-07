@@ -4,12 +4,12 @@
 
 use std::sync::Arc;
 
-use auth_framework::storage::AuthStorage;
+use crate::secret_store::SecretStore;
 use serde_json::json;
 
 #[derive(Debug, thiserror::Error)]
 #[error("failed to store outbound OAuth binding pointer")]
-pub struct OAuthBindingWriteError(#[source] auth_framework::AuthError);
+pub struct OAuthBindingWriteError(#[source] crate::secret_store::SecretStoreError);
 
 /// Stable KV key for “which outbound token row is bound to this catalog entry”.
 pub fn oauth_binding_kv_key(entry_id: &str) -> String {
@@ -18,7 +18,7 @@ pub fn oauth_binding_kv_key(entry_id: &str) -> String {
 
 /// Store `{ "hosted_kv_key": "…" }` UTF-8 JSON at [`oauth_binding_kv_key`].
 pub async fn write_oauth_binding_pointer(
-    storage: &Arc<dyn AuthStorage>,
+    storage: &Arc<dyn SecretStore>,
     entry_id: &str,
     hosted_kv_key: &str,
 ) -> Result<(), OAuthBindingWriteError> {
@@ -40,22 +40,13 @@ mod tests {
     #[test]
     fn pointer_write_fault_preserves_auth_storage_source() {
         use std::error::Error;
-        let error = OAuthBindingWriteError(auth_framework::AuthError::Storage(
-            auth_framework::errors::StorageError::BackendUnavailable,
-        ));
+        let error =
+            OAuthBindingWriteError(crate::secret_store::SecretStoreError::BackendUnavailable);
         let source = error.source().unwrap();
         assert!(matches!(
-            source.downcast_ref::<auth_framework::AuthError>(),
-            Some(auth_framework::AuthError::Storage(
-                auth_framework::errors::StorageError::BackendUnavailable
-            ))
+            source.downcast_ref::<crate::secret_store::SecretStoreError>(),
+            Some(crate::secret_store::SecretStoreError::BackendUnavailable)
         ));
-        assert!(matches!(
-            source
-                .source()
-                .unwrap()
-                .downcast_ref::<auth_framework::errors::StorageError>(),
-            Some(auth_framework::errors::StorageError::BackendUnavailable)
-        ));
+        assert!(source.source().is_none());
     }
 }

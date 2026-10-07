@@ -21,7 +21,7 @@ pub(in crate::plasm_dag) fn infer_surface_contract(
     }
 
     let (mut kind, entity, mut effect, mut shape) = infer_surface_contract_from_expr(expr)?;
-    let qe = if matches!(shape, crate::plasm_plan::ResultShape::Page) {
+    let mut qe = if matches!(shape, crate::plasm_plan::ResultShape::Page) {
         if let Some(qe) = expr.qualified_entity_key() {
             QualifiedEntityKey::from(qe)
         } else if let Expr::Page(p) = expr {
@@ -59,17 +59,28 @@ pub(in crate::plasm_dag) fn infer_surface_contract(
             }
         }
     }
-    // Action-with-`provides` returns catalog-qualified entity rows (AuthSession login, etc.),
-    // not a bare side-effect ack — required for federated homograph hole fill / CML env.
-    if let Expr::Invoke(inv) = expr {
+    // Mutations with declared entity outputs retain that entity and cardinality.
+    let mutation_capability = match expr {
+        Expr::Invoke(inv) => Some(&inv.capability),
+        Expr::Create(create) => Some(&create.capability),
+        _ => None,
+    };
+    if let Some(capability) = mutation_capability {
         let resolving_cgs = cgs_for_qualified_entity(session, &qe).ok_or_else(|| {
             DagCompilationError::CatalogMissing {
                 entry_id: qe.entry_id.to_string(),
                 entity: qe.entity.to_string(),
             }
         })?;
-        if let Some(cap) = resolving_cgs.capabilities.get(inv.capability.as_str()) {
-            if !cap.provides.is_empty() {
+        if let Some(cap) = resolving_cgs.capabilities.get(capability.as_str()) {
+            if let Some((entity, cardinality)) = cap.declared_entity_output() {
+                qe.entity = entity.into();
+                shape = match cardinality {
+                    plasm_core::Cardinality::One => crate::plasm_plan::ResultShape::MutationResult,
+                    plasm_core::Cardinality::Many => crate::plasm_plan::ResultShape::List,
+                };
+                effect = EffectClass::Write;
+            } else if !cap.provides.is_empty() {
                 shape = crate::plasm_plan::ResultShape::MutationResult;
                 effect = EffectClass::Write;
             }

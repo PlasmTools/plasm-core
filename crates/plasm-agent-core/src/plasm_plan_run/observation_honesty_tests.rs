@@ -166,12 +166,20 @@ async fn ordered_fanout_case(count: usize, fail_at: usize) {
         ))
         .await
         .unwrap();
+        let delivered = crate::test_support::execution_fixtures::drain_presentation_pages(
+            &session,
+            &host,
+            &opened.session_id,
+            &projected.return_steps[0].result,
+        )
+        .await
+        .unwrap();
         assert_eq!(
-            projected.return_steps[0].result.entities().len(),
+            delivered.entities().len(),
             count,
-            "an acquired collection must not be silently repaged before or after projection"
+            "paging must preserve every acquired projected row"
         );
-        assert!(!projected.return_steps[0].result.has_more);
+        assert!(!delivered.has_more);
     }
     let program = "src = e1{group_id=\"source\"}\nselected = src | select description\ncreated = selected => e1.m1(group_id=\"dest\", description=_.description)\ncreated";
     let bundle = crate::plasm_compile::compile_plasm_expression(

@@ -241,7 +241,7 @@ export class AgentRuntime {
       intent: workflowIntentSchema.parse(input.intent),
     };
     if (request.sessionMode !== "extend") return this.plasmContextTurn(request);
-    const ref = logicalSessionRefSchema.parse(request.logicalSessionRef);
+    const ref = this.parseSessionRef(request.logicalSessionRef);
     return this.discoveryQueue.run(
       ref,
       request.intent,
@@ -259,7 +259,7 @@ export class AgentRuntime {
         ? await this.requireSessionByRef(input.logicalSessionRef ?? "")
         : undefined;
       if (mode === "new" && input.logicalSessionRef) {
-        throw new Error("logical_session_ref belongs on session_mode extend");
+        throw this.sessionInputFailure("invalid_context_input", "logical_session_ref belongs on session_mode extend");
       }
       const provenance = deriveIntent(existing?.intentProvenance ?? this.initialProvenance, intent);
       const packet = await this.engine.routeIntent(
@@ -549,19 +549,32 @@ export class AgentRuntime {
     });
   }
 
+  private sessionInputFailure(code: "invalid_context_input" | "invalid_logical_session_ref" | "unknown_logical_session_ref", diagnostic: string): AgentExecutionFailure {
+    const open = this.workflowSession?.logicalSessionRef;
+    return new AgentExecutionFailure({
+      cause: "program", recovery: "repair_program", code,
+      diagnostic: `${diagnostic}. ${open ? `Open workflow logical_session_ref is \`${open}\`; copy it verbatim.` : 'Call plasm_context with session_mode "new" first, then copy its logical_session_ref verbatim.'}`,
+      node: null, occurrence_path: [], catalog_digest: null,
+      effects: [], dispatches: [], effects_unresolved: false,
+    });
+  }
+
+  private parseSessionRef(ref: string | undefined): string {
+    const parsed = logicalSessionRefSchema.safeParse(ref);
+    if (!parsed.success) {
+      throw this.sessionInputFailure("invalid_logical_session_ref", "Expected a canonical logical_session_ref returned by plasm_context");
+    }
+    return parsed.data;
+  }
+
   private async requireSessionByRef(ref: string): Promise<AgentSessionState> {
-    const key = ref.trim();
+    const key = this.parseSessionRef(ref);
     if (this.workflowSession?.logicalSessionRef === key) {
       return this.workflowSession;
     }
     const session = await this.sessionManager.getByLogicalRef(key);
     if (!session) {
-      const open = this.workflowSession?.logicalSessionRef;
-      throw new Error(
-        open
-          ? `unknown logical_session_ref \`${key}\` — open workflow is \`${open}\` (reuse it verbatim)`
-          : `unknown logical_session_ref \`${key}\` — call plasm_context first with a stable intent`,
-      );
+      throw this.sessionInputFailure("unknown_logical_session_ref", `Unknown logical_session_ref \`${key}\``);
     }
     if (session.engineInstanceId !== this.engineInstanceId) {
       throw new Error("Execution session expired with its native engine; explicitly open a new context");

@@ -1,4 +1,4 @@
-//! Control-plane: store MCP catalog binding envelopes in auth-framework `kv_store`.
+//! Control-plane: store MCP catalog binding envelopes in Plasm credential `kv_store`.
 
 use axum::extract::Extension;
 use axum::http::StatusCode;

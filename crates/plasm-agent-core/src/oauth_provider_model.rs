@@ -8,7 +8,7 @@ use thiserror::Error;
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub struct OAuthEndpointUrl(String);
 
-/// Reference to auth-framework KV where the OAuth **client secret** is stored (not the user token).
+/// Reference to Plasm credential KV where the OAuth **client secret** is stored (not the user token).
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub struct OauthClientSecretKvRef(String);
 

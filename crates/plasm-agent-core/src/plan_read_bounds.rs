@@ -123,6 +123,7 @@ pub fn cap_execution_result_page(
     result.collection = all.delivery(0..cap)?;
     result.has_more = true;
     let cursor = crate::execute_session::SyntheticPageCursor {
+        kind: crate::execute_session::SyntheticPageKind::Expression,
         node_id: node_id.to_string(),
         qualified_entity: qualified_entity.clone(),
         collection: all,

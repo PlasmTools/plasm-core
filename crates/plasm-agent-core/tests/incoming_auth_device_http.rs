@@ -2,8 +2,6 @@
 
 use std::sync::Arc;
 
-use auth_framework::storage::core::AuthStorage;
-use auth_framework::storage::MemoryStorage;
 use axum::body::Body;
 use axum::http::{Request, StatusCode};
 use plasm_agent_core::http::{build_plasm_host_state, PlasmHostBootstrap};
@@ -11,6 +9,8 @@ use plasm_agent_core::incoming_auth::{IncomingAuthConfig, IncomingAuthMode, Inco
 use plasm_agent_core::incoming_auth_device::{
     incoming_auth_device_public_routes, mint_incoming_access_token,
 };
+use plasm_agent_core::secret_store::MemorySecretStore;
+use plasm_agent_core::secret_store::SecretStore;
 use plasm_agent_core::server_state::CatalogBootstrap;
 use plasm_core::discovery::CgsRegistry;
 use plasm_core::loader::load_schema;
@@ -33,7 +33,9 @@ fn fixture_registry() -> Arc<CgsRegistry> {
     )]))
 }
 
-fn test_host_state(storage: Arc<MemoryStorage>) -> plasm_agent_core::server_state::PlasmHostState {
+fn test_host_state(
+    storage: Arc<MemorySecretStore>,
+) -> plasm_agent_core::server_state::PlasmHostState {
     let engine = ExecutionEngine::new(ExecutionConfig::default()).expect("execution engine");
     let incoming = IncomingAuthVerifier::new(IncomingAuthConfig {
         mode: IncomingAuthMode::Optional,
@@ -60,7 +62,7 @@ fn test_host_state(storage: Arc<MemoryStorage>) -> plasm_agent_core::server_stat
 
 #[tokio::test]
 async fn device_start_requires_auth_storage() {
-    let mut st = test_host_state(Arc::new(MemoryStorage::new()));
+    let mut st = test_host_state(Arc::new(MemorySecretStore::new()));
     st.oss.auth_storage = None;
     let app = incoming_auth_device_public_routes().layer(axum::Extension(st));
 
@@ -81,7 +83,7 @@ async fn device_start_requires_auth_storage() {
 
 #[tokio::test]
 async fn device_start_and_poll_approved_via_kv() {
-    let storage = Arc::new(MemoryStorage::new());
+    let storage = Arc::new(MemorySecretStore::new());
     let st = test_host_state(storage.clone());
     let verifier = st.incoming_auth.as_ref().unwrap().clone();
     let app = incoming_auth_device_public_routes().layer(axum::Extension(st));

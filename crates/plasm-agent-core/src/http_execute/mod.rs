@@ -101,6 +101,7 @@ pub use crate::mcp_run_markdown::{
 /// Result of [`publish_plasm_result_steps`] for MCP tool shaping (`_meta` only; snapshot URIs are inline in Markdown).
 #[derive(Debug)]
 pub struct ExecuteRunToolOutput {
+    pub(crate) delivered_steps: Vec<PublishedResultStep>,
     pub markdown: String,
     pub tool_meta: Option<serde_json::Map<String, serde_json::Value>>,
 }

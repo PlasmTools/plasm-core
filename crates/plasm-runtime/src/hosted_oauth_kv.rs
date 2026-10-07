@@ -1,4 +1,4 @@
-//! Structured OAuth credentials stored in auth-framework KV at `plasm:outbound:*` keys.
+//! Structured OAuth credentials stored in Plasm credential KV at `plasm:outbound:*` keys.
 //!
 //! Values are JSON [`OutboundOAuthKvV1`] with `entry_id` for provider resolution and optional `refresh_token`.
 

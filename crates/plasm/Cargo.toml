@@ -77,7 +77,6 @@ libc = { version = "0.2", optional = true }
 tempfile = { workspace = true }
 insta = { workspace = true, features = ["json"] }
 jsonwebtoken = { workspace = true }
-auth-framework = { workspace = true }
 proptest = { workspace = true }
 serde = { workspace = true }
 serde_urlencoded = { workspace = true }

@@ -3,7 +3,7 @@
 //! Flow: `POST /v1/discover` → use `entry_id` + `entity` from candidates → `POST /execute` → follow
 //! `Location` with `GET` (session JSON) → `POST` the same path with one Plasm program.
 //!
-//! - `GET /v1/health`, `GET /v1/auth/status` (liveness + auth-framework probe: `200` when [`AuthFramework`] is initialized, else `503`), `GET /v1/registry`, …, `POST /v1/discover`. Listen address: `--listen-host` + `--port` (see [`crate::listen_endpoint`]).
+//! - `GET /v1/health`, `GET /v1/auth/status` (liveness + credential storage probe: `200` when Plasm credential storage is initialized, else `503`), `GET /v1/registry`, …, `POST /v1/discover`. Listen address: `--listen-host` + `--port` (see [`crate::listen_endpoint`]).
 //! - `POST /execute` — JSON `{ entry_id, entities, principal? }` → `303` + `Location` only (no body); ids are in the URL (`principal` required when `PLASM_AUTH_RESOLUTION=delegated`)
 //! - `GET /execute/:prompt_hash/:session` — `200` + JSON (`prompt`, `entry_id`, `entities`, …)
 //! - `POST /execute/:prompt_hash/:session` — `text/plain` or JSON program string (`{"program": "..."}`); `Accept`: json | ndjson | table (**default** when omitted: **json**)

@@ -559,6 +559,8 @@ pub struct DomainCapability {
     /// Query/search source-selection parameters.
     #[serde(default)]
     pub selection: Vec<DomainParameter>,
+    #[serde(default)]
+    pub input_validation: crate::InputValidation,
     /// Pagination, sorting, and response-shape controls.
     #[serde(default)]
     pub controls: Vec<DomainParameter>,
@@ -1125,6 +1127,7 @@ fn capability_inputs_from_domain(
     values: &IndexMap<String, NamedValueSchema>,
 ) -> Result<CapabilityInputs, SchemaAssemblyError> {
     Ok(CapabilityInputs {
+        input_validation: cap.input_validation.clone(),
         receiver: cap
             .receiver
             .clone()

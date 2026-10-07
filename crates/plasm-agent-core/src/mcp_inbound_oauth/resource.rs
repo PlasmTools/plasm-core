@@ -3,6 +3,11 @@ use super::error::McpOAuthError;
 pub fn normalize_resource_url(raw: &str) -> Result<String, McpOAuthError> {
     let parsed = url::Url::parse(raw.trim())
         .map_err(|_| McpOAuthError::invalid_target("resource must be an absolute URL"))?;
+    if parsed.fragment().is_some() {
+        return Err(McpOAuthError::invalid_target(
+            "resource URL must not contain a fragment",
+        ));
+    }
     if parsed.scheme() != "http" && parsed.scheme() != "https" {
         return Err(McpOAuthError::invalid_target(
             "resource URL must use http or https",
@@ -28,7 +33,6 @@ pub fn normalize_resource_url(raw: &str) -> Result<String, McpOAuthError> {
     }
     normalized.set_path(&path);
     normalized.set_query(None);
-    normalized.set_fragment(None);
     Ok(normalized.to_string())
 }
 

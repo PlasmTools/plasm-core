@@ -6,52 +6,14 @@ use crate::mcp_run_markdown::{
     slim_result_section_header_label, OmittedReferenceOnlyFields,
 };
 use crate::output::format_operations_block;
-use crate::output::LossySummaryFieldNames;
 
-use super::policy::{PublishPlan, ResolvedStepPublish, StepFormatOutcome, StepInBandMode};
+use super::policy::{PublishPlan, ResolvedStepPublish};
 use super::PublishedResultStep;
 
 pub(crate) struct InlinePublishBodies {
     pub sections: String,
     pub omitted_union: OmittedReferenceOnlyFields,
     pub paging: Vec<PlasmPagingStepMeta>,
-}
-
-pub(crate) fn format_resolved_steps(
-    steps: &[PublishedResultStep],
-    plan: &mut PublishPlan,
-    cgs: Option<&plasm_core::CGS>,
-) {
-    for (i, step) in steps.iter().enumerate() {
-        let resolved = &mut plan.resolved[i];
-        let observation = crate::output::render_observation(
-            step.result.as_ref(),
-            step.cgs.as_deref().or(cgs),
-            resolved
-                .mode
-                .max_entity_rows()
-                .unwrap_or(resolved.row_count),
-            plan.inline_text_budget_bytes,
-        );
-        if observation.shown < resolved.row_count {
-            resolved.mode = StepInBandMode::CappedInline {
-                shown: observation.shown,
-            };
-        }
-        resolved.coverage = observation.coverage;
-        let formatted = crate::mcp_run_markdown::McpFormattedExecuteResult {
-            tsv_body: observation.tsv,
-            reference_only_omitted: OmittedReferenceOnlyFields::default(),
-            lossy_summary_fields: LossySummaryFieldNames::default(),
-            in_band_report: observation.fidelity,
-        };
-        resolved.format = Some(StepFormatOutcome {
-            omitted: formatted.reference_only_omitted.clone(),
-            lossy: formatted.lossy_summary_fields.clone(),
-            in_band: formatted.in_band_report.clone(),
-            formatted,
-        });
-    }
 }
 
 fn step_section_header(i: usize, total_steps: usize, label: &str, count_label: &str) -> String {
@@ -90,20 +52,21 @@ fn append_paging_if_needed(
 
 fn append_coverage_note(sections: &mut String, resolved: &ResolvedStepPublish, plan: &PublishPlan) {
     sections.push_str(&mcp_coverage_preview_note(
-        shown_rows_for_mode(resolved.mode, resolved.row_count),
         resolved.row_count,
+        resolved.source_rows,
         resolved.coverage,
         resolved.artifact.is_some(),
         None,
         resolved.continue_handle.as_deref(),
         plan.artifact_access,
     ));
-}
-
-fn shown_rows_for_mode(mode: StepInBandMode, row_count: usize) -> usize {
-    match mode {
-        StepInBandMode::Full => row_count,
-        StepInBandMode::CappedInline { shown } => shown,
+    if !resolved.delivery_range.is_empty() {
+        sections.push_str(&format!(
+            "\nDelivery range: {}–{} of {} observed rows.\n",
+            resolved.delivery_range.start + 1,
+            resolved.delivery_range.end,
+            resolved.source_rows
+        ));
     }
 }
 

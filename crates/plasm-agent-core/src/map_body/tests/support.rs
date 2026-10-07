@@ -3,6 +3,7 @@ use super::*;
 struct Transport {
     calls: Arc<Mutex<Vec<String>>>,
     parents: usize,
+    export_rows: usize,
     pause_on_child: Option<Arc<(tokio::sync::Notify, tokio::sync::Notify)>>,
     cancel_on_child: Option<crate::operation::ExecutionScope>,
     unproven_child: bool,
@@ -34,6 +35,25 @@ impl HttpTransport for Transport {
             }
         }
         let parts: Vec<_> = req.path.trim_matches('/').split('/').collect();
+        if req.path == "/export" {
+            let rows = (0..self.export_rows)
+                .map(|i| json!({"id":format!("document{i}"), "path":"/documents/export.txt"}))
+                .collect::<Vec<_>>();
+            return Ok((
+                if self.export_rows == 1 {
+                    rows[0].clone()
+                } else {
+                    json!(rows)
+                },
+                None,
+            ));
+        }
+        if req.path == "/exports" {
+            return Ok((
+                json!([{ "id":"document", "path":"/documents/export.txt" }]),
+                None,
+            ));
+        }
         if self.unproven_child && req.path == "/items/i2/tags" {
             // An empty page with an explicit next link is not exhaustion.
             return Ok((json!([]), Some("http://127.0.0.1:9/next-tags".into())));
@@ -73,23 +93,32 @@ pub(super) fn fixture_with_controls(
     cancel_on_child: Option<crate::operation::ExecutionScope>,
     pause_on_child: Option<Arc<(tokio::sync::Notify, tokio::sync::Notify)>>,
 ) -> (ExecuteSession, PlasmHostState, Arc<Mutex<Vec<String>>>) {
-    fixture_with_evidence(parents, cancel_on_child, pause_on_child, false)
+    fixture_with_evidence(parents, cancel_on_child, pause_on_child, false, None)
 }
 pub(super) fn fixture_with_unproven_child(
     parents: usize,
 ) -> (ExecuteSession, PlasmHostState, Arc<Mutex<Vec<String>>>) {
-    fixture_with_evidence(parents, None, None, true)
+    fixture_with_evidence(parents, None, None, true, None)
+}
+pub(super) fn fixture_with_export_count(
+    count: usize,
+) -> (ExecuteSession, PlasmHostState, Arc<Mutex<Vec<String>>>) {
+    fixture_with_evidence(1, None, None, false, Some(count))
 }
 fn fixture_with_evidence(
     parents: usize,
     cancel_on_child: Option<crate::operation::ExecutionScope>,
     pause_on_child: Option<Arc<(tokio::sync::Notify, tokio::sync::Notify)>>,
     unproven_child: bool,
+    export_rows: Option<usize>,
 ) -> (ExecuteSession, PlasmHostState, Arc<Mutex<Vec<String>>>) {
-    let mut cgs = plasm_core::load_schema(
-        &std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-            .join("../../fixtures/schemas/python_dag_slice"),
-    )
+    let mut cgs = plasm_core::load_schema(&std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join(
+        if export_rows.is_some() {
+            "../../fixtures/schemas/python_action_output"
+        } else {
+            "../../fixtures/schemas/python_dag_slice"
+        },
+    ))
     .unwrap();
     if unproven_child {
         cgs.capabilities
@@ -132,6 +161,7 @@ fn fixture_with_evidence(
         Arc::new(Transport {
             calls: calls.clone(),
             parents,
+            export_rows: export_rows.unwrap_or(1),
             pause_on_child,
             cancel_on_child,
             unproven_child,
