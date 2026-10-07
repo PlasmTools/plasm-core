@@ -5,6 +5,10 @@ database_search:
       value: v1
     - type: literal
       value: search
+  body:
+    type: object
+    fields:
+    - [query, {type: var, name: query, if: {exists: query}}]
 
 database_query:
   method: POST

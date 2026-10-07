@@ -49,7 +49,7 @@ pub struct HealthResponse {
     pub version: &'static str,
 }
 
-/// Returned by [`get_auth_status`] when [`AuthFramework`] is initialized.
+/// Returned by [`get_auth_status`] when Plasm credential storage is initialized.
 #[derive(Debug, Serialize)]
 pub struct AuthStatusResponse {
     pub status: &'static str,
@@ -69,18 +69,18 @@ pub async fn health_response() -> Json<HealthResponse> {
 pub async fn get_auth_status(
     Extension(st): Extension<PlasmHostState>,
 ) -> Result<Json<AuthStatusResponse>, (StatusCode, Json<serde_json::Value>)> {
-    if st.auth_framework().is_none() {
+    let Some(storage) = st.auth_storage() else {
         return Err((
             StatusCode::SERVICE_UNAVAILABLE,
             Json(serde_json::json!({
-                "error": "auth_framework_disabled",
-                "detail": "auth-framework is not initialized in this process"
+                "error": "secret_store_disabled",
+                "detail": "credential storage is not initialized in this process"
             })),
         ));
-    }
+    };
     Ok(Json(AuthStatusResponse {
         status: "ok",
-        storage: crate::auth_framework_host::auth_storage_backend_label(),
+        storage: storage.backend_label(),
         open_source: st.saas.is_none().then_some(true),
     }))
 }

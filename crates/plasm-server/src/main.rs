@@ -257,11 +257,13 @@ const LOCAL_AUTH_JWT_SECRET_RELATIVE_PATH: &str = "bootstrap-secrets/PLASM_AUTH_
 #[error("{source}")]
 struct AuthStorageKeyValidationError {
     #[source]
-    source: auth_framework::errors::AuthError,
+    source: plasm_agent_core::secret_store::SecretStoreError,
 }
 
 #[derive(Debug, thiserror::Error)]
 enum LocalAuthBootstrapError {
+    #[error("local appliance key generation failed")]
+    KeyGeneration(#[from] plasm_agent_core::secret_store::SecretStoreError),
     #[error(
         "PLASM_AUTH_JWT_SECRET is required in Kubernetes; set it via your deployment secrets."
     )]
@@ -374,7 +376,7 @@ fn ensure_local_appliance_jwt_signing_secret(
     let secret = if existed {
         read_local_auth_storage_key(&path)?
     } else {
-        let secret = generate_auth_storage_encryption_key();
+        let secret = generate_auth_storage_encryption_key()?;
         write_local_auth_storage_key(&path, &secret)?;
         read_local_auth_storage_key(&path)?
     };
@@ -387,7 +389,9 @@ fn ensure_local_appliance_jwt_signing_secret(
 }
 
 fn auth_storage_uses_postgres() -> bool {
-    env_str_nonempty("PLASM_AUTH_STORAGE_URL") || env_str_nonempty("DATABASE_URL")
+    env_str_nonempty("PLASM_AUTH_STORAGE_URL")
+        || env_str_nonempty("DATABASE_URL")
+        || env_str_nonempty("PLASM_MCP_CONFIG_DATABASE_URL")
 }
 
 fn local_auth_storage_key_path() -> Option<PathBuf> {
@@ -395,45 +399,12 @@ fn local_auth_storage_key_path() -> Option<PathBuf> {
         .map(|root| root.join(LOCAL_AUTH_STORAGE_KEY_RELATIVE_PATH))
 }
 
-fn encode_base64(bytes: &[u8]) -> String {
-    const TABLE: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
-    let mut out = String::with_capacity(bytes.len().div_ceil(3) * 4);
-    let mut i = 0usize;
-    while i < bytes.len() {
-        let b0 = bytes[i];
-        let b1 = bytes.get(i + 1).copied();
-        let b2 = bytes.get(i + 2).copied();
-        out.push(TABLE[(b0 >> 2) as usize] as char);
-        out.push(TABLE[(((b0 & 0b0000_0011) << 4) | (b1.unwrap_or(0) >> 4)) as usize] as char);
-        match (b1, b2) {
-            (Some(v1), Some(v2)) => {
-                out.push(TABLE[(((v1 & 0b0000_1111) << 2) | (v2 >> 6)) as usize] as char);
-                out.push(TABLE[(v2 & 0b0011_1111) as usize] as char);
-            }
-            (Some(v1), None) => {
-                out.push(TABLE[((v1 & 0b0000_1111) << 2) as usize] as char);
-                out.push('=');
-            }
-            (None, None) => {
-                out.push('=');
-                out.push('=');
-            }
-            (None, Some(_)) => unreachable!(),
-        }
-        i += 3;
-    }
-    out
-}
-
-fn generate_auth_storage_encryption_key() -> String {
-    let mut bytes = [0u8; 32];
-    bytes[..16].copy_from_slice(uuid::Uuid::new_v4().as_bytes());
-    bytes[16..].copy_from_slice(uuid::Uuid::new_v4().as_bytes());
-    encode_base64(&bytes)
+fn generate_auth_storage_encryption_key() -> Result<String, LocalAuthBootstrapError> {
+    Ok(plasm_agent_core::secret_store::SecretEncryption::generate_key()?)
 }
 
 fn validate_auth_storage_encryption_key() -> Result<(), AuthStorageKeyValidationError> {
-    auth_framework::storage::StorageEncryption::new()
+    plasm_agent_core::secret_store::SecretEncryption::from_environment()
         .map(|_| ())
         .map_err(|source| AuthStorageKeyValidationError { source })
 }
@@ -511,7 +482,7 @@ fn ensure_local_auth_storage_encryption_key(
     let key = if existed {
         read_local_auth_storage_key(&path)?
     } else {
-        let key = generate_auth_storage_encryption_key();
+        let key = generate_auth_storage_encryption_key()?;
         write_local_auth_storage_key(&path, &key)?;
         read_local_auth_storage_key(&path)?
     };
@@ -994,8 +965,8 @@ async fn bootstrap_appliance_core(
     send(boot::BootstrapUiMsg::Detail(
         "OAuth / MCP policy / discovery embeddings (host bootstrap)".into(),
     ));
-    if let Err(e) = mcp_host_bootstrap::ensure_auth_framework_on_host(&mut app_state).await {
-        let mut msg = format!("auth-framework init failed: {e}");
+    if let Err(e) = mcp_host_bootstrap::ensure_secret_store_on_host(&mut app_state).await {
+        let mut msg = format!("credential storage init failed: {e}");
         if let LocalAuthStorageKeyBootstrap::LoadedFromFile { path }
         | LocalAuthStorageKeyBootstrap::GeneratedFile { path } = &local_key_bootstrap
         {
@@ -1017,7 +988,7 @@ async fn bootstrap_appliance_core(
         return Err(BootstrapStopped::Fatal);
     }
     send(boot::BootstrapUiMsg::Detail(
-        "auth-framework + encrypted auth storage attached".into(),
+        "Plasm encrypted credential storage attached".into(),
     ));
     let oauth_link_catalog =
         Arc::new(plasm_agent_core::oauth_link_catalog::OauthLinkCatalog::from_env());
@@ -1062,7 +1033,7 @@ async fn bootstrap_appliance_core(
         .oss
         .auth_storage
         .clone()
-        .expect("auth storage after ensure_auth_framework_on_host");
+        .expect("auth storage after ensure_secret_store_on_host");
     let outbound_secret_provider = Arc::new(
         plasm_agent_core::outbound_secret_provider::AgentOutboundSecretProvider::new(
             auth_storage,
@@ -1905,7 +1876,7 @@ mod tests {
         let temp = tempfile::tempdir().expect("tempdir");
         std::env::set_var("PLASM_LOCAL_STATE_DIR", temp.path());
         std::env::set_var("DATABASE_URL", "postgresql://localhost/plasm");
-        let explicit_key = generate_auth_storage_encryption_key();
+        let explicit_key = generate_auth_storage_encryption_key().unwrap();
         std::env::set_var("AUTH_STORAGE_ENCRYPTION_KEY", &explicit_key);
 
         assert_eq!(
@@ -2007,7 +1978,7 @@ mod tests {
         assert!(source
             .source()
             .unwrap()
-            .is::<auth_framework::errors::AuthError>());
+            .is::<plasm_agent_core::secret_store::SecretStoreError>());
         let message = err.to_string();
         assert!(
             message.contains(&path.display().to_string()),

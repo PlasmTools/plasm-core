@@ -58,11 +58,10 @@ rust-mcp-sdk = { workspace = true }
 async-trait = { workspace = true }
 futures-util = { workspace = true }
 jsonwebtoken = { workspace = true }
+aes-gcm = { workspace = true }
+getrandom = { workspace = true }
 subtle = { workspace = true }
-# Upstream QuickStart references `.postgres()` without `cfg(feature)`; compile needs `postgres-storage`
-# even when we only use `InMemoryStorage` at runtime (see auth_framework::storage::memory).
-auth-framework = { workspace = true }
-sqlx = { workspace = true, features = ["migrate", "chrono", "uuid"] }
+sqlx = { workspace = true, features = ["macros", "migrate", "chrono", "uuid"] }
 sqlx-tracing = { workspace = true }
 opentelemetry = { workspace = true }
 minijinja = { version = "2.19.0", default-features = false, features = ["builtins", "serde"] }

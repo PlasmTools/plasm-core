@@ -180,9 +180,14 @@ mod tests {
         let session = paging_session();
         let source = synthetic_published_result_step(27, None);
         let identity = source.result.collection.membership().identity().clone();
-        let first =
-            super::publish_plasm_result_steps(&session, None, None, None, &[source.clone()])
-                .unwrap();
+        let first = super::publish_plasm_result_steps(
+            &session,
+            None,
+            None,
+            None,
+            std::slice::from_ref(&source),
+        )
+        .unwrap();
         assert_eq!(source.result.entities().len(), 27);
         assert_eq!(first.delivered_steps[0].result.entities().len(), 25);
         let handle = first.delivered_steps[0]

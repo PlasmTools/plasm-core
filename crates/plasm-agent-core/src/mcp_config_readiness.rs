@@ -3,7 +3,7 @@
 use std::collections::HashSet;
 use std::sync::Arc;
 
-use auth_framework::storage::AuthStorage;
+use crate::secret_store::SecretStore;
 use plasm_core::discovery::CgsRegistry;
 use plasm_core::schema::AuthScheme;
 use plasm_core::CgsCatalog;
@@ -16,7 +16,7 @@ use crate::server_state::PlasmHostState;
 
 pub async fn catalog_entry_readiness_gaps(
     repo: &McpConfigRepository,
-    storage: Option<&Arc<dyn AuthStorage>>,
+    storage: Option<&Arc<dyn SecretStore>>,
     cfg: &McpRuntimeConfig,
     entry_id: &str,
     optional: &HashSet<String>,

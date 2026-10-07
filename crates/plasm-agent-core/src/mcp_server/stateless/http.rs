@@ -68,6 +68,10 @@ pub(crate) async fn router(plasm: Arc<PlasmHostState>) -> axum::Router {
         None
     };
 
+    let oauth_router = auth
+        .as_ref()
+        .map(|provider| crate::mcp_oauth_http::router(Arc::clone(provider)))
+        .unwrap_or_default();
     let state = StatelessMcpState {
         plasm: Arc::clone(&plasm),
         handler: mcp_handler,
@@ -79,6 +83,7 @@ pub(crate) async fn router(plasm: Arc<PlasmHostState>) -> axum::Router {
         .route("/health", get(health))
         .route("/mcp", post(handle_post))
         .with_state(state)
+        .merge(oauth_router)
         .layer(axum::middleware::from_fn(
             super::super::mcp_http_dns_rebinding::reject_dns_rebinding,
         ))
@@ -314,26 +319,51 @@ async fn verify_auth(
         return Ok(None);
     };
     let Some(token) = bearer_token(headers) else {
-        return Err((
-            StatusCode::UNAUTHORIZED,
-            Json(json!({
-                "error": "invalid_token",
-                "error_description": "Authorization: Bearer <token> required",
-            })),
-        )
-            .into_response());
+        return Err(auth_failure(
+            auth,
+            "Authorization: Bearer <token> required",
+            false,
+        ));
     };
     match auth.verify_token(token).await {
         Ok(info) => Ok(Some(info)),
-        Err(e) => Err((
-            StatusCode::UNAUTHORIZED,
-            Json(json!({
-                "error": "invalid_token",
-                "error_description": e.to_string(),
-            })),
-        )
-            .into_response()),
+        Err(_) => Err(auth_failure(
+            auth,
+            "invalid OAuth bearer token or API key",
+            true,
+        )),
     }
+}
+
+fn auth_failure(
+    auth: &PlasmMcpApiKeyAuthProvider,
+    description: &str,
+    invalid_token: bool,
+) -> Response {
+    let challenge = match auth.bearer_challenge(invalid_token) {
+        Ok(challenge) => challenge,
+        Err(error) => {
+            tracing::warn!(error = %error, "invalid MCP authentication challenge configuration");
+            return (
+                StatusCode::SERVICE_UNAVAILABLE,
+                "MCP authentication unavailable",
+            )
+                .into_response();
+        }
+    };
+    let mut response = (
+        StatusCode::UNAUTHORIZED,
+        Json(json!({"error": "invalid_token", "error_description": description})),
+    )
+        .into_response();
+    response
+        .headers_mut()
+        .insert(header::WWW_AUTHENTICATE, challenge);
+    response.headers_mut().insert(
+        header::CACHE_CONTROL,
+        http::HeaderValue::from_static("no-store"),
+    );
+    response
 }
 
 fn bearer_token(headers: &HeaderMap) -> Option<String> {

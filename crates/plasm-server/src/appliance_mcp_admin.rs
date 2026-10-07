@@ -3,11 +3,11 @@
 use std::sync::Arc;
 
 use plasm_agent_core::appliance_mcp_defaults;
-use plasm_agent_core::auth_framework_host;
 use plasm_agent_core::mcp_api_key_registry::McpApiKeyRegistry;
 use plasm_agent_core::mcp_config_admin::{McpConfigAdminService, McpConfigScope};
 use plasm_agent_core::mcp_config_repository::McpConfigRepository;
 use plasm_agent_core::mcp_transport_auth::McpTransportAuth;
+use plasm_agent_core::secret_store_host;
 use plasm_agent_core::server_state::PlasmHostState;
 use uuid::Uuid;
 
@@ -37,6 +37,8 @@ pub enum StandaloneMcpAdminError {
     MissingPolicyStoreUrl,
     #[error("MCP policy store connection or migration failed")]
     Repository(#[from] plasm_agent_core::mcp_config_repository::McpConfigRepositoryError),
+    #[error("credential storage initialization failed")]
+    SecretStore(#[from] plasm_agent_core::secret_store::SecretStoreError),
 }
 
 /// CLI / tooling: connect sqlx + MCP transport auth without booting HTTP listeners.
@@ -46,10 +48,7 @@ pub async fn connect_standalone_mcp_admin_service(
         return Err(StandaloneMcpAdminError::MissingPolicyStoreUrl);
     };
     let repo = Arc::new(McpConfigRepository::connect_and_migrate(&db_url).await?);
-    let keys: Arc<dyn McpTransportAuth> =
-        match auth_framework_host::init_standalone_auth_storage().await {
-            Ok(storage) => Arc::new(McpApiKeyRegistry::new(storage)),
-            Err(_) => auth_framework_host::mcp_api_key_registry_memory_only(),
-        };
+    let storage = secret_store_host::init_standalone_auth_storage().await?;
+    let keys: Arc<dyn McpTransportAuth> = Arc::new(McpApiKeyRegistry::new(storage));
     Ok(McpConfigAdminService::new(repo, keys))
 }

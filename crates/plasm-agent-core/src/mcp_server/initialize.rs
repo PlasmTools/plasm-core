@@ -64,7 +64,26 @@ pub fn plasm_mcp_stateless_enabled() -> bool {
 
 /// MCP routes for merging with discovery/execute on one port (stateful SDK or stateless axum).
 pub async fn build_mcp_router_for_merge(plasm: Arc<PlasmHostState>) -> SdkResult<axum::Router> {
-    if plasm_mcp_stateless_enabled() {
+    let transport = if plasm_mcp_stateless_enabled() {
+        McpHttpTransport::Stateless
+    } else {
+        McpHttpTransport::StreamableHttp
+    };
+    build_mcp_router_for_transport(plasm, transport).await
+}
+
+#[derive(Clone, Copy, Debug)]
+pub enum McpHttpTransport {
+    StreamableHttp,
+    Stateless,
+}
+
+/// Explicit transport selection, without mutating process configuration.
+pub async fn build_mcp_router_for_transport(
+    plasm: Arc<PlasmHostState>,
+    transport: McpHttpTransport,
+) -> SdkResult<axum::Router> {
+    if matches!(transport, McpHttpTransport::Stateless) {
         tracing::info!("MCP transport: stateless (SEP-2575, PLASM_MCP_STATELESS)");
         return Ok(stateless::router(plasm).await);
     }

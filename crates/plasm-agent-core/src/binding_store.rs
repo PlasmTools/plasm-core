@@ -1,6 +1,6 @@
 //! Scoped MCP binding KV store/load — single primitive for HTTP, TUI, readiness, and execute.
 
-use auth_framework::storage::AuthStorage;
+use crate::secret_store::SecretStore;
 use indexmap::IndexMap;
 use plasm_runtime::binding_kv::{
     binding_kv_key_from_uuid, parse_binding_kv_v1_scoped, BindingKvParseError, BindingKvV1,
@@ -24,7 +24,7 @@ pub enum BindingLoadError {
     #[error("binding KV read failed")]
     KvRead {
         #[source]
-        source: auth_framework::AuthError,
+        source: crate::secret_store::SecretStoreError,
     },
     #[error("binding KV missing for key {0}")]
     KvMissing(String),
@@ -41,7 +41,7 @@ pub enum BindingStoreError {
     #[error("binding KV store failed: {source}")]
     KvStore {
         #[source]
-        source: auth_framework::AuthError,
+        source: crate::secret_store::SecretStoreError,
     },
     #[error("binding pointer upsert failed: {0}")]
     PointerUpsert(#[from] sqlx::Error),
@@ -77,7 +77,7 @@ impl From<&BindingScope> for BindingScopeV1 {
 
 /// Load binding wire values for a scope. `Ok(None)` when no Postgres pointer exists.
 pub async fn load_binding_values_scoped(
-    storage: &Arc<dyn AuthStorage>,
+    storage: &Arc<dyn SecretStore>,
     repo: &McpConfigRepository,
     scope: &BindingScope,
 ) -> Result<Option<IndexMap<String, String>>, BindingLoadError> {
@@ -107,7 +107,7 @@ pub async fn load_binding_values_scoped(
 }
 
 pub async fn load_session_binding_map(
-    storage: &Arc<dyn AuthStorage>,
+    storage: &Arc<dyn SecretStore>,
     repo: &McpConfigRepository,
     scope: &BindingScope,
 ) -> Result<SessionBindingMap, BindingLoadError> {
@@ -119,7 +119,7 @@ pub async fn load_session_binding_map(
 
 /// Store a scoped binding envelope, upsert the Postgres pointer, and delete the prior KV key when rotated.
 pub async fn store_scoped_binding_envelope(
-    storage: &Arc<dyn AuthStorage>,
+    storage: &Arc<dyn SecretStore>,
     repo: &McpConfigRepository,
     scope: BindingScope,
     values: IndexMap<String, String>,
@@ -164,7 +164,7 @@ pub fn bindings_complete_for_values(entry_id: &str, values: &IndexMap<String, St
 }
 
 pub async fn entry_bindings_complete_scoped(
-    storage: &Arc<dyn AuthStorage>,
+    storage: &Arc<dyn SecretStore>,
     repo: &McpConfigRepository,
     scope: &BindingScope,
 ) -> bool {
@@ -187,7 +187,7 @@ pub async fn entry_bindings_complete_scoped(
     }
 }
 
-async fn hosted_kv_bytes_present(storage: &Arc<dyn AuthStorage>, kv_key: &str) -> bool {
+async fn hosted_kv_bytes_present(storage: &Arc<dyn SecretStore>, kv_key: &str) -> bool {
     storage
         .get_kv(kv_key.trim())
         .await
@@ -198,7 +198,7 @@ async fn hosted_kv_bytes_present(storage: &Arc<dyn AuthStorage>, kv_key: &str) -
 
 pub async fn entry_secret_present(
     repo: &McpConfigRepository,
-    storage: Option<&Arc<dyn AuthStorage>>,
+    storage: Option<&Arc<dyn SecretStore>>,
     config_id: Uuid,
     entry_id: &str,
 ) -> bool {
@@ -221,7 +221,7 @@ pub async fn entry_secret_present(
 /// in the upsert body (credentials already stored; binding row not written yet).
 pub async fn entry_secret_present_for_upsert(
     repo: &McpConfigRepository,
-    storage: Option<&Arc<dyn AuthStorage>>,
+    storage: Option<&Arc<dyn SecretStore>>,
     cfg: &McpRuntimeConfig,
     entry_id: &str,
 ) -> bool {
@@ -258,23 +258,12 @@ mod tests {
     fn binding_read_fault_preserves_auth_storage_source() {
         use std::error::Error;
         let error = BindingLoadError::KvRead {
-            source: auth_framework::AuthError::Storage(
-                auth_framework::errors::StorageError::BackendUnavailable,
-            ),
+            source: crate::secret_store::SecretStoreError::BackendUnavailable,
         };
         let source = error.source().unwrap();
         assert!(matches!(
-            source.downcast_ref::<auth_framework::AuthError>(),
-            Some(auth_framework::AuthError::Storage(
-                auth_framework::errors::StorageError::BackendUnavailable
-            ))
-        ));
-        assert!(matches!(
-            source
-                .source()
-                .unwrap()
-                .downcast_ref::<auth_framework::errors::StorageError>(),
-            Some(auth_framework::errors::StorageError::BackendUnavailable)
+            source.downcast_ref::<crate::secret_store::SecretStoreError>(),
+            Some(crate::secret_store::SecretStoreError::BackendUnavailable)
         ));
     }
 
@@ -282,26 +271,16 @@ mod tests {
     fn binding_store_faults_preserve_concrete_source_chains() {
         use std::error::Error;
         let error = BindingStoreError::KvStore {
-            source: auth_framework::AuthError::Storage(
-                auth_framework::errors::StorageError::BackendUnavailable,
-            ),
+            source: crate::secret_store::SecretStoreError::BackendUnavailable,
         };
         let auth = error
             .source()
             .unwrap()
-            .downcast_ref::<auth_framework::AuthError>()
+            .downcast_ref::<crate::secret_store::SecretStoreError>()
             .unwrap();
         assert!(matches!(
             auth,
-            auth_framework::AuthError::Storage(
-                auth_framework::errors::StorageError::BackendUnavailable
-            )
-        ));
-        assert!(matches!(
-            auth.source()
-                .unwrap()
-                .downcast_ref::<auth_framework::errors::StorageError>(),
-            Some(auth_framework::errors::StorageError::BackendUnavailable)
+            crate::secret_store::SecretStoreError::BackendUnavailable
         ));
 
         let source = serde_json::from_str::<serde_json::Value>("{").unwrap_err();

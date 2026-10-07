@@ -1,4 +1,4 @@
-//! Control-plane: store outbound API secrets in auth-framework `kv_store` (`hosted_kv` keys in CGS).
+//! Control-plane: store outbound API secrets in Plasm credential `kv_store` (`hosted_kv` keys in CGS).
 
 use axum::extract::Extension;
 use axum::http::StatusCode;

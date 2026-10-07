@@ -9,10 +9,10 @@
 //! Postgres table `public.oauth_provider_apps` (enabled rows) on startup and on a periodic refresh
 //! when `PLASM_AUTH_STORAGE_URL` / `DATABASE_URL` / `PLASM_OAUTH_PROVIDER_DATABASE_URL` is set — see
 //! `oauth_provider_pull`. `POST /internal/oauth-link/v1/provider-upsert` still applies immediate
-//! in-memory updates until the next DB refresh. Client secrets are resolved from auth-framework KV at
+//! in-memory updates until the next DB refresh. Client secrets are resolved from Plasm credential KV at
 //! OAuth start using `client_secret_key` (JIT), never embedded in the in-memory catalog.
 
-use auth_framework::storage::AuthStorage;
+use crate::secret_store::SecretStore;
 use serde::Deserialize;
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -220,7 +220,7 @@ impl OauthLinkCatalog {
     /// Runtime wins over static catalog for the same `entry_id`. JIT-loads secret from KV for runtime entries.
     pub async fn resolve_for_oauth_start(
         &self,
-        storage: &Arc<dyn AuthStorage>,
+        storage: &Arc<dyn SecretStore>,
         entry_id: &str,
     ) -> Result<OauthResolvedProvider, OauthResolveError> {
         let runtime_meta = {
@@ -289,7 +289,7 @@ pub enum OauthResolveError {
     #[error("OAuth client secret has invalid UTF-8 encoding")]
     BadSecretUtf8,
     #[error("OAuth storage error: {0}")]
-    Storage(#[source] auth_framework::errors::AuthError),
+    Storage(#[source] crate::secret_store::SecretStoreError),
 }
 
 impl OauthResolveError {

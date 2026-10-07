@@ -1,13 +1,13 @@
 //! Tenant MCP Streamable HTTP API keys: **N keys per** [`Uuid`] `config_id`, each with a
 //! stable `key_id`. Verifier uses `plasm_mcp_api2_hash:*` → `key_id` → `plasm_mcp_api2_key:*`
-//! (raw key material in encrypted [`AuthStorage`], per ownership doc).
+//! (raw key material in encrypted [`SecretStore`], per ownership doc).
 //!
 //! **Cutover** from the prior single-key model: old `plasm_mcp_api_key_*` keys are not read;
 
 use std::sync::Arc;
 
-use auth_framework::errors::AuthError;
-use auth_framework::storage::core::AuthStorage;
+use crate::secret_store::SecretStore;
+use crate::secret_store::SecretStoreError;
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
@@ -71,11 +71,11 @@ struct KeyRecordV2 {
 
 #[derive(Clone)]
 pub struct McpApiKeyRegistry {
-    storage: Arc<dyn AuthStorage>,
+    storage: Arc<dyn SecretStore>,
 }
 
 impl McpApiKeyRegistry {
-    pub fn new(storage: Arc<dyn AuthStorage>) -> Self {
+    pub fn new(storage: Arc<dyn SecretStore>) -> Self {
         Self { storage }
     }
 
@@ -84,17 +84,17 @@ impl McpApiKeyRegistry {
     }
 
     /// Every key has a non-empty display name; trim, max 128 UTF-8 scalars.
-    fn normalize_required_key_name(label: String) -> Result<String, AuthError> {
+    fn normalize_required_key_name(label: String) -> Result<String, SecretStoreError> {
         let t = label.trim();
         if t.is_empty() {
-            return Err(AuthError::InvalidInput(
+            return Err(SecretStoreError::InvalidInput(
                 "MCP API key name is required".to_string(),
             ));
         }
         Ok(t.chars().take(128).collect())
     }
 
-    async fn read_id_list(&self, config_id: Uuid) -> Result<Vec<Uuid>, AuthError> {
+    async fn read_id_list(&self, config_id: Uuid) -> Result<Vec<Uuid>, SecretStoreError> {
         let raw = self.storage.get_kv(&set_key(config_id)).await?;
         let Some(bytes) = raw else {
             return Ok(Vec::new());
@@ -103,12 +103,12 @@ impl McpApiKeyRegistry {
         if s.trim().is_empty() {
             return Ok(Vec::new());
         }
-        let ids: Vec<Uuid> = serde_json::from_str(s.trim()).map_err(AuthError::from)?;
+        let ids: Vec<Uuid> = serde_json::from_str(s.trim()).map_err(SecretStoreError::from)?;
         Ok(ids)
     }
 
-    async fn write_id_list(&self, config_id: Uuid, ids: &[Uuid]) -> Result<(), AuthError> {
-        let s = serde_json::to_string(ids).map_err(AuthError::from)?;
+    async fn write_id_list(&self, config_id: Uuid, ids: &[Uuid]) -> Result<(), SecretStoreError> {
+        let s = serde_json::to_string(ids).map_err(SecretStoreError::from)?;
         self.storage
             .store_kv(&set_key(config_id), s.as_bytes(), None)
             .await?;
@@ -116,7 +116,7 @@ impl McpApiKeyRegistry {
     }
 
     /// Removes every key for this config (MCP config revoke / rotate-all / disable).
-    pub async fn revoke_for_config(&self, config_id: Uuid) -> Result<(), AuthError> {
+    pub async fn revoke_for_config(&self, config_id: Uuid) -> Result<(), SecretStoreError> {
         let ids = self.read_id_list(config_id).await?;
         for k in ids {
             self.remove_one_key(k).await?;
@@ -126,12 +126,12 @@ impl McpApiKeyRegistry {
     }
 
     /// Deletes one key: hash index, record, and membership in the config set.
-    async fn remove_one_key(&self, key_id: Uuid) -> Result<(), AuthError> {
+    async fn remove_one_key(&self, key_id: Uuid) -> Result<(), SecretStoreError> {
         let rkey = key_rec_key(key_id);
         let Some(bytes) = self.storage.get_kv(&rkey).await? else {
             return Ok(());
         };
-        let rec: KeyRecordV2 = serde_json::from_slice(&bytes).map_err(AuthError::from)?;
+        let rec: KeyRecordV2 = serde_json::from_slice(&bytes).map_err(SecretStoreError::from)?;
         self.storage
             .delete_kv(&hash_to_key_id_kv(&rec.hash_hex))
             .await?;
@@ -152,7 +152,7 @@ impl McpApiKeyRegistry {
         &self,
         config_id: Uuid,
         label: String,
-    ) -> Result<McpApiKeyProvisioned, AuthError> {
+    ) -> Result<McpApiKeyProvisioned, SecretStoreError> {
         let name = Self::normalize_required_key_name(label)?;
         let key_id = Uuid::new_v4();
         let api_key = format!("plasm_mcp_{}", Uuid::new_v4().simple());
@@ -165,7 +165,7 @@ impl McpApiKeyRegistry {
             label: Some(name),
             created_at,
         };
-        let json = serde_json::to_vec(&rec).map_err(AuthError::from)?;
+        let json = serde_json::to_vec(&rec).map_err(SecretStoreError::from)?;
 
         self.storage
             .store_kv(
@@ -191,21 +191,22 @@ impl McpApiKeyRegistry {
         config_id: Uuid,
         key_id: Uuid,
         label: String,
-    ) -> Result<(), AuthError> {
+    ) -> Result<(), SecretStoreError> {
         let name = Self::normalize_required_key_name(label)?;
         let rbytes = self
             .storage
             .get_kv(&key_rec_key(key_id))
             .await?
-            .ok_or(AuthError::UserNotFound)?;
-        let mut rec: KeyRecordV2 = serde_json::from_slice(&rbytes).map_err(AuthError::from)?;
+            .ok_or(SecretStoreError::NotFound)?;
+        let mut rec: KeyRecordV2 =
+            serde_json::from_slice(&rbytes).map_err(SecretStoreError::from)?;
         if rec.config_id != config_id {
-            return Err(AuthError::InvalidInput(
+            return Err(SecretStoreError::InvalidInput(
                 "MCP key does not belong to this configuration".to_string(),
             ));
         }
         rec.label = Some(name);
-        let json = serde_json::to_vec(&rec).map_err(AuthError::from)?;
+        let json = serde_json::to_vec(&rec).map_err(SecretStoreError::from)?;
         self.storage
             .store_kv(&key_rec_key(key_id), &json, None)
             .await?;
@@ -217,7 +218,7 @@ impl McpApiKeyRegistry {
         &self,
         config_id: Uuid,
         new_key_label: String,
-    ) -> Result<McpApiKeyProvisioned, AuthError> {
+    ) -> Result<McpApiKeyProvisioned, SecretStoreError> {
         self.revoke_for_config(config_id).await?;
         self.add_key(config_id, new_key_label).await
     }
@@ -229,7 +230,7 @@ impl McpApiKeyRegistry {
         config_id: Uuid,
         key_id: Uuid,
         new_key_label: String,
-    ) -> Result<McpApiKeyProvisioned, AuthError> {
+    ) -> Result<McpApiKeyProvisioned, SecretStoreError> {
         self.revoke_one_api_key(config_id, key_id).await?;
         self.add_key(config_id, new_key_label).await
     }
@@ -258,17 +259,17 @@ impl McpApiKeyRegistry {
     async fn list_items_for_config(
         &self,
         config_id: Uuid,
-    ) -> Result<Vec<McpApiKeyListItem>, AuthError> {
+    ) -> Result<Vec<McpApiKeyListItem>, SecretStoreError> {
         let mut out = Vec::new();
         for id in self.read_id_list(config_id).await? {
             let rkey = key_rec_key(id);
-            let rbytes =
-                self.storage.get_kv(&rkey).await?.ok_or_else(|| {
-                    AuthError::InvalidInput("missing MCP API key record".to_string())
-                })?;
-            let mut rec: KeyRecordV2 = serde_json::from_slice(&rbytes).map_err(AuthError::from)?;
+            let rbytes = self.storage.get_kv(&rkey).await?.ok_or_else(|| {
+                SecretStoreError::InvalidInput("missing MCP API key record".to_string())
+            })?;
+            let mut rec: KeyRecordV2 =
+                serde_json::from_slice(&rbytes).map_err(SecretStoreError::from)?;
             if rec.config_id != config_id {
-                return Err(AuthError::InvalidInput(
+                return Err(SecretStoreError::InvalidInput(
                     "MCP key record / set mismatch".to_string(),
                 ));
             }
@@ -278,7 +279,7 @@ impl McpApiKeyRegistry {
                 _ => {
                     let d = format!("Key {fp}");
                     rec.label = Some(d.clone());
-                    let json = serde_json::to_vec(&rec).map_err(AuthError::from)?;
+                    let json = serde_json::to_vec(&rec).map_err(SecretStoreError::from)?;
                     self.storage.store_kv(&rkey, &json, None).await?;
                     d
                 }
@@ -297,20 +298,24 @@ impl McpApiKeyRegistry {
     pub async fn list_api_keys(
         &self,
         config_id: Uuid,
-    ) -> Result<Vec<McpApiKeyListItem>, AuthError> {
+    ) -> Result<Vec<McpApiKeyListItem>, SecretStoreError> {
         self.list_items_for_config(config_id).await
     }
 
     /// Re-read raw key material (control plane only; audit at HTTP layer).
-    pub async fn reveal_api_key(&self, config_id: Uuid, key_id: Uuid) -> Result<String, AuthError> {
+    pub async fn reveal_api_key(
+        &self,
+        config_id: Uuid,
+        key_id: Uuid,
+    ) -> Result<String, SecretStoreError> {
         let rbytes = self
             .storage
             .get_kv(&key_rec_key(key_id))
             .await?
-            .ok_or(AuthError::UserNotFound)?;
-        let rec: KeyRecordV2 = serde_json::from_slice(&rbytes).map_err(AuthError::from)?;
+            .ok_or(SecretStoreError::NotFound)?;
+        let rec: KeyRecordV2 = serde_json::from_slice(&rbytes).map_err(SecretStoreError::from)?;
         if rec.config_id != config_id {
-            return Err(AuthError::InvalidInput(
+            return Err(SecretStoreError::InvalidInput(
                 "MCP key does not belong to this configuration".to_string(),
             ));
         }
@@ -318,15 +323,19 @@ impl McpApiKeyRegistry {
     }
 
     /// Revoke a single key.
-    pub async fn revoke_one_api_key(&self, config_id: Uuid, key_id: Uuid) -> Result<(), AuthError> {
+    pub async fn revoke_one_api_key(
+        &self,
+        config_id: Uuid,
+        key_id: Uuid,
+    ) -> Result<(), SecretStoreError> {
         let rbytes = self
             .storage
             .get_kv(&key_rec_key(key_id))
             .await?
-            .ok_or(AuthError::UserNotFound)?;
-        let rec: KeyRecordV2 = serde_json::from_slice(&rbytes).map_err(AuthError::from)?;
+            .ok_or(SecretStoreError::NotFound)?;
+        let rec: KeyRecordV2 = serde_json::from_slice(&rbytes).map_err(SecretStoreError::from)?;
         if rec.config_id != config_id {
-            return Err(AuthError::InvalidInput(
+            return Err(SecretStoreError::InvalidInput(
                 "MCP key does not belong to this configuration".to_string(),
             ));
         }
@@ -337,7 +346,7 @@ impl McpApiKeyRegistry {
     pub async fn public_status_for_config(
         &self,
         config_id: Uuid,
-    ) -> Result<Option<McpApiKeyStatusPublic>, AuthError> {
+    ) -> Result<Option<McpApiKeyStatusPublic>, SecretStoreError> {
         let ids = self.read_id_list(config_id).await?;
         let Some(&last_id) = ids.last() else {
             return Ok(None);
@@ -346,8 +355,10 @@ impl McpApiKeyRegistry {
             .storage
             .get_kv(&key_rec_key(last_id))
             .await?
-            .ok_or_else(|| AuthError::InvalidInput("missing key record for status".to_string()))?;
-        let rec: KeyRecordV2 = serde_json::from_slice(&rbytes).map_err(AuthError::from)?;
+            .ok_or_else(|| {
+                SecretStoreError::InvalidInput("missing key record for status".to_string())
+            })?;
+        let rec: KeyRecordV2 = serde_json::from_slice(&rbytes).map_err(SecretStoreError::from)?;
         Ok(Some(McpApiKeyStatusPublic {
             key_fingerprint: Self::fingerprint_from_hash_hex(&rec.hash_hex),
         }))
@@ -357,11 +368,11 @@ impl McpApiKeyRegistry {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use auth_framework::storage::MemoryStorage;
+    use crate::secret_store::MemorySecretStore;
 
     #[tokio::test]
     async fn rotate_one_replaces_key_others_unchanged() {
-        let storage = Arc::new(MemoryStorage::new()) as Arc<dyn AuthStorage>;
+        let storage = Arc::new(MemorySecretStore::new()) as Arc<dyn SecretStore>;
         let reg = McpApiKeyRegistry::new(storage);
         let cid = Uuid::new_v4();
         let a = reg.add_key(cid, "A".to_string()).await.expect("a");
@@ -380,7 +391,7 @@ mod tests {
 
     #[tokio::test]
     async fn add_two_keys_both_verify_list_reveal() {
-        let storage = Arc::new(MemoryStorage::new()) as Arc<dyn AuthStorage>;
+        let storage = Arc::new(MemorySecretStore::new()) as Arc<dyn SecretStore>;
         let reg = McpApiKeyRegistry::new(storage);
         let cid = Uuid::new_v4();
         let a = reg.add_key(cid, "A".to_string()).await.expect("a");
@@ -400,7 +411,7 @@ mod tests {
 
     #[tokio::test]
     async fn add_key_rejects_empty_name() {
-        let storage = Arc::new(MemoryStorage::new()) as Arc<dyn AuthStorage>;
+        let storage = Arc::new(MemorySecretStore::new()) as Arc<dyn SecretStore>;
         let reg = McpApiKeyRegistry::new(storage);
         let cid = Uuid::new_v4();
         assert!(reg.add_key(cid, "  \n".to_string()).await.is_err());
@@ -408,7 +419,7 @@ mod tests {
 
     #[tokio::test]
     async fn rotate_all_invalidates_all_prior() {
-        let storage = Arc::new(MemoryStorage::new()) as Arc<dyn AuthStorage>;
+        let storage = Arc::new(MemorySecretStore::new()) as Arc<dyn SecretStore>;
         let reg = McpApiKeyRegistry::new(storage);
         let cid = Uuid::new_v4();
         let a = reg.add_key(cid, "A".to_string()).await.expect("a");
@@ -425,7 +436,7 @@ mod tests {
 
     #[tokio::test]
     async fn revoke_for_config() {
-        let storage = Arc::new(MemoryStorage::new()) as Arc<dyn AuthStorage>;
+        let storage = Arc::new(MemorySecretStore::new()) as Arc<dyn SecretStore>;
         let reg = McpApiKeyRegistry::new(storage);
         let cid = Uuid::new_v4();
         let a = reg.add_key(cid, "A".to_string()).await.expect("a");
@@ -436,7 +447,7 @@ mod tests {
 
     #[tokio::test]
     async fn revoke_one_of_two() {
-        let storage = Arc::new(MemoryStorage::new()) as Arc<dyn AuthStorage>;
+        let storage = Arc::new(MemorySecretStore::new()) as Arc<dyn SecretStore>;
         let reg = McpApiKeyRegistry::new(storage);
         let cid = Uuid::new_v4();
         let a = reg.add_key(cid, "A".to_string()).await.expect("a");
@@ -448,7 +459,7 @@ mod tests {
 
     #[tokio::test]
     async fn set_key_label_updates_list() {
-        let storage = Arc::new(MemoryStorage::new()) as Arc<dyn AuthStorage>;
+        let storage = Arc::new(MemorySecretStore::new()) as Arc<dyn SecretStore>;
         let reg = McpApiKeyRegistry::new(storage);
         let cid = Uuid::new_v4();
         let a = reg.add_key(cid, "A".to_string()).await.expect("a");
