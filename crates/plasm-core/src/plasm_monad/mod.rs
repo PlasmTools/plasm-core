@@ -5,6 +5,7 @@
 //! `map`; relation fanout and `for_each` to `flat_map`.
 
 pub mod bind_graph;
+pub mod capture;
 pub mod comp;
 pub mod correlated;
 pub mod equiv;
@@ -15,6 +16,7 @@ pub mod payload;
 pub mod step;
 
 pub use bind_graph::{BindGraphError, PlasmBindGraph, PlasmHoleUse};
+pub use capture::{CaptureCardinality, CaptureContract, CapturePort};
 pub use comp::{
     PlasmComp, PlasmCompArtifact, PlasmCompValidationError, PlasmReturn, StepId, StepIdError,
     PLASM_COMP_WIRE_VERSION,

@@ -155,7 +155,13 @@ pub enum PythonFieldError {
 #[derive(Debug, Error)]
 pub enum MapSchemaError {
     #[error("map-body schema could not be derived")]
-    Invalid,
+    Invalid(#[source] Box<crate::map_body_schema::MapBodySchemaError>),
+}
+
+impl From<crate::map_body_schema::MapBodySchemaError> for MapSchemaError {
+    fn from(error: crate::map_body_schema::MapBodySchemaError) -> Self {
+        Self::Invalid(Box::new(error))
+    }
 }
 
 pub(crate) fn iteration_predicate(
@@ -232,70 +238,9 @@ pub(crate) fn validate(
 ) -> Result<(), MapBodyValidationError> {
     let body = &map.body;
     body.execution_layers()?;
-    let expected = QualifiedEntityKey {
-        entry_id: body.parent.entity.entry_id.clone(),
-        entity: body.parent.entity.entity.clone(),
-    };
-    if body.parent_entity_authority
-        && capture_owner(nodes, body.parent.source.as_str(), 0)? != &expected
-    {
-        return Err(ScopeContractError::ParentIdentityChanged.into());
-    }
-    if let Some(schema) = &body.parent_schema {
-        validate_port_schema(es, nodes, body.parent.source.as_str(), schema)?;
-    } else {
-        let cgs = crate::catalog_ownership::resolve_cgs_for_entry_entity(
-            es,
-            &expected.entry_id,
-            &expected.entity,
-        )
-        .map_err(|_| CatalogOwnershipError::EntityUnavailable {
-            catalog_entry: expected.entry_id.clone(),
-            entity: expected.entity.clone(),
-        })?;
-        for field in cgs
-            .get_entity(&expected.entity)
-            .ok_or(ScopeContractError::ParentEntityMissing)?
-            .fields
-            .keys()
-        {
-            crate::python_compute::source_field_kind(
-                es,
-                nodes,
-                body.parent.source.as_str(),
-                field.as_str(),
-                0,
-            )
-            .map_err(|_| PythonFieldError::Unavailable {
-                node: body.parent.source.to_string(),
-                field: field.to_string(),
-            })?;
-        }
-    }
-    for capture in &body.captures {
-        if capture.singleton
-            && !crate::plasm_plan::scoped_capture_permits_singleton(nodes, capture.source.as_str())
-        {
-            return Err(ScopeContractError::PluralCapturePromoted.into());
-        }
-        if let Some(value) = &capture.value_contract {
-            if capture.entity_authority
-                || !capture.singleton
-                || &crate::map_body_schema::row_contract(es, nodes, capture.source.as_str())
-                    .map_err(|_| MapSchemaError::Invalid)?
-                    != value
-            {
-                return Err(ScopeContractError::ScalarCaptureContractChanged.into());
-            }
-        } else {
-            validate_port_schema(es, nodes, capture.source.as_str(), &capture.schema)?;
-        }
-        if capture.entity_authority {
-            let owner = capture_owner(nodes, capture.source.as_str(), 0)?;
-            if owner.entry_id != capture.entity.entry_id || owner.entity != capture.entity.entity {
-                return Err(ScopeContractError::CaptureOwnerMismatch.into());
-            }
-        }
+    validate_capture_port(es, nodes, &body.parent)?;
+    for port in &body.captures {
+        validate_capture_port(es, nodes, port)?;
     }
     if let plasm_core::plasm_monad::ScopedOutput::Rows {
         entity,
@@ -361,7 +306,7 @@ pub(crate) fn validate(
             .find(|n| n.id() == &relation.relation.source)
             .ok_or(ScopeContractError::RelationSourceMissing)?;
         let source_owner = match source {
-            ValidatedPlanNode::Capture(c) if c.entity_authority => Some(&c.entity),
+            ValidatedPlanNode::Capture(c) if c.contract.entity_authority() => Some(&c.entity),
             ValidatedPlanNode::Surface(s) => s.qualified_entity.as_ref(),
             ValidatedPlanNode::RelationTraversal(r) => Some(&r.relation.target),
             _ => None,
@@ -391,7 +336,7 @@ pub(crate) fn validate(
             entity: source_owner.entity.clone(),
         })?;
         if let ValidatedPlanNode::Capture(capture) = source {
-            if let Some(schema) = &capture.schema {
+            if let Some(schema) = capture.contract.schema() {
                 let entity = cgs
                     .get_entity(source_owner.entity.as_str())
                     .ok_or(ScopeContractError::ParentEntityMissing)?;
@@ -419,7 +364,7 @@ pub(crate) fn validate(
             &relation.relation.materialize,
         )?;
     }
-    crate::map_body_schema::output_schema(es, body).map_err(|_| MapSchemaError::Invalid)?;
+    crate::map_body_schema::output_schema(es, body).map_err(MapSchemaError::from)?;
     crate::plan_session_provisions::validate(es, map.plan.nodes(), &body.body.bind)?;
     Ok(())
 }
@@ -441,6 +386,67 @@ fn validate_relation_materialization(
     Ok(())
 }
 
+fn validate_capture_port(
+    es: &ExecuteSession,
+    nodes: &[ValidatedPlanNode],
+    port: &impl plasm_core::plasm_monad::CapturePort,
+) -> Result<(), MapBodyValidationError> {
+    use plasm_core::plasm_monad::CaptureCardinality;
+    let source = port.source().as_str();
+    let cardinality = port.cardinality();
+    if cardinality == CaptureCardinality::Singleton
+        && !crate::plasm_plan::scoped_capture_permits_singleton(nodes, source)
+    {
+        return Err(ScopeContractError::PluralCapturePromoted.into());
+    }
+    if let Some(value) = port.contract().value_contract() {
+        if cardinality == CaptureCardinality::Collection
+            || &crate::map_body_schema::row_contract(es, nodes, source)
+                .map_err(MapSchemaError::from)?
+                != value
+        {
+            return Err(ScopeContractError::ScalarCaptureContractChanged.into());
+        }
+    } else if let Some(schema) = port.contract().schema() {
+        validate_port_schema(es, nodes, source, schema)?;
+    } else {
+        let owner = port.entity();
+        let cgs = crate::catalog_ownership::resolve_cgs_for_entry_entity(
+            es,
+            &owner.entry_id,
+            &owner.entity,
+        )
+        .map_err(|_| CatalogOwnershipError::EntityUnavailable {
+            catalog_entry: owner.entry_id.clone(),
+            entity: owner.entity.clone(),
+        })?;
+        for field in cgs
+            .get_entity(&owner.entity)
+            .ok_or(ScopeContractError::ParentEntityMissing)?
+            .fields
+            .keys()
+        {
+            crate::python_compute::source_field_kind(es, nodes, source, field.as_str(), 0)
+                .map_err(|_| PythonFieldError::Unavailable {
+                    node: source.to_owned(),
+                    field: field.to_string(),
+                })?;
+        }
+    }
+    if port.contract().entity_authority() {
+        let owner = capture_owner(nodes, source, 0)?;
+        if owner.entry_id != port.entity().entry_id || owner.entity != port.entity().entity {
+            return Err(if cardinality == CaptureCardinality::ParentOccurrence {
+                ScopeContractError::ParentIdentityChanged
+            } else {
+                ScopeContractError::CaptureOwnerMismatch
+            }
+            .into());
+        }
+    }
+    Ok(())
+}
+
 /// Catalog authority survives row-preserving operations, never object derivation.
 fn capture_owner<'a>(
     nodes: &'a [ValidatedPlanNode],
@@ -455,7 +461,7 @@ fn capture_owner<'a>(
         .find(|n| n.id().as_str() == id)
         .ok_or(ScopeContractError::ParentSourceMissing)?;
     match node {
-        ValidatedPlanNode::Capture(c) if c.entity_authority => Ok(&c.entity),
+        ValidatedPlanNode::Capture(c) if c.contract.entity_authority() => Ok(&c.entity),
         ValidatedPlanNode::Surface(s)
             if s.result_shape != crate::plasm_plan::ResultShape::SideEffectAck =>
         {

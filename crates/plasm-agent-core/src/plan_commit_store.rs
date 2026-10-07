@@ -99,6 +99,29 @@ impl std::fmt::Display for PlanCommitVerifyError {
     }
 }
 
+impl From<PlanCommitVerifyError> for plasm_runtime::ExecutionFailure {
+    fn from(error: PlanCommitVerifyError) -> Self {
+        use plasm_runtime::{ExecutionFailure, FailureCause};
+        let (cause, code) = match &error {
+            PlanCommitVerifyError::Unknown { .. } => (FailureCause::Program, "plan_commit_unknown"),
+            PlanCommitVerifyError::Expired { .. } => (FailureCause::Program, "plan_commit_expired"),
+            PlanCommitVerifyError::Mismatch { .. } => {
+                (FailureCause::Program, "plan_commit_mismatch")
+            }
+            PlanCommitVerifyError::PlanAheadOfSession { .. } => {
+                (FailureCause::Program, "plan_commit_ahead_of_session")
+            }
+            PlanCommitVerifyError::StalePolicy { .. } => {
+                (FailureCause::Program, "plan_commit_stale_policy")
+            }
+            PlanCommitVerifyError::Evidence { .. } => {
+                (FailureCause::Runtime, "plan_commit_evidence_mismatch")
+            }
+        };
+        ExecutionFailure::new(cause, code, error.to_string())
+    }
+}
+
 pub async fn register_plan_commit_and_persist(
     st: &PlasmHostState,
     prompt_hash: &str,

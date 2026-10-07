@@ -22,6 +22,15 @@ The compiler resolves lexical names to scope-qualified ports before producing
 IL. Runtime execution receives only the sealed ports and body. It must not
 search an enclosing mutable environment by Python spelling.
 
+Canonical `PlasmComp` wire version 3 carries a shared `CaptureContract` on every
+parent and enclosing port. `Value` retains the recursive value type, including
+null and arrays, and cannot carry entity receiver authority. `Rows` carries the
+observed schema and receiver authority. Both ports implement `CapturePort` for
+construction-independent validation and lowering. Cardinality remains separate:
+one parent occurrence is not proof that its enclosing source is a singleton.
+Selection, ordering, deduplication and limits preserve value kind. Earlier comp
+wire versions are rejected; their capture representation is not reinterpreted.
+
 The existing `map` cardinality is retained: one synthetic record per source row.
 A nested map used as a record field contributes a typed array of records,
 including an empty array. It does not flatten or drop its parent. Bare rowset

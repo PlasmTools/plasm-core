@@ -672,8 +672,9 @@ pub(crate) fn assert_planning_query_pipe(
                 return Err("qualification renderer must consume a typed singleton row".into());
             };
             let parent = scope
-                .parent_schema
-                .as_ref()
+                .parent
+                .contract
+                .schema()
                 .ok_or("qualification parent schema missing")?;
             if renderer.source != scope.parent.local.as_str()
                 || input.fields != parent.fields

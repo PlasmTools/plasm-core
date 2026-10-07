@@ -65,6 +65,7 @@ pub struct ParentCapture {
     /// Name under which one row is installed in each fresh body scope.
     pub local: StepId,
     pub entity: PlanQualifiedEntityKey,
+    pub contract: super::CaptureContract,
 }
 
 /// One synthetic output row for every parent, including parents with no children.
@@ -74,8 +75,6 @@ pub struct CorrelatedBody {
     pub parent: ParentCapture,
     pub output: ScopedOutput,
     pub max_parents: NonZeroU32,
-    pub parent_entity_authority: bool,
-    pub parent_schema: Option<super::SyntheticResultSchema>,
     pub captures: Vec<ScopedCapture>,
     pub body: PlasmComp,
 }
@@ -104,13 +103,8 @@ pub struct ScopedCapture {
     pub source: StepId,
     pub local: StepId,
     pub entity: PlanQualifiedEntityKey,
-    pub schema: super::SyntheticResultSchema,
-    /// Scalar cells retain their value contract instead of becoming records
-    /// merely because the transport also provides a one-column row schema.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub value_contract: Option<crate::value_contract::ValueContract>,
+    pub contract: super::CaptureContract,
     pub singleton: bool,
-    pub entity_authority: bool,
 }
 
 impl CorrelatedBody {
@@ -325,8 +319,6 @@ impl CorrelatedBody {
     /// Semantic equality includes scope, qualification and bound; body name/metadata are inert.
     pub fn semantic_eq(&self, other: &Self) -> bool {
         self.output == other.output
-            && self.parent_entity_authority == other.parent_entity_authority
-            && self.parent_schema == other.parent_schema
             && self.captures == other.captures
             && self.parent == other.parent
             && self.max_parents == other.max_parents
@@ -405,4 +397,43 @@ pub fn iteration_step_effect(
         result_shape: operation.result_shape,
         projection: operation.projection.clone(),
     })
+}
+
+impl super::CapturePort for ParentCapture {
+    fn source(&self) -> &StepId {
+        &self.source
+    }
+    fn local(&self) -> &StepId {
+        &self.local
+    }
+    fn entity(&self) -> &PlanQualifiedEntityKey {
+        &self.entity
+    }
+    fn contract(&self) -> &super::CaptureContract {
+        &self.contract
+    }
+    fn cardinality(&self) -> super::CaptureCardinality {
+        super::CaptureCardinality::ParentOccurrence
+    }
+}
+impl super::CapturePort for ScopedCapture {
+    fn source(&self) -> &StepId {
+        &self.source
+    }
+    fn local(&self) -> &StepId {
+        &self.local
+    }
+    fn entity(&self) -> &PlanQualifiedEntityKey {
+        &self.entity
+    }
+    fn contract(&self) -> &super::CaptureContract {
+        &self.contract
+    }
+    fn cardinality(&self) -> super::CaptureCardinality {
+        if self.singleton {
+            super::CaptureCardinality::Singleton
+        } else {
+            super::CaptureCardinality::Collection
+        }
+    }
 }

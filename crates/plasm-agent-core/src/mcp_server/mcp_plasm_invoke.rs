@@ -1,6 +1,7 @@
 //! MCP `plasm` / `plasm_run` argument parsing.
 
-use plasm_core::{PagingHandle, PlanCommitRef};
+pub(crate) use plasm_core::run_reference::ExecutableRunTarget;
+use plasm_core::PagingHandle;
 use rust_mcp_sdk::schema::{CallToolError, CallToolResult};
 use thiserror::Error;
 
@@ -11,15 +12,9 @@ pub(crate) struct McpRunRefParseError {
 }
 
 #[derive(Debug, Clone)]
-pub(crate) enum McpPlasmRunTarget {
-    Commit(PlanCommitRef),
-    Page(PagingHandle),
-}
-
-#[derive(Debug, Clone)]
 pub(crate) enum McpPlasmInvocation {
     Dry { program: String },
-    Run(McpPlasmRunTarget),
+    Run(ExecutableRunTarget),
 }
 
 impl McpPlasmInvocation {
@@ -30,7 +25,7 @@ impl McpPlasmInvocation {
         }
     }
 
-    pub(crate) fn run_target(&self) -> Option<&McpPlasmRunTarget> {
+    pub(crate) fn run_target(&self) -> Option<&ExecutableRunTarget> {
         match self {
             Self::Dry { .. } => None,
             Self::Run(target) => Some(target),
@@ -40,8 +35,8 @@ impl McpPlasmInvocation {
     pub(crate) fn invocation_text(&self) -> &str {
         match self {
             Self::Dry { program } => program.as_str(),
-            Self::Run(McpPlasmRunTarget::Commit(pc)) => pc.as_str(),
-            Self::Run(McpPlasmRunTarget::Page(h)) => h.as_str(),
+            Self::Run(ExecutableRunTarget::Commit(pc)) => pc.as_str(),
+            Self::Run(ExecutableRunTarget::Page(h)) => h.as_str(),
         }
     }
 }
@@ -54,17 +49,9 @@ fn strip_page_program_wrapper(raw: &str) -> &str {
         .unwrap_or(s)
 }
 
-fn parse_mcp_run_ref(raw: &str) -> Result<McpPlasmRunTarget, McpRunRefParseError> {
+fn parse_mcp_run_ref(raw: &str) -> Result<ExecutableRunTarget, McpRunRefParseError> {
     let token = strip_page_program_wrapper(raw);
-    if let Ok(handle) = PagingHandle::parse(token) {
-        return Ok(McpPlasmRunTarget::Page(handle));
-    }
-    if let Some(pc) = PlanCommitRef::parse(token) {
-        return Ok(McpPlasmRunTarget::Commit(pc));
-    }
-    Err(McpRunRefParseError {
-        token: token.to_owned(),
-    })
+    ExecutableRunTarget::parse(token).map_err(|error| McpRunRefParseError { token: error.token })
 }
 
 fn program_looks_like_paging_continuation(program: &str) -> bool {

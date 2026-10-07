@@ -19,11 +19,12 @@ use plasm_agent_core::run_artifacts::RunArtifactStore;
 use plasm_agent_core::server_state::CatalogBootstrap;
 use plasm_agent_core::PlasmCompBundle;
 use plasm_core::discovery::{CgsRegistry, RegistryEntryPair};
+use plasm_core::run_reference::ExecutableRunTarget;
+use plasm_core::PlanCommitRef;
 use plasm_core::{
     capability_method_label_kebab, ExposureEntityKey, NamedValueSchema, OutputSchema,
     PromptPipelineConfig, SymbolMapCrossRequestCache, TeachingExposureSession, CGS,
 };
-use plasm_core::{PagingHandle, PlanCommitRef};
 use plasm_runtime::{ExecutionConfig, ExecutionEngine, ExecutionMode, HttpTransport};
 use std::path::Path;
 use std::sync::Arc;
@@ -57,24 +58,14 @@ pub enum AgentEngineError {
     SeedEntityMissing { entry_id: String, entity: String },
     #[error("flow policy denied plan commit ({verdict:?}) with {violations} violation(s)")]
     PlanCommitDenied { verdict: String, violations: usize },
-    #[error("plan commit reference is missing")]
-    MissingPlanCommitRef,
-    #[error("plan commit reference `{value}` is invalid")]
-    InvalidPlanCommitRef { value: String },
     #[error("plan commit reference is unknown or expired")]
     PlanCommitUnavailable(#[source] plasm_agent_core::plan_commit_store::PlanCommitVerifyError),
     #[error("run reference is unknown or expired")]
     RunReferenceUnavailable(#[source] plasm_agent_core::plan_commit_store::PlanCommitVerifyError),
     #[error("committed plan artifact is invalid: {0}")]
     CommittedPlanArtifact(#[source] plasm_agent_core::error::PlasmCompBundleError),
-    #[error("dry evaluation of committed plan failed: {0}")]
-    CommittedPlanDry(#[source] plasm_agent_core::plan_commit_store::PlanCommitVerifyError),
     #[error("dry evaluation of paging plan failed: {0}")]
     PagingPlanDry(#[source] Box<ProgramStageError>),
-    #[error("paging continuation compilation failed")]
-    PagingContinuation(#[source] plasm_runtime::ExecutionFailure),
-    #[error("run reference `{value}` is neither a commit reference nor a paging handle")]
-    InvalidRunReference { value: String },
     #[error("canonical run artifact identifier is invalid")]
     InvalidRunArtifactId,
     #[error("canonical run artifact is missing")]
@@ -196,6 +187,29 @@ pub struct RunPlanResult {
     pub meta_json: Option<String>,
     pub artifacts_json: Option<String>,
     pub failure_json: Option<String>,
+}
+
+impl RunPlanResult {
+    /// Admission fails before this invocation can dispatch any operation.
+    fn reference_rejection(code: &str, diagnostic: impl Into<String>) -> Self {
+        let failure = plasm_runtime::ExecutionFailure::new(
+            plasm_runtime::FailureCause::Program,
+            code,
+            diagnostic,
+        );
+        Self::failure(failure)
+    }
+
+    fn failure(failure: plasm_runtime::ExecutionFailure) -> Self {
+        Self {
+            ok: false,
+            message: failure.diagnostic().to_owned(),
+            rows_json: None,
+            meta_json: None,
+            artifacts_json: None,
+            failure_json: Some(serde_json::to_string(&failure).expect("typed failure serializes")),
+        }
+    }
 }
 
 fn live_run_rows_json(
@@ -738,16 +752,21 @@ impl AgentEngine {
     pub fn run_plan(&mut self, plan_commit_ref: &str) -> Result<RunPlanResult> {
         let trimmed = plan_commit_ref.trim();
         if trimmed.is_empty() {
-            return Err(AgentEngineError::MissingPlanCommitRef);
+            return Ok(RunPlanResult::reference_rejection(
+                "invalid_run_reference",
+                "Copy the reviewed commit reference from plasm or the continuation handle from plasm_run; artifact identifiers are not executable references.",
+            ));
         }
-        let commit_ref = PlanCommitRef::parse(trimmed).ok_or_else(|| {
-            AgentEngineError::InvalidPlanCommitRef {
-                value: trimmed.to_owned(),
-            }
-        })?;
+        let Some(commit_ref) = PlanCommitRef::parse(trimmed) else {
+            return Ok(RunPlanResult::reference_rejection(
+                "invalid_run_reference",
+                "Copy a reviewed commit reference from plasm verbatim.",
+            ));
+        };
         let es = self.ensure_execute_session()?;
-        resolve_committed_plan(&es, &commit_ref)
-            .map_err(AgentEngineError::PlanCommitUnavailable)?;
+        if let Err(error) = resolve_committed_plan(&es, &commit_ref) {
+            return Ok(RunPlanResult::failure(error.into()));
+        }
         Ok(RunPlanResult {
             ok: false,
             message: format!("Plan `{trimmed}` validated. Pass a HostTransportFn to execute live."),
@@ -767,26 +786,42 @@ impl AgentEngine {
     ) -> Result<RunPlanResult> {
         let trimmed = plan_commit_ref.trim();
         if trimmed.is_empty() {
-            return Err(AgentEngineError::MissingPlanCommitRef);
+            return Ok(RunPlanResult::reference_rejection(
+                "invalid_run_reference",
+                "Copy a reviewed commit reference or paging handle verbatim.",
+            ));
         }
         let es = self.ensure_execute_session()?;
-        let (bundle, dry) = if let Some(commit_ref) = PlanCommitRef::parse(trimmed) {
-            let committed = resolve_committed_plan(&es, &commit_ref)
-                .map_err(AgentEngineError::RunReferenceUnavailable)?;
-            let bundle = PlasmCompBundle::new(committed.artifact.clone())
-                .map_err(AgentEngineError::CommittedPlanArtifact)?;
-            let dry = dry_for_committed_plasm_run(&es, &bundle, &committed)
-                .map_err(AgentEngineError::CommittedPlanDry)?;
-            (bundle, dry)
-        } else if let Ok(handle) = PagingHandle::parse(trimmed) {
-            let bundle = plasm_agent_core::mcp_server::compile_page_continuation(&es, &handle, 0)
-                .map_err(AgentEngineError::PagingContinuation)?;
-            let dry = evaluate_plasm_comp_dry(&es, &bundle).map_err(AgentEngineError::from)?;
-            (bundle, dry)
-        } else {
-            return Err(AgentEngineError::InvalidRunReference {
-                value: trimmed.to_owned(),
-            });
+        let (bundle, dry) = match ExecutableRunTarget::parse(trimmed) {
+            Ok(ExecutableRunTarget::Commit(commit_ref)) => {
+                let committed = match resolve_committed_plan(&es, &commit_ref) {
+                    Ok(committed) => committed,
+                    Err(error) => return Ok(RunPlanResult::failure(error.into())),
+                };
+                let bundle = PlasmCompBundle::new(committed.artifact.clone())
+                    .map_err(AgentEngineError::CommittedPlanArtifact)?;
+                let dry = match dry_for_committed_plasm_run(&es, &bundle, &committed) {
+                    Ok(dry) => dry,
+                    Err(error) => return Ok(RunPlanResult::failure(error.into())),
+                };
+                (bundle, dry)
+            }
+            Ok(ExecutableRunTarget::Page(handle)) => {
+                let bundle = match plasm_agent_core::mcp_server::compile_page_continuation(
+                    &es, &handle, 0,
+                ) {
+                    Ok(bundle) => bundle,
+                    Err(failure) => return Ok(RunPlanResult::failure(failure)),
+                };
+                let dry = evaluate_plasm_comp_dry(&es, &bundle).map_err(AgentEngineError::from)?;
+                (bundle, dry)
+            }
+            Err(_) => {
+                return Ok(RunPlanResult::reference_rejection(
+                "invalid_run_reference",
+                format!("Run reference `{trimmed}` is not executable. Copy a reviewed commit reference from plasm or a continuation handle from plasm_run verbatim; run artifact IDs identify observations, not executable plans."),
+            ));
+            }
         };
 
         let host = self.build_host_state(transport)?;
@@ -1049,6 +1084,150 @@ mod tests {
     };
     use std::path::PathBuf;
     use std::sync::Arc;
+
+    #[test]
+    fn run_reference_admission_is_effect_free_and_correctable() {
+        let (mut engine, info) = tiny_engine();
+        engine
+            .expose_seeds(
+                "abstract reference admission",
+                &[CapabilitySeed {
+                    entry_id: info.entry_id,
+                    entity: "Product".into(),
+                }],
+            )
+            .unwrap();
+        for reference in [
+            "",
+            "????",
+            "pr0000000000000000000000000000000000000000000000000000000000000000",
+            "pc999",
+        ] {
+            let result = engine
+                .run_plan(reference)
+                .expect("admission is a typed observation");
+            let failure: serde_json::Value =
+                serde_json::from_str(result.failure_json.as_ref().unwrap()).unwrap();
+            assert_eq!(failure["cause"], "program");
+            assert_eq!(failure["recovery"], "repair_program");
+            assert_eq!(failure["effects_unresolved"], false);
+            assert_eq!(failure["effects"], serde_json::json!([]));
+            assert_eq!(failure["dispatches"], serde_json::json!([]));
+        }
+    }
+
+    #[tokio::test]
+    async fn stale_policy_admission_is_correctable_and_never_dispatches() {
+        let (mut engine, info) = tiny_engine();
+        engine
+            .expose_seeds(
+                "policy admission",
+                &[CapabilitySeed {
+                    entry_id: info.entry_id,
+                    entity: "Product".into(),
+                }],
+            )
+            .unwrap();
+        let dry = engine
+            .dry_run("class Read(Program):\n    def build(self):\n        return e1.query()\n")
+            .await
+            .unwrap();
+        let es = engine.ensure_execute_session().unwrap();
+        let reference = PlanCommitRef::parse(&dry.plan_commit_ref).unwrap();
+        let mut record = es.get_plan_commit(&reference).unwrap();
+        record.policy_revision = plasm_agent_core::PolicyRevision(99);
+        es.register_plan_commit(record);
+        let rejection = engine
+            .run_plan_live(&dry.plan_commit_ref, Arc::new(AdmissionMustNotDispatch))
+            .await
+            .unwrap();
+        let failure: plasm_runtime::ExecutionFailure =
+            serde_json::from_str(rejection.failure_json.as_ref().unwrap()).unwrap();
+        assert_eq!(failure.code, "plan_commit_stale_policy");
+        assert_eq!(
+            failure.recovery,
+            plasm_runtime::RecoveryDisposition::RepairProgram
+        );
+        assert!(
+            failure.effects.is_empty()
+                && failure.dispatches.is_empty()
+                && !failure.effects_unresolved
+        );
+        let rejection = engine.run_plan(&dry.plan_commit_ref).unwrap();
+        assert_eq!(
+            rejection.failure_json,
+            Some(serde_json::to_string(&failure).unwrap())
+        );
+    }
+
+    #[tokio::test]
+    async fn live_run_reference_admission_rejects_unknown_and_expired_before_dispatch() {
+        let (mut engine, info) = tiny_engine();
+        engine
+            .expose_seeds(
+                "abstract reference admission",
+                &[CapabilitySeed {
+                    entry_id: info.entry_id,
+                    entity: "Product".into(),
+                }],
+            )
+            .unwrap();
+        let dry = engine
+            .dry_run("class Read(Program):\n    def build(self):\n        return e1.query()\n")
+            .await
+            .unwrap();
+        let es = engine.ensure_execute_session().unwrap();
+        let reference = PlanCommitRef::parse(&dry.plan_commit_ref).unwrap();
+        let mut record = es.get_plan_commit(&reference).unwrap();
+        record.expires_at = Instant::now();
+        es.register_plan_commit(record);
+        for reference in [
+            "",
+            "????",
+            "pr0000000000000000000000000000000000000000000000000000000000000000",
+            "pc999",
+            &dry.plan_commit_ref,
+        ] {
+            let result = engine
+                .run_plan_live(reference, Arc::new(AdmissionMustNotDispatch))
+                .await
+                .unwrap();
+            let failure: plasm_runtime::ExecutionFailure =
+                serde_json::from_str(result.failure_json.as_ref().unwrap()).unwrap();
+            assert_eq!(
+                failure.recovery,
+                plasm_runtime::RecoveryDisposition::RepairProgram
+            );
+            assert!(!failure.effects_unresolved);
+            assert!(failure.effects.is_empty() && failure.dispatches.is_empty());
+        }
+    }
+
+    struct AdmissionMustNotDispatch;
+    #[async_trait::async_trait]
+    impl HttpTransport for AdmissionMustNotDispatch {
+        async fn get_json_absolute(
+            &self,
+            _: &str,
+            _: Option<plasm_runtime::auth::ResolvedAuth>,
+        ) -> std::result::Result<
+            (serde_json::Value, Option<String>),
+            plasm_runtime::error::RuntimeError,
+        > {
+            panic!("rejected admission must never fetch");
+        }
+        async fn send_compiled_http(
+            &self,
+            _: &str,
+            _: &plasm_compile::CompiledRequest,
+            _: Option<plasm_runtime::auth::ResolvedAuth>,
+        ) -> std::result::Result<
+            (serde_json::Value, Option<String>),
+            plasm_runtime::error::RuntimeError,
+        > {
+            panic!("rejected admission must never dispatch");
+        }
+    }
 
     #[test]
     fn agent_engine_error_has_bounded_footprint() {

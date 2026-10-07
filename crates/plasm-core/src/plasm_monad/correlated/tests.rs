@@ -103,17 +103,26 @@ fn body() -> CorrelatedBody {
         parent: ParentCapture {
             source: id("items"),
             local: id("parent"),
+            contract: crate::plasm_monad::CaptureContract::Rows {
+                schema: None,
+                entity_authority: true,
+            },
             entity: PlanQualifiedEntityKey {
                 entry_id: "fixture".into(),
                 entity: "Item".into(),
             },
         },
         max_parents: NonZeroU32::new(256).unwrap(),
-        parent_entity_authority: true,
-        parent_schema: None,
         captures: vec![],
         body: comp,
     }
+}
+
+#[test]
+fn capture_value_contract_rejects_receiver_authority_on_wire() {
+    let value = crate::value_contract::ValueContract::scalar(crate::FieldType::String);
+    let wire = serde_json::json!({"kind":"value", "value":value, "entity_authority":true});
+    assert!(serde_json::from_value::<super::super::CaptureContract>(wire).is_err());
 }
 
 #[test]
@@ -405,10 +414,11 @@ fn rowset_identity_scope_returns_only_admitted_ports() {
         source: id("outer"),
         local: id("captured"),
         entity: body.parent.entity.clone(),
-        schema,
-        value_contract: None,
+        contract: crate::plasm_monad::CaptureContract::Rows {
+            schema: Some(schema),
+            entity_authority: true,
+        },
         singleton: false,
-        entity_authority: true,
     });
     body.body.return_ = PlasmReturn::Step {
         step: id("captured"),

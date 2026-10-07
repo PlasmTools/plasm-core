@@ -9,7 +9,7 @@ import {
   PLASM_TOOL_DESCRIPTION,
 } from "./descriptions.js";
 import { toolInput } from "./tool-input.js";
-import { logicalSessionRefSchema } from "../runtime/session-contract.js";
+import { logicalSessionRefSchema, runReferenceSchema } from "../runtime/session-contract.js";
 
 const plasmContextInputSchema = z.object({
   intent: z
@@ -45,8 +45,7 @@ const plasmInputSchema = z.object({
 const plasmRunInputSchema = z.object({
   logical_session_ref: logicalSessionRefSchema
     .describe("Copy the logical_session_ref returned by plasm_context verbatim; do not reconstruct or abbreviate it."),
-  run_ref: z
-    .string()
+  run_ref: runReferenceSchema
     .describe("pcN from plasm dry-run, or page handle from a prior plasm_run more-pages line"),
   reasoning: z
     .string()

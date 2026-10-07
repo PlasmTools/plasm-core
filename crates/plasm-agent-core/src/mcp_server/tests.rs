@@ -1,4 +1,4 @@
-use super::mcp_plasm_invoke::McpPlasmRunTarget;
+use super::mcp_plasm_invoke::ExecutableRunTarget;
 
 fn default_plasm_tools() -> Vec<rust_mcp_sdk::schema::Tool> {
     super::tools::plasm_tools(
@@ -500,7 +500,7 @@ fn plasm_run_invocation_accepts_run_ref_pc_or_page_handle() {
         false,
     )
     .expect("commit invocation");
-    let Some(McpPlasmRunTarget::Commit(pc)) = commit.run_target() else {
+    let Some(ExecutableRunTarget::Commit(pc)) = commit.run_target() else {
         panic!("expected commit invocation");
     };
     assert_eq!(pc.as_str(), "pc12");
@@ -516,7 +516,7 @@ fn plasm_run_invocation_accepts_run_ref_pc_or_page_handle() {
     )
     .expect("page invocation");
     match page.run_target() {
-        Some(McpPlasmRunTarget::Page(h)) => {
+        Some(ExecutableRunTarget::Page(h)) => {
             assert_eq!(h.as_str(), "l_AAAAAAAAQACAAAAAAAAAAQ_pg3");
         }
         _ => panic!("expected page invocation"),

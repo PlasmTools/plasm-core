@@ -35,6 +35,11 @@ export const logicalSessionRefSchema = z.string().regex(/^l_[A-Za-z0-9_-]{21}[AQ
 }, "expected a canonical logical session ref").brand<"LogicalSessionRef">();
 export type LogicalSessionRef = z.infer<typeof logicalSessionRefSchema>;
 
+/** Executable references exclude observation artifact identifiers. */
+export const runReferenceSchema = z.string().regex(/^(?:pc[0-9]+|pg[0-9]{1,24}|l_[A-Za-z0-9_-]{21}[AQgw]_pg[0-9]{1,24})$/, "copy a reviewed commit reference or paging handle verbatim")
+  .refine(value => !value.startsWith("l_") || logicalSessionRefSchema.safeParse(value.slice(0, value.lastIndexOf("_pg"))).success)
+  .brand<"RunReference">();
+
 export const sessionIdentitySchema = z.object({
   tenantScope: unicodeTextSchema.refine((value) => value.length > 0, "tenant must not be empty"),
   logicalSessionRef: logicalSessionRefSchema,

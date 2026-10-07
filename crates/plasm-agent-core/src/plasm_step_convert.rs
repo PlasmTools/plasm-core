@@ -759,31 +759,13 @@ fn plan_result_shape(value: ResultShape) -> PlanResultShape {
 pub(crate) fn lift_body(
     body: &plasm_core::plasm_monad::CorrelatedBody,
 ) -> Result<ValidatedPlan, StepPayloadLiftError> {
-    let capture = PlanNodeId::new(body.parent.local.as_str())?;
-    let mut nodes = vec![ValidatedPlanNode::Capture(
-        crate::plasm_plan::ValidatedCaptureNode {
-            id: capture.clone(),
-            entity: plan_qualified_entity_key(&body.parent.entity),
-            schema: body.parent_schema.clone(),
-            value_contract: None,
-            singleton: true,
-            entity_authority: body.parent_entity_authority,
-        },
-    )];
-    let mut topo = vec![capture];
-    for capture in &body.captures {
-        let id = PlanNodeId::new(capture.local.as_str())?;
-        nodes.push(ValidatedPlanNode::Capture(
-            crate::plasm_plan::ValidatedCaptureNode {
-                id: id.clone(),
-                entity: plan_qualified_entity_key(&capture.entity),
-                schema: Some(capture.schema.clone()),
-                value_contract: capture.value_contract.clone(),
-                singleton: capture.singleton,
-                entity_authority: capture.entity_authority,
-            },
-        ));
-        topo.push(id);
+    let parent = lift_capture_port(&body.parent)?;
+    let mut topo = vec![parent.id.clone()];
+    let mut nodes = vec![ValidatedPlanNode::Capture(parent)];
+    for port in &body.captures {
+        let capture = lift_capture_port(port)?;
+        topo.push(capture.id.clone());
+        nodes.push(ValidatedPlanNode::Capture(capture));
     }
     for id in body.execution_layers()?.iter().flatten() {
         nodes.push(step_payload_to_validated_node(
@@ -989,4 +971,15 @@ mod tests {
             if step == "mapped" && input == "items")
         );
     }
+}
+
+fn lift_capture_port(
+    port: &impl plasm_core::plasm_monad::CapturePort,
+) -> Result<crate::plasm_plan::ValidatedCaptureNode, StepPayloadLiftError> {
+    Ok(crate::plasm_plan::ValidatedCaptureNode {
+        id: PlanNodeId::new(port.local().as_str())?,
+        entity: plan_qualified_entity_key(port.entity()),
+        contract: port.contract().clone(),
+        singleton: port.cardinality() != plasm_core::plasm_monad::CaptureCardinality::Collection,
+    })
 }

@@ -667,7 +667,7 @@ pub(crate) fn compute_fingerprint(
             serde_json::to_vec(&serde_json::json!({
                 "capture": map.body.parent, "max_parents": map.body.max_parents,
                 "output": map.body.output, "captures": map.body.captures,
-                "parent_schema": map.body.parent_schema, "parent_entity_authority": map.body.parent_entity_authority,
+                "parent_contract": map.body.parent.contract,
                 "body": plasm_core::plasm_comp_commit_canonical(&map.body.body),
             }))
             .map_err(ComputeFingerprintError::Serialization)?,

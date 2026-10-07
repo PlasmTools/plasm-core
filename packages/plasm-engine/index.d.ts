@@ -24,6 +24,9 @@ export declare class PlasmEngine {
   runPlanLive(planCommitRef: string, transport: (request: JsTransportRequest) => JsTransportResponse | Promise<JsTransportResponse>, logicalSessionId?: string): Promise<JsRunPlanResult>
 }
 
+/** Wire-schema parity gate, using the same parser as MCP and native execution. */
+export declare function isExecutableRunReference(raw: string): boolean
+
 export interface JsCatalogInfo {
   entryId: string
   catalogCgsHash: string

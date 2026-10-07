@@ -432,10 +432,8 @@ pub struct ValidatedMapBodyNode {
 pub struct ValidatedCaptureNode {
     pub(crate) id: PlanNodeId,
     pub(crate) entity: QualifiedEntityKey,
-    pub(crate) schema: Option<SyntheticResultSchema>,
-    pub(crate) value_contract: Option<plasm_core::value_contract::ValueContract>,
+    pub(crate) contract: plasm_core::plasm_monad::CaptureContract,
     pub(crate) singleton: bool,
-    pub(crate) entity_authority: bool,
 }
 
 #[derive(Debug, Clone)]

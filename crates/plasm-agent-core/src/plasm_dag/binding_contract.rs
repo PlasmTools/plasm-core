@@ -180,7 +180,11 @@ pub(in crate::plasm_dag) fn program_binding_contract_for_source(
         }
         DagNodeSource::Compute {
             source,
-            op: op @ ComputeOp::Limit { .. },
+            op:
+                op @ (ComputeOp::Limit { .. }
+                | ComputeOp::Filter { .. }
+                | ComputeOp::Sort { .. }
+                | ComputeOp::DedupeBy { .. }),
             schema,
             ..
         } => {
@@ -188,7 +192,8 @@ pub(in crate::plasm_dag) fn program_binding_contract_for_source(
                 .unwrap_or_else(|| synthetic_row_contract(source, schema));
             let mut contract = inherit_row_preserving_contract(
                 label,
-                value_kind,
+                // Selection, ordering and cardinality cannot change value kind.
+                parent.value_kind,
                 &parent,
                 crate::plasm_plan::compute_cardinality_transfer(op, || parent.row_cardinality),
                 ContinuationAnchor::BindingLabel,
@@ -198,11 +203,7 @@ pub(in crate::plasm_dag) fn program_binding_contract_for_source(
         }
         DagNodeSource::Compute {
             source,
-            op:
-                op @ (ComputeOp::Filter { .. }
-                | ComputeOp::Sort { .. }
-                | ComputeOp::DedupeBy { .. }
-                | ComputeOp::With { .. }),
+            op: op @ ComputeOp::With { .. },
             schema,
             ..
         } => {

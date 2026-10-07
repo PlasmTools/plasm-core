@@ -588,3 +588,4 @@ if (!nativeBinding) {
 
 module.exports = nativeBinding
 module.exports.PlasmEngine = nativeBinding.PlasmEngine
+module.exports.isExecutableRunReference = nativeBinding.isExecutableRunReference

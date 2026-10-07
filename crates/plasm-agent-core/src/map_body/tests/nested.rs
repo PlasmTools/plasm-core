@@ -9,6 +9,156 @@ fn nested_source(es: &ExecuteSession, inner: &str, bound: u32) -> String {
 }
 
 #[test]
+fn emitted_limits_preserve_value_contracts_and_ports_reject_mismatches() {
+    use crate::map_body::{MapBodyValidationError, ScopeContractError};
+    use crate::plasm_plan::{
+        PlanNodeId, ValidatedCaptureNode, ValidatedComputeNode, ValidatedPlanNode,
+    };
+    use plasm_core::value_contract::ValueContract;
+    on_runtime(async {
+        let (es, _, calls) = fixture(0);
+        for value in [
+            json!("text"),
+            json!(7),
+            json!(true),
+            json!(null),
+            json!(["text", false, 3]),
+        ] {
+            let contract = ValueContract::literal(
+                &serde_json::from_value::<plasm_core::Value>(value).unwrap(),
+            )
+            .unwrap();
+            let source_id = PlanNodeId::new("value").unwrap();
+            let limited_id = PlanNodeId::new("limited").unwrap();
+            let nodes = vec![
+                ValidatedPlanNode::Capture(ValidatedCaptureNode {
+                    id: source_id.clone(),
+                    entity: crate::plasm_plan::QualifiedEntityKey {
+                        entry_id: "fixture".into(),
+                        entity: "__value".into(),
+                    },
+                    contract: CaptureContract::Value {
+                        value: contract.clone(),
+                    },
+                    singleton: true,
+                }),
+                ValidatedPlanNode::Compute(ValidatedComputeNode {
+                    source_node: source_id.clone(),
+                    id: limited_id,
+                    effect_class: plasm_core::EffectClass::ArtifactRead,
+                    result_shape: plasm_core::ResultShape::Single,
+                    compute: ComputeTemplate {
+                        source: "value".into(),
+                        op: ComputeOp::Limit { count: 1 },
+                        schema: SyntheticResultSchema::for_value(contract.clone()).unwrap(),
+                        page_size: None,
+                        collection_alias: None,
+                    },
+                    depends_on: vec![source_id],
+                    uses_result: vec![],
+                }),
+            ];
+            assert_eq!(
+                crate::map_body_schema::row_contract(&es, &nodes, "limited").unwrap(),
+                contract
+            );
+            let mut parent = ParentCapture {
+                source: id("limited"),
+                local: id("parent"),
+                entity: owner("__value"),
+                contract: CaptureContract::Value {
+                    value: contract.clone(),
+                },
+            };
+            crate::map_body::validate_capture_port(&es, &nodes, &parent).unwrap();
+            let mut enclosing = ScopedCapture {
+                source: id("limited"),
+                local: id("enclosing"),
+                entity: owner("__value"),
+                contract: parent.contract.clone(),
+                singleton: true,
+            };
+            crate::map_body::validate_capture_port(&es, &nodes, &enclosing).unwrap();
+            let wrong = CaptureContract::Value {
+                value: ValueContract::scalar(plasm_core::FieldType::Uuid),
+            };
+            parent.contract = wrong.clone();
+            enclosing.contract = wrong;
+            for error in [
+                crate::map_body::validate_capture_port(&es, &nodes, &parent).unwrap_err(),
+                crate::map_body::validate_capture_port(&es, &nodes, &enclosing).unwrap_err(),
+            ] {
+                assert!(matches!(
+                    error,
+                    MapBodyValidationError::Contract(
+                        ScopeContractError::ScalarCaptureContractChanged
+                    )
+                ));
+            }
+        }
+        assert!(calls.lock().unwrap().is_empty());
+    });
+}
+
+#[test]
+fn nested_helper_captures_preserve_recursive_value_cells() {
+    on_runtime(async {
+        for (literal, value) in [
+            ("'text'", json!("text")),
+            ("7", json!(7)),
+            ("True", json!(true)),
+            ("None", json!(null)),
+            ("['text', False, 3]", json!(["text", false, 3])),
+        ] {
+            let (es, host, _) = fixture(3);
+            let symbols = es.teaching_exposure.as_ref().unwrap().to_symbol_map();
+            let item = symbols.entity_sym_for("fixture", "Item");
+            let tags = symbols.ident_sym_relation_for("fixture", "Item", "tags");
+            let source = format!("class Captured(Program):\n    def build(self):\n        def selected(value):\n            return {item}.query().where(lambda row: row.title == 'Title 2').flat_map(lambda parent: parent.{tags}.map(lambda child: {{'value': value, 'child': child.label}}, max_parents=8), max_parents=8)\n        return selected({literal})\n");
+            let bundle = compile_python_program(&es, &source).await.unwrap();
+            let result = execute(&es, &host, &bundle).await.unwrap();
+            let row = plasm_runtime::entity_to_agent_row_json(
+                &result.return_steps[0].result.entities()[0],
+                None,
+            );
+            assert_eq!(
+                row["value"],
+                json!([{"value":value,"child":"L0"},{"value":value,"child":"L1"}])
+            );
+        }
+    });
+}
+
+#[test]
+fn nested_flat_map_captures_helper_scalar_and_parent_record() {
+    on_runtime(async {
+        let (es, host, _) = fixture(3);
+        let symbols = es.teaching_exposure.as_ref().unwrap().to_symbol_map();
+        let item = symbols.entity_sym_for("fixture", "Item");
+        let relation = symbols.ident_sym_relation_for("fixture", "Item", "tags");
+        let code = format!("class Nested(Program):\n    def build(self):\n        def selected(title):\n            return {item}.query().where(lambda row: row.title == title).flat_map(lambda parent: parent.{relation}.map(lambda child: {{'parent': parent.title, 'child': child.label}}, max_parents=8), max_parents=8)\n        return selected('Title 2')\n");
+        let bundle = compile_python_program(&es, &code).await.unwrap();
+        let run = execute(&es, &host, &bundle)
+            .await
+            .unwrap_or_else(|error| panic!("{}", error.diagnostic()));
+        let actual: Vec<_> = run.return_steps[0]
+            .result
+            .entities()
+            .iter()
+            .map(|row| plasm_runtime::entity_to_agent_row_json(row, None))
+            .collect();
+        assert_eq!(actual.len(), 1);
+        assert_eq!(
+            actual[0]["value"],
+            json!([
+                {"parent":"Title 2","child":"L0"},
+                {"parent":"Title 2","child":"L1"}
+            ])
+        );
+    });
+}
+
+#[test]
 fn nested_maps_preserve_parent_child_pairing_and_empty_children() {
     on_runtime(async {
         for count in [0, 1, 3] {
@@ -287,7 +437,15 @@ fn nested_maps_replay_rejects_capture_schema_and_bound_tampering() {
                 .unwrap();
             match change {
                 "field" => {
-                    inner.captures[0].schema.fields[0].name = OutputName::new("absent").unwrap()
+                    if let CaptureContract::Rows {
+                        schema: Some(schema),
+                        ..
+                    } = &mut inner.captures[0].contract
+                    {
+                        schema.fields[0].name = OutputName::new("absent").unwrap();
+                    } else {
+                        panic!("fixture capture must be a row");
+                    }
                 }
                 "owner" => inner.captures[0].entity.entity = "Tag".into(),
                 "bound" => inner.max_parents = NonZeroU32::new(65_537).unwrap(),

@@ -14,7 +14,7 @@ import {
 } from "../engine/napi-binding.js";
 import { createDefaultHostTransport } from "../engine/host-transport.js";
 import { formatLogicalSessionWireRef } from "../runtime/logical-session.js";
-import { logicalSessionRefSchema, workflowIntentSchema, deriveIntent, type IntentProvenance } from "./session-contract.js";
+import { logicalSessionRefSchema, runReferenceSchema, workflowIntentSchema, deriveIntent, type IntentProvenance } from "./session-contract.js";
 import { SessionManager, type AgentSessionState } from "../session-state.js";
 import {
   formatPlasmContextMarkdown,
@@ -408,6 +408,13 @@ export class AgentRuntime {
 
   async plasmRun(input: PlasmRunInput): Promise<string> {
     const session = await this.requireSessionByRef(input.logicalSessionRef);
+    if (!runReferenceSchema.safeParse(input.runRef).success) {
+      throw new AgentExecutionFailure({
+        cause: "program", recovery: "repair_program", code: "invalid_run_reference",
+        diagnostic: "Copy the reviewed commit reference from plasm or a continuation handle from plasm_run verbatim. Run artifact IDs identify observations, not executable plans.",
+        node: null, occurrence_path: [], catalog_digest: null, effects: [], dispatches: [], effects_unresolved: false,
+      });
+    }
     void input.reasoning;
     const entryId = session.seeds[0]?.api;
     const catalogCgsHash = entryId ? this.catalogHashForEntry(entryId) : undefined;

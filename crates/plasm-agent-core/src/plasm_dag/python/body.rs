@@ -496,17 +496,6 @@ impl Lower<'_> {
             })
             .ok_or(PythonLoweringInvariantError::CapturedValueProvenanceMissing)?;
             let schema = super::text::inferred_schema(self.es, &scoped.state, id.as_str(), 0)?;
-            let value_contract = if contract.value_kind == BindingValueKind::ScalarCell {
-                Some(
-                    schema
-                        .fields
-                        .first()
-                        .and_then(|field| field.value_type.clone())
-                        .ok_or(PythonLoweringInvariantError::CaptureScalarContractMissing)?,
-                )
-            } else {
-                None
-            };
             captures.push(ScopedCapture {
                 source: id.clone(),
                 local: id.clone(),
@@ -514,10 +503,8 @@ impl Lower<'_> {
                     entry_id: owner.entry_id,
                     entity: owner.entity,
                 },
-                schema,
-                value_contract,
+                contract: capture_contract(&contract, schema)?,
                 singleton: contract.row_cardinality.permits_scalar_field_extract(),
-                entity_authority: contract.supports_method_invoke(),
             });
         }
         self.serial = scoped.serial;
@@ -528,18 +515,15 @@ impl Lower<'_> {
             parent: ParentCapture {
                 source: StepId::new(&source)?,
                 local: StepId::new(row)?,
+                contract: capture_contract(
+                    &contract,
+                    super::text::inferred_schema(self.es, &self.state, &source, 0)?,
+                )?,
                 entity: PlanQualifiedEntityKey {
                     entry_id: owner.entry_id,
                     entity: owner.entity,
                 },
             },
-            parent_entity_authority: contract.supports_method_invoke(),
-            parent_schema: Some(super::text::inferred_schema(
-                self.es,
-                &self.state,
-                &source,
-                0,
-            )?),
             captures,
             max_parents: bound,
             body,
@@ -784,6 +768,26 @@ impl Lower<'_> {
                 value: plasm_core::operand_binding::ResolvedValue::new(scalar.scalar(e)?)
                     .map_err(|_| PythonLoweringInvariantError::InvalidResolvedLiteral)?,
             },
+        })
+    }
+}
+
+fn capture_contract(
+    binding: &crate::program_binding::ProgramBindingContract,
+    schema: plasm_core::plasm_monad::SyntheticResultSchema,
+) -> Result<plasm_core::plasm_monad::CaptureContract, PythonLoweringInvariantError> {
+    use plasm_core::plasm_monad::CaptureContract;
+    if binding.is_scalar_cell() {
+        let value = schema
+            .fields
+            .first()
+            .and_then(|field| field.value_type.clone())
+            .ok_or(PythonLoweringInvariantError::CaptureScalarContractMissing)?;
+        Ok(CaptureContract::Value { value })
+    } else {
+        Ok(CaptureContract::Rows {
+            schema: Some(schema),
+            entity_authority: binding.supports_method_invoke(),
         })
     }
 }

@@ -172,6 +172,7 @@ pub mod comp_canonical;
 mod o200k_token_count;
 mod operation_handle;
 mod plan_commit;
+pub mod run_reference;
 #[cfg(test)]
 mod span_graph_tests;
 mod spans;

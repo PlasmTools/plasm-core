@@ -41,6 +41,13 @@ await checkSessionExtension(async () => {}, async (runtime, ref, engine) => {
     }
   }
   assert.equal(admissions, 0, "bad handles never reach the engine");
+  for (const run_ref of ["????", "", "pr" + "0".repeat(64)]) {
+    const observed = await tools.plasm_run!.execute!({ logical_session_ref: ref, run_ref }, options) as { failure: { code: string; recovery: string; effects_unresolved: boolean } };
+    assert.equal(observed.failure.code, "invalid_run_reference");
+    assert.equal(observed.failure.recovery, "repair_program");
+    assert.equal(observed.failure.effects_unresolved, false);
+    assert.equal(terminalExecutionFailure([{ role: "tool", content: [{ toolName: "plasm_run", output: { type: "json", value: observed } }] }]), undefined);
+  }
   let requests = 0;
   const model = new MockLanguageModelV3({ doStream: async () => {
     requests++;
@@ -55,5 +62,52 @@ await checkSessionExtension(async () => {}, async (runtime, ref, engine) => {
   assert.equal(requests, 2, "invalid input buys a bounded correction generation");
   assert.equal(admissions, 1, "only the corrected call reaches the engine");
   assert.notEqual(result.stopReason, "execution_failed");
+  let runAdmissions = 0;
+  engine.runPlan = async () => {
+    runAdmissions++;
+    return { ok: false, message: "corrected reference validated" };
+  };
+  let runRequests = 0;
+  const runModel = new MockLanguageModelV3({ doStream: async () => {
+    runRequests++;
+    return { stream: new ReadableStream({ start(controller) {
+      controller.enqueue({ type: "tool-call", toolCallId: `run-${runRequests}`, toolName: "plasm_run", input: JSON.stringify({ logical_session_ref: ref, run_ref: runRequests === 1 ? "????" : "pc1" }) });
+      controller.enqueue({ type: "finish", finishReason: { unified: "tool-calls", raw: undefined }, usage: { inputTokens: { total: 8, noCache: 8, cacheRead: 0, cacheWrite: 0 }, outputTokens: { total: 2, text: 2, reasoning: 0 } } });
+      controller.close();
+    } }) };
+  } });
+  const repairedRun = await runEveToolLoop({ model: runModel, system: "Abstract run admission fixture", messages: [{ role: "user", content: "Run the reviewed plan" }], tools, maxSteps: 2, agentName: "run-input-recovery", telemetry: { isEnabled: false } });
+  assert.equal(runRequests, 2);
+  assert.equal(runAdmissions, 1, "only the corrected run reference reaches native admission");
+  assert.notEqual(repairedRun.stopReason, "execution_failed");
+  let policyRequests = 0;
+  let staleAdmissions = 0;
+  let freshAdmissions = 0;
+  engine.runPlan = async (runRef) => {
+    if (runRef === "pc1") {
+      staleAdmissions++;
+      return { ok: false, message: "review again", failureJson: JSON.stringify({
+        cause:"program", recovery:"repair_program", code:"plan_commit_stale_policy",
+        diagnostic:"The policy changed; review the program again before execution.",
+        node:null, occurrence_path:[], catalog_digest:null, effects:[], dispatches:[], effects_unresolved:false,
+      }) };
+    }
+    assert.equal(runRef,"pc2"); freshAdmissions++;
+    return {ok:false,message:"fresh reviewed reference admitted"};
+  };
+  engine.dryRun = async () => ({writeCount:0,planCommitRef:"pc2",summary:"fresh policy review",fusedCleanRead:false});
+  const policyModel = new MockLanguageModelV3({ doStream: async () => {
+    policyRequests++;
+    const review = policyRequests === 2;
+    const input = review ? {logical_session_ref:ref,program:"fixture"} : {logical_session_ref:ref,run_ref:policyRequests===1?"pc1":"pc2"};
+    return {stream:new ReadableStream({start(controller) {
+      controller.enqueue({type:"tool-call",toolCallId:`policy-${policyRequests}`,toolName:review?"plasm":"plasm_run",input:JSON.stringify(input)});
+      controller.enqueue({type:"finish",finishReason:{unified:"tool-calls",raw:undefined},usage:{inputTokens:{total:8,noCache:8,cacheRead:0,cacheWrite:0},outputTokens:{total:2,text:2,reasoning:0}}});
+      controller.close();
+    }})};
+  }});
+  const policyRun = await runEveToolLoop({model:policyModel,system:"Abstract policy recovery fixture",messages:[{role:"user",content:"Execute after current policy review"}],tools,maxSteps:3,agentName:"policy-input-recovery",telemetry:{isEnabled:false}});
+  assert.equal(policyRequests,3); assert.equal(staleAdmissions,1); assert.equal(freshAdmissions,1);
+  assert.notEqual(policyRun.stopReason,"execution_failed");
 });
 console.log("PASS: malformed and unknown session refs are effect-free corrections; the model loop admits a corrected call");

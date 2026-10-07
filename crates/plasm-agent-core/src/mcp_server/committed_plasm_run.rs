@@ -6,7 +6,7 @@ use tracing::Instrument;
 use plasm_core::{PagingHandle, PlanCommitRef, PromptPipelineConfig, SymbolMapCrossRequestCache};
 
 use crate::execute_session::ExecuteSession;
-use crate::plan_commit_store::{dry_for_committed_plasm_run, CommittedPlan, PlanCommitVerifyError};
+use crate::plan_commit_store::{dry_for_committed_plasm_run, CommittedPlan};
 use crate::plan_dry_display::{build_plan_dry_compact_view, PlanDryVerdict};
 use crate::plan_gate::{plan_requires_review_gate, PlanGateContext};
 use crate::plasm_comp_bundle::PlasmCompBundle;
@@ -23,7 +23,7 @@ use crate::trace_sink_emit::PlasmTraceContext;
 use plasm_runtime::{ExecutionFailure, FailureCause};
 use plasm_trace::TraceCompWire;
 
-use super::mcp_plasm_invoke::McpPlasmRunTarget;
+use super::mcp_plasm_invoke::ExecutableRunTarget;
 use super::trace::CodePlanTraceInput;
 
 /// MCP execute-row wire + logical session identity.
@@ -142,13 +142,13 @@ pub fn compile_page_continuation(
 pub async fn resolve_mcp_live_run_ingress(
     es: &ExecuteSession,
     mcp_trace: &PlasmTraceContext,
-    run_target: &McpPlasmRunTarget,
+    run_target: &ExecutableRunTarget,
     _pipeline: &PromptPipelineConfig,
     _symbol_map_cross_cache: &SymbolMapCrossRequestCache,
     call_index: u64,
 ) -> Result<ResolvedMcpLiveRunIngress, ExecutionFailure> {
     match run_target {
-        McpPlasmRunTarget::Page(handle) => {
+        ExecutableRunTarget::Page(handle) => {
             crate::http_execute::resolve_paging_storage_handle(Some(mcp_trace), handle)
                 .map_err(ExecutionFailure::from)?;
             let program = format!("Continue result page {handle}");
@@ -161,13 +161,13 @@ pub async fn resolve_mcp_live_run_ingress(
                 },
             })
         }
-        McpPlasmRunTarget::Commit(pc) => {
+        ExecutableRunTarget::Commit(pc) => {
             let committed =
                 crate::mcp_plasm_run_phases::mcp_plasm_run_phase("resolve_commit", || async {
                     crate::plan_commit_store::resolve_committed_plan(es, pc)
                 })
                 .await
-                .map_err(commit_verify_failure)?;
+                .map_err(ExecutionFailure::from)?;
             Ok(ResolvedMcpLiveRunIngress {
                 bundle: PlasmCompBundle::new(committed.artifact.clone()).map_err(|detail| {
                     ExecutionFailure::new(
@@ -184,24 +184,6 @@ pub async fn resolve_mcp_live_run_ingress(
             })
         }
     }
-}
-
-fn commit_verify_failure(error: PlanCommitVerifyError) -> ExecutionFailure {
-    let (cause, code) = match &error {
-        PlanCommitVerifyError::Unknown { .. } => (FailureCause::Program, "plan_commit_unknown"),
-        PlanCommitVerifyError::Expired { .. } => (FailureCause::Program, "plan_commit_expired"),
-        PlanCommitVerifyError::Mismatch { .. } => (FailureCause::Program, "plan_commit_mismatch"),
-        PlanCommitVerifyError::PlanAheadOfSession { .. } => {
-            (FailureCause::Program, "plan_commit_ahead_of_session")
-        }
-        PlanCommitVerifyError::StalePolicy { .. } => {
-            (FailureCause::Program, "plan_commit_stale_policy")
-        }
-        PlanCommitVerifyError::Evidence { .. } => {
-            (FailureCause::Runtime, "plan_commit_evidence_mismatch")
-        }
-    };
-    ExecutionFailure::new(cause, code, error.to_string())
 }
 
 /// Ingress for MCP `plasm_run` live execute.

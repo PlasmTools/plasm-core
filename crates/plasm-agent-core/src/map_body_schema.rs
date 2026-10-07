@@ -20,8 +20,6 @@ pub enum MapBodySchemaError {
     MapOutputSourceMissing,
     #[error("map body must return a record")]
     MapMustReturnRecord,
-    #[error("row-preserving source has no record contract")]
-    RowPreservingSourceRequiresRecord,
     #[error("record source has no recursive schema")]
     RecursiveSchemaMissing,
     #[error("record owner is absent")]
@@ -66,8 +64,10 @@ pub(crate) fn output_schema(
         }
         if matches!(body.output, ScopedOutput::Filter) {
             let mut selected = body
-                .parent_schema
-                .clone()
+                .parent
+                .contract
+                .schema()
+                .cloned()
                 .ok_or(MapBodySchemaError::PredicateParentSchemaMissing)?;
             refinements::refine(body, &mut selected).map_err(MapBodySchemaError::Refinement)?;
             return Ok(selected);
@@ -254,7 +254,7 @@ fn record_contract_at(
                     ValueShape::Record { fields } | ValueShape::ObservedRecord { fields, .. } => {
                         fields
                     }
-                    _ => return Err(MapBodySchemaError::RowPreservingSourceRequiresRecord),
+                    _ => return Ok(source),
                 };
                 let mut schema = c.compute.schema.clone();
                 schema
@@ -268,10 +268,10 @@ fn record_contract_at(
             _ => Some(c.compute.schema.clone()),
         },
         N::Capture(c) => {
-            if let Some(value) = &c.value_contract {
+            if let Some(value) = c.contract.value_contract() {
                 return Ok(value.clone());
             }
-            c.schema.clone()
+            c.contract.schema().cloned()
         }
         n if n.result_shape() == ResultShape::SideEffectAck => {
             return Ok(ValueContract::record(

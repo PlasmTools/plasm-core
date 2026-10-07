@@ -14,6 +14,12 @@ pub use types::{JsTransportRequest, JsTransportResponse};
 use engine::AgentEngine as InnerEngine;
 use napi::bindgen_prelude::*;
 use napi_derive::napi;
+
+/// Wire-schema parity gate, using the same parser as MCP and native execution.
+#[napi]
+pub fn is_executable_run_reference(raw: String) -> bool {
+    plasm_core::run_reference::ExecutableRunTarget::is_canonical(&raw)
+}
 use plasm_agent_core::discovery_service::{DiscoveryService, RouteTurn};
 use plasm_agent_core::discovery_store::{
     DiscoveryAuthorization, DiscoverySessionPin, DiscoveryStore, PreparedCatalog,

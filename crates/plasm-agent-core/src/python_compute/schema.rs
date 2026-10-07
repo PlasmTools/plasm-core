@@ -147,10 +147,10 @@ pub(crate) fn source_field_kind(
         .ok_or(PythonSchemaError::SourceNodeMissing)?;
     let owner = match node {
         Node::Capture(c) => {
-            if let Some(value) = &c.value_contract {
+            if let Some(value) = c.contract.value_contract() {
                 return value.field(field).map_err(Into::into);
             }
-            if let Some(schema) = &c.schema {
+            if let Some(schema) = c.contract.schema() {
                 return schema
                     .fields
                     .iter()

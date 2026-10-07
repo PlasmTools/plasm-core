@@ -57,7 +57,7 @@ pub(super) async fn materialize(
         .get(&source_id)
         .ok_or_else(|| scope_failure("scope_source_missing", "map body source not materialized"))?;
     if source.qualified_entity.entry_id != body.parent.entity.entry_id
-        || (body.parent_entity_authority
+        || (body.parent.contract.entity_authority()
             && source.qualified_entity.entity != body.parent.entity.entity)
     {
         return Err(scope_failure(

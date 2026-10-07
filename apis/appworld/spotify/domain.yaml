@@ -1,4 +1,4 @@
-version: 37
+version: 38
 entry_id: spotify
 auth:
   scheme: none
@@ -143,7 +143,7 @@ entities:
     id_field: access_token
     implicit_request_identity: true
     primary_query: library_query
-    description: "Saved collections. Library.songs is the distinct union of directly saved songs, saved-album songs, and saved-playlist songs. Likes are independent."
+    description: "Saved collections. Songs, albums and playlists have separate direct membership. Saving an album or playlist does not save its contained songs to the song library. Likes are independent."
     discovery:
       names: [library, music library, library songs, saved music, song album and playlist libraries]
     fields:
@@ -152,7 +152,7 @@ entities:
         value_ref: nv_access_token
     relations:
       songs:
-        description: "Members: directly saved songs UNION saved-album songs UNION saved-playlist songs. Identity: song_id (distinct). Song likes are independent. Genre and play counts come from Song details."
+        description: "Members: directly saved songs only. Identity: song_id. Album and playlist contents are separate relations and do not imply song-library membership. Song likes are independent."
         target: Song
         cardinality: many
         materialize: {kind: view_embed, view: library}
@@ -168,7 +168,7 @@ entities:
         materialize: {kind: view_embed, view: library}
   Song:
     id_field: song_id
-    description: "A track. The library shelf contains directly saved songs only; Library.songs also includes saved-album and saved-playlist songs. Song likes are independent (LikedSong)."
+    description: "A track. The library shelf and Library.songs contain directly saved songs only. Album and playlist contents are separate relations. Song likes are independent (LikedSong)."
     discovery:
       names:
       - song
@@ -2121,7 +2121,7 @@ capabilities:
     - like_count
     - shareable_link
   library_query:
-    description: Read the user's saved music library, with songs across saved tracks, albums and playlists, plus the saved albums and playlists themselves.
+    description: Read separately saved songs, albums and playlists. Album and playlist contents do not imply direct song-library membership.
     kind: query
     entity: Library
     discovery:
@@ -2955,7 +2955,7 @@ capabilities:
     provides: [email, first_name, last_name, registered_at]
 views:
   library:
-    description: Saved music collections with distinct songs across saved tracks, albums and playlists.
+    description: Separately saved song, album and playlist collections.
     capability: library_query
     entity: Library
     scope:
@@ -2978,17 +2978,13 @@ views:
       bind:
         access_token: {kind: scope, param: access_token}
         shelf: {kind: literal, value: library}
-    - id: album_songs
-      traverse: {node: albums, relation: songs}
-    - id: playlist_songs
-      traverse: {node: playlists, relation: songs}
     output:
       access_token: {kind: scope, param: access_token}
     relation_outputs:
     - relation: songs
       target: Song
       cardinality: many
-      binding: {kind: node_union_rows, nodes: [direct_songs, album_songs, playlist_songs]}
+      binding: {kind: node_all_rows, node: direct_songs}
     - relation: albums
       target: Album
       cardinality: many
@@ -3154,7 +3150,7 @@ values:
     - catalog
     - library
     - recommendations
-    description: Song source — catalog, directly saved tracks only (library), or recommendations. Album and playlist tracks require their own relations or Library.songs.
+    description: Song source — catalog, directly saved tracks only (library), or recommendations. Album and playlist tracks require their own relations; containment does not imply song-library membership.
   nv_album_shelf:
     type: enum
     enum:
