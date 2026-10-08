@@ -28,20 +28,14 @@ capabilities:
   counter_get:
     kind: get
     entity: Counter
-    arguments:
-      input_type:
-        type: object
-        fields:
-        - {name: id, value_ref: text, required: true}
+    scope:
+    - {name: id, value_ref: text, required: true}
     provides: [id, value]
   wire_get:
     kind: get
     entity: Wire
-    arguments:
-      input_type:
-        type: object
-        fields:
-        - {name: id, value_ref: text, required: true}
+    scope:
+    - {name: id, value_ref: text, required: true}
     provides: [id, value]
   advance:
     kind: action

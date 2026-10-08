@@ -232,6 +232,7 @@ async fn hydrate_invoke_target(
         reference: invoke.target.clone(),
         catalog_entry_id: plasm_core::CatalogEntryStamp::none(),
         capability_name: None,
+        input: None,
     };
     let (cached, _source) = engine
         .fetch_get_decoded(
@@ -277,6 +278,7 @@ async fn hydrate_entity_ref_param(
         reference,
         catalog_entry_id: plasm_core::CatalogEntryStamp::none(),
         capability_name: None,
+        input: None,
     };
     let (cached, _source) = engine
         .fetch_get_decoded(

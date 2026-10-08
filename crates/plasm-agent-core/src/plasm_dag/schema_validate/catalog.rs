@@ -17,6 +17,8 @@ pub enum SchemaCatalogError {
     InvalidFieldPath(#[from] plasm_core::plasm_monad::PlanAtomError),
     #[error("query capability resolution failed: {0}")]
     QueryCapabilityResolution(#[source] plasm_core::query_resolve::QueryCapabilityResolveError),
+    #[error("Get capability resolution failed: {0}")]
+    GetCapabilityResolution(#[source] plasm_core::TypeError),
 }
 
 pub(in crate::plasm_dag) fn cgs_for_qualified_entity(
@@ -68,10 +70,10 @@ pub(in crate::plasm_dag) fn capability_for_surface_expr<'a>(
             };
             Ok(Some(cap))
         }
-        Expr::Get(g) => Ok(cgs
-            .find_capabilities(g.reference.entity_type.as_str(), CapabilityKind::Get)
-            .into_iter()
-            .next()),
+        Expr::Get(g) => g
+            .capability(cgs)
+            .map(Some)
+            .map_err(SchemaCatalogError::GetCapabilityResolution),
         Expr::Create(c) => Ok(cgs.get_capability(c.capability.as_str())),
         Expr::Delete(d) => Ok(cgs.get_capability(d.capability.as_str())),
         Expr::Invoke(i) => Ok(cgs.get_capability(i.capability.as_str())),

@@ -590,7 +590,8 @@ impl BindOperands for Expr {
                     .transpose()?;
             }
             Self::Get(get) => {
-                bind_key(&get.reference.entity_type, &mut get.reference.key, resolver)?
+                bind_key(&get.reference.entity_type, &mut get.reference.key, resolver)?;
+                bind_input(&mut get.input, resolver)?;
             }
             Self::Create(create) => {
                 create.input = create.input.bind_operands(resolver)?;
@@ -658,6 +659,7 @@ pub fn input_references(expr: &Expr) -> Vec<PlasmInputRef> {
 /// Structural call inputs for policy analysis; operation metadata is never inspected as JSON.
 pub fn invocation_input(expr: &Expr) -> Option<Value> {
     match expr {
+        Expr::Get(c) => c.input.as_ref().map(InvokeInputPayload::to_value),
         Expr::Create(c) => Some(c.input.to_value()),
         Expr::Invoke(c) => c.input.as_ref().map(InvokeInputPayload::to_value),
         Expr::Delete(c) => c.input.as_ref().map(InvokeInputPayload::to_value),
@@ -665,8 +667,7 @@ pub fn invocation_input(expr: &Expr) -> Option<Value> {
             ChainStep::Explicit { expr } => invocation_input(expr),
             ChainStep::AutoGet => None,
         },
-        Expr::Get(_)
-        | Expr::Query(_)
+        Expr::Query(_)
         | Expr::Page(_)
         | Expr::Wait(_)
         | Expr::Cancel(_)

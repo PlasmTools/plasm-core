@@ -94,21 +94,39 @@ impl Lower<'_> {
                 plasm_core::Expr::Query(q)
             }
             CatalogReadKind::Get => {
+                let mut g = plasm_core::GetExpr::pathless_nullary(owner.entity.as_str());
+                g.capability_name = specific.clone();
+                let cap = g.capability(cgs).map_err(PythonLoweringError::from)?;
                 let entity = cgs.get_entity(owner.entity.as_str()).ok_or(
                     crate::program_rejection::PythonLoweringInvariantError::GetEntityMissing,
                 )?;
-                let reference = if specific
-                    .as_ref()
-                    .and_then(|name| cgs.get_capability(name.as_str()))
-                    .or_else(|| cgs.primary_get_capability(owner.entity.as_str()))
-                    .is_some_and(|cap| !cap.get_requires_identity_anchor(cgs))
-                {
-                    if !call.arguments.args.is_empty() || !call.arguments.keywords.is_empty() {
+                let (identity_keywords, input_keywords): (Vec<_>, Vec<_>) =
+                    call.arguments.keywords.iter().partition(|kw| {
+                        cap.get_requires_identity_anchor(cgs)
+                            && kw.arg.as_ref().is_some_and(|key| {
+                                if entity.key_vars.len() > 1 {
+                                    entity
+                                        .key_vars
+                                        .iter()
+                                        .any(|slot| slot.as_str() == key.as_str())
+                                } else {
+                                    key.as_str() == "identity"
+                                }
+                            })
+                    });
+                let input =
+                    self.invocation_arguments(site, input_keywords.into_iter(), &owner, cap)?;
+                let input = inputs::normalize(cap, input, cgs).map_err(|error| match error {
+                    PythonLoweringError::Input(error) => input_at(site, (*error).clone()),
+                    other => at(site, other),
+                })?;
+                let reference = if !cap.get_requires_identity_anchor(cgs) {
+                    if !call.arguments.args.is_empty() || !identity_keywords.is_empty() {
                         return Err(at(
                             site,
                             PythonSourceError::NullaryGetArguments {
                                 positional: call.arguments.args.len(),
-                                keywords: call.arguments.keywords.len(),
+                                keywords: identity_keywords.len(),
                             },
                         ));
                     }
@@ -125,20 +143,11 @@ impl Lower<'_> {
                         ));
                     }
                     let mut slots = BTreeMap::new();
-                    for kw in &call.arguments.keywords {
+                    for kw in &identity_keywords {
                         let key = kw
                             .arg
                             .as_ref()
                             .ok_or_else(|| at(site, PythonSourceError::IdentityUnpacking))?;
-                        if !entity.key_vars.iter().any(|k| k.as_str() == key.as_str()) {
-                            return Err(at(
-                                site,
-                                PythonSourceError::UnknownCompoundIdentityKey {
-                                    entity: owner.entity.to_string(),
-                                    key: key.to_string(),
-                                },
-                            ));
-                        }
                         if slots
                             .insert(key.to_string(), self.identity_slot(&kw.value)?)
                             .is_some()
@@ -177,19 +186,7 @@ impl Lower<'_> {
                         ));
                     }
                     let mut identity = call.arguments.args.first();
-                    for kw in &call.arguments.keywords {
-                        let key = kw
-                            .arg
-                            .as_ref()
-                            .ok_or_else(|| at(site, PythonSourceError::IdentityUnpacking))?;
-                        if key.as_str() != "identity" {
-                            return Err(at(
-                                site,
-                                PythonSourceError::UnexpectedGetArgument {
-                                    argument: key.to_string(),
-                                },
-                            ));
-                        }
+                    for kw in &identity_keywords {
                         if identity.replace(&kw.value).is_some() {
                             return Err(at(site, PythonSourceError::DuplicateGetIdentity));
                         }
@@ -206,7 +203,8 @@ impl Lower<'_> {
                     }
                 };
                 let mut g = plasm_core::GetExpr::from_ref(reference);
-                g.capability_name = specific.clone();
+                g.capability_name = Some(cap.name.clone());
+                g.input = Some(input.into());
                 g.catalog_entry_id = plasm_core::CatalogEntryStamp::some(owner.entry_id.clone());
                 plasm_core::Expr::Get(g)
             }

@@ -457,6 +457,20 @@ pub fn type_check_get(get: &GetExpr, cgs: &CGS) -> Result<(), TypeError> {
             })?;
 
     let en = get.reference.entity_type.to_string();
+    if let Some(input) = &get.input {
+        let capability = get.capability(cgs)?;
+        let input = crate::effective_capability_input(
+            capability,
+            entity,
+            &get.reference,
+            input.to_value(),
+            cgs,
+        );
+        validate_capability_invocation_input(capability, &input, cgs)?;
+        if !capability.get_requires_identity_anchor(cgs) {
+            return Ok(());
+        }
+    }
     match &get.reference.key {
         EntityKey::Simple(_) => {
             if entity.key_vars.len() > 1 {

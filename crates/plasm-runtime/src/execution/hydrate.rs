@@ -216,12 +216,7 @@ pub(crate) fn stamp_entities_and_mat(
 }
 
 fn get_capability_for_stamp<'a>(get: &GetExpr, cgs: &'a CGS) -> Option<&'a CapabilitySchema> {
-    match get.capability_name.as_deref() {
-        Some(name) => cgs
-            .get_capability(name)
-            .filter(|c| c.kind == CapabilityKind::Get),
-        None => cgs.find_capability(&get.reference.entity_type, CapabilityKind::Get),
-    }
+    get.capability(cgs).ok()
 }
 
 /// Stamp the overlay a unary Get actually used (session + per-ref + ambient)
@@ -241,6 +236,10 @@ pub(crate) fn stamp_get_capability_params(
     let mut overlay = mat.capability_params_for_get(&get.reference, &catalog_key);
     for (k, v) in &ambient.capability_params {
         overlay.entry(k.clone()).or_insert_with(|| v.clone());
+    }
+    if let Some(Value::Object(explicit)) = get.input.as_ref().map(|input| input.to_value()) {
+        overlay = ambient.capability_params.clone();
+        overlay.extend(explicit);
     }
     let inherit = CapabilityParamEnv::from_bindings(&overlay, cap);
     stamp_entities_and_mat(std::slice::from_ref(row), mat, &inherit);

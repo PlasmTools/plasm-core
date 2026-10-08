@@ -232,10 +232,10 @@ pub enum PythonSourceError {
     WritePositionalArguments { actual: usize },
     #[error("Python source is invalid: this method requires an entity receiver")]
     ReceiverRequired { capability: String },
-    #[error("Python source is invalid: write argument unpacking is not admitted")]
-    WriteArgumentUnpacking,
-    #[error("Python source is invalid: duplicate write argument: `{argument}`")]
-    DuplicateWriteArgument { argument: String },
+    #[error("Python source is invalid: invocation argument unpacking is not admitted")]
+    InvocationArgumentUnpacking,
+    #[error("Python source is invalid: duplicate invocation argument: `{argument}`")]
+    DuplicateInvocationArgument { argument: String },
     #[error("Python source is invalid: expected a field dependency")]
     ExpectedFieldDependency,
     #[error("Python source is invalid: field input requires a proven singleton; binding `{binding}` has no singleton proof. Use row transforms or map for plural rows; establish a singleton before scalar extraction.")]
@@ -326,8 +326,6 @@ pub enum PythonSourceError {
     },
     #[error("Python source is invalid: identity keyword unpacking is not admitted")]
     IdentityUnpacking,
-    #[error("Python source is invalid: unknown compound identity key: `{entity}.{key}`")]
-    UnknownCompoundIdentityKey { entity: String, key: String },
     #[error("Python source is invalid: duplicate compound identity key: `{entity}.{key}`")]
     DuplicateCompoundIdentityKey { entity: String, key: String },
     #[error("Python source is invalid: compound Get requires every identity key: {missing:?}")]
@@ -337,8 +335,6 @@ pub enum PythonSourceError {
     },
     #[error("Python source is invalid: Get takes at most one positional identity")]
     GetPositionalArgumentCount { actual: usize },
-    #[error("Python source is invalid: unexpected Get argument; expected identity: `{argument}`")]
-    UnexpectedGetArgument { argument: String },
     #[error("Python source is invalid: Get received multiple values for identity")]
     DuplicateGetIdentity,
     #[error("Python source is invalid: Get requires identity (positional or keyword)")]

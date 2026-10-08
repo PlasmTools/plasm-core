@@ -60,13 +60,35 @@ async fn derived_get_preserves_bound_query_credentials() {
         Arc::new(RecordingTransport(tokens.clone())),
         None,
     );
-    for token in ["bound-a", "bound-b"] {
-        let get = GetExpr::new("SecuredRecord", "row-a").with_capability("record_get");
-        let mut mat = SessionMaterialization::new();
-        mat.stamp_capability_params(
-            &get.reference,
-            IndexMap::from([("access_token".into(), Value::String(token.into()))]),
+    let mut mat = SessionMaterialization::new();
+    for token in ["bound-a", "bound-a", "bound-b"] {
+        let mut get = GetExpr::new("SecuredRecord", "row-a").with_capability("record_get");
+        get.input = Some(
+            Value::Object(IndexMap::from([(
+                "access_token".into(),
+                Value::String(token.into()),
+            )]))
+            .into(),
         );
+        let request = resolved_get::ResolvedGet::resolve(
+            &get,
+            &cgs,
+            None,
+            &mat,
+            &ViewAmbientContext::default(),
+            resolved_get::GetPurpose::Authored,
+        )
+        .unwrap();
+        assert_eq!(
+            request.ambient.capability_params.get("access_token"),
+            Some(&Value::String(token.into()))
+        );
+        if token == "bound-b" {
+            assert!(
+                request.cached_row(&mat, &cgs).is_none(),
+                "different explicit input hit Get cache"
+            );
+        }
         let out = engine
             .execute(
                 &Expr::Get(get),
@@ -87,6 +109,24 @@ async fn derived_get_preserves_bound_query_credentials() {
         assert_eq!(out.entities()[0].reference.primary_slot_str(), "row-a");
     }
     assert_eq!(*tokens.lock().unwrap(), ["bound-a", "bound-b"]);
+    let mut invalid = GetExpr::new("SecuredRecord", "row-a");
+    invalid.input = Some(Value::Object(IndexMap::new()).into());
+    assert!(engine
+        .execute(
+            &Expr::Get(invalid),
+            &cgs,
+            &mut mat,
+            None,
+            StreamConsumeOpts::default(),
+            ExecuteOptions::default()
+        )
+        .await
+        .is_err());
+    assert_eq!(
+        tokens.lock().unwrap().len(),
+        2,
+        "invalid input reached transport or reused cached data"
+    );
 }
 
 fn create_test_cgs() -> CGS {

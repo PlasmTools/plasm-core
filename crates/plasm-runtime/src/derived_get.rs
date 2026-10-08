@@ -47,10 +47,7 @@ pub(crate) async fn execute_derived_get(
     };
     // A derived Get must use the same per-reference bindings as a wire Get.
     // These are scoped to this invocation; never bleed them into ambient state.
-    let catalog_key =
-        SessionMaterialization::provide_catalog_key(cgs, get.catalog_entry_id.as_deref());
-    let mut bindings = ambient.capability_params.clone();
-    bindings.extend(cache.capability_params_for_get(&get.reference, &catalog_key));
+    let bindings = &ambient.capability_params;
     let mut predicates: Vec<_> = source_capability
         .scope_params()
         .iter()

@@ -918,29 +918,8 @@ impl Renderer<'_> {
                     }
                 ));
             }
-            for field in cap.input_fields().filter(|field| {
-                !cap.scope_params()
-                    .iter()
-                    .any(|scope| scope.name == field.name)
-            }) {
-                let ty = self.input_field(
-                    cgs,
-                    entry,
-                    cap.domain.as_str(),
-                    &format!("{}:{}", signature_path, field.name),
-                    field,
-                    0,
-                )?;
-                comment(
-                    &mut body,
-                    "    ",
-                    &format!(
-                        "session({}:{ty}) before Get; not a get(...) argument",
-                        field.name
-                    ),
-                );
-            }
-        } else {
+        }
+        {
             for schema in cap.invocation_input_schemas() {
                 if !matches!(
                     schema.input_type,
@@ -958,7 +937,16 @@ impl Renderer<'_> {
             let fields: Vec<_> = if source_call {
                 cap.inputs.query_source_fields().collect()
             } else {
-                cap.input_fields().collect()
+                cap.input_fields()
+                    .filter(|field| {
+                        cap.kind != CapabilityKind::Get
+                            || cgs.get_entity(cap.domain.as_str()).is_none_or(|entity| {
+                                !crate::scope_entity_ref_infer::should_omit_invoke_teaching_arg(
+                                    entity, cap, field, cgs,
+                                )
+                            })
+                    })
+                    .collect()
             };
             for field in fields {
                 identifier(&field.name)?;
@@ -970,7 +958,7 @@ impl Renderer<'_> {
                     field,
                     0,
                 )?;
-                if params.is_empty() {
+                if !params.iter().any(|param| param == "*") {
                     params.push("*".into());
                 }
                 params.push(format!(

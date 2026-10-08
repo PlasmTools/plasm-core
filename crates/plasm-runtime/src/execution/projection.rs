@@ -132,6 +132,9 @@ impl ExecutionEngine {
                                     });
                                 }
                                 branch.insert(row.clone())?;
+                                if let Some(merged) = branch.graph.get(&row.reference).cloned() {
+                                    branch.publish_fresh_row(merged)?;
+                                }
                                 stamp_get_capability_params(&mut branch, cgs, &get, &ambient, &row);
                                 Ok::<_, RuntimeError>(branch)
                             }

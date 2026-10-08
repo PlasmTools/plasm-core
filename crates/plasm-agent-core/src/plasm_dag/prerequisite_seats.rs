@@ -39,11 +39,30 @@ pub(in crate::plasm_dag) fn validate_prerequisite_seat_bind(
             }
             Ok(())
         }
-        Expr::Get(_)
-        | Expr::Page(_)
-        | Expr::Wait(_)
-        | Expr::Cancel(_)
-        | Expr::TeachingValue { .. } => Ok(()),
+        Expr::Get(get) => {
+            let Some(input) = &get.input else {
+                return Ok(());
+            };
+            let catalog = get
+                .catalog_entry_id
+                .as_deref()
+                .unwrap_or(session.entry_id.as_str());
+            let cgs = crate::catalog_ownership::resolve_cgs_for_entry_entity(
+                session,
+                catalog,
+                get.reference.entity_type.as_str(),
+            )?;
+            let capability = get.capability(cgs)?;
+            validate_invocation_object(
+                session,
+                state,
+                node_id,
+                capability.name.as_str(),
+                Some(catalog),
+                &input.to_value(),
+            )
+        }
+        Expr::Page(_) | Expr::Wait(_) | Expr::Cancel(_) | Expr::TeachingValue { .. } => Ok(()),
     }
 }
 

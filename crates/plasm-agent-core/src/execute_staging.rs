@@ -118,7 +118,7 @@ mod tests {
         use plasm_core::{Expr, GetExpr, Ref};
         let p = ParsedExpr::from_expr(Expr::Get(GetExpr {
             reference: Ref::new("Pet", "1"),
-            path_vars: None,
+            input: None,
             catalog_entry_id: plasm_core::CatalogEntryStamp::none(),
             capability_name: None,
         }));
@@ -182,7 +182,7 @@ mod property_tests {
                     false,
                     ParsedExpr::from_expr(Expr::Get(GetExpr {
                         reference: Ref::new("Pet", "1"),
-                        path_vars: None,
+                        input: None,
                         catalog_entry_id: plasm_core::CatalogEntryStamp::none(),
                         capability_name: None,
                     })),

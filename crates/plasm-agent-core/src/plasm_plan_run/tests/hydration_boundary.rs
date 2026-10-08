@@ -491,7 +491,7 @@ fn membership_evidence_survives_nested_python_filter_and_warm_cache() {
             r#"class Report(Program):
     def build(self):
         auth = {session}.{login}()
-        folder = {folder}.get("root")
+        folder = {folder}.get("root", access_token=auth.access_token)
         notes = folder.{notes}.where(lambda note: note.note_id > 0)
         owners = notes.flat_map(lambda note: note.{owners}.where(lambda owner: owner.owner_id > 0))
         return owners

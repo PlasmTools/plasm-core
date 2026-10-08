@@ -201,6 +201,17 @@ pub(crate) enum BranchLocalWrite {
     Recorded,
 }
 
+/// A Get's resolved input snapshot and row-version witness for scoped reuse.
+#[derive(Debug, Clone, PartialEq)]
+pub(crate) struct GetObservation {
+    pub capability: plasm_core::CapabilityName,
+    pub catalog: String,
+    pub environment: IndexMap<String, Value>,
+    pub parameters: IndexMap<String, Value>,
+    pub explicit_parameters: Option<Vec<String>>,
+    pub row_version: u64,
+}
+
 /// Unified per-session materialization state.
 #[derive(Debug, Clone, Default)]
 pub struct SessionMaterialization {
@@ -218,6 +229,8 @@ pub struct SessionMaterialization {
     pub(crate) snapshot_row_refs: std::collections::HashSet<Ref>,
     /// Capability params from the fetch that produced each row. Inherited by synthesized GETs.
     pub(crate) inherited_capability_params: std::collections::HashMap<Ref, IndexMap<String, Value>>,
+    /// A detail cache hit for an authored read needs the same selected capability and inputs.
+    pub(crate) get_observations: std::collections::HashMap<Ref, GetObservation>,
     /// Catalog-keyed fields from action-with-`provides` (e.g. AuthSession login `access_token`).
     /// Overlay onto unary Gets the same way a per-ref stamp / `catalog_bind` already does.
     /// Search selection holes do not read this map.
@@ -242,6 +255,7 @@ impl SessionMaterialization {
             observed_snapshot_rows: Default::default(),
             snapshot_row_refs: hot.snapshot_row_refs.clone(),
             inherited_capability_params: hot.inherited_capability_params.clone(),
+            get_observations: hot.get_observations.clone(),
             provided_session_params: hot.provided_session_params.clone(),
             prerequisite_deployments: hot.prerequisite_deployments.clone(),
         }
@@ -312,6 +326,14 @@ impl SessionMaterialization {
     ) -> IndexMap<String, Value> {
         let mut overlay = self.provided_session_params_for(catalog_key);
         overlay.extend(self.capability_params_for(reference));
+        if let Some(observation) = self.get_observations.get(reference) {
+            if observation.catalog == catalog_key {
+                if let Some(names) = &observation.explicit_parameters {
+                    overlay.retain(|name, _| !names.contains(name));
+                    overlay.extend(observation.parameters.clone());
+                }
+            }
+        }
         overlay
     }
 
@@ -332,6 +354,7 @@ impl SessionMaterialization {
     pub(crate) fn publish_fresh_row(&mut self, row: CachedEntity) -> Result<(), RuntimeError> {
         let reference = row.reference.clone();
         self.graph.overwrite(row)?;
+        self.get_observations.remove(&reference);
         self.snapshot_row_refs.insert(reference.clone());
         self.observed_snapshot_rows.insert(reference);
         Ok(())
@@ -403,9 +426,11 @@ impl SessionMaterialization {
     /// not inherited [`RecordedReadReuse::Invalidated`]. A poisoned parent with two
     /// read-only sibling forks must union-merge so both observations survive absorb.
     pub fn absorb_branch(&mut self, branch: SessionMaterialization) -> Result<usize, RuntimeError> {
+        // Retain scope evidence: changed row versions invalidate reuse, not captured inputs.
         if matches!(branch.branch_local_write, BranchLocalWrite::Recorded) {
             let merged = branch.graph.stats().total_entities;
             self.graph = branch.graph;
+            self.get_observations = branch.get_observations;
             self.query_index = branch.query_index;
             self.responses = branch.responses;
             self.inherited_capability_params = branch.inherited_capability_params;
@@ -435,9 +460,19 @@ impl SessionMaterialization {
         let mut merged = self.graph.merge(ordinary_rows)?;
         // A view or post-write read is one observed snapshot, not additive pages of an edge.
         // Preserve that replacement through optimistic branch commit.
+        let snapshot_parameters = branch.observed_snapshot_rows.clone();
         for reference in branch.observed_snapshot_rows {
             if let Some(row) = branch.graph.get(&reference) {
                 self.publish_fresh_row(row.clone())?;
+                if let (Some(mut observation), Some(stored)) = (
+                    branch.get_observations.get(&reference).cloned(),
+                    self.graph.get(&reference),
+                ) {
+                    if observation.row_version == row.version {
+                        observation.row_version = stored.version;
+                        self.get_observations.insert(reference.clone(), observation);
+                    }
+                }
                 merged += 1;
             }
         }
@@ -447,7 +482,11 @@ impl SessionMaterialization {
             self.recorded_read_reuse = RecordedReadReuse::Invalidated;
         }
         for (reference, params) in branch.inherited_capability_params {
-            self.stamp_capability_params(&reference, params);
+            if snapshot_parameters.contains(&reference) {
+                self.inherited_capability_params.insert(reference, params);
+            } else {
+                self.stamp_capability_params(&reference, params);
+            }
         }
         for (catalog_key, params) in branch.provided_session_params {
             self.stamp_provided_session_params(catalog_key, params);

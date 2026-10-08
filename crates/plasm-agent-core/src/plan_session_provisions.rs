@@ -144,6 +144,10 @@ fn get_inputs(
         _ => return Ok(vec![]),
     };
     let entry = get.catalog_entry_id.as_deref().unwrap_or(entry);
+    // Authored reads carry their declared inputs and ordinary DAG dependencies.
+    if get.input.is_some() {
+        return Ok(vec![]);
+    }
     let cgs = catalog(es, entry)?;
     let cap = match get.capability_name.as_deref() {
         Some(name) => cgs.get_capability(name),

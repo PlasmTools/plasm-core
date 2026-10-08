@@ -32,6 +32,8 @@ mod projected_alias_grain;
 
 mod ra17_prerequisite_seats;
 
+mod get_invocation_inputs;
+
 fn test_session() -> ExecuteSession {
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     let cgs = Arc::new(

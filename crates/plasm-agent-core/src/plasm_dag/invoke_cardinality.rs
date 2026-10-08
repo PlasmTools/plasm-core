@@ -16,6 +16,17 @@ pub(in crate::plasm_dag) fn validate_invoke_scalar_field_refs(
     expr: &Expr,
 ) -> Result<(), DagCompilationError> {
     let (capability, entity, catalog_entry_id, input) = match expr {
+        Expr::Get(get) => {
+            let Some(input) = &get.input else {
+                return Ok(());
+            };
+            (
+                get.capability_name.as_deref().unwrap_or("get"),
+                get.reference.entity_type.as_str(),
+                get.catalog_entry_id.as_deref(),
+                input,
+            )
+        }
         Expr::Invoke(inv) => {
             let Some(input) = &inv.input else {
                 return Ok(());
@@ -57,11 +68,9 @@ pub(in crate::plasm_dag) fn validate_invoke_scalar_field_refs(
             }
             return Ok(());
         }
-        Expr::Get(_)
-        | Expr::Page(_)
-        | Expr::Wait(_)
-        | Expr::Cancel(_)
-        | Expr::TeachingValue { .. } => return Ok(()),
+        Expr::Page(_) | Expr::Wait(_) | Expr::Cancel(_) | Expr::TeachingValue { .. } => {
+            return Ok(())
+        }
     };
     let qe = QualifiedEntityKey {
         entry_id: catalog_entry_id
@@ -75,10 +84,14 @@ pub(in crate::plasm_dag) fn validate_invoke_scalar_field_refs(
             entity: qe.entity.to_string(),
         }
     })?;
-    let Some(cap) = cgs.get_capability(capability) else {
-        return Ok(());
+    let cap = match expr {
+        Expr::Get(get) => get.capability(&cgs)?,
+        _ => match cgs.get_capability(capability) {
+            Some(cap) => cap,
+            None => return Ok(()),
+        },
     };
-    let fields: Vec<_> = cap.invocation_object_fields().collect();
+    let fields: Vec<_> = cap.input_fields().collect();
     if fields.is_empty() {
         return Ok(());
     }

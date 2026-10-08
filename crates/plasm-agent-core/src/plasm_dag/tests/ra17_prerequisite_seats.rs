@@ -12,9 +12,11 @@ fn dual_session() -> ExecuteSession {
     let source = Arc::new(
         plasm_core::loader::load_schema_dir(&root.join("source")).expect("source catalog"),
     );
-    let consumer = Arc::new(
-        plasm_core::loader::load_schema_dir(&root.join("consumer")).expect("consumer catalog"),
-    );
+    let mut consumer = plasm_core::loader::load_schema_dir(&root.join("consumer")).expect("consumer catalog");
+    let mut read_requirement = consumer.prerequisites.requirements["attach"][0].clone();
+    read_requirement.bindings[0].input.lane = plasm_core::prerequisites::InputLane::Arguments;
+    consumer.prerequisites.requirements.insert("record_get".into(), vec![read_requirement]);
+    let consumer = Arc::new(consumer);
     let mut ctxs = indexmap::IndexMap::new();
     ctxs.insert(
         "source".into(),
@@ -53,6 +55,10 @@ fn dual_session() -> ExecuteSession {
     };
     session.set_prerequisite_deployments(DeploymentBindings {
         bindings: vec![
+            DeploymentBinding {
+                consumer: CapabilityRef { catalog: "consumer".into(), capability: "record_get".into() },
+                requirement: "session".into(), provider_catalog: "consumer".into(), provider: "session".into(),
+            },
             DeploymentBinding {
                 consumer: business.clone(),
                 requirement: "session".into(),
@@ -150,8 +156,24 @@ async fn python_writes_keep_qualified_prerequisite_seats() {
     let consumer_login = symbols.method_sym_for("consumer", "AuthSession", "login");
     let source_login = symbols.method_sym_for("source", "AuthSession", "login");
     let attach = symbols.method_sym_for("consumer", "Record", "attach");
-    let code = format!("class Attach(Program):\n    def build(self):\n        sw = {consumer}.{consumer_login}()\n        fs = {source}.{source_login}()\n        row = {record}.get(\"rec-1\")\n        done = row.{attach}(access_token=sw.access_token, file_path=\"/tmp/a\", source_access_token=fs.access_token)\n        return done\n");
+    let code = format!("class Attach(Program):\n    def build(self):\n        sw = {consumer}.{consumer_login}()\n        fs = {source}.{source_login}()\n        row = {record}.get(\"rec-1\", access_token=sw.access_token)\n        done = row.{attach}(access_token=sw.access_token, file_path=\"/tmp/a\", source_access_token=fs.access_token)\n        return done\n");
     crate::plasm_compile::compile_python_program(&session, &code).await.expect("matching seats");
+    let foreign_read = code.replace("\"rec-1\", access_token=sw.", "\"rec-1\", access_token=fs.");
+    let error = crate::plasm_compile::compile_python_program(&session, &foreign_read).await.unwrap_err();
+    let mut cause: Option<&(dyn std::error::Error + 'static)> = Some(&error);
+    let mut wrong_provider = false;
+    while let Some(error) = cause {
+        wrong_provider |= matches!(error.downcast_ref::<plasm_core::prerequisites::PrerequisiteError>(),
+            Some(plasm_core::prerequisites::PrerequisiteError::WrongDeployedProviderSource { .. }));
+        let dag = error.downcast_ref::<crate::plasm_dag::error::DagCompilationError>()
+            .or_else(|| error.downcast_ref::<std::sync::Arc<crate::plasm_dag::error::DagCompilationError>>().map(std::sync::Arc::as_ref));
+        wrong_provider |= matches!(dag,
+            Some(crate::plasm_dag::error::DagCompilationError::Prerequisite(
+                plasm_core::prerequisites::PrerequisiteError::WrongDeployedProviderSource { source_catalog, provider_catalog, provider }
+            )) if source_catalog == "source" && provider_catalog == "consumer" && provider == "session");
+        cause = error.source();
+    }
+    assert!(wrong_provider, "read must preserve the typed provider rejection: {error}");
     let fanout = code.replace("done = row.", "done = row.flat_map(lambda item: item.").replace("source_access_token=fs.access_token)", "source_access_token=fs.access_token))");
     crate::plasm_compile::compile_python_program(&session, &fanout).await.expect("matching fanout captures");
     let error = crate::plasm_compile::compile_python_program(&session, &fanout.replace("source_access_token=fs.", "source_access_token=sw.")).await.unwrap_err();

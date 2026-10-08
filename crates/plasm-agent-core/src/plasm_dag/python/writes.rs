@@ -6,6 +6,46 @@ use plasm_core::{CatalogEntryStamp, IdentitySlot, PlasmInputRef, Value};
 use ruff_python_ast::ExprCall;
 
 impl Lower<'_> {
+    pub(super) fn invocation_arguments<'a>(
+        &mut self,
+        site: &PyExpr,
+        keywords: impl Iterator<Item = &'a ruff_python_ast::Keyword>,
+        owner: &EntityBinding,
+        cap: &plasm_core::CapabilitySchema,
+    ) -> Result<indexmap::IndexMap<String, Value>, PythonLoweringError> {
+        let symbols = self.state.sym_map_for(self.es);
+        let mut input = indexmap::IndexMap::new();
+        for kw in keywords {
+            let key = kw
+                .arg
+                .as_ref()
+                .ok_or_else(|| at(site, PythonSourceError::InvocationArgumentUnpacking))?;
+            let wire = if inputs::is_union_tag(cap, key.as_str()) {
+                key.to_string()
+            } else {
+                symbols
+                    .resolve_cap_param(
+                        CatalogScope::qualified(owner.entry_id.as_str()),
+                        owner.entity.as_str(),
+                        cap.name.as_str(),
+                        key.as_str(),
+                        cap,
+                    )
+                    .map_err(|error| at(site, error))?
+            };
+            let value = self.write_value(&kw.value)?;
+            if input.insert(wire, value).is_some() {
+                return Err(at(
+                    site,
+                    PythonSourceError::DuplicateInvocationArgument {
+                        argument: key.to_string(),
+                    },
+                ));
+            }
+        }
+        Ok(input)
+    }
+
     pub(super) fn write(
         &mut self,
         site: &PyExpr,
@@ -15,7 +55,6 @@ impl Lower<'_> {
         receiver: Option<&str>,
         id: &str,
     ) -> Result<String, PythonLoweringError> {
-        let symbols = self.state.sym_map_for(self.es);
         let kind = resolved.kind;
         let cgs = resolved.cgs;
         let cap = resolved.schema;
@@ -35,35 +74,7 @@ impl Lower<'_> {
                 },
             ));
         }
-        let mut input = indexmap::IndexMap::new();
-        for kw in &call.arguments.keywords {
-            let key = kw
-                .arg
-                .as_ref()
-                .ok_or_else(|| at(site, PythonSourceError::WriteArgumentUnpacking))?;
-            let wire = if inputs::is_union_tag(cap, key.as_str()) {
-                key.to_string()
-            } else {
-                symbols
-                    .resolve_cap_param(
-                        CatalogScope::qualified(owner.entry_id.as_str()),
-                        owner.entity.as_str(),
-                        resolved.capability.as_str(),
-                        key.as_str(),
-                        cap,
-                    )
-                    .map_err(|e| at(site, e))?
-            };
-            let value = self.write_value(&kw.value)?;
-            if input.insert(wire, value).is_some() {
-                return Err(at(
-                    site,
-                    PythonSourceError::DuplicateWriteArgument {
-                        argument: key.to_string(),
-                    },
-                ));
-            }
-        }
+        let input = self.invocation_arguments(site, call.arguments.keywords.iter(), &owner, cap)?;
         let stamp = CatalogEntryStamp::some(owner.entry_id.clone());
         let target = if let Some(receiver) = receiver {
             let entity = cgs.get_entity(owner.entity.as_str()).ok_or(

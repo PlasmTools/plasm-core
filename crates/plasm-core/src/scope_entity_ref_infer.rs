@@ -1,5 +1,5 @@
-//! Type-level inference for same-entity [`FieldType::EntityRef`] **scope** parameters on dotted
-//! invoke/create: when the receiver is already `EntityRef(T)` and the scope slot targets `T`,
+//! Type-level inference for same-entity [`FieldType::EntityRef`] **scope** parameters on Get and dotted
+//! invoke/create: when the identity target is already `EntityRef(T)` and the scope slot targets `T`,
 //! omit explicit scope args if [`normalize_entity_ref_value_for_target`] succeeds on the receiver
 //! identity. Explicit authored keys always win.
 
@@ -29,7 +29,8 @@ pub fn classify_scope_param_supply(
     field: &InputFieldSchema,
     cgs: &CGS,
 ) -> ScopeParamSupply {
-    if cap.receiver_entity() != Some(&receiver_entity.name)
+    if (cap.kind == crate::CapabilityKind::Get && !cap.get_requires_identity_anchor(cgs))
+        || !has_identity_target(receiver_entity, cap)
         || !cap.scope_params().iter().any(|scope| scope == field)
     {
         return ScopeParamSupply::Explicit;
@@ -70,9 +71,14 @@ pub fn field_supplied_by_receiver_identity(
     cap: &CapabilitySchema,
     field_name: &str,
 ) -> bool {
-    cap.receiver_entity() == Some(&ent.name)
+    has_identity_target(ent, cap)
         && (field_name == ent.id_field.as_str()
             || ent.key_vars.iter().any(|key| key.as_str() == field_name))
+}
+
+fn has_identity_target(entity: &EntityDef, cap: &CapabilitySchema) -> bool {
+    cap.receiver_entity() == Some(&entity.name)
+        || (cap.kind == crate::CapabilityKind::Get && cap.domain == entity.name)
 }
 
 /// Build a normalized EntityRef(scope) value from a same-entity receiver [`Ref`].
@@ -158,6 +164,14 @@ pub fn effective_capability_input(
                     map.insert(field.name.to_string(), v);
                 }
             }
+        }
+    }
+
+    // Receiver inference supplies a value; defaults apply only to still-absent inputs.
+    for field in cap.input_fields() {
+        if let Some(default) = &field.default {
+            map.entry(field.name.clone())
+                .or_insert_with(|| default.clone());
         }
     }
 

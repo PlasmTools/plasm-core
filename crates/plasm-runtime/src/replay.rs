@@ -90,6 +90,10 @@ impl RequestFingerprint {
         let mut hasher = Hasher::new();
 
         if let CompiledOperation::Http(request) | CompiledOperation::GraphQl(request) = request {
+            if let Some(headers) = &request.headers {
+                hasher.update(b"|headers|");
+                hasher.update(normalize_json_for_fingerprint(headers).as_bytes());
+            }
             if let Some(credential) = &request.credential {
                 hasher.update(b"|credential|");
                 hasher.update(
@@ -594,6 +598,30 @@ mod tests {
         let fp2 = RequestFingerprint::from_request(&request2);
 
         assert_ne!(fp1, fp2);
+        let mut scoped = request1.clone();
+        scoped.headers = Some(Value::Object(IndexMap::from([
+            ("Authorization".into(), Value::String("scope-a".into())),
+            ("Accept".into(), Value::String("application/json".into())),
+        ])));
+        let mut changed = scoped.clone();
+        changed.headers = Some(Value::Object(IndexMap::from([
+            ("Accept".into(), Value::String("application/json".into())),
+            ("Authorization".into(), Value::String("scope-b".into())),
+        ])));
+        for wrap in [CompiledOperation::Http, CompiledOperation::GraphQl] {
+            assert_ne!(
+                RequestFingerprint::from_operation(&wrap(scoped.clone())),
+                RequestFingerprint::from_operation(&wrap(changed.clone()))
+            );
+            let mut reordered = scoped.clone();
+            if let Some(Value::Object(headers)) = &mut reordered.headers {
+                headers.reverse();
+            }
+            assert_eq!(
+                RequestFingerprint::from_operation(&wrap(scoped.clone())),
+                RequestFingerprint::from_operation(&wrap(reordered))
+            );
+        }
     }
 
     #[test]

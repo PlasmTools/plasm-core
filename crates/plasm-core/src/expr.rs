@@ -146,6 +146,9 @@ pub struct GetExpr {
     /// When set, dispatches to this GET capability instead of the entity default.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub capability_name: Option<CapabilityName>,
+    /// Authored invocation inputs; internal hydration obtains captured bindings.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub input: Option<InvokeInputPayload>,
 }
 
 /// Create expression: create a new resource (no target ID).
@@ -431,12 +434,44 @@ impl QueryExpr {
 }
 
 impl GetExpr {
+    /// Resolve the selected read once for validation, teaching and execution.
+    pub fn capability<'a>(
+        &self,
+        cgs: &'a CGS,
+    ) -> Result<&'a crate::CapabilitySchema, crate::TypeError> {
+        self.resolve_capability(cgs, self.capability_name.as_deref())
+    }
+
+    pub fn resolve_capability<'a>(
+        &self,
+        cgs: &'a CGS,
+        name: Option<&str>,
+    ) -> Result<&'a crate::CapabilitySchema, crate::TypeError> {
+        let capability = match name {
+            Some(name) => cgs.get_capability(name),
+            None => cgs.primary_get_capability(self.reference.entity_type.as_str()),
+        }
+        .ok_or_else(|| crate::TypeError::CapabilityNotFound {
+            capability: name.unwrap_or("get").to_string(),
+        })?;
+        if capability.kind != crate::CapabilityKind::Get
+            || capability.domain != self.reference.entity_type
+        {
+            return Err(crate::TypeError::GetCapabilityMismatch {
+                capability: capability.name.to_string(),
+                entity: self.reference.entity_type.to_string(),
+            });
+        }
+        Ok(capability)
+    }
+
     /// Create a new get expression (single-key entity, literal identity).
     pub fn new(entity_type: impl Into<EntityName>, id: impl Into<EntityId>) -> Self {
         Self {
             reference: Ref::new(entity_type, id),
             catalog_entry_id: CatalogEntryStamp::none(),
             capability_name: None,
+            input: None,
         }
     }
 
@@ -459,6 +494,7 @@ impl GetExpr {
             reference,
             catalog_entry_id: CatalogEntryStamp::none(),
             capability_name: None,
+            input: None,
         }
     }
 }

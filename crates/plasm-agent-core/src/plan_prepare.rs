@@ -854,6 +854,7 @@ mod tests {
             },
             catalog_entry_id: plasm_core::CatalogEntryStamp::none(),
             capability_name: None,
+            input: None,
         });
         let mut used = HashSet::new();
         collect_entities_from_expr(&expr, &mut used);

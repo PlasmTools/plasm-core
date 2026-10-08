@@ -146,7 +146,10 @@ pub(crate) fn entity_field_predicate(
 }
 
 pub(crate) fn capability_param_names(capability: &plasm_core::CapabilitySchema) -> HashSet<String> {
-    capability.input_fields().map(|f| f.name.clone()).collect()
+    capability
+        .input_parameter_names()
+        .map(str::to_owned)
+        .collect()
 }
 
 /// Extract an EntityRef field or declared-relation target ID from a cached entity.

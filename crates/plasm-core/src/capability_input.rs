@@ -516,6 +516,11 @@ fn validate_capability_invocation_input_inner(
         [] => {
             if let Some(schema) = capability.primary_invocation_schema() {
                 validate_capability_input_with_satisfied(input, schema, cgs, satisfied_fields)?;
+            } else if let Some((field, _)) = input.as_object().and_then(|object| object.first()) {
+                return Err(TypeError::FieldNotFound {
+                    field: field.clone(),
+                    entity: capability.domain.to_string(),
+                });
             }
             Ok(())
         }

@@ -884,6 +884,18 @@ pub(in crate::plasm_dag) fn validate_catalog_operands(
     id: &str,
     expr: &Expr,
 ) -> Result<(), DagCompilationError> {
+    if let Expr::Get(get) = expr {
+        if get.input.is_some() {
+            let cgs = crate::catalog_ownership::resolve_cgs_for_entry_entity(
+                session,
+                get.catalog_entry_id
+                    .as_deref()
+                    .unwrap_or(session.entry_id.as_str()),
+                get.reference.entity_type.as_str(),
+            )?;
+            plasm_core::type_check_get(get, cgs)?;
+        }
+    }
     validate_invoke_scalar_field_refs(session, state, id, expr)?;
     super::prerequisite_seats::validate_prerequisite_seat_bind(session, state, id, expr)?;
     Ok(())

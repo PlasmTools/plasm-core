@@ -445,7 +445,7 @@ fn partial_write_card_names_only_immediately_available_result_fields() {
 }
 
 #[test]
-fn get_card_separates_session_prerequisite_from_call_arguments() {
+fn get_card_teaches_declared_invocation_inputs() {
     let mut cgs = fixture();
     let mut session = cgs.capabilities["item_publish"]
         .inputs
@@ -464,9 +464,8 @@ fn get_card_separates_session_prerequisite_from_call_arguments() {
     let exposure = TeachingExposureSession::new(&cgs, "fixture", &["Item"]);
     let wave = prepare_python_teaching_wave(&exposure, &PythonTeachingState::default()).unwrap();
     assert!(
-        wave.declarations.contains(
-            "session(access_token:v4) before Get; not a get(...) argument\n  e1.get(identity: v1)"
-        ),
+        wave.declarations
+            .contains("e1.get(identity: v1, *, access_token: v4"),
         "{}",
         wave.declarations
     );

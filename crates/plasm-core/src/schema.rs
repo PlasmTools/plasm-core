@@ -3758,6 +3758,35 @@ impl CGS {
 
     fn validate_capability_input_lanes(&self) -> Result<(), SchemaError> {
         for (cap_name, cap) in &self.capabilities {
+            if cap.kind == CapabilityKind::Get && cap.get_requires_identity_anchor(self) {
+                if let Some(entity) = self.get_entity(cap.domain.as_str()) {
+                    let fields = cap
+                        .input_fields()
+                        .filter(|field| {
+                            !crate::scope_entity_ref_infer::should_omit_invoke_teaching_arg(
+                                entity, cap, field, self,
+                            )
+                        })
+                        .map(|field| field.name.as_str());
+                    let union_fields = cap.union_parameter_names();
+                    for parameter in fields.chain(union_fields) {
+                        let reserved = if entity.key_vars.len() > 1 {
+                            entity.key_vars.iter().any(|key| key.as_str() == parameter)
+                        } else {
+                            parameter == "identity"
+                        };
+                        if reserved {
+                            return Err(
+                                crate::error::SchemaConstraintError::GetInputIdentityCollision {
+                                    capability: cap_name.to_string(),
+                                    parameter: parameter.to_owned(),
+                                }
+                                .into(),
+                            );
+                        }
+                    }
+                }
+            }
             if !matches!(cap.kind, CapabilityKind::Query | CapabilityKind::Search)
                 && !cap.inputs.input_validation.cross_field_rules.is_empty()
             {
@@ -6049,6 +6078,26 @@ impl CapabilitySchema {
             )
     }
 
+    /// All top-level invocation keys, including root-union discriminators and fields.
+    /// Nested object fields remain within their owning input value.
+    pub fn input_parameter_names(&self) -> impl Iterator<Item = &str> {
+        self.input_fields()
+            .map(|field| field.name.as_str())
+            .chain(self.union_parameter_names())
+    }
+
+    fn union_parameter_names(&self) -> impl Iterator<Item = &str> {
+        self.invocation_input_schemas()
+            .flat_map(|schema| match &schema.input_type {
+                InputType::Union { variants } => variants.as_slice(),
+                _ => &[],
+            })
+            .flat_map(|variant| {
+                std::iter::once(variant.wire.field.as_str())
+                    .chain(variant.fields.iter().map(|field| field.name.as_str()))
+            })
+    }
+
     /// Whether this capability has a required typed parent-scope parameter.
     pub fn has_required_scope_param(&self) -> bool {
         self.scope_params().iter().any(|f| f.required)
@@ -6099,29 +6148,10 @@ impl CapabilitySchema {
             .is_some_and(|m| capability_mapping_is_view_transport(&m.template.0))
     }
 
-    /// True when this Get must be keyed (identity / view scope / required body / derived list-pick) — not bare `e#` or `e#.m#()`.
-    pub fn get_requires_identity_anchor(&self, cgs: &CGS) -> bool {
-        if self.requires_receiver() {
-            return true;
-        }
-        if !capability_is_zero_arity_invoke(self) {
-            return true;
-        }
-        if self.derived.is_some() {
-            return true;
-        }
-        if !self.is_view_transport() {
-            return false;
-        }
-        let Some(mapping) = &self.mapping else {
-            return false;
-        };
-        let Some(view_key) = mapping.template.0.get("view").and_then(|v| v.as_str()) else {
-            return false;
-        };
-        cgs.views
-            .get(view_key)
-            .is_some_and(|view| view.scope.iter().any(|s| s.required))
+    /// Identity comes from the receiver contract or a derived identity selection,
+    /// independently of the number of declared invocation inputs.
+    pub fn get_requires_identity_anchor(&self, _cgs: &CGS) -> bool {
+        self.requires_receiver() || self.derived.is_some()
     }
 
     /// True when this Get is list-backed (derived plan or view transport) and must not hydrate recursively.

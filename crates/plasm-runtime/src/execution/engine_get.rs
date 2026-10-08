@@ -25,8 +25,17 @@ impl ExecutionEngine {
         mode: ExecutionMode,
         ambient: &ViewAmbientContext,
     ) -> Result<ExecutionResult, RuntimeError> {
-        // Satisfy from cache only when we already hold a detail payload (RA-11: skip after write).
-        if let Some(entity) = mat.consult_complete_get(&get.reference) {
+        let resolved = resolved_get::ResolvedGet::resolve(
+            get,
+            cgs,
+            None,
+            mat,
+            ambient,
+            resolved_get::GetPurpose::Authored,
+        )?;
+        let ambient = &resolved.ambient;
+        // Input scope is part of observation identity; RA-11 still forbids a hit after a write.
+        if let Some(entity) = resolved.cached_row(mat, cgs) {
             let cached = entity.clone();
             stamp_get_capability_params(mat, cgs, get, ambient, &cached);
             return Ok(ExecutionResult {
@@ -64,7 +73,7 @@ impl ExecutionEngine {
                 ambient,
             )
             .await?;
-        mat.insert(cached.clone())?;
+        resolved.record(mat, cgs, cached.clone())?;
         stamp_get_capability_params(mat, cgs, get, ambient, &cached);
 
         Ok(ExecutionResult {
@@ -104,7 +113,16 @@ impl ExecutionEngine {
         mode: ExecutionMode,
         required_relation: Option<&str>,
     ) -> Result<ExecutionResult, RuntimeError> {
-        if let Some(entity) = mat.consult_complete_get(&get.reference).filter(|entity| {
+        let ambient = ViewAmbientContext::default();
+        let request = ResolvedGet::resolve(
+            get,
+            cgs,
+            get.capability_name.as_deref(),
+            mat,
+            &ambient,
+            GetPurpose::Authored,
+        )?;
+        if let Some(entity) = request.cached_row(mat, cgs).filter(|entity| {
             required_relation.is_none_or(|name| entity.relations.contains_key(name))
         }) {
             return Ok(ExecutionResult {
@@ -131,15 +149,6 @@ impl ExecutionEngine {
             });
         }
 
-        let ambient = ViewAmbientContext::default();
-        let request = ResolvedGet::resolve(
-            get,
-            cgs,
-            get.capability_name.as_deref(),
-            mat,
-            &ambient,
-            GetPurpose::Authored,
-        )?;
         let capability = request.capability;
         if capability.derived.is_some() {
             return Err(RuntimeError::DerivedGetNestingForbidden {
@@ -153,8 +162,8 @@ impl ExecutionEngine {
         let (cached, source) = self
             .fetch_http_transport_get_decoded(&request, cgs, mode, &capability_template, true, mat)
             .await?;
-        mat.insert(cached.clone())?;
-        stamp_get_capability_params(mat, cgs, get, &ambient, &cached);
+        request.record(mat, cgs, cached.clone())?;
+        stamp_get_capability_params(mat, cgs, get, &request.ambient, &cached);
 
         Ok(ExecutionResult {
             collection: ExecutionCollection::observe_for(

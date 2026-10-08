@@ -59,6 +59,13 @@ impl HttpTransport for Transport {
             return Ok((json!([]), Some("http://127.0.0.1:9/next-tags".into())));
         }
         let rows = match parts.as_slice() {
+            ["items", id] => {
+                let n: usize = id.strip_prefix('i').unwrap().parse().unwrap();
+                return Ok((
+                    json!({"id":id,"title":format!("Title {n}"),"state":"open"}),
+                    None,
+                ));
+            }
             ["touch"] | ["publish"] | ["marks", _] => vec![],
             ["items"] => (0..self.parents)
                 .map(|i| json!({"id":format!("i{i}"), "title":format!("Title {i}"),"state":"open"}))

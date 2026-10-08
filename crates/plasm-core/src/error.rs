@@ -128,6 +128,9 @@ pub enum TypeError {
     #[error("Capability '{capability}' not found in schema")]
     CapabilityNotFound { capability: String },
 
+    #[error("Capability '{capability}' is not a Get on '{entity}'")]
+    GetCapabilityMismatch { capability: String, entity: String },
+
     #[error("Input required for capability '{capability}' but not provided")]
     InputRequired { capability: String },
 
@@ -170,6 +173,9 @@ impl TypeError {
             ),
             Self::CapabilityNotFound { capability } => format!(
                 "Capability {capability:?} is not declared in the current catalog. Use a declared method on its entity."
+            ),
+            Self::GetCapabilityMismatch { capability, entity } => format!(
+                "Use a declared Get method on {entity:?}; {capability:?} does not read that entity."
             ),
             Self::RequiredParameterOmitted { parameter, .. } => format!(
                 "Supply the required keyword {parameter}=value on the declared Python method."
@@ -258,6 +264,12 @@ pub enum ViewMappingError {
 pub enum SchemaConstraintError {
     #[error("capability '{capability}': invalid input rule: {reason}")]
     InputRule { capability: String, reason: String },
+
+    #[error("Get capability '{capability}' invocation input '{parameter}' collides with a reserved identity keyword")]
+    GetInputIdentityCollision {
+        capability: String,
+        parameter: String,
+    },
     #[error("capability '{capability}': query/search inputs may only use scope, selection, and controls")]
     QueryInputLane { capability: String },
     #[error("capability '{capability}': selection is only valid on query/search capabilities")]

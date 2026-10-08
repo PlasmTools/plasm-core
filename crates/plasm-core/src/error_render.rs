@@ -2090,6 +2090,9 @@ pub fn render_type_error_with_feedback(
     let error = err.to_string();
 
     match err {
+        TypeError::GetCapabilityMismatch { .. } => {
+            StepError::type_correction(err.python_correction(), error)
+        }
         TypeError::CoercionFailure { field, source } => {
             let field = ident_label_for_feedback(field, &style);
             StepError::type_correction(
