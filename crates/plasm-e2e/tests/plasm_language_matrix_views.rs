@@ -236,9 +236,8 @@ fn matrix_views_row_to_text_wire_column_aliases() {
 #[test]
 fn matrix_views_row_to_text_source_alias_iteration() {
     block_on_views_live(|| async move {
-        let base = hermit_lang_matrix::language_matrix_hermit_base_url()
-            .await
-            .clone();
+        // The program filters for i1; its backend must preserve fixture identities.
+        let base = hermit_lang_matrix::fresh_python_parity_hermit_base_url().await;
         let cgs = load_language_matrix_views_cgs();
         plasm_compile::validate_cgs_capability_templates(&cgs).expect("templates");
         let es = Arc::new(views_execute_session(cgs.clone()));
@@ -297,9 +296,8 @@ fn matrix_views_row_to_text_source_alias_iteration() {
 #[test]
 fn matrix_views_row_to_text_named_loop_cursor() {
     block_on_views_live(|| async move {
-        let base = hermit_lang_matrix::language_matrix_hermit_base_url()
-            .await
-            .clone();
+        // The program filters for i1; its backend must preserve fixture identities.
+        let base = hermit_lang_matrix::fresh_python_parity_hermit_base_url().await;
         let cgs = load_language_matrix_views_cgs();
         plasm_compile::validate_cgs_capability_templates(&cgs).expect("templates");
         let es = Arc::new(views_execute_session(cgs.clone()));
