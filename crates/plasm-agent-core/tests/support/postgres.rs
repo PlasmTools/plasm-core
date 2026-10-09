@@ -57,7 +57,9 @@ async fn start_postgres_container(
 ) -> Result<ContainerAsync<GenericImage>, String> {
     let fut = GenericImage::new("postgres", "16")
         .with_wait_for(WaitFor::log(
-            LogWaitStrategy::stderr("database system is ready to accept connections").with_times(2),
+            // The temporary init server logs to stdout; only the final TCP server
+            // emits this readiness message on stderr.
+            LogWaitStrategy::stderr("database system is ready to accept connections"),
         ))
         .with_exposed_port(5432.tcp())
         .with_env_var("POSTGRES_PASSWORD", "postgres")
