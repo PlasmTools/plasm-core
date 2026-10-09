@@ -8,9 +8,13 @@ use std::panic::AssertUnwindSafe;
 use std::process::{Child, Command, Stdio};
 
 use appliance_boot_support::{
-    apply_appliance_test_env, bin_path, make_appliance_data_root, pick_free_tcp_port,
+    apply_appliance_test_env, make_appliance_data_root, pick_free_tcp_port,
     push_appliance_cli_args, repo_root, schema_path, wait_bootstrap_ready,
 };
+
+fn bin_path() -> std::path::PathBuf {
+    env!("CARGO_BIN_EXE_plasm-server").into()
+}
 
 fn spawn_headless_appliance() -> (u16, tempfile::TempDir, std::path::PathBuf, Child) {
     let listen_port = pick_free_tcp_port();

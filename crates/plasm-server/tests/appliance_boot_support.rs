@@ -209,10 +209,6 @@ pub fn schema_path() -> PathBuf {
     p
 }
 
-pub fn bin_path() -> PathBuf {
-    PathBuf::from(env!("CARGO_BIN_EXE_plasm-server"))
-}
-
 pub fn embedded_pg_temp_parent() -> PathBuf {
     #[cfg(target_os = "macos")]
     {

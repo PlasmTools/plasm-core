@@ -14,13 +14,18 @@ use std::time::Duration;
 use testty::session::PtySession;
 
 use appliance_boot_support::{
-    appliance_pty_spawn_env, bin_path, make_appliance_data_root, pick_free_tcp_port, repo_root,
-    schema_path,
+    appliance_pty_spawn_env, make_appliance_data_root, pick_free_tcp_port, repo_root, schema_path,
 };
 
 const STABLE_FRAME: Duration = Duration::from_secs(2);
 const SCREEN_WAIT: Duration = Duration::from_secs(300);
 const EXIT_WAIT: Duration = Duration::from_secs(30);
+
+fn bin_path() -> std::path::PathBuf {
+    std::env::var_os("CARGO_BIN_EXE_plasm_server")
+        .expect("appliance PTY gate must supply the built plasm-server binary")
+        .into()
+}
 
 #[test]
 fn tui_pty_quit_smoke() {
@@ -52,15 +57,9 @@ fn tui_pty_quit_smoke() {
         diag_log.display()
     );
 
-    let mut session = PtySession::spawn_with_size(
-        &bin_path(),
-        120,
-        40,
-        &args,
-        &env_pairs,
-        Some(&repo_root()),
-    )
-    .unwrap_or_else(|e| panic!("spawn plasm-server in PTY: {e}"));
+    let mut session =
+        PtySession::spawn_with_size(&bin_path(), 120, 40, &args, &env_pairs, Some(&repo_root()))
+            .unwrap_or_else(|e| panic!("spawn plasm-server in PTY: {e}"));
 
     session
         .wait_for_stable_frame(STABLE_FRAME, SCREEN_WAIT)
