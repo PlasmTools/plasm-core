@@ -18,7 +18,7 @@ use support::postgres::{integration_postgres_url, INTEGRATION_POSTGRES_URL_ENV};
 #[tokio::test]
 async fn singleton_allowlist_and_keys_roundtrip() {
     const START_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(45);
-    let Some((_, db_url)) = integration_postgres_url(START_TIMEOUT).await else {
+    let Some((_postgres, db_url)) = integration_postgres_url(START_TIMEOUT).await else {
         eprintln!(
             "mcp_config_admin integration: skipping (no Docker / Postgres). \
              Set {INTEGRATION_POSTGRES_URL_ENV} or ensure Docker is running."

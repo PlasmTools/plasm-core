@@ -19,7 +19,7 @@ use uuid::Uuid;
 const START_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(45);
 
 async fn ensure_outbound_tables(pool: &PgPool) {
-    sqlx::query(
+    sqlx::raw_sql(
         r#"
         CREATE TABLE IF NOT EXISTS project_outbound_auth_configs (
             id UUID PRIMARY KEY,
@@ -125,7 +125,7 @@ async fn seed_connected_account(
 
 #[tokio::test]
 async fn pending_auth_config_secret_readiness_succeeds_without_binding_row() {
-    let Some((_, db_url)) = integration_postgres_url(START_TIMEOUT).await else {
+    let Some((_postgres, db_url)) = integration_postgres_url(START_TIMEOUT).await else {
         eprintln!(
             "mcp_readiness_pending_auth: skipping (no Docker / Postgres). \
              Set {INTEGRATION_POSTGRES_URL_ENV} or ensure Docker is running."
@@ -168,7 +168,7 @@ async fn pending_auth_config_secret_readiness_succeeds_without_binding_row() {
 
 #[tokio::test]
 async fn pending_auth_config_secret_readiness_fails_without_connected_account() {
-    let Some((_, db_url)) = integration_postgres_url(START_TIMEOUT).await else {
+    let Some((_postgres, db_url)) = integration_postgres_url(START_TIMEOUT).await else {
         eprintln!(
             "mcp_readiness_pending_auth: skipping (no Docker / Postgres). \
              Set {INTEGRATION_POSTGRES_URL_ENV} or ensure Docker is running."
@@ -203,7 +203,7 @@ async fn pending_auth_config_secret_readiness_fails_without_connected_account() 
 
 #[tokio::test]
 async fn graph_binding_join_still_resolves_secret_when_binding_row_exists() {
-    let Some((_, db_url)) = integration_postgres_url(START_TIMEOUT).await else {
+    let Some((_postgres, db_url)) = integration_postgres_url(START_TIMEOUT).await else {
         eprintln!(
             "mcp_readiness_pending_auth: skipping (no Docker / Postgres). \
              Set {INTEGRATION_POSTGRES_URL_ENV} or ensure Docker is running."
