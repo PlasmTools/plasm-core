@@ -817,11 +817,15 @@ impl ExecuteSession {
         cgs: &CGS,
     ) -> Result<Arc<plasm_compile::CompiledCatalog>, CompiledCatalogLookupError> {
         let hash = cgs.catalog_cgs_hash_hex();
-        self.compiled_catalogs_by_entry
-            .values()
-            .find(|compiled| compiled.cgs_hash() == hash)
-            .cloned()
-            .ok_or(CompiledCatalogLookupError::HashMissing { catalog_hash: hash })
+        // Session materialization may change auth/backend metadata without changing
+        // the packaged recipes. Resolve ownership through the effective context.
+        let entry_id = self
+            .contexts_by_entry
+            .iter()
+            .find(|(_, context)| context.cgs.catalog_cgs_hash_hex() == hash)
+            .map(|(entry_id, _)| entry_id)
+            .ok_or(CompiledCatalogLookupError::HashMissing { catalog_hash: hash })?;
+        self.compiled_catalog_for_entry(entry_id)
     }
 
     /// Allocate the next monotonic `resource_index` for this execute session (used for `plasm://r/{n}`).
@@ -2269,6 +2273,47 @@ mod tests {
     use crate::run_artifacts::{ArtifactPayload, ArtifactPayloadMetadata};
     use plasm_core::CgsContext;
     use plasm_core::CGS;
+
+    #[test]
+    fn compiled_recipes_follow_session_entry_after_backend_materialization() {
+        let packaged = CGS::new();
+        let compiled =
+            Arc::new(plasm_compile::compile_cgs_capability_templates(&packaged).unwrap());
+        let mut effective = packaged.clone();
+        effective.http_backend = "https://tenant.example".into();
+        let effective = Arc::new(effective);
+        assert_ne!(compiled.cgs_hash(), effective.catalog_cgs_hash_hex());
+        let session = ExecuteSession::new_with_bindings(
+            "ph".into(),
+            "prompt".into(),
+            effective.clone(),
+            IndexMap::from([(
+                "matrix".into(),
+                Arc::new(CgsContext::entry("matrix", effective.clone())),
+            )]),
+            "matrix".into(),
+            String::new(),
+            String::new(),
+            None,
+            Vec::new(),
+            None,
+            None,
+            effective.catalog_cgs_hash_hex(),
+            None,
+            IndexMap::new(),
+            IndexMap::from([("matrix".into(), compiled.clone())]),
+        );
+        assert!(Arc::ptr_eq(
+            &session.compiled_catalog_for_cgs(&effective).unwrap(),
+            &compiled,
+        ));
+        let mut unrelated = (*effective).clone();
+        unrelated.http_backend = "https://unrelated.example".into();
+        assert!(matches!(
+            session.compiled_catalog_for_cgs(&unrelated),
+            Err(CompiledCatalogLookupError::HashMissing { .. })
+        ));
+    }
 
     #[tokio::test]
     async fn reuse_key_ignores_context_intent_when_logical_session_id_set() {
