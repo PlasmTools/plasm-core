@@ -394,6 +394,7 @@ fn row_algebra_reads_matches_beyond_the_first_backend_pages() {
             tokio::runtime::Runtime::new().unwrap().block_on(async {
                 use plasm_agent::plasm_compile::compile_plasm_program;
                 use plasm_agent::plasm_plan_run::run_plasm_comp;
+                use plasm_runtime::ResultCoverage;
                 for (program, expected) in [
                     ("rows = Item\nrows | where n >= 40 | select id, n", 5),
                     ("rows = Item\nrows | select id, n", 45),
@@ -436,10 +437,21 @@ fn row_algebra_reads_matches_beyond_the_first_backend_pages() {
                     .await
                     .expect("execute algebra");
                     let output = &result.return_steps[0].result;
-                    assert_eq!(output.entities().len(), expected, "{program}");
+                    // Delivery paging limits resident rows, not the immutable
+                    // semantic collection or its completeness evidence.
+                    assert_eq!(output.count(), expected, "{program}");
+                    assert_eq!(output.entities().len(), expected.min(25), "{program}");
+                    assert_eq!(output.coverage(), ResultCoverage::Complete, "{program}");
+                    assert_eq!(output.has_more, expected > 25, "{program}");
+                    assert_eq!(output.paging_handle.is_some(), expected > 25, "{program}");
                     assert_eq!(
-                        output.coverage(),
-                        plasm_runtime::ResultCoverage::Complete,
+                        output
+                            .collection
+                            .computation_source()
+                            .materialize(plasm_core::collection_codec::Demand::Whole)
+                            .expect("complete immutable computation source")
+                            .len(),
+                        expected,
                         "{program}"
                     );
                     let requests = recorded.requests.lock().unwrap();

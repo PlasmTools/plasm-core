@@ -52,7 +52,7 @@ struct MetadataLoader {
     #[cfg(test)]
     fixture: Option<(SocketAddr, reqwest::Certificate)>,
     #[cfg(test)]
-    lookup_delay: Duration,
+    lookup_release: Option<Arc<std::sync::Mutex<std::sync::mpsc::Receiver<()>>>>,
     #[cfg(test)]
     resolved_addresses: Option<Vec<SocketAddr>>,
     #[cfg(test)]
@@ -69,7 +69,7 @@ impl Default for MetadataLoader {
             #[cfg(test)]
             fixture: None,
             #[cfg(test)]
-            lookup_delay: Duration::ZERO,
+            lookup_release: None,
             #[cfg(test)]
             resolved_addresses: None,
             #[cfg(test)]
@@ -112,7 +112,7 @@ impl MetadataLoader {
         #[cfg(test)]
         let fixture_address = self.fixture.as_ref().map(|fixture| fixture.0);
         #[cfg(test)]
-        let delay = self.lookup_delay;
+        let lookup_release = self.lookup_release.clone();
         #[cfg(test)]
         let resolved_addresses = self.resolved_addresses.clone();
         #[cfg(test)]
@@ -124,7 +124,11 @@ impl MetadataLoader {
             }
             #[cfg(test)]
             if let Some(address) = fixture_address {
-                std::thread::sleep(delay);
+                if let Some(release) = lookup_release {
+                    // A dropped test sender also releases the resolver during
+                    // unwinding; a failed assertion cannot strand this worker.
+                    let _ = release.lock().unwrap().recv();
+                }
                 return Ok((resolved_addresses.unwrap_or_else(|| vec![address]), permit));
             }
             (resolver_host.as_str(), port)

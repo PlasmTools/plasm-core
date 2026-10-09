@@ -134,7 +134,8 @@ async fn timed_out_dns_retains_capacity_until_resolver_finishes() {
     let mut loader = fixture.loader();
     loader.slots = Arc::new(tokio::sync::Semaphore::new(1));
     loader.lookup_timeout = Duration::from_millis(20);
-    loader.lookup_delay = Duration::from_millis(150);
+    let (release, resolver) = std::sync::mpsc::channel();
+    loader.lookup_release = Some(Arc::new(std::sync::Mutex::new(resolver)));
     let storage = MemorySecretStore::new();
     assert!(loader.load(&storage, &fixture.id("/valid")).await.is_err());
     assert_eq!(loader.slots.available_permits(), 0);
@@ -142,7 +143,12 @@ async fn timed_out_dns_retains_capacity_until_resolver_finishes() {
         loader.load(&storage, &fixture.id("/valid")).await,
         Err(McpOAuthError::MetadataRetrieval { source }) if source.is_capacity_failure()
     ));
-    tokio::time::sleep(Duration::from_millis(170)).await;
+    release.send(()).unwrap();
+    let permit = tokio::time::timeout(Duration::from_secs(5), loader.slots.acquire())
+        .await
+        .expect("resolver must release its capacity")
+        .unwrap();
+    drop(permit);
     assert_eq!(loader.slots.available_permits(), 1);
     assert!(fixture.counts().await.get("/valid").is_none());
 }
