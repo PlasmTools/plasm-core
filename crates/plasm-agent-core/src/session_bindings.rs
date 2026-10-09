@@ -4,7 +4,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use tracing::Instrument;
 
-use auth_framework::storage::AuthStorage;
+use crate::secret_store::SecretStore;
 
 use crate::binding_slots::{BindingScope, SessionBindingMap};
 use crate::binding_store::{self, BindingLoadError};
@@ -15,7 +15,7 @@ use crate::server_state::PlasmHostState;
 pub use crate::binding_store::BindingLoadError as SessionBindingLoadError;
 
 pub async fn load_session_binding_map(
-    storage: &Arc<dyn AuthStorage>,
+    storage: &Arc<dyn SecretStore>,
     repo: &McpConfigRepository,
     scope: &BindingScope,
 ) -> Result<SessionBindingMap, BindingLoadError> {

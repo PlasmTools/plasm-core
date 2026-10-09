@@ -44,7 +44,7 @@ pub trait SecretProvider: Send + Sync {
     /// Returns `None` if the secret is not present (unset env var, missing entry, …).
     fn get_secret<'a>(&'a self, key: &'a str) -> BoxFuture<'a, Option<String>>;
 
-    /// Resolve a Plasm-hosted credential from auth-framework `kv_store` (or equivalent).
+    /// Resolve a Plasm-hosted credential from Plasm credential `kv_store` (or equivalent).
     ///
     /// Default: always `None` (env-only deployments). The MCP/HTTP host (`plasm-agent-core`) overrides this when
     /// wiring [`AuthResolver`] for HTTP/MCP.

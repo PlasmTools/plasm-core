@@ -102,8 +102,8 @@ mod ui_read;
 
 pub(crate) use initialize::mcp_stateless_server_details;
 pub use initialize::{
-    build_mcp_hyper_server_for_merge, build_mcp_router_for_merge, mcp_hyper_router,
-    plasm_mcp_stateless_enabled, run_mcp_server,
+    build_mcp_hyper_server_for_merge, build_mcp_router_for_merge, build_mcp_router_for_transport,
+    mcp_hyper_router, plasm_mcp_stateless_enabled, run_mcp_server, McpHttpTransport,
 };
 
 #[cfg(test)]

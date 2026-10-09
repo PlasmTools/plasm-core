@@ -10,9 +10,9 @@ mod support;
 
 use std::sync::Arc;
 
-use plasm_agent_core::auth_framework_host;
 use plasm_agent_core::mcp_config_admin::{McpConfigAdminService, McpConfigScope};
 use plasm_agent_core::mcp_config_repository::McpConfigRepository;
+use plasm_agent_core::secret_store_host;
 use support::postgres::{integration_postgres_url, INTEGRATION_POSTGRES_URL_ENV};
 
 #[tokio::test]
@@ -30,7 +30,7 @@ async fn singleton_allowlist_and_keys_roundtrip() {
             .await
             .expect("migrate"),
     );
-    let keys = auth_framework_host::mcp_api_key_registry_memory_only();
+    let keys = secret_store_host::memory_auth_bundle().0;
     let svc = McpConfigAdminService::new(repo, keys);
 
     let scope = McpConfigScope::organization_workspace_project(

@@ -2,15 +2,15 @@
 
 use std::sync::Arc;
 
-use auth_framework::storage::{AuthStorage, MemoryStorage};
 use plasm_agent::oauth_link_catalog::{OauthLinkCatalog, RuntimeOauthProviderMeta};
 use plasm_agent::outbound_secret_provider::AgentOutboundSecretProvider;
+use plasm_agent_core::secret_store::{MemorySecretStore, SecretStore};
 use plasm_core::AuthScheme;
 use plasm_runtime::{AuthResolver, OutboundOAuthKvV1, SecretProvider, OUTBOUND_OAUTH_KV_VERSION};
 
 #[tokio::test]
 async fn hosted_bearer_refreshes_expired_envelope_and_rewrites_kv() {
-    let storage = Arc::new(MemoryStorage::new()) as Arc<dyn AuthStorage>;
+    let storage = Arc::new(MemorySecretStore::new()) as Arc<dyn SecretStore>;
     let catalog = Arc::new(OauthLinkCatalog::default());
 
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();

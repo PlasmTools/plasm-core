@@ -7,8 +7,8 @@
 
 pub mod appliance_mcp_defaults;
 pub mod appliance_services;
-pub mod auth_framework_host;
-mod auth_framework_postgres_schema;
+pub mod secret_store_host;
+
 pub mod backend_normalize;
 pub mod binding_slots;
 pub mod binding_store;
@@ -81,7 +81,9 @@ mod mcp_plasm_run_phases;
 pub mod mcp_policy;
 pub mod mcp_run_await;
 mod mcp_run_markdown;
+pub mod secret_store;
 pub use mcp_run_markdown::{ArtifactAccessMode, McpResultTransportPolicy};
+mod mcp_oauth_http;
 pub mod mcp_runtime_config;
 pub mod mcp_server;
 mod mcp_stream_auth;

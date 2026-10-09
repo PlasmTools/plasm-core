@@ -8,13 +8,13 @@ use std::collections::HashSet;
 use std::sync::Arc;
 use std::time::Duration;
 
-use auth_framework::storage::AuthStorage;
 use plasm_agent_core::mcp_api_key_registry::McpApiKeyProvisioned;
 use plasm_agent_core::mcp_config_admin::{
     McpCatalogAuthMarker, McpConfigAdminService, McpConfigApiKeyRow, McpConfigCatalogRow,
 };
 use plasm_agent_core::oauth_link_catalog::OauthLinkCatalog;
 use plasm_agent_core::oauth_provider_repository::OauthProviderAppRow;
+use plasm_agent_core::secret_store::SecretStore;
 use plasm_agent_core::server_state::PlasmHostState;
 use tokio::sync::mpsc;
 use uuid::Uuid;
@@ -157,7 +157,7 @@ pub enum AdminJob {
         /// The control-station OAuth tab sends explicit scopes whenever CGS defines `oauth.scopes`.
         scopes: Vec<String>,
         catalog: Arc<OauthLinkCatalog>,
-        storage: Arc<dyn AuthStorage>,
+        storage: Arc<dyn SecretStore>,
     },
     OauthProviderUpsert {
         corr: AdminCorr,
@@ -282,7 +282,7 @@ fn apply_oauth_binding_state_to_catalog_rows(
 
 async fn apply_local_secret_state_to_catalog_rows(
     rows: &mut [McpConfigCatalogRow],
-    storage: &Arc<dyn AuthStorage>,
+    storage: &Arc<dyn SecretStore>,
 ) {
     for row in rows {
         let Some(key) = row.api_secret_hosted_kv.as_deref() else {
@@ -295,7 +295,7 @@ async fn apply_local_secret_state_to_catalog_rows(
 
 async fn apply_binding_state_to_catalog_rows(
     rows: &mut [McpConfigCatalogRow],
-    storage: &Arc<dyn AuthStorage>,
+    storage: &Arc<dyn SecretStore>,
     repo: &plasm_agent_core::mcp_config_repository::McpConfigRepository,
     config_id: uuid::Uuid,
     tenant_id: &str,

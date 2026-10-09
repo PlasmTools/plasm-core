@@ -90,11 +90,11 @@ async fn standalone_oauth_context() -> Result<
     (
         Option<Arc<McpConfigRepository>>,
         Arc<OauthLinkCatalog>,
-        Arc<dyn auth_framework::storage::AuthStorage>,
+        Arc<dyn plasm_agent_core::secret_store::SecretStore>,
     ),
     AdminError,
 > {
-    let storage = plasm_agent_core::auth_framework_host::init_standalone_auth_storage()
+    let storage = plasm_agent_core::secret_store_host::init_standalone_auth_storage()
         .await
         .map_err(|source| AdminError::AuthInitialization {
             source: Box::new(source),

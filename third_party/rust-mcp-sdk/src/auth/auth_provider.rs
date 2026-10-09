@@ -69,7 +69,7 @@ pub trait AuthProvider: Send + Sync {
     ) -> Option<http::Response<GenericBody>> {
         let allowed_methods = match endpoint {
             OauthEndpoint::AuthorizationEndpoint => {
-                vec![Method::GET, Method::HEAD, Method::OPTIONS]
+                vec![Method::GET, Method::POST, Method::HEAD, Method::OPTIONS]
             }
             OauthEndpoint::TokenEndpoint => vec![Method::POST, Method::OPTIONS],
             OauthEndpoint::RegistrationEndpoint => vec![

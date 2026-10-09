@@ -1664,7 +1664,7 @@ pub enum OutputType {
 ///
 /// For each secret-bearing slot on other variants, declare **at least one** non-empty source:
 /// - `env` — environment variable name (local dev / operator-managed)
-/// - `hosted_kv` — auth-framework `kv_store` key path (must start with `plasm:outbound:`)
+/// - `hosted_kv` — Plasm credential `kv_store` key path (must start with `plasm:outbound:`)
 ///
 /// For `api_key_header`, `api_key_query`, `bearer_token`, and `oauth_bearer`, **both** may be set: the runtime
 /// prefers a non-empty `hosted_kv` value (e.g. set from `plasm-server`) and falls back to `env`
@@ -1683,7 +1683,7 @@ pub enum AuthScheme {
         /// Name of the environment variable holding the key value
         #[serde(default)]
         env: Option<String>,
-        /// auth-framework KV key for the stored secret
+        /// Plasm credential KV key for the stored secret
         #[serde(default)]
         hosted_kv: Option<String>,
     },
@@ -1695,7 +1695,7 @@ pub enum AuthScheme {
         /// Name of the environment variable holding the key value
         #[serde(default)]
         env: Option<String>,
-        /// auth-framework KV key for the stored secret
+        /// Plasm credential KV key for the stored secret
         #[serde(default)]
         hosted_kv: Option<String>,
     },
@@ -1705,7 +1705,7 @@ pub enum AuthScheme {
         /// Name of the environment variable holding the bearer token
         #[serde(default)]
         env: Option<String>,
-        /// auth-framework KV key for the stored token
+        /// Plasm credential KV key for the stored token
         #[serde(default)]
         hosted_kv: Option<String>,
         /// When `true`, allows omitting both `env` and `hosted_kv` in the catalog — operators rely on a
@@ -1732,13 +1732,13 @@ pub enum AuthScheme {
         /// Env var holding the OAuth2 client ID
         #[serde(default)]
         client_id_env: Option<String>,
-        /// auth-framework KV key for the client ID
+        /// Plasm credential KV key for the client ID
         #[serde(default)]
         client_id_hosted_kv: Option<String>,
         /// Env var holding the OAuth2 client secret
         #[serde(default)]
         client_secret_env: Option<String>,
-        /// auth-framework KV key for the client secret
+        /// Plasm credential KV key for the client secret
         #[serde(default)]
         client_secret_hosted_kv: Option<String>,
         /// Optional list of scopes to request

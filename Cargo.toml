@@ -37,7 +37,7 @@ description = "Typed capability graph (CGS), CML mappings, and path language for
 # In-memory Okapi BM25 + DefaultTokenizer (unicode-segmentation / Snowball / stopwords).
 # Core serialization and typing
 serde = { version = "1.0", features = ["derive"] }
-postcard = { version = "1.1", features = ["alloc"] }
+postcard = { version = "1.1", default-features = false, features = ["alloc"] }
 serde_json = "1.0"
 serde_yaml = "0.9"
 serde_urlencoded = "0.7"
@@ -53,7 +53,18 @@ futures-util = { version = "0.3", default-features = false, features = [
     "async-await",
     "std",
 ] }
-tokio = { version = "1.0", features = ["full"] }
+# Upstream host dependencies can still add `full`; keep our own requirements explicit.
+tokio = { version = "1.53.2", features = [
+    "fs",
+    "io-util",
+    "macros",
+    "net",
+    "process",
+    "rt-multi-thread",
+    "signal",
+    "sync",
+    "time",
+] }
 tokio-util = { version = "0.7", features = ["rt"] }
 reqwest = { version = "0.12", default-features = false, features = [
     "json",
@@ -63,7 +74,7 @@ reqwest = { version = "0.12", default-features = false, features = [
 http = "1"
 http-problem = "0.3.0"
 
-# Web server for mock backend (0.8 aligns with auth-framework axum-integration)
+# Web server for mock backend
 axum = { version = "0.8", features = ["json"] }
 tower = { version = "0.5", features = ["util"] }
 
@@ -102,25 +113,24 @@ opentelemetry-appender-tracing = { version = "0.31", features = [
 opentelemetry-http = { version = "0.31", default-features = false }
 
 # CLI framework
-clap = { version = "4.5", features = ["derive"] }
+clap = { version = "4.6.7", features = ["derive"] }
 anyhow = "1"
 dotenvy = "0.15"
 
 # Testing frameworks
 proptest = "1.7"
-insta = { version = "1.43" }
+insta = { version = "1.49" }
 genco = { version = "0.19" }
 serial_test = "3"
 beavuck-hermit = { path = "vendor/hermit", version = "1.4.27" }
 
 # Auth / tokens / OAuth
-jsonwebtoken = "9"
+# Incoming identity and MCP access tokens use HS256; PEM parsing is unused.
+jsonwebtoken = { version = "9", default-features = false }
+aes-gcm = { version = "0.10.3", default-features = false, features = ["aes", "alloc"] }
+getrandom = "0.3.4"
 oauth2 = { version = "5", default-features = false, features = ["reqwest", "rustls-tls"] }
 # Upstream reqwest dep uses default TLS (native-tls/openssl on Linux); see monorepo RELEASING.md.
-auth-framework = { version = "0.5.0-rc1", default-features = false, features = [
-    "axum-integration",
-    "postgres-storage",
-] }
 
 # Database
 sqlx = { version = "0.8.6", default-features = false, features = [
@@ -157,13 +167,13 @@ rayon = "1.11"
 criterion = { version = "0.5", features = ["html_reports"] }
 aho-corasick = "1.1"
 indexmap = { version = "2.0", features = ["serde"] }
-uuid = { version = "1.18", features = ["v4", "v5"] }
+uuid = { version = "1.27", features = ["v4", "v5"] }
 url = "2.5"
 tower-http = { version = "0.6", features = ["cors", "trace"] }
 tempfile = "3.0"
 chrono = { version = "0.4.45", default-features = false, features = ["clock", "serde"] }
 chrono-english = "0.1.8"
-rust_decimal = { version = "1.40", default-features = false, features = ["std", "serde", "serde-with-str"] }
+rust_decimal = { version = "1.43", default-features = false, features = ["std", "serde", "serde-with-str"] }
 # LLM / REPL
 baml = "0.220"
 rust-mcp-sdk = { version = "0.9.0", default-features = false, features = [
@@ -178,7 +188,7 @@ rustyline = "17.0.2"
 # Appliance TUI (`plasm-server` binary + package)
 ratatui = { version = "0.29", default-features = false, features = ["crossterm"] }
 crossterm = "0.28"
-crossbeam-channel = "0.5"
+crossbeam-channel = "0.5.17"
 scopeguard = "1.2"
 
 # Data / Iceberg (JanKaul iceberg-rust stack)
@@ -189,16 +199,16 @@ iceberg-sql-catalog = { git = "https://github.com/JanKaul/iceberg-rust", rev = "
     "runtime-tokio",
 ] }
 object_store = { version = "0.13", features = ["aws", "gcp", "azure", "fs"] }
-shuttle = "0.9"
+shuttle = "0.9.5"
 dashmap = "6.2"
 
 # EVM / Alloy
 alloy = "1.8.2"
-alloy-chains = { version = "0.2.37", features = ["serde"] }
+alloy-chains = { version = "0.2.39", features = ["serde"] }
 alloy-primitives = { version = "1.7", features = ["serde"] }
 alloy-json-abi = { version = "1.7", features = ["serde_json"] }
 alloy-dyn-abi = "1.7"
-alloy-provider = { version = "1.8.2", features = ["anvil-api"] }
+alloy-provider = { version = "1.8.2", default-features = false, features = ["reqwest", "reqwest-rustls-tls"] }
 alloy-rpc-client = "1.8.2"
 alloy-rpc-types = "1.8.2"
 alloy-transport-http = "1.8.2"

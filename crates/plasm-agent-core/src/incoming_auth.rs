@@ -52,6 +52,8 @@ pub enum IncomingAuthError {
     JwtNotConfigured,
     #[error("only HS256 JWTs are supported for incoming auth")]
     UnsupportedJwtAlgorithm,
+    #[error("MCP OAuth tokens cannot establish an incoming tenant identity")]
+    InvalidTokenPurpose,
     #[error("JWT header is invalid: {0}")]
     JwtHeader(#[source] jsonwebtoken::errors::Error),
     #[error("JWT claims are invalid: {0}")]
@@ -97,6 +99,8 @@ pub struct IncomingPrincipal(pub Option<TenantPrincipal>);
 #[derive(Debug, Deserialize)]
 struct JwtClaims {
     sub: String,
+    #[serde(default)]
+    token_type: Option<String>,
     #[serde(default, alias = "tid")]
     tenant_id: Option<String>,
     #[serde(default)]
@@ -221,6 +225,12 @@ impl IncomingAuthVerifier {
         let data =
             decode::<JwtClaims>(token, &key, &validation).map_err(IncomingAuthError::JwtClaims)?;
         let claims = data.claims;
+        if matches!(
+            claims.token_type.as_deref(),
+            Some("access_token" | "refresh_token")
+        ) {
+            return Err(IncomingAuthError::InvalidTokenPurpose);
+        }
         let tenant_id = claims
             .tenant_id
             .or(claims.tenant)
@@ -448,6 +458,34 @@ pub async fn incoming_auth_http_middleware(
 mod tests {
     use super::*;
     use axum::http::HeaderValue;
+
+    #[test]
+    fn mcp_access_token_cannot_be_promoted_to_incoming_identity() {
+        let secret = "shared-test-secret";
+        let verifier = IncomingAuthVerifier::new(IncomingAuthConfig {
+            mode: IncomingAuthMode::Required,
+            jwt_secret: Some(secret.into()),
+            jwt_issuer: Some("https://plasm.example/mcp".into()),
+            jwt_audience: Some("https://plasm.example/mcp".into()),
+            api_keys_file: None,
+        })
+        .unwrap();
+        let claims = serde_json::json!({
+            "sub": "u1", "tenant_id": "tenant-a", "token_type": "access_token",
+            "iss": "https://plasm.example/mcp", "aud": "https://plasm.example/mcp",
+            "exp": jsonwebtoken::get_current_timestamp() + 3600,
+        });
+        let token = jsonwebtoken::encode(
+            &jsonwebtoken::Header::new(Algorithm::HS256),
+            &claims,
+            &jsonwebtoken::EncodingKey::from_secret(secret.as_bytes()),
+        )
+        .unwrap();
+        assert!(matches!(
+            verifier.verify_bearer_token(&token),
+            Err(IncomingAuthError::InvalidTokenPurpose)
+        ));
+    }
 
     #[test]
     fn jwt_round_trip_hs256() {

@@ -1,8 +1,8 @@
-//! Outbound HTTP credential resolution: environment variables plus auth-framework `kv_store` (`hosted_kv`).
+//! Outbound HTTP credential resolution: environment variables plus Plasm credential `kv_store` (`hosted_kv`).
 
 use std::sync::Arc;
 
-use auth_framework::storage::AuthStorage;
+use crate::secret_store::SecretStore;
 use futures_util::future::BoxFuture;
 use plasm_runtime::auth::{EnvSecretProvider, SecretProvider};
 use plasm_runtime::hosted_oauth_kv::{
@@ -19,9 +19,9 @@ pub(crate) enum HostedSecretError {
     #[error("hosted_kv read failed: {source}")]
     Read {
         #[source]
-        source: auth_framework::errors::AuthError,
+        source: crate::secret_store::SecretStoreError,
     },
-    #[error("Hosted credential '{key}' is not available (bearer_token). Store it via the control plane or check auth-framework storage.")]
+    #[error("Hosted credential '{key}' is not available (bearer_token). Store it via the control plane or check Plasm credential storage.")]
     MissingBearer { key: String },
     #[error("hosted credential has invalid UTF-8 encoding")]
     InvalidUtf8 {
@@ -43,7 +43,7 @@ pub(crate) enum HostedSecretError {
     #[error("store refreshed oauth credential: {source}")]
     StoreRefreshed {
         #[source]
-        source: auth_framework::errors::AuthError,
+        source: crate::secret_store::SecretStoreError,
     },
 }
 
@@ -94,19 +94,19 @@ mod tests {
     }
 }
 
-/// Reads env vars via [`EnvSecretProvider`] and Plasm-hosted secrets via [`AuthStorage::get_kv`].
+/// Reads env vars via [`EnvSecretProvider`] and Plasm-hosted secrets via [`SecretStore::get_kv`].
 ///
 /// Resolves OAuth-linked `plasm:outbound:*` JSON envelopes and refreshes access tokens using
 /// [`OauthLinkCatalog::resolve_for_oauth_start`] for client credentials.
 #[derive(Clone)]
 pub struct AgentOutboundSecretProvider {
-    storage: Arc<dyn AuthStorage>,
+    storage: Arc<dyn SecretStore>,
     oauth_link_catalog: Arc<OauthLinkCatalog>,
     web_notify: Option<WebConnectedAccountNotifyConfig>,
 }
 
 impl AgentOutboundSecretProvider {
-    pub fn new(storage: Arc<dyn AuthStorage>, oauth_link_catalog: Arc<OauthLinkCatalog>) -> Self {
+    pub fn new(storage: Arc<dyn SecretStore>, oauth_link_catalog: Arc<OauthLinkCatalog>) -> Self {
         Self {
             storage,
             oauth_link_catalog,

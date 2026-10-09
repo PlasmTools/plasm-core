@@ -40,4 +40,3 @@ impl ::std::default::Default for Union2KassistantOrKuser {
 
     }
 }
-

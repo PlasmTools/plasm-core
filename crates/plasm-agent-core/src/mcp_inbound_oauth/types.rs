@@ -1,22 +1,19 @@
+use super::error::McpOAuthError;
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 
 pub const OAUTH_SCOPE: &str = "mcp:tools";
-pub const OAUTH_REGISTER_PATH: &str = "/oauth/register";
 const MCP_OAUTH_PREFIX: &str = "/mcp";
 
 #[derive(Debug, Clone, Serialize)]
 pub struct McpOAuthRegisterResponse {
     pub client_id: String,
-    pub client_secret: String,
     pub client_id_issued_at: u64,
-    pub client_secret_expires_at: u64,
     pub redirect_uris: Vec<String>,
     pub token_endpoint_auth_method: String,
     pub grant_types: Vec<String>,
     pub response_types: Vec<String>,
     pub scope: String,
-    pub registration_client_uri: String,
-    pub registration_access_token: String,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -38,11 +35,19 @@ pub struct McpOAuthTokenRequest {
     pub code_verifier: Option<String>,
     pub refresh_token: Option<String>,
     pub resource: Option<String>,
+    pub scope: Option<String>,
+}
+
+#[derive(Debug, Clone)]
+pub struct AuthorizationRequest {
+    pub params: HashMap<String, String>,
+    pub error: Option<McpOAuthError>,
+    pub ambiguous_context: bool,
 }
 
 #[derive(Debug, Clone)]
 pub enum AuthorizeOutcome {
-    AwaitingPrincipal,
+    AwaitingPrincipal { params: HashMap<String, String> },
     Redirect { location: String },
 }
 

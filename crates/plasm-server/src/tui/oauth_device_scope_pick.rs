@@ -3,8 +3,8 @@
 use std::collections::BTreeSet;
 use std::sync::Arc;
 
-use auth_framework::storage::AuthStorage;
 use plasm_agent_core::oauth_link_catalog::OauthLinkCatalog;
+use plasm_agent_core::secret_store::SecretStore;
 use plasm_core::discovery::{CgsCatalog, CgsRegistry, DiscoveryError};
 use plasm_core::schema::{OauthDefaultScopeSet, OauthScopeEntry};
 
@@ -18,7 +18,7 @@ pub struct OAuthDeviceScopePickState {
     pub selected: BTreeSet<String>,
     pub cursor: usize,
     pub link_catalog: Arc<OauthLinkCatalog>,
-    pub storage: Arc<dyn AuthStorage>,
+    pub storage: Arc<dyn SecretStore>,
 }
 
 impl std::fmt::Debug for OAuthDeviceScopePickState {
@@ -30,7 +30,7 @@ impl std::fmt::Debug for OAuthDeviceScopePickState {
             .field("selected", &self.selected)
             .field("cursor", &self.cursor)
             .field("link_catalog", &"<OauthLinkCatalog>")
-            .field("storage", &"<AuthStorage>")
+            .field("storage", &"<SecretStore>")
             .finish()
     }
 }
@@ -43,7 +43,7 @@ impl OAuthDeviceScopePickState {
         reg: &CgsRegistry,
         entry_id: String,
         link_catalog: Arc<OauthLinkCatalog>,
-        storage: Arc<dyn AuthStorage>,
+        storage: Arc<dyn SecretStore>,
     ) -> Result<Option<Self>, DiscoveryError> {
         let ctx = reg.load_context(entry_id.trim())?;
         let Some(oauth) = ctx.oauth.as_ref() else {
