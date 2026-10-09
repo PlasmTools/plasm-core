@@ -411,6 +411,10 @@ use axum::response::Response;
 use crate::server_state::PlasmHostState;
 
 /// Layer order: add this **before** [`Extension`] of [`PlasmHostState`] so `Extension` runs first and populates request extensions.
+#[allow(
+    clippy::result_large_err,
+    reason = "HTTP boundary errors are fully rendered Axum responses"
+)]
 pub async fn incoming_auth_http_middleware(
     mut req: Request<Body>,
     next: Next,

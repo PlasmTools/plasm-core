@@ -51,7 +51,7 @@ impl RunArtifactId {
             return None;
         }
         let mut out = [0u8; 32];
-        for (i, pair) in bytes.chunks_exact(2).enumerate() {
+        for (i, pair) in bytes.as_chunks::<2>().0.iter().enumerate() {
             let hi = hex_nibble(pair[0])?;
             let lo = hex_nibble(pair[1])?;
             out[i] = (hi << 4) | lo;

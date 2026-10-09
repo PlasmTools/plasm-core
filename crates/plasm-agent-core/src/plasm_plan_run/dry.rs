@@ -643,8 +643,7 @@ pub(crate) fn ensure_node_dispatchable(
                 return Err(DryPlanValidationError::QualifiedEntityCatalogNotLoaded {
                     index,
                     entry_id: origin.entry_id,
-                }
-                .into());
+                });
             }
             Ok(())
         }

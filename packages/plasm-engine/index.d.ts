@@ -67,11 +67,13 @@ export interface JsTransportRequest {
   method: string
   url: string
   /**
-   * Callback and underlying fetch MUST preserve supplied credentials. With
-   * Authorization supplied, do not add/replace ANY auth material, including
-   * Cookie, API-key headers or query auth. Inject host bearer only when absent.
-   * Hidden-credential adapters must not use this engine-visible contract; use
-   * an Opaque runtime transport (typed RequestIdentityAuthOpaque).
+   * Callbacks and their HTTP clients must preserve supplied credentials.
+   * When Authorization is supplied, they MUST NOT add or replace any auth
+   * material (including Cookie, API-key headers or query credentials).
+   * Host bearer injection may occur only when Authorization is absent.
+   * Adapters requiring hidden credentials cannot use this engine-visible
+   * contract: they must attest TransportAuthScope::Opaque, causing typed
+   * RuntimeError::RequestIdentityAuthOpaque for request-owned observations.
    */
   headers?: Record<string, string>
   body?: string

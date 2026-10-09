@@ -180,6 +180,10 @@ fn anonymous() -> IncomingAuthContextResponse {
 }
 
 /// `GET /v1/incoming-auth/context` — principal + shell workspace/project model (Rust-owned).
+#[allow(
+    clippy::result_large_err,
+    reason = "HTTP boundary errors are fully rendered Axum responses"
+)]
 pub async fn get_incoming_auth_context(
     Extension(st): Extension<PlasmHostState>,
     Extension(IncomingPrincipal(principal)): Extension<IncomingPrincipal>,

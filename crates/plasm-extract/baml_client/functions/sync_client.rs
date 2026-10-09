@@ -5,7 +5,10 @@
 
 //! Synchronous BAML client with function-object pattern.
 
-use crate::baml_client::{runtime::{get_runtime, FunctionOptions}, stream_types, types};
+use crate::baml_client::{
+    runtime::{get_runtime, FunctionOptions},
+    stream_types, types,
+};
 use baml::{BamlEncode, BamlError, StreamingCall};
 
 // =============================================================================
@@ -119,22 +122,42 @@ macro_rules! baml_function_sync {
 // Generate function structs
 // =============================================================================
 
+baml_function_sync!(
+    ExtractDomainModel(
+        api_summary: impl AsRef<str> + BamlEncode,
+    ) -> (stream_types::DomainModel, types::DomainModel)
+);
 
+baml_function_sync!(
+    ExtractMissingEntities(
+        api_summary: impl AsRef<str> + BamlEncode,
+        missing_entity_names: impl AsRef<str> + BamlEncode,
+        known_refs: impl AsRef<str> + BamlEncode,
+        known_enums: impl AsRef<str> + BamlEncode,
+    ) -> (stream_types::DomainModel, types::DomainModel)
+);
 
-baml_function_sync!(ExtractDomainModel(api_summary: impl AsRef<str> + BamlEncode, ) -> (stream_types::DomainModel, types::DomainModel));
+baml_function_sync!(
+    ExtractMissingSharedTypes(
+        api_summary: impl AsRef<str> + BamlEncode,
+        existing_entities: impl AsRef<str> + BamlEncode,
+        missing_type_issues: impl AsRef<str> + BamlEncode,
+    ) -> (stream_types::DomainModel, types::DomainModel)
+);
 
+baml_function_sync!(
+    TranslatePlan(messages: &[types::PlanChatTurn]) -> (stream_types::PlasmPlan, types::PlasmPlan)
+);
 
-baml_function_sync!(ExtractMissingEntities(api_summary: impl AsRef<str> + BamlEncode, missing_entity_names: impl AsRef<str> + BamlEncode, known_refs: impl AsRef<str> + BamlEncode, known_enums: impl AsRef<str> + BamlEncode, ) -> (stream_types::DomainModel, types::DomainModel));
-
-
-baml_function_sync!(ExtractMissingSharedTypes(api_summary: impl AsRef<str> + BamlEncode, existing_entities: impl AsRef<str> + BamlEncode, missing_type_issues: impl AsRef<str> + BamlEncode, ) -> (stream_types::DomainModel, types::DomainModel));
-
-
-baml_function_sync!(TranslatePlan(messages: &[types::PlanChatTurn], ) -> (stream_types::PlasmPlan, types::PlasmPlan));
-
-
-baml_function_sync!(ValidateDomainModel(api_summary: impl AsRef<str> + BamlEncode, domain_model: impl AsRef<str> + BamlEncode, ) -> (stream_types::DomainModelValidation, types::DomainModelValidation));
-
+baml_function_sync!(
+    ValidateDomainModel(
+        api_summary: impl AsRef<str> + BamlEncode,
+        domain_model: impl AsRef<str> + BamlEncode,
+    ) -> (
+        stream_types::DomainModelValidation,
+        types::DomainModelValidation
+    )
+);
 
 // =============================================================================
 // Client Struct
@@ -153,7 +176,6 @@ pub struct BamlSyncClient {
     pub TranslatePlan: TranslatePlan,
 
     pub ValidateDomainModel: ValidateDomainModel,
-
 }
 
 impl BamlSyncClient {
@@ -170,7 +192,6 @@ impl BamlSyncClient {
             TranslatePlan: TranslatePlan::new(),
 
             ValidateDomainModel: ValidateDomainModel::new(),
-
         }
     }
 
@@ -179,16 +200,25 @@ impl BamlSyncClient {
         Self {
             options: options.clone(),
 
-            ExtractDomainModel: ExtractDomainModel { options: options.clone() },
+            ExtractDomainModel: ExtractDomainModel {
+                options: options.clone(),
+            },
 
-            ExtractMissingEntities: ExtractMissingEntities { options: options.clone() },
+            ExtractMissingEntities: ExtractMissingEntities {
+                options: options.clone(),
+            },
 
-            ExtractMissingSharedTypes: ExtractMissingSharedTypes { options: options.clone() },
+            ExtractMissingSharedTypes: ExtractMissingSharedTypes {
+                options: options.clone(),
+            },
 
-            TranslatePlan: TranslatePlan { options: options.clone() },
+            TranslatePlan: TranslatePlan {
+                options: options.clone(),
+            },
 
-            ValidateDomainModel: ValidateDomainModel { options: options.clone() },
-
+            ValidateDomainModel: ValidateDomainModel {
+                options: options.clone(),
+            },
         }
     }
 }

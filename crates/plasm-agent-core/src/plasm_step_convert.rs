@@ -796,6 +796,17 @@ pub(crate) fn lift_body(
     ))
 }
 
+fn lift_capture_port(
+    port: &impl plasm_core::plasm_monad::CapturePort,
+) -> Result<crate::plasm_plan::ValidatedCaptureNode, StepPayloadLiftError> {
+    Ok(crate::plasm_plan::ValidatedCaptureNode {
+        id: PlanNodeId::new(port.local().as_str())?,
+        entity: plan_qualified_entity_key(port.entity()),
+        contract: port.contract().clone(),
+        singleton: port.cardinality() != plasm_core::plasm_monad::CaptureCardinality::Collection,
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -971,15 +982,4 @@ mod tests {
             if step == "mapped" && input == "items")
         );
     }
-}
-
-fn lift_capture_port(
-    port: &impl plasm_core::plasm_monad::CapturePort,
-) -> Result<crate::plasm_plan::ValidatedCaptureNode, StepPayloadLiftError> {
-    Ok(crate::plasm_plan::ValidatedCaptureNode {
-        id: PlanNodeId::new(port.local().as_str())?,
-        entity: plan_qualified_entity_key(port.entity()),
-        contract: port.contract().clone(),
-        singleton: port.cardinality() != plasm_core::plasm_monad::CaptureCardinality::Collection,
-    })
 }

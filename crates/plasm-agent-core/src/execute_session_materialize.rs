@@ -60,7 +60,7 @@ pub enum MaterializeError {
     SchemaOverlay {
         entry_id: String,
         #[source]
-        source: crate::schema_overlay_session::SchemaOverlaySessionError,
+        source: Box<crate::schema_overlay_session::SchemaOverlaySessionError>,
     },
     #[error(transparent)]
     CatalogRuntime(#[from] crate::catalog_runtime::CatalogRuntimeError),
@@ -123,7 +123,7 @@ pub(crate) async fn materialize_entry_context(
     .await
     .map_err(|source| MaterializeError::SchemaOverlay {
         entry_id: entry_id.to_string(),
-        source,
+        source: Box::new(source),
     })?;
     let ctx = Arc::new(CgsContext::entry(
         entry_id.to_string(),

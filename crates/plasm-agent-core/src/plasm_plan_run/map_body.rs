@@ -521,12 +521,21 @@ pub(super) struct ScopeBudget(std::sync::atomic::AtomicUsize);
 impl ScopeBudget {
     fn enter(&self) -> Result<(), ScopeBudgetError> {
         use std::sync::atomic::Ordering;
-        self.0
-            .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |n| {
-                (n < 65_536).then_some(n + 1)
-            })
-            .map(|_| ())
-            .map_err(|_| ScopeBudgetError::OccurrenceLimitExceeded)
+        let mut occurrences = self.0.load(Ordering::Relaxed);
+        loop {
+            if occurrences >= 65_536 {
+                return Err(ScopeBudgetError::OccurrenceLimitExceeded);
+            }
+            match self.0.compare_exchange_weak(
+                occurrences,
+                occurrences + 1,
+                Ordering::Relaxed,
+                Ordering::Relaxed,
+            ) {
+                Ok(_) => return Ok(()),
+                Err(actual) => occurrences = actual,
+            }
+        }
     }
 }
 

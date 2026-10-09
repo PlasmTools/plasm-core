@@ -53,6 +53,10 @@ pub fn run_ui_progress_routes() -> Router {
         .layer(run_ui_progress_cors_layer())
 }
 
+#[allow(
+    clippy::result_large_err,
+    reason = "HTTP boundary errors are fully rendered Axum responses"
+)]
 async fn get_run_ui_progress_json(
     Extension(st): Extension<PlasmHostState>,
     Path(logical_session_ref): Path<String>,
@@ -63,6 +67,10 @@ async fn get_run_ui_progress_json(
     Ok(Json(st.snapshot_for_running_op(&resolved)))
 }
 
+#[allow(
+    clippy::result_large_err,
+    reason = "HTTP boundary errors are fully rendered Axum responses"
+)]
 async fn get_run_ui_progress_stream(
     Extension(st): Extension<PlasmHostState>,
     Path(logical_session_ref): Path<String>,
@@ -119,6 +127,10 @@ async fn get_run_ui_progress_stream(
     ))
 }
 
+#[allow(
+    clippy::result_large_err,
+    reason = "HTTP boundary errors are fully rendered Axum responses"
+)]
 async fn resolve_for_http(
     st: &PlasmHostState,
     logical_session_ref: &str,

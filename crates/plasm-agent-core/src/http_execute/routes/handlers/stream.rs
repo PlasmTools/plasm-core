@@ -9,6 +9,10 @@ pub(crate) struct OperationStreamPath {
     operation_handle: String,
 }
 
+#[allow(
+    clippy::result_large_err,
+    reason = "HTTP boundary errors are fully rendered Axum responses"
+)]
 pub(crate) async fn get_operation_progress_stream(
     Extension(st): Extension<crate::server_state::PlasmHostState>,
     Path(path): Path<OperationStreamPath>,

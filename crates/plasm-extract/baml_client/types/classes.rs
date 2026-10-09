@@ -3,14 +3,13 @@
 //
 // Learn more at https://docs.boundaryml.com
 
-
 //! Generated class types.
 
-use baml::{BamlEncode, BamlDecode, __internal::serde::{Serialize, Deserialize}};
 use super::*;
-
-
-
+use baml::{
+    __internal::serde::{Deserialize, Serialize},
+    BamlDecode, BamlEncode,
+};
 
 #[derive(Debug, Clone, Default, BamlEncode, BamlDecode, Serialize, Deserialize)]
 #[serde(crate = "::baml::__internal::serde")]
@@ -26,16 +25,11 @@ pub struct DomainCapability {
     pub response_is_array: bool,
 }
 
-
-
 impl ::std::convert::AsRef<DomainCapability> for DomainCapability {
     fn as_ref(&self) -> &DomainCapability {
         self
     }
 }
-
-
-
 
 #[derive(Debug, Clone, Default, BamlEncode, BamlDecode, Serialize, Deserialize)]
 #[serde(crate = "::baml::__internal::serde")]
@@ -50,16 +44,11 @@ pub struct DomainEntity {
     pub capabilities: Vec<DomainCapability>,
 }
 
-
-
 impl ::std::convert::AsRef<DomainEntity> for DomainEntity {
     fn as_ref(&self) -> &DomainEntity {
         self
     }
 }
-
-
-
 
 #[derive(Debug, Clone, Default, BamlEncode, BamlDecode, Serialize, Deserialize)]
 #[serde(crate = "::baml::__internal::serde")]
@@ -73,16 +62,11 @@ pub struct DomainField {
     pub ref_target_entity: Option<String>,
 }
 
-
-
 impl ::std::convert::AsRef<DomainField> for DomainField {
     fn as_ref(&self) -> &DomainField {
         self
     }
 }
-
-
-
 
 #[derive(Debug, Clone, Default, BamlEncode, BamlDecode, Serialize, Deserialize)]
 #[serde(crate = "::baml::__internal::serde")]
@@ -91,16 +75,11 @@ pub struct DomainModel {
     pub shared_types: Vec<SharedType>,
 }
 
-
-
 impl ::std::convert::AsRef<DomainModel> for DomainModel {
     fn as_ref(&self) -> &DomainModel {
         self
     }
 }
-
-
-
 
 #[derive(Debug, Clone, Default, BamlEncode, BamlDecode, Serialize, Deserialize)]
 #[serde(crate = "::baml::__internal::serde")]
@@ -110,16 +89,11 @@ pub struct DomainModelValidation {
     pub suggestions: Vec<String>,
 }
 
-
-
 impl ::std::convert::AsRef<DomainModelValidation> for DomainModelValidation {
     fn as_ref(&self) -> &DomainModelValidation {
         self
     }
 }
-
-
-
 
 #[derive(Debug, Clone, Default, BamlEncode, BamlDecode, Serialize, Deserialize)]
 #[serde(crate = "::baml::__internal::serde")]
@@ -133,16 +107,11 @@ pub struct DomainParameter {
     pub ref_target_entity: Option<String>,
 }
 
-
-
 impl ::std::convert::AsRef<DomainParameter> for DomainParameter {
     fn as_ref(&self) -> &DomainParameter {
         self
     }
 }
-
-
-
 
 #[derive(Debug, Clone, Default, BamlEncode, BamlDecode, Serialize, Deserialize)]
 #[serde(crate = "::baml::__internal::serde")]
@@ -154,16 +123,11 @@ pub struct DomainRelation {
     pub evidence: String,
 }
 
-
-
 impl ::std::convert::AsRef<DomainRelation> for DomainRelation {
     fn as_ref(&self) -> &DomainRelation {
         self
     }
 }
-
-
-
 
 #[derive(Debug, Clone, Default, BamlEncode, BamlDecode, Serialize, Deserialize)]
 #[serde(crate = "::baml::__internal::serde")]
@@ -172,16 +136,11 @@ pub struct PlanChatTurn {
     pub content: String,
 }
 
-
-
 impl ::std::convert::AsRef<PlanChatTurn> for PlanChatTurn {
     fn as_ref(&self) -> &PlanChatTurn {
         self
     }
 }
-
-
-
 
 #[derive(Debug, Clone, Default, BamlEncode, BamlDecode, Serialize, Deserialize)]
 #[serde(crate = "::baml::__internal::serde")]
@@ -190,16 +149,11 @@ pub struct PlasmPlan {
     pub reasoning: String,
 }
 
-
-
 impl ::std::convert::AsRef<PlasmPlan> for PlasmPlan {
     fn as_ref(&self) -> &PlasmPlan {
         self
     }
 }
-
-
-
 
 #[derive(Debug, Clone, Default, BamlEncode, BamlDecode, Serialize, Deserialize)]
 #[serde(crate = "::baml::__internal::serde")]
@@ -210,16 +164,11 @@ pub struct SharedType {
     pub used_by: Vec<String>,
 }
 
-
-
 impl ::std::convert::AsRef<SharedType> for SharedType {
     fn as_ref(&self) -> &SharedType {
         self
     }
 }
-
-
-
 
 #[derive(Debug, Clone, Default, BamlEncode, BamlDecode, Serialize, Deserialize)]
 #[serde(crate = "::baml::__internal::serde")]
@@ -229,11 +178,8 @@ pub struct ValidationIssue {
     pub description: String,
 }
 
-
-
 impl ::std::convert::AsRef<ValidationIssue> for ValidationIssue {
     fn as_ref(&self) -> &ValidationIssue {
         self
     }
 }
-

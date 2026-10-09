@@ -5,7 +5,6 @@
 
 //! Generated class builder wrappers for type-safe field access.
 
-
 /// Wrapper for the `DomainCapability` class builder.
 ///
 /// Provides type-safe method access to fields defined in the schema.
@@ -28,29 +27,28 @@ impl DomainCapabilityClassBuilder {
 
     /// Get the class as a type definition.
     pub fn r#type(&self) -> ::baml::TypeDef {
-        self.inner.as_type()
+        self.inner
+            .as_type()
             .expect("DomainCapability is statically defined in .baml and should always have a type")
     }
-
 
     // =========================================================================
     // Field Accessors (1:1 with schema field names)
     // =========================================================================
 
-
     /// Access the `name` field builder.
     pub fn property_name(&self) -> ::baml::ClassPropertyBuilder {
-        self.inner.get_property("name")
-            .expect("DomainCapability.name is statically defined in .baml and should always be present")
+        self.inner.get_property("name").expect(
+            "DomainCapability.name is statically defined in .baml and should always be present",
+        )
     }
-
 
     /// Access the `kind` field builder.
     pub fn property_kind(&self) -> ::baml::ClassPropertyBuilder {
-        self.inner.get_property("kind")
-            .expect("DomainCapability.kind is statically defined in .baml and should always be present")
+        self.inner.get_property("kind").expect(
+            "DomainCapability.kind is statically defined in .baml and should always be present",
+        )
     }
-
 
     /// Access the `description` field builder.
     pub fn property_description(&self) -> ::baml::ClassPropertyBuilder {
@@ -58,13 +56,11 @@ impl DomainCapabilityClassBuilder {
             .expect("DomainCapability.description is statically defined in .baml and should always be present")
     }
 
-
     /// Access the `http_method` field builder.
     pub fn property_http_method(&self) -> ::baml::ClassPropertyBuilder {
         self.inner.get_property("http_method")
             .expect("DomainCapability.http_method is statically defined in .baml and should always be present")
     }
-
 
     /// Access the `path_template` field builder.
     pub fn property_path_template(&self) -> ::baml::ClassPropertyBuilder {
@@ -72,13 +68,11 @@ impl DomainCapabilityClassBuilder {
             .expect("DomainCapability.path_template is statically defined in .baml and should always be present")
     }
 
-
     /// Access the `parameters` field builder.
     pub fn property_parameters(&self) -> ::baml::ClassPropertyBuilder {
         self.inner.get_property("parameters")
             .expect("DomainCapability.parameters is statically defined in .baml and should always be present")
     }
-
 
     /// Access the `request_body_fields` field builder.
     pub fn property_request_body_fields(&self) -> ::baml::ClassPropertyBuilder {
@@ -86,22 +80,18 @@ impl DomainCapabilityClassBuilder {
             .expect("DomainCapability.request_body_fields is statically defined in .baml and should always be present")
     }
 
-
     /// Access the `response_entity` field builder.
     pub fn property_response_entity(&self) -> ::baml::ClassPropertyBuilder {
         self.inner.get_property("response_entity")
             .expect("DomainCapability.response_entity is statically defined in .baml and should always be present")
     }
 
-
     /// Access the `response_is_array` field builder.
     pub fn property_response_is_array(&self) -> ::baml::ClassPropertyBuilder {
         self.inner.get_property("response_is_array")
             .expect("DomainCapability.response_is_array is statically defined in .baml and should always be present")
     }
-
 }
-
 
 /// Wrapper for the `DomainEntity` class builder.
 ///
@@ -125,43 +115,42 @@ impl DomainEntityClassBuilder {
 
     /// Get the class as a type definition.
     pub fn r#type(&self) -> ::baml::TypeDef {
-        self.inner.as_type()
+        self.inner
+            .as_type()
             .expect("DomainEntity is statically defined in .baml and should always have a type")
     }
-
 
     // =========================================================================
     // Field Accessors (1:1 with schema field names)
     // =========================================================================
 
-
     /// Access the `name` field builder.
     pub fn property_name(&self) -> ::baml::ClassPropertyBuilder {
-        self.inner.get_property("name")
+        self.inner
+            .get_property("name")
             .expect("DomainEntity.name is statically defined in .baml and should always be present")
     }
 
-
     /// Access the `description` field builder.
     pub fn property_description(&self) -> ::baml::ClassPropertyBuilder {
-        self.inner.get_property("description")
-            .expect("DomainEntity.description is statically defined in .baml and should always be present")
+        self.inner.get_property("description").expect(
+            "DomainEntity.description is statically defined in .baml and should always be present",
+        )
     }
-
 
     /// Access the `id_field` field builder.
     pub fn property_id_field(&self) -> ::baml::ClassPropertyBuilder {
-        self.inner.get_property("id_field")
-            .expect("DomainEntity.id_field is statically defined in .baml and should always be present")
+        self.inner.get_property("id_field").expect(
+            "DomainEntity.id_field is statically defined in .baml and should always be present",
+        )
     }
-
 
     /// Access the `id_type` field builder.
     pub fn property_id_type(&self) -> ::baml::ClassPropertyBuilder {
-        self.inner.get_property("id_type")
-            .expect("DomainEntity.id_type is statically defined in .baml and should always be present")
+        self.inner.get_property("id_type").expect(
+            "DomainEntity.id_type is statically defined in .baml and should always be present",
+        )
     }
-
 
     /// Access the `alternate_keys` field builder.
     pub fn property_alternate_keys(&self) -> ::baml::ClassPropertyBuilder {
@@ -169,29 +158,27 @@ impl DomainEntityClassBuilder {
             .expect("DomainEntity.alternate_keys is statically defined in .baml and should always be present")
     }
 
-
     /// Access the `fields` field builder.
     pub fn property_fields(&self) -> ::baml::ClassPropertyBuilder {
-        self.inner.get_property("fields")
-            .expect("DomainEntity.fields is statically defined in .baml and should always be present")
+        self.inner.get_property("fields").expect(
+            "DomainEntity.fields is statically defined in .baml and should always be present",
+        )
     }
-
 
     /// Access the `relations` field builder.
     pub fn property_relations(&self) -> ::baml::ClassPropertyBuilder {
-        self.inner.get_property("relations")
-            .expect("DomainEntity.relations is statically defined in .baml and should always be present")
+        self.inner.get_property("relations").expect(
+            "DomainEntity.relations is statically defined in .baml and should always be present",
+        )
     }
-
 
     /// Access the `capabilities` field builder.
     pub fn property_capabilities(&self) -> ::baml::ClassPropertyBuilder {
-        self.inner.get_property("capabilities")
-            .expect("DomainEntity.capabilities is statically defined in .baml and should always be present")
+        self.inner.get_property("capabilities").expect(
+            "DomainEntity.capabilities is statically defined in .baml and should always be present",
+        )
     }
-
 }
-
 
 /// Wrapper for the `DomainField` class builder.
 ///
@@ -215,43 +202,42 @@ impl DomainFieldClassBuilder {
 
     /// Get the class as a type definition.
     pub fn r#type(&self) -> ::baml::TypeDef {
-        self.inner.as_type()
+        self.inner
+            .as_type()
             .expect("DomainField is statically defined in .baml and should always have a type")
     }
-
 
     // =========================================================================
     // Field Accessors (1:1 with schema field names)
     // =========================================================================
 
-
     /// Access the `name` field builder.
     pub fn property_name(&self) -> ::baml::ClassPropertyBuilder {
-        self.inner.get_property("name")
+        self.inner
+            .get_property("name")
             .expect("DomainField.name is statically defined in .baml and should always be present")
     }
 
-
     /// Access the `field_type` field builder.
     pub fn property_field_type(&self) -> ::baml::ClassPropertyBuilder {
-        self.inner.get_property("field_type")
-            .expect("DomainField.field_type is statically defined in .baml and should always be present")
+        self.inner.get_property("field_type").expect(
+            "DomainField.field_type is statically defined in .baml and should always be present",
+        )
     }
-
 
     /// Access the `required` field builder.
     pub fn property_required(&self) -> ::baml::ClassPropertyBuilder {
-        self.inner.get_property("required")
-            .expect("DomainField.required is statically defined in .baml and should always be present")
+        self.inner.get_property("required").expect(
+            "DomainField.required is statically defined in .baml and should always be present",
+        )
     }
-
 
     /// Access the `description` field builder.
     pub fn property_description(&self) -> ::baml::ClassPropertyBuilder {
-        self.inner.get_property("description")
-            .expect("DomainField.description is statically defined in .baml and should always be present")
+        self.inner.get_property("description").expect(
+            "DomainField.description is statically defined in .baml and should always be present",
+        )
     }
-
 
     /// Access the `shared_type_name` field builder.
     pub fn property_shared_type_name(&self) -> ::baml::ClassPropertyBuilder {
@@ -259,22 +245,18 @@ impl DomainFieldClassBuilder {
             .expect("DomainField.shared_type_name is statically defined in .baml and should always be present")
     }
 
-
     /// Access the `array_element_type` field builder.
     pub fn property_array_element_type(&self) -> ::baml::ClassPropertyBuilder {
         self.inner.get_property("array_element_type")
             .expect("DomainField.array_element_type is statically defined in .baml and should always be present")
     }
 
-
     /// Access the `ref_target_entity` field builder.
     pub fn property_ref_target_entity(&self) -> ::baml::ClassPropertyBuilder {
         self.inner.get_property("ref_target_entity")
             .expect("DomainField.ref_target_entity is statically defined in .baml and should always be present")
     }
-
 }
-
 
 /// Wrapper for the `DomainModel` class builder.
 ///
@@ -298,31 +280,29 @@ impl DomainModelClassBuilder {
 
     /// Get the class as a type definition.
     pub fn r#type(&self) -> ::baml::TypeDef {
-        self.inner.as_type()
+        self.inner
+            .as_type()
             .expect("DomainModel is statically defined in .baml and should always have a type")
     }
-
 
     // =========================================================================
     // Field Accessors (1:1 with schema field names)
     // =========================================================================
 
-
     /// Access the `entities` field builder.
     pub fn property_entities(&self) -> ::baml::ClassPropertyBuilder {
-        self.inner.get_property("entities")
-            .expect("DomainModel.entities is statically defined in .baml and should always be present")
+        self.inner.get_property("entities").expect(
+            "DomainModel.entities is statically defined in .baml and should always be present",
+        )
     }
-
 
     /// Access the `shared_types` field builder.
     pub fn property_shared_types(&self) -> ::baml::ClassPropertyBuilder {
-        self.inner.get_property("shared_types")
-            .expect("DomainModel.shared_types is statically defined in .baml and should always be present")
+        self.inner.get_property("shared_types").expect(
+            "DomainModel.shared_types is statically defined in .baml and should always be present",
+        )
     }
-
 }
-
 
 /// Wrapper for the `DomainModelValidation` class builder.
 ///
@@ -346,15 +326,14 @@ impl DomainModelValidationClassBuilder {
 
     /// Get the class as a type definition.
     pub fn r#type(&self) -> ::baml::TypeDef {
-        self.inner.as_type()
-            .expect("DomainModelValidation is statically defined in .baml and should always have a type")
+        self.inner.as_type().expect(
+            "DomainModelValidation is statically defined in .baml and should always have a type",
+        )
     }
-
 
     // =========================================================================
     // Field Accessors (1:1 with schema field names)
     // =========================================================================
-
 
     /// Access the `overall_quality` field builder.
     pub fn property_overall_quality(&self) -> ::baml::ClassPropertyBuilder {
@@ -362,22 +341,18 @@ impl DomainModelValidationClassBuilder {
             .expect("DomainModelValidation.overall_quality is statically defined in .baml and should always be present")
     }
 
-
     /// Access the `issues` field builder.
     pub fn property_issues(&self) -> ::baml::ClassPropertyBuilder {
         self.inner.get_property("issues")
             .expect("DomainModelValidation.issues is statically defined in .baml and should always be present")
     }
 
-
     /// Access the `suggestions` field builder.
     pub fn property_suggestions(&self) -> ::baml::ClassPropertyBuilder {
         self.inner.get_property("suggestions")
             .expect("DomainModelValidation.suggestions is statically defined in .baml and should always be present")
     }
-
 }
-
 
 /// Wrapper for the `DomainParameter` class builder.
 ///
@@ -401,29 +376,28 @@ impl DomainParameterClassBuilder {
 
     /// Get the class as a type definition.
     pub fn r#type(&self) -> ::baml::TypeDef {
-        self.inner.as_type()
+        self.inner
+            .as_type()
             .expect("DomainParameter is statically defined in .baml and should always have a type")
     }
-
 
     // =========================================================================
     // Field Accessors (1:1 with schema field names)
     // =========================================================================
 
-
     /// Access the `name` field builder.
     pub fn property_name(&self) -> ::baml::ClassPropertyBuilder {
-        self.inner.get_property("name")
-            .expect("DomainParameter.name is statically defined in .baml and should always be present")
+        self.inner.get_property("name").expect(
+            "DomainParameter.name is statically defined in .baml and should always be present",
+        )
     }
-
 
     /// Access the `location` field builder.
     pub fn property_location(&self) -> ::baml::ClassPropertyBuilder {
-        self.inner.get_property("location")
-            .expect("DomainParameter.location is statically defined in .baml and should always be present")
+        self.inner.get_property("location").expect(
+            "DomainParameter.location is statically defined in .baml and should always be present",
+        )
     }
-
 
     /// Access the `field_type` field builder.
     pub fn property_field_type(&self) -> ::baml::ClassPropertyBuilder {
@@ -431,13 +405,12 @@ impl DomainParameterClassBuilder {
             .expect("DomainParameter.field_type is statically defined in .baml and should always be present")
     }
 
-
     /// Access the `required` field builder.
     pub fn property_required(&self) -> ::baml::ClassPropertyBuilder {
-        self.inner.get_property("required")
-            .expect("DomainParameter.required is statically defined in .baml and should always be present")
+        self.inner.get_property("required").expect(
+            "DomainParameter.required is statically defined in .baml and should always be present",
+        )
     }
-
 
     /// Access the `shared_type_name` field builder.
     pub fn property_shared_type_name(&self) -> ::baml::ClassPropertyBuilder {
@@ -445,22 +418,18 @@ impl DomainParameterClassBuilder {
             .expect("DomainParameter.shared_type_name is statically defined in .baml and should always be present")
     }
 
-
     /// Access the `description` field builder.
     pub fn property_description(&self) -> ::baml::ClassPropertyBuilder {
         self.inner.get_property("description")
             .expect("DomainParameter.description is statically defined in .baml and should always be present")
     }
 
-
     /// Access the `ref_target_entity` field builder.
     pub fn property_ref_target_entity(&self) -> ::baml::ClassPropertyBuilder {
         self.inner.get_property("ref_target_entity")
             .expect("DomainParameter.ref_target_entity is statically defined in .baml and should always be present")
     }
-
 }
-
 
 /// Wrapper for the `DomainRelation` class builder.
 ///
@@ -484,22 +453,21 @@ impl DomainRelationClassBuilder {
 
     /// Get the class as a type definition.
     pub fn r#type(&self) -> ::baml::TypeDef {
-        self.inner.as_type()
+        self.inner
+            .as_type()
             .expect("DomainRelation is statically defined in .baml and should always have a type")
     }
-
 
     // =========================================================================
     // Field Accessors (1:1 with schema field names)
     // =========================================================================
 
-
     /// Access the `name` field builder.
     pub fn property_name(&self) -> ::baml::ClassPropertyBuilder {
-        self.inner.get_property("name")
-            .expect("DomainRelation.name is statically defined in .baml and should always be present")
+        self.inner.get_property("name").expect(
+            "DomainRelation.name is statically defined in .baml and should always be present",
+        )
     }
-
 
     /// Access the `target_entity` field builder.
     pub fn property_target_entity(&self) -> ::baml::ClassPropertyBuilder {
@@ -507,13 +475,11 @@ impl DomainRelationClassBuilder {
             .expect("DomainRelation.target_entity is statically defined in .baml and should always be present")
     }
 
-
     /// Access the `cardinality` field builder.
     pub fn property_cardinality(&self) -> ::baml::ClassPropertyBuilder {
         self.inner.get_property("cardinality")
             .expect("DomainRelation.cardinality is statically defined in .baml and should always be present")
     }
-
 
     /// Access the `foreign_key_field` field builder.
     pub fn property_foreign_key_field(&self) -> ::baml::ClassPropertyBuilder {
@@ -521,15 +487,13 @@ impl DomainRelationClassBuilder {
             .expect("DomainRelation.foreign_key_field is statically defined in .baml and should always be present")
     }
 
-
     /// Access the `evidence` field builder.
     pub fn property_evidence(&self) -> ::baml::ClassPropertyBuilder {
-        self.inner.get_property("evidence")
-            .expect("DomainRelation.evidence is statically defined in .baml and should always be present")
+        self.inner.get_property("evidence").expect(
+            "DomainRelation.evidence is statically defined in .baml and should always be present",
+        )
     }
-
 }
-
 
 /// Wrapper for the `PlanChatTurn` class builder.
 ///
@@ -553,31 +517,29 @@ impl PlanChatTurnClassBuilder {
 
     /// Get the class as a type definition.
     pub fn r#type(&self) -> ::baml::TypeDef {
-        self.inner.as_type()
+        self.inner
+            .as_type()
             .expect("PlanChatTurn is statically defined in .baml and should always have a type")
     }
-
 
     // =========================================================================
     // Field Accessors (1:1 with schema field names)
     // =========================================================================
 
-
     /// Access the `role` field builder.
     pub fn property_role(&self) -> ::baml::ClassPropertyBuilder {
-        self.inner.get_property("role")
+        self.inner
+            .get_property("role")
             .expect("PlanChatTurn.role is statically defined in .baml and should always be present")
     }
 
-
     /// Access the `content` field builder.
     pub fn property_content(&self) -> ::baml::ClassPropertyBuilder {
-        self.inner.get_property("content")
-            .expect("PlanChatTurn.content is statically defined in .baml and should always be present")
+        self.inner.get_property("content").expect(
+            "PlanChatTurn.content is statically defined in .baml and should always be present",
+        )
     }
-
 }
-
 
 /// Wrapper for the `PlasmPlan` class builder.
 ///
@@ -601,31 +563,29 @@ impl PlasmPlanClassBuilder {
 
     /// Get the class as a type definition.
     pub fn r#type(&self) -> ::baml::TypeDef {
-        self.inner.as_type()
+        self.inner
+            .as_type()
             .expect("PlasmPlan is statically defined in .baml and should always have a type")
     }
-
 
     // =========================================================================
     // Field Accessors (1:1 with schema field names)
     // =========================================================================
 
-
     /// Access the `text` field builder.
     pub fn property_text(&self) -> ::baml::ClassPropertyBuilder {
-        self.inner.get_property("text")
+        self.inner
+            .get_property("text")
             .expect("PlasmPlan.text is statically defined in .baml and should always be present")
     }
 
-
     /// Access the `reasoning` field builder.
     pub fn property_reasoning(&self) -> ::baml::ClassPropertyBuilder {
-        self.inner.get_property("reasoning")
-            .expect("PlasmPlan.reasoning is statically defined in .baml and should always be present")
+        self.inner.get_property("reasoning").expect(
+            "PlasmPlan.reasoning is statically defined in .baml and should always be present",
+        )
     }
-
 }
-
 
 /// Wrapper for the `SharedType` class builder.
 ///
@@ -649,45 +609,43 @@ impl SharedTypeClassBuilder {
 
     /// Get the class as a type definition.
     pub fn r#type(&self) -> ::baml::TypeDef {
-        self.inner.as_type()
+        self.inner
+            .as_type()
             .expect("SharedType is statically defined in .baml and should always have a type")
     }
-
 
     // =========================================================================
     // Field Accessors (1:1 with schema field names)
     // =========================================================================
 
-
     /// Access the `name` field builder.
     pub fn property_name(&self) -> ::baml::ClassPropertyBuilder {
-        self.inner.get_property("name")
+        self.inner
+            .get_property("name")
             .expect("SharedType.name is statically defined in .baml and should always be present")
     }
 
-
     /// Access the `description` field builder.
     pub fn property_description(&self) -> ::baml::ClassPropertyBuilder {
-        self.inner.get_property("description")
-            .expect("SharedType.description is statically defined in .baml and should always be present")
+        self.inner.get_property("description").expect(
+            "SharedType.description is statically defined in .baml and should always be present",
+        )
     }
-
 
     /// Access the `values` field builder.
     pub fn property_values(&self) -> ::baml::ClassPropertyBuilder {
-        self.inner.get_property("values")
+        self.inner
+            .get_property("values")
             .expect("SharedType.values is statically defined in .baml and should always be present")
     }
 
-
     /// Access the `used_by` field builder.
     pub fn property_used_by(&self) -> ::baml::ClassPropertyBuilder {
-        self.inner.get_property("used_by")
-            .expect("SharedType.used_by is statically defined in .baml and should always be present")
+        self.inner.get_property("used_by").expect(
+            "SharedType.used_by is statically defined in .baml and should always be present",
+        )
     }
-
 }
-
 
 /// Wrapper for the `ValidationIssue` class builder.
 ///
@@ -711,35 +669,32 @@ impl ValidationIssueClassBuilder {
 
     /// Get the class as a type definition.
     pub fn r#type(&self) -> ::baml::TypeDef {
-        self.inner.as_type()
+        self.inner
+            .as_type()
             .expect("ValidationIssue is statically defined in .baml and should always have a type")
     }
-
 
     // =========================================================================
     // Field Accessors (1:1 with schema field names)
     // =========================================================================
 
-
     /// Access the `severity` field builder.
     pub fn property_severity(&self) -> ::baml::ClassPropertyBuilder {
-        self.inner.get_property("severity")
-            .expect("ValidationIssue.severity is statically defined in .baml and should always be present")
+        self.inner.get_property("severity").expect(
+            "ValidationIssue.severity is statically defined in .baml and should always be present",
+        )
     }
-
 
     /// Access the `entity` field builder.
     pub fn property_entity(&self) -> ::baml::ClassPropertyBuilder {
-        self.inner.get_property("entity")
-            .expect("ValidationIssue.entity is statically defined in .baml and should always be present")
+        self.inner.get_property("entity").expect(
+            "ValidationIssue.entity is statically defined in .baml and should always be present",
+        )
     }
-
 
     /// Access the `description` field builder.
     pub fn property_description(&self) -> ::baml::ClassPropertyBuilder {
         self.inner.get_property("description")
             .expect("ValidationIssue.description is statically defined in .baml and should always be present")
     }
-
 }
-

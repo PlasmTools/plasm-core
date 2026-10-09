@@ -311,6 +311,10 @@ fn validate_sep_headers(
     Ok(())
 }
 
+#[allow(
+    clippy::result_large_err,
+    reason = "HTTP boundary errors are fully rendered Axum responses"
+)]
 async fn verify_auth(
     state: &StatelessMcpState,
     headers: &HeaderMap,

@@ -129,6 +129,10 @@ fn problem_trace_sink_unavailable(detail: impl Into<String>) -> Problem {
     .with_detail(detail.into())
 }
 
+#[allow(
+    clippy::result_large_err,
+    reason = "HTTP boundary errors are fully rendered Axum responses"
+)]
 async fn list_traces(
     Extension(st): Extension<PlasmHostState>,
     Extension(principal): Extension<IncomingPrincipal>,
@@ -234,6 +238,10 @@ async fn list_traces(
     Ok(Json(TraceListResponse { traces }))
 }
 
+#[allow(
+    clippy::result_large_err,
+    reason = "HTTP boundary errors are fully rendered Axum responses"
+)]
 async fn get_trace_detail(
     Extension(st): Extension<PlasmHostState>,
     Extension(principal): Extension<IncomingPrincipal>,

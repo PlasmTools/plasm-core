@@ -9,7 +9,26 @@ Entries before **0.4.35** live in [`CHANGELOG-ARCHIVE.md`](CHANGELOG-ARCHIVE.md)
 
 ## [Unreleased]
 
+## [0.5.0] - 2026-10-09
+
+### Changed
+
+- **Python program cutover:** public admission uses complete typed Python `Program`
+  subclasses with declared compute dependencies, scoped composition, and plan/run
+  separation. Historical native syntax is retained only as an internal semantic oracle.
+- **Execution and evidence:** preserve typed invocation inputs, resumable result delivery,
+  paging continuation contracts, request-owned observations, and complete lexical trace scopes.
+- **Credential ownership:** Plasm owns encrypted credential persistence and MCP OAuth
+  lifecycle, replacing auth-framework while retaining the existing AES-256-GCM envelope.
+- **Reproducible builds:** version application workspace lockfiles and retain audited
+  dependency feature selections.
+
 ### Fixed
+
+- Harden MCP OAuth client metadata retrieval, redirect validation, authorization-code
+  redemption, and refresh-token lifecycle with permanent regression coverage.
+- Release Python workers while awaiting host I/O and preserve typed failures across
+  compiler, runtime, host, and transport boundaries.
 
 - **In-repo overlay fixtures:** schema-overlay JSON/bootstrap trees now live under
   `fixtures/schemas/*_overlay/` so `plasm-core` test compiles (docs CI fenced-example
@@ -109,4 +128,3 @@ Entries before **0.4.35** live in [`CHANGELOG-ARCHIVE.md`](CHANGELOG-ARCHIVE.md)
 ### Fixed
 
 - **plasm-web Docker bake:** copy `fixtures/flow-policies` to `/fixtures/flow-policies` so compile-time `@external_resource` packs resolve under `/app` WORKDIR.
-
