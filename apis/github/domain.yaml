@@ -1768,19 +1768,16 @@ capabilities:
     description: Read one issue for triage or follow-up.
     kind: get
     entity: Issue
-    arguments:
-      input_type:
-        type: object
-        fields:
-        - name: owner
-          value_ref: nv_github_account_login
-          required: true
-        - name: repo
-          value_ref: nv_github_repository_name
-          required: true
-        - name: number
-          value_ref: nv_issue_number
-          required: true
+    scope:
+    - name: owner
+      value_ref: nv_github_account_login
+      required: true
+    - name: repo
+      value_ref: nv_github_repository_name
+      required: true
+    - name: number
+      value_ref: nv_issue_number
+      required: true
     provides:
     - id
     - owner
@@ -1879,19 +1876,16 @@ capabilities:
     description: Read one pull request for review or merge decisions.
     kind: get
     entity: PullRequest
-    arguments:
-      input_type:
-        type: object
-        fields:
-        - name: owner
-          value_ref: nv_github_account_login
-          required: true
-        - name: repo
-          value_ref: nv_github_repository_name
-          required: true
-        - name: number
-          value_ref: nv_pull_request_number
-          required: true
+    scope:
+    - name: owner
+      value_ref: nv_github_account_login
+      required: true
+    - name: repo
+      value_ref: nv_github_repository_name
+      required: true
+    - name: number
+      value_ref: nv_pull_request_number
+      required: true
     provides:
     - id
     - owner
@@ -2039,19 +2033,20 @@ capabilities:
       - content
       - path
       - README
+    scope:
+    - name: owner
+      value_ref: nv_github_account_login
+      required: true
+    - name: repo
+      value_ref: nv_github_repository_name
+      required: true
+    - name: filename
+      value_ref: nv_wire_str_short
+      required: true
     arguments:
       input_type:
         type: object
         fields:
-        - name: owner
-          value_ref: nv_github_account_login
-          required: true
-        - name: repo
-          value_ref: nv_github_repository_name
-          required: true
-        - name: filename
-          value_ref: nv_wire_str_short
-          required: true
         - name: ref
           value_ref: nv_github_branch_name
           required: false
@@ -2431,19 +2426,16 @@ capabilities:
     description: Read one workflow run for CI status and provenance.
     kind: get
     entity: WorkflowRun
-    arguments:
-      input_type:
-        type: object
-        fields:
-        - name: owner
-          value_ref: nv_github_account_login
-          required: true
-        - name: repo
-          value_ref: nv_github_repository_name
-          required: true
-        - name: id
-          value_ref: nv_wire_int
-          required: true
+    scope:
+    - name: owner
+      value_ref: nv_github_account_login
+      required: true
+    - name: repo
+      value_ref: nv_github_repository_name
+      required: true
+    - name: id
+      value_ref: nv_wire_int
+      required: true
     provides:
     - id
     - owner
@@ -2537,19 +2529,16 @@ capabilities:
     description: Runner timing and billable usage for a run.
     kind: get
     entity: WorkflowRunUsage
-    arguments:
-      input_type:
-        type: object
-        fields:
-        - name: owner
-          value_ref: nv_github_account_login
-          required: true
-        - name: repo
-          value_ref: nv_github_repository_name
-          required: true
-        - name: run_id
-          value_ref: nv_wire_int
-          required: true
+    scope:
+    - name: owner
+      value_ref: nv_github_account_login
+      required: true
+    - name: repo
+      value_ref: nv_github_repository_name
+      required: true
+    - name: run_id
+      value_ref: nv_wire_int
+      required: true
     provides:
     - owner
     - repo
