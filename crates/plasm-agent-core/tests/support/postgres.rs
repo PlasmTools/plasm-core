@@ -5,7 +5,7 @@
 use std::time::Duration;
 
 use testcontainers_modules::testcontainers::{
-    core::{wait::LogWaitStrategy, IntoContainerPort, WaitFor},
+    core::{error::TestcontainersError, wait::LogWaitStrategy, IntoContainerPort, WaitFor},
     runners::AsyncRunner,
     ContainerAsync, GenericImage, ImageExt,
 };
@@ -85,6 +85,7 @@ pub async fn integration_postgres_url(
         }
     }
 
+    let startup_deadline = tokio::time::Instant::now() + start_timeout;
     let node = match start_postgres_container(start_timeout).await {
         Ok(n) => n,
         Err(msg) => {
@@ -95,10 +96,26 @@ pub async fn integration_postgres_url(
             return None;
         }
     };
-    let port = match node.get_host_port_ipv4(5432).await {
-        Ok(p) => p,
-        Err(e) => {
+    // PostgreSQL readiness and Docker's host-port publication are separate
+    // signals. Keep inspecting this container within the startup deadline.
+    let port = match tokio::time::timeout_at(startup_deadline, async {
+        loop {
+            let ports = node.ports().await?;
+            if let Some(port) = ports.map_to_host_port_ipv4(5432.tcp()) {
+                break Ok::<_, TestcontainersError>(port);
+            }
+            tokio::time::sleep(Duration::from_millis(100)).await;
+        }
+    })
+    .await
+    {
+        Ok(Ok(p)) => p,
+        Ok(Err(e)) => {
             eprintln!("integration postgres: port mapping failed: {e}");
+            return None;
+        }
+        Err(_) => {
+            eprintln!("integration postgres: host port was not published within {start_timeout:?}");
             return None;
         }
     };
