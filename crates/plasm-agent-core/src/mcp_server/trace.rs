@@ -61,10 +61,12 @@ pub(crate) async fn emit_code_plan_trace(
     emit: CodePlanTraceEmit<'_>,
 ) -> CodePlanTraceOutcome {
     let comp = input.comp.as_ref();
+    // Preserve the exact submitted Python before execution can time out or be cancelled.
+    // Failure keeps that document; completion may enrich it with final reflection.
     let skip_archive = matches!(
         &emit,
         CodePlanTraceEmit::Execute {
-            phase: CODE_PLAN_EXECUTION_STARTED | CODE_PLAN_EXECUTION_FAILED,
+            phase: CODE_PLAN_EXECUTION_FAILED,
             ..
         }
     );
@@ -317,6 +319,49 @@ mod tests {
 
     fn minimal_shared_comp() -> Arc<TraceCompWire> {
         Arc::new(TraceCompWire::from_json_value(minimal_trace_comp_json()).expect("minimal comp"))
+    }
+
+    #[tokio::test]
+    async fn started_then_failed_preserves_original_python_archive() {
+        use crate::run_artifacts::{CodePlanArchiveDocument, RunArtifactStore};
+        use crate::test_support::session_fixtures::ExecuteSessionFixture;
+
+        let hub = crate::trace_hub::TraceHub::default();
+        let store = Arc::new(RunArtifactStore::default());
+        let es = ExecuteSessionFixture::new()
+            .entities(Vec::new())
+            .build(Arc::new(plasm_core::CGS::default()));
+        let source =
+            "# café\nclass Probe(Program):\n    def build(self):\n        return e1.get()\n";
+        let input = || super::CodePlanTraceInput {
+            hub: &hub,
+            store: Arc::clone(&store),
+            mcp_key: "trace-source-test",
+            es: &es,
+            prompt_hash: "source-test",
+            session_id: "session-test",
+            comp: minimal_shared_comp(),
+            program: source,
+            plan_call_index: 1,
+            code_chars: source.chars().count() as u64,
+        };
+        let plan_id = input().emit_execute_started().await;
+        let before = store
+            .get_code_plan_payload_result("source-test", "session-test", plan_id)
+            .await
+            .expect("archive read")
+            .expect("source must be archived before execution begins");
+        input().emit_execute_failed(plan_id).await;
+        let after = store
+            .get_code_plan_payload_result("source-test", "session-test", plan_id)
+            .await
+            .expect("archive read")
+            .expect("failure must retain source");
+        assert_eq!(before.bytes, after.bytes);
+        let doc: CodePlanArchiveDocument =
+            serde_json::from_slice(&after.bytes).expect("archive JSON");
+        assert_eq!(doc.code, source);
+        assert_eq!(doc.plan_id, plan_id.to_string());
     }
 
     fn minimal_execute_segment(phase: &str, plan_id: &str) -> TraceSegment {

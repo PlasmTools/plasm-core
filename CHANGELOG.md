@@ -9,6 +9,17 @@ Entries before **0.4.35** live in [`CHANGELOG-ARCHIVE.md`](CHANGELOG-ARCHIVE.md)
 
 ## [Unreleased]
 
+## [0.5.1] - 2026-10-10
+
+### Changed
+
+- Add keyboard-accessible evidence tabs to MCP plan review and run explorer.
+- Show original Python source in SaaS trace inspection and retain it when execution fails.
+
+### Fixed
+
+- Preserve exact submitted Python in the trace archive before execution starts.
+
 ## [0.5.0] - 2026-10-09
 
 ### Changed
