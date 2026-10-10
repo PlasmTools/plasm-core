@@ -31,11 +31,19 @@ async fn cep_7_failed_operation_preserves_typed_error() {
     let err = resolve_terminal_plan_run(es.as_ref(), None, None, &handle)
         .await
         .expect_err("terminal failed");
-    assert!(matches!(err, OperationError::OperationFailed { .. }));
-    assert_eq!(
-        err.detail(),
-        format!("operation `{handle}` failed: graph_write_conflict: Stop")
-    );
+    let OperationError::OperationFailed {
+        handle: failed_handle,
+        error,
+    } = &err
+    else {
+        panic!("expected typed terminal operation failure");
+    };
+    assert_eq!(failed_handle, handle.as_str());
+    assert_eq!(error.cause, plasm_runtime::FailureCause::Runtime);
+    assert_eq!(error.code, "graph_write_conflict");
+    assert_eq!(error.recovery, plasm_runtime::RecoveryDisposition::Stop);
+    assert_eq!(error.diagnostic(), GRAPH_WRITE_CONFLICT_USER_MESSAGE);
+    assert!(err.detail().contains(GRAPH_WRITE_CONFLICT_USER_MESSAGE));
     assert_eq!(err.code(), OperationError::CODE_OPERATION_FAILED);
 }
 
