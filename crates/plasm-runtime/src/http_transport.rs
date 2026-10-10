@@ -769,10 +769,15 @@ pub fn host_key_from_url(url: &str) -> String {
         .to_ascii_lowercase()
 }
 
-/// Parse `Retry-After` and optional `X-RateLimit-Reset` (unix seconds) into a sleep hint.
+/// Parse `Retry-After`, or `X-RateLimit-Reset` when the reported quota is exhausted.
 pub fn parse_retry_hints(headers: &reqwest::header::HeaderMap) -> Option<Duration> {
     if let Some(d) = parse_retry_after_header(headers) {
         return Some(d);
+    }
+    // Providers include reset timestamps on ordinary responses, including permission
+    // denials. A future reset alone does not establish that this request was throttled.
+    if parse_rate_limit_remaining(headers) != Some(0) {
+        return None;
     }
     headers
         .get("x-ratelimit-reset")
@@ -1418,12 +1423,42 @@ mod http_outcome_tests {
     }
 
     #[test]
+    fn permission_denial_with_available_quota_is_terminal() {
+        let now = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_secs();
+        let mut headers = reqwest::header::HeaderMap::new();
+        headers.insert(
+            "x-ratelimit-reset",
+            (now + 3600).to_string().parse().unwrap(),
+        );
+        headers.insert("x-ratelimit-remaining", "4999".parse().unwrap());
+        let parsed = HttpParsedResponse {
+            status: 403,
+            url: "https://api.example.com/private".into(),
+            method: "GET",
+            link: None,
+            content_type: Some("application/json".into()),
+            bytes: br#"{"message":"Organization restricts OAuth app access"}"#.to_vec(),
+            retry_after: parse_retry_hints(&headers),
+            rate_limit_remaining: parse_rate_limit_remaining(&headers),
+            authorization: OutboundAuthorizationFact::absent(),
+        };
+        assert!(matches!(
+            evaluate_parsed_response(parsed),
+            HttpAttemptResult::Failed(_)
+        ));
+    }
+
+    #[test]
     fn x_ratelimit_reset_parses_seconds_until_reset() {
         let now = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .unwrap()
             .as_secs();
         let mut headers = reqwest::header::HeaderMap::new();
+        headers.insert("x-ratelimit-remaining", "0".parse().unwrap());
         headers.insert("x-ratelimit-reset", (now + 42).to_string().parse().unwrap());
         assert_eq!(parse_retry_hints(&headers), Some(Duration::from_secs(42)));
     }

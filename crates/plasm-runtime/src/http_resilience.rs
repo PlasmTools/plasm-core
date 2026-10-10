@@ -153,7 +153,8 @@ impl ResilientHttpTransport {
                         failure,
                     ));
                 }
-                if started.elapsed() >= self.policy.total_retry_budget {
+                let delay = self.compute_delay(attempt, retry_after, url);
+                if started.elapsed().saturating_add(delay) >= self.policy.total_retry_budget {
                     failure.retry_budget_exhausted = true;
                     return Err(finalize_retryable_failure(
                         status,
@@ -163,7 +164,6 @@ impl ResilientHttpTransport {
                         failure,
                     ));
                 }
-                let delay = self.compute_delay(attempt, retry_after, url);
                 crate::runtime_metrics::record_http_retry(status, delay);
                 debug!(
                     target: "plasm_runtime::http_resilience",
@@ -189,6 +189,10 @@ impl ResilientHttpTransport {
                     && transport_error_is_retryable(&e)
                 {
                     let delay = self.compute_delay(attempt, None, url);
+                    if started.elapsed().saturating_add(delay) >= self.policy.total_retry_budget {
+                        e.set_attempts(attempt);
+                        return Err(e);
+                    }
                     crate::runtime_metrics::record_http_retry(0, delay);
                     debug!(
                         target: "plasm_runtime::http_resilience",
@@ -616,6 +620,41 @@ mod tests {
         let d = jitter_duration(Duration::from_millis(1000), "https://api.example.com/x", 2);
         assert!(d >= Duration::from_millis(500));
         assert!(d <= Duration::from_millis(1000));
+    }
+
+    #[tokio::test]
+    async fn retry_hint_beyond_budget_returns_without_sleeping() {
+        let transport = ResilientHttpTransport::new(
+            ReqwestHttpTransport::new(reqwest::Client::new()),
+            fast_retry_policy(1),
+        );
+        let outcome = Ok(HttpAttemptResult::Retryable {
+            status: 429,
+            retry_after: Some(Duration::from_secs(3600)),
+            failure: crate::HttpStatusFailure::without_request(429, "quota exhausted".into()),
+        });
+        let result = tokio::time::timeout(
+            Duration::from_millis(100),
+            transport.process_attempt(
+                "https://api.example.com/records",
+                "GET",
+                "api.example.com",
+                1,
+                Instant::now(),
+                outcome,
+            ),
+        )
+        .await
+        .expect("a retry beyond the budget must not sleep");
+        let error = result.expect_err("retry budget must reject this delay");
+        assert!(matches!(
+            error,
+            RuntimeError::RateLimited {
+                status: 429,
+                attempts: 1,
+                ..
+            }
+        ));
     }
 
     #[test]
