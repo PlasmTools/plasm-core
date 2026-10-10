@@ -248,6 +248,20 @@ mod tests {
     }
 
     #[test]
+    fn graph_rehydration_corruption_is_runtime_stop_not_program_repair() {
+        let failure: plasm_runtime::ExecutionFailure = RunLineError::ArtifactRehydration(
+            crate::graph_rehydrate::GraphRehydrateError::Persistence(
+                crate::session_graph_persistence::SessionGraphPersistenceError::InvalidGraphPageKind,
+            ),
+        )
+        .into();
+        assert_eq!(failure.cause, FailureCause::Runtime);
+        assert_eq!(failure.code, "artifact_persist_failed");
+        assert_eq!(failure.recovery, RecoveryDisposition::Stop);
+        assert_eq!(failure.diagnostic(), "graph page kind must be `graph_page`");
+    }
+
+    #[test]
     fn stale_page_handle_stays_typed_through_http_error_boundary() {
         let handle = PagingHandle::parse("pg1").unwrap();
         let failure: plasm_runtime::ExecutionFailure =

@@ -76,7 +76,7 @@ async fn spill_refless_rows(fx: &GraphRehydrateFixture, rows: Vec<serde_json::Va
             content_type: "application/json".into(),
             content_encoding: None,
             schema_version: crate::run_artifacts::RUN_ARTIFACT_PAYLOAD_SCHEMA_VERSION,
-            producer: "plasm.graph_rehydrate_test".into(),
+            producer: crate::session_graph_persistence::GRAPH_PAGE_DELTA_PRODUCER.into(),
         },
         bytes: axum::body::Bytes::from(serde_json::to_vec(&body).expect("json")),
     };

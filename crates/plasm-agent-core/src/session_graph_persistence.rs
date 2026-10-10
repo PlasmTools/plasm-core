@@ -39,6 +39,7 @@ use crate::run_artifacts::{
 };
 
 pub const GRAPH_PAGE_DELTA_SCHEMA_VERSION: u32 = 4;
+pub(crate) const GRAPH_PAGE_DELTA_PRODUCER: &str = "plasm.graph_page_spill";
 
 #[derive(Debug, Error)]
 pub enum SessionGraphPersistenceError {
@@ -64,6 +65,8 @@ pub enum SessionGraphPersistenceError {
         "graph page contains entities that do not match its declared entity type `{entity_type}`"
     )]
     GraphPageEntityTypeMismatch { entity_type: String },
+    #[error("session graph delta producer is unsupported")]
+    UnsupportedDeltaProducer,
     #[error("graph page visitor failed: {source}")]
     Visitor {
         #[source]
@@ -277,10 +280,16 @@ impl SessionGraphPersistence {
         prompt_hash: &str,
         session_id: &str,
         seq: u64,
-    ) -> Result<GraphPageDelta, SessionGraphPersistenceError> {
+    ) -> Result<Option<GraphPageDelta>, SessionGraphPersistenceError> {
         let payload = self.read_delta(prompt_hash, session_id, seq).await?;
+        if payload.metadata.producer == "plasm" {
+            return Ok(None);
+        }
+        if payload.metadata.producer != GRAPH_PAGE_DELTA_PRODUCER {
+            return Err(SessionGraphPersistenceError::UnsupportedDeltaProducer);
+        }
         let body: serde_json::Value = serde_json::from_slice(&payload.bytes)?;
-        parse_graph_page_body(&body)
+        parse_graph_page_body(&body).map(Some)
     }
 
     /// Walk spill deltas in append (`seq`) order — interleaved LIST+GET; early exit cancels both.
@@ -310,6 +319,9 @@ impl SessionGraphPersistence {
                 let page = self
                     .read_delta_graph_page(prompt_hash, session_id, seq)
                     .await?;
+                let Some(page) = page else {
+                    continue;
+                };
                 pages_read += 1;
                 if visit(page)
                     .map_err(|source| SessionGraphPersistenceError::Visitor { source })?
@@ -346,7 +358,7 @@ impl SessionGraphPersistence {
         let concurrency = delta_read_concurrency();
         let ph = prompt_hash.to_string();
         let sid = session_id.to_string();
-        let mut pages: Vec<GraphPageDelta> = futures_util::stream::iter(seqs)
+        let pages: Vec<Option<GraphPageDelta>> = futures_util::stream::iter(seqs)
             .map(|seq| {
                 let persistence = self.clone();
                 let ph = ph.clone();
@@ -356,6 +368,7 @@ impl SessionGraphPersistence {
             .buffer_unordered(concurrency)
             .try_collect()
             .await?;
+        let mut pages: Vec<GraphPageDelta> = pages.into_iter().flatten().collect();
         pages.sort_by_key(|p| p.page_index);
         Ok(pages)
     }
@@ -581,6 +594,93 @@ mod tests {
         assert_eq!(page.schema_version, GRAPH_PAGE_DELTA_SCHEMA_VERSION);
     }
 
+    #[tokio::test]
+    async fn graph_page_reads_skip_interleaved_run_artifact_deltas() {
+        let store: Arc<dyn ObjectStore> = Arc::new(object_store::memory::InMemory::new());
+        let persistence = SessionGraphPersistence::new(store, StorePath::from("mixed-deltas"));
+        let empty: plasm_core::collection_codec::SharedRows<plasm_runtime::CachedEntity> =
+            Vec::new().into();
+        persistence
+            .append_graph_page("hash", "session", 1, 0, "Berry", &empty)
+            .await
+            .unwrap();
+        let run_artifact = ArtifactPayload {
+            metadata: ArtifactPayloadMetadata::json_default(),
+            bytes: Bytes::from_static(br#"{"run_id":"pr0000000000000000000000000000000000000000000000000000000000000000"}"#),
+        };
+        persistence
+            .append_delta("hash", "session", 2, &run_artifact)
+            .await
+            .unwrap();
+        persistence
+            .append_graph_page("hash", "session", 3, 1, "Berry", &empty)
+            .await
+            .unwrap();
+
+        let pages = persistence
+            .read_graph_pages("hash", "session")
+            .await
+            .unwrap();
+        assert_eq!(
+            pages.iter().map(|page| page.page_index).collect::<Vec<_>>(),
+            vec![0, 1]
+        );
+        let mut visited = Vec::new();
+        let pages_read = persistence
+            .visit_graph_pages_in_seq_order("hash", "session", |page| {
+                visited.push(page.page_index);
+                Ok(ControlFlow::Continue(()))
+            })
+            .await
+            .unwrap();
+        assert_eq!(visited, vec![0, 1]);
+        assert_eq!(pages_read, 2);
+    }
+
+    #[tokio::test]
+    async fn graph_page_reads_reject_unknown_delta_producers() {
+        let store: Arc<dyn ObjectStore> = Arc::new(object_store::memory::InMemory::new());
+        let persistence = SessionGraphPersistence::new(store, StorePath::from("unknown-producer"));
+        let payload = ArtifactPayload {
+            metadata: ArtifactPayloadMetadata {
+                producer: "unrecognized-producer".into(),
+                ..ArtifactPayloadMetadata::json_default()
+            },
+            bytes: Bytes::from_static(br#"{"kind":"graph_page"}"#),
+        };
+        persistence
+            .append_delta("hash", "session", 1, &payload)
+            .await
+            .unwrap();
+
+        assert!(matches!(
+            persistence.read_graph_pages("hash", "session").await,
+            Err(SessionGraphPersistenceError::UnsupportedDeltaProducer)
+        ));
+    }
+
+    #[tokio::test]
+    async fn graph_page_reads_reject_malformed_payload_from_graph_page_producer() {
+        let store: Arc<dyn ObjectStore> = Arc::new(object_store::memory::InMemory::new());
+        let persistence = SessionGraphPersistence::new(store, StorePath::from("malformed-page"));
+        let payload = ArtifactPayload {
+            metadata: ArtifactPayloadMetadata {
+                producer: GRAPH_PAGE_DELTA_PRODUCER.into(),
+                ..ArtifactPayloadMetadata::json_default()
+            },
+            bytes: Bytes::from_static(br#"{"kind":"not_a_graph_page"}"#),
+        };
+        persistence
+            .append_delta("hash", "session", 1, &payload)
+            .await
+            .unwrap();
+
+        assert!(matches!(
+            persistence.read_graph_pages("hash", "session").await,
+            Err(SessionGraphPersistenceError::InvalidGraphPageKind)
+        ));
+    }
+
     #[test]
     fn decode_framed_delta_slices_body_without_copy() {
         let body = br#"{"kind":"graph_page"}"#;
@@ -750,7 +850,10 @@ mod tests {
                 r#"{{"kind":"graph_page","schema_version":{GRAPH_PAGE_DELTA_SCHEMA_VERSION},"entity_type":"Berry","page_index":{page_index},"entities":[]}}"#
             );
             let payload = ArtifactPayload {
-                metadata: ArtifactPayloadMetadata::json_default(),
+                metadata: ArtifactPayloadMetadata {
+                    producer: GRAPH_PAGE_DELTA_PRODUCER.into(),
+                    ..ArtifactPayloadMetadata::json_default()
+                },
                 bytes: Bytes::from(body.into_bytes()),
             };
             persistence

@@ -9,6 +9,15 @@ Entries before **0.4.35** live in [`CHANGELOG-ARCHIVE.md`](CHANGELOG-ARCHIVE.md)
 
 ## [Unreleased]
 
+## [0.5.3] - 2026-10-10
+
+### Fixed
+
+- Read graph-page spill entries separately from interleaved run-artifact entries; reject unsupported producers and malformed graph pages.
+- Classify scoped graph rehydration faults as runtime failures that stop execution, rather than requesting program corrections.
+- Preserve complete embedded membership evidence for preferred parent reads.
+- Recover MCP app plan and run references from the current session-token format, preserve SDK method receivers during hydration, and display admission corrections without requesting a plan payload.
+
 ## [0.5.2] - 2026-10-10
 
 ### Changed

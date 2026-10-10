@@ -377,11 +377,21 @@ fn validate_exhaustive_embed(
         .get_entity(parent)
         .and_then(|entity| entity.relations.get(relation))
         .and_then(|relation| relation.materialize.as_ref());
-    if let Some(RelationMaterialization::FromParentGet {
-        collection_coverage: plasm_core::EmbeddedCollectionCoverage::Complete,
-        path,
-    }) = materialize
-    {
+    let complete_path = match materialize {
+        Some(
+            RelationMaterialization::FromParentGet {
+                collection_coverage: plasm_core::EmbeddedCollectionCoverage::Complete,
+                path,
+            }
+            | RelationMaterialization::PreferFromParentGet {
+                collection_coverage: plasm_core::EmbeddedCollectionCoverage::Complete,
+                path,
+                ..
+            },
+        ) => Some(path),
+        _ => None,
+    };
+    if let Some(path) = complete_path {
         if path.is_empty() {
             return Err(DecodeError::ExhaustiveEmbedPathEmpty {
                 parent: parent.to_owned(),
@@ -637,6 +647,41 @@ mod tests {
         for valid in [json!({"id":"root", "notes":[]}), json!({"id":"root"})] {
             decode_entities_with_cgs(&decoder, &valid, Some(&cgs)).unwrap();
         }
+    }
+
+    #[test]
+    fn prefer_from_parent_get_complete_coverage_proves_embedded_membership() {
+        let mut cgs = plasm_core::load_schema_dir(
+            &std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+                .join("../../fixtures/schemas/hydration_boundary_matrix"),
+        )
+        .unwrap();
+        cgs.entities
+            .get_mut("Folder")
+            .unwrap()
+            .relations
+            .get_mut("notes")
+            .unwrap()
+            .materialize = Some(
+            serde_json::from_value(json!({
+                "kind":"prefer_from_parent_get",
+                "collection_coverage":"complete",
+                "path":[{"key":"notes"},{"wildcard":true}],
+                "fallback":{"kind":"hydrate_from_embed_path","get_capability":"get_note"}
+            }))
+            .unwrap(),
+        );
+
+        assert_eq!(
+            validate_exhaustive_embed(
+                &cgs,
+                "Folder",
+                "notes",
+                &json!({"notes":[{"id":"n1"},{"id":"n2"}]}),
+            )
+            .unwrap(),
+            Some(2)
+        );
     }
 
     proptest::proptest! {

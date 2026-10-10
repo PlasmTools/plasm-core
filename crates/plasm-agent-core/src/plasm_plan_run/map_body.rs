@@ -40,6 +40,16 @@ fn scope_failure(code: &'static str, diagnostic: impl Into<String>) -> Execution
     ExecutionFailure::new(plasm_runtime::FailureCause::Program, code, diagnostic)
 }
 
+fn scope_rehydration_failure(
+    error: crate::graph_rehydrate::GraphRehydrateError,
+) -> ExecutionFailure {
+    ExecutionFailure::new(
+        plasm_runtime::FailureCause::Runtime,
+        "graph_rehydration_failed",
+        error.to_string(),
+    )
+}
+
 pub(super) async fn materialize(
     ctx: &PlanStepMaterializeCtx<'_>,
     map: &ValidatedMapBodyNode,
@@ -184,9 +194,7 @@ pub(super) async fn materialize(
     let semantic_parent_rows = source
         .resolve_materialized_source_parents(&rehydrator)
         .await
-        .map_err(|diagnostic| {
-            scope_failure("scope_parent_identity_invalid", diagnostic.to_string())
-        })?;
+        .map_err(scope_rehydration_failure)?;
     let semantic_parents: std::collections::HashMap<_, _> = semantic_parent_rows.iter().enumerate().map(|(index, row)| (&row.reference, index)).collect();
     for (occurrence, parent) in parents.into_iter().enumerate() {
         ctx.scope_budget
@@ -581,7 +589,20 @@ fn materialize_record<'a>(
 
 #[cfg(test)]
 mod budget_tests {
-    use super::ScopeBudget;
+    use super::*;
+
+    #[test]
+    fn graph_rehydration_failure_stops_instead_of_repairing_the_program() {
+        let error = crate::graph_rehydrate::GraphRehydrateError::Persistence(
+            crate::session_graph_persistence::SessionGraphPersistenceError::InvalidGraphPageKind,
+        );
+        let failure = scope_rehydration_failure(error);
+        assert_eq!(failure.cause, plasm_runtime::FailureCause::Runtime);
+        assert_eq!(failure.code, "graph_rehydration_failed");
+        assert_eq!(failure.recovery, plasm_runtime::RecoveryDisposition::Stop);
+        assert_eq!(failure.diagnostic(), "graph page kind must be `graph_page`");
+    }
+
     #[test]
     fn scoped_occurrence_budget_is_shared_and_never_wraps() {
         let budget = std::sync::Arc::new(ScopeBudget::default());
