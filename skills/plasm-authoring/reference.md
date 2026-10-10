@@ -237,9 +237,11 @@ History-browse phrases belong on the **Source** entity `names`. Materialize Quer
 
 **Exhaustive embedded collections:** `from_parent_get` may declare
 `collection_coverage: complete` only when the backend contract guarantees every
-observed collection at its path is exhaustive. Omit this key for previews,
-independently paginated arrays, limited samples or unverified contracts; omission
-means `unknown`. The runtime combines this assertion with parent coverage and
+observed collection at its path is exhaustive. An executable many-relation must
+establish this contract at CGS compilation; omission or `unknown` is a typed
+catalog error. For independently paginated arrays, use a scoped query that proves
+exhaustion. Previews and limited samples cannot implement an exhaustive relation.
+The runtime combines this assertion with parent coverage and
 observed path evidence. Missing arrays are not empty arrays, and child hydration
 does not establish complete membership. Verify the path against both wire data
 and decoded observations; prefer the child object path when it preserves fields

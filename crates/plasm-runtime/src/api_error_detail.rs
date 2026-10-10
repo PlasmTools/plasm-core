@@ -1,8 +1,8 @@
 //! Portable extraction of human-readable text from HTTP API error bodies.
 //!
 //! Pipeline: **media type** (handled in [`crate::http_transport::parse_http_response`]) →
-//! **JSON property rules** (this module) or **bounded plain text** → **character cap** so large
-//! responses do not flood prompts or MCP tool output.
+//! **JSON property rules** (this module) preserve semantic corrections; arbitrary
+//! bodies remain diagnostic evidence rather than being pasted into agent output.
 
 use serde_json::Value;
 
@@ -26,7 +26,8 @@ pub fn cap_detail(s: &str, max_chars: usize) -> String {
 }
 
 /// Ordered lines for **correction** / multi-line hints (Atlassian field errors, multiple messages).
-/// Stops filling once a **primary** shape yields content where appropriate; see implementation.
+/// Preserve every declared correction, including field errors accompanying a
+/// summary. Arbitrary response properties are never diagnostic text.
 pub fn json_api_error_lines(value: &Value) -> Vec<String> {
     let mut lines = Vec::new();
 
@@ -36,7 +37,6 @@ pub fn json_api_error_lines(value: &Value) -> Vec<String> {
         .filter(|s| !s.is_empty())
     {
         lines.push(s.to_string());
-        return lines;
     }
 
     if let Some(arr) = value.get("errorMessages").and_then(|v| v.as_array()) {
@@ -45,9 +45,6 @@ pub fn json_api_error_lines(value: &Value) -> Vec<String> {
                 lines.push(s.to_string());
             }
         }
-        if !lines.is_empty() {
-            return lines;
-        }
     }
 
     if let Some(obj) = value.get("errors").and_then(|v| v.as_object()) {
@@ -55,9 +52,6 @@ pub fn json_api_error_lines(value: &Value) -> Vec<String> {
             if let Some(s) = v.as_str().filter(|s| !s.is_empty()) {
                 lines.push(format!("{k}: {s}"));
             }
-        }
-        if !lines.is_empty() {
-            return lines;
         }
     }
 
@@ -76,13 +70,19 @@ pub fn json_api_error_lines(value: &Value) -> Vec<String> {
             line.push_str(d);
         }
         lines.push(line);
-        return lines;
     }
 
     if let Some(s) = value.as_str().filter(|s| !s.is_empty()) {
         lines.push(s.to_string());
     }
 
+    if let Some(errors) = value.get("errors").and_then(Value::as_array) {
+        for error in errors {
+            lines.extend(json_api_error_lines(error));
+        }
+    }
+    let mut seen = std::collections::BTreeSet::new();
+    lines.retain(|line| seen.insert(line.clone()));
     lines
 }
 
@@ -105,7 +105,7 @@ pub fn graphql_errors_summary(value: &Value) -> Option<String> {
         return None;
     }
     let joined = parts.join("; ");
-    Some(cap_detail(&joined, MAX_API_ERROR_DETAIL_CHARS))
+    Some(joined)
 }
 
 /// Descend one segment of a CML `items_path` (numeric index or object key).
@@ -155,10 +155,10 @@ impl std::fmt::Display for GraphQlMutationFailure {
             Self::Envelope { detail: Value::String(detail) } => {
                 format!("write rejected (success: false): {}", detail.trim())
             }
-            Self::Envelope { detail } => format!("write rejected (success: false): {detail}"),
+            Self::Envelope { detail } => format!("write rejected (success: false): {}", summarize_json_error_body(detail)),
             Self::Unspecified => "write rejected by the API (success: false) — check required inputs and permissions for this mutation".to_owned(),
         };
-        f.write_str(&cap_detail(&diagnostic, MAX_API_ERROR_DETAIL_CHARS))
+        f.write_str(&diagnostic)
     }
 }
 
@@ -219,18 +219,17 @@ pub fn fibery_command_envelope_hint(value: &Value, missing_segment: &str) -> Opt
     Some(format!("Fibery command failed ({name}): {message}"))
 }
 
-/// Single bounded string for logs and `RuntimeError` (joins [`json_api_error_lines`] with `; `).
+/// Complete semantic corrections; unknown payloads stay in diagnostic storage.
 pub fn summarize_json_error_body(value: &Value) -> String {
     let lines = json_api_error_lines(value);
-    let joined = if lines.is_empty() {
-        serde_json::to_string(value).unwrap_or_default()
+    if lines.is_empty() {
+        "The API rejected the request without a recognized correction. Check required inputs and permissions; inspect the recorded response for provider details.".into()
     } else {
         lines.join("; ")
-    };
-    cap_detail(&joined, MAX_API_ERROR_DETAIL_CHARS)
+    }
 }
 
-/// JSON error summary for HTTP client messages: [`summarize_json_error_body`], optional `documentation_url`, then cap.
+/// JSON error corrections with the provider's documentation link when supplied.
 pub fn summarize_json_api_error_for_http(value: &Value) -> String {
     let mut detail = summarize_json_error_body(value);
     if let Some(doc) = value
@@ -240,7 +239,7 @@ pub fn summarize_json_api_error_for_http(value: &Value) -> String {
     {
         detail.push_str(&format!(" ({doc})"));
     }
-    cap_detail(&detail, MAX_API_ERROR_DETAIL_CHARS)
+    detail
 }
 
 /// Map control characters to spaces (keep `\n` / `\t`) — shared by debug previews and plain-text error paths.
@@ -257,18 +256,46 @@ pub fn sanitize_preview_chars(s: &str) -> String {
 }
 
 /// Non-JSON error body (e.g. HTML): lossy UTF-8, strip most controls, cap.
-pub fn summarize_text_error_body(bytes: &[u8], _content_type: Option<&str>) -> String {
+pub fn summarize_text_error_body(bytes: &[u8], content_type: Option<&str>) -> String {
     let s = String::from_utf8_lossy(bytes);
     let t = s.trim();
     let cleaned = sanitize_preview_chars(t);
     let collapsed = cleaned.split_whitespace().collect::<Vec<_>>().join(" ");
-    cap_detail(&collapsed, MAX_API_ERROR_DETAIL_CHARS)
+    if content_type.is_some_and(|mime| mime.contains("html"))
+        || collapsed.starts_with('<')
+        || collapsed.chars().count() > MAX_API_ERROR_DETAIL_CHARS
+    {
+        "The API returned an unrecognized error response. Check request inputs and permissions; inspect the recorded provider response for details.".into()
+    } else {
+        collapsed
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use serde_json::json;
+
+    #[test]
+    fn corrections_preserve_all_fields_without_raw_payloads_or_truncation() {
+        let errors: serde_json::Map<String, Value> = (0..60)
+            .map(|index| (format!("field_{index}"), Value::String("required".into())))
+            .collect();
+        let value =
+            json!({"message": "Invalid input", "errors": errors, "private": "do-not-render"});
+        let correction = summarize_json_error_body(&value);
+        assert!(correction.contains("Invalid input"));
+        for index in 0..60 {
+            assert!(correction.contains(&format!("field_{index}: required")));
+        }
+        assert!(!correction.contains("do-not-render"));
+        assert!(!correction.contains('…'));
+        let opaque = json!({"request": {"token": "do-not-render"}});
+        assert!(!summarize_json_error_body(&opaque).contains("do-not-render"));
+        assert!(!GraphQlMutationFailure::Envelope { detail: opaque }
+            .to_string()
+            .contains("do-not-render"));
+    }
 
     #[test]
     fn fibery_command_envelope_hint_on_success_false() {
@@ -396,12 +423,12 @@ mod tests {
     }
 
     #[test]
-    fn message_wins_over_error_messages() {
+    fn summary_preserves_additional_corrections() {
         let v = json!({
             "message": "primary",
             "errorMessages": ["other"]
         });
-        assert_eq!(json_api_error_lines(&v), vec!["primary"]);
+        assert_eq!(json_api_error_lines(&v), vec!["primary", "other"]);
     }
 
     #[test]
@@ -426,7 +453,8 @@ mod tests {
     fn summarize_text_strips_htmlish_noise() {
         let bytes = b"<!DOCTYPE html><html><body>oops</body></html>";
         let s = summarize_text_error_body(bytes, Some("text/html"));
-        assert!(s.contains("oops") || s.contains("<!DOCTYPE"));
+        assert!(s.contains("unrecognized error response"));
+        assert!(!s.contains("<html>"));
         assert!(s.len() <= MAX_API_ERROR_DETAIL_CHARS + 4);
     }
 

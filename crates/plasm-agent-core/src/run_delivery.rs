@@ -125,7 +125,7 @@ impl OperationWire {
 
 #[derive(Debug, thiserror::Error)]
 pub enum LiveRunError {
-    #[error("live run timed out after {0:?}")]
+    #[error("live run timed out after {seconds}s", seconds = .0.as_secs_f64())]
     Timeout(Duration),
     #[error("{0}")]
     Failed(plasm_runtime::ExecutionFailure),

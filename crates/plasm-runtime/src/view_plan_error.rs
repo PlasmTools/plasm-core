@@ -26,7 +26,7 @@ pub enum ViewPlanError {
     },
     #[error("view `{view}` requires a query predicate supplying scope parameters")]
     ScopePredicateRequired { view: String },
-    #[error("view node `{node}`: unsupported capability kind {kind:?}")]
+    #[error("view node `{node}`: unsupported capability kind {kind}")]
     UnsupportedNodeKind {
         node: String,
         kind: plasm_core::CapabilityKind,

@@ -757,9 +757,16 @@ pub enum RelationMaterialization {
         )]
         collection_coverage: EmbeddedCollectionCoverage,
     },
-    /// Prefer wire/path embed on the parent row; per-row scoped fallback when embed is absent or incomplete.
+    /// Prefer wire/path embed on the parent row only when collection membership is proven complete;
+    /// otherwise resolve through the declared scoped fallback.
     PreferFromParentGet {
         path: Vec<JsonPathSegment>,
+        /// Catalog assertion that every embedded member at `path` is present.
+        #[serde(
+            default,
+            skip_serializing_if = "EmbeddedCollectionCoverage::is_unknown"
+        )]
+        collection_coverage: EmbeddedCollectionCoverage,
         #[serde(default)]
         on_embed_miss: EmbedOnMissPolicy,
         fallback: RelationScopedFallback,
@@ -822,6 +829,15 @@ pub struct RelationSchema {
 pub enum Cardinality {
     One,
     Many,
+}
+
+impl std::fmt::Display for Cardinality {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(match self {
+            Self::One => "one",
+            Self::Many => "many",
+        })
+    }
 }
 
 /// What to do with a compound [`FieldType::EntityRef`] **scope** parameter after runtime splat.
@@ -2968,7 +2984,7 @@ impl CGS {
                         view: view_key.clone(),
                         node: node.id.clone(),
                         capability: node.capability.clone(),
-                        kind: format!("{:?}", nc.kind),
+                        kind: nc.kind.to_string(),
                     });
                 }
 
@@ -3130,8 +3146,8 @@ impl CGS {
                     return Err(SchemaError::ViewRelationOutputCardinalityMismatch {
                         view: view_key.clone(),
                         relation: ro.relation.to_string(),
-                        expected: format!("{:?}", rel.cardinality),
-                        got: format!("{:?}", ro.cardinality),
+                        expected: rel.cardinality.to_string(),
+                        got: ro.cardinality.to_string(),
                     });
                 }
                 let node_ok = |node_id: &str| view.nodes.iter().any(|n| n.id == node_id);
@@ -3302,7 +3318,7 @@ impl CGS {
                     return Err(SchemaError::UnsupportedIdentityType {
                         entity: entity_name.to_string(),
                         field: field.to_string(),
-                        field_type: format!("{field_type:?}"),
+                        field_type: field_type.to_string(),
                     });
                 }
             }
@@ -3406,21 +3422,39 @@ impl CGS {
                                     target: relation.target_resource.to_string(),
                                 });
                             }
-                            RelationMaterialization::FromParentGet { path, .. } => {
-                                Self::validate_from_parent_get_path(
-                                    entity_name.as_str(),
-                                    relation_name.as_str(),
-                                    path,
-                                )?;
-                            }
-                            RelationMaterialization::PreferFromParentGet {
-                                path, fallback, ..
+                            RelationMaterialization::FromParentGet {
+                                path,
+                                collection_coverage,
                             } => {
                                 Self::validate_from_parent_get_path(
                                     entity_name.as_str(),
                                     relation_name.as_str(),
                                     path,
                                 )?;
+                                if *collection_coverage != EmbeddedCollectionCoverage::Complete {
+                                    return Err(SchemaError::RelationMembershipUnproven {
+                                        entity: entity_name.to_string(),
+                                        relation: relation_name.to_string(),
+                                    });
+                                }
+                            }
+                            RelationMaterialization::PreferFromParentGet {
+                                path,
+                                collection_coverage,
+                                fallback,
+                                ..
+                            } => {
+                                Self::validate_from_parent_get_path(
+                                    entity_name.as_str(),
+                                    relation_name.as_str(),
+                                    path,
+                                )?;
+                                if *collection_coverage != EmbeddedCollectionCoverage::Complete {
+                                    return Err(SchemaError::RelationMembershipUnproven {
+                                        entity: entity_name.to_string(),
+                                        relation: relation_name.to_string(),
+                                    });
+                                }
                                 self.validate_relation_scoped_fallback(
                                     entity_name.as_str(),
                                     relation_name.as_str(),
@@ -5223,7 +5257,7 @@ impl CGS {
             return Err(SchemaError::PrimaryReadNotGet {
                 entity: entity.to_string(),
                 capability: cap_id.to_string(),
-                kind: format!("{:?}", cap.kind),
+                kind: cap.kind.to_string(),
             });
         }
         Ok(())
@@ -5251,7 +5285,7 @@ impl CGS {
             return Err(SchemaError::PrimaryQueryNotQuery {
                 entity: entity.to_string(),
                 capability: cap_id.to_string(),
-                kind: format!("{:?}", cap.kind),
+                kind: cap.kind.to_string(),
             });
         }
         Ok(())
@@ -5279,7 +5313,7 @@ impl CGS {
             return Err(SchemaError::PrimarySearchNotSearch {
                 entity: entity.to_string(),
                 capability: cap_id.to_string(),
-                kind: format!("{:?}", cap.kind),
+                kind: cap.kind.to_string(),
             });
         }
         Ok(())
@@ -5813,8 +5847,8 @@ impl CGS {
                     relation: relation.to_string(),
                     cap_param: cap_param.to_string(),
                     parent_field: parent_field.to_string(),
-                    parent_type: format!("{parent_ty:?}"),
-                    param_type: format!("{:?}", param_nv.field_type),
+                    parent_type: parent_ty.to_string(),
+                    param_type: param_nv.field_type.to_string(),
                 });
             }
         }

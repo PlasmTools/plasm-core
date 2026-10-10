@@ -5,7 +5,9 @@ fn nested_source(es: &ExecuteSession, inner: &str, bound: u32) -> String {
     let symbols = es.teaching_exposure.as_ref().unwrap().to_symbol_map();
     let item = symbols.entity_sym_for("fixture", "Item");
     let relation = symbols.ident_sym_relation_for("fixture", "Item", "tags");
-    format!("class Nested(Program):\n    def build(self):\n        parents = {item}.query()\n        result = parents.map(lambda parent: {{'title': parent.title, 'children': parent.{relation}.map(lambda child: {inner}, max_parents={bound})}}, max_parents=8)\n        return result\n")
+    format!(
+        "class Nested(Program):\n    def build(self):\n        parents = {item}.query()\n        result = parents.map(lambda parent: {{'title': parent.title, 'children': parent.{relation}.map(lambda child: {inner}, max_parents={bound})}}, max_parents=8)\n        return result\n"
+    )
 }
 
 #[test]
@@ -114,7 +116,9 @@ fn nested_helper_captures_preserve_recursive_value_cells() {
             let symbols = es.teaching_exposure.as_ref().unwrap().to_symbol_map();
             let item = symbols.entity_sym_for("fixture", "Item");
             let tags = symbols.ident_sym_relation_for("fixture", "Item", "tags");
-            let source = format!("class Captured(Program):\n    def build(self):\n        def selected(value):\n            return {item}.query().where(lambda row: row.title == 'Title 2').flat_map(lambda parent: parent.{tags}.map(lambda child: {{'value': value, 'child': child.label}}, max_parents=8), max_parents=8)\n        return selected({literal})\n");
+            let source = format!(
+                "class Captured(Program):\n    def build(self):\n        def selected(value):\n            return {item}.query().where(lambda row: row.title == 'Title 2').flat_map(lambda parent: parent.{tags}.map(lambda child: {{'value': value, 'child': child.label}}, max_parents=8), max_parents=8)\n        return selected({literal})\n"
+            );
             let bundle = compile_python_program(&es, &source).await.unwrap();
             let result = execute(&es, &host, &bundle).await.unwrap();
             let row = plasm_runtime::entity_to_agent_row_json(
@@ -136,7 +140,9 @@ fn nested_flat_map_captures_helper_scalar_and_parent_record() {
         let symbols = es.teaching_exposure.as_ref().unwrap().to_symbol_map();
         let item = symbols.entity_sym_for("fixture", "Item");
         let relation = symbols.ident_sym_relation_for("fixture", "Item", "tags");
-        let code = format!("class Nested(Program):\n    def build(self):\n        def selected(title):\n            return {item}.query().where(lambda row: row.title == title).flat_map(lambda parent: parent.{relation}.map(lambda child: {{'parent': parent.title, 'child': child.label}}, max_parents=8), max_parents=8)\n        return selected('Title 2')\n");
+        let code = format!(
+            "class Nested(Program):\n    def build(self):\n        def selected(title):\n            return {item}.query().where(lambda row: row.title == title).flat_map(lambda parent: parent.{relation}.map(lambda child: {{'parent': parent.title, 'child': child.label}}, max_parents=8), max_parents=8)\n        return selected('Title 2')\n"
+        );
         let bundle = compile_python_program(&es, &code).await.unwrap();
         let run = execute(&es, &host, &bundle)
             .await
@@ -279,7 +285,13 @@ fn nested_maps_three_levels_keep_ancestor_ports_distinct() {
         let (es, host, _) = fixture(2);
         let symbols = es.teaching_exposure.as_ref().unwrap().to_symbol_map();
         let item = symbols.entity_sym_for("fixture", "Item");
-        let code = nested_source(&es, &format!("{{'grandchildren': {item}.query().map(lambda grandchild: {{'root': parent.title, 'child': child.label, 'grandchild': grandchild.title}}, max_parents=8)}}"), 8);
+        let code = nested_source(
+            &es,
+            &format!(
+                "{{'grandchildren': {item}.query().map(lambda grandchild: {{'root': parent.title, 'child': child.label, 'grandchild': grandchild.title}}, max_parents=8)}}"
+            ),
+            8,
+        );
         let bundle = compile_python_program(&es, &code).await.unwrap();
         let run = execute(&es, &host, &bundle).await.unwrap();
         let row = plasm_runtime::entity_to_agent_row_json(
@@ -358,7 +370,9 @@ fn nested_maps_stream_full_addresses_and_cancel_inner_reads() {
         let symbols = es.teaching_exposure.as_ref().unwrap().to_symbol_map();
         let item = symbols.entity_sym_for("fixture", "Item");
         let relation = symbols.ident_sym_relation_for("fixture", "Item", "tags");
-        let code = format!("class Nested(Program):\n    def build(self):\n        return {item}.query().map(lambda parent: {{'children': {item}.query().take(1).map(lambda child: {{'tags': child.{relation}.map(lambda tag: {{'label': tag.label}}, max_parents=8)}}, max_parents=8)}}, max_parents=8)");
+        let code = format!(
+            "class Nested(Program):\n    def build(self):\n        return {item}.query().map(lambda parent: {{'children': {item}.query().take(1).map(lambda child: {{'tags': child.{relation}.map(lambda tag: {{'label': tag.label}}, max_parents=8)}}, max_parents=8)}}, max_parents=8)"
+        );
         let bundle = compile_python_program(&es, &code).await.unwrap();
         let handle = es.mint_operation_handle("l_AAAAAAAAQACAAAAAAAAAAQ");
         let cancel = plasm_runtime::CancelSignal::new();
@@ -476,7 +490,9 @@ fn nested_maps_accept_synthetic_rows_without_receiver_authority() {
         let symbols = es.teaching_exposure.as_ref().unwrap().to_symbol_map();
         let item = symbols.entity_sym_for("fixture", "Item");
         let method = symbols.method_sym_for("fixture", "Item", "touch");
-        let code = format!("class Synthetic(Program):\n    def build(self):\n        values = {item}.query().map(lambda parent: {{'id': parent.id, 'name': parent.title}}, max_parents=8)\n        return values.map(lambda value: {{'label': value.name}}, max_parents=8)");
+        let code = format!(
+            "class Synthetic(Program):\n    def build(self):\n        values = {item}.query().map(lambda parent: {{'id': parent.id, 'name': parent.title}}, max_parents=8)\n        return values.map(lambda value: {{'label': value.name}}, max_parents=8)"
+        );
         let invalid = code.replace(
             "{'label': value.name}",
             &format!("{{'done': value.{method}()}}"),
@@ -505,7 +521,9 @@ fn scoped_compute_uses_value_fields_without_loading_navigation_edges() {
             .unwrap()
             .to_symbol_map()
             .entity_sym_for("fixture", "Item");
-        let code = format!("class Labels(Program):\n    @compute\n    def labels(self, rows: list[Value[{item}]]) -> str:\n        return '|'.join(row.title for row in rows)\n    def build(self):\n        return {item}.query().map(lambda parent: {{'labels': self.labels({item}.query())}}, max_parents=8)");
+        let code = format!(
+            "class Labels(Program):\n    @compute\n    def labels(self, rows: list[Value[{item}]]) -> str:\n        return '|'.join(row.title for row in rows)\n    def build(self):\n        return {item}.query().map(lambda parent: {{'labels': self.labels({item}.query())}}, max_parents=8)"
+        );
         let bundle = compile_python_program(&es, &code).await.unwrap();
         let run = execute(&es, &host, &bundle).await.unwrap();
         assert_eq!(
@@ -526,7 +544,10 @@ fn ordinary_nested_flat_map_and_captured_fstring_execute() {
         let item = symbols.entity_sym_for("fixture", "Item");
         let relation = symbols.ident_sym_relation_for("fixture", "Item", "tags");
         let publish = symbols.method_sym_for("fixture", "Item", "publish");
-        let code = format!("class Nested(Program):\n    def build(self):\n        return {item}.query().flat_map(lambda parent: parent.{relation}.flat_map(lambda child: {item}.{publish}(content=f'{parent_expr}:{{child.label.lower()}}')))\n", parent_expr="{parent.title.lower().replace(' ', '_')}");
+        let code = format!(
+            "class Nested(Program):\n    def build(self):\n        return {item}.query().flat_map(lambda parent: parent.{relation}.flat_map(lambda child: {item}.{publish}(content=f'{parent_expr}:{{child.label.lower()}}')))\n",
+            parent_expr = "{parent.title.lower().replace(' ', '_')}"
+        );
         let bundle = compile_python_program(&es, &code).await.unwrap();
         assert!(calls.lock().unwrap().is_empty());
         let run = execute(&es, &host, &bundle).await.unwrap();
@@ -565,7 +586,9 @@ fn captured_formatting_executes_conversion_and_format_spec() {
         let symbols = es.teaching_exposure.as_ref().unwrap().to_symbol_map();
         let item = symbols.entity_sym_for("fixture", "Item");
         let publish = symbols.method_sym_for("fixture", "Item", "publish");
-        let code = format!("class Formatting(Program):\n    def build(self):\n        return {item}.query().take(1).flat_map(lambda row: {item}.{publish}(content=f'{{row.title!r:>12}}'), max_parents=1)\n");
+        let code = format!(
+            "class Formatting(Program):\n    def build(self):\n        return {item}.query().take(1).flat_map(lambda row: {item}.{publish}(content=f'{{row.title!r:>12}}'), max_parents=1)\n"
+        );
         let bundle = compile_python_program(&es, &code).await.unwrap();
         assert!(
             calls.lock().unwrap().is_empty(),

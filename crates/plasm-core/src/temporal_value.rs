@@ -64,7 +64,7 @@ pub enum TemporalValueError {
     KindMismatch,
     #[error("expected a typed temporal value")]
     ExpectedTypedValue,
-    #[error("expected a {kind:?} string")]
+    #[error("expected a {kind} string")]
     ExpectedString { kind: TemporalKind },
     #[error("expected a Unix {unit} integer")]
     ExpectedUnixInteger { unit: &'static str },
@@ -149,6 +149,12 @@ impl TemporalKind {
             domain: None,
             nullable: false,
         }
+    }
+}
+
+impl std::fmt::Display for TemporalKind {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(self.python_name())
     }
 }
 

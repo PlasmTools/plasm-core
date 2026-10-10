@@ -8,6 +8,7 @@ use super::*;
 use compute::*;
 use relation::*;
 use std::collections::{BTreeMap, HashMap};
+use std::fmt;
 use thiserror::Error;
 use value::*;
 
@@ -43,11 +44,11 @@ pub enum PlanNodeStructureError {
     MapBodyPayloadOnOtherNode,
     #[error("until_scope and step_scope are only valid for iterate_until nodes")]
     IterationScopeOnOtherNode,
-    #[error("executable node {index} ({kind:?}) requires ir or ir_template")]
+    #[error("executable node {index} ({kind}) requires ir or ir_template")]
     MissingExecutableIr { index: usize, kind: PlanNodeKind },
     #[error("plan node {index} cannot carry both ir and ir_template")]
     MultipleExecutableIr { index: usize },
-    #[error("executable node {index} ({kind:?}) requires a qualified entity unless it is a page")]
+    #[error("executable node {index} ({kind}) requires a qualified entity unless it is a page")]
     MissingQualifiedEntity { index: usize, kind: PlanNodeKind },
     #[error("search node {index} must have read effect")]
     SearchMustBeRead { index: usize },
@@ -75,7 +76,9 @@ pub enum PlanNodeStructureError {
     UnknownDeriveSource { index: usize, source_id: String },
     #[error("derive node {index} requires an item binding for map/cell derivation")]
     MissingDeriveItemBinding { index: usize },
-    #[error("derive node {index} input `{source_id}` is not statically singleton and has no explicit singleton proof")]
+    #[error(
+        "derive node {index} input `{source_id}` is not statically singleton and has no explicit singleton proof"
+    )]
     UnprovenDeriveBroadcast { index: usize, source_id: String },
 }
 
@@ -131,7 +134,7 @@ pub enum PlanValidationError {
     IterationStepMismatch,
     #[error("{0}")]
     Compute(#[source] compute::PlanExpressionError),
-    #[error("plan node {index} references unknown {reference:?} source `{node}`")]
+    #[error("plan node {index} references unknown {reference} source `{node}`")]
     UnknownDependency {
         index: usize,
         reference: PlanDependencyKind,
@@ -139,7 +142,9 @@ pub enum PlanValidationError {
     },
     #[error("plan dependency graph has a cycle")]
     DependencyCycle,
-    #[error("plan node {index} effect binding `{source_id}` does not reference item binding `{binding}`")]
+    #[error(
+        "plan node {index} effect binding `{source_id}` does not reference item binding `{binding}`"
+    )]
     InvalidEffectBindingSource {
         index: usize,
         source_id: String,
@@ -188,6 +193,21 @@ pub enum PlanDependencyKind {
 impl PlanValidationError {
     pub fn diagnostic(&self) -> String {
         self.to_string()
+    }
+}
+
+impl fmt::Display for PlanDependencyKind {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(match self {
+            Self::ExplicitDependency => "explicit dependency",
+            Self::ResultUse => "result use",
+            Self::Source => "source",
+            Self::DeriveSource => "derive source",
+            Self::DeriveInput => "derive input",
+            Self::ComputeSource => "compute source",
+            Self::UnionSource => "union source",
+            Self::RelationSource => "relation source",
+        })
     }
 }
 
@@ -1057,7 +1077,7 @@ fn validate_return_refs(
 ) -> Result<ValidatedPlanReturn, PlanValidationError> {
     match ret {
         PlanReturn::Node { node } if node.trim().is_empty() => {
-            return Err(PlanValidationError::EmptyReturn)
+            return Err(PlanValidationError::EmptyReturn);
         }
         PlanReturn::Parallel { nodes } if nodes.is_empty() => {
             return Err(PlanValidationError::EmptyReturn);

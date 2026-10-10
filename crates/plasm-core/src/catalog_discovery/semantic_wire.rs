@@ -367,6 +367,7 @@ mod tests {
             path: vec![crate::schema::JsonPathSegment::Key {
                 key: "SECRET_PATH".into(),
             }],
+            collection_coverage: Default::default(),
             on_embed_miss: Default::default(),
             fallback: crate::schema::RelationScopedFallback::QueryScopedBindings {
                 capability: "read_children".into(),

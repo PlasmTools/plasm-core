@@ -9,6 +9,22 @@ Entries before **0.4.35** live in [`CHANGELOG-ARCHIVE.md`](CHANGELOG-ARCHIVE.md)
 
 ## [Unreleased]
 
+## [0.5.2] - 2026-10-10
+
+### Changed
+
+- Reject embedded many-relations without complete membership evidence at CGS compilation.
+- Acquire Linear issue labels and children through cursor-paginated scoped queries.
+- Acquire GitHub issue labels through their paginated scoped query; require membership proof for preferred embeds as well as direct embeds.
+- Declare verified exhaustive embedded arrays across the affected catalogs; remove GitHub's capped `Commit.files` relation.
+
+### Fixed
+
+- Render concise semantic corrections instead of Rust debug dumps, raw collection identities, or arbitrary provider response bodies.
+- Preserve all provider field corrections alongside summary messages, without truncating required constraints.
+- Classify incomplete observed collections as response-contract failures rather than Python program mistakes.
+- Enforce the error-presentation contract in CI and retain typed recovery and effect reconciliation evidence.
+
 ## [0.5.1] - 2026-10-10
 
 ### Changed

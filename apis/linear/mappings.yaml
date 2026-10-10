@@ -12,7 +12,7 @@ issue_search:
     fields:
       - - query
         - type: const
-          value: 'query($first: Int, $after: String, $filter: IssueFilter) { issues(first: $first, after: $after, filter: $filter) { nodes { id identifier title priority team { key } } pageInfo { hasNextPage endCursor } } }'
+          value: 'query($first: Int, $after: String, $filter: IssueFilter, $includeArchived: Boolean!) { issues(first: $first, after: $after, filter: $filter, includeArchived: $includeArchived) { nodes { id identifier title priority team { key } } pageInfo { hasNextPage endCursor } } }'
       - - variables
         - type: object
           fields:
@@ -117,6 +117,24 @@ issue_search:
                             - type: var
                               name: priority
                       else_expr: { type: const, value: null }
+                  - - parent
+                    - type: if
+                      condition: { type: exists, var: parent_id }
+                      then_expr:
+                        type: object
+                        fields:
+                          - - id
+                            - type: object
+                              fields:
+                                - - eq
+                                  - type: var
+                                    name: parent_id
+                      else_expr: { type: const, value: null }
+            - - includeArchived
+              - type: if
+                condition: { type: exists, var: parent_id }
+                then_expr: { type: const, value: true }
+                else_expr: { type: const, value: false }
             - - first
               - type: const
                 value: 50
@@ -151,7 +169,7 @@ issue_get:
     fields:
       - - query
         - type: const
-          value: 'query($id: String!){ issue(id: $id) { id identifier title description priority estimate dueDate parent { id identifier title } children(first: 50, includeArchived: true) { nodes { id identifier title } } team { id key name } project { id name slugId } assignee { id name displayName email } state { id name type } cycle { id number startsAt endsAt } labels { nodes { id name color } } } }'
+          value: 'query($id: String!){ issue(id: $id) { id identifier title description priority estimate dueDate parent { id identifier title } team { id key name } project { id name slugId } assignee { id name displayName email } state { id name type } cycle { id number startsAt endsAt } } }'
       - - variables
         - type: object
           fields:
@@ -503,20 +521,20 @@ label_query:
     fields:
       - - query
         - type: const
-          value: 'query($first: Int, $after: String) { issueLabels(first: $first, after: $after) { nodes { id name color } pageInfo { hasNextPage endCursor } } }'
+          value: 'query($issue: String!, $first: Int, $after: String) { issue(id: $issue) { labels(first: $first, after: $after) { nodes { id name color } pageInfo { hasNextPage endCursor } } } }'
       - - variables
         - type: object
-          fields: []
+          fields:
+            - - issue
+              - type: var
+                name: issue
   response:
-    items_path: [data, issueLabels, nodes]
+    items_path: [data, issue, labels, nodes]
   pagination:
     location: body
     body_merge_path:
     - variables
-    response_prefix:
-    - data
-    - issueLabels
-    - pageInfo
+    response_prefix: [data, issue, labels, pageInfo]
     params:
       first:
         fixed: 50

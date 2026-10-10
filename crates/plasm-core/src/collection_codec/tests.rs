@@ -1,6 +1,33 @@
 use super::*;
 use proptest::prelude::*;
 
+#[test]
+fn incomplete_collection_correction_groups_reasons_without_dumping_evidence() {
+    let gaps = (0..60)
+        .map(|index| EvidenceGap {
+            source: identity(index),
+            reason: match index % 3 {
+                0 => Gap::UndeclaredMembership,
+                1 => Gap::UnprovenTermination,
+                _ => Gap::OmittedOccurrences,
+            },
+        })
+        .collect();
+    let fault = CollectionFault::Incomplete {
+        identity: identity(0),
+        coverage: ResultCoverage::Unknown,
+        gaps,
+    };
+    let correction = fault.to_string();
+    assert!(correction.contains("membership"));
+    assert!(correction.contains("Pagination"));
+    assert!(correction.contains("omitted"));
+    assert!(!correction.contains("CollectionIdentity"));
+    assert!(!correction.contains("EvidenceGap"));
+    assert!(correction.len() < 600);
+    assert!(matches!(fault, CollectionFault::Incomplete { gaps, .. } if gaps.len() == 60));
+}
+
 #[derive(Debug, PartialEq, Deserialize)]
 struct RejectedJson;
 

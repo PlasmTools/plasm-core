@@ -292,6 +292,20 @@ pub(crate) async fn snapshot_embed_relation_under_graph_lock(
         rel_name,
         target_entity,
         parents,
+        crate::graph_rehydrate::effective_collection_coverage(
+            relation.relation.cardinality,
+            match &relation.relation.materialize {
+                plasm_core::RelationMaterialization::FromParentGet {
+                    collection_coverage,
+                    ..
+                }
+                | plasm_core::RelationMaterialization::PreferFromParentGet {
+                    collection_coverage,
+                    ..
+                } => *collection_coverage,
+                _ => plasm_core::EmbeddedCollectionCoverage::Unknown,
+            },
+        ),
         mat,
         wire_fallback_rows,
         scoped_es.cgs.as_ref(),
@@ -668,6 +682,7 @@ pub(crate) fn resolve_embed_target_entities(
     rel_name: &str,
     target_entity: &str,
     parents: &plasm_core::collection_codec::SharedRows<CachedEntity>,
+    collection_coverage: plasm_core::EmbeddedCollectionCoverage,
     mat: &plasm_runtime::SessionMaterialization,
     wire_fallback_rows: Option<&[plasm_core::ValueRow]>,
     cgs: &CGS,
@@ -676,6 +691,7 @@ pub(crate) fn resolve_embed_target_entities(
         rel_name,
         target_entity,
         parents,
+        collection_coverage,
         mat,
     ) {
         Some(mut entities) => {
@@ -698,10 +714,13 @@ pub(crate) fn resolve_embed_target_entities(
             }
             Ok(entities)
         }
-        None => wire_fallback_rows
-            .map(|rows| rows_to_entities_with_refs(target_entity, rows, Some(cgs)))
-            .transpose()
-            .map(|rows| rows.unwrap_or_default()),
+        None if collection_coverage == plasm_core::EmbeddedCollectionCoverage::Complete => {
+            wire_fallback_rows
+                .map(|rows| rows_to_entities_with_refs(target_entity, rows, Some(cgs)))
+                .transpose()
+                .map(|rows| rows.unwrap_or_default())
+        }
+        None => Ok(Vec::new()),
     }
 }
 
@@ -860,7 +879,8 @@ mod parent_get_row_tests {
         let rows = resolve_embed_target_entities(
             "lines",
             "LangLine",
-            &vec![parent].into(),
+            &vec![parent.clone()].into(),
+            plasm_core::EmbeddedCollectionCoverage::Complete,
             &plasm_runtime::SessionMaterialization::new(),
             Some(&wire),
             &cgs,
@@ -869,6 +889,18 @@ mod parent_get_row_tests {
         assert_eq!(rows.len(), 1);
         assert_eq!(rows[0].reference, plasm_core::Ref::new("LangLine", "l1"));
         assert_eq!(rows[0].payload_to_json()["note"], "observed");
+
+        let unknown_rows = resolve_embed_target_entities(
+            "lines",
+            "LangLine",
+            &vec![parent].into(),
+            plasm_core::EmbeddedCollectionCoverage::Unknown,
+            &plasm_runtime::SessionMaterialization::new(),
+            Some(&wire),
+            &cgs,
+        )
+        .unwrap();
+        assert!(unknown_rows.is_empty());
     }
 
     #[test]

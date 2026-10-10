@@ -91,7 +91,7 @@ impl From<crate::plasm_plan::PlanAtomError> for StepPayloadLiftError {
 pub(crate) enum StepPayloadConversionError {
     #[error("capture node `{node}` cannot be serialized as a root step")]
     CaptureCannotSerializeRoot { node: String },
-    #[error("validated surface node has non-surface plan kind `{kind:?}`")]
+    #[error("validated surface node has non-surface plan kind `{kind}`")]
     ExpectedSurfacePlanKind { kind: PlanNodeKind },
     #[error("validated plan contains invalid binding name `{name}`")]
     InvalidBindingName { name: String },

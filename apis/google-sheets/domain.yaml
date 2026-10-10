@@ -43,6 +43,7 @@ entities:
         cardinality: many
         materialize:
           kind: from_parent_get
+          collection_coverage: complete
           path:
           - key: sheets
           - wildcard: true

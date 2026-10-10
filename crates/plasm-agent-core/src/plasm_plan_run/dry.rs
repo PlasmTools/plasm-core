@@ -81,7 +81,7 @@ pub enum DryPlanValidationError {
         actual: String,
         expected: String,
     },
-    #[error("plan node {index} relation cardinality {actual:?} does not match catalog cardinality {expected:?}")]
+    #[error("plan node {index} relation cardinality {actual} does not match catalog cardinality {expected}")]
     RelationCardinalityMismatch {
         index: usize,
         actual: crate::plasm_plan::RelationCardinality,

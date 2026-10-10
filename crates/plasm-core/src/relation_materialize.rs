@@ -79,6 +79,7 @@ pub fn relation_refs_fully_resolved<'a>(
 /// Decide embed vs scoped query for one parent row from frozen catalog materialization.
 pub fn resolve_relation_row_resolution(
     materialize: &RelationMaterialization,
+    cardinality: crate::Cardinality,
     relation_name: &str,
     expected_target: &str,
     parent_json: &Value,
@@ -87,9 +88,17 @@ pub fn resolve_relation_row_resolution(
 ) -> RelationRowResolution {
     match materialize {
         RelationMaterialization::Unavailable => RelationRowResolution::ScopedQuery,
-        RelationMaterialization::FromParentGet { .. } => RelationRowResolution::EmbeddedRefs(
-            relation_refs.map(|s| s.to_vec()).unwrap_or_default(),
-        ),
+        RelationMaterialization::FromParentGet {
+            collection_coverage,
+            ..
+        } if cardinality == crate::Cardinality::One
+            || *collection_coverage == crate::EmbeddedCollectionCoverage::Complete =>
+        {
+            RelationRowResolution::EmbeddedRefs(
+                relation_refs.map(|s| s.to_vec()).unwrap_or_default(),
+            )
+        }
+        RelationMaterialization::FromParentGet { .. } => RelationRowResolution::ScopedQuery,
         RelationMaterialization::QueryScoped { .. }
         | RelationMaterialization::QueryScopedBindings { .. } => RelationRowResolution::ScopedQuery,
         RelationMaterialization::GetScopedBindings { .. } => RelationRowResolution::ScopedQuery,
@@ -98,9 +107,10 @@ pub fn resolve_relation_row_resolution(
         ),
         RelationMaterialization::PreferFromParentGet {
             path,
+            collection_coverage: crate::EmbeddedCollectionCoverage::Complete,
             on_embed_miss,
             fallback: _,
-        } => resolve_prefer_from_parent_get_row(
+        } if cardinality == crate::Cardinality::Many => resolve_prefer_from_parent_get_row(
             path,
             *on_embed_miss,
             relation_name,
@@ -109,6 +119,20 @@ pub fn resolve_relation_row_resolution(
             relation_refs,
             graph_has_ref,
         ),
+        RelationMaterialization::PreferFromParentGet {
+            path,
+            on_embed_miss,
+            ..
+        } if cardinality == crate::Cardinality::One => resolve_prefer_from_parent_get_row(
+            path,
+            *on_embed_miss,
+            relation_name,
+            expected_target,
+            parent_json,
+            relation_refs,
+            graph_has_ref,
+        ),
+        RelationMaterialization::PreferFromParentGet { .. } => RelationRowResolution::ScopedQuery,
     }
 }
 
@@ -149,6 +173,7 @@ fn resolve_prefer_from_parent_get_row(
 /// Per-parent embed vs scoped resolution for plan/runtime prefer materialization.
 pub fn partition_prefer_resolutions<'a, F>(
     materialize: &RelationMaterialization,
+    cardinality: crate::Cardinality,
     relation_key: &str,
     expected_target: &str,
     parent_rows: impl IntoIterator<Item = (&'a Value, Option<&'a [Ref]>)>,
@@ -162,6 +187,7 @@ where
         .map(|(parent_json, relation_refs)| {
             resolve_relation_row_resolution(
                 materialize,
+                cardinality,
                 relation_key,
                 expected_target,
                 parent_json,
@@ -313,6 +339,56 @@ mod tests {
     use indexmap::IndexMap;
 
     #[test]
+    fn catalog_rejects_many_embeds_without_membership_evidence() {
+        let directory = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../fixtures/schemas/from_parent_get_nav");
+        let mut cgs = crate::load_schema_dir(&directory).unwrap();
+        let relation = cgs
+            .entities
+            .get_mut("ParentItem")
+            .unwrap()
+            .relations
+            .get_mut("tags")
+            .unwrap();
+        let Some(RelationMaterialization::FromParentGet {
+            collection_coverage,
+            ..
+        }) = &mut relation.materialize
+        else {
+            panic!("fixture must exercise an embedded many-relation");
+        };
+        *collection_coverage = crate::EmbeddedCollectionCoverage::Unknown;
+        assert!(
+            matches!(cgs.validate(), Err(crate::SchemaError::RelationMembershipUnproven { entity, relation }) if entity == "ParentItem" && relation == "tags")
+        );
+    }
+
+    #[test]
+    fn catalog_rejects_preferred_many_embed_without_membership_evidence() {
+        let directory = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../fixtures/schemas/plasm_language_matrix");
+        let mut cgs = crate::load_schema_dir(&directory).unwrap();
+        let relation = cgs
+            .entities
+            .get_mut("LangItem")
+            .unwrap()
+            .relations
+            .get_mut("tags")
+            .unwrap();
+        let Some(RelationMaterialization::PreferFromParentGet {
+            collection_coverage,
+            ..
+        }) = &mut relation.materialize
+        else {
+            panic!("fixture must exercise a preferred embedded many-relation");
+        };
+        *collection_coverage = crate::EmbeddedCollectionCoverage::Unknown;
+        assert!(
+            matches!(cgs.validate(), Err(crate::SchemaError::RelationMembershipUnproven { entity, relation }) if entity == "LangItem" && relation == "tags")
+        );
+    }
+
+    #[test]
     fn embedded_collection_coverage_serialization_is_explicit() {
         let absent = serde_json::json!({"kind":"from_parent_get", "path":[{"key":"items"},{"wildcard":true}]});
         let parsed: RelationMaterialization = serde_json::from_value(absent.clone()).unwrap();
@@ -322,6 +398,26 @@ mod tests {
         assert_eq!(serde_json::to_value(&parsed).unwrap(), complete);
         let invalid = serde_json::json!({"kind":"from_parent_get", "collection_coverage":"maybe", "path":[{"key":"items"}]});
         assert!(serde_json::from_value::<RelationMaterialization>(invalid).is_err());
+
+        let unknown_prefer = serde_json::json!({
+            "kind":"prefer_from_parent_get",
+            "path":[{"key":"items"}],
+            "on_embed_miss":"fallback_scoped",
+            "fallback":{"kind":"query_scoped", "capability":"items_query", "param":"parent"}
+        });
+        let parsed: RelationMaterialization =
+            serde_json::from_value(unknown_prefer.clone()).unwrap();
+        assert_eq!(serde_json::to_value(&parsed).unwrap(), unknown_prefer);
+        let complete_prefer = serde_json::json!({
+            "kind":"prefer_from_parent_get",
+            "path":[{"key":"items"}],
+            "collection_coverage":"complete",
+            "on_embed_miss":"fallback_scoped",
+            "fallback":{"kind":"query_scoped", "capability":"items_query", "param":"parent"}
+        });
+        let parsed: RelationMaterialization =
+            serde_json::from_value(complete_prefer.clone()).unwrap();
+        assert_eq!(serde_json::to_value(&parsed).unwrap(), complete_prefer);
     }
 
     #[test]
@@ -332,6 +428,7 @@ mod tests {
         };
         let res = resolve_relation_row_resolution(
             &mat,
+            Cardinality::Many,
             "tags",
             "Tag",
             &crate::fixture_value!({"tags": [{"id": 1}]}),
@@ -347,6 +444,7 @@ mod tests {
             path: vec![JsonPathSegment::Key {
                 key: "labels".into(),
             }],
+            collection_coverage: crate::EmbeddedCollectionCoverage::Complete,
             on_embed_miss: EmbedOnMissPolicy::FallbackScoped,
             fallback: RelationScopedFallback::QueryScopedBindings {
                 capability: "issue_label_query".into(),
@@ -355,6 +453,7 @@ mod tests {
         };
         let res = resolve_relation_row_resolution(
             &mat,
+            Cardinality::Many,
             "labels",
             "Label",
             &crate::fixture_value!({"labels": []}),
@@ -373,6 +472,7 @@ mod tests {
                 },
                 JsonPathSegment::Wildcard { wildcard: true },
             ],
+            collection_coverage: crate::EmbeddedCollectionCoverage::Complete,
             on_embed_miss: EmbedOnMissPolicy::FallbackScoped,
             fallback: RelationScopedFallback::QueryScopedBindings {
                 capability: "issue_label_query".into(),
@@ -383,6 +483,7 @@ mod tests {
         let row = crate::fixture_value!({"labels": [{"id": 99}]});
         let resolutions = partition_prefer_resolutions(
             &mat,
+            Cardinality::Many,
             "labels",
             "Label",
             [(&row, Some(refs.as_slice()))],
@@ -401,6 +502,7 @@ mod tests {
                 JsonPathSegment::Key { key: "tags".into() },
                 JsonPathSegment::Wildcard { wildcard: true },
             ],
+            collection_coverage: crate::EmbeddedCollectionCoverage::Complete,
             on_embed_miss: EmbedOnMissPolicy::FallbackScoped,
             fallback: RelationScopedFallback::QueryScopedBindings {
                 capability: "langtag_query".into(),
@@ -411,6 +513,7 @@ mod tests {
         let projected = crate::fixture_value!({"id": "i1", "title": "Demo"});
         let res = resolve_relation_row_resolution(
             &mat,
+            Cardinality::Many,
             "tags",
             "LangTag",
             &projected,
@@ -418,6 +521,86 @@ mod tests {
             |_| true,
         );
         assert_eq!(res, RelationRowResolution::EmbeddedRefs(refs));
+    }
+
+    #[test]
+    fn prefer_unknown_collection_coverage_ignores_cached_refs() {
+        let mat = RelationMaterialization::PreferFromParentGet {
+            path: vec![
+                JsonPathSegment::Key { key: "tags".into() },
+                JsonPathSegment::Wildcard { wildcard: true },
+            ],
+            collection_coverage: crate::EmbeddedCollectionCoverage::Unknown,
+            on_embed_miss: EmbedOnMissPolicy::FallbackScoped,
+            fallback: RelationScopedFallback::QueryScoped {
+                capability: "langtag_query".into(),
+                param: "item_id".into(),
+            },
+        };
+        let refs = vec![Ref::new("LangTag", "t1")];
+        let parent = crate::fixture_value!({"id": "i1", "tags": [{"id": "t1"}]});
+        assert_eq!(
+            resolve_relation_row_resolution(
+                &mat,
+                Cardinality::Many,
+                "tags",
+                "LangTag",
+                &parent,
+                Some(&refs),
+                |_| { true },
+            ),
+            RelationRowResolution::ScopedQuery
+        );
+    }
+
+    #[test]
+    fn unknown_singleton_prefer_preserves_cached_target() {
+        let mat = RelationMaterialization::PreferFromParentGet {
+            path: vec![JsonPathSegment::Key {
+                key: "detail".into(),
+            }],
+            collection_coverage: crate::EmbeddedCollectionCoverage::Unknown,
+            on_embed_miss: EmbedOnMissPolicy::FallbackScoped,
+            fallback: RelationScopedFallback::QueryScoped {
+                capability: "detail_query".into(),
+                param: "parent_id".into(),
+            },
+        };
+        let refs = vec![Ref::new("Detail", "d1")];
+        assert_eq!(
+            resolve_relation_row_resolution(
+                &mat,
+                Cardinality::One,
+                "detail",
+                "Detail",
+                &crate::fixture_value!({"id": "p1"}),
+                Some(&refs),
+                |_| true,
+            ),
+            RelationRowResolution::EmbeddedRefs(refs)
+        );
+    }
+
+    #[test]
+    fn unknown_many_from_parent_get_fails_closed() {
+        let mat = RelationMaterialization::FromParentGet {
+            path: vec![JsonPathSegment::Key {
+                key: "children".into(),
+            }],
+            collection_coverage: crate::EmbeddedCollectionCoverage::Unknown,
+        };
+        assert_eq!(
+            resolve_relation_row_resolution(
+                &mat,
+                Cardinality::Many,
+                "children",
+                "Child",
+                &crate::fixture_value!({"children": [{"id": "c1"}]}),
+                Some(&[Ref::new("Child", "c1")]),
+                |_| true,
+            ),
+            RelationRowResolution::ScopedQuery
+        );
     }
 
     #[test]
@@ -429,6 +612,7 @@ mod tests {
                 JsonPathSegment::Key { key: "tags".into() },
                 JsonPathSegment::Wildcard { wildcard: true },
             ],
+            collection_coverage: crate::EmbeddedCollectionCoverage::Complete,
             on_embed_miss: EmbedOnMissPolicy::FallbackScoped,
             fallback: RelationScopedFallback::QueryScopedBindings {
                 capability: "langtag_query".into(),
@@ -437,8 +621,15 @@ mod tests {
         };
         let refs = vec![Ref::new("LangTag", "t1")];
         let row = crate::fixture_value!({"tags": [{"id": "t1"}]});
-        let res =
-            resolve_relation_row_resolution(&mat, "tags", "LangTag", &row, Some(&refs), |_| false);
+        let res = resolve_relation_row_resolution(
+            &mat,
+            Cardinality::Many,
+            "tags",
+            "LangTag",
+            &row,
+            Some(&refs),
+            |_| false,
+        );
         assert_eq!(res, RelationRowResolution::ScopedQuery);
     }
 
@@ -469,6 +660,7 @@ mod tests {
         ];
         let mat = RelationMaterialization::PreferFromParentGet {
             path: path.clone(),
+            collection_coverage: crate::EmbeddedCollectionCoverage::Complete,
             on_embed_miss: EmbedOnMissPolicy::FallbackScoped,
             fallback: RelationScopedFallback::HydrateFromEmbedPath {
                 path: path.clone(),
@@ -487,8 +679,15 @@ mod tests {
             extracted[0].get("name").and_then(Value::as_str),
             Some("pikachu")
         );
-        let res =
-            resolve_relation_row_resolution(&mat, "pokemon", "Pokemon", &row, None, |_| false);
+        let res = resolve_relation_row_resolution(
+            &mat,
+            Cardinality::Many,
+            "pokemon",
+            "Pokemon",
+            &row,
+            None,
+            |_| false,
+        );
         assert_eq!(res, RelationRowResolution::ScopedQuery);
     }
 
@@ -537,6 +736,7 @@ mod tests {
         };
         let res = resolve_relation_row_resolution(
             &mat,
+            Cardinality::Many,
             "tags",
             "LangTag",
             &crate::fixture_value!({ "item_id": "i1" }),

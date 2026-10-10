@@ -205,10 +205,9 @@ fn map_reduction(
     spec: &AggregateSpec,
     fn_: ReductionFunction,
 ) -> Result<TypedAggregate, FrameSchemaError> {
-    let field = spec
-        .field
-        .clone()
-        .ok_or(FrameSchemaError::UnknownColumn(format!("{fn_:?} field")))?;
+    let field = spec.field.clone().ok_or(FrameSchemaError::UnknownColumn(
+        "aggregation requires a declared field".into(),
+    ))?;
     Ok(TypedAggregate::Reduction {
         name: spec.name.clone(),
         fn_,

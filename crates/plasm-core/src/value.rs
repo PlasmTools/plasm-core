@@ -864,6 +864,28 @@ pub enum FieldType {
     },
 }
 
+impl std::fmt::Display for FieldType {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let name = match self {
+            Self::Boolean => "boolean",
+            Self::Number => "number",
+            Self::Integer => "integer",
+            Self::Uuid => "uuid",
+            Self::DigitId => "digit_id",
+            Self::Blob => "blob",
+            Self::String => "string",
+            Self::Select => "select",
+            Self::MultiSelect => "multi_select",
+            Self::Date => "date",
+            Self::Array => "array",
+            Self::Json => "json",
+            Self::Money => "money",
+            Self::EntityRef { target, .. } => return write!(f, "reference to {target}"),
+        };
+        f.write_str(name)
+    }
+}
+
 impl FieldType {
     /// Wire entity name for an [`FieldType::EntityRef`], if any.
     pub fn entity_ref_target(&self) -> Option<&str> {
@@ -958,6 +980,22 @@ pub enum CompOp {
     Contains,
     #[serde(rename = "exists")]
     Exists,
+}
+
+impl std::fmt::Display for CompOp {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(match self {
+            Self::Eq => "=",
+            Self::Neq => "!=",
+            Self::Gt => ">",
+            Self::Lt => "<",
+            Self::Gte => ">=",
+            Self::Lte => "<=",
+            Self::In => "in",
+            Self::Contains => "contains",
+            Self::Exists => "exists",
+        })
+    }
 }
 
 #[cfg(test)]

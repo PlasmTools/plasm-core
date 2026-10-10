@@ -97,6 +97,7 @@ entities:
         cardinality: many
         materialize:
           kind: from_parent_get
+          collection_coverage: complete
           path: [{key: emails}, {wildcard: true}]
       drafts:
         description: Draft messages in this thread.
@@ -104,6 +105,7 @@ entities:
         cardinality: many
         materialize:
           kind: from_parent_get
+          collection_coverage: complete
           path: [{key: drafts}, {wildcard: true}]
   Email:
     id_field: email_id
@@ -147,6 +149,7 @@ entities:
         cardinality: many
         materialize:
           kind: from_parent_get
+          collection_coverage: complete
           path: [{key: recipients}, {wildcard: true}]
       attachments:
         description: Files attached to this message, including filenames and download identities.
@@ -154,6 +157,7 @@ entities:
         cardinality: many
         materialize:
           kind: from_parent_get
+          collection_coverage: complete
           path: [{key: attachments}, {wildcard: true}]
   Draft:
     id_field: draft_id
@@ -199,6 +203,7 @@ entities:
         cardinality: many
         materialize:
           kind: from_parent_get
+          collection_coverage: complete
           path: [{key: recipients}, {wildcard: true}]
       attachments:
         description: Files attached to this message, including filenames and download identities.
@@ -206,6 +211,7 @@ entities:
         cardinality: many
         materialize:
           kind: from_parent_get
+          collection_coverage: complete
           path: [{key: attachments}, {wildcard: true}]
   Profile:
     id_field: email

@@ -177,11 +177,9 @@ entities:
         cardinality: many
         discovery: null
         materialize:
-          kind: from_parent_get
-          path:
-          - key: labels
-          - key: nodes
-          - wildcard: true
+          kind: query_scoped
+          capability: label_query
+          param: issue
       parent:
         target: Issue
         cardinality: one
@@ -189,11 +187,10 @@ entities:
         target: Issue
         cardinality: many
         materialize:
-          kind: from_parent_get
-          path:
-          - key: children
-          - key: nodes
-          - wildcard: true
+          kind: query_scoped_bindings
+          capability: issue_search
+          bindings:
+            parent_id: id
       comments:
         target: Comment
         cardinality: many
@@ -387,6 +384,10 @@ capabilities:
     description: Find issues by title and filter criteria.
     kind: query
     entity: Issue
+    scope:
+    - name: parent_id
+      value_ref: nv_issue_id
+      required: false
     selection:
     - name: q
       selection_effect: other
@@ -539,9 +540,13 @@ capabilities:
     - name
     - type
   label_query:
-    description: List issue labels.
+    description: List every label attached to one issue.
     kind: query
     entity: Label
+    scope:
+    - name: issue
+      value_ref: nv_issue_ref
+      required: true
     provides:
     - name
     - color

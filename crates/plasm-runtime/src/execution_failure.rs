@@ -311,7 +311,11 @@ impl From<crate::RuntimeError> for ExecutionFailure {
 }
 impl std::fmt::Display for ExecutionFailure {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{}: {:?}", self.code, self.recovery)
+        write!(f, "{}: {}", self.code, self.diagnostic())?;
+        if let Some(correction) = self.recovery_instructions() {
+            write!(f, " {correction}")?;
+        }
+        Ok(())
     }
 }
 impl std::error::Error for ExecutionFailure {}
@@ -437,7 +441,7 @@ mod tests {
         assert_eq!(failure.cause, FailureCause::ResponseContract);
         assert_eq!(failure.code, "pagination_progress_violation");
         assert_eq!(failure.recovery, RecoveryDisposition::Stop);
-        assert!(failure.diagnostic().contains("DuplicateIdentityOverlap"));
+        assert!(failure.diagnostic().contains("duplicate identity overlap"));
         assert_eq!(failure.recovery_instructions(), None);
     }
 

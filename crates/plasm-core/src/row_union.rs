@@ -7,12 +7,12 @@ use std::collections::BTreeSet;
 pub enum RowUnionError {
     #[error("union input row at index {index} on the {side} side must be an object (RA-14)")]
     InputRowNotObject { side: &'static str, index: usize },
-    #[error("union requires identical columns; left has {left_columns:?}, right has {right_columns:?} (RA-14)")]
+    #[error("union requires identical columns; left has {left_columns}, right has {right_columns} (RA-14)", left_columns = .left_columns.join(", "), right_columns = .right_columns.join(", "))]
     ColumnSetMismatch {
         left_columns: Vec<String>,
         right_columns: Vec<String>,
     },
-    #[error("union row has unexpected column `{column}`; expected {expected_columns:?} (RA-14)")]
+    #[error("union row has unexpected column `{column}`; expected {expected_columns} (RA-14)", expected_columns = .expected_columns.join(", "))]
     UnexpectedColumn {
         column: String,
         expected_columns: Vec<String>,

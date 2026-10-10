@@ -25,9 +25,9 @@ pub enum PlanCommitRehydrateError {
     Bundle(#[from] crate::plasm_comp_bundle::PlasmCompBundleError),
     #[error("rehydrated plan validation failed: {0}")]
     Validation(#[from] crate::plasm_step_convert::StepPayloadLiftError),
-    #[error("rehydrated plan flow denied ({:?}, {} violation(s))", .denial.verdict, .denial.violations.len())]
+    #[error("rehydrated plan was denied by information-flow policy ({} violation(s))", .denial.violations.len())]
     FlowDenied { denial: FlowDenial },
-    #[error("rehydrated plan policy revision mismatch (stored {stored:?}, current {current:?})")]
+    #[error("rehydrated plan was reviewed under a different policy revision")]
     PolicyRevisionMismatch {
         stored: PolicyRevision,
         current: Option<PolicyRevision>,
@@ -44,13 +44,11 @@ pub enum AsyncOperationStartError {
 
 #[derive(Debug, Clone, PartialEq, Eq, Error)]
 pub enum OperationHandleResolutionError {
-    #[error("invalid namespaced operation handle `{handle}`")]
+    #[error("operation handle has an invalid logical-session namespace")]
     InvalidNamespacedHandle { handle: String },
-    #[error(
-        "operation handle logical-session ref `{actual}` does not match current ref `{expected}`"
-    )]
+    #[error("operation handle belongs to a different logical session")]
     SessionRefMismatch { actual: String, expected: String },
-    #[error("namespaced logical-session operation required; use `{logical_session_ref}_oN` from the operation result")]
+    #[error("a namespaced operation handle is required; use the handle returned by the operation")]
     NamespacedHandleRequired { logical_session_ref: String },
     #[error("namespaced operation handles require a logical_session_ref context")]
     NamespaceContextRequired,
@@ -1094,6 +1092,10 @@ mod tests {
                 expected: "l_AAAAAAAAQACAAAAAAAAABQ".into(),
             }
         );
+        let diagnostic = mismatch.to_string();
+        assert!(diagnostic.contains("different logical session"));
+        assert!(!diagnostic.contains("l_AAAAAAAAQACAAAAAAAAAAQ"));
+        assert!(!diagnostic.contains("l_AAAAAAAAQACAAAAAAAAABQ"));
     }
 
     #[test]

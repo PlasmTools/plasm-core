@@ -21,7 +21,7 @@ pub enum DispatchError {
     SearchCapabilityMissing { index: usize },
     #[error("plan.nodes[{index}] references unknown capability `{capability}`")]
     CapabilityMissing { index: usize, capability: String },
-    #[error("plan.nodes[{index}] {plan_kind:?} cannot dispatch capability `{capability}` of kind {capability_kind:?}")]
+    #[error("plan.nodes[{index}] {plan_kind} cannot dispatch capability `{capability}` of kind {capability_kind}")]
     PlanKindMismatch {
         index: usize,
         plan_kind: PlanNodeKind,

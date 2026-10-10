@@ -1242,13 +1242,8 @@ label_query:
   path:
   - type: if
     condition:
-      type: equals
-      left:
-        type: var
-        name: shelf
-      right:
-        type: const
-        value: issue_label
+      type: exists
+      var: issue_number
     then_expr:
       type: format
       template: repos/{owner}/{repo}/issues/{issue_number}/labels

@@ -19,20 +19,20 @@ pub enum EvmError {
     HeaderName(#[source] alloy_reqwest::header::InvalidHeaderName),
     #[error("invalid EVM RPC auth header value: {0}")]
     HeaderValue(#[source] alloy_reqwest::header::InvalidHeaderValue),
-    #[error("ABI {phase:?} failed for `{signature}`: {source}")]
+    #[error("ABI {phase} failed for `{signature}`: {source}")]
     Abi {
         phase: EvmAbiPhase,
         signature: String,
         #[source]
         source: alloy_dyn_abi::Error,
     },
-    #[error("EVM RPC {operation:?} failed: {source}")]
+    #[error("EVM RPC {operation} failed: {source}")]
     Rpc {
         operation: EvmRpcOperation,
         #[source]
         source: alloy_provider::transport::TransportError,
     },
-    #[error("EVM decode index {index} out of bounds for {field_kind:?} (length {len})")]
+    #[error("EVM decode index {index} out of bounds for {field_kind} (length {len})")]
     DecodeIndex {
         field_kind: EvmDecodeFieldKind,
         index: usize,
@@ -413,4 +413,35 @@ fn u64_to_json(value: u64) -> JsonValue {
 
 fn plasm_value_to_json(value: &plasm_core::Value) -> Result<JsonValue, RuntimeError> {
     serde_json::to_value(value).map_err(RuntimeError::from)
+}
+
+impl std::fmt::Display for EvmAbiPhase {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(match self {
+            Self::EncodeCall => "encode call",
+            Self::DecodeOutput => "decode output",
+            Self::DecodeLog => "decode log",
+            Self::ParseInputType => "parse input type",
+        })
+    }
+}
+
+impl std::fmt::Display for EvmDecodeFieldKind {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(match self {
+            Self::Input => "input",
+            Self::Output => "output",
+            Self::Topic => "topic",
+            Self::Data => "data",
+        })
+    }
+}
+
+impl std::fmt::Display for EvmRpcOperation {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(match self {
+            Self::Call => "call",
+            Self::GetLogs => "get logs",
+        })
+    }
 }

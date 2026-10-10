@@ -1066,7 +1066,7 @@ mod tests {
                     _ => None,
                 };
                 self.wires.lock().unwrap().push(Wire {
-                    method: format!("{:?}", request.method),
+                    method: request.method.to_string(),
                     path: request.path.clone(),
                     query,
                     authorization,

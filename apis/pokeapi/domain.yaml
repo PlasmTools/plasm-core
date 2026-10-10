@@ -38,6 +38,7 @@ entities:
         discovery: null
         materialize:
           kind: prefer_from_parent_get
+          collection_coverage: complete
           path:
           - key: pokemon
           - wildcard: true
@@ -763,6 +764,7 @@ entities:
           - mega
         materialize:
           kind: from_parent_get
+          collection_coverage: complete
           path:
           - key: forms
           - wildcard: true
@@ -776,6 +778,7 @@ entities:
           - abilities
         materialize:
           kind: from_parent_get
+          collection_coverage: complete
           path:
           - key: abilities
           - wildcard: true
@@ -790,6 +793,7 @@ entities:
           - types
         materialize:
           kind: from_parent_get
+          collection_coverage: complete
           path:
           - key: types
           - wildcard: true
@@ -804,6 +808,7 @@ entities:
           - moves
         materialize:
           kind: from_parent_get
+          collection_coverage: complete
           path:
           - key: moves
           - wildcard: true
@@ -1083,6 +1088,7 @@ entities:
         cardinality: many
         materialize:
           kind: from_parent_get
+          collection_coverage: complete
           path:
           - key: moves
           - wildcard: true
@@ -1092,6 +1098,7 @@ entities:
         cardinality: many
         materialize:
           kind: prefer_from_parent_get
+          collection_coverage: complete
           path:
           - key: pokemon
           - wildcard: true

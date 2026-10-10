@@ -183,6 +183,36 @@ mod tests {
     }
 
     #[test]
+    fn collection_evidence_fault_is_not_a_program_repair_or_debug_dump() {
+        use plasm_core::collection_codec::{CollectionFault, CollectionIdentity, EvidenceGap, Gap};
+        let identity = CollectionIdentity {
+            catalog: [42; 32],
+            expression: [99; 32],
+            epoch: 0,
+        };
+        let fault = CollectionFault::Incomplete {
+            identity: identity.clone(),
+            coverage: plasm_core::collection_codec::ResultCoverage::Unknown,
+            gaps: [EvidenceGap {
+                source: identity,
+                reason: Gap::UndeclaredMembership,
+            }]
+            .into(),
+        };
+        let result = HostFault(plasm_runtime::ExecutionFailure::from(fault))
+            .into_tool_result(crate::mcp_delivery::McpDeliveryProfile::FullApps);
+        let text = serde_json::to_string(&result.content).unwrap();
+        assert!(text.contains("complete membership"));
+        assert!(!text.contains("CollectionIdentity"));
+        assert!(!text.contains("EvidenceGap"));
+        assert!(!text.contains("Revise the program"));
+        let failure = &result.structured_content.unwrap()["failure"];
+        assert_eq!(failure["cause"], "response_contract");
+        assert_eq!(failure["code"], "collection_incomplete");
+        assert_eq!(failure["recovery"], "stop");
+    }
+
+    #[test]
     fn model_delivery_uses_semantic_failure_text_without_receipt_json() {
         let mut failure = plasm_runtime::ExecutionFailure::new(
             plasm_runtime::FailureCause::Upstream,

@@ -643,7 +643,7 @@ impl Decoder<'_> {
                         .contract()
                 } else {
                     return Err(InferenceGraphError::UnsealedNamedType {
-                        identity: format!("{identity:?}::{name}"),
+                        identity: format!("{}::{name}", identity.source),
                     }
                     .into());
                 }

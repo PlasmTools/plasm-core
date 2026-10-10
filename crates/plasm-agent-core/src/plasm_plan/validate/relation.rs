@@ -26,7 +26,9 @@ pub enum PlanRelationValidationError {
     },
     #[error(transparent)]
     ViewEmbedProof(#[from] plasm_core::ViewEmbedProofError),
-    #[error("plan node {node_index} relation source `{source_id}` is not view-produced by node `{producer}` for view `{view}`")]
+    #[error(
+        "plan node {node_index} relation source `{source_id}` is not view-produced by node `{producer}` for view `{view}`"
+    )]
     SourceDoesNotReachProducer {
         node_index: usize,
         source_id: String,
@@ -34,7 +36,7 @@ pub enum PlanRelationValidationError {
         view: String,
     },
     #[error(
-        "plan node {node_index} view producer `{producer}` must be a surface root (got {kind:?})"
+        "plan node {node_index} view producer `{producer}` must be a surface root (got {kind})"
     )]
     ProducerIsNotSurfaceRoot {
         node_index: usize,

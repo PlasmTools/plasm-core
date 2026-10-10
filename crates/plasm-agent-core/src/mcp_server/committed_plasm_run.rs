@@ -376,7 +376,7 @@ async fn execute_mcp_live_run_inner(
                 LiveRunError::Timeout(d) => plasm_runtime::ExecutionFailure::new(
                     plasm_runtime::FailureCause::Runtime,
                     "live_run_timeout",
-                    format!("live run timed out after {d:?}"),
+                    format!("live run timed out after {}s", d.as_secs_f64()),
                 ),
                 LiveRunError::Failed(failure) => failure,
             })

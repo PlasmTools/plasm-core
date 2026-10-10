@@ -2,7 +2,7 @@ use thiserror::Error;
 
 #[derive(Debug, Error)]
 pub enum ChainError {
-    #[error("field `{entity}.{field}` is {actual:?}, not EntityRef")]
+    #[error("field `{entity}.{field}` is {actual}, not EntityRef")]
     FieldNotEntityRef {
         entity: String,
         field: String,

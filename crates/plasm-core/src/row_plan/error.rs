@@ -81,18 +81,18 @@ pub enum PredicateCompileError {
 
 #[derive(Debug, Clone, PartialEq, Eq, Error)]
 pub enum RowTypeError {
-    #[error("arithmetic `{op:?}` is not defined for {lhs:?} and {rhs:?}")]
+    #[error("arithmetic `{op}` is not defined for {lhs} and {rhs}; use compatible numeric or temporal operands")]
     ArithDomain {
         op: ArithOp,
         lhs: ValueContract,
         rhs: ValueContract,
     },
-    #[error("when() branches have mismatched types {then:?} vs {else_:?}")]
+    #[error("when() branches return {then} and {else_}; return the same type from both branches")]
     WhenBranchMismatch {
         then: ValueContract,
         else_: ValueContract,
     },
-    #[error("temporal arithmetic requires a temporal value, got {got:?}")]
+    #[error("temporal arithmetic requires a temporal value, got {got}; supply a typed date, datetime or duration")]
     TemporalArithNotTemporal { got: ValueContract },
     #[error("project spec cannot be used as a .with column")]
     ProjectIntoWith,

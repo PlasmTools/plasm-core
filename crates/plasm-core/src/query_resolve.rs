@@ -60,7 +60,7 @@ pub enum QueryCapabilityResolveError {
 
 #[derive(Error, Debug, Clone, PartialEq, Eq)]
 pub enum QueryMatchError {
-    #[error("every query capability for this entity requires scope parameters in the predicate; include every required scope field so one query row can match (partial scope is not enough). Available: {requirements:?}")]
+    #[error("Include all required scope fields for one query capability: {scopes}", scopes = scope_corrections(.requirements))]
     MissingScope {
         requirements: Vec<QueryScopeRequirement>,
     },
@@ -68,6 +68,20 @@ pub enum QueryMatchError {
     NoQueryCapability,
     #[error("catalog `{catalog}` is not loaded or does not define the requested entity")]
     CatalogUnavailable { catalog: String },
+}
+
+fn scope_corrections(requirements: &[QueryScopeRequirement]) -> String {
+    requirements
+        .iter()
+        .map(|requirement| {
+            format!(
+                "{} requires {}",
+                requirement.capability,
+                requirement.missing.join(", ")
+            )
+        })
+        .collect::<Vec<_>>()
+        .join("; ")
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

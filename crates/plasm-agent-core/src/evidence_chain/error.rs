@@ -6,7 +6,7 @@ pub enum EvidenceEmitError {
     ScopeNotInitialized,
     #[error("invalid PLASM_EVIDENCE_SIGNING_KEY: {0}")]
     SigningKeyInvalid(#[source] SigningKeyParseError),
-    #[error("run_id wire {supplied:?} does not match recomputed digest {expected}")]
+    #[error("run_id wire {supplied} does not match recomputed digest {expected}")]
     RunIdDigestMismatch { supplied: String, expected: String },
     #[error("evidence chain missing comp_committed segment")]
     MissingCompCommitted,

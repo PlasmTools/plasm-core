@@ -268,18 +268,12 @@ entities:
           - label
           - labels
         materialize:
-          kind: prefer_from_parent_get
-          on_embed_miss: fallback_scoped
-          path:
-          - key: labels
-          - wildcard: true
-          fallback:
-            kind: query_scoped_bindings
-            capability: label_query
-            bindings:
-              owner: owner
-              repo: repo
-              issue_number: number
+          kind: query_scoped_bindings
+          capability: label_query
+          bindings:
+            owner: owner
+            repo: repo
+            issue_number: number
       comments:
         target: IssueComment
         cardinality: many
@@ -452,7 +446,7 @@ entities:
     - owner
     - repo
     - sha
-    description: A versioned code snapshot used for history, blame, release, and branch decisions.
+    description: "A versioned code snapshot used for history, blame, release, and branch decisions. The GitHub commit endpoint caps changed-file results at 3,000, so this catalog does not expose a commit.files relation that could imply exhaustive membership."
     fields:
       owner:
         derive:
@@ -512,15 +506,6 @@ entities:
         path: stats.total
         value_ref: nv_wire_int
     relations:
-      files:
-        target: CommitFile
-        cardinality: many
-        description: Files touched by this commit.
-        materialize:
-          kind: from_parent_get
-          path:
-          - key: files
-          - wildcard: true
       author:
         target: User
         cardinality: one
@@ -2692,7 +2677,7 @@ capabilities:
       type: side_effect
       description: Mark thread read in the recipient's inbox.
   label_query:
-    description: List Label by shelf (label | issue_label).
+    description: List repository labels, or labels attached to one issue when issue_number is supplied.
     kind: query
     entity: Label
     scope_aggregate_key_policy: omit_when_redundant
@@ -2709,12 +2694,6 @@ capabilities:
     - name: issue_number
       value_ref: nv_issue_number
       required: false
-    selection:
-    - name: shelf
-      selection_effect: source
-      value_ref: nv_label_query_shelf
-      required: true
-      description: label | issue_label
     controls: []
   label_get:
     description: Resolve one repository label by name.
@@ -4350,7 +4329,6 @@ views:
     - id: labels
       capability: label_query
       bind:
-        shelf: {kind: literal, value: issue_label}
         owner:
           kind: scope
           param: owner
@@ -5286,12 +5264,6 @@ values:
     - workflow_run
     - workflow_run_by_workflow
     description: WorkflowRun query shelf
-  nv_label_query_shelf:
-    type: enum
-    enum:
-    - label
-    - issue_label
-    description: Label query shelf
   nv_issuecomment_query_shelf:
     type: enum
     enum:

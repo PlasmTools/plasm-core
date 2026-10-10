@@ -123,6 +123,11 @@ pub(crate) fn partition_prefer_from_parent_get(
         .collect();
     let resolutions = partition_prefer_resolutions(
         materialize,
+        parent_entity_def
+            .relations
+            .get(relation_key)
+            .expect("validated relation definition")
+            .cardinality,
         relation_key,
         expected_target,
         parent_row_refs,

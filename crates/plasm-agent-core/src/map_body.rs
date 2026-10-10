@@ -2,6 +2,44 @@
 use crate::{execute_session::ExecuteSession, plasm_plan::*};
 use thiserror::Error;
 
+fn relation_materialization_label(
+    materialization: &plasm_core::RelationMaterialization,
+) -> &'static str {
+    use plasm_core::RelationMaterialization as Materialization;
+
+    match materialization {
+        Materialization::Unavailable => "unavailable",
+        Materialization::FromParentGet { .. } => "embedded parent GET",
+        Materialization::PreferFromParentGet { .. } => "preferred embedded parent GET",
+        Materialization::QueryScoped { .. } => "scoped target query",
+        Materialization::QueryScopedBindings { .. } => "scoped target query bindings",
+        Materialization::GetScopedBindings { .. } => "scoped target GET bindings",
+        Materialization::ViewEmbed { .. } => "composed view relation output",
+    }
+}
+
+#[cfg(test)]
+mod presentation_tests {
+    use super::ScopeContractError;
+
+    #[test]
+    fn relation_materialization_error_uses_semantic_labels() {
+        let error = ScopeContractError::RelationMaterializationMismatch {
+            declared: Box::new(plasm_core::RelationMaterialization::Unavailable),
+            lowered: Box::new(plasm_core::RelationMaterialization::ViewEmbed {
+                view: "private-view-name".into(),
+            }),
+        };
+
+        let diagnostic = error.to_string();
+        assert_eq!(
+            diagnostic,
+            "body relation materialization differs from catalog: declared unavailable, lowered composed view relation output"
+        );
+        assert!(!diagnostic.contains("private-view-name"));
+    }
+}
+
 #[derive(Debug, Error)]
 pub enum MapBodyValidationError {
     #[error(transparent)]
@@ -114,7 +152,11 @@ pub enum ScopeContractError {
     RelationIdentityOmitted { field: String },
     #[error("body relation is missing from source catalog")]
     RelationCatalogEntryMissing,
-    #[error("body relation materialization differs from catalog: declared {declared:?}, lowered {lowered:?}")]
+    #[error(
+        "body relation materialization differs from catalog: declared {declared_label}, lowered {lowered_label}",
+        declared_label = relation_materialization_label(.declared),
+        lowered_label = relation_materialization_label(.lowered)
+    )]
     RelationMaterializationMismatch {
         declared: Box<plasm_core::RelationMaterialization>,
         lowered: Box<plasm_core::RelationMaterialization>,

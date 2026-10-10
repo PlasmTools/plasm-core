@@ -217,7 +217,7 @@ async fn live_materialize_pure(
             step_failure(
                 "plan_source_not_materialized",
                 format!(
-                    "source node {:?} has not been materialized",
+                    "source node `{}` has not been materialized",
                     source_id.as_str()
                 ),
             )
@@ -241,7 +241,7 @@ async fn live_materialize_pure(
                 let input = materialized.get(&binding_id).ok_or_else(|| {
                     step_failure(
                         "compute_binding_not_materialized",
-                        format!("compute binding {binding:?} has not been materialized"),
+                        format!("compute binding `{binding}` has not been materialized"),
                     )
                 })?;
                 crate::python_compute::require_complete_collection(&input.result)?;
@@ -458,7 +458,7 @@ async fn live_materialize_pure(
             .ok_or_else(|| {
                 step_failure(
                     "plan_source_not_materialized",
-                    format!("source node {:?} has not been materialized", src.as_str()),
+                    format!("source node `{}` has not been materialized", src.as_str()),
                 )
             })?,
         None => ctx.es.entry_id.clone(),

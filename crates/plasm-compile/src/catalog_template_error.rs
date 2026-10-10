@@ -39,7 +39,7 @@ pub enum CatalogTemplateError {
     RecipeMissing { capability: String },
     #[error("compiled request recipes target CGS {expected}, loaded CGS is {actual}")]
     RevisionMismatch { expected: String, actual: String },
-    #[error("compiled request recipe capability set does not match the CGS: expected {expected:?}, actual {actual:?}")]
+    #[error("compiled request recipe capability set does not match the CGS: expected {expected}, actual {actual}", expected = .expected.join(", "), actual = .actual.join(", "))]
     RecipeCapabilitySet {
         expected: Vec<String>,
         actual: Vec<String>,
@@ -49,7 +49,7 @@ pub enum CatalogTemplateError {
         #[source]
         source: Arc<plasm_core::catalog_il::CatalogIlError>,
     },
-    #[error("read compiled request recipes at {path:?}: {source}")]
+    #[error("read compiled request recipes at {path}: {source}", path = .path.display())]
     RecipeRead {
         path: PathBuf,
         #[source]
@@ -65,12 +65,12 @@ pub enum CatalogTemplateError {
         #[source]
         source: crate::CmlError,
     },
-    #[error("capability `{capability}` CML template: unknown bind reference(s) {wires:?} — allowed: bind.catalog_http_origin")]
+    #[error("capability `{capability}` CML template: unknown bind reference(s) {wires} — allowed: bind.catalog_http_origin", wires = .wires.join(", "))]
     UnknownBindingWires {
         capability: String,
         wires: Vec<String>,
     },
-    #[error("capability `{capability}`: credential binding requires a create or action capability (got {kind:?})")]
+    #[error("capability `{capability}`: credential binding requires a create or action capability (got {kind})")]
     CredentialCapabilityKind {
         capability: String,
         kind: plasm_core::CapabilityKind,
@@ -80,14 +80,14 @@ pub enum CatalogTemplateError {
         #[source]
         source: plasm_core::path_env::PathEnvProofError,
     },
-    #[error("capability `{capability}`: pagination param(s) {parameters:?} also appear as CML template vars (path/query/body/headers/multipart) — dual-wire is forbidden; remove the manual fields and let `pagination:` drive the wire")]
+    #[error("capability `{capability}`: pagination param(s) {parameters} also appear as CML template vars (path/query/body/headers/multipart) — dual-wire is forbidden; remove the manual fields and let `pagination:` drive the wire", parameters = .parameters.join(", "))]
     PaginationDualWire {
         capability: String,
         parameters: Vec<String>,
     },
     #[error("capability `{capability}`: initial-only query key `{field}` must be a field of the CML query object")]
     InitialOnlyQueryKey { capability: String, field: String },
-    #[error("capability `{capability}`: parameter(s) {parameters:?} are declared in domain.yaml but not referenced in CML (path/query/body/headers/multipart/pagination). Fabricated filters/params that never hit the wire are forbidden — wire them in mappings.yaml or remove them from the capability.")]
+    #[error("capability `{capability}`: parameter(s) {parameters} are declared in domain.yaml but not referenced in CML (path/query/body/headers/multipart/pagination). Fabricated filters/params that never hit the wire are forbidden — wire them in mappings.yaml or remove them from the capability.", parameters = .parameters.join(", "))]
     UnwiredCapabilityParameters {
         capability: String,
         parameters: Vec<String>,
@@ -128,7 +128,7 @@ pub enum CatalogTemplateError {
         node: String,
         capability: String,
     },
-    #[error("view `{view}` node `{node}`: unsupported capability kind {kind:?}")]
+    #[error("view `{view}` node `{node}`: unsupported capability kind {kind}")]
     ViewNodeCapabilityKind {
         view: String,
         node: String,
@@ -208,13 +208,13 @@ pub enum CatalogTemplateError {
     },
     #[error("capability `{capability}`: OpenAPI GET {path} declares pagination but CML omits `pagination:`")]
     OpenApiPaginationMissing { capability: String, path: String },
-    #[error("read {path:?}: {source}")]
+    #[error("read {path}: {source}", path = .path.display())]
     OpenApiRead {
         path: PathBuf,
         #[source]
         source: Arc<std::io::Error>,
     },
-    #[error("parse {path:?}: {source}")]
+    #[error("parse {path}: {source}", path = .path.display())]
     OpenApiJson {
         path: PathBuf,
         #[source]

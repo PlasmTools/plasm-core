@@ -68,8 +68,9 @@ fn run_artifact_wire_rejects_uuid_shape() {
     assert_eq!(error.preview, supplied);
     assert_eq!(
         error.to_string(),
-        format!("invalid `run_id`: expected `pr` + 64 hex digits (got {supplied:?})")
+        "invalid `run_id`: expected `pr` followed by 64 hexadecimal digits"
     );
+    assert!(!error.to_string().contains(supplied));
 }
 
 #[test]

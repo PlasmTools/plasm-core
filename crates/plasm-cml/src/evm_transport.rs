@@ -62,7 +62,7 @@ pub enum EvmCompileError {
         "Plasm compile-time input references cannot be coerced to solidity type '{solidity_type}'"
     )]
     UnboundOperand { solidity_type: DynSolType },
-    #[error("failed to coerce {value:?} to solidity type '{solidity_type}': {source}")]
+    #[error("value cannot be converted to Solidity type '{solidity_type}'; supply a value matching that ABI type")]
     SolidityCoercion {
         solidity_type: DynSolType,
         value: Value,

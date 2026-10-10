@@ -90,7 +90,7 @@ pub enum RequestFailure {
     },
     #[error("{0}")]
     GraphQlMutation(#[from] crate::api_error_detail::GraphQlMutationFailure),
-    #[error("MockServer {operation:?} failed with HTTP {status}")]
+    #[error("MockServer {operation} failed with HTTP {status}")]
     MockServer {
         operation: MockServerOperation,
         status: u16,
@@ -218,5 +218,15 @@ mod tests {
         let failure = error.source().unwrap();
         assert!(failure.is::<RequestFailure>());
         assert!(failure.source().unwrap().is::<serde_json::Error>());
+    }
+}
+
+impl std::fmt::Display for MockServerOperation {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(match self {
+            Self::CreateExpectation => "create expectation",
+            Self::ClearExpectations => "clear expectations",
+            Self::Reset => "reset",
+        })
     }
 }

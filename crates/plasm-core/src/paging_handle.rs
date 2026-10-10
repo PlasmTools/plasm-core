@@ -17,7 +17,7 @@ pub struct PagingHandle(String);
 #[derive(Debug, Clone, Error, PartialEq, Eq)]
 pub enum PagingHandleParseError {
     #[error(
-        "paging handle must be plain `pg` + digits or namespaced `l_<token>_pg` + digits (got {0:?})"
+        "Use the returned paging handle: plain `pg` + digits or namespaced `l_<token>_pg` + digits"
     )]
     InvalidFormat(String),
 }

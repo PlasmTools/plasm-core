@@ -146,7 +146,7 @@ mod operation_error_tests {
     }
 
     #[test]
-    fn operation_failed_detail_omits_private_diagnostic() {
+    fn operation_failed_detail_preserves_the_actionable_correction() {
         let err = OperationError::OperationFailed {
             handle: "o1".into(),
             error: plasm_runtime::ExecutionFailure::new(
@@ -159,10 +159,10 @@ mod operation_error_tests {
         let detail = err.detail();
         assert_eq!(
             detail,
-            "operation `o1` failed: concurrent_execute_conflict: Stop"
+            "operation `o1` failed: concurrent_execute_conflict: session graph changed during concurrent execute; retry the request"
         );
-        assert!(!detail.contains("session graph changed"));
-        assert!(!detail.contains("retry the request"));
+        assert!(!detail.contains("ExecutionFailure"));
+        assert!(!detail.contains("Stop"));
     }
 
     #[test]

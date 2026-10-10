@@ -410,7 +410,10 @@ pub(crate) async fn post_run_execute_session_inner(
                 Uri::from_static(problem_types::EXECUTE_INVALID_EXPRESSION),
             )
             .with_title("Gateway Timeout")
-            .with_detail(format!("live run timed out after {d:?}")),
+            .with_detail(format!(
+                "live run timed out after {:.3} seconds",
+                d.as_secs_f64()
+            )),
         ),
         Err(crate::run_delivery::LiveRunError::Failed(e)) => {
             crate::http_execute::execution_failure_response(e)

@@ -107,7 +107,7 @@ impl EffectEvent {
             ),
             author_label: author_label.map(str::to_string),
             reason: Some(format!(
-                "mutating capability {:?} on {}.{}",
+                "mutating capability {} on {}.{}",
                 self.kind, self.entry_id, self.entity
             )),
         }

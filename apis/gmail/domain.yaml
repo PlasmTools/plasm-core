@@ -175,6 +175,7 @@ entities:
         discovery: null
         materialize:
           kind: from_parent_get
+          collection_coverage: complete
           path:
           - key: messages
           - wildcard: true

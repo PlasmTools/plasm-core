@@ -411,7 +411,7 @@ pub(crate) fn execution_failed_response(
         cgs_ctx = %cgs_ctx,
         "expression execution failed (detail)"
     );
-    let detail = format!("{line_prefix}{e}\n\n{cgs_ctx}");
+    let detail = format!("{line_prefix}{e}");
     problem_response(
         Problem::custom(
             ProblemStatus::INTERNAL_SERVER_ERROR,

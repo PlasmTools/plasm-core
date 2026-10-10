@@ -62,6 +62,7 @@ entities:
         cardinality: many
         materialize:
           kind: from_parent_get
+          collection_coverage: complete
           path: [{key: targets_owe_to_source}, {key: breakdown}, {wildcard: true}]
       outgoing:
         description: Amount this participant owes the counterparty.
@@ -69,6 +70,7 @@ entities:
         cardinality: many
         materialize:
           kind: from_parent_get
+          collection_coverage: complete
           path: [{key: source_owes_to_targets}, {key: breakdown}, {wildcard: true}]
   BalanceSummary:
     id_field: access_token
@@ -85,6 +87,7 @@ entities:
         description: Counterparty identities, debt directions and amounts contributing to the totals.
         materialize:
           kind: from_parent_get
+          collection_coverage: complete
           path: [{key: breakdown}, {wildcard: true}]
   DownloadedFile:
     abstract: true
@@ -212,6 +215,7 @@ entities:
         cardinality: many
         materialize:
           kind: from_parent_get
+          collection_coverage: complete
           path:
           - key: members
           - wildcard: true
@@ -316,6 +320,7 @@ entities:
         cardinality: many
         materialize:
           kind: from_parent_get
+          collection_coverage: complete
           path: [{key: shares}, {wildcard: true}]
       comments:
         target: ExpenseComment
@@ -582,6 +587,7 @@ entities:
         cardinality: many
         materialize:
           kind: from_parent_get
+          collection_coverage: complete
           path: [{key: owed_by}, {wildcard: true}]
   Balance:
     id_field: access_token
@@ -621,6 +627,7 @@ entities:
         cardinality: many
         materialize:
           kind: from_parent_get
+          collection_coverage: complete
           path: [{key: participants}, {wildcard: true}]
   User:
     id_field: email

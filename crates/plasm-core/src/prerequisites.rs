@@ -198,6 +198,12 @@ pub struct CapabilityRef {
     pub capability: String,
 }
 
+impl std::fmt::Display for CapabilityRef {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}.{}", self.catalog, self.capability)
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct DeploymentBinding {

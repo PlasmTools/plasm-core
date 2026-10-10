@@ -1305,7 +1305,7 @@ async fn python_predicate_lazy_branch_preserves_joined_types() {
 }
 
 #[tokio::test]
-async fn python_quantified_predicate_rejects_unproven_collection() {
+async fn python_quantified_predicate_rejects_unobserved_collection() {
     let base = hermit_lang_matrix::fresh_python_parity_hermit_base_url().await;
     let case = Case {
         id: "quantifier_unknown",
@@ -1315,7 +1315,8 @@ async fn python_quantified_predicate_rejects_unproven_collection() {
     };
     let (es, host) = parity_context(&case, &base);
     for operation in ["any", "all"] {
-        let body = format!("item = E.get(\"i1\")\nreturn {{\"value\": {operation}(child.note == \"line-a\" for child in item.REL_UNPROVEN_LINES)}}");
+        // The catalog proves the array contract, but this response omits it.
+        let body = format!("item = E.get(\"i2\")\nreturn {{\"value\": {operation}(child.note == \"line-a\" for child in item.REL_UNPROVEN_LINES)}}");
         let bundle = compile_fixture(&es, &body).await.unwrap();
         let dry = evaluate_plasm_comp_dry(&es, &bundle).unwrap();
         let error = Box::pin(run_plasm_comp(
@@ -1331,7 +1332,7 @@ async fn python_quantified_predicate_rejects_unproven_collection() {
             None,
         ))
         .await
-        .expect_err("unproven relation must not establish a quantified result");
+        .expect_err("an unobserved relation must not establish a quantified result");
         assert_eq!(error.code, "collection_incomplete");
         assert_eq!(error.cause, plasm_runtime::FailureCause::ResponseContract);
     }

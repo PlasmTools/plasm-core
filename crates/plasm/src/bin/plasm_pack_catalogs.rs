@@ -720,6 +720,22 @@ mod tests {
 
     #[test]
     fn repaired_catalog_inputs_preserve_wire_semantics() {
+        let repository_labels = request(
+            "github",
+            "label_query",
+            &[("owner", "acme"), ("repo", "widgets")],
+        );
+        assert_eq!(repository_labels["path"], "/repos/acme/widgets/labels");
+        let issue_labels = request(
+            "github",
+            "label_query",
+            &[
+                ("owner", "acme"),
+                ("repo", "widgets"),
+                ("issue_number", "42"),
+            ],
+        );
+        assert_eq!(issue_labels["path"], "/repos/acme/widgets/issues/42/labels");
         let issue = request(
             "gitlab",
             "issue_for_project_query",

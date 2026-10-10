@@ -33,8 +33,8 @@ pub enum SessionMutateError {
     #[error("unknown entity `{entity}` in catalog `{entry_id}`")]
     UnknownEntity { entry_id: String, entity: String },
     #[error(
-        "unknown entity `{entity}` in catalog `{entry_id}`; nearest entity names: {nearest:?}"
-    )]
+        "unknown entity `{entity}` in catalog `{entry_id}`; nearest entity names: {nearest}"
+    , nearest = .nearest.join(", "))]
     UnknownSeedEntity {
         entry_id: String,
         entity: String,

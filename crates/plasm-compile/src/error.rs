@@ -17,14 +17,14 @@ pub enum CompileError {
     #[error(transparent)]
     TemporalInput(#[from] plasm_core::temporal_input::TemporalInputError),
 
-    #[error("No capability found for entity '{entity}' with kind '{kind:?}'")]
+    #[error("No capability found for entity '{entity}' with kind '{kind}'")]
     CapabilityNotFound { entity: String, kind: String },
 
-    #[error("Field type '{field_type:?}' is not supported by this backend")]
+    #[error("Field type '{field_type}' is not supported by this backend")]
     UnsupportedFieldType { field_type: String },
 
     #[error(
-        "Operator '{operator:?}' is not supported for field type '{field_type:?}' by this backend"
+        "Operator '{operator}' is not supported for field type '{field_type}' by this backend"
     )]
     UnsupportedOperator {
         operator: String,

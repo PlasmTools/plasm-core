@@ -10,14 +10,14 @@ pub const LOGICAL_SESSION_WIRE_TOKEN_LEN: usize = 22;
 
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum LogicalSessionWireRefError {
-    #[error("logical_session_ref must be `l_` + 22 URL-safe base64 chars (got {0:?})")]
+    #[error("logical_session_ref must use the `l_` prefix and a 22-character URL-safe token")]
     InvalidFormat(String),
     #[error(
-        "legacy transport slot refs (`s0`, …) are no longer accepted; call `plasm_context` for a new `l_<token>` handle"
+        "legacy transport slot refs are no longer accepted; call `plasm_context` for a logical session handle"
     )]
     LegacyTransportSlot(String),
     #[error(
-        "UUID text is not accepted as logical_session_ref; use the `l_<token>` from `plasm_context`"
+        "UUID text is not accepted as logical_session_ref; use the handle returned by `plasm_context`"
     )]
     RawUuidRejected(String),
 }
@@ -123,5 +123,20 @@ mod tests {
         assert!(wire.contains('l'));
         let id = parse_logical_session_wire_ref(&wire).expect("parse random uuid");
         assert_eq!(id.as_uuid(), uuid);
+    }
+
+    #[test]
+    fn invalid_refs_are_not_echoed_in_diagnostics() {
+        let supplied = "l_sensitive-token-value";
+        let error = parse_logical_session_wire_ref(supplied).unwrap_err();
+        assert!(!error.to_string().contains(supplied));
+        assert!(error.to_string().contains("URL-safe token"));
+
+        let legacy = parse_logical_session_wire_ref("sensitive-s9").unwrap_err();
+        assert!(!legacy.to_string().contains("sensitive-s9"));
+
+        let uuid = "00000000-0000-0000-0000-000000000001";
+        let raw_uuid = parse_logical_session_wire_ref(uuid).unwrap_err();
+        assert!(!raw_uuid.to_string().contains(uuid));
     }
 }

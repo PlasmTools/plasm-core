@@ -23,17 +23,21 @@ pub enum PlanDataInputError {
 
 #[derive(Debug, Error)]
 pub enum PlanExpressionError {
-    #[error("plan node {node_index} effect template kind {kind:?} is not executable")]
+    #[error("plan node {node_index} effect template kind {kind} is not executable")]
     NonExecutableEffect {
         node_index: usize,
         kind: PlanNodeKind,
     },
-    #[error("plan node {node_index} effect template input binding {binding_index} requires non-empty from and to aliases")]
+    #[error(
+        "plan node {node_index} effect template input binding {binding_index} requires non-empty from and to aliases"
+    )]
     EmptyEffectBinding {
         node_index: usize,
         binding_index: usize,
     },
-    #[error("plan node {node_index} {path} input binding {binding_index} requires a non-empty from alias")]
+    #[error(
+        "plan node {node_index} {path} input binding {binding_index} requires a non-empty from alias"
+    )]
     EmptyExpressionBinding {
         node_index: usize,
         path: String,
@@ -119,7 +123,9 @@ pub enum RenderTemplateValidationError {
     EmptyTemplate { node_index: usize },
     #[error("plan node {node_index} render template exceeds the supported length")]
     TemplateTooLong { node_index: usize },
-    #[error("render template uses abolished dollar interpolation at {span}; use Minijinja {{{{ expression }}}} syntax instead")]
+    #[error(
+        "render template uses abolished dollar interpolation at {span}; use Minijinja {{{{ expression }}}} syntax instead"
+    )]
     AbolishedInterpolation { span: String },
     #[error("render template is invalid")]
     InvalidTemplate(#[source] minijinja::Error),

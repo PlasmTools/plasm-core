@@ -328,7 +328,7 @@ pub enum PythonSourceError {
     IdentityUnpacking,
     #[error("Python source is invalid: duplicate compound identity key: `{entity}.{key}`")]
     DuplicateCompoundIdentityKey { entity: String, key: String },
-    #[error("Python source is invalid: compound Get requires every identity key: {missing:?}")]
+    #[error("Python source is invalid: compound Get requires every identity key: {missing}", missing = .missing.join(", "))]
     MissingCompoundIdentityKeys {
         entity: String,
         missing: Vec<String>,

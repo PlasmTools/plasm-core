@@ -143,7 +143,7 @@ pub fn coerce_value_for_field_type_with_policy(
             Ok(val)
         } else {
             Err(CoercionError::StringTemplateUnsupported {
-                field_type: format!("{ft:?}"),
+                field_type: ft.to_string(),
             })
         };
     }

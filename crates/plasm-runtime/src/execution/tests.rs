@@ -2408,6 +2408,7 @@ fn partition_scoped_query_fanout_one_job_per_parent() {
 fn prefer_graph_miss_yields_scoped_not_error() {
     let materialize = RelationMaterialization::PreferFromParentGet {
         path: vec![JsonPathSegment::Key { key: "tags".into() }],
+        collection_coverage: plasm_core::EmbeddedCollectionCoverage::Complete,
         on_embed_miss: plasm_core::EmbedOnMissPolicy::FallbackScoped,
         fallback: RelationScopedFallback::QueryScoped {
             capability: "cap".into(),
@@ -2436,6 +2437,7 @@ fn prefer_graph_miss_yields_scoped_not_error() {
     );
     let res = resolve_relation_row_resolution(
         &materialize,
+        plasm_core::Cardinality::Many,
         "tags",
         "LangTag",
         &parent.to_row_values(None),

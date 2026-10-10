@@ -15,7 +15,7 @@ pub struct OperationHandle(String);
 #[derive(Debug, Clone, Error, PartialEq, Eq)]
 pub enum OperationHandleParseError {
     #[error(
-        "operation handle must be plain `o` + digits or namespaced `l_<token>_o` + digits (got {0:?})"
+        "Use the returned operation handle: plain `o` + digits or namespaced `l_<token>_o` + digits"
     )]
     InvalidFormat(String),
 }

@@ -272,7 +272,9 @@ fn late_compute_failure_retains_acknowledged_write_receipts() {
         let symbols = es.teaching_exposure.as_ref().unwrap().to_symbol_map();
         let item = symbols.entity_sym_for("fixture", "Item");
         let touch = symbols.method_sym_for("fixture", "Item", "touch");
-        let code = format!("class Task(Program):\n    @compute\n    def broken(self, rows: list[Row]) -> str:\n        return rows[100].title\n    def build(self):\n        parents = {item}.query()\n        mapped = parents.map(lambda parent: {{\"receipt\": {item}.{touch}(), \"text\": self.broken({item}.query())}}, max_parents=3)\n        {item}.{touch}()\n        return mapped\n");
+        let code = format!(
+            "class Task(Program):\n    @compute\n    def broken(self, rows: list[Row]) -> str:\n        return rows[100].title\n    def build(self):\n        parents = {item}.query()\n        mapped = parents.map(lambda parent: {{\"receipt\": {item}.{touch}(), \"text\": self.broken({item}.query())}}, max_parents=3)\n        {item}.{touch}()\n        return mapped\n"
+        );
         let bundle = crate::plasm_compile::compile_python_program(&es, &code)
             .await
             .unwrap();

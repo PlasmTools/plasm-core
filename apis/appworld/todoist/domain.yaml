@@ -159,6 +159,7 @@ entities:
         cardinality: many
         materialize:
           kind: from_parent_get
+          collection_coverage: complete
           path: [{key: pending_invites}, {wildcard: true}]
       collaborators:
         description: People collaborating on this project.
@@ -166,6 +167,7 @@ entities:
         cardinality: many
         materialize:
           kind: from_parent_get
+          collection_coverage: complete
           path: [{key: collaborators}, {wildcard: true}]
       tasks:
         description: Tasks in this project.
@@ -271,6 +273,7 @@ entities:
         cardinality: many
         materialize:
           kind: from_parent_get
+          collection_coverage: complete
           path: [{key: labels}, {wildcard: true}]
       comments:
         description: Comments on this task.

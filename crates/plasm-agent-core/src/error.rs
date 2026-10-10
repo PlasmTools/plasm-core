@@ -130,12 +130,12 @@ pub enum AgentArgumentError {
     TargetEntityNotFound { entity: String },
     #[error("Missing required path flag --{flag} (CML path variable `{variable}`)")]
     MissingPathFlag { flag: String, variable: String },
-    #[error("Entity `{entity}` uses compound key {key_vars:?}; a GET capability is required to resolve CLI path variables")]
+    #[error("Entity `{entity}` uses compound key {key_vars}; a GET capability is required to resolve CLI path variables", key_vars = .key_vars.join(", "))]
     CompoundKeyRequiresGet {
         entity: String,
         key_vars: Vec<String>,
     },
-    #[error("Entity `{entity}` uses compound key {key_vars:?}; derived Gets have no CML path template for CLI key binding")]
+    #[error("Entity `{entity}` uses compound key {key_vars}; derived Gets have no CML path template for CLI key binding", key_vars = .key_vars.join(", "))]
     CompoundKeyGetRequiresPathTemplate {
         entity: String,
         key_vars: Vec<String>,

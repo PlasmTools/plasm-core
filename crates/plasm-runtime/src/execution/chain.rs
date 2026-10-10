@@ -775,6 +775,7 @@ impl ExecutionEngine {
             matches!(
                 resolve_relation_row_resolution(
                     rel.materialize.as_ref().expect("prefer"),
+                    rel.cardinality,
                     relation_key,
                     expected_target,
                     &parent_json,

@@ -22,8 +22,11 @@ pub(crate) async fn materialize_prefer_from_parent_get_relation(
     use super::plan_fanout_parallel::{self as fanout, RowFanoutPolicy};
     use plasm_core::collection_codec::{Demand, SharedRows, Transform};
     use plasm_runtime::execution::{ExecutionCollection, PayloadResidency};
-    let RelationMaterialization::PreferFromParentGet { fallback, .. } =
-        &relation.relation.materialize
+    let RelationMaterialization::PreferFromParentGet {
+        fallback,
+        collection_coverage,
+        ..
+    } = &relation.relation.materialize
     else {
         return Err(ExecutionFailure::new(
             plasm_runtime::FailureCause::Program,
@@ -46,6 +49,10 @@ pub(crate) async fn materialize_prefer_from_parent_get_relation(
     let read_cap = crate::plan_read_bounds::effective_relation_read_cap(relation);
     let rel_name = relation.relation.relation.as_str();
     let target_entity = relation.relation.target.entity.as_str();
+    let effective_coverage = crate::graph_rehydrate::effective_collection_coverage(
+        relation.relation.cardinality,
+        *collection_coverage,
+    );
     let rehydrator = crate::graph_rehydrate::GraphSurfaceRehydrator::new(
         es,
         st,
@@ -75,47 +82,53 @@ pub(crate) async fn materialize_prefer_from_parent_get_relation(
         relation.relation.ir.projection.as_deref(),
         Some(es),
     );
-    let snapshot =
-        crate::graph_rehydrate::RelationEmbedSnapshot::capture(&scoped_es, &parents, rel_name)
-            .await;
+    let snapshot = crate::graph_rehydrate::RelationEmbedSnapshot::capture(
+        &scoped_es,
+        &parents,
+        rel_name,
+        effective_coverage,
+    )
+    .await;
     for (index, (parent, cached)) in parents.iter().zip(snapshot.resident).enumerate() {
-        if let Some(membership) = parent.relations.get(rel_name) {
-            let all_present = cached.len() == membership.len();
-            if all_present
-                || matches!(
-                    fallback,
-                    plasm_core::RelationScopedFallback::HydrateFromEmbedPath { .. }
-                )
-            {
-                embedded[index] = true;
-                resident[index] = cached;
-                children[index] = Some(ExecutionCollection::graph(membership.record().clone()));
-                if let plasm_core::RelationScopedFallback::HydrateFromEmbedPath {
-                    get_capability,
-                    ..
-                } = fallback
+        if effective_coverage == plasm_core::EmbeddedCollectionCoverage::Complete {
+            if let Some(membership) = parent.relations.get(rel_name) {
+                let all_present = cached.len() == membership.len();
+                if all_present
+                    || matches!(
+                        fallback,
+                        plasm_core::RelationScopedFallback::HydrateFromEmbedPath { .. }
+                    )
                 {
-                    let missing = membership
-                        .iter()
-                        .filter(|reference| {
-                            !resident[index]
-                                .iter()
-                                .any(|row| &row.reference == *reference)
-                        })
-                        .cloned();
-                    super::prefer_embed_hydrate::push_prefer_hydrate_get_jobs(
-                        &mut jobs,
-                        &scoped_es,
-                        node_index,
-                        index,
-                        &base_display,
-                        &relation.relation.target,
-                        target_entity,
+                    embedded[index] = true;
+                    resident[index] = cached;
+                    children[index] = Some(ExecutionCollection::graph(membership.record().clone()));
+                    if let plasm_core::RelationScopedFallback::HydrateFromEmbedPath {
                         get_capability,
-                        missing,
-                    )?;
+                        ..
+                    } = fallback
+                    {
+                        let missing = membership
+                            .iter()
+                            .filter(|reference| {
+                                !resident[index]
+                                    .iter()
+                                    .any(|row| &row.reference == *reference)
+                            })
+                            .cloned();
+                        super::prefer_embed_hydrate::push_prefer_hydrate_get_jobs(
+                            &mut jobs,
+                            &scoped_es,
+                            node_index,
+                            index,
+                            &base_display,
+                            &relation.relation.target,
+                            target_entity,
+                            get_capability,
+                            missing,
+                        )?;
+                    }
+                    continue;
                 }
-                continue;
             }
         }
         if matches!(
@@ -125,7 +138,9 @@ pub(crate) async fn materialize_prefer_from_parent_get_relation(
             return Err(ExecutionFailure::new(
                 plasm_runtime::FailureCause::Runtime,
                 "relation_membership_observation_missing",
-                format!("relation `{rel_name}` lacks a decoded membership observation for parent {index}"),
+                format!(
+                    "relation `{rel_name}` lacks a decoded membership observation for parent {index}"
+                ),
             ));
         }
         let row_identity = source_mat

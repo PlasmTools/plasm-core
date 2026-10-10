@@ -50,8 +50,22 @@ fn cardinality_remedy(actual: usize) -> &'static str {
     }
 }
 
+fn input_cardinality_proof_label(proof: crate::plasm_plan::InputCardinalityProof) -> &'static str {
+    match proof {
+        crate::plasm_plan::InputCardinalityProof::Acknowledgement => "acknowledgement",
+        crate::plasm_plan::InputCardinalityProof::Collection => "collection",
+        crate::plasm_plan::InputCardinalityProof::StaticSingleton => "static singleton",
+        crate::plasm_plan::InputCardinalityProof::RuntimeCheckedSingleton => {
+            "runtime-checked singleton"
+        }
+    }
+}
+
 impl From<InputRowsError> for plasm_runtime::ExecutionFailure {
     fn from(error: InputRowsError) -> Self {
+        if let InputRowsError::IncompleteCollection(fault) = error {
+            return fault.into();
+        }
         let code = match &error {
             InputRowsError::Identifier(_) => "plan_identifier_invalid",
             InputRowsError::NodeUnavailable { .. } => "plan_input_not_materialized",
@@ -59,7 +73,7 @@ impl From<InputRowsError> for plasm_runtime::ExecutionFailure {
             InputRowsError::AcknowledgementMissing { .. } => "plan_acknowledgement_missing",
             InputRowsError::ScalarValueMissing => "plan_scalar_value_missing",
             InputRowsError::ValueShapeInvalid(_) => "plan_input_shape_invalid",
-            InputRowsError::IncompleteCollection(_) => "plan_input_collection_incomplete",
+            InputRowsError::IncompleteCollection(_) => unreachable!("handled above"),
             InputRowsError::Cardinality { .. } => "plan_input_cardinality_invalid",
         };
         Self::new(
@@ -202,7 +216,7 @@ pub(crate) fn materialized_singleton_inputs(
                 node.as_str(),
                 alias.as_str(),
                 mat.inline_row_count(),
-                format!("{:?} broadcast", input.proof).as_str(),
+                format!("{} broadcast", input_cardinality_proof_label(input.proof)).as_str(),
             ));
         }
         out.insert(

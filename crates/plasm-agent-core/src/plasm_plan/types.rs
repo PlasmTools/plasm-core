@@ -3,6 +3,7 @@
 use plasm_core::Expr;
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, HashMap};
+use std::fmt;
 use std::marker::PhantomData;
 use thiserror::Error;
 
@@ -775,6 +776,28 @@ impl PlanNodeKind {
                 | PlanNodeKind::Delete
                 | PlanNodeKind::Action
         )
+    }
+}
+
+impl fmt::Display for PlanNodeKind {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(match self {
+            Self::Query => "query",
+            Self::Search => "search",
+            Self::Get => "get",
+            Self::Create => "create",
+            Self::Update => "update",
+            Self::Delete => "delete",
+            Self::Action => "action",
+            Self::Data => "data input",
+            Self::Derive => "derived value",
+            Self::Compute => "compute",
+            Self::ForEach => "for_each scope",
+            Self::IterateUntil => "iterate_until scope",
+            Self::Relation => "relation traversal",
+            Self::MapBody => "map body",
+            Self::Capture => "capture",
+        })
     }
 }
 

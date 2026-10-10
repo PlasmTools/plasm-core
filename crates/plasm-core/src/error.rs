@@ -22,7 +22,7 @@ pub enum ValueDomainViolation {
         actual_bytes: usize,
         max_bytes: usize,
     },
-    #[error("value violates profile {0:?}")]
+    #[error("value violates profile {0}")]
     InvalidProfile(crate::ProfileId),
     #[error("value is shorter than minimum length {0}")]
     BelowMinLength(usize),
@@ -68,9 +68,7 @@ pub enum TypeError {
     #[error("Field '{field}' not found in entity '{entity}'")]
     FieldNotFound { field: String, entity: String },
 
-    #[error(
-        "Operator '{op:?}' not compatible with field type '{field_type:?}' for field '{field}'"
-    )]
+    #[error("Operator '{op}' not compatible with field type '{field_type}' for field '{field}'")]
     IncompatibleOperator {
         field: String,
         op: String,
@@ -163,25 +161,25 @@ impl TypeError {
     pub fn python_correction(&self) -> String {
         match self {
             Self::FieldNotFound { field, entity } => format!(
-                "Field {field:?} is not declared on {entity:?}. Use a field declared on that row's entity."
+                "Field `{field}` is not declared on `{entity}`. Use a field declared on that row's entity."
             ),
             Self::RelationNotFound { relation, entity } => format!(
-                "Relation {relation:?} is not declared on {entity:?}. Use a relation declared on that entity."
+                "Relation `{relation}` is not declared on `{entity}`. Use a relation declared on that entity."
             ),
             Self::EntityNotFound { entity } => format!(
-                "Entity {entity:?} is not in the current catalog. Use an exposed entity binding."
+                "Entity `{entity}` is not in the current catalog. Use an exposed entity binding."
             ),
             Self::CapabilityNotFound { capability } => format!(
-                "Capability {capability:?} is not declared in the current catalog. Use a declared method on its entity."
+                "Capability `{capability}` is not declared in the current catalog. Use a declared method on its entity."
             ),
             Self::GetCapabilityMismatch { capability, entity } => format!(
-                "Use a declared Get method on {entity:?}; {capability:?} does not read that entity."
+                "Use a declared Get method on `{entity}`; `{capability}` does not read that entity."
             ),
             Self::RequiredParameterOmitted { parameter, .. } => format!(
                 "Supply the required keyword {parameter}=value on the declared Python method."
             ),
             Self::InputRequired { capability } => format!(
-                "Capability {capability:?} requires input. Supply its declared required arguments."
+                "Capability `{capability}` requires input. Supply its declared required arguments."
             ),
             Self::RefKeyMismatch { source, .. } => format!(
                 "Get identity mismatch: {source}. Follow the declared get identity signature."
@@ -191,13 +189,13 @@ impl TypeError {
                 expected_type,
                 ..
             } => format!(
-                "Replace the teaching placeholder for {field:?} with an actual {expected_type} value."
+                "Replace the teaching placeholder for `{field}` with an actual {expected_type} value."
             ),
             Self::RecursiveError { relation, source } => {
-                format!("Relation {relation:?}: {}", source.python_correction())
+                format!("Relation `{relation}`: {}", source.python_correction())
             }
             Self::ChainTargetMissingGet { target_entity, .. } => format!(
-                "The relation target {target_entity:?} has no Get capability. Use a declared materialized relation or source."
+                "The relation target `{target_entity}` has no Get capability. Use a declared materialized relation or source."
             ),
             Self::CoercionFailure { .. } | Self::EntityRefCoercionFailure { .. } => {
                 self.to_string()
@@ -213,11 +211,11 @@ impl TypeError {
 
 #[derive(Debug, Clone, PartialEq, Eq, Error)]
 pub enum ReferenceContractError {
-    #[error("compound key {keys:?} required; use named form Entity(key=value, ...)")]
+    #[error("compound key {keys} required; use named form Entity(key=value, ...)", keys = .keys.join(", "))]
     CompoundKeyRequired { keys: Vec<String> },
     #[error("simple id form expected for this entity")]
     SimpleKeyRequired,
-    #[error("expected compound identity keys {expected:?}, got {actual:?}")]
+    #[error("expected compound identity keys {expected}, got {actual}", expected = .expected.join(", "), actual = .actual.join(", "))]
     CompoundKeysMismatch {
         expected: Vec<String>,
         actual: Vec<String>,
@@ -315,7 +313,7 @@ pub enum PipelineSegmentError {
 
 #[derive(Debug, Clone, Error)]
 pub enum RegistryWireMismatch {
-    #[error("array items field_type {actual:?} vs values {expected:?}")]
+    #[error("array items field_type {actual} vs values {expected}")]
     FieldType {
         actual: crate::FieldType,
         expected: crate::FieldType,
@@ -340,7 +338,7 @@ pub enum RelationMaterializeError {
     UnknownCapability,
     #[error("capability is declared on entity '{actual}' but relation targets '{expected}'")]
     DomainMismatch { actual: String, expected: String },
-    #[error("capability kind must be {expected} (got {actual:?})")]
+    #[error("capability kind must be {expected} (got {actual})")]
     KindMismatch {
         expected: crate::preflight::PreflightReadKind,
         actual: crate::CapabilityKind,
@@ -440,8 +438,8 @@ pub enum SchemaError {
     },
 
     #[error(
-        "Entity '{entity}' has multiple Get capabilities {capabilities:?} — set primary_read to the canonical Get capability id"
-    )]
+        "Entity '{entity}' has multiple Get capabilities {capabilities} — set primary_read to the canonical Get capability id"
+    , capabilities = .capabilities.join(", "))]
     AmbiguousPrimaryRead {
         entity: String,
         capabilities: Vec<String>,
@@ -469,8 +467,8 @@ pub enum SchemaError {
     },
 
     #[error(
-        "Entity '{entity}' has {count} Query capabilities {capabilities:?} — at most one kind:query per entity (compress with a selection discriminant + CML path branch, fold scoped lists into one query + relation materialize, or split entities)"
-    )]
+        "Entity '{entity}' has {count} Query capabilities {capabilities} — at most one kind:query per entity (compress with a selection discriminant + CML path branch, fold scoped lists into one query + relation materialize, or split entities)"
+    , capabilities = .capabilities.join(", "))]
     TooManyQueryCapabilities {
         entity: String,
         count: usize,
@@ -499,8 +497,8 @@ pub enum SchemaError {
     },
 
     #[error(
-        "Entity '{entity}' has {count} Search capabilities {capabilities:?} — at most one kind:search per entity (compress with a selection discriminant + CML path branch, or split entities)"
-    )]
+        "Entity '{entity}' has {count} Search capabilities {capabilities} — at most one kind:search per entity (compress with a selection discriminant + CML path branch, or split entities)"
+    , capabilities = .capabilities.join(", "))]
     TooManySearchCapabilities {
         entity: String,
         count: usize,
@@ -526,8 +524,8 @@ pub enum SchemaError {
     BodyVarInputParamCollision { capability: String },
 
     #[error(
-        "Entity '{entity}' has multiple unscoped {kind} capabilities: {capabilities:?}. At most one unscoped (primary) capability per kind is allowed; add role: scope to the parent-FK parameter on sub-resource capabilities."
-    )]
+        "Entity '{entity}' has multiple unscoped {kind} capabilities: {capabilities}. At most one unscoped (primary) capability per kind is allowed; add role: scope to the parent-FK parameter on sub-resource capabilities."
+    , capabilities = .capabilities.join(", "))]
     DuplicateCapability {
         entity: String,
         kind: String,
@@ -732,7 +730,7 @@ pub enum SchemaError {
     },
 
     #[error(
-        "Entity '{entity}' relation '{relation}': binding `{cap_param}` ← parent `{parent_field}` is not assignable ({parent_type:?} → {param_type:?})"
+        "Entity '{entity}' relation '{relation}': binding `{cap_param}` ← parent `{parent_field}` is not assignable ({parent_type} → {param_type})"
     )]
     RelationMaterializeBindingTypeMismatch {
         entity: String,
@@ -769,6 +767,9 @@ pub enum SchemaError {
         target: String,
     },
 
+    #[error("Entity '{entity}' relation '{relation}': embedded many-relation has no proven complete membership. Verify an exhaustive backend contract and declare collection_coverage: complete, or use a paginated scoped query; previews cannot implement an exhaustive relation.")]
+    RelationMembershipUnproven { entity: String, relation: String },
+
     #[error("Entity '{entity}' relation '{relation}': view_embed view '{view}' is not defined")]
     RelationViewEmbedUnknownView {
         entity: String,
@@ -787,8 +788,8 @@ pub enum SchemaError {
     },
 
     #[error(
-        "Entity '{entity}' relation '{relation}': no query/search capability on '{target}' declares parameters {params:?}"
-    )]
+        "Entity '{entity}' relation '{relation}': no query/search capability on '{target}' declares parameters {params}"
+    , params = .params.join(", "))]
     RelationMaterializeNoMatchingCapability {
         entity: String,
         relation: String,
@@ -824,8 +825,8 @@ pub enum SchemaError {
 
     /// One or more capabilities were not represented in teaching-line synthesis.
     #[error(
-        "Capability coverage incomplete: Python teaching omitted signatures for {uncovered:?}"
-    )]
+        "Capability coverage incomplete: Python teaching omitted signatures for {uncovered}"
+    , uncovered = .uncovered.iter().map(|(entity, capability)| format!("{entity}.{capability}")).collect::<Vec<_>>().join(", "))]
     CapabilityCoverageIncomplete { uncovered: Vec<(String, String)> },
 
     #[error("oauth.provider must be non-empty")]

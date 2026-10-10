@@ -348,7 +348,7 @@ pub enum CollectionFault {
     InputMismatch { index: usize },
     #[error("stored collection identity differs from requested identity")]
     IdentityMismatch,
-    #[error("whole collection required for {identity:?}: {coverage}; gaps={gaps:?}")]
+    #[error("This operation requires a complete collection; coverage is {coverage}. {correction}", correction = incomplete_collection_correction(.gaps))]
     Incomplete {
         identity: CollectionIdentity,
         coverage: ResultCoverage,
@@ -392,6 +392,24 @@ pub enum CollectionFault {
     FrameDigestMismatch,
     #[error("collection frame coverage and gaps are inconsistent")]
     FrameEvidenceInconsistent,
+}
+
+/// Render each distinct missing proof once. Keep occurrence identities and the
+/// full evidence set in the typed fault, rather than the correction channel.
+fn incomplete_collection_correction(gaps: &BTreeSet<EvidenceGap>) -> String {
+    let reasons: BTreeSet<_> = gaps.iter().map(|gap| gap.reason).collect();
+    if reasons.is_empty() {
+        return "Use a source with proven complete coverage before counting, aggregating or claiming absence.".into();
+    }
+    reasons
+        .into_iter()
+        .map(|reason| match reason {
+            Gap::UndeclaredMembership => "The response did not establish complete membership; re-observe the declared source before a whole-collection calculation.",
+            Gap::UnprovenTermination => "Pagination has not proven exhaustion; finish fetching through a declared terminal page.",
+            Gap::OmittedOccurrences => "Some occurrences were omitted; use the unabridged source before claiming a whole-collection result.",
+        })
+        .collect::<Vec<_>>()
+        .join(" ")
 }
 
 /// One production evidence implementation. Adapters consume this interface rather

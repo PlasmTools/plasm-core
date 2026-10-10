@@ -92,6 +92,7 @@ entities:
         cardinality: many
         materialize:
           kind: from_parent_get
+          collection_coverage: complete
           path: [{key: breakdown}, {wildcard: true}]
   RatingBucket:
     abstract: true
@@ -243,6 +244,7 @@ entities:
         cardinality: many
         materialize:
           kind: from_parent_get
+          collection_coverage: complete
           path: [{key: variations}, {wildcard: true}]
   Seller:
     id_field: seller_id
@@ -300,6 +302,7 @@ entities:
         cardinality: many
         materialize:
           kind: from_parent_get
+          collection_coverage: complete
           path:
           - key: sellers
           - wildcard: true
@@ -418,6 +421,7 @@ entities:
         cardinality: many
         materialize:
           kind: from_parent_get
+          collection_coverage: complete
           path:
           - key: cart_items
           - wildcard: true
@@ -471,6 +475,7 @@ entities:
         cardinality: many
         materialize:
           kind: from_parent_get
+          collection_coverage: complete
           path: [{key: order_items}, {wildcard: true}]
   OrderItem:
     abstract: true

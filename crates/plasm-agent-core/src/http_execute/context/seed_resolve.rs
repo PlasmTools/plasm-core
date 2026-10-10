@@ -18,12 +18,12 @@ pub enum SeedResolutionError {
     MissingCatalog { entry_id: String },
     #[error("seed entity name must not be empty")]
     EmptyEntity,
-    #[error("unknown entity `{entity}`; nearest entity names: {nearest:?}")]
+    #[error("unknown entity `{entity}`; nearest entity names: {nearest}", nearest = .nearest.join(", "))]
     UnknownEntity {
         entity: String,
         nearest: Vec<String>,
     },
-    #[error("entity name `{entity}` is ambiguous; matching catalog keys: {candidates:?}")]
+    #[error("entity name `{entity}` is ambiguous; matching catalog keys: {candidates}", candidates = .candidates.join(", "))]
     AmbiguousEntity {
         entity: String,
         candidates: Vec<String>,

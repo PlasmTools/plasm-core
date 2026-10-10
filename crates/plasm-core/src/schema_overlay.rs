@@ -55,7 +55,7 @@ pub enum OverlayValidationError {
     },
     #[error("source capability '{capability}' not found")]
     SourceCapabilityMissing { capability: String },
-    #[error("source capability '{capability}' must be query, get, or search (got {actual:?})")]
+    #[error("source capability '{capability}' must be query, get, or search (got {actual})")]
     SourceCapabilityKind {
         capability: String,
         actual: CapabilityKind,
@@ -66,7 +66,7 @@ pub enum OverlayValidationError {
         #[source]
         source: std::sync::Arc<minijinja::Error>,
     },
-    #[error("{context}: unknown bind references {wires:?} — allowed: bind.catalog_http_origin")]
+    #[error("{context}: unknown bind references {wires} — allowed: bind.catalog_http_origin", wires = .wires.join(", "))]
     UnknownBindingWires { context: String, wires: Vec<String> },
     #[error("source bind param '{param}' is not declared on capability '{capability}'")]
     BindParamUnknown { param: String, capability: String },
@@ -96,13 +96,13 @@ pub enum OverlayTemplateLocation {
 pub enum SchemaOverlayError {
     #[error("overlay source bind {parameter} resolved to an empty value")]
     EmptySourceBind { parameter: String },
-    #[error("JSON path {path:?} is missing key {segment}")]
+    #[error("JSON path {path} is missing key {segment}", path = .path.join("."))]
     JsonPathMissingKey { path: Vec<String>, segment: String },
-    #[error("JSON path {path:?} must resolve to an array")]
+    #[error("JSON path {path} must resolve to an array", path = .path.join("."))]
     JsonPathExpectedArray { path: Vec<String> },
-    #[error("JSON path {path:?} must resolve to an object")]
+    #[error("JSON path {path} must resolve to an object", path = .path.join("."))]
     JsonPathExpectedObject { path: Vec<String> },
-    #[error("JSON path {path:?} must resolve to a string")]
+    #[error("JSON path {path} must resolve to a string", path = .path.join("."))]
     JsonPathExpectedString { path: Vec<String> },
     #[error("overlay append-array merge path must not be empty")]
     EmptyAppendArrayPath,

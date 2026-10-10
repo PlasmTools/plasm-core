@@ -13,9 +13,9 @@ use thiserror::Error;
 pub enum PrerequisiteBindingRenderError {
     #[error("prerequisite closure references missing acquisition `{id}`")]
     MissingAcquisition { id: String },
-    #[error("prerequisite closure references missing capability `{reference:?}`")]
+    #[error("prerequisite closure references missing capability `{reference}`")]
     MissingCapability { reference: CapabilityRef },
-    #[error("prerequisite capability `{reference:?}` was not exposed to teaching")]
+    #[error("prerequisite capability `{reference}` was not exposed to teaching")]
     CapabilityNotExposed { reference: CapabilityRef },
     #[error("provider `{instance}` references missing input port `{port}`")]
     MissingProviderInput { instance: String, port: String },
@@ -25,7 +25,7 @@ pub enum PrerequisiteBindingRenderError {
     EmptyInputPath,
     #[error("prerequisite capability references missing catalog `{catalog}`")]
     MissingCatalog { catalog: String },
-    #[error("provider capability `{reference:?}` has no declared entity output")]
+    #[error("provider capability `{reference}` has no declared entity output")]
     MissingEntityOutput { reference: CapabilityRef },
     #[error("provider output `{field}` could not be serialized")]
     Serialization {

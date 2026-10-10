@@ -7,14 +7,15 @@ use plasm_core::value_expression::ValueOperation;
 use plasm_core::Value;
 use ruff_python_ast::{Expr, Stmt};
 use std::collections::HashSet;
+use std::fmt;
 
 #[derive(Debug, thiserror::Error)]
 pub enum PredicateFactsError {
     #[error("sealed predicate step `{step}` is missing")]
     MissingStep { step: String },
-    #[error("sealed predicate capture {path:?} is missing from step `{step}`")]
+    #[error("sealed predicate capture {path} is missing from step `{step}`", path = .path.join("."))]
     MissingCapture { step: String, path: Vec<String> },
-    #[error("sealed predicate kernel is unsupported: {kind:?}")]
+    #[error("sealed predicate kernel is unsupported: {kind}")]
     UnsupportedKernel { kind: UnsupportedPredicateKernel },
     #[error("sealed predicate compute source is invalid")]
     Parse(#[from] ruff_python_parser::ParseError),
@@ -32,6 +33,17 @@ pub enum UnsupportedPredicateKernel {
     Parameters,
     Body,
     Expression,
+}
+
+impl fmt::Display for UnsupportedPredicateKernel {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(match self {
+            Self::FunctionCount => "predicate must contain exactly one function",
+            Self::Parameters => "predicate function parameters are unsupported",
+            Self::Body => "predicate function body is unsupported",
+            Self::Expression => "predicate expression is unsupported",
+        })
+    }
 }
 
 fn unsupported(kind: UnsupportedPredicateKernel) -> PredicateFactsError {

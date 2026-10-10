@@ -288,7 +288,7 @@ pub enum RunArtifactInitError {
     InvalidUrl(#[source] url::ParseError),
     #[error("PLASM_RUN_ARTIFACTS_URL could not open an object store")]
     ObjectStore(#[source] object_store::Error),
-    #[error("could not create run-artifacts directory {path:?}")]
+    #[error("could not create run-artifacts directory {path}", path = .path.display())]
     CreateDirectory {
         path: PathBuf,
         #[source]

@@ -67,7 +67,9 @@ fn python_action_output_single_entity_rejects_wrong_row_count_before_downstream_
             let item = symbols.entity_sym_for("fixture", "Item");
             let export = symbols.method_sym_for("fixture", "Item", "export");
             let publish = symbols.method_sym_for("fixture", "Item", "publish");
-            let source = format!("class Export(Program):\n    def build(self):\n        document = {item}.{export}()\n        return {item}.{publish}(content=document.path)\n");
+            let source = format!(
+                "class Export(Program):\n    def build(self):\n        document = {item}.{export}()\n        return {item}.{publish}(content=document.path)\n"
+            );
             let bundle = compile_python_program(&es, &source).await.unwrap();
             let error = execute(&es, &host, &bundle).await.unwrap_err();
             assert_eq!(error.cause, plasm_runtime::FailureCause::ResponseContract);
@@ -554,7 +556,9 @@ fn composition_source(es: &ExecuteSession) -> String {
     let code = source(es)
         .replace("    def build(self):", "    @compute\n    def document(self, rows: list[Row]) -> str:\n        return \";\".join(row.title + \":\" + row.labels for row in rows)\n\n    def build(self):")
         .replace("        return items.map(", "        ids = items.select(\"id\").union(items.select(\"id\")).distinct(\"id\")\n        selected = items.where(lambda row: row.id in ids).where(lambda row: row.state == \"open\").distinct(\"id\").order_by(\"id\")\n        mapped = selected.map(");
-    format!("{code}        text = self.document(mapped)\n        {item}.{touch}(content=text)\n        return text\n")
+    format!(
+        "{code}        text = self.document(mapped)\n        {item}.{touch}(content=text)\n        return text\n"
+    )
 }
 
 #[test]
@@ -1000,7 +1004,9 @@ fn python_union_preserves_common_entity_receiver_authority() {
         let relation = symbols.ident_sym_relation_for("fixture", "Item", "tags");
         let publish = symbols.method_sym_for("fixture", "Item", "mark");
         for projection in ["", ".select('id')"] {
-            let prefix = format!("class Read(Program):\n    def build(self):\n        rows = {item}.query(){projection}.union({item}.query(){projection})\n");
+            let prefix = format!(
+                "class Read(Program):\n    def build(self):\n        rows = {item}.query(){projection}.union({item}.query(){projection})\n"
+            );
             let source = format!("{prefix}        return rows.flat_map(lambda r: r.{relation})\n");
             let bundle = compile_python_program(&es, &source)
                 .await
@@ -1020,7 +1026,9 @@ fn python_union_preserves_common_entity_receiver_authority() {
                 .collect();
             assert_eq!(effects, ["/marks/i0", "/marks/i1", "/marks/i2"]);
         }
-        let synthetic = format!("class Synthetic(Program):\n    def build(self):\n        real = {item}.query().select('id')\n        copied = real.map(lambda r: {{'id': r.id}}, max_parents=3)\n        return real.union(copied).flat_map(lambda r: r.{relation})\n");
+        let synthetic = format!(
+            "class Synthetic(Program):\n    def build(self):\n        real = {item}.query().select('id')\n        copied = real.map(lambda r: {{'id': r.id}}, max_parents=3)\n        return real.union(copied).flat_map(lambda r: r.{relation})\n"
+        );
         assert!(
             compile_python_program(&es, &synthetic).await.is_err(),
             "matching fields cannot manufacture receiver authority"
@@ -1071,7 +1079,9 @@ fn python_union_catalog_rows_preserve_effect_arguments() {
         let symbols = es.teaching_exposure.as_ref().unwrap().to_symbol_map();
         let item = symbols.entity_sym_for("fixture", "Item");
         let publish = symbols.method_sym_for("fixture", "Item", "publish");
-        let source = format!("class Write(Program):\n    def build(self):\n        rows = {item}.query().union({item}.query())\n        return rows.flat_map(lambda r: {item}.{publish}(content=r.id))\n");
+        let source = format!(
+            "class Write(Program):\n    def build(self):\n        rows = {item}.query().union({item}.query())\n        return rows.flat_map(lambda r: {item}.{publish}(content=r.id))\n"
+        );
         let bundle = compile_python_program(&es, &source).await.unwrap();
         execute(&es, &host, &bundle).await.unwrap();
         let mut effects = calls
@@ -1093,7 +1103,9 @@ fn python_union_distinct_entity_projections_remain_typed_values() {
         let symbols = es.teaching_exposure.as_ref().unwrap().to_symbol_map();
         let item = symbols.entity_sym_for("fixture", "Item");
         let tag = symbols.entity_sym_for("fixture", "Tag");
-        let source = format!("class Values(Program):\n    def build(self):\n        left = {item}.query().select('id')\n        right = {tag}.query(item_id='i2').select('id')\n        return left.union(right).map(lambda r: {{'value': r.id}}, max_parents=8)\n");
+        let source = format!(
+            "class Values(Program):\n    def build(self):\n        left = {item}.query().select('id')\n        right = {tag}.query(item_id='i2').select('id')\n        return left.union(right).map(lambda r: {{'value': r.id}}, max_parents=8)\n"
+        );
         let bundle = compile_python_program(&es, &source).await.unwrap();
         let result = execute(&es, &host, &bundle).await.unwrap();
         assert_eq!(rows(&result).len(), 5);
@@ -1106,7 +1118,9 @@ fn python_per_row_values_compose_without_a_result_field() {
         let (es, host, _) = fixture(3);
         let symbols = es.teaching_exposure.as_ref().unwrap().to_symbol_map();
         let item = symbols.entity_sym_for("fixture", "Item");
-        let source = format!("class Values(Program):\n    @compute\n    def title(self, row: Row) -> str:\n        return row.title\n    @compute\n    def upper(self, text: str) -> str:\n        return text.upper()\n    def build(self):\n        return {item}.query().select('title').map(lambda row: {{'title': self.title(row), 'upper': self.upper(self.title(row))}}, max_parents=8)\n");
+        let source = format!(
+            "class Values(Program):\n    @compute\n    def title(self, row: Row) -> str:\n        return row.title\n    @compute\n    def upper(self, text: str) -> str:\n        return text.upper()\n    def build(self):\n        return {item}.query().select('title').map(lambda row: {{'title': self.title(row), 'upper': self.upper(self.title(row))}}, max_parents=8)\n"
+        );
         let bundle = compile_python_program(&es, &source).await.unwrap();
         let run = execute(&es, &host, &bundle).await.unwrap();
         assert_eq!(
@@ -1157,7 +1171,9 @@ fn python_compute_infers_materialized_inputs_at_each_call() {
             .is_err(),
             "an explicit scalar assertion cannot change collection cardinality"
         );
-        let effectful = format!("class Bad(Program):\n    @compute\n    def write(self, row):\n        return row.{publish}(content='x')\n    def build(self):\n        return self.write({item}.get('i0'))\n");
+        let effectful = format!(
+            "class Bad(Program):\n    @compute\n    def write(self, row):\n        return row.{publish}(content='x')\n    def build(self):\n        return self.write({item}.get('i0'))\n"
+        );
         assert!(compile_python_program(&es, &effectful).await.is_err());
         assert_eq!(calls.lock().unwrap().len(), calls_before_rejection);
     });
@@ -1170,7 +1186,9 @@ fn python_row_entity_annotation_runs_without_granting_authority() {
         let symbols = es.teaching_exposure.as_ref().unwrap().to_symbol_map();
         let item = symbols.entity_sym_for("fixture", "Item");
         let relation = symbols.ident_sym_relation_for("fixture", "Item", "tags");
-        let source = format!("class P(Program):\n    @compute\n    def identity(self, rows: list[Row[{item}]]) -> list[Row[{item}]]:\n        return rows\n    def build(self):\n        values = self.identity({item}.query())\n        return values\n");
+        let source = format!(
+            "class P(Program):\n    @compute\n    def identity(self, rows: list[Row[{item}]]) -> list[Row[{item}]]:\n        return rows\n    def build(self):\n        values = self.identity({item}.query())\n        return values\n"
+        );
         let bundle = compile_python_program(&es, &source).await.unwrap();
         let run = execute(&es, &host, &bundle).await.unwrap();
         assert_eq!(rows(&run).len(), 1);
@@ -1195,7 +1213,9 @@ fn python_compute_infers_structural_return_at_public_admission() {
         let (es, host, _) = fixture(3);
         let symbols = es.teaching_exposure.as_ref().unwrap().to_symbol_map();
         let item = symbols.entity_sym_for("fixture", "Item");
-        let source = format!("class Summary(Program):\n    @compute\n    def describe(self, rows: list[Row]):\n        return [{{'key': row.id, 'title': row.title}} for row in rows]\n\n    def build(self):\n        return self.describe({item}.query())\n");
+        let source = format!(
+            "class Summary(Program):\n    @compute\n    def describe(self, rows: list[Row]):\n        return [{{'key': row.id, 'title': row.title}} for row in rows]\n\n    def build(self):\n        return self.describe({item}.query())\n"
+        );
         let bundle = compile_python_program(&es, &source).await.unwrap();
         let run = execute(&es, &host, &bundle).await.unwrap();
         assert_eq!(
@@ -1205,7 +1225,9 @@ fn python_compute_infers_structural_return_at_public_admission() {
         let bare_dict = source.replace("rows: list[Row]):", "rows: list[Row]) -> list[dict]:");
         let inferred = compile_python_program(&es, &bare_dict).await.unwrap();
         assert!(execute(&es, &host, &inferred).await.is_ok());
-        let nested = format!("class Bad(Program):\n    def build(self):\n        @compute\n        def inner(row: Row) -> str:\n            return row.title\n        return {item}.query().map(inner, max_parents=3)\n");
+        let nested = format!(
+            "class Bad(Program):\n    def build(self):\n        @compute\n        def inner(row: Row) -> str:\n            return row.title\n        return {item}.query().map(inner, max_parents=3)\n"
+        );
         assert!(compile_python_program(&es, &nested)
             .await
             .unwrap_err()
@@ -1230,7 +1252,9 @@ fn python_compute_closes_unannotated_local_helper_at_public_admission() {
             .unwrap()
             .to_symbol_map()
             .entity_sym_for("fixture", "Item");
-        let source = format!("class Summary(Program):\n    @compute\n    def describe(self, rows: list[Row]):\n        def project(items):\n            result = []\n            for row in items:\n                result.append({{'key': row.id, 'title': row.title}})\n            return result\n        return project(rows)\n    def build(self):\n        return self.describe({item}.query())\n");
+        let source = format!(
+            "class Summary(Program):\n    @compute\n    def describe(self, rows: list[Row]):\n        def project(items):\n            result = []\n            for row in items:\n                result.append({{'key': row.id, 'title': row.title}})\n            return result\n        return project(rows)\n    def build(self):\n        return self.describe({item}.query())\n"
+        );
         let bundle = compile_python_program(&es, &source).await.unwrap();
         let run = execute(&es, &host, &bundle).await.unwrap();
         assert_eq!(
@@ -1371,16 +1395,33 @@ fn python_reasonable_structural_input_and_set_capture() {
     on_runtime(async {
         let (es, host, _) = fixture(1);
         for (source, expected) in [
-            ("class P(Program):\n    @compute\n    def make(self, value: int) -> dict[str, int]:\n        return {'n': value}\n    @compute\n    def read(self, data: dict[str, int]) -> int:\n        return data['n']\n    def build(self):\n        return self.read(self.make(2))\n", json!({"value":2})),
-            ("class P(Program):\n    @compute\n    def show(self, rows: list[dict], suffix: str) -> str:\n        return rows[0].get('name', '') + suffix\n    def build(self):\n        return self.show([{'name': 'a', 'count': 2}], '!')\n", json!({"value":"a!"})),
-            ("class P(Program):\n    @compute\n    def show(self, data: dict[str, str | int]) -> str:\n        return str(data['name']) + str(data['count'])\n    def build(self):\n        return self.show({'name': 'a', 'count': 2})\n", json!({"value":"a2"})),
-            ("class P(Program):\n    def build(self):\n        names = {'a', 'a', 'b'}\n        return {'count': len(names), 'member': 'a' in names}\n", json!({"count":2,"member":true})),
+            (
+                "class P(Program):\n    @compute\n    def make(self, value: int) -> dict[str, int]:\n        return {'n': value}\n    @compute\n    def read(self, data: dict[str, int]) -> int:\n        return data['n']\n    def build(self):\n        return self.read(self.make(2))\n",
+                json!({"value":2}),
+            ),
+            (
+                "class P(Program):\n    @compute\n    def show(self, rows: list[dict], suffix: str) -> str:\n        return rows[0].get('name', '') + suffix\n    def build(self):\n        return self.show([{'name': 'a', 'count': 2}], '!')\n",
+                json!({"value":"a!"}),
+            ),
+            (
+                "class P(Program):\n    @compute\n    def show(self, data: dict[str, str | int]) -> str:\n        return str(data['name']) + str(data['count'])\n    def build(self):\n        return self.show({'name': 'a', 'count': 2})\n",
+                json!({"value":"a2"}),
+            ),
+            (
+                "class P(Program):\n    def build(self):\n        names = {'a', 'a', 'b'}\n        return {'count': len(names), 'member': 'a' in names}\n",
+                json!({"count":2,"member":true}),
+            ),
         ] {
             let bundle = compile_python_program(&es, source)
                 .await
-                .unwrap_or_else(|error| panic!("structural input admission failed: {error:?}\n{source}"));
+                .unwrap_or_else(|error| {
+                    panic!("structural input admission failed: {error:?}\n{source}")
+                });
             let run = execute(&es, &host, &bundle).await.unwrap();
-            assert_eq!(serde_json::to_value(&run.return_steps[0].result.entities()[0].fields).unwrap(), expected);
+            assert_eq!(
+                serde_json::to_value(&run.return_steps[0].result.entities()[0].fields).unwrap(),
+                expected
+            );
         }
     });
 }
@@ -1392,7 +1433,9 @@ fn python_program_helpers_preserve_independent_ports_and_effects() {
         let symbols = es.teaching_exposure.as_ref().unwrap().to_symbol_map();
         let item = symbols.entity_sym_for("fixture", "Item");
         let publish = symbols.method_sym_for("fixture", "Item", "publish");
-        let source = format!("class P(Program):\n    def _publish(self, row: Row, *, text: str='ok'):\n        if row.title is not None:\n            return {item}.{publish}(content=text)\n        return None\n    def build(self):\n        rows = {item}.query()\n        return rows.flat_map(lambda row: self._publish(row, text='done'))\n");
+        let source = format!(
+            "class P(Program):\n    def _publish(self, row: Row, *, text: str='ok'):\n        if row.title is not None:\n            return {item}.{publish}(content=text)\n        return None\n    def build(self):\n        rows = {item}.query()\n        return rows.flat_map(lambda row: self._publish(row, text='done'))\n"
+        );
         let bundle = compile_python_program(&es, &source).await.unwrap();
         assert!(calls.lock().unwrap().is_empty());
         execute(&es, &host, &bundle).await.unwrap();
@@ -1407,7 +1450,9 @@ fn python_program_helpers_preserve_independent_ports_and_effects() {
         for invalid in [
             "class P(Program):\n    def _loop(self, value):\n        return self._loop(value)\n    def build(self):\n        return self._loop(1)\n",
             "class P(Program):\n    def _leak(self, value):\n        return secret\n    def build(self):\n        secret = 'caller local'\n        return self._leak(1)\n",
-        ] { assert!(compile_python_program(&es, invalid).await.is_err()); }
+        ] {
+            assert!(compile_python_program(&es, invalid).await.is_err());
+        }
     });
 }
 
@@ -1444,7 +1489,9 @@ fn python_unelected_effect_has_no_completed_invocation() {
         let symbols = es.teaching_exposure.as_ref().unwrap().to_symbol_map();
         let item = symbols.entity_sym_for("fixture", "Item");
         let publish = symbols.method_sym_for("fixture", "Item", "publish");
-        let source = format!("class P(Program):\n    def build(self):\n        rows = {item}.query()\n        def choose(row):\n            if row.title == 'never matches':\n                return {item}.{publish}(content='done')\n            return None\n        return rows.flat_map(choose)\n");
+        let source = format!(
+            "class P(Program):\n    def build(self):\n        rows = {item}.query()\n        def choose(row):\n            if row.title == 'never matches':\n                return {item}.{publish}(content='done')\n            return None\n        return rows.flat_map(choose)\n"
+        );
         let bundle = compile_python_program(&es, &source).await.unwrap();
         let run = execute(&es, &host, &bundle).await.unwrap();
         assert_eq!(*calls.lock().unwrap(), vec!["/items"]);
@@ -1468,7 +1515,9 @@ fn python_flat_map_sequences_returned_effects_in_source_order() {
         let symbols = es.teaching_exposure.as_ref().unwrap().to_symbol_map();
         let item = symbols.entity_sym_for("fixture", "Item");
         let publish = symbols.method_sym_for("fixture", "Item", "publish");
-        let source = format!("class Effects(Program):\n    def build(self):\n        rows = {item}.query()\n        def sequence(row):\n            first = {item}.{publish}(content='first')\n            if row.title is not None:\n                second = {item}.{publish}(content='second')\n                return [first, second]\n            return [first]\n        return rows.flat_map(sequence)\n");
+        let source = format!(
+            "class Effects(Program):\n    def build(self):\n        rows = {item}.query()\n        def sequence(row):\n            first = {item}.{publish}(content='first')\n            if row.title is not None:\n                second = {item}.{publish}(content='second')\n                return [first, second]\n            return [first]\n        return rows.flat_map(sequence)\n"
+        );
         let bundle = compile_python_program(&es, &source).await.unwrap();
         assert!(calls.lock().unwrap().is_empty());
         let run = execute(&es, &host, &bundle).await.unwrap();
@@ -1498,7 +1547,9 @@ fn python_typed_pure_helper_materializes_only_its_complete_set_result() {
         let (es, host, calls) = fixture(2);
         let symbols = es.teaching_exposure.as_ref().unwrap().to_symbol_map();
         let item = symbols.entity_sym_for("fixture", "Item");
-        let source = format!("class Values(Program):\n    def titles(self, rows: list[Row]) -> set[str]:\n        names = set()\n        for row in rows:\n            if row.title is not None:\n                names.add(row.title)\n        return names\n    def build(self):\n        names = self.titles({item}.query())\n        return {{'has_title': 'Title 0' in names, 'count': len(names)}}\n");
+        let source = format!(
+            "class Values(Program):\n    def titles(self, rows: list[Row]) -> set[str]:\n        names = set()\n        for row in rows:\n            if row.title is not None:\n                names.add(row.title)\n        return names\n    def build(self):\n        names = self.titles({item}.query())\n        return {{'has_title': 'Title 0' in names, 'count': len(names)}}\n"
+        );
         let bundle = compile_python_program(&es, &source).await.unwrap();
         assert!(calls.lock().unwrap().is_empty());
         let run = execute(&es, &host, &bundle).await.unwrap();

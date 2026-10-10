@@ -104,7 +104,7 @@ pub struct RunArtifactWire(pub RunArtifactId);
 /// Rejection evidence for an invalid inbound run artifact identifier.
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 #[error(
-    "invalid `run_id`: expected `{prefix}` + 64 hex digits (got {preview:?})",
+    "invalid `run_id`: expected `{prefix}` followed by 64 hexadecimal digits",
     prefix = RUN_ARTIFACT_WIRE_PREFIX
 )]
 pub struct RunArtifactWireError {
@@ -229,7 +229,9 @@ pub enum RunArtifactDecodeError {
     Document(#[from] RunArtifactDocumentError),
     #[error("run artifact framing header is invalid")]
     InvalidFrameHeader,
-    #[error("run artifact framing metadata is truncated: declared {declared} bytes, available {available}")]
+    #[error(
+        "run artifact framing metadata is truncated: declared {declared} bytes, available {available}"
+    )]
     MetadataTruncated { declared: usize, available: usize },
 }
 
@@ -404,9 +406,9 @@ pub enum RunArtifactError {
     Metadata(#[from] ArtifactPayloadMetadataError),
     #[error(transparent)]
     Decode(#[from] RunArtifactDecodeError),
-    #[error("run artifact document contains invalid run_id `{run_id}`")]
+    #[error("run artifact document contains an invalid run_id")]
     InvalidDocumentRunId { run_id: String },
-    #[error("run artifact id mismatch: expected {expected}, stored {stored}")]
+    #[error("run artifact id does not match the requested artifact")]
     RunIdMismatch { expected: String, stored: String },
     #[error("evidence bundle is missing its chain head")]
     MissingEvidenceChainHead,
@@ -418,7 +420,7 @@ pub enum RunArtifactError {
     ObjectStore(#[from] object_store::Error),
     #[error("run artifact filesystem operation failed: {0}")]
     Filesystem(#[from] std::io::Error),
-    #[error("invalid path segment in run artifact key: {segment:?}")]
+    #[error("run artifact key contains an invalid path segment")]
     InvalidPathSegment { segment: String },
 }
 

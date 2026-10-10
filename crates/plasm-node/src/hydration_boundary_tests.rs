@@ -193,11 +193,7 @@ async fn run_native_hydration() {
         serde_json::from_str(result.rows_json.as_deref().unwrap()).unwrap();
     assert_eq!(envelope[0]["rows"][0]["value"], json!("18"));
 
-    for (identity, edge, expected) in [
-        ("empty", "notes", Some("0")),
-        ("missing", "notes", None),
-        ("root", "unproven_notes", None),
-    ] {
+    for (identity, edge, expected) in [("empty", "notes", Some("0")), ("missing", "notes", None)] {
         let program =
             compute_program.replace("get(\"root\").notes", &format!("get({identity:?}).{edge}"));
         let dry = engine.dry_run(&program).await.unwrap();

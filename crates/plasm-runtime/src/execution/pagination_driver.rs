@@ -418,3 +418,27 @@ mod tests {
         ));
     }
 }
+
+impl std::fmt::Display for PaginationTerminalReason {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(match self {
+            Self::ShortPage => "short page",
+            Self::StopWhen => "stop when",
+            Self::CursorExhausted => "cursor exhausted",
+            Self::CounterMax => "counter max",
+            Self::EmptyPage => "empty page",
+            Self::MaxPages => "max pages",
+            Self::MaxItems => "max items",
+            Self::RowMatchBudget => "row match budget",
+            Self::LinkHeaderExhausted => "link header exhausted",
+            Self::NextUrlExhausted => "next url exhausted",
+            Self::BlockRangeComplete => "block range complete",
+            Self::NonProgress => "non progress",
+            Self::RepeatedCoordinate => "repeated coordinate",
+            Self::DuplicateIdentityOverlap => "duplicate identity overlap",
+            Self::FullPageZeroNovel => "full page zero novel",
+            Self::ResumeContractMismatch => "resume contract mismatch",
+            Self::Complete => "complete",
+        })
+    }
+}

@@ -38,6 +38,7 @@ entities:
         cardinality: many
         materialize:
           kind: from_parent_get
+          collection_coverage: complete
           path:
           - key: pokemon
           - wildcard: true
@@ -58,6 +59,7 @@ entities:
         cardinality: many
         materialize:
           kind: from_parent_get
+          collection_coverage: complete
           path:
           - key: pokemon
           - wildcard: true

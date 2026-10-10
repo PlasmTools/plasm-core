@@ -91,7 +91,7 @@ fn federation_resolve_type_error(err: FederationResolveError) -> TypeError {
     match err {
         FederationResolveError::AmbiguousEntity { entity, entry_ids } => TypeError::EntityNotFound {
             entity: format!(
-                "`{entity}` is ambiguous across federated catalogs {entry_ids:?}; use the session `e#` symbol from the teaching table for the intended catalog"
+                "`{entity}` is ambiguous across federated catalogs {}; use the session `e#` symbol from the teaching table for the intended catalog", entry_ids.join(", ")
             ),
         },
         FederationResolveError::EntityNotInAnyCatalog { entity } => {
@@ -270,7 +270,7 @@ fn resolve_chain_target<'a>(
                 return Err(TypeError::IncompatibleOperator {
                     field: selector.to_string(),
                     op: "chain (EntityRef navigation)".to_string(),
-                    field_type: format!("{:?} (expected EntityRef or relation)", other),
+                    field_type: format!("{other} (expected EntityRef or relation)"),
                 });
             }
         };
@@ -784,8 +784,8 @@ fn type_check_comparison(
         if !fnv.field_type.compatible_operators().contains(&op) {
             return Err(TypeError::IncompatibleOperator {
                 field: field_name.to_string(),
-                op: format!("{:?}", op),
-                field_type: format!("{:?}", fnv.field_type),
+                op: op.to_string(),
+                field_type: fnv.field_type.to_string(),
             });
         }
 

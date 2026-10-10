@@ -18,12 +18,6 @@ entities:
           kind: from_parent_get
           collection_coverage: complete
           path: [{key: notes}, {wildcard: true}]
-      unproven_notes:
-        target: Note
-        cardinality: many
-        materialize:
-          kind: from_parent_get
-          path: [{key: notes}, {wildcard: true}]
       wire_notes:
         target: Note
         cardinality: many

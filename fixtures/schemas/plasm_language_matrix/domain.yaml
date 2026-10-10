@@ -199,6 +199,7 @@ entities:
         cardinality: many
         materialize:
           kind: from_parent_get
+          collection_coverage: complete
           path:
           - key: lines
           - wildcard: true
@@ -213,12 +214,12 @@ entities:
           - key: lines
           - wildcard: true
       tags:
-        description: Tags embedded on LangItem GET when present; scoped query per item when embed is absent
-          or incomplete
+        description: Complete tags list embedded on LangItem GET when present; scoped query per item when absent
         target: LangTag
         cardinality: many
         materialize:
           kind: prefer_from_parent_get
+          collection_coverage: complete
           on_embed_miss: fallback_scoped
           path:
           - key: tags
@@ -242,6 +243,7 @@ entities:
         cardinality: many
         materialize:
           kind: prefer_from_parent_get
+          collection_coverage: complete
           on_embed_miss: fallback_scoped
           path:
           - key: compound_branches
@@ -255,6 +257,7 @@ entities:
         cardinality: many
         materialize:
           kind: from_parent_get
+          collection_coverage: complete
           path:
           - key: children
           - wildcard: true

@@ -35,7 +35,7 @@ pub enum ValueDomainError {
     },
     #[error("invalid regular expression: {0}")]
     InvalidPattern(#[source] regex::Error),
-    #[error("invalid value for profile {0:?}")]
+    #[error("invalid value for profile {0}")]
     InvalidProfileValue(ProfileId),
     #[error("value is shorter than min_length {0}")]
     BelowMinLength(usize),
@@ -182,6 +182,12 @@ pub enum ProfileId {
     Enum,
     #[serde(rename = "multi_enum")]
     MultiEnum,
+}
+
+impl std::fmt::Display for ProfileId {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(self.type_name())
+    }
 }
 
 impl ProfileId {

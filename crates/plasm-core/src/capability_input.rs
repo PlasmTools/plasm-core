@@ -31,7 +31,7 @@ fn expected_type_phrase_for_placeholder(field_type: &FieldType) -> String {
             "one of the allowed values the schema lists for this field — never `$`".into()
         }
         FieldType::Array | FieldType::MultiSelect | FieldType::Json => format!(
-            "a value matching {:?} for this slot — never the literal `$`",
+            "a value matching {} for this slot — never the literal `$`",
             field_type
         ),
     }
@@ -117,7 +117,7 @@ fn validate_array_item_value(
         return Err(TypeError::IncompatibleValue {
             field: path.to_string(),
             value_type: value.type_name().to_string(),
-            field_type: format!("{:?}", spec.field_type),
+            field_type: spec.field_type.to_string(),
         });
     }
     if matches!(spec.field_type, FieldType::Array) {
@@ -137,8 +137,8 @@ fn validate_array_item_value(
             if !allowed.contains(&sv.to_string()) {
                 return Err(TypeError::IncompatibleValue {
                     field: path.to_string(),
-                    value_type: format!("'{sv}' (not in allowed values)"),
-                    field_type: format!("select with values: {:?}", allowed),
+                    value_type: "undeclared select value".into(),
+                    field_type: format!("select with allowed values: {}", allowed.join(", ")),
                 });
             }
         }
@@ -216,8 +216,8 @@ pub(crate) fn validate_multiselect_value(
         if !allowed.contains(&sv.to_string()) {
             return Err(TypeError::IncompatibleValue {
                 field: format!("{path}[{i}]"),
-                value_type: format!("'{sv}' (not in allowed values)"),
-                field_type: format!("multi_select with values: {:?}", allowed),
+                value_type: "undeclared select value".into(),
+                field_type: format!("multi_select with values: {}", allowed.join(", ")),
             });
         }
     }
@@ -302,7 +302,7 @@ pub(crate) fn validate_concrete_named_value(
                     _ => TypeError::IncompatibleValue {
                         field: field_path.to_string(),
                         value_type: coerced.type_name().to_string(),
-                        field_type: format!("{:?}", nv.field_type),
+                        field_type: nv.field_type.to_string(),
                     },
                 });
             }
@@ -660,7 +660,7 @@ pub(crate) fn validate_input_type(
                     _ => TypeError::IncompatibleValue {
                         field: path.to_string(),
                         value_type: value.type_name().to_string(),
-                        field_type: format!("{:?}", field_type),
+                        field_type: field_type.to_string(),
                     },
                 });
             }
@@ -671,7 +671,7 @@ pub(crate) fn validate_input_type(
                     return Err(TypeError::IncompatibleValue {
                         field: path.to_string(),
                         value_type: format!("'{}' (not in allowed values)", string_val),
-                        field_type: format!("select with values: {:?}", allowed),
+                        field_type: format!("select with allowed values: {}", allowed.join(", ")),
                     });
                 }
             }
@@ -1085,7 +1085,14 @@ fn validate_cross_field_rule(
     if !valid {
         return Err(TypeError::IncompatibleValue {
             field: rule.fields.join(", "),
-            value_type: format!("fields present: {:?}", present_fields),
+            value_type: format!(
+                "fields present: {}",
+                present_fields
+                    .iter()
+                    .map(|field| field.as_str())
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            ),
             field_type: rule.error_message.clone(),
         });
     }

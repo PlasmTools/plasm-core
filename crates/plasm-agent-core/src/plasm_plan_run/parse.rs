@@ -286,7 +286,7 @@ pub fn typecheck_parsed_for_session(
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
-#[error("Plasm program node targets catalog {entry_id:?}, but that catalog is not loaded in this execute session")]
+#[error("Plasm program node targets catalog {entry_id}, but that catalog is not loaded in this execute session")]
 pub struct SessionCatalogNotLoaded {
     pub entry_id: String,
 }

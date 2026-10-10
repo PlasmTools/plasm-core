@@ -488,7 +488,8 @@ mod tests {
                 1 => Some(RelationMaterialization::QueryScopedBindings { capability, bindings: Default::default() }),
                 2 => Some(RelationMaterialization::GetScopedBindings { capability, bindings: Default::default() }),
                 3..=5 => Some(RelationMaterialization::PreferFromParentGet {
-                    path: vec![], on_embed_miss: EmbedOnMissPolicy::FallbackScoped,
+                    path: vec![], collection_coverage: Default::default(),
+                    on_embed_miss: EmbedOnMissPolicy::FallbackScoped,
                     fallback: match mode {
                         3 => RelationScopedFallback::QueryScoped { capability, param: "scope_seat".into() },
                         4 => RelationScopedFallback::QueryScopedBindings { capability, bindings: Default::default() },

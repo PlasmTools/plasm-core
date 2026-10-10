@@ -35,7 +35,7 @@ pub enum IdentityCodecError {
         #[source]
         source: crate::ParentFieldTypeError,
     },
-    #[error("identity field `{entity}.{field}` has unsupported type {field_type:?}")]
+    #[error("identity field `{entity}.{field}` has unsupported type {field_type}")]
     UnsupportedFieldType {
         entity: String,
         field: String,
@@ -53,7 +53,7 @@ pub enum IdentityCodecError {
     InvalidBoolean,
     #[error("identity operand must be a declared scalar")]
     ExpectedScalar,
-    #[error("identity operand does not match declared {field_type:?} scalar domain")]
+    #[error("identity operand does not match declared {field_type} scalar domain")]
     ScalarDomainMismatch { field_type: crate::FieldType },
     #[error(transparent)]
     DigitId(#[from] crate::wire_coercion::DigitIdCoercionError),

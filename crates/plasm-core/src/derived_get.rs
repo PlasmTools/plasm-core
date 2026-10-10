@@ -10,7 +10,7 @@ use serde::{Deserialize, Serialize};
 pub enum DerivedGetError {
     #[error("plan references unknown get capability")]
     UnknownGet,
-    #[error("outer capability must be kind: get (got {actual:?})")]
+    #[error("outer capability must be kind: get (got {actual})")]
     OuterKind { actual: CapabilityKind },
     #[error("derived get must have mapping: None (no CML transport)")]
     UnexpectedMapping,
@@ -18,7 +18,7 @@ pub enum DerivedGetError {
     CapabilityNameMismatch { actual: String, expected: String },
     #[error("unknown source query `{query}`")]
     UnknownSourceQuery { query: String },
-    #[error("source `{query}` must be kind: query (got {actual:?})")]
+    #[error("source `{query}` must be kind: query (got {actual})")]
     SourceKind {
         query: String,
         actual: CapabilityKind,

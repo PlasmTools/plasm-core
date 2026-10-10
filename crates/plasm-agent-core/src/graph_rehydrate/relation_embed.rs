@@ -1,7 +1,10 @@
 //! CEP-4: relation embed snapshot — one graph lock, then lock-free apply.
 
 use indexmap::IndexMap;
-use plasm_core::{Cardinality, Ref, RelationMaterialization, CGS, MAX_FROM_PARENT_GET_EMBED_DEPTH};
+use plasm_core::{
+    Cardinality, EmbeddedCollectionCoverage, Ref, RelationMaterialization, CGS,
+    MAX_FROM_PARENT_GET_EMBED_DEPTH,
+};
 use plasm_runtime::{entity_to_row_values, CachedEntity, SessionMaterialization};
 
 /// Resident observations for all parent occurrences from one coherent graph read.
@@ -10,19 +13,37 @@ pub(crate) struct RelationEmbedSnapshot {
     pub(crate) resident: Vec<plasm_core::collection_codec::SharedRows<CachedEntity>>,
 }
 
+pub(crate) fn effective_collection_coverage(
+    cardinality: plasm_core::RelationCardinality,
+    declared: EmbeddedCollectionCoverage,
+) -> EmbeddedCollectionCoverage {
+    if cardinality == plasm_core::RelationCardinality::One {
+        EmbeddedCollectionCoverage::Complete
+    } else {
+        declared
+    }
+}
+
 impl RelationEmbedSnapshot {
     pub(crate) async fn capture(
         session: &crate::execute_session::ExecuteSession,
         parents: &plasm_core::collection_codec::SharedRows<CachedEntity>,
         relation_name: &str,
+        collection_coverage: EmbeddedCollectionCoverage,
     ) -> Self {
         let guard = session.lock_graph_cache().await;
-        Self::from_graph(parents, relation_name, guard.materialization())
+        Self::from_graph(
+            parents,
+            relation_name,
+            collection_coverage,
+            guard.materialization(),
+        )
     }
 
     fn from_graph(
         parents: &plasm_core::collection_codec::SharedRows<CachedEntity>,
         relation_name: &str,
+        collection_coverage: EmbeddedCollectionCoverage,
         graph: &SessionMaterialization,
     ) -> Self {
         use plasm_core::collection_codec::SharedRows;
@@ -30,6 +51,9 @@ impl RelationEmbedSnapshot {
             resident: parents
                 .iter()
                 .map(|parent| {
+                    if collection_coverage != EmbeddedCollectionCoverage::Complete {
+                        return SharedRows::default();
+                    }
                     let rows: Vec<_> = parent
                         .relations
                         .get(relation_name)
@@ -44,12 +68,27 @@ impl RelationEmbedSnapshot {
     }
 }
 
-fn relation_is_embed_materialize(materialize: &Option<RelationMaterialization>) -> bool {
-    matches!(
-        materialize,
-        Some(RelationMaterialization::FromParentGet { .. })
-            | Some(RelationMaterialization::PreferFromParentGet { .. })
-    )
+fn relation_is_embed_materialize(
+    materialize: &Option<RelationMaterialization>,
+    cardinality: Cardinality,
+) -> bool {
+    match materialize {
+        Some(RelationMaterialization::FromParentGet {
+            collection_coverage,
+            ..
+        }) => {
+            cardinality == Cardinality::One
+                || *collection_coverage == EmbeddedCollectionCoverage::Complete
+        }
+        Some(RelationMaterialization::PreferFromParentGet {
+            collection_coverage,
+            ..
+        }) => {
+            cardinality == Cardinality::One
+                || *collection_coverage == EmbeddedCollectionCoverage::Complete
+        }
+        _ => false,
+    }
 }
 
 /// Agent wire row with `from_parent_get` relation objects embedded from the session graph.
@@ -74,7 +113,7 @@ pub(crate) fn wire_row_with_from_parent_embeds(
             continue;
         };
         for (rel_name, rel_schema) in &def.relations {
-            if !relation_is_embed_materialize(&rel_schema.materialize) {
+            if !relation_is_embed_materialize(&rel_schema.materialize, rel_schema.cardinality) {
                 continue;
             }
             let Some(refs) = e.relations.get(rel_name.as_str()) else {
@@ -102,7 +141,18 @@ pub(crate) fn wire_row_with_from_parent_embeds(
             cgs.get_entity(e.reference.entity_type.as_str()),
         ) {
             for (rel_name, rel_schema) in &def.relations {
-                if !relation_is_embed_materialize(&rel_schema.materialize) {
+                if !relation_is_embed_materialize(&rel_schema.materialize, rel_schema.cardinality) {
+                    if rel_schema.cardinality == Cardinality::Many
+                        && matches!(
+                            rel_schema.materialize.as_ref(),
+                            Some(RelationMaterialization::FromParentGet { .. })
+                                | Some(RelationMaterialization::PreferFromParentGet { .. })
+                        )
+                    {
+                        // Retain observed refs in the graph, but never project an
+                        // unproven embed as a complete collection for compute.
+                        obj.shift_remove(rel_name.as_str());
+                    }
                     continue;
                 }
                 let Some(refs) = e.relations.get(rel_name.as_str()) else {
@@ -177,8 +227,12 @@ pub(crate) fn collect_all_embedded_relation_targets(
     relation_name: &str,
     target_entity: &str,
     parents: &plasm_core::collection_codec::SharedRows<CachedEntity>,
+    collection_coverage: EmbeddedCollectionCoverage,
     graph: &SessionMaterialization,
 ) -> Option<Vec<CachedEntity>> {
+    if collection_coverage != EmbeddedCollectionCoverage::Complete {
+        return None;
+    }
     let mut out = Vec::new();
     for parent in parents {
         if !parent.relations.contains_key(relation_name) {
@@ -230,7 +284,12 @@ mod tests {
         graph
             .merge_graph(vec![identity_only_entity(&a), identity_only_entity(&b)])
             .unwrap();
-        let snapshot = RelationEmbedSnapshot::from_graph(&parents, "children", &graph);
+        let snapshot = RelationEmbedSnapshot::from_graph(
+            &parents,
+            "children",
+            EmbeddedCollectionCoverage::Complete,
+            &graph,
+        );
         let rows = &snapshot.resident[0];
         assert_eq!(
             rows.iter().map(|row| &row.reference).collect::<Vec<_>>(),
@@ -245,6 +304,13 @@ mod tests {
         assert_eq!(rows[0].last_updated, observed_update);
         assert_eq!(rows[1].reference, a);
         assert_eq!(graph.get(&b).unwrap().last_updated, observed_update + 42);
+        let unknown = RelationEmbedSnapshot::from_graph(
+            &parents,
+            "children",
+            EmbeddedCollectionCoverage::Unknown,
+            &graph,
+        );
+        assert!(unknown.resident.iter().all(|rows| rows.is_empty()));
     }
 
     #[test]
@@ -304,6 +370,7 @@ mod tests {
                             "children",
                             "Child",
                             &vec![parent.clone()].into(),
+                            EmbeddedCollectionCoverage::Complete,
                             &graph.lock().unwrap(),
                         )
                         .unwrap();
@@ -345,15 +412,16 @@ mod tests {
                     }]).unwrap();
                 }
             }
-            let rows = collect_all_embedded_relation_targets("children", "Child", &vec![parent.clone()].into(), &graph).unwrap();
+            let rows = collect_all_embedded_relation_targets("children", "Child", &vec![parent.clone()].into(), EmbeddedCollectionCoverage::Complete, &graph).unwrap();
             proptest::prop_assert_eq!(rows.iter().map(|r| r.reference.clone()).collect::<Vec<_>>(), refs);
             for (row, exists) in rows.iter().zip(&present) {
                 proptest::prop_assert_eq!(row.completeness, if *exists { plasm_runtime::EntityCompleteness::Complete } else { plasm_runtime::EntityCompleteness::Summary });
             }
-            proptest::prop_assert!(collect_all_embedded_relation_targets("missing", "Child", &vec![parent.clone()].into(), &graph).is_none());
+            proptest::prop_assert!(collect_all_embedded_relation_targets("missing", "Child", &vec![parent.clone()].into(), EmbeddedCollectionCoverage::Complete, &graph).is_none());
             if !present.is_empty() {
-                proptest::prop_assert!(collect_all_embedded_relation_targets("children", "Other", &vec![parent].into(), &graph).is_none());
+                proptest::prop_assert!(collect_all_embedded_relation_targets("children", "Other", &vec![parent.clone()].into(), EmbeddedCollectionCoverage::Complete, &graph).is_none());
             }
+            proptest::prop_assert!(collect_all_embedded_relation_targets("children", "Child", &vec![parent].into(), EmbeddedCollectionCoverage::Unknown, &graph).is_none());
         }
     }
 
@@ -402,12 +470,29 @@ mod tests {
     }
 
     #[test]
-    fn wire_row_embeds_declared_relation_from_graph() {
+    fn wire_row_embeds_unknown_singleton_prefer_relation_from_graph() {
         use plasm_core::loader::load_schema_dir;
 
         let dir = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
             .join("../../fixtures/schemas/plasm_language_matrix");
-        let cgs = load_schema_dir(&dir).expect("langmatrix");
+        let mut cgs = load_schema_dir(&dir).expect("langmatrix");
+        cgs.entities
+            .get_mut("LangSummary")
+            .unwrap()
+            .relations
+            .get_mut("detail")
+            .unwrap()
+            .materialize = Some(RelationMaterialization::PreferFromParentGet {
+            path: vec![plasm_core::JsonPathSegment::Key {
+                key: "detail".into(),
+            }],
+            collection_coverage: EmbeddedCollectionCoverage::Unknown,
+            on_embed_miss: plasm_core::EmbedOnMissPolicy::FallbackScoped,
+            fallback: plasm_core::RelationScopedFallback::QueryScoped {
+                capability: "detail_query".into(),
+                param: "summary_id".into(),
+            },
+        });
         let summary = CachedEntity {
             reference: Ref::new("LangSummary", "sum-i1"),
             fields: indexmap::IndexMap::new(),
@@ -456,6 +541,65 @@ mod tests {
     }
 
     #[test]
+    fn wire_row_does_not_embed_prefer_relation_without_complete_coverage() {
+        use plasm_core::loader::load_schema_dir;
+
+        let dir = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("../../fixtures/schemas/plasm_language_matrix");
+        let mut cgs = load_schema_dir(&dir).expect("langmatrix");
+        let materialize = cgs
+            .entities
+            .get_mut("LangItem")
+            .unwrap()
+            .relations
+            .get_mut("tags")
+            .unwrap()
+            .materialize
+            .as_mut()
+            .unwrap();
+        let RelationMaterialization::PreferFromParentGet {
+            collection_coverage,
+            ..
+        } = materialize
+        else {
+            panic!("fixture tags relation must use PreferFromParentGet");
+        };
+        *collection_coverage = EmbeddedCollectionCoverage::Unknown;
+
+        let parent_ref = Ref::new("LangItem", "parent");
+        let tag_ref = Ref::new("LangTag", "tag");
+        let parent = CachedEntity {
+            reference: parent_ref,
+            fields: Default::default(),
+            relations: IndexMap::from([("tags".into(), vec![tag_ref.clone()])])
+                .into_iter()
+                .map(|(name, refs)| {
+                    (
+                        name,
+                        plasm_core::row_contract::RelationMembership::observe(
+                            None,
+                            &"relation_fixture",
+                            refs,
+                            None,
+                        )
+                        .unwrap(),
+                    )
+                })
+                .collect(),
+            last_updated: 0,
+            version: 0,
+            completeness: plasm_runtime::EntityCompleteness::Complete,
+            unavailable_fields: Default::default(),
+        };
+        let tag = identity_only_entity(&tag_ref);
+        let mut graph = SessionMaterialization::new();
+        graph.merge_graph(vec![tag]).unwrap();
+
+        let row = wire_row_with_from_parent_embeds(&parent, &cgs, &graph);
+        assert!(row.get("tags").is_none());
+    }
+
+    #[test]
     fn prefer_projected_parent_relation_refs_without_graph_falls_back_scoped() {
         let mat = RelationMaterialization::PreferFromParentGet {
             path: vec![
@@ -467,6 +611,7 @@ mod tests {
                     key: "pokemon".into(),
                 },
             ],
+            collection_coverage: plasm_core::EmbeddedCollectionCoverage::Complete,
             on_embed_miss: EmbedOnMissPolicy::FallbackScoped,
             fallback: RelationScopedFallback::HydrateFromEmbedPath {
                 path: Vec::new(),
@@ -477,6 +622,7 @@ mod tests {
         let projected = crate::fixture_value!({"name": "electric"});
         let resolutions = partition_prefer_resolutions(
             &mat,
+            plasm_core::Cardinality::Many,
             "pokemon",
             "Pokemon",
             [(&projected, Some(refs.as_slice()))],
@@ -490,6 +636,7 @@ mod tests {
     fn partition_prefer_resolutions_matches_row_resolution() {
         let mat = RelationMaterialization::PreferFromParentGet {
             path: vec![JsonPathSegment::Key { key: "tags".into() }],
+            collection_coverage: plasm_core::EmbeddedCollectionCoverage::Complete,
             on_embed_miss: EmbedOnMissPolicy::FallbackScoped,
             fallback: RelationScopedFallback::QueryScoped {
                 capability: "cap".into(),
@@ -500,6 +647,7 @@ mod tests {
         let refs = vec![Ref::new("Tag", "1")];
         let resolutions = partition_prefer_resolutions(
             &mat,
+            plasm_core::Cardinality::Many,
             "tags",
             "Tag",
             [(&row, Some(refs.as_slice()))],

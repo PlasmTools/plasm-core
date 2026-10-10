@@ -2,6 +2,14 @@
 
 use super::*;
 
+fn execution_mode_label(mode: ExecutionMode) -> &'static str {
+    match mode {
+        ExecutionMode::Live => "live",
+        ExecutionMode::Replay => "replay",
+        ExecutionMode::Hybrid => "hybrid",
+    }
+}
+
 impl ExecutionEngine {
     /// Execute a create expression (no target ID — creates a new resource)
     pub(crate) async fn execute_create(
@@ -164,7 +172,7 @@ impl ExecutionEngine {
                 })
             }
             _ => Err(RuntimeError::UnsupportedExecutionMode {
-                mode: format!("create with {:?}", mode),
+                mode: format!("create with {}", execution_mode_label(mode)),
             }),
         }
     }
@@ -271,7 +279,7 @@ impl ExecutionEngine {
                 })
             }
             _ => Err(RuntimeError::UnsupportedExecutionMode {
-                mode: format!("delete with {:?}", mode),
+                mode: format!("delete with {}", execution_mode_label(mode)),
             }),
         }
     }
@@ -527,7 +535,7 @@ impl ExecutionEngine {
                 })
             }
             _ => Err(RuntimeError::UnsupportedExecutionMode {
-                mode: format!("invoke with {:?} mode", mode),
+                mode: format!("invoke with {} mode", execution_mode_label(mode)),
             }),
         }
     }

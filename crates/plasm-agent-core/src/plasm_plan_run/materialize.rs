@@ -253,7 +253,7 @@ pub(crate) async fn materialize_validated_relation_traversal(
         materialization_failure(
             "relation_source_not_materialized",
             format!(
-                "relation source node {:?} has not been materialized",
+                "relation source node `{}` has not been materialized",
                 relation.relation.source.as_str()
             ),
         )
@@ -659,7 +659,7 @@ pub(crate) async fn materialized_rows(
         materialization_failure(
             "plan_source_not_materialized",
             format!(
-                "source node {:?} has not been materialized",
+                "source node `{}` has not been materialized",
                 source.as_str()
             ),
         )

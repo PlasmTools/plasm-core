@@ -369,7 +369,7 @@ pub fn render_parse_error_with_feedback(
     cgs: &CGS,
     style: FeedbackStyle<'_>,
 ) -> StepError {
-    let error = format!("{} (input: {work:?})", err.message());
+    let error = err.message().to_owned();
     let expr_line = expr_line_for_feedback(work, display_input, &style);
     let full_entity_refs: Vec<&str> = cgs.entities.keys().map(|k| k.as_str()).collect();
 

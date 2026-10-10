@@ -238,7 +238,9 @@ pub(super) fn program(es: &ExecuteSession) -> (PlasmCompBundle, CorrelatedBody) 
             .unwrap();
     let symbols = es.teaching_exposure.as_ref().unwrap().to_symbol_map();
     let tag = symbols.entity_sym_for("fixture", "Tag");
-    let source=format!("@compute\ndef labels(tags: list[Value[{tag}]]) -> str:\n    return \"|\".join(tag.label for tag in tags)\n");
+    let source = format!(
+        "@compute\ndef labels(tags: list[Value[{tag}]]) -> str:\n    return \"|\".join(tag.label for tag in tags)\n"
+    );
     let mut body = empty_comp(None);
     let expr = plasm_core::Expr::Query(
         plasm_core::QueryExpr::filtered(

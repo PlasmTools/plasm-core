@@ -22,7 +22,7 @@ pub enum HttpLimiterError {
 
 #[derive(Error, Debug)]
 pub enum PaginationFault {
-    #[error("pagination query key `{key}` is not valid for {transport:?}")]
+    #[error("pagination query key `{key}` is not valid for {transport}")]
     QueryParameterUnsupported {
         key: String,
         transport: PaginationTransport,
@@ -31,7 +31,7 @@ pub enum PaginationFault {
     InitialQueryObjectRequired,
     #[error("initial-only pagination query requires HTTP transport")]
     InitialQueryHttpRequired,
-    #[error("block-range pagination is not valid for {transport:?}")]
+    #[error("block-range pagination is not valid for {transport}")]
     BlockRangeUnsupported { transport: PaginationTransport },
     #[error("pagination body injection requires a JSON object request body")]
     BodyObjectRequired,
@@ -56,6 +56,16 @@ pub enum PaginationTransport {
     ComposedView,
 }
 
+impl std::fmt::Display for PaginationTransport {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(match self {
+            Self::EvmCall => "evm call",
+            Self::EvmLogs => "evm logs",
+            Self::ComposedView => "composed view",
+        })
+    }
+}
+
 #[derive(Error, Debug)]
 pub enum AuthenticationError {
     #[error("required secret '{key}' is not set")]
@@ -76,7 +86,7 @@ pub enum AuthenticationError {
     HostedRefreshUnavailable,
     #[error("OAuth2 response missing 'access_token' field")]
     AccessTokenMissing,
-    #[error("OAuth HTTP {operation:?} failed: {source}")]
+    #[error("OAuth HTTP {operation} failed: {source}")]
     Http {
         operation: OAuthHttpOperation,
         #[source]
@@ -101,6 +111,16 @@ pub enum OAuthHttpOperation {
     DecodeTokenResponse,
 }
 
+impl std::fmt::Display for OAuthHttpOperation {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(match self {
+            Self::BuildClient => "build client",
+            Self::SendTokenRequest => "send token request",
+            Self::DecodeTokenResponse => "decode token response",
+        })
+    }
+}
+
 #[derive(Error, Debug)]
 pub enum CacheError {
     #[error("entity not found: {reference}")]
@@ -117,7 +137,7 @@ pub enum CacheError {
     },
     #[error("composed view `{view}` returned no entity row")]
     ViewRowMissing { view: String },
-    #[error("unexpected transport request: {method:?} {path}")]
+    #[error("unexpected transport request: {method} {path}")]
     UnexpectedRequest {
         method: plasm_compile::HttpMethod,
         path: String,
@@ -152,7 +172,7 @@ pub enum ReplayStoreError {
     FingerprintLength { actual: usize },
     #[error("replay storage I/O failed: {0}")]
     Io(#[from] std::io::Error),
-    #[error("replay storage {operation:?} failed: {source}")]
+    #[error("replay storage {operation} failed: {source}")]
     Operation {
         operation: ReplayStoreOperation,
         #[source]
@@ -169,6 +189,18 @@ pub enum ReplayStoreOperation {
     ReadEntry,
     ListEntries,
     ReadDirectoryEntry,
+}
+
+impl std::fmt::Display for ReplayStoreOperation {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(match self {
+            Self::CreateDirectory => "create directory",
+            Self::WriteEntry => "write entry",
+            Self::ReadEntry => "read entry",
+            Self::ListEntries => "list entries",
+            Self::ReadDirectoryEntry => "read directory entry",
+        })
+    }
 }
 
 #[derive(Error, Debug)]
@@ -206,7 +238,7 @@ pub enum RuntimeError {
     HttpLimiter(#[from] HttpLimiterError),
     #[error("pagination configuration failed: {0}")]
     PaginationFault(#[from] PaginationFault),
-    #[error("relation hop missing required parameters: {params:?}; inherit required bindings from the parent Get before traversing the relation")]
+    #[error("relation hop missing required parameters: {params}; inherit required bindings from the parent Get before traversing the relation", params = .params.join(", "))]
     RelationParametersMissing { params: Vec<String> },
     #[error("get_scoped_bindings missing bound value for `{field}` on entity `{entity}`")]
     MaterializeBindingMissing { entity: String, field: String },
@@ -222,13 +254,13 @@ pub enum RuntimeError {
     ViewQueryDispatchRequired,
     #[error("EVM transport requires an RPC base URL")]
     EvmRpcUrlMissing,
-    #[error("continuation {kind:?} must execute through its host dispatcher")]
+    #[error("continuation {kind} must execute through its host dispatcher")]
     ContinuationDispatchRequired { kind: ContinuationKind },
     #[error("teaching values cannot be executed")]
     TeachingValueNotExecutable,
     #[error("capability `{capability}` not found")]
     CapabilityUnknown { capability: String },
-    #[error("capability `{capability}` must support reads (got {actual:?})")]
+    #[error("capability `{capability}` must support reads (got {actual})")]
     ReadCapabilityRequired {
         capability: String,
         actual: plasm_core::CapabilityKind,
@@ -281,7 +313,7 @@ pub enum RuntimeError {
     PaginationContract(#[from] plasm_compile::PaginationContractError),
     #[error(transparent)]
     CatalogTemplate(#[from] plasm_compile::CatalogTemplateError),
-    #[error("HTTP {phase:?} failed: {source}")]
+    #[error("HTTP {phase} failed: {source}")]
     HttpTransport {
         phase: HttpTransportPhase,
         #[source]
@@ -298,7 +330,7 @@ pub enum RuntimeError {
     SchemaContract(#[from] Box<plasm_core::SchemaError>),
     #[error("operand resolution failed: {0}")]
     OperandResolution(#[from] plasm_core::operand_binding::ResolvedValueError),
-    #[error("computed view template {phase:?} failed: {source}")]
+    #[error("computed view template {phase} failed: {source}")]
     ViewTemplate {
         phase: ViewTemplatePhase,
         #[source]
@@ -406,7 +438,7 @@ pub enum RuntimeError {
     #[error("Replay store error: {0}")]
     ReplayStoreError(#[from] ReplayStoreError),
 
-    #[error("zero rows — Derived get `{capability}`: no row where {match_field} == {identity:?}")]
+    #[error("zero rows — Derived get `{capability}`: no row where {match_field} == {identity}")]
     DerivedGetNotFound {
         capability: String,
         match_field: String,
@@ -414,7 +446,7 @@ pub enum RuntimeError {
     },
 
     #[error(
-        "Derived get `{capability}`: {matches} rows match {match_field} == {identity:?} (ambiguous)"
+        "Derived get `{capability}`: {matches} rows match {match_field} == {identity} (ambiguous)"
     )]
     DerivedGetNonUnique {
         capability: String,
@@ -431,7 +463,7 @@ pub enum RuntimeError {
     )]
     DerivedGetIncompleteSource { capability: String },
 
-    #[error("pagination progress guard: {reason:?}")]
+    #[error("pagination progress guard: {reason}")]
     PaginationProgress {
         reason: crate::execution::PaginationTerminalReason,
     },
@@ -461,6 +493,16 @@ pub enum ViewTemplatePhase {
     Render,
 }
 
+impl std::fmt::Display for ViewTemplatePhase {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(match self {
+            Self::BindData => "bind data",
+            Self::Compile => "compile",
+            Self::Render => "render",
+        })
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum HttpTransportPhase {
     BuildClient,
@@ -468,11 +510,31 @@ pub enum HttpTransportPhase {
     ReadResponse,
 }
 
+impl std::fmt::Display for HttpTransportPhase {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(match self {
+            Self::BuildClient => "build client",
+            Self::Send => "send",
+            Self::ReadResponse => "read response",
+        })
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ContinuationKind {
     Page,
     Wait,
     Cancel,
+}
+
+impl std::fmt::Display for ContinuationKind {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(match self {
+            Self::Page => "page",
+            Self::Wait => "wait",
+            Self::Cancel => "cancel",
+        })
+    }
 }
 
 impl RuntimeError {

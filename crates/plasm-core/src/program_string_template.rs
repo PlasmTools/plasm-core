@@ -49,7 +49,7 @@ const DOLLAR_HARD_ERROR: &str = "abolished `${…}` / `$$` string interpolation;
 
 #[derive(Debug, Error)]
 pub enum ProgramStringError {
-    #[error("{DOLLAR_HARD_ERROR} (found near {span:?})")]
+    #[error("{DOLLAR_HARD_ERROR} (found near {span})")]
     DollarForbidden { span: String },
     #[error("template render: {0}")]
     Render(#[source] minijinja::Error),

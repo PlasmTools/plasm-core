@@ -22,6 +22,52 @@ pub struct ValueContract {
     pub nullable: bool,
 }
 
+/// Semantic type notation for corrections; catalog pins and internal ownership
+/// records stay in the typed contract.
+impl std::fmt::Display for ValueContract {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match &self.shape {
+            ValueShape::Scalar { field_type } => write!(f, "{field_type}")?,
+            ValueShape::Temporal { kind, .. } => write!(f, "{kind}")?,
+            ValueShape::Array { element } => write!(f, "list[{element}]")?,
+            ValueShape::Set { element } => write!(f, "set[{element}]")?,
+            ValueShape::Dictionary { key, value } => write!(f, "dict[{key}, {value}]")?,
+            ValueShape::MappingRecord { record } => write!(f, "mapping[{record}]")?,
+            ValueShape::Record { fields } | ValueShape::ObservedRecord { fields, .. } => {
+                f.write_str("record{")?;
+                for (index, (name, contract)) in fields.iter().enumerate() {
+                    if index > 0 {
+                        f.write_str(", ")?;
+                    }
+                    write!(f, "{name}: {contract}")?;
+                    if matches!(&self.shape, ValueShape::ObservedRecord { optional_fields, .. } if optional_fields.contains(name))
+                    {
+                        f.write_str(" (optional)")?;
+                    }
+                }
+                f.write_str("}")?;
+            }
+            ValueShape::Null => f.write_str("None")?,
+            ValueShape::Never => f.write_str("empty element type")?,
+            ValueShape::Union { variants } => {
+                for (index, contract) in variants.iter().enumerate() {
+                    if index > 0 {
+                        f.write_str(" | ")?;
+                    }
+                    write!(f, "{contract}")?;
+                }
+            }
+        }
+        if let Some(domain) = &self.domain {
+            write!(f, " ({}/{})", domain.entry_id, domain.value_ref.as_str())?;
+        }
+        if self.nullable {
+            f.write_str(" | None")?;
+        }
+        Ok(())
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Error)]
 pub enum ValueContractError {
     #[error("field `{name}` is absent from the record contract")]
@@ -798,7 +844,7 @@ impl ValueContract {
                         value,
                         cgs,
                         entry,
-                        &format!("{path}[{name:?}]"),
+                        &format!("{path}[{name}]"),
                         depth + 1,
                         catalogs,
                         boundary,

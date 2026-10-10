@@ -44,9 +44,7 @@ impl PlasmMcpHandler {
         let commit_ref = PlanCommitRef::parse(run_ref_str).ok_or_else(|| {
             CallToolError::invalid_arguments(
                 TOOL,
-                Some(format!(
-                    "invalid `run_ref`: expected pcN token, got {run_ref_str:?}"
-                )),
+                Some("invalid `run_ref`: use the pcN token returned by `plasm`".into()),
             )
         })?;
         let logical_uuid = self.resolve_logical_session_ref_to_uuid(TOOL, &session_ref)?;

@@ -64,7 +64,7 @@ pub struct TerminalAwaitContext {
 
 #[derive(Debug, thiserror::Error, PartialEq, Eq)]
 pub enum AwaitError {
-    #[error("await timed out after {0:?}")]
+    #[error("await timed out after {seconds}s", seconds = .0.as_secs_f64())]
     Timeout(Duration),
     #[error("{0}")]
     Operation(plasm_runtime::ExecutionFailure),
