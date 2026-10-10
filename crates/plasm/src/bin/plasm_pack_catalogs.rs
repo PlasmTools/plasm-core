@@ -198,6 +198,7 @@ fn load_package_list(path: &Path) -> Result<HashSet<String>> {
 async fn reusable_catalogs(
     out_dir: &Path,
     embedding_cache: &Path,
+    prepared_hashes: &std::collections::BTreeMap<String, String>,
 ) -> Result<std::collections::BTreeMap<String, (String, CatalogManifest)>> {
     let mut reusable = std::collections::BTreeMap::new();
     if !out_dir.join("catalog-set.json").exists() {
@@ -216,6 +217,12 @@ async fn reusable_catalogs(
                 continue;
             }
         };
+        // Prior publications may describe a generation that no longer validates under the
+        // current compiler. The prepared source catalog is authoritative: discard obsolete
+        // generations before reading or validating any of their artifacts.
+        if prepared_hashes.get(&manifest.entry_id) != Some(&manifest.cgs_hash) {
+            continue;
+        }
         // Packing may replace an older generation; only matching profiles can supply cache hits.
         if manifest.format_version != PLASM_CATALOG_FORMAT_VERSION
             || manifest.embedding_profile != Default::default()
@@ -395,7 +402,11 @@ async fn pack(args: Args) -> Result<()> {
             }
         })
         .unwrap_or_else(|| cache_dir.join("embeddings"));
-    let reusable = reusable_catalogs(&out_dir, &embedding_cache_dir).await?;
+    let prepared_hashes = catalogs
+        .iter()
+        .map(|(name, cgs)| (name.clone(), cgs.catalog_cgs_hash_hex()))
+        .collect();
+    let reusable = reusable_catalogs(&out_dir, &embedding_cache_dir, &prepared_hashes).await?;
     let mut embedded_documents = 0usize;
     let mut reused_documents = 0usize;
     let mut embedding_requests = 0usize;
@@ -1226,17 +1237,40 @@ mod tests {
             serde_json::to_vec(&manifest).unwrap(),
         )
         .unwrap();
+        let mut stale_manifest = manifest.clone();
+        stale_manifest.cgs_hash = format!(
+            "{}{}",
+            if manifest.cgs_hash.starts_with('0') {
+                '1'
+            } else {
+                '0'
+            },
+            &manifest.cgs_hash[1..]
+        );
+        stale_manifest.cgs_json = "obsolete-generation.cgs.json".into();
+        fs::write(
+            output.path().join("obsolete.manifest.json"),
+            serde_json::to_vec(&stale_manifest).unwrap(),
+        )
+        .unwrap();
         fs::write(
             output.path().join("catalog-set.json"),
             serde_json::to_vec(&plasm_core::catalog_il::CatalogSetManifest {
                 format_version: PLASM_CATALOG_FORMAT_VERSION,
-                manifests: vec!["fixture.manifest.json".into()],
+                manifests: vec![
+                    "obsolete.manifest.json".into(),
+                    "fixture.manifest.json".into(),
+                ],
             })
             .unwrap(),
         )
         .unwrap();
+        let prepared_hashes = std::collections::BTreeMap::from([(
+            "prerequisite_matrix".to_string(),
+            manifest.cgs_hash.clone(),
+        )]);
         for _ in 0..2 {
-            let reused = reusable_catalogs(output.path(), cache.path())
+            let reused = reusable_catalogs(output.path(), cache.path(), &prepared_hashes)
                 .await
                 .unwrap();
             assert_eq!(reused["prerequisite_matrix"].1.cgs_hash, manifest.cgs_hash);
@@ -1293,7 +1327,7 @@ mod tests {
         let recipe_bytes = fs::read(&recipe_path).unwrap();
         fs::write(&recipe_path, b"{}").unwrap();
         assert!(
-            reusable_catalogs(output.path(), cache.path())
+            reusable_catalogs(output.path(), cache.path(), &prepared_hashes)
                 .await
                 .is_err(),
             "damaged compiled recipes must not be published as cache hits"
@@ -1301,7 +1335,7 @@ mod tests {
         fs::write(&recipe_path, recipe_bytes).unwrap();
         fs::write(output.path().join(&active_manifest.discovery_json), b"{}").unwrap();
         assert!(
-            reusable_catalogs(output.path(), cache.path())
+            reusable_catalogs(output.path(), cache.path(), &prepared_hashes)
                 .await
                 .is_err(),
             "damaged artifacts must not be published as cache hits"
