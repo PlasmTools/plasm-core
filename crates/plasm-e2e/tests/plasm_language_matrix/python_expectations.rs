@@ -386,7 +386,6 @@ pub(super) fn assert_coverage(id: &str, run: &PlasmPlanRunResult) {
         | "prefix_union_single_relation"
         | "cert_relation_opaque_r_symbol"
         | "relation_one_chain"
-        | "relation_relation_lines"
         | "relation_relation_tags_scoped"
         | "relation_bind_projection_then_relation"
         | "relation_bind_relation_hop_one_one"
@@ -398,7 +397,6 @@ pub(super) fn assert_coverage(id: &str, run: &PlasmPlanRunResult) {
         | "complete_binding_continuation"
         | "complete_bind_plural_relation_opaque_p"
         | "complete_homograph_lhs_coercion"
-        | "cert_federated_relation_r"
         | "cert_federated_target_entry" => Unknown,
         _ => Complete,
     };

@@ -303,6 +303,12 @@ pub(crate) async fn snapshot_embed_relation_under_graph_lock(
                     collection_coverage,
                     ..
                 } => *collection_coverage,
+                // A view records relation membership from its composed DAG.
+                // It is not a parent-GET array requiring a catalog assertion;
+                // embedded_collection below preserves the recorded evidence.
+                plasm_core::RelationMaterialization::ViewEmbed { .. } => {
+                    plasm_core::EmbeddedCollectionCoverage::Complete
+                }
                 _ => plasm_core::EmbeddedCollectionCoverage::Unknown,
             },
         ),

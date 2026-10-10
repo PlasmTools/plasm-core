@@ -131,6 +131,16 @@ impl From<HttpStatusFailure> for RateLimitCause {
     }
 }
 
+impl std::fmt::Display for MockServerOperation {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(match self {
+            Self::CreateExpectation => "create expectation",
+            Self::ClearExpectations => "clear expectations",
+            Self::Reset => "reset",
+        })
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -218,15 +228,5 @@ mod tests {
         let failure = error.source().unwrap();
         assert!(failure.is::<RequestFailure>());
         assert!(failure.source().unwrap().is::<serde_json::Error>());
-    }
-}
-
-impl std::fmt::Display for MockServerOperation {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.write_str(match self {
-            Self::CreateExpectation => "create expectation",
-            Self::ClearExpectations => "clear expectations",
-            Self::Reset => "reset",
-        })
     }
 }
