@@ -9,6 +9,14 @@ Entries before **0.4.35** live in [`CHANGELOG-ARCHIVE.md`](CHANGELOG-ARCHIVE.md)
 
 ## [Unreleased]
 
+## [0.5.4] - 2026-10-11
+
+### Fixed
+
+- Deliver static Python semantics once in the MCP `plasm` tool description; context responses contain incremental session declarations and prerequisites.
+- Accept valid Comp v3 correlated scopes in MCP apps, including the full parent bound and nested capture inputs.
+- Deliver semantic result fields and relations to Run Explorer instead of serialized cache metadata.
+
 ## [0.5.3] - 2026-10-10
 
 ### Fixed

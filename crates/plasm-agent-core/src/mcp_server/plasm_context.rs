@@ -9,8 +9,8 @@ use serde_json::json;
 use tracing::Instrument;
 
 use crate::http_execute::{
-    apply_capability_seeds, build_plasm_context_agent_markdown, build_plasm_context_tool_meta,
-    ApplyCapabilitySeedsOutcome, PlasmContextToolMetaParams,
+    apply_capability_seeds_for_mcp, build_plasm_context_agent_markdown,
+    build_plasm_context_tool_meta, ApplyCapabilitySeedsOutcome, PlasmContextToolMetaParams,
 };
 use crate::incoming_auth::tenant_scope;
 use crate::mcp_logical_ref::format_logical_session_wire_ref;
@@ -301,7 +301,6 @@ impl PlasmMcpHandler {
             "MCP plasm_context: Plasm execute binding before apply_capability_seeds (false means open path; true means expand/federate against existing prompt_hash/session)"
         );
         let context_span = crate::spans::mcp_tool_plasm_context(logical_session_ref.as_str());
-        let mut churn_advisory = String::new();
         let mut session_churn: Option<crate::http_execute::SessionChurnAdvisory> = None;
         if session_mode == PlasmContextSessionMode::New {
             if let Some(adv) = crate::http_execute::format_session_churn_advisory(
@@ -313,11 +312,10 @@ impl PlasmMcpHandler {
             )
             .await
             {
-                churn_advisory = adv.markdown.clone();
                 session_churn = Some(adv);
             }
         }
-        let out: ApplyCapabilitySeedsOutcome = apply_capability_seeds(
+        let out: ApplyCapabilitySeedsOutcome = apply_capability_seeds_for_mcp(
             &routed_host,
             principal_incoming.as_ref(),
             binding
@@ -409,7 +407,7 @@ impl PlasmMcpHandler {
             logical_session_ref.as_str(),
             &out.waves,
             out.symbol_space_reset,
-            churn_advisory.as_str(),
+            "",
         );
         if let Some(session) = routed_host
             .get_execute_session(&out.prompt_hash, &out.session_id)

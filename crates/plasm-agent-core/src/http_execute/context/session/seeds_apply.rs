@@ -190,6 +190,59 @@ pub async fn apply_capability_seeds(
     logical_session_id: Option<Uuid>,
     plasm_context_intent: &str,
 ) -> Result<ApplyCapabilitySeedsOutcome, super::SessionMutateError> {
+    apply_capability_seeds_with_presentation(
+        st,
+        principal_incoming,
+        binding,
+        seeds,
+        principal,
+        tenant_mcp_cfg,
+        logical_session_id,
+        plasm_context_intent,
+        false,
+    )
+    .await
+}
+
+/// MCP context uses the `plasm` tool description for static language semantics, so its
+/// first-open wave carries declarations only. HTTP execute retains the full prompt body.
+#[allow(clippy::too_many_arguments)]
+pub async fn apply_capability_seeds_for_mcp(
+    st: &PlasmHostState,
+    principal_incoming: Option<&crate::incoming_auth::TenantPrincipal>,
+    binding: Option<(&str, &str)>,
+    seeds: Vec<CapabilitySeed>,
+    principal: Option<String>,
+    tenant_mcp_cfg: Option<Arc<crate::mcp_runtime_config::McpRuntimeConfig>>,
+    logical_session_id: Option<Uuid>,
+    plasm_context_intent: &str,
+) -> Result<ApplyCapabilitySeedsOutcome, super::SessionMutateError> {
+    apply_capability_seeds_with_presentation(
+        st,
+        principal_incoming,
+        binding,
+        seeds,
+        principal,
+        tenant_mcp_cfg,
+        logical_session_id,
+        plasm_context_intent,
+        true,
+    )
+    .await
+}
+
+#[allow(clippy::too_many_arguments)]
+async fn apply_capability_seeds_with_presentation(
+    st: &PlasmHostState,
+    principal_incoming: Option<&crate::incoming_auth::TenantPrincipal>,
+    binding: Option<(&str, &str)>,
+    seeds: Vec<CapabilitySeed>,
+    principal: Option<String>,
+    tenant_mcp_cfg: Option<Arc<crate::mcp_runtime_config::McpRuntimeConfig>>,
+    logical_session_id: Option<Uuid>,
+    plasm_context_intent: &str,
+    declarations_only_context: bool,
+) -> Result<ApplyCapabilitySeedsOutcome, super::SessionMutateError> {
     let seeds = normalize_capability_seeds(seeds);
 
     let ResolvedExecuteBinding {
@@ -336,6 +389,7 @@ pub async fn apply_capability_seeds(
                                     session: pair.1,
                                     entry_id: sess_arc.entry_id.clone(),
                                     prompt: sess_arc.prompt_text.clone(),
+                                    context_prompt: String::new(),
                                     entities: sess_arc.entities.clone(),
                                     reused: true,
                                     principal: sess_arc.principal.clone(),
@@ -390,7 +444,11 @@ pub async fn apply_capability_seeds(
                     .await?;
             open_md.push_str(&format_session_unchanged_reuse_markdown(exposure.as_ref()));
         } else {
-            open_md.push_str(&created.prompt);
+            open_md.push_str(if declarations_only_context {
+                &created.context_prompt
+            } else {
+                &created.prompt
+            });
         }
         let teaching_prompt_chars_added = if created.reused {
             0

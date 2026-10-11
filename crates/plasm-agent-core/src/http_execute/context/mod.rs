@@ -27,12 +27,12 @@ pub(crate) use seeds::{
     primary_entry_id_for_grouped, teaching_exposure_at, unchanged_expand_wave,
     CapabilityExposurePlan, PlasmContextToolMetaParams, STALE_EXECUTE_BINDING_NOTICE,
 };
-pub use session::apply_capability_seeds;
 pub(crate) use session::execute_session_create_response_inner;
 #[cfg(test)]
 pub(crate) use session::replay_teaching_exposure_waves;
 pub(crate) use session::upsert_logical_ledger_from_snapshot;
 pub use session::SessionMutateError;
+pub use session::{apply_capability_seeds, apply_capability_seeds_for_mcp};
 pub(crate) use session::{
     apply_federate_exposure_wave, build_initial_exposure_wave, ExposureCatalogWave,
 };

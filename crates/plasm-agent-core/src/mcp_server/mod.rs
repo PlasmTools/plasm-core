@@ -22,7 +22,7 @@
 //! Do not shrink or rotate picks to “narrow” the session; that only makes sense when opening a new binding.
 //! Tenant MCP policy
 //! is enforced from `Authorization: Bearer <api_key>` (opaque key from control-plane provision) when tenant configs exist.
-//! Tool text returns **table-only** language card on fresh `plasm_context` opens (`reused: false`); repeated
+//! Tool text returns **dynamic declaration-only** context on fresh `plasm_context` opens (`reused: false`); repeated
 //! opens with the same entry + capability picks omit the teaching body to avoid token churn.
 //! **Symbols:** for a fixed binding (`prompt_hash` + `session`), `e#` / `m#` / `p#` grow **append-only**
 //! when you add new picks; they do not reshuffle. A new primary catalog open or logical session starts a new

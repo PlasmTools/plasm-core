@@ -147,6 +147,14 @@ pub(crate) async fn execute_session_create_response_inner(
         &teaching_exposure,
         &Default::default(),
     )?;
+    let mut context_prompt = wave.declarations.clone();
+    if symbol_space_reset {
+        context_prompt = format!(
+            "{}{}",
+            super::super::seeds::SYMBOL_SPACE_RESET_NOTICE,
+            context_prompt
+        );
+    }
     let mut prompt = format!(
         "{}\n{}",
         wave.language.unwrap_or_default(),
@@ -246,6 +254,7 @@ pub(crate) async fn execute_session_create_response_inner(
         prompt_hash: prompt_hash_str,
         session: session_id_str,
         prompt,
+        context_prompt,
         entry_id: body.entry_id,
         entities: session_entity_names,
         reused: false,

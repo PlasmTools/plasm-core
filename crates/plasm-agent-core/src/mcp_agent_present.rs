@@ -241,25 +241,13 @@ impl AgentContent {
         }
     }
 
-    /// Banner prepended to every `plasm_context` agent body.
-    pub const CONTEXT_LANGUAGE_CARD_BANNER: &str =
-        "**Language card** — Plasm symbols + syntax table for this session. Write `plasm.program` from the left column; Meaning marks are defined in the **`plasm` tool** description. Domain rows come from `plasm` / `plasm_run`.";
-
     pub fn context(refs: &ContextTokenRefs<'_>, body_markdown: &str) -> Self {
         let tokens: Vec<(&'static str, String)> = vec![
             ("kind", AgentResultKind::Context.as_str().into()),
             ("logical_session_ref", refs.logical_session_ref.into()),
         ];
         let body = body_markdown.trim();
-        let body = if body.is_empty() {
-            None
-        } else {
-            Some(format!(
-                "{}\n\n{}",
-                Self::CONTEXT_LANGUAGE_CARD_BANNER,
-                body
-            ))
-        };
+        let body = (!body.is_empty()).then(|| body.to_string());
         Self {
             kind: AgentResultKind::Context,
             tokens,
@@ -438,14 +426,9 @@ mod tests {
         assert!(md.contains("logical_session_ref\tl_ref\n"));
         assert!(!md.contains("session_mode\tnew\n"));
         assert!(!md.contains("domain_revision\t"));
-        assert!(md.contains(AgentContent::CONTEXT_LANGUAGE_CARD_BANNER));
         assert!(md.contains("## language card\nok"));
-        assert!(
-            md.find(AgentContent::CONTEXT_LANGUAGE_CARD_BANNER)
-                .zip(md.find("## language card\nok"))
-                .is_some_and(|(a, b)| a < b),
-            "banner must precede language-card body"
-        );
+        assert!(!md.contains("left column"));
+        assert!(!md.contains("Meaning marks"));
     }
 
     #[test]

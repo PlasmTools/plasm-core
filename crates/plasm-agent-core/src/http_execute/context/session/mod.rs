@@ -19,5 +19,5 @@ pub use federate::federate_execute_session;
 pub use mutate_error::SessionMutateError;
 pub use open::execute_session_create_response;
 pub(crate) use open::execute_session_create_response_inner;
-pub use seeds_apply::apply_capability_seeds;
+pub use seeds_apply::{apply_capability_seeds, apply_capability_seeds_for_mcp};
 pub(crate) use symbol_ledger::upsert_logical_ledger_from_snapshot;

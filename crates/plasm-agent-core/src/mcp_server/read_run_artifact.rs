@@ -153,7 +153,7 @@ impl PlasmMcpHandler {
                 CallToolError::invalid_arguments(
                     tool_name,
                     Some(
-                        "no execute session for this logical session: call plasm_context with capability picks (`seeds`) first"
+                        "no execute session for this logical session: extend plasm_context with the same logical_session_ref and current intent first"
                             .into(),
                     ),
                 )

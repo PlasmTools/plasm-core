@@ -7,7 +7,9 @@ mod tests {
 
     use crate::execute_session::ExecuteSession;
     use crate::http::{build_plasm_host_state, PlasmHostBootstrap};
-    use crate::http_execute::{apply_capability_seeds, CapabilitySeed};
+    use crate::http_execute::{
+        apply_capability_seeds, apply_capability_seeds_for_mcp, CapabilitySeed,
+    };
     use crate::plasm_compile::compile_plasm_expression;
     use crate::plasm_plan_run::{evaluate_plasm_comp_dry, format_session_symbolic_parse_error};
     use crate::server_state::PlasmHostState;
@@ -156,6 +158,55 @@ created"#
         block_on_worker_stack(
             symbol_stability_langitem_create_survives_intermediate_plasm_reads_inner,
         );
+    }
+
+    #[test]
+    fn mcp_context_wave_is_dynamic_while_http_keeps_static_language_card() {
+        block_on_worker_stack(
+            mcp_context_wave_is_dynamic_while_http_keeps_static_language_card_inner,
+        );
+    }
+
+    async fn mcp_context_wave_is_dynamic_while_http_keeps_static_language_card_inner() {
+        let Some(st) = matrix_host() else {
+            return;
+        };
+        let intent = "read and create language matrix items";
+        let seeds = vec![CapabilitySeed {
+            entry_id: ENTRY.into(),
+            entity: "LangItem".into(),
+        }];
+        let mcp = apply_capability_seeds_for_mcp(
+            &st,
+            None,
+            None,
+            seeds.clone(),
+            None,
+            None,
+            Some(Uuid::new_v4()),
+            intent,
+        )
+        .await
+        .expect("MCP context open");
+        let mcp_body = &mcp.waves[0].markdown_delta;
+        assert!(mcp_body.contains("e1") && mcp_body.contains("LangItem"));
+        assert!(!mcp_body.contains(plasm_core::prompt_render::python::LANGUAGE));
+
+        let http = apply_capability_seeds(
+            &st,
+            None,
+            None,
+            seeds,
+            None,
+            None,
+            Some(Uuid::new_v4()),
+            intent,
+        )
+        .await
+        .expect("HTTP context open");
+        assert!(http.waves[0]
+            .markdown_delta
+            .contains(plasm_core::prompt_render::python::LANGUAGE));
     }
 
     async fn symbol_stability_langitem_create_survives_intermediate_plasm_reads_inner() {

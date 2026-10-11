@@ -45,6 +45,7 @@ pub(crate) fn create_execute_session_response(
         prompt_hash: sess.prompt_hash.clone(),
         session: session_id,
         prompt,
+        context_prompt: String::new(),
         entry_id: sess.entry_id.clone(),
         entities: sess.entities.clone(),
         reused,

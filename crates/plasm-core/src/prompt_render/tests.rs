@@ -2154,7 +2154,7 @@ fn mcp_static_tool_descriptions_byte_budget() {
     const MAX_WORKFLOW_BYTES: usize = 1600;
 
     let workflow = super::MCP_INITIALIZE_WORKFLOW;
-    let plasm_tool = super::PLASM_TOOL_DESCRIPTION;
+    let plasm_tool = super::PLASM_MCP_TOOL_DESCRIPTION;
     let context = super::PLASM_CONTEXT_TOOL_DESCRIPTION;
     let param = super::PLASM_PROGRAM_PARAM_DESCRIPTION;
 

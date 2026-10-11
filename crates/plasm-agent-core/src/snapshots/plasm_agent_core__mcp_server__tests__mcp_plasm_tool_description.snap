@@ -1,13 +1,37 @@
 ---
-source: plasm-oss/crates/plasm-agent-core/src/mcp_server/tests.rs
-expression: "plasm_core::prompt_render::PLASM_TOOL_DESCRIPTION"
+source: crates/plasm-agent-core/src/mcp_server/tests.rs
+expression: "plasm_core::prompt_render::PLASM_MCP_TOOL_DESCRIPTION"
 ---
 **Plasm** — `logical_session_ref` + `program`. Clean read-only plans execute inline. Plans containing mutations or a review gate return a `run_ref` for `plasm_run`; do not echo the program there.
 
-`program` is Python source text, not JSON data. Submit exactly one class derived from Program, with build(self), immutable bindings and an explicit return. The Python semantic card and incremental domain declarations arrive through plasm_context. Do not copy declarations, instantiate the class or call build. Only datetime imports are admitted.
+`program` is Python source text, not JSON data. Submit exactly one class derived from Program, with build(self), immutable bindings and an explicit return. This tool description contains the static Python semantic reference; incremental domain declarations arrive through plasm_context. Do not copy declarations, instantiate the class or call build. Only datetime imports are admitted.
 
 Use only taught e#/m#/r# symbols and exact wire names. Pass catalog method arguments by name; Get also accepts its single identity positionally. The class declares a deferred, typed DAG; @compute methods process materialized values later in bounded Monty. Program-owned Python parse, type and plan rejections return needs_fix with a correction; preserve selection criteria and repair within the same logical session. No other source syntax is accepted and failed Python is never retried as another language.
 
 Inspect coverage and operation outcomes. A failed or cancelled run can have completed writes: inspect evidence before issuing further effects. Extend the existing context for missing capabilities. Never open a new session to repair syntax.
 
 Failure evidence belongs to one execution. A new program may perform reads or writes in the same logical session; it does not resume or roll back an earlier execution. Service diagnostics inform the agent but do not determine effect status.
+
+
+Program.build: immutable DAG versions; return result/record/tuple. Literal-ID for loops and one-clause list comprehensions expand (max 256); no dynamic loops/while/filtered comprehensions/for-else/statement if/mutation. Callbacks branch; imports: module/@compute.
+
+Cards: exact signatures; eN/mN/rN/vN session-local/append-only. eN.method=root; row.method=entity row/singleton; = ... optional. Relations: row.rN, or rows.flat_map(lambda row: row.rN); never rN(). vN=domain identity/constraints; Literal=choices. Comments=data; groups=methods; constraints=JSON/@profile. Declared inputs=call keywords; producer fields=dependencies.
+
+Rows:
+where(predicate), select("f", alias="f", derived=lambda r: expr), order_by("f", descending=False), take(n>=0), distinct("f"), union(other), aggregate(n=agg.count()), group_by("f", n=agg.sum("amount")). agg: count/sum/avg/min/max/first/last; union dedups first-wins. Predicates: Python truth/comparison/and/or/not, any/all on complete collections; substring/list/one-column RHS membership. Lazy reads; explicit effects. Verify search matches/identities before effects. where filters acquired rows. Branches keep types; arithmetic drops constraints. query/search.page_size(n).
+
+eN.get(value) or eN.get(identity=value); compound Get uses exact named keys; nullary Get omits identity. Add only declared keyword inputs. Get/take(1): scalar fields, identity; empty extraction fails. Entity rows/captures retain identity/authority; records/compute do not. union retains receiver authority only when both arms carry the same catalog/entity authority; else values. Project returned fields, not call inputs; partial writes list available fields. Projections=typed records (r.field/r["field"]); dicts=dict[str,T], no key guarantees; embedded rows=arrays; recursive records/arrays/args.
+
+flat_map(lambda r: rows_or_effect, max_parents=65536): nested reads/writes; optional bound 1..65536. map(lambda r: {"key": expr}, max_parents=N): required bound 1..256. Depth<=16; occurrences<=65536. Captures/f-strings=dependencies. def f(row): typed/defaulted inputs, locals/captures, branches, early return; fallthrough=None. map/flat_map/where/select/iterate callbacks; flat_map None=no output, [effect1, effect2]=ordered effects, no mixed values. Predicates/projections pure. Program helpers: self.helper(args); pure helpers compute a value; Plasm helpers elaborate a scoped invocation. No recursion/escape.
+
+@compute: self.method(...) runs pure Python after inputs materialize. Input types inferred from each call: query -> list of rows; proven singleton -> one row; annotations not required. Inputs remain independent. Values have no rN/mN authority. Returns: bool/int/float/str, vN, Row, Value[eN], list[T], set[T], T | U/None; Row.field retains its contract. Check `text is not None` before `text.split(...)` when text is `str | None`. dict/list[dict]: typed mappings with .get(); set[T] preserves set semantics. Return annotation optional; Monty infers bodies/loops/implicit None. Dicts infer key/value types, not keys. vN annotates, not constructs; validate returns before effects. Monty Python; no host IO/self calls. Inputs<=256 complete rows; input/output<=1 MiB; exceptions/budgets fail. JsonValue/Blob=JSON; EntityRef=opaque; Money={"__plasm_money": decimal_string}. Exact: money_add(a,b), money_sub(a,b), money_mul(v,f), money_div(v,f), money_compare(a,b)->-1/0/1; f=int/decimal str, no float; currency mismatch fails.
+
+datetime: import date/datetime/timedelta/timezone at module/compute scope. Date fields are typed: compare directly; `.isoformat()` for text, never slice. Naive/aware preserved. Relative times use runtime date.today()/datetime.now(), never guesses. Bounds: date.today()-timedelta(days=1) or .replace(month=1, day=1). Literal dates need input.
+
+Get.iterate(lambda r: effect, until=lambda r: test, max_steps=N) re-reads state; exhaustion fails. Effects: program/parent order; failure stops remaining effects/parents. Unreturned writes run; dependent reads see them. Fanout dedupes identities; excludes existing complete members. Failure: keep completed/unknown effect receipts and service diagnostics; failed dispatch may have effects. New programs may read/write in-session; no resume/rollback. Partial/unknown cannot prove absence.
+
+class P(Program):
+    def build(self):
+        return e1.query().where(lambda r: r.score is not None and r.score > 0).select("title")
+
+Absent: AttributeError; select needs presence. Nullable receivers: is not None.

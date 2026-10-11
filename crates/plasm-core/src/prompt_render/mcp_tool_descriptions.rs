@@ -1,10 +1,17 @@
-//! Static MCP protocol descriptions; context serves the Python semantic card.
+//! Static MCP protocol descriptions; `plasm` owns Python semantics and context serves dynamic declarations.
 //!
 //! MCP initialize is poorly supported by clients; **`tools/list` descriptions carry the canonical truth**.
 //! The same bytes are prepended to eval/REPL/`plasm init`/terminal surfaces via [`PLASM_TOOL_DESCRIPTION`].
 
 /// Canonical `plasm` protocol: inline reads and reviewed effect plans.
 pub const PLASM_TOOL_DESCRIPTION: &str = include_str!("assets/plasm_tool.txt");
+
+/// MCP `plasm` description owns the canonical Python semantic reference once, on tools/list.
+pub const PLASM_MCP_TOOL_DESCRIPTION: &str = concat!(
+    include_str!("assets/plasm_tool.txt"),
+    "\n\n",
+    include_str!("assets/python-plasm-dag.txt"),
+);
 
 /// Canonical `plasm_run` tool body (without transport-specific artifact-read suffix).
 pub const PLASM_RUN_TOOL_DESCRIPTION_BASE: &str = include_str!("assets/plasm_run_tool_base.txt");
@@ -32,18 +39,16 @@ pub const PLASM_CONTEXT_TOOL_DESCRIPTION: &str = include_str!("assets/plasm_cont
 
 /// JSON-schema description for the MCP `plasm` tool `program` parameter.
 ///
-/// Truncation-survival stub only: hosts sometimes clip [`PLASM_TOOL_DESCRIPTION`] but keep
-/// per-parameter schema text. The Python semantic card and domain declarations arrive through context;
-/// [`PLASM_TOOL_DESCRIPTION`] owns submission protocol, not duplicated grammar.
+/// Truncation-survival stub only: hosts sometimes clip [`PLASM_MCP_TOOL_DESCRIPTION`] but keep
+/// per-parameter schema text. Dynamic domain declarations arrive through context.
 /// Budget: [`PLASM_PROGRAM_PARAM_MAX_BYTES`].
 pub const PLASM_PROGRAM_PARAM_DESCRIPTION: &str = include_str!("assets/program_param.txt");
 
 /// Max bytes for [`PLASM_PROGRAM_PARAM_DESCRIPTION`] (truncation-resistant field surface).
 pub const PLASM_PROGRAM_PARAM_MAX_BYTES: usize = 1600;
 
-/// Max bytes for [`PLASM_TOOL_DESCRIPTION`].
-/// Submission protocol budget; language teaching is served separately by context.
-pub const PLASM_TOOL_DESCRIPTION_MAX_BYTES: usize = 5800;
+/// Max bytes for [`PLASM_MCP_TOOL_DESCRIPTION`].
+pub const PLASM_TOOL_DESCRIPTION_MAX_BYTES: usize = 6500;
 
 /// Host-truncation prefixes that must still carry program-authoring mandates.
 pub const PLASM_TOOL_DESCRIPTION_PREFIX_BYTES: usize = 2048;
@@ -62,7 +67,7 @@ pub const TEACHING_VALID_EXPR_MARKER: &str = "Submit exactly one class derived f
 const PROGRAM_PARAM_CONTRACT_MARKERS: &[&str] = &[
     "not JSON data",
     "plasm_context",
-    "semantic card",
+    "semantic reference",
     "explicit return",
     "@compute",
     "session_mode: \"extend\"",

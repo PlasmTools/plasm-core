@@ -10,9 +10,9 @@ use serde_json::Map;
 use crate::mcp_delivery::McpDeliveryProfile;
 use crate::mcp_run_markdown::ArtifactAccessMode;
 use plasm_core::prompt_render::{
-    PLASM_CONTEXT_TOOL_DESCRIPTION, PLASM_PROGRAM_PARAM_DESCRIPTION,
+    PLASM_CONTEXT_TOOL_DESCRIPTION, PLASM_MCP_TOOL_DESCRIPTION, PLASM_PROGRAM_PARAM_DESCRIPTION,
     PLASM_READ_RUN_ARTIFACT_TOOL_DESCRIPTION, PLASM_RUN_TOOL_ARTIFACT_RESOURCES,
-    PLASM_RUN_TOOL_ARTIFACT_TOOL, PLASM_RUN_TOOL_DESCRIPTION_BASE, PLASM_TOOL_DESCRIPTION,
+    PLASM_RUN_TOOL_ARTIFACT_TOOL, PLASM_RUN_TOOL_DESCRIPTION_BASE,
 };
 
 use super::schema::{json_schema_non_empty_string_type, json_schema_string_type};
@@ -106,7 +106,7 @@ pub(crate) fn plasm_tools(artifact_access: ArtifactAccessMode, ui_apps_enabled: 
     tools.push(Tool {
         name: "plasm".into(),
         title: Some("Plan Plasm (dry-run)".into()),
-        description: Some(PLASM_TOOL_DESCRIPTION.into()),
+        description: Some(PLASM_MCP_TOOL_DESCRIPTION.into()),
         input_schema: ToolInputSchema::new(
             vec!["logical_session_ref".into(), "program".into()],
             Some(plasm_program_props.clone()),

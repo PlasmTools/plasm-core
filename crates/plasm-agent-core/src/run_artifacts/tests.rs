@@ -595,8 +595,31 @@ fn project_artifact_payload_for_agent_slim_by_default() {
 }
 
 #[test]
-fn project_artifact_payload_for_mcp_read_run_explorer_ui_is_full() {
+fn project_artifact_payload_for_mcp_read_run_explorer_ui_returns_semantic_rows() {
     let run_id = sample_run_id();
+    let mut rows = artifact_test_rows();
+    rows[0]
+        .fields
+        .insert("count".into(), Value::Integer(2).into());
+    rows[0].fields.insert(
+        "pokemon".into(),
+        plasm_core::json_value_to_plasm_value(&serde_json::json!([
+            {"name": "pikachu"}, {"name": "raichu"}
+        ]))
+        .into(),
+    );
+    let related = plasm_core::Ref::new("Widget", "2");
+    rows[0].update_relations(
+        "related".into(),
+        plasm_core::row_contract::RelationMembership::observe(
+            None,
+            &"ui_projection_fixture",
+            vec![related.clone()],
+            None,
+        )
+        .expect("relation membership"),
+        0,
+    );
     let doc = RunArtifactDocument {
         run_id: run_id.to_wire(),
         prompt_hash: "ab".repeat(32),
@@ -607,9 +630,9 @@ fn project_artifact_payload_for_mcp_read_run_explorer_ui_is_full() {
         parsed_preimage: sample_parsed_preimage(),
         display_lines: vec!["line".into()],
         request_fingerprints: vec!["fp1".into()],
-        entities: artifact_test_rows().into(),
+        entities: rows.clone().into(),
         collection: crate::test_support::execution_fixtures::checkpoint(
-            artifact_test_rows(),
+            rows,
             plasm_runtime::ResultCoverage::Partial,
         ),
         source: ExecutionSource::Live,
@@ -631,17 +654,23 @@ fn project_artifact_payload_for_mcp_read_run_explorer_ui_is_full() {
         Some(plasm_trace::MCP_RESOURCE_READ_SOURCE_RUN_EXPLORER_UI),
     )
     .expect("ui read");
-    let ui_doc: RunArtifactDocument = serde_json::from_slice(&ui.bytes).expect("full doc");
-    assert_eq!(ui_doc.prompt_hash, doc.prompt_hash);
+    let ui_doc: RunArtifactAgentView = serde_json::from_slice(&ui.bytes).expect("semantic view");
     assert_eq!(
-        ui_doc.agent_view().unwrap().coverage,
-        plasm_runtime::ResultCoverage::Partial
+        ui_doc.entities,
+        vec![serde_json::json!({
+            "id": 1,
+            "count": 2,
+            "pokemon": [{"name": "pikachu"}, {"name": "raichu"}],
+            "related": [related.to_string()],
+        })]
     );
+    assert_eq!(ui_doc.coverage, plasm_runtime::ResultCoverage::Partial);
 
     let agent = project_artifact_payload_for_mcp_read(&payload, None).expect("agent read");
     let agent_v: serde_json::Value = serde_json::from_slice(&agent.bytes).expect("json");
     assert!(agent_v.get("prompt_hash").is_none());
     assert_eq!(agent_v["coverage"], "partial");
+    assert_eq!(agent.bytes, ui.bytes);
     assert_eq!(
         doc.agent_view().unwrap().coverage,
         plasm_runtime::ResultCoverage::Partial

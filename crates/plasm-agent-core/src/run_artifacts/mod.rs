@@ -435,14 +435,13 @@ pub fn project_artifact_payload_for_agent(
     })
 }
 
-/// MCP `resources/read` projection: Run Explorer receives canonical docs; agent reads stay slim.
+/// MCP `resources/read` exposes semantic result rows for both agents and Run Explorer.
+/// Read-source attribution does not change the result payload into storage envelopes.
 pub fn project_artifact_payload_for_mcp_read(
     payload: &ArtifactPayload,
-    read_source: Option<&str>,
+    _read_source: Option<&str>,
 ) -> Result<ArtifactPayload, RunArtifactError> {
-    use plasm_trace::MCP_RESOURCE_READ_SOURCE_RUN_EXPLORER_UI;
-    let full = read_source == Some(MCP_RESOURCE_READ_SOURCE_RUN_EXPLORER_UI);
-    project_artifact_payload_for_agent(payload, full)
+    project_artifact_payload_for_agent(payload, false)
 }
 
 /// Verify stored JSON matches the requested content-addressed `run_id`.

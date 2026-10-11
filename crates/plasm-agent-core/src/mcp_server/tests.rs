@@ -97,7 +97,7 @@ fn mcp_plasm_tool_description_snapshot() {
     with_insta_snapshots(|| {
         insta::assert_snapshot!(
             "mcp_plasm_tool_description",
-            plasm_core::prompt_render::PLASM_TOOL_DESCRIPTION
+            plasm_core::prompt_render::PLASM_MCP_TOOL_DESCRIPTION
         );
     });
 }
@@ -204,17 +204,17 @@ fn mcp_server_initialize_workflow_uses_session_mode_not_intent_key() {
 
 #[test]
 fn mcp_tool_descriptions_are_self_contained_without_initialize() {
-    let plasm_desc = plasm_core::prompt_render::PLASM_TOOL_DESCRIPTION;
+    let plasm_desc = plasm_core::prompt_render::PLASM_MCP_TOOL_DESCRIPTION;
     assert!(plasm_desc.contains(plasm_core::prompt_render::MCP_TOOL_SYNTAX_CONTRACT_MARKER));
     assert!(plasm_desc.contains("logical_session_ref") && plasm_desc.contains("run_ref"));
     assert!(plasm_desc.contains("@compute"));
     assert!(plasm_desc.contains("incremental domain declarations"));
     assert!(plasm_desc.contains(plasm_core::prompt_render::TEACHING_VALID_EXPR_MARKER));
 
-    assert!(plasm_core::prompt_render::PLASM_TOOL_DESCRIPTION
+    assert!(plasm_core::prompt_render::PLASM_MCP_TOOL_DESCRIPTION
         .contains(plasm_core::prompt_render::MCP_TOOL_SYNTAX_CONTRACT_MARKER));
-    assert!(plasm_core::prompt_render::PLASM_TOOL_DESCRIPTION.contains("run_ref"));
-    assert!(plasm_core::prompt_render::PLASM_CONTEXT_TOOL_DESCRIPTION.contains("symbol table"));
+    assert!(plasm_core::prompt_render::PLASM_MCP_TOOL_DESCRIPTION.contains("run_ref"));
+    assert!(plasm_core::prompt_render::PLASM_CONTEXT_TOOL_DESCRIPTION.contains("session symbols"));
     assert!(
         plasm_core::prompt_render::PLASM_CONTEXT_TOOL_DESCRIPTION.contains("Call before `plasm`")
     );
@@ -224,7 +224,9 @@ fn mcp_tool_descriptions_are_self_contained_without_initialize() {
     assert!(
         plasm_core::prompt_render::PLASM_CONTEXT_TOOL_DESCRIPTION.contains("Call before `plasm`")
     );
-    assert!(plasm_core::prompt_render::PLASM_TOOL_DESCRIPTION.contains("do not echo the program"));
+    assert!(
+        plasm_core::prompt_render::PLASM_MCP_TOOL_DESCRIPTION.contains("do not echo the program")
+    );
     assert!(!plasm_core::prompt_render::PLASM_RUN_TOOL_DESCRIPTION.contains("echo the program"));
     let program_param_violations = plasm_core::prompt_render::program_param_contract_violations(
         plasm_core::prompt_render::PLASM_PROGRAM_PARAM_DESCRIPTION,
@@ -233,7 +235,7 @@ fn mcp_tool_descriptions_are_self_contained_without_initialize() {
         program_param_violations.is_empty(),
         "program param contract violations: {program_param_violations:?}"
     );
-    assert!(!plasm_core::prompt_render::PLASM_TOOL_DESCRIPTION.contains("MCP initialize"));
+    assert!(!plasm_core::prompt_render::PLASM_MCP_TOOL_DESCRIPTION.contains("MCP initialize"));
     assert!(!plasm_core::prompt_render::PLASM_CONTEXT_TOOL_DESCRIPTION.contains("MCP initialize"));
     for tool in default_plasm_tools() {
         let desc = tool.description.as_deref().unwrap_or("");
@@ -258,8 +260,12 @@ fn mcp_tool_list_wire_carries_full_untruncated_descriptions() {
         .expect("plasm tool");
     assert_eq!(
         plasm.description.as_deref(),
-        Some(plasm_core::prompt_render::PLASM_TOOL_DESCRIPTION),
+        Some(plasm_core::prompt_render::PLASM_MCP_TOOL_DESCRIPTION),
         "served plasm tool description must equal the full asset byte-for-byte"
+    );
+    assert!(
+        plasm_core::prompt_render::PLASM_MCP_TOOL_DESCRIPTION.len()
+            <= plasm_core::prompt_render::PLASM_TOOL_DESCRIPTION_MAX_BYTES
     );
 
     let schema = serde_json::to_value(plasm.input_schema.clone()).expect("plasm input_schema json");
@@ -280,7 +286,7 @@ fn mcp_tool_list_wire_carries_full_untruncated_descriptions() {
     for (label, asset) in [
         (
             "plasm tool description",
-            plasm_core::prompt_render::PLASM_TOOL_DESCRIPTION,
+            plasm_core::prompt_render::PLASM_MCP_TOOL_DESCRIPTION,
         ),
         (
             "program param description",
@@ -296,6 +302,23 @@ fn mcp_tool_list_wire_carries_full_untruncated_descriptions() {
             tools_json.contains(body),
             "serialized tools/list must contain the full {label}"
         );
+    }
+    let language = plasm_core::prompt_render::python::LANGUAGE;
+    assert_eq!(
+        plasm
+            .description
+            .as_deref()
+            .unwrap()
+            .matches(language)
+            .count(),
+        1
+    );
+    for tool in tools.iter().filter(|tool| tool.name != "plasm") {
+        assert!(!tool
+            .description
+            .as_deref()
+            .unwrap_or_default()
+            .contains(language));
     }
 }
 
@@ -350,8 +373,9 @@ fn plasm_context_tool_description_contract_append_vs_refresh() {
     assert!(
         desc.contains("session_mode: \"extend\"")
             && !desc.contains("effect_slots")
-            && desc.contains("Jev judges relevance"),
-        "expected relevance guidance in plasm_context description"
+            && !desc.contains("Jev judges relevance")
+            && desc.contains("static Python semantic reference is in the `plasm` tool description"),
+        "expected dynamic-only context guidance"
     );
     assert!(
         workflow.contains("session_mode"),

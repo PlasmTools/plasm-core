@@ -144,6 +144,9 @@ pub struct CreateExecuteSessionResponse {
     pub prompt_hash: String,
     pub session: String,
     pub prompt: String,
+    /// Declaration-only presentation for MCP context; HTTP continues to receive `prompt`.
+    #[serde(skip)]
+    pub(crate) context_prompt: String,
     pub entry_id: String,
     pub entities: Vec<String>,
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
@@ -202,11 +205,23 @@ impl PagingHandleFault {
 impl std::fmt::Display for PagingHandleFault {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Self::InvalidNamespace { handle } => write!(f, "invalid namespaced page handle `{handle}`"),
-            Self::WrongSession { handle } => write!(f, "page handle `{handle}` belongs to another session"),
-            Self::McpRequiresNamespace { handle } => write!(f, "page handle `{handle}` is not scoped to this MCP session; use a handle from its result"),
-            Self::HttpRejectsNamespace { handle } => write!(f, "page handle `{handle}` requires an MCP session"),
-            Self::Unavailable { handle } => write!(f, "page handle `{handle}` is no longer available; use a handle from the current result or plan a new read"),
+            Self::InvalidNamespace { handle } => {
+                write!(f, "invalid namespaced page handle `{handle}`")
+            }
+            Self::WrongSession { handle } => {
+                write!(f, "page handle `{handle}` belongs to another session")
+            }
+            Self::McpRequiresNamespace { handle } => write!(
+                f,
+                "page handle `{handle}` is not scoped to this MCP session; use a handle from its result"
+            ),
+            Self::HttpRejectsNamespace { handle } => {
+                write!(f, "page handle `{handle}` requires an MCP session")
+            }
+            Self::Unavailable { handle } => write!(
+                f,
+                "page handle `{handle}` is no longer available; use a handle from the current result or plan a new read"
+            ),
         }
     }
 }
@@ -272,9 +287,9 @@ pub(crate) use run_line::run_parsed_plasm_line;
 #[cfg(test)]
 pub(crate) use context::replay_teaching_exposure_waves;
 pub use context::{
-    apply_capability_seeds, execute_session_create_response, expand_execute_teaching_session,
-    federate_execute_session, normalize_capability_seeds, resolve_capability_seeds,
-    ExpandTeachingWaveResult, SessionMutateError,
+    apply_capability_seeds, apply_capability_seeds_for_mcp, execute_session_create_response,
+    expand_execute_teaching_session, federate_execute_session, normalize_capability_seeds,
+    resolve_capability_seeds, ExpandTeachingWaveResult, SessionMutateError,
 };
 pub(crate) use context::{
     apply_federate_exposure_wave, build_initial_exposure_wave, ExposureCatalogWave,
