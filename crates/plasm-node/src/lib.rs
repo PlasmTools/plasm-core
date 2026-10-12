@@ -77,6 +77,8 @@ pub struct JsRunPlanResult {
 
 #[derive(Debug, Error)]
 enum NodeEngineError {
+    #[error("Plasm engine is closing or closed")]
+    Closed,
     #[error("logical session `{id}` is unknown")]
     UnknownSession { id: String },
     #[error("logical session has no discovery generation pin")]
@@ -116,6 +118,8 @@ fn lock<T>(m: &Mutex<T>) -> std::sync::MutexGuard<'_, T> {
 /// executor instead of blocking it. Independent logical sessions remain concurrent.
 #[napi]
 pub struct PlasmEngine {
+    closing: std::sync::atomic::AtomicBool,
+    drained: tokio::sync::RwLock<bool>,
     python_pool: Arc<plasm_agent_core::python_pool::PythonPool>,
     inner: Arc<AsyncMutex<InnerEngine>>,
     sessions: Mutex<HashMap<String, Arc<AsyncMutex<InnerEngine>>>>,
@@ -133,6 +137,17 @@ impl PlasmEngine {
     pub fn new() -> Self {
         Self::with_runtime(None)
     }
+    async fn admit(&self) -> Result<tokio::sync::RwLockReadGuard<'_, bool>> {
+        if self.closing.load(std::sync::atomic::Ordering::Acquire) {
+            return Err(map_err(NodeEngineError::Closed));
+        }
+        let guard = self.drained.read().await;
+        if self.closing.load(std::sync::atomic::Ordering::Acquire) {
+            return Err(map_err(NodeEngineError::Closed));
+        }
+        Ok(guard)
+    }
+
     fn session_engine(&self, id: &str) -> NodeResult<Arc<AsyncMutex<InnerEngine>>> {
         lock(&self.sessions)
             .get(id)
@@ -214,6 +229,8 @@ impl PlasmEngine {
     pub fn with_runtime(monty_binary: Option<String>) -> Self {
         tracing_setup::init();
         Self {
+            closing: std::sync::atomic::AtomicBool::new(false),
+            drained: tokio::sync::RwLock::new(false),
             python_pool: Arc::new(match monty_binary {
                 Some(path) => plasm_agent_core::python_pool::PythonPool::with_binary(path.into()),
                 None => Default::default(),
@@ -225,8 +242,22 @@ impl PlasmEngine {
         }
     }
 
+    /// Close admission, drain native callbacks and terminate pooled workers.
+    /// Cancellation leaves admission closed; a subsequent close completes cleanup.
+    #[napi]
+    pub async fn close(&self) {
+        self.closing
+            .store(true, std::sync::atomic::Ordering::Release);
+        let mut drained = self.drained.write().await;
+        if !*drained {
+            self.python_pool.close().await;
+            *drained = true;
+        }
+    }
+
     #[napi]
     pub async fn load_catalog(&self, catalog_dir: String) -> Result<JsCatalogInfo> {
+        let _admission = self.admit().await?;
         let mut engine = self.inner.lock().await;
         let info = engine
             .load_catalog(PathBuf::from(catalog_dir).as_path())
@@ -244,6 +275,7 @@ impl PlasmEngine {
         deployment_id: String,
         bindings_json: String,
     ) -> Result<String> {
+        let _admission = self.admit().await?;
         let (paths, allowed) = {
             let engine = self.inner.lock().await;
             (engine.packed_manifests(), engine.allowed_catalogs())
@@ -287,6 +319,7 @@ impl PlasmEngine {
         intent_provenance_json: String,
         logical_session_id: Option<String>,
     ) -> Result<String> {
+        let _admission = self.admit().await?;
         let provenance: plasm_agent_core::intent_provenance::IntentProvenance =
             serde_json::from_str(&intent_provenance_json)
                 .map_err(NodeEngineError::from)
@@ -364,6 +397,7 @@ impl PlasmEngine {
         intent: String,
         seeds: Vec<JsSeed>,
     ) -> Result<JsTeachingResult> {
+        let _admission = self.admit().await?;
         let mut engine = self.inner.lock().await;
         let capability_seeds: Vec<CapabilitySeed> = seeds
             .into_iter()
@@ -383,6 +417,7 @@ impl PlasmEngine {
 
     #[napi]
     pub async fn introspect_catalog(&self, entry_id: String) -> Result<String> {
+        let _admission = self.admit().await?;
         let engine = self.inner.lock().await;
         let info = engine.introspect_catalog(&entry_id).map_err(map_err)?;
         serde_json::to_string(&info).map_err(|e| Error::from_reason(e.to_string()))
@@ -394,6 +429,7 @@ impl PlasmEngine {
         program: String,
         logical_session_id: Option<String>,
     ) -> Result<JsDryRunResult> {
+        let _admission = self.admit().await?;
         let mut engine = self.execution_engine(logical_session_id.as_deref()).await?;
         let result = engine.dry_run(&program).await.map_err(map_err)?;
         Ok(JsDryRunResult {
@@ -413,6 +449,7 @@ impl PlasmEngine {
         plan_commit_ref: String,
         logical_session_id: Option<String>,
     ) -> Result<JsRunPlanResult> {
+        let _admission = self.admit().await?;
         let mut engine = self.execution_engine(logical_session_id.as_deref()).await?;
         let result = engine.run_plan(&plan_commit_ref).map_err(map_err)?;
         Ok(JsRunPlanResult {
@@ -434,6 +471,7 @@ impl PlasmEngine {
         transport: JsHostTransport,
         logical_session_id: Option<String>,
     ) -> Result<JsRunPlanResult> {
+        let _admission = self.admit().await?;
         let mut engine = self.execution_engine(logical_session_id.as_deref()).await?;
         let callback = JsCallbackHttpTransport::new(transport.0, engine.primary_entry_id());
         let result = engine
@@ -503,6 +541,57 @@ mod mutex_law_tests {
     }
 
     /// Full cutover guard: sync acquisition on the shared Tokio mutex must not return.
+    #[tokio::test]
+    async fn close_drains_admitted_calls_and_rejects_new_calls() {
+        use std::future::{poll_fn, Future};
+        use std::task::Poll;
+        let engine = PlasmEngine::new();
+        let mut held = engine.inner.lock().await;
+        *held = InnerEngine::from_generation(
+            [("fixture".into(), plasm_core::CGS::new())].into(),
+            Default::default(),
+            "closing-session".into(),
+        );
+        let mut admitted = Box::pin(engine.introspect_catalog("fixture".into()));
+        poll_fn(|cx| {
+            assert!(admitted.as_mut().poll(cx).is_pending());
+            Poll::Ready(())
+        })
+        .await;
+        let mut closing = Box::pin(engine.close());
+        poll_fn(|cx| {
+            assert!(closing.as_mut().poll(cx).is_pending());
+            Poll::Ready(())
+        })
+        .await;
+        assert!(engine.introspect_catalog("fixture".into()).await.is_err());
+        drop(held);
+        assert!(admitted.await.is_ok());
+        closing.await;
+        assert!(*engine.drained.read().await);
+        assert!(engine.introspect_catalog("fixture".into()).await.is_err());
+        engine.close().await;
+    }
+
+    #[tokio::test]
+    async fn cancelled_close_keeps_admission_closed_and_can_finish() {
+        use std::future::{poll_fn, Future};
+        use std::task::Poll;
+        let engine = PlasmEngine::new();
+        let admitted = engine.admit().await.unwrap();
+        let mut closing = Box::pin(engine.close());
+        poll_fn(|cx| {
+            assert!(closing.as_mut().poll(cx).is_pending());
+            Poll::Ready(())
+        })
+        .await;
+        drop(closing);
+        assert!(engine.admit().await.is_err());
+        drop(admitted);
+        engine.close().await;
+        assert!(*engine.drained.read().await);
+    }
+
     #[test]
     fn plasm_engine_napi_surface_forbids_blocking_lock() {
         let src = include_str!("lib.rs");

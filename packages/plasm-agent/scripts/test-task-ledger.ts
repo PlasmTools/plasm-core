@@ -37,6 +37,7 @@ const unused = async (): Promise<never> => {
   throw new Error("unexpected engine call");
 };
 const engine: PlasmEngine = {
+  close: async () => {},
   loadCatalog: unused,
   activateDiscovery: unused,
   routeIntent: unused,

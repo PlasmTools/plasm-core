@@ -187,6 +187,18 @@ Installed globally or via `npx`: `plasm-agent <command>` (bin entry in package.j
 
 ## Scripts
 
+Call `await agent.close()` before publishing terminal evidence or exiting a host.
+It closes turn admission, waits for accepted turns, drains runtime operations and
+their archive writes, then closes the owned native engine and Monty workers.
+`AgentRuntime.close()` provides the same runtime guarantee for direct tool hosts.
+Injected engines must implement `close(): Promise<void>`; the runtime owns their
+shutdown. Repeated close returns the same completion. Operation failures remain
+on their original promises; cleanup failures reject close.
+
+Accepted work is drained rather than cancelled, so retain the host's operation
+deadlines and process watchdog. Call close from the owning host after a turn,
+rather than awaiting it from a callback inside the same accepted operation.
+
 ```bash
 cd packages/plasm-agent
 npm install

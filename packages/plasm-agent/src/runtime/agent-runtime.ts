@@ -1,3 +1,4 @@
+import { DrainingLifecycle } from "./lifecycle.js";
 import { AgentExecutionFailure, executionFailureSchema } from "./execution-failure.js";
 import { routingExplanationLines, routingRecoveryMarkdown, routingSupportMarkdown } from "../engine/routing.js";
 import path from "node:path";
@@ -138,6 +139,13 @@ function parseRowsJson(rowsJson?: string): unknown[] | undefined {
 }
 
 export class AgentRuntime {
+  private readonly lifecycle = new DrainingLifecycle();
+
+  /** Stop new admissions, drain accepted work and close the owned engine. */
+  close(): Promise<void> {
+    return this.lifecycle.close(() => this.engine.close());
+  }
+
   private readonly engineInstanceId = randomUUID();
   readonly engine: PlasmEngine;
   readonly sessionManager: SessionManager;
@@ -209,7 +217,11 @@ export class AgentRuntime {
     }
   }
 
-  async bootstrap(): Promise<LoadedCatalog[]> {
+  bootstrap(): Promise<LoadedCatalog[]> {
+    return this.lifecycle.run(() => this.bootstrapAdmitted());
+  }
+
+  private async bootstrapAdmitted(): Promise<LoadedCatalog[]> {
     if (this.archive) {
       await this.archive.bootstrap();
     }
@@ -234,7 +246,11 @@ export class AgentRuntime {
 
   private readonly discoveryQueue = new DiscoveryQueue();
 
-  async plasmContext(input: PlasmContextInput): Promise<string> {
+  plasmContext(input: PlasmContextInput): Promise<string> {
+    return this.lifecycle.run(() => this.plasmContextAdmitted(input));
+  }
+
+  private async plasmContextAdmitted(input: PlasmContextInput): Promise<string> {
     // Snapshot inputs before waiting: callers must not mutate a queued request.
     const request: PlasmContextInput = {
       ...input,
@@ -327,7 +343,11 @@ export class AgentRuntime {
     });
   }
 
-  async plasm(input: PlasmPlanInput): Promise<string> {
+  plasm(input: PlasmPlanInput): Promise<string> {
+    return this.lifecycle.run(() => this.plasmAdmitted(input));
+  }
+
+  private async plasmAdmitted(input: PlasmPlanInput): Promise<string> {
     const session = await this.requireSessionByRef(input.logicalSessionRef);
     void input.reasoning;
     const entryId = session.seeds[0]?.api;
@@ -395,7 +415,7 @@ export class AgentRuntime {
         });
 
         if (dry.fusedCleanRead) {
-          return this.plasmRun({
+          return this.plasmRunAdmitted({
             logicalSessionRef: input.logicalSessionRef,
             runRef: dry.planCommitRef,
           });
@@ -406,7 +426,11 @@ export class AgentRuntime {
     );
   }
 
-  async plasmRun(input: PlasmRunInput): Promise<string> {
+  plasmRun(input: PlasmRunInput): Promise<string> {
+    return this.lifecycle.run(() => this.plasmRunAdmitted(input));
+  }
+
+  private async plasmRunAdmitted(input: PlasmRunInput): Promise<string> {
     const session = await this.requireSessionByRef(input.logicalSessionRef);
     if (!runReferenceSchema.safeParse(input.runRef).success) {
       throw new AgentExecutionFailure({

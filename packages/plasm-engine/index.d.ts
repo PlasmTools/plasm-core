@@ -8,6 +8,8 @@
  * executor instead of blocking it. Independent logical sessions remain concurrent.
  */
 export declare class PlasmEngine {
+  /** Stop admission, drain native calls and close pooled Monty workers. */
+  close(): Promise<void>
   constructor(montyBinary?: string | undefined | null)
   loadCatalog(catalogDir: string): Promise<JsCatalogInfo>
   /** Activate the complete loaded manifest set using explicit deployment bindings. */

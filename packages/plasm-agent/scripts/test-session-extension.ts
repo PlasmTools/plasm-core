@@ -17,6 +17,7 @@ export async function checkSessionExtension(observe: (intent: string) => Promise
   const provenanceBySession = new Map<string, IntentProvenance>();
   const unused = async (): Promise<never> => { throw new Error("unexpected engine operation"); };
   const engine: PlasmEngine = {
+  close: async () => {},
     loadCatalog: unused, synthesizeTeaching: unused, dryRun: unused,
     activateDiscovery: unused, runPlan: unused, run: unused, introspectCatalog: unused,
     async routeIntent(provenance, sessionId) {

@@ -10,6 +10,7 @@ import { classifyNonTerminalStop, runEveToolLoop } from "../src/telemetry/eve-to
 
 const unused = async (): Promise<never> => { throw new Error("unexpected engine call"); };
 const engine: PlasmEngine = {
+  close: async () => {},
   loadCatalog: unused, activateDiscovery: unused, routeIntent: unused,
   synthesizeTeaching: unused, dryRun: unused, runPlan: unused, run: unused,
   introspectCatalog: unused,

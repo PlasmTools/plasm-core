@@ -65,6 +65,8 @@ export type HostTransportResponse = {
 export type HostTransportFn = (request: HostTransportRequest) => Promise<HostTransportResponse>;
 
 export interface PlasmEngine {
+  /** Close admission and drain all accepted native work before releasing workers. */
+  close(): Promise<void>;
   loadCatalog(catalog: LoadedCatalog): Promise<void>;
   synthesizeTeaching(
     intent: string,
@@ -84,6 +86,7 @@ export interface PlasmEngine {
 }
 
 type NativePlasmEngine = {
+  close(): Promise<void>;
   loadCatalog(catalogDir: string): Promise<{
     entryId: string;
     catalogCgsHash: string;
@@ -139,6 +142,10 @@ function loadNativeConstructor(): NativeConstructor | null {
 export class NapiPlasmEngine implements PlasmEngine {
   private readonly native: NativePlasmEngine;
   private loaded: LoadedCatalog[] = [];
+
+  close(): Promise<void> {
+    return this.native.close();
+  }
 
   constructor(NativeEngine: NativeConstructor = loadNativeConstructor()!) {
     if (!NativeEngine) {

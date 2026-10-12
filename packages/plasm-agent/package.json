@@ -44,6 +44,7 @@
     "README.md"
   ],
   "scripts": {
+    "test:lifecycle": "node scripts/run-plasm-cli.mjs scripts/test-lifecycle.ts",
     "typecheck": "tsc --noEmit",
     "plasm-agent": "node scripts/run-plasm-cli.mjs",
     "build:engine": "npm run build --prefix ../plasm-engine",

@@ -1,3 +1,4 @@
+import { DrainingLifecycle } from "./lifecycle.js";
 import { AgentExecutionFailure, executionFailureSchema } from "./execution-failure.js";
 import { readFile } from "node:fs/promises";
 import path from "node:path";
@@ -116,6 +117,13 @@ export interface AgentTurnResult {
 }
 
 export class PlasmAgent {
+  private readonly lifecycle = new DrainingLifecycle();
+
+  /** Stop new admissions, drain accepted work and close the owned engine. */
+  close(): Promise<void> {
+    return this.lifecycle.close(() => this.runtime.close());
+  }
+
   private initialContext?: Promise<string>;
   readonly runtime: AgentRuntime;
   private readonly model: string | LanguageModel;
@@ -170,7 +178,7 @@ export class PlasmAgent {
   }
 
   async bootstrap(): Promise<void> {
-    await this.runtime.bootstrap();
+    await this.lifecycle.run(async () => { await this.runtime.bootstrap(); });
   }
 
   async loadInstructions(): Promise<string> {
@@ -208,7 +216,14 @@ export class PlasmAgent {
     return base;
   }
 
-  async generate(
+  generate(
+    prompt: string,
+    options: AgentGenerateOptions = {},
+  ): Promise<AgentTurnResult> {
+    return this.lifecycle.run(() => this.generateAdmitted(prompt, options));
+  }
+
+  private async generateAdmitted(
     prompt: string,
     options: AgentGenerateOptions = {},
   ): Promise<AgentTurnResult> {

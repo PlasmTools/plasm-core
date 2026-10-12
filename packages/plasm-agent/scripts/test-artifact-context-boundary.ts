@@ -16,6 +16,7 @@ const session = [...sessionCases(1)][0]!;
 const message = "Native Plasm response: snapshot available.";
 let snapshot: unknown;
 const engine: PlasmEngine = {
+  close: async () => {},
   loadCatalog: unused, activateDiscovery: unused, routeIntent: unused,
   synthesizeTeaching: unused, dryRun: unused, run: unused, introspectCatalog: unused,
   runPlan: async () => ({ ok: true, message, rowsJson: JSON.stringify(snapshot),
