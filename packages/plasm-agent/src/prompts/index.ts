@@ -18,16 +18,21 @@ export type PromptAssetName =
   | "initialize_workflow.txt"
   | "plasm_context_tool.txt"
   | "plasm_tool.txt"
+  | "python-plasm-dag.txt"
   | "plasm_run_tool_base.txt";
 
-export function loadPromptAsset(name: PromptAssetName): string {
+function readPromptAsset(name: PromptAssetName): string {
   const monorepo = path.join(monorepoAssetsDir, name);
   const vendored = path.join(vendoredDir, name);
   const file = existsSync(monorepo) ? monorepo : vendored;
   if (!existsSync(file)) {
     throw new Error(`missing Plasm prompt asset: ${name} (looked in ${monorepo} and ${vendored})`);
   }
-  return readFileSync(file, "utf8").trim();
+  return readFileSync(file, "utf8");
+}
+
+export function loadPromptAsset(name: PromptAssetName): string {
+  return readPromptAsset(name).trim();
 }
 
 export type SystemLiturgyOptions = {
@@ -126,7 +131,7 @@ export const TASK_LEDGER_LITURGY = [
 
 /**
  * Framework system liturgy for every PlasmAgent turn.
- * Plan→Act→Observe cycle + language law + tool-only resource rite —
+ * Plan→Act→Observe cycle; language semantics belong to tool descriptions —
  * not product/AppWorld overlays. Eval-terminal completion is gated:
  * without `includeEvalTerminals`, do not invent `complete_task` / `submit_answer`.
  */
@@ -143,12 +148,7 @@ export function buildDefaultSystemLiturgy(options: SystemLiturgyOptions = {}): s
       "TASK_LEDGER_PLAN_SLOT",
     );
   }
-  const sections = [
-    workflow,
-    "",
-    "## Plasm language (`plasm` tool)",
-    loadPromptAsset("plasm_tool.txt"),
-  ];
+  const sections = [workflow];
   if (options.includeTaskLedger) {
     sections.push("", TASK_LEDGER_LITURGY);
   }
@@ -156,7 +156,8 @@ export function buildDefaultSystemLiturgy(options: SystemLiturgyOptions = {}): s
 }
 
 export function buildPlasmToolDescription(): string {
-  return loadPromptAsset("plasm_tool.txt");
+  // Same assembly as plasm-core's PLASM_MCP_TOOL_DESCRIPTION.
+  return `${readPromptAsset("plasm_tool.txt")}\n\n${readPromptAsset("python-plasm-dag.txt")}`.trim();
 }
 
 export function buildPlasmContextToolDescription(): string {

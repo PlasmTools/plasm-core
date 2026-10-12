@@ -32,7 +32,7 @@ assert.equal(
 assert.match(product, NO_TOOL_CALL);
 assert.equal(product.includes("complete_task"), false, "non-eval liturgy must not invent complete_task");
 assert.equal(product.includes("submit_answer"), false, "non-eval liturgy must not invent submit_answer");
-assert.match(product, /Python source text, not JSON data/, "plasm_tool.txt program-text law remains");
+assert.doesNotMatch(product, /Python source text, not JSON data/, "program syntax belongs to the tool description");
 
 const evalLiturgy = buildDefaultSystemLiturgy({ includeEvalTerminals: true });
 assert.equal(
@@ -54,7 +54,7 @@ assert.match(evalLiturgy, /complete_task/);
 assert.match(evalLiturgy, /submit_answer/);
 assert.match(evalLiturgy, /no reportable value/);
 assert.match(evalLiturgy, /Call `plasm_context`/, "workflow steps after the slot must remain");
-assert.match(evalLiturgy, /Python source text, not JSON data/, "plasm_tool.txt program-text law remains");
+assert.doesNotMatch(evalLiturgy, /Python source text, not JSON data/, "eval workflow does not duplicate tool semantics");
 assert.equal(evalLiturgy.includes("halt-after"), false);
 
 const decoyWorkflow =

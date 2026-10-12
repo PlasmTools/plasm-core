@@ -985,15 +985,9 @@ impl AgentEngine {
             exposure,
             &self.python_teaching,
         )?;
-        let text = if wave.language.is_none() && wave.declarations.is_empty() {
-            String::new()
-        } else {
-            format!(
-                "{}\n{}",
-                wave.language.unwrap_or_default(),
-                wave.declarations
-            )
-        };
+        // The tool description owns the static language reference. Context
+        // waves contain only the append-only session declarations.
+        let text = wave.declarations;
         self.python_teaching = wave.next_state;
         Ok(text)
     }
@@ -1420,6 +1414,8 @@ mod tests {
             })
             .collect::<Vec<_>>();
         let teaching = engine.expose_seeds("", &seeds).unwrap();
+        assert!(!teaching.prompt.contains("Program.build:"));
+        assert!(!teaching.prompt.contains("Cards: exact signatures;"));
         for cap in &catalog.capabilities {
             if cap.python.unavailable.is_some() {
                 continue;

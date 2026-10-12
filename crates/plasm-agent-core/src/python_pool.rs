@@ -368,7 +368,12 @@ pub(crate) fn pool_failure(error: monty_pool::PoolError) -> ExecutionFailure {
     infrastructure_failure(error.to_string())
 }
 fn infrastructure_failure(detail: impl Into<String>) -> ExecutionFailure {
-    ExecutionFailure::new(FailureCause::Runtime, "python_pool_failure", detail)
+    tracing::error!(detail = %detail.into(), "Python compute worker infrastructure failed");
+    ExecutionFailure::new(
+        FailureCause::Runtime,
+        "python_pool_failure",
+        "Python compute stopped because the host worker failed. The host must repair the worker before execution can continue.",
+    )
 }
 
 /// Only the user-code execution phase grants program repair authority. Never inspect prose.
