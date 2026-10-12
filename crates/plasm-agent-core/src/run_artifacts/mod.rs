@@ -381,7 +381,7 @@ pub struct DocumentFromRun<'a> {
     pub run_id: RunArtifactId,
     pub prompt_hash: &'a str,
     pub session_id: &'a str,
-    pub entry_id: &'a str,
+    pub qualified_entity: &'a crate::plasm_plan::QualifiedEntityKey,
     pub principal: Option<String>,
     pub display_lines: Vec<String>,
     pub parsed_preimage: &'a ParsedExpr,
@@ -401,7 +401,8 @@ pub fn document_from_run(
         run_id: d.run_id.to_wire(),
         prompt_hash: d.prompt_hash.to_string(),
         session_id: d.session_id.to_string(),
-        entry_id: d.entry_id.to_string(),
+        entry_id: d.qualified_entity.entry_id.clone(),
+        entity: d.qualified_entity.entity.clone(),
         resource_index: d.resource_index,
         principal: d.principal,
         parsed_preimage: d.parsed_preimage.clone(),
@@ -433,15 +434,6 @@ pub fn project_artifact_payload_for_agent(
         metadata: payload.metadata.clone(),
         bytes: serde_json::to_vec(&slim)?.into(),
     })
-}
-
-/// MCP `resources/read` exposes semantic result rows for both agents and Run Explorer.
-/// Read-source attribution does not change the result payload into storage envelopes.
-pub fn project_artifact_payload_for_mcp_read(
-    payload: &ArtifactPayload,
-    _read_source: Option<&str>,
-) -> Result<ArtifactPayload, RunArtifactError> {
-    project_artifact_payload_for_agent(payload, false)
 }
 
 /// Verify stored JSON matches the requested content-addressed `run_id`.

@@ -51,6 +51,13 @@ fn append_paging_if_needed(
 }
 
 fn append_coverage_note(sections: &mut String, resolved: &ResolvedStepPublish, plan: &PublishPlan) {
+    if resolved.coverage == plasm_runtime::ResultCoverage::Complete
+        && !resolved.is_truncated_for_transport()
+        && resolved.continue_handle.is_none()
+        && resolved.delivery_range.start == 0
+    {
+        return;
+    }
     sections.push_str(&mcp_coverage_preview_note(
         resolved.row_count,
         resolved.source_rows,
@@ -60,7 +67,10 @@ fn append_coverage_note(sections: &mut String, resolved: &ResolvedStepPublish, p
         resolved.continue_handle.as_deref(),
         plan.artifact_access,
     ));
-    if !resolved.delivery_range.is_empty() {
+    if !resolved.delivery_range.is_empty()
+        && (resolved.delivery_range.start != 0
+            || resolved.delivery_range.end < resolved.source_rows)
+    {
         sections.push_str(&format!(
             "\nDelivery range: {}–{} of {} observed rows.\n",
             resolved.delivery_range.start + 1,

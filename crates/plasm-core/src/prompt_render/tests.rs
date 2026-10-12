@@ -2136,7 +2136,7 @@ fn python_reference_includes_composition_contract() {
         "max_steps",
         "one-column RHS",
         "immutable DAG versions",
-        "return result/record/tuple",
+        "Return rowsets directly; tuple returns multiple results",
         "None",
         "completed/unknown effect receipts",
     ] {

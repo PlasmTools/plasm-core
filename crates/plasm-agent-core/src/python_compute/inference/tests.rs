@@ -1,6 +1,25 @@
 use super::*;
 use plasm_core::{value_contract::DomainRef, ValueDomainKey};
 
+proptest::proptest! {
+    #![proptest_config(proptest::test_runner::Config::with_cases(128))]
+    #[test]
+    fn rowset_properties_arithmetic_drops_nominal_domain_while_copy_keeps_it(
+        offset in -1000i64..1000, domain in "[a-z]{1,20}",
+    ) {
+        let mut number = Type::scalar(FieldType::Integer);
+        number.domain = Some(DomainRef {
+            entry_id: "matrix".into(), catalog_hash: "pin".into(),
+            value_ref: ValueDomainKey::new(domain).unwrap(),
+        });
+        let input = fields(&[("number", number.clone())]);
+        let copied = infer_body("\n    return row.number\n", &[("row", &input)], "").unwrap();
+        proptest::prop_assert_eq!(&copied, &number);
+        let transformed = infer_body(&format!("\n    return row.number + ({offset})\n"), &[("row", &input)], "").unwrap();
+        proptest::prop_assert_eq!(transformed, Type::scalar(FieldType::Integer));
+    }
+}
+
 fn fields(items: &[(&str, Type)]) -> Type {
     Type::record(
         items

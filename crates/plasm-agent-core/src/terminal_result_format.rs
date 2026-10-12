@@ -17,13 +17,6 @@ fn cgs_for_entry(es: &ExecuteSession, entry_id: &str) -> Option<Arc<CGS>> {
         .or_else(|| Some(Arc::clone(&es.cgs)))
 }
 
-fn entity_type_for_doc(doc: &RunArtifactDocument) -> Option<String> {
-    doc.parsed_preimage
-        .expr
-        .qualified_entity_key()
-        .map(|qe| qe.entity.to_string())
-}
-
 fn execution_result_from_artifact_doc(
     doc: &RunArtifactDocument,
     _cgs: &CGS,
@@ -58,7 +51,7 @@ pub fn published_step_from_artifact_doc(
             run_artifact_id: doc.run_id.clone(),
         }
     })?;
-    let entity = entity_type_for_doc(doc);
+    let entity = Some(doc.entity.clone());
     let result = execution_result_from_artifact_doc(doc, cgs.as_ref())?;
     let display = doc
         .display_lines
@@ -82,6 +75,7 @@ pub fn hydrate_plan_run_from_artifact_formatted(
     doc: &RunArtifactDocument,
     es: &ExecuteSession,
     wire_id: &str,
+    logical_session_ref: Option<&str>,
 ) -> Result<(ExecuteRunToolOutput, Vec<serde_json::Value>), OperationError> {
     let run_id =
         RunArtifactId::from_wire(wire_id).ok_or_else(|| OperationError::ResultArtifactMissing {
@@ -115,7 +109,7 @@ pub fn hydrate_plan_run_from_artifact_formatted(
     let step = published_step_from_artifact_doc(doc, es, Some(artifact))?;
     let out = publish_plasm_result_steps(
         es,
-        None,
+        logical_session_ref,
         Some(es.cgs.as_ref()),
         None,
         std::slice::from_ref(&step),
@@ -142,8 +136,7 @@ mod tests {
     use super::*;
     use crate::run_artifacts::RunArtifactDocument;
 
-    #[test]
-    fn hydrate_empty_artifact_uses_tsv_not_json() {
+    fn empty_artifact() -> (ExecuteSession, RunArtifactDocument) {
         let cgs = Arc::new(CGS::new());
         let mut ctxs = indexmap::IndexMap::new();
         ctxs.insert(
@@ -170,6 +163,7 @@ mod tests {
             prompt_hash: "ph".into(),
             session_id: "sid".into(),
             entry_id: "default".into(),
+            entity: "Pet".into(),
             resource_index: Some(1),
             principal: None,
             parsed_preimage: ParsedExpr::from_expr(Expr::Query(QueryExpr {
@@ -194,8 +188,15 @@ mod tests {
             stats: ExecutionStats::default(),
             operations: plasm_runtime::OperationLedger::empty(),
         };
-        let (out, _) = hydrate_plan_run_from_artifact_formatted(&doc, &es, doc.run_id.as_str())
-            .expect("format");
+        (es, doc)
+    }
+
+    #[test]
+    fn hydrate_empty_artifact_uses_tsv_not_json() {
+        let (es, doc) = empty_artifact();
+        let (out, _) =
+            hydrate_plan_run_from_artifact_formatted(&doc, &es, doc.run_id.as_str(), None)
+                .expect("format");
         assert!(out.markdown.contains("```tsv"));
         assert!(!out.markdown.contains("```json"));
         let steps = out
@@ -210,5 +211,35 @@ mod tests {
             steps[0].get("run_id").and_then(|v| v.as_str()),
             Some(doc.run_id.as_str())
         );
+    }
+
+    proptest::proptest! {
+        #![proptest_config(proptest::test_runner::Config::with_cases(128))]
+        #[test]
+        fn rowset_properties_artifact_roundtrip_matches_live_context(
+            count in 0usize..120, text in ".{0,1200}", complete in proptest::bool::ANY,
+        ) {
+            let (es, mut doc) = empty_artifact();
+            let coverage = if complete { plasm_runtime::ResultCoverage::Complete } else { plasm_runtime::ResultCoverage::Unknown };
+            let rows: Vec<_> = (0..count).map(|i| {
+                let mut row = CachedEntity::new(plasm_core::Ref::new("Pet", i.to_string()), 0);
+                row.fields.insert("computed_name".into(), plasm_core::Value::String(format!("{text}:{i}")).into());
+                row.fields.insert("ordinal".into(), plasm_core::Value::Integer(i as i64).into());
+                row
+            }).collect();
+            doc.entities = rows.clone().into();
+            doc.collection = crate::test_support::execution_fixtures::checkpoint(rows, coverage);
+            let decoded: RunArtifactDocument = serde_json::from_slice(&serde_json::to_vec(&doc).unwrap()).unwrap();
+            let live_step = published_step_from_artifact_doc(&doc, &es, None).unwrap();
+            let live = publish_plasm_result_steps(&es, None, Some(&es.cgs), None, &[live_step]).unwrap();
+            let (stored, returned) = hydrate_plan_run_from_artifact_formatted(&decoded, &es, &doc.run_id, None).unwrap();
+            fn table(text: &str) -> &str { text.split("```tsv\n").nth(1).unwrap().split("```").next().unwrap() }
+            proptest::prop_assert_eq!(table(&live.markdown), table(&stored.markdown));
+            proptest::prop_assert_eq!(live.delivered_steps[0].result.entities().len(), returned.len());
+            proptest::prop_assert_eq!(decoded.entities.len(), count);
+            proptest::prop_assert_eq!(stored.delivered_steps[0].result.coverage(), coverage);
+            proptest::prop_assert!(!stored.markdown.contains("```json"));
+            if count != 0 { proptest::prop_assert!(table(&stored.markdown).lines().next().unwrap().contains("computed_name")); }
+        }
     }
 }

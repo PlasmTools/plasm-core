@@ -802,7 +802,7 @@ pub(crate) async fn finalize_embed_relation_materialized_node(
         st,
         es,
         session_id,
-        Some(relation.relation.target.entry_id.as_str()),
+        &relation.relation.target,
         artifact_labels,
         &parsed_preimage,
         &materialized.result,

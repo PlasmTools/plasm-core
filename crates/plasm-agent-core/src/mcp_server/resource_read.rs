@@ -1,5 +1,163 @@
 //! MCP `resources/read` for Plasm run snapshots and MCP App UI bundles.
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::execute_session::SessionReuseKey;
+    use crate::run_artifacts::{
+        document_from_run, ArtifactPayload, ArtifactPayloadMetadata, DocumentFromRun, RunArtifactId,
+    };
+    use plasm_core::CgsCatalog;
+
+    #[tokio::test]
+    async fn computed_artifact_context_is_tsv_with_session_paging_while_ui_is_json() {
+        let mut cgs = plasm_core::load_schema(
+            &std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+                .join("../../fixtures/schemas/python_dag_slice"),
+        )
+        .unwrap();
+        cgs.bind_registry_entry_id("default");
+        let cgs = Arc::new(cgs);
+        let session_id = uuid::Uuid::new_v4().simple().to_string();
+        let logical_id = uuid::Uuid::new_v4();
+        let session_ref =
+            crate::mcp_logical_ref::format_logical_session_wire_ref_from_uuid(logical_id);
+        let host = crate::http::build_plasm_host_state(crate::http::PlasmHostBootstrap {
+            engine: plasm_runtime::ExecutionEngine::new(Default::default()).unwrap(),
+            mode: plasm_runtime::ExecutionMode::Live,
+            registry: Arc::new(plasm_core::discovery::CgsRegistry::from_pairs(vec![(
+                "default".into(),
+                "Fixture".into(),
+                vec![],
+                cgs.clone(),
+            )])),
+            catalog_bootstrap: crate::server_state::CatalogBootstrap::Fixed,
+            incoming_auth: None,
+            run_artifacts: Arc::new(crate::run_artifacts::RunArtifactStore::memory()),
+            session_graph_persistence: None,
+            oss_local_filesystem_defaults: false,
+        })
+        .unwrap();
+        let cgs = host
+            .catalog
+            .snapshot()
+            .load_context("default")
+            .unwrap()
+            .cgs
+            .clone();
+        let es = crate::test_support::session_fixtures::test_execute_session(
+            cgs.clone(),
+            &"a".repeat(64),
+        );
+        let prompt_hash = es.prompt_hash.clone();
+        host.sessions
+            .insert(
+                SessionReuseKey {
+                    tenant_scope: String::new(),
+                    entry_id: "default".into(),
+                    catalog_cgs_hash: cgs.catalog_cgs_hash_hex(),
+                    entities: vec!["Pet".into()],
+                    context_intent: None,
+                    principal: None,
+                    logical_session_id: Some(logical_id.to_string()),
+                },
+                prompt_hash.clone(),
+                session_id.clone(),
+                es,
+            )
+            .await;
+        host.logical_execute_bindings
+            .insert(logical_id, prompt_hash.clone(), session_id.clone())
+            .await;
+        let step =
+            crate::test_support::execution_fixtures::synthetic_published_result_step(32, None);
+        let owner = crate::plasm_plan::QualifiedEntityKey {
+            entry_id: "default".into(),
+            entity: step.entity.unwrap(),
+        };
+        let preimage =
+            plasm_core::expr_parser::ParsedExpr::from_expr(plasm_core::Expr::TeachingValue {
+                value: plasm_core::Value::Null,
+            });
+        let run_id = RunArtifactId::from_wire(&format!("pr{}", "a".repeat(64))).unwrap();
+        let doc = document_from_run(DocumentFromRun {
+            run_id,
+            prompt_hash: &prompt_hash,
+            session_id: &session_id,
+            qualified_entity: &owner,
+            principal: None,
+            display_lines: vec!["computed rows".into()],
+            parsed_preimage: &preimage,
+            result: &step.result,
+            resource_index: None,
+        })
+        .unwrap();
+        let payload = ArtifactPayload {
+            metadata: ArtifactPayloadMetadata::json_default(),
+            bytes: serde_json::to_vec(&doc).unwrap().into(),
+        };
+        let resolved = artifact_resolve::ResolvedRunArtifact {
+            payload: payload.clone(),
+            run_id: Some(run_id),
+            prompt_hash: prompt_hash.clone(),
+            session_id: session_id.clone(),
+        };
+        let handler = PlasmMcpHandler::new(Arc::new(host));
+        let uri = crate::run_artifacts::plasm_run_resource_uri(&prompt_hash, &session_id, &run_id);
+        let model = read_run_result(&handler, &uri, resolved.clone(), None)
+            .await
+            .unwrap();
+        let ReadResourceContent::TextResourceContents(model) = &model.contents[0] else {
+            panic!("model result must be text");
+        };
+        assert_eq!(model.mime_type.as_deref(), Some("text/markdown"));
+        assert!(model.text.contains("```tsv"));
+        assert!(
+            model.text.contains(&session_ref),
+            "continuation belongs to the resolved logical session"
+        );
+        assert!(serde_json::from_str::<serde_json::Value>(&model.text).is_err());
+        let tool = super::super::resource_helpers::run_artifact_context_payload(
+            &handler,
+            &prompt_hash,
+            &session_id,
+            &payload,
+        )
+        .await
+        .unwrap();
+        assert_eq!(tool.metadata.content_type, "text/markdown");
+        assert!(std::str::from_utf8(&tool.bytes).unwrap().contains("```tsv"));
+        let ui = read_run_result(
+            &handler,
+            &uri,
+            resolved,
+            Some(plasm_trace::MCP_RESOURCE_READ_SOURCE_RUN_EXPLORER_UI),
+        )
+        .await
+        .unwrap();
+        let ReadResourceContent::TextResourceContents(ui) = &ui.contents[0] else {
+            panic!("UI artifact must be JSON text");
+        };
+        assert_eq!(ui.mime_type.as_deref(), Some("application/json"));
+        let rows: serde_json::Value = serde_json::from_str(&ui.text).unwrap();
+        assert_eq!(rows["entities"].as_array().unwrap().len(), 32);
+        handler
+            .plasm
+            .logical_execute_bindings
+            .remove(&logical_id)
+            .await;
+        let error = super::super::resource_helpers::run_artifact_context_payload(
+            &handler,
+            &prompt_hash,
+            &session_id,
+            &payload,
+        )
+        .await
+        .unwrap_err();
+        assert!(error.to_string().contains("no MCP logical session binding"));
+    }
+}
+
 use std::sync::Arc;
 use std::time::Instant;
 
@@ -47,7 +205,7 @@ async fn resolve_session_binding(
         .emit(&handler.plasm)
         .await;
         return Err(RpcError::invalid_params().with_message(
-            "no execute session for this logical session: call plasm_context with capability picks (`seeds`) first",
+            "execute session unavailable: extend plasm_context with the same logical_session_ref and current intent",
         ));
     };
     Ok((b, ls_key))
@@ -111,6 +269,32 @@ fn map_resolve_rpc_err(e: artifact_resolve::RunArtifactResolveError) -> RpcError
     }
 }
 
+async fn read_run_result(
+    handler: &PlasmMcpHandler,
+    uri: &str,
+    resolved: artifact_resolve::ResolvedRunArtifact,
+    read_source: Option<&str>,
+) -> Result<ReadResourceResult, RpcError> {
+    let payload = if read_source == Some(plasm_trace::MCP_RESOURCE_READ_SOURCE_RUN_EXPLORER_UI) {
+        crate::run_artifacts::project_artifact_payload_for_agent(&resolved.payload, false).map_err(
+            |error| {
+                RpcError::internal_error()
+                    .with_message(format!("run artifact projection failed: {error}"))
+            },
+        )?
+    } else {
+        super::resource_helpers::run_artifact_context_payload(
+            handler,
+            &resolved.prompt_hash,
+            &resolved.session_id,
+            &resolved.payload,
+        )
+        .await
+        .map_err(|error| RpcError::internal_error().with_message(error.to_string()))?
+    };
+    read_resource_result_for_payload(uri, payload)
+}
+
 pub(crate) async fn handle_read_resource_request(
     handler: &PlasmMcpHandler,
     params: ReadResourceRequestParams,
@@ -171,17 +355,7 @@ pub(crate) async fn handle_read_resource_request(
             );
         });
         crate::metrics::record_mcp_resource_read("canonical", "success", "none", started.elapsed());
-        return read_resource_result_for_payload(
-            uri,
-            crate::run_artifacts::project_artifact_payload_for_mcp_read(
-                &resolved.payload,
-                read_source,
-            )
-            .map_err(|e| {
-                RpcError::internal_error()
-                    .with_message(format!("run artifact projection failed: {e}"))
-            })?,
-        );
+        return read_run_result(handler, uri, resolved, read_source).await;
     }
 
     if let Some((prompt_hash, session_id, plan_id)) = parse_plasm_execute_plan_uri(uri) {
@@ -265,12 +439,5 @@ pub(crate) async fn handle_read_resource_request(
         );
     });
     crate::metrics::record_mcp_resource_read("canonical", "success", "none", started.elapsed());
-    read_resource_result_for_payload(
-        uri,
-        crate::run_artifacts::project_artifact_payload_for_mcp_read(&resolved.payload, read_source)
-            .map_err(|e| {
-                RpcError::internal_error()
-                    .with_message(format!("run artifact projection failed: {e}"))
-            })?,
-    )
+    read_run_result(handler, uri, resolved, read_source).await
 }

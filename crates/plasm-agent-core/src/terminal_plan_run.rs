@@ -242,7 +242,7 @@ async fn hydrate_plan_run_from_artifact(
         })?;
     let (out, node_results) =
         crate::terminal_result_format::hydrate_plan_run_from_artifact_formatted(
-            &doc, sess, wire_id,
+            &doc, sess, wire_id, None,
         )?;
     Ok(PlasmPlanRunResult {
         version: serde_json::json!({}),

@@ -285,19 +285,18 @@ pub async fn archive_plasm_result_snapshot(
     st: &PlasmHostState,
     sess: &ExecuteSession,
     session_id: &str,
-    entry_id_override: Option<&str>,
+    qualified_entity: &crate::plasm_plan::QualifiedEntityKey,
     display_lines: Vec<String>,
     parsed_preimage: &ParsedExpr,
     result: &ExecutionResult,
     trace: Option<&PlasmTraceContext>,
 ) -> Result<RunArtifactHandle, crate::run_artifacts::PersistExecuteRunError> {
-    let entry_id = entry_id_override.unwrap_or(sess.entry_id.as_str());
     let source_line = display_lines.join("\n");
     persist_execute_run(PersistExecuteRunInput {
         st,
         sess,
         session_id,
-        entry_id,
+        qualified_entity,
         source_line: &source_line,
         display_lines,
         parsed: parsed_preimage,

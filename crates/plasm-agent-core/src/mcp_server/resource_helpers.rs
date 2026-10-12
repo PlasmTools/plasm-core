@@ -52,6 +52,48 @@ pub(crate) fn mcp_artifact_payload_chars(payload: &ArtifactPayload) -> (u64, boo
     }
 }
 
+/// Stored results use the live rowset renderer and its display limits in model context.
+pub(crate) async fn run_artifact_context_payload(
+    handler: &PlasmMcpHandler,
+    prompt_hash: &str,
+    session_id: &str,
+    payload: &ArtifactPayload,
+) -> Result<ArtifactPayload, CallToolError> {
+    let doc: crate::run_artifacts::RunArtifactDocument = serde_json::from_slice(&payload.bytes)
+        .map_err(|error| {
+            CallToolError::from_message(format!("run artifact decode failed: {error}"))
+        })?;
+    let session = handler
+        .plasm
+        .get_execute_session(prompt_hash, session_id)
+        .await
+        .ok_or_else(|| {
+            CallToolError::from_message(
+                "execute session unavailable: extend plasm_context with the same logical_session_ref and current intent",
+            )
+        })?;
+    let logical_session_ref = handler
+        .plasm
+        .logical_session_id_for_execute_binding(prompt_hash, session_id)
+        .await
+        .map(crate::mcp_logical_ref::format_logical_session_wire_ref_from_uuid)
+        .ok_or_else(|| CallToolError::from_message("run artifact has no MCP logical session binding: use the run URI returned by plasm_run for the current logical_session_ref"))?;
+    let (out, _) = crate::terminal_result_format::hydrate_plan_run_from_artifact_formatted(
+        &doc,
+        session.as_ref(),
+        &doc.run_id,
+        Some(&logical_session_ref),
+    )
+    .map_err(|error| CallToolError::from_message(error.to_string()))?;
+    Ok(ArtifactPayload {
+        metadata: crate::run_artifacts::ArtifactPayloadMetadata {
+            content_type: "text/markdown".into(),
+            ..crate::run_artifacts::ArtifactPayloadMetadata::json_default()
+        },
+        bytes: out.markdown.into(),
+    })
+}
+
 pub(crate) fn read_resource_result_for_payload(
     uri: &str,
     payload: ArtifactPayload,

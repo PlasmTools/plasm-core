@@ -83,7 +83,11 @@ fn column_meta_for_name(
         }
         return Some(relation_column_meta(name, rel));
     }
-    None
+    Some(json!({
+        "name": name,
+        "kind": "field",
+        "wire_type": "json",
+    }))
 }
 
 fn relation_column_meta(name: &str, rel: &RelationSchema) -> Value {

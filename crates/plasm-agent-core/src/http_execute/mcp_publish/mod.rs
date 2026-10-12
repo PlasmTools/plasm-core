@@ -871,17 +871,17 @@ mod tests {
     }
 
     #[test]
-    fn markdown_full_mode_mentions_coverage() {
+    fn markdown_complete_rows_omit_redundant_coverage_prose() {
         let step = with_coverage(
             synthetic_published_result_step(3, None),
             plasm_runtime::ResultCoverage::Complete,
         );
         let out = publish_plasm_result_steps(None, None, std::slice::from_ref(&step));
-        assert!(
-            out.markdown
-                .contains("complete coverage for this expression."),
-            "Full mode must mention coverage: {}",
-            out.markdown
+        assert!(out.markdown.contains("## moves (3 rows)"));
+        assert!(!out.markdown.contains("coverage for this expression"));
+        assert_eq!(
+            out.delivered_steps[0].result.coverage(),
+            plasm_runtime::ResultCoverage::Complete
         );
     }
 
@@ -940,17 +940,18 @@ mod tests {
     }
 
     #[test]
-    fn markdown_empty_result_mentions_coverage() {
+    fn markdown_complete_empty_result_stays_compact() {
         let step = with_coverage(
             synthetic_published_result_step(0, None),
             plasm_runtime::ResultCoverage::Complete,
         );
         let out = publish_plasm_result_steps(None, None, std::slice::from_ref(&step));
-        assert!(
-            out.markdown
-                .contains("complete coverage for this expression."),
-            "empty Full result must mention coverage: {}",
-            out.markdown
+        assert!(out.markdown.contains("## moves (0 rows)"));
+        assert!(out.markdown.contains("(no results)"));
+        assert!(!out.markdown.contains("coverage for this expression"));
+        assert_eq!(
+            out.delivered_steps[0].result.coverage(),
+            plasm_runtime::ResultCoverage::Complete
         );
     }
 

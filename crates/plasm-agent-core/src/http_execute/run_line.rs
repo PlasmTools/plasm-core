@@ -231,7 +231,7 @@ pub(crate) async fn run_parsed_plasm_line(
     };
     if let Some(ref key) = page_storage_key {
         if let Some(cursor) = sess.peek_synthetic_paging_resume(key) {
-            let entry_id = cursor.qualified_entity.entry_id.clone();
+            let qualified_entity = cursor.qualified_entity.clone();
             let result =
                 synthetic_page_result(sess, key, cursor, trace).map_err(RunLineError::from)?;
             let mut archive = result.clone();
@@ -240,7 +240,7 @@ pub(crate) async fn run_parsed_plasm_line(
                 st,
                 sess,
                 session_id,
-                entry_id: entry_id.as_str(),
+                qualified_entity: &qualified_entity,
                 source_line: line,
                 display_lines: vec![line.to_string()],
                 parsed: &parsed,
@@ -380,7 +380,7 @@ pub(crate) async fn run_parsed_plasm_line(
         st,
         sess,
         session_id,
-        entry_id: qualified_entity.entry_id.as_str(),
+        qualified_entity: &qualified_entity,
         source_line: line,
         display_lines: vec![line.to_string()],
         parsed: &parsed,

@@ -16,7 +16,7 @@ use uuid::Uuid;
 pub const RUN_ARTIFACT_WIRE_PREFIX: &str = "pr";
 
 /// Metadata + JSON body schema for framed execute run snapshots (`PLAR1` envelope).
-pub const RUN_ARTIFACT_PAYLOAD_SCHEMA_VERSION: u32 = 3;
+pub const RUN_ARTIFACT_PAYLOAD_SCHEMA_VERSION: u32 = 4;
 
 /// Canonical 32-byte identity for a stored execute run snapshot (content-addressed).
 #[derive(Clone, Copy, PartialEq, Eq, Hash)]
@@ -215,6 +215,8 @@ pub enum RunArtifactDocumentError {
     MissingSessionId,
     #[error("run artifact entry_id is missing")]
     MissingEntryId,
+    #[error("run artifact result entity is missing")]
+    MissingEntity,
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -254,6 +256,9 @@ pub fn validate_run_artifact_document(
     }
     if doc.entry_id.trim().is_empty() {
         return Err(RunArtifactDocumentError::MissingEntryId);
+    }
+    if doc.entity.trim().is_empty() {
+        return Err(RunArtifactDocumentError::MissingEntity);
     }
     Ok(())
 }
@@ -302,6 +307,8 @@ pub struct RunArtifactDocument {
     pub prompt_hash: String,
     pub session_id: String,
     pub entry_id: String,
+    /// Entity from the validated result owner, including pure computed rowsets.
+    pub entity: String,
     /// Monotonic per `(prompt_hash, session_id)` execute session; drives `plasm://r/{n}` and archive index lookup.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub resource_index: Option<u64>,

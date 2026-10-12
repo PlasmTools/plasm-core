@@ -275,7 +275,8 @@ fn field_type_is_blob(cgs: Option<&CGS>, entity_type: &EntityName, field: &str) 
         .is_some_and(|nv| matches!(nv.field_type, FieldType::Blob))
 }
 
-/// Column order for agent table/TSV: fields (blob → ref+mime) + relations — no cache metadata columns.
+/// Column order follows materialized rows, including DAG-produced projections.
+/// CGS supplies presentation hints; it does not restrict the returned columns.
 pub(crate) fn union_entity_table_columns(
     result: &impl RowObservation,
     cgs: Option<&CGS>,
@@ -286,15 +287,9 @@ pub(crate) fn union_entity_table_columns(
     let mut emitted: BTreeSet<String> = BTreeSet::new();
 
     for entity in entities() {
-        let ent_def = cgs.and_then(|g| g.get_entity(entity.reference.entity_type.as_str()));
         for key in entity.fields.keys().chain(entity.unavailable_fields.iter()) {
             if emitted.contains(key.as_str()) {
                 continue;
-            }
-            if let Some(ent) = ent_def {
-                if !ent.fields.contains_key(key.as_str()) {
-                    continue;
-                }
             }
             let any_blob =
                 entities().any(|e| field_type_is_blob(cgs, &e.reference.entity_type, key.as_str()));
@@ -312,11 +307,6 @@ pub(crate) fn union_entity_table_columns(
             }
         }
         for rel in entity.relations.keys() {
-            if let Some(ent) = ent_def {
-                if !ent.relations.contains_key(rel.as_str()) {
-                    continue;
-                }
-            }
             if emitted.insert(rel.clone()) {
                 columns.push(rel.clone());
             }
@@ -978,7 +968,7 @@ mod tests {
     }
 
     #[test]
-    fn result_tsv_and_column_schema_cannot_name_untaught_field() {
+    fn result_tsv_and_column_schema_preserve_materialized_projection_fields() {
         let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
             .join("../../fixtures/schemas/return_projection_teaching");
         let cgs = plasm_core::loader::load_schema_dir(&dir).expect("return_projection_teaching");
@@ -992,7 +982,7 @@ mod tests {
         for name in &taught {
             fields.insert(name.clone(), Value::String(format!("v-{name}")));
         }
-        fields.insert("shadow_col".into(), Value::String("rogue".into()));
+        fields.insert("derived_col".into(), Value::String("derived".into()));
         let entity = CachedEntity::from_decoded(
             r,
             fields,
@@ -1021,8 +1011,8 @@ mod tests {
         };
         let cols = union_entity_table_columns(&result, Some(&cgs), None);
         assert!(
-            !cols.iter().any(|c| c == "shadow_col"),
-            "dump must not name a field the card omitted: {cols:?}"
+            cols.iter().any(|c| c == "derived_col"),
+            "materialized projection columns must survive catalog hints: {cols:?}"
         );
         for name in &taught {
             assert!(
@@ -1032,8 +1022,8 @@ mod tests {
         }
         let (tsv, _, _) = format_result_tsv_with_cgs(&result, Some(&cgs), None);
         assert!(
-            !tsv.split('\n').next().unwrap_or("").contains("shadow_col"),
-            "TSV header must not name shadow_col:\n{tsv}"
+            tsv.split('\n').next().unwrap_or("").contains("derived_col"),
+            "TSV header must include the produced column:\n{tsv}"
         );
         let schema = crate::run_ui_column_schema::build_run_step_column_schema(
             &result,
@@ -1043,8 +1033,8 @@ mod tests {
         )
         .expect("column schema");
         assert!(
-            schema.columns.iter().all(|c| c["name"] != "shadow_col"),
-            "binding column_schema must not name shadow_col: {:?}",
+            schema.columns.iter().any(|c| c["name"] == "derived_col"),
+            "binding column_schema must include the produced column: {:?}",
             schema.columns
         );
     }

@@ -3,7 +3,6 @@
 use std::sync::Arc;
 use std::time::Instant;
 
-use base64::Engine as _;
 use rust_mcp_sdk::schema::schema_utils::CallToolError;
 use rust_mcp_sdk::schema::{CallToolResult, TextContent};
 use rust_mcp_sdk::McpServer;
@@ -221,17 +220,17 @@ impl PlasmMcpHandler {
                 lookup_arg,
             )
             .await?;
-        let payload =
-            crate::run_artifacts::project_artifact_payload_for_agent(&resolved.payload, false)
-                .map_err(|e| {
-                    CallToolError::from_message(format!("artifact projection failed: {e}"))
-                })?;
+        let payload = super::resource_helpers::run_artifact_context_payload(
+            self,
+            &resolved.prompt_hash,
+            &resolved.session_id,
+            &resolved.payload,
+        )
+        .await?;
         let (char_count, binary) = mcp_artifact_payload_chars(&payload);
         let text = std::str::from_utf8(&payload.bytes)
             .map(str::to_string)
-            .unwrap_or_else(|_| {
-                base64::engine::general_purpose::STANDARD.encode(&resolved.payload.bytes)
-            });
+            .map_err(|_| CallToolError::from_message("result text must be UTF-8"))?;
         let mut meta = serde_json::Map::new();
         meta.insert(
             "plasm".into(),

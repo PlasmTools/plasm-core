@@ -97,6 +97,7 @@ fn run_artifact_doc(
         prompt_hash: ph.to_string(),
         session_id: sid.to_string(),
         entry_id: "overshow".into(),
+        entity: "Profile".into(),
         resource_index: None,
         principal: None,
         parsed_preimage: ParsedExpr {

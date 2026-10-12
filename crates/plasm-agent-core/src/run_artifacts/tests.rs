@@ -148,6 +148,7 @@ async fn memory_insert_get_round_trip() {
         prompt_hash: "p".repeat(64),
         session_id: "s1".into(),
         entry_id: "e".into(),
+        entity: "Widget".into(),
         resource_index: Some(1),
         principal: None,
         parsed_preimage: sample_parsed_preimage(),
@@ -197,7 +198,10 @@ fn document_from_run_persists_coverage() {
         run_id: sample_run_id(),
         prompt_hash: "ph",
         session_id: "sid",
-        entry_id: "matrix",
+        qualified_entity: &crate::plasm_plan::QualifiedEntityKey {
+            entry_id: "matrix".into(),
+            entity: "LangItem".into(),
+        },
         principal: None,
         display_lines: vec!["LangItem".into()],
         parsed_preimage: &sample_parsed_preimage(),
@@ -446,6 +450,7 @@ async fn fs_backend_resource_index_round_trip() {
         prompt_hash: ph.clone(),
         session_id: "s1".into(),
         entry_id: "e".into(),
+        entity: "Widget".into(),
         resource_index: Some(3),
         principal: None,
         parsed_preimage: sample_parsed_preimage(),
@@ -511,6 +516,7 @@ async fn init_from_env_url_precedes_dir() {
         prompt_hash: ph.clone(),
         session_id: "sess".into(),
         entry_id: "e".into(),
+        entity: "Widget".into(),
         resource_index: None,
         principal: None,
         parsed_preimage: sample_parsed_preimage(),
@@ -554,6 +560,7 @@ fn project_artifact_payload_for_agent_slim_by_default() {
         prompt_hash: "ab".repeat(32),
         session_id: "sess".into(),
         entry_id: "github".into(),
+        entity: "Widget".into(),
         resource_index: Some(1),
         principal: Some("tenant:1".into()),
         parsed_preimage: sample_parsed_preimage(),
@@ -595,7 +602,7 @@ fn project_artifact_payload_for_agent_slim_by_default() {
 }
 
 #[test]
-fn project_artifact_payload_for_mcp_read_run_explorer_ui_returns_semantic_rows() {
+fn run_explorer_json_returns_semantic_rows() {
     let run_id = sample_run_id();
     let mut rows = artifact_test_rows();
     rows[0]
@@ -625,6 +632,7 @@ fn project_artifact_payload_for_mcp_read_run_explorer_ui_returns_semantic_rows()
         prompt_hash: "ab".repeat(32),
         session_id: "sess".into(),
         entry_id: "github".into(),
+        entity: "Widget".into(),
         resource_index: Some(1),
         principal: Some("tenant:1".into()),
         parsed_preimage: sample_parsed_preimage(),
@@ -649,11 +657,7 @@ fn project_artifact_payload_for_mcp_read_run_explorer_ui_returns_semantic_rows()
         metadata: ArtifactPayloadMetadata::json_default(),
         bytes: serde_json::to_vec(&doc).expect("encode").into(),
     };
-    let ui = project_artifact_payload_for_mcp_read(
-        &payload,
-        Some(plasm_trace::MCP_RESOURCE_READ_SOURCE_RUN_EXPLORER_UI),
-    )
-    .expect("ui read");
+    let ui = project_artifact_payload_for_agent(&payload, false).expect("ui read");
     let ui_doc: RunArtifactAgentView = serde_json::from_slice(&ui.bytes).expect("semantic view");
     assert_eq!(
         ui_doc.entities,
@@ -666,11 +670,9 @@ fn project_artifact_payload_for_mcp_read_run_explorer_ui_returns_semantic_rows()
     );
     assert_eq!(ui_doc.coverage, plasm_runtime::ResultCoverage::Partial);
 
-    let agent = project_artifact_payload_for_mcp_read(&payload, None).expect("agent read");
-    let agent_v: serde_json::Value = serde_json::from_slice(&agent.bytes).expect("json");
-    assert!(agent_v.get("prompt_hash").is_none());
-    assert_eq!(agent_v["coverage"], "partial");
-    assert_eq!(agent.bytes, ui.bytes);
+    let ui_v: serde_json::Value = serde_json::from_slice(&ui.bytes).expect("json");
+    assert!(ui_v.get("prompt_hash").is_none());
+    assert_eq!(ui_v["coverage"], "partial");
     assert_eq!(
         doc.agent_view().unwrap().coverage,
         plasm_runtime::ResultCoverage::Partial
@@ -709,7 +711,10 @@ fn snapshot_roundtrip_preserves_typed_membership_and_rejects_row_substitution() 
         run_id: sample_run_id(),
         prompt_hash: "ph",
         session_id: "sid",
-        entry_id: "matrix",
+        qualified_entity: &crate::plasm_plan::QualifiedEntityKey {
+            entry_id: "matrix".into(),
+            entity: "Item".into(),
+        },
         principal: None,
         display_lines: vec![],
         parsed_preimage: &sample_parsed_preimage(),
@@ -738,7 +743,10 @@ fn snapshot_roundtrip_preserves_typed_membership_and_rejects_row_substitution() 
         run_id: sample_run_id(),
         prompt_hash: "ph",
         session_id: "sid",
-        entry_id: "matrix",
+        qualified_entity: &crate::plasm_plan::QualifiedEntityKey {
+            entry_id: "matrix".into(),
+            entity: "Item".into()
+        },
         principal: None,
         display_lines: vec![],
         parsed_preimage: &sample_parsed_preimage(),

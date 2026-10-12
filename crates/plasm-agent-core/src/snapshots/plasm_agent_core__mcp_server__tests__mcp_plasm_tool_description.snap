@@ -13,7 +13,7 @@ Inspect coverage and operation outcomes. A failed or cancelled run can have comp
 Failure evidence belongs to one execution. A new program may perform reads or writes in the same logical session; it does not resume or roll back an earlier execution. Service diagnostics inform the agent but do not determine effect status.
 
 
-Program.build: immutable DAG versions; return result/record/tuple. Literal-ID for loops and one-clause list comprehensions expand (max 256); no dynamic loops/while/filtered comprehensions/for-else/statement if/mutation. Callbacks branch; imports: module/@compute.
+Program.build: immutable DAG versions. Return rowsets directly; tuple returns multiple results. Records are data, not response envelopes. Literal-ID for loops and one-clause list comprehensions expand (max 256); no dynamic loops/while/filtered comprehensions/for-else/statement if/mutation. Callbacks branch; imports: module/@compute.
 
 Cards: exact signatures; eN/mN/rN/vN session-local/append-only. eN.method=root; row.method=entity row/singleton; = ... optional. Relations: row.rN, or rows.flat_map(lambda row: row.rN); never rN(). vN=domain identity/constraints; Literal=choices. Comments=data; groups=methods; constraints=JSON/@profile. Declared inputs=call keywords; producer fields=dependencies.
 

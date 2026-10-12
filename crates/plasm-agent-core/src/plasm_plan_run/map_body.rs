@@ -487,7 +487,7 @@ pub(super) async fn materialize(
         ctx.st,
         ctx.es,
         ctx.session_id,
-        Some(&entry_id),
+        &QualifiedEntityKey { entry_id: entry_id.clone(), entity: entity.clone() },
         vec![display.clone()],
         &evidence_plan::parsed_expr_for_plan_node(&node),
         &result,

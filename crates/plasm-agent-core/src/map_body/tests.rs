@@ -20,6 +20,7 @@ use std::{
 };
 
 mod python_lowering;
+mod rowset_properties;
 mod support;
 use support::*;
 
