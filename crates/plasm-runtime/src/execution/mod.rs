@@ -103,6 +103,7 @@ use self::entity_decoder::{
 };
 
 pub use compile_preflight::preflight_compile_expr;
+pub(crate) use compile_preflight::preflight_compile_view_node;
 
 pub(crate) use pagination_state::PaginationLoopState;
 #[cfg(test)]

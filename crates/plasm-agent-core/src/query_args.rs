@@ -265,9 +265,9 @@ mod tests {
 
         let matches = parse_query(&["test", "--status", "available"], &cap, &cgs);
         let pred = args_to_query_predicate(&matches, &cap, &cgs).unwrap();
-        if let Predicate::Comparison { field, op, value } = pred {
+        if let Predicate::Comparison { field, op, value } = &pred {
             assert_eq!(field, "status");
-            assert_eq!(op, CompOp::Eq);
+            assert_eq!(*op, CompOp::Eq);
             assert_eq!(value.to_value(), Value::String("available".into()));
         } else {
             panic!("expected Comparison");

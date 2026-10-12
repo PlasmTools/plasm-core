@@ -335,33 +335,19 @@ impl Value {
 
     /// Recursively lower [`Value::PhraseIdent`] leaves to [`Value::String`].
     pub fn normalize_phrase_idents_in_tree(&mut self) {
-        match self {
-            Value::PhraseIdent(s) => *self = Value::String(s.clone()),
-            Value::Array(items) => {
-                for item in items {
-                    item.normalize_phrase_idents_in_tree();
-                }
+        let mut pending = vec![self];
+        while let Some(value) = pending.pop() {
+            match value {
+                Value::PhraseIdent(ident) => *value = Value::String(std::mem::take(ident)),
+                Value::Array(items) => pending.extend(items.iter_mut().rev()),
+                Value::Object(fields)
+                | Value::UnionCtor {
+                    ctor_fields: fields,
+                    ..
+                } => pending.extend(fields.values_mut().rev()),
+                Value::GetScalarExtract(extract) => pending.push(&mut extract.identity),
+                _ => {}
             }
-            Value::Object(map) => {
-                for v in map.values_mut() {
-                    v.normalize_phrase_idents_in_tree();
-                }
-            }
-            Value::UnionCtor { ctor_fields, .. } => {
-                for v in ctor_fields.values_mut() {
-                    v.normalize_phrase_idents_in_tree();
-                }
-            }
-            Value::GetScalarExtract(g) => g.identity.normalize_phrase_idents_in_tree(),
-            Value::PlasmInputRef(_)
-            | Value::Null
-            | Value::Bool(_)
-            | Value::Integer(_)
-            | Value::Unsigned(_)
-            | Value::Float(_)
-            | Value::StringTemplate(_)
-            | Value::String(_)
-            | Value::Money(_) => {}
         }
     }
 
@@ -383,23 +369,17 @@ impl Value {
 
     /// True if this value or any nested object/array contains the teaching table `$` placeholder.
     pub fn contains_domain_placeholder_deep(&self) -> bool {
-        match self {
-            Value::String(s) if s == "$" => true,
-            Value::StringTemplate(_) | Value::String(_) | Value::PhraseIdent(_) => false,
-            Value::UnionCtor { ctor_fields, .. } => ctor_fields
-                .values()
-                .any(Self::contains_domain_placeholder_deep),
-            Value::Object(m) => m.values().any(Self::contains_domain_placeholder_deep),
-            Value::Array(a) => a.iter().any(Self::contains_domain_placeholder_deep),
-            Value::PlasmInputRef(_)
-            | Value::GetScalarExtract(_)
-            | Value::Null
-            | Value::Bool(_)
-            | Value::Integer(_)
-            | Value::Unsigned(_)
-            | Value::Float(_)
-            | Value::Money(_) => false,
+        let mut pending = vec![self];
+        while let Some(value) = pending.pop() {
+            match value {
+                Value::String(value) if value == "$" => return true,
+                Value::UnionCtor { ctor_fields, .. } => pending.extend(ctor_fields.values()),
+                Value::Object(fields) => pending.extend(fields.values()),
+                Value::Array(values) => pending.extend(values),
+                _ => {}
+            }
         }
+        false
     }
 
     /// Get the type name of this value as a string.

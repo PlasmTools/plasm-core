@@ -71,6 +71,106 @@ fn union_query_and_search_params(cgs: &CGS, entity: &str) -> Vec<InputFieldSchem
 
 /// Type-check an expression against a CGS schema.
 pub fn type_check_expr(expr: &Expr, cgs: &CGS) -> Result<(), TypeError> {
+    check_expression_work(ExprCheckWork::Expression(expr), cgs, None)
+}
+
+enum ExprCheckWork<'a> {
+    Expression(&'a Expr),
+    Chain(&'a ChainExpr),
+    FinishChain(&'a ChainExpr, Option<&'a Expr>),
+}
+
+#[derive(Clone, Copy)]
+struct SourceHead<'a> {
+    entity: &'a str,
+    catalog: Option<&'a crate::identity::RegistryEntryId>,
+}
+
+type NavigationCache = std::collections::HashMap<(*const Expr, *const CGS), Option<String>>;
+
+fn cached_navigation(expr: &Expr, cgs: &CGS, cache: &mut NavigationCache) -> Option<String> {
+    let mut cursor = expr;
+    let mut hops = Vec::new();
+    let mut entity = loop {
+        if let Some(entity) = cache.get(&(cursor as *const Expr, cgs as *const CGS)) {
+            break entity.clone();
+        }
+        if let Expr::Chain(chain) = cursor {
+            hops.push((cursor as *const Expr, chain.selector.as_str()));
+            cursor = &chain.source;
+        } else {
+            break Some(cursor.primary_entity().to_owned());
+        }
+    };
+    for (node, selector) in hops.into_iter().rev() {
+        entity = entity.and_then(|entity| {
+            cgs.get_entity(&entity)
+                .and_then(|entity| entity.relations.get(selector))
+                .map(|relation| relation.target_resource.to_string())
+        });
+        cache.insert((node, cgs as *const CGS), entity.clone());
+    }
+    entity
+}
+
+fn check_expression_work(
+    root: ExprCheckWork<'_>,
+    cgs: &CGS,
+    federation: Option<&FederationDispatch>,
+) -> Result<(), TypeError> {
+    let mut pending = vec![root];
+    let mut heads = std::collections::HashMap::new();
+    let mut navigation = NavigationCache::new();
+    while let Some(step) = pending.pop() {
+        match step {
+            ExprCheckWork::Expression(expr @ Expr::Chain(chain)) => {
+                pending.push(ExprCheckWork::FinishChain(chain, Some(expr)));
+                pending.push(ExprCheckWork::Expression(&chain.source));
+            }
+            ExprCheckWork::Chain(chain) => {
+                pending.push(ExprCheckWork::FinishChain(chain, None));
+                pending.push(ExprCheckWork::Expression(&chain.source));
+            }
+            ExprCheckWork::Expression(expr) => {
+                if let Some(fed) = federation {
+                    type_check_expr_federated_leaf(expr, fed, cgs)?;
+                } else {
+                    type_check_expr_leaf(expr, cgs)?;
+                }
+                heads.insert(
+                    expr as *const Expr,
+                    SourceHead {
+                        entity: expr.primary_entity(),
+                        catalog: expr.session_catalog_entry_id(),
+                    },
+                );
+            }
+            ExprCheckWork::FinishChain(chain, expr) => {
+                let head = heads[&(chain.source.as_ref() as *const Expr)];
+                if let Some(fed) = federation {
+                    type_check_chain_federated_hop(chain, head, fed, cgs, &mut navigation)?;
+                } else {
+                    type_check_chain_hop(chain, cgs, &mut navigation)?;
+                }
+                if let Some(expr) = expr {
+                    heads.insert(
+                        expr as *const Expr,
+                        SourceHead {
+                            entity: head.entity,
+                            catalog: chain.catalog_entry_id.as_ref().or(head.catalog),
+                        },
+                    );
+                }
+                if let ChainStep::Explicit { expr } = &chain.step {
+                    pending.push(ExprCheckWork::Expression(expr));
+                }
+            }
+        }
+    }
+    Ok(())
+}
+
+fn type_check_expr_leaf(expr: &Expr, cgs: &CGS) -> Result<(), TypeError> {
     let span = crate::spans::typecheck_expr();
     let _guard = span.enter();
     match expr {
@@ -79,7 +179,7 @@ pub fn type_check_expr(expr: &Expr, cgs: &CGS) -> Result<(), TypeError> {
         Expr::Create(create) => type_check_create(create, cgs),
         Expr::Delete(delete) => type_check_delete(delete, cgs),
         Expr::Invoke(invoke) => type_check_invoke(invoke, cgs),
-        Expr::Chain(chain) => type_check_chain(chain, cgs),
+        Expr::Chain(_) => unreachable!("chains are handled by the iterative driver"),
         Expr::Page(page) => type_check_page(page),
         Expr::Wait(wait) => type_check_wait(wait),
         Expr::Cancel(cancel) => type_check_cancel(cancel),
@@ -117,6 +217,14 @@ fn resolve_cgs_for_catalog_entity<'a>(
 
 /// Type-check using per-entity [`CGS`] from [`FederationDispatch`] (fallback: primary session graph).
 pub fn type_check_expr_federated(
+    expr: &Expr,
+    fed: &FederationDispatch,
+    fallback: &CGS,
+) -> Result<(), TypeError> {
+    check_expression_work(ExprCheckWork::Expression(expr), fallback, Some(fed))
+}
+
+fn type_check_expr_federated_leaf(
     expr: &Expr,
     fed: &FederationDispatch,
     fallback: &CGS,
@@ -170,7 +278,7 @@ pub fn type_check_expr_federated(
                 fallback,
             )?,
         ),
-        Expr::Chain(chain) => type_check_chain_federated(chain, fed, fallback),
+        Expr::Chain(_) => unreachable!("chains are handled by the iterative driver"),
         Expr::TeachingValue { .. } => Ok(()),
     }
 }
@@ -186,68 +294,58 @@ pub fn reject_domain_placeholder_in_executable(expr: &Expr) -> Result<(), TypeEr
             description: None,
         }
     };
-    match expr {
-        Expr::Get(g) => {
-            if g.reference.contains_domain_placeholder() {
-                return Err(err());
-            }
-        }
-        Expr::Create(c) => {
-            if c.input.to_value().contains_domain_placeholder_deep() {
-                return Err(err());
-            }
-        }
-        Expr::Delete(d) => {
-            if d.target.contains_domain_placeholder() {
-                return Err(err());
-            }
-        }
-        Expr::Invoke(i) => {
-            if i.target.contains_domain_placeholder() {
-                return Err(err());
-            }
-            if let Some(inp) = &i.input {
-                if inp.to_value().contains_domain_placeholder_deep() {
+    for expr in expr.walk() {
+        match expr {
+            Expr::Get(g) => {
+                if g.reference.contains_domain_placeholder() {
                     return Err(err());
                 }
             }
-        }
-        Expr::Chain(ch) => {
-            reject_domain_placeholder_in_executable(&ch.source)?;
-            if let ChainStep::Explicit { expr: inner } = &ch.step {
-                reject_domain_placeholder_in_executable(inner)?;
-            }
-        }
-        Expr::TeachingValue { value } => {
-            if value.contains_domain_placeholder_deep() {
-                return Err(err());
-            }
-        }
-        Expr::Query(q) => {
-            if let Some(pred) = &q.predicate {
-                if predicate_contains_domain_placeholder(pred) {
+            Expr::Create(c) => {
+                if c.input.to_value().contains_domain_placeholder_deep() {
                     return Err(err());
                 }
             }
+            Expr::Delete(d) => {
+                if d.target.contains_domain_placeholder() {
+                    return Err(err());
+                }
+            }
+            Expr::Invoke(i) => {
+                if i.target.contains_domain_placeholder() {
+                    return Err(err());
+                }
+                if let Some(inp) = &i.input {
+                    if inp.to_value().contains_domain_placeholder_deep() {
+                        return Err(err());
+                    }
+                }
+            }
+            Expr::Chain(_) => {}
+            Expr::TeachingValue { value } => {
+                if value.contains_domain_placeholder_deep() {
+                    return Err(err());
+                }
+            }
+            Expr::Query(q) => {
+                if let Some(pred) = &q.predicate {
+                    if predicate_contains_domain_placeholder(pred) {
+                        return Err(err());
+                    }
+                }
+            }
+            Expr::Page(_) | Expr::Wait(_) | Expr::Cancel(_) => {}
         }
-        Expr::Page(_) | Expr::Wait(_) | Expr::Cancel(_) => {}
     }
     Ok(())
 }
 
 fn predicate_contains_domain_placeholder(pred: &crate::Predicate) -> bool {
     use crate::Predicate;
-    match pred {
-        Predicate::True | Predicate::False => false,
+    pred.walk().any(|node| match node {
         Predicate::Comparison { value, .. } => value.to_value().contains_domain_placeholder_deep(),
-        Predicate::And { args } | Predicate::Or { args } => {
-            args.iter().any(predicate_contains_domain_placeholder)
-        }
-        Predicate::Not { predicate } => predicate_contains_domain_placeholder(predicate),
-        Predicate::ExistsRelation { predicate, .. } => predicate
-            .as_ref()
-            .is_some_and(|p| predicate_contains_domain_placeholder(p)),
-    }
+        _ => false,
+    })
 }
 
 /// Resolve chain selector against source entity into `(target_entity_name, relation_if_declared)`.
@@ -313,29 +411,25 @@ fn ensure_chain_auto_get_admissible(
     })
 }
 
-fn type_check_chain_federated(
+fn type_check_chain_federated_hop(
     chain: &ChainExpr,
+    head: SourceHead<'_>,
     fed: &FederationDispatch,
     fallback: &CGS,
+    cache: &mut NavigationCache,
 ) -> Result<(), TypeError> {
-    type_check_expr_federated(&chain.source, fed, fallback)?;
-
-    let source_entity_wire = chain.source.primary_entity();
+    let source_entity_wire = head.entity;
     let cgs_src = resolve_cgs_for_catalog_entity(
-        chain
-            .source
-            .session_catalog_entry_id()
-            .map(|id| id.as_str()),
+        head.catalog.map(|id| id.as_str()),
         source_entity_wire,
         fed,
         fallback,
     )?;
-    let source_entity_name = chain
-        .source
-        .relation_navigation_entity(cgs_src)
-        .ok_or_else(|| TypeError::EntityNotFound {
+    let source_entity_name = cached_navigation(&chain.source, cgs_src, cache).ok_or_else(|| {
+        TypeError::EntityNotFound {
             entity: source_entity_wire.to_string(),
-        })?;
+        }
+    })?;
     let source_entity = cgs_src
         .get_entity(source_entity_name.as_str())
         .ok_or_else(|| TypeError::EntityNotFound {
@@ -349,7 +443,9 @@ fn type_check_chain_federated(
         cgs_src,
     )?;
 
-    let source_qe = chain.source.qualified_entity_key();
+    let source_qe = head
+        .catalog
+        .map(|id| crate::cgs_federation::QualifiedEntityKey::new(id.clone(), head.entity));
     let cgs_tgt = if cgs_src.get_entity(&target_entity_name).is_some() {
         cgs_src
     } else {
@@ -379,7 +475,7 @@ fn type_check_chain_federated(
             cgs_tgt,
         )?,
         ChainStep::Explicit { expr } => {
-            type_check_expr_federated(expr, fed, fallback)?;
+            let _ = expr;
         }
     }
 
@@ -637,12 +733,16 @@ fn type_check_targeted_call(
 ///   (fanout query traversal), or
 /// - an explicit continuation expression that is itself well-typed.
 pub fn type_check_chain(chain: &ChainExpr, cgs: &CGS) -> Result<(), TypeError> {
-    type_check_expr(&chain.source, cgs)?;
+    check_expression_work(ExprCheckWork::Chain(chain), cgs, None)
+}
 
-    let source_entity_name = chain
-        .source
-        .relation_navigation_entity(cgs)
-        .ok_or_else(|| TypeError::EntityNotFound {
+fn type_check_chain_hop(
+    chain: &ChainExpr,
+    cgs: &CGS,
+    cache: &mut NavigationCache,
+) -> Result<(), TypeError> {
+    let source_entity_name =
+        cached_navigation(&chain.source, cgs, cache).ok_or_else(|| TypeError::EntityNotFound {
             entity: chain.source.primary_entity().to_string(),
         })?;
     let source_entity =
@@ -673,7 +773,7 @@ pub fn type_check_chain(chain: &ChainExpr, cgs: &CGS) -> Result<(), TypeError> {
             cgs,
         )?,
         ChainStep::Explicit { expr } => {
-            type_check_expr(expr, cgs)?;
+            let _ = expr;
         }
     }
 
@@ -696,27 +796,56 @@ pub fn type_check_predicate(
     cap_params: &[InputFieldSchema],
     cgs: &CGS,
 ) -> Result<(), TypeError> {
-    match predicate {
-        Predicate::True | Predicate::False => Ok(()),
-
-        Predicate::Comparison { field, op, value } => {
-            type_check_comparison(field, *op, value, entity, cap_params, cgs)
-        }
-
-        Predicate::And { args } | Predicate::Or { args } => {
-            for arg in args {
-                type_check_predicate(arg, entity, cap_params, cgs)?;
+    let mut pending = vec![(predicate, entity, cap_params, None)];
+    let mut ancestry: Vec<(&str, Option<usize>)> = Vec::new();
+    while let Some((predicate, entity, cap_params, path)) = pending.pop() {
+        let result = match predicate {
+            Predicate::True | Predicate::False => Ok(()),
+            Predicate::Comparison { field, op, value } => {
+                type_check_comparison(field, *op, value, entity, cap_params, cgs)
             }
-            Ok(())
+            Predicate::And { args } | Predicate::Or { args } => {
+                pending.extend(args.iter().rev().map(|arg| (arg, entity, cap_params, path)));
+                Ok(())
+            }
+            Predicate::Not { predicate } => {
+                pending.push((predicate, entity, cap_params, path));
+                Ok(())
+            }
+            Predicate::ExistsRelation {
+                relation,
+                predicate,
+            } => match relation_target(relation, entity, cgs) {
+                Ok(target) => {
+                    if let Some(child) = predicate {
+                        let index = ancestry.len();
+                        ancestry.push((relation, path));
+                        pending.push((child, target, &[], Some(index)));
+                    }
+                    Ok(())
+                }
+                Err(error) => Err(error),
+            },
+        };
+        if let Err(source) = result {
+            let mut cursor = path;
+            let mut relations = Vec::new();
+            while let Some(index) = cursor {
+                let (relation, parent) = ancestry[index];
+                relations.push(relation.to_owned());
+                cursor = parent;
+            }
+            if relations.is_empty() {
+                return Err(source);
+            }
+            relations.reverse();
+            return Err(TypeError::RelationPredicate {
+                relations,
+                source: Box::new(source),
+            });
         }
-
-        Predicate::Not { predicate } => type_check_predicate(predicate, entity, cap_params, cgs),
-
-        Predicate::ExistsRelation {
-            relation,
-            predicate,
-        } => type_check_relation(relation, predicate.as_deref(), entity, cgs),
     }
+    Ok(())
 }
 
 /// Type-check a field comparison.
@@ -806,46 +935,68 @@ fn type_check_comparison(
 }
 
 /// Type-check a relation predicate.
-fn type_check_relation(
+fn relation_target<'a>(
     relation_name: &str,
-    predicate: Option<&Predicate>,
     entity: &EntityDef,
-    cgs: &CGS,
-) -> Result<(), TypeError> {
-    // Check that the relation exists
+    cgs: &'a CGS,
+) -> Result<&'a EntityDef, TypeError> {
     let relation =
         entity
             .relations
             .get(relation_name)
             .ok_or_else(|| TypeError::RelationNotFound {
-                relation: relation_name.to_string(),
+                relation: relation_name.to_owned(),
                 entity: entity.name.to_string(),
             })?;
-
-    // Check that the target entity exists
-    let target_entity =
-        cgs.get_entity(&relation.target_resource)
-            .ok_or_else(|| TypeError::EntityNotFound {
-                entity: relation.target_resource.to_string(),
-            })?;
-
-    // Type-check the nested predicate against the target entity.
-    // Relation predicates filter target-entity fields; capability params do not apply here.
-    if let Some(pred) = predicate {
-        type_check_predicate(pred, target_entity, &[], cgs).map_err(|err| {
-            TypeError::RecursiveError {
-                relation: relation_name.to_string(),
-                source: Box::new(err),
-            }
-        })?;
-    }
-
-    Ok(())
+    cgs.get_entity(&relation.target_resource)
+        .ok_or_else(|| TypeError::EntityNotFound {
+            entity: relation.target_resource.to_string(),
+        })
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn appended_chains_and_relation_predicates_use_heap_frames() {
+        let mut cgs = crate::loader::load_schema_dir(
+            &std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+                .join("../../fixtures/schemas/plasm_language_matrix"),
+        )
+        .unwrap();
+        cgs.entities.get_mut("LangItem").unwrap().relations.insert(
+            "next".into(),
+            RelationSchema {
+                name: "next".into(),
+                description: String::new(),
+                target_resource: "LangItem".into(),
+                cardinality: crate::Cardinality::One,
+                materialize: None,
+                discovery: None,
+            },
+        );
+        let count = 8_192;
+        let mut expr = Expr::Get(GetExpr::from_ref(crate::Ref::new("LangItem", "x")));
+        for _ in 0..count {
+            expr = Expr::Chain(ChainExpr::auto_get(expr, "next"));
+        }
+        type_check_expr(&expr, &cgs).unwrap();
+        let mut predicate = Predicate::eq("missing", "x");
+        for _ in 0..count {
+            predicate = Predicate::exists_relation("next", Some(predicate));
+        }
+        let error =
+            type_check_predicate(&predicate, cgs.get_entity("LangItem").unwrap(), &[], &cgs)
+                .unwrap_err();
+        assert!(
+            matches!(&error, TypeError::RelationPredicate { relations, source }
+            if relations.len() == count && matches!(source.as_ref(), TypeError::FieldNotFound { field, .. } if field == "missing"))
+        );
+        drop(error);
+        drop(predicate);
+        drop(expr);
+    }
     use crate::loader::load_schema_dir;
     use crate::schema::{registry_test_util, FieldValueKind, NamedValueSchema, ValueDomainKey};
     use crate::{

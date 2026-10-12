@@ -221,7 +221,7 @@ pub struct InvokeExpr {
 ///
 /// When source yields a collection (`[A]`), the chain maps over each element
 /// (List monad `traverse`).
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, PartialEq, Serialize, Deserialize)]
 pub struct ChainExpr {
     /// Expression that yields the source entity (typically a GetExpr).
     pub source: Box<Expr>,
@@ -237,6 +237,80 @@ pub struct ChainExpr {
     /// What to do with the resolved Ref — auto-GET or explicit continuation.
     #[serde(default)]
     pub step: ChainStep,
+}
+
+impl Clone for ChainExpr {
+    fn clone(&self) -> Self {
+        enum Work<'a> {
+            Expr(&'a Expr),
+            Chain(&'a ChainExpr),
+            Finish(&'a ChainExpr),
+        }
+        let mut work = vec![Work::Chain(self)];
+        let mut values = Vec::new();
+        while let Some(step) = work.pop() {
+            match step {
+                Work::Expr(Expr::Chain(chain)) | Work::Chain(chain) => {
+                    work.push(Work::Finish(chain));
+                    if let ChainStep::Explicit { expr } = &chain.step {
+                        work.push(Work::Expr(expr));
+                    }
+                    work.push(Work::Expr(&chain.source));
+                }
+                Work::Expr(expr) => values.push(expr.clone()),
+                Work::Finish(chain) => {
+                    let step = match chain.step {
+                        ChainStep::AutoGet => ChainStep::AutoGet,
+                        ChainStep::Explicit { .. } => ChainStep::Explicit {
+                            expr: Box::new(values.pop().expect("cloned continuation")),
+                        },
+                    };
+                    let source = Box::new(values.pop().expect("cloned source"));
+                    values.push(Expr::Chain(ChainExpr {
+                        source,
+                        step,
+                        selector: chain.selector.clone(),
+                        catalog_entry_id: chain.catalog_entry_id.clone(),
+                    }));
+                }
+            }
+        }
+        match values.pop().expect("cloned root") {
+            Expr::Chain(chain) => chain,
+            _ => unreachable!("chain clone root"),
+        }
+    }
+}
+
+impl Drop for ChainExpr {
+    fn drop(&mut self) {
+        // Keep the existing child allocations instead of moving large Expr
+        // payloads into a second contiguous allocation during destruction.
+        #[allow(clippy::vec_box)]
+        fn detach(chain: &mut ChainExpr, pending: &mut Vec<Box<Expr>>) {
+            if matches!(chain.source.as_ref(), Expr::Chain(_)) {
+                pending.push(std::mem::replace(
+                    &mut chain.source,
+                    Box::new(Expr::TeachingValue { value: Value::Null }),
+                ));
+            }
+            if let ChainStep::Explicit { expr } = &mut chain.step {
+                if matches!(expr.as_ref(), Expr::Chain(_)) {
+                    pending.push(std::mem::replace(
+                        expr,
+                        Box::new(Expr::TeachingValue { value: Value::Null }),
+                    ));
+                }
+            }
+        }
+        let mut pending = Vec::new();
+        detach(self, &mut pending);
+        while let Some(mut expr) = pending.pop() {
+            if let Expr::Chain(chain) = expr.as_mut() {
+                detach(chain, &mut pending);
+            }
+        }
+    }
 }
 
 /// Continuation after extracting an EntityRef value.
@@ -836,6 +910,39 @@ impl RefWire {
 }
 
 impl Expr {
+    /// Source-first structural traversal with heap-owned pending work.
+    pub fn walk(&self) -> impl Iterator<Item = &Expr> {
+        let mut pending = vec![self];
+        std::iter::from_fn(move || {
+            let node = pending.pop()?;
+            if let Expr::Chain(chain) = node {
+                if let ChainStep::Explicit { expr } = &chain.step {
+                    pending.push(expr);
+                }
+                pending.push(&chain.source);
+            }
+            Some(node)
+        })
+    }
+
+    /// Mutate transport leaves without retaining aliases to their chain parents.
+    pub fn try_for_each_leaf_mut<E>(
+        &mut self,
+        mut visit: impl FnMut(&mut Expr) -> Result<(), E>,
+    ) -> Result<(), E> {
+        let mut pending = vec![self];
+        while let Some(node) = pending.pop() {
+            if let Expr::Chain(chain) = node {
+                if let ChainStep::Explicit { expr } = &mut chain.step {
+                    pending.push(expr.as_mut());
+                }
+                pending.push(chain.source.as_mut());
+            } else {
+                visit(node)?;
+            }
+        }
+        Ok(())
+    }
     pub fn query(query: QueryExpr) -> Self {
         Expr::Query(query)
     }
@@ -869,17 +976,24 @@ impl Expr {
 
     /// Registry `entry_id` when the surface entity token was a session `e#` symbol.
     pub fn session_catalog_entry_id(&self) -> Option<&crate::identity::RegistryEntryId> {
-        match self {
-            Expr::Query(q) => q.catalog_entry_id.as_ref(),
-            Expr::Get(g) => g.catalog_entry_id.as_ref(),
-            Expr::Create(c) => c.catalog_entry_id.as_ref(),
-            Expr::Delete(d) => d.catalog_entry_id.as_ref(),
-            Expr::Invoke(i) => i.catalog_entry_id.as_ref(),
-            Expr::Chain(c) => c
-                .catalog_entry_id
-                .as_ref()
-                .or_else(|| c.source.session_catalog_entry_id()),
-            Expr::Page(_) | Expr::Wait(_) | Expr::Cancel(_) | Expr::TeachingValue { .. } => None,
+        let mut cursor = self;
+        loop {
+            match cursor {
+                Expr::Query(q) => return q.catalog_entry_id.as_ref(),
+                Expr::Get(g) => return g.catalog_entry_id.as_ref(),
+                Expr::Create(c) => return c.catalog_entry_id.as_ref(),
+                Expr::Delete(d) => return d.catalog_entry_id.as_ref(),
+                Expr::Invoke(i) => return i.catalog_entry_id.as_ref(),
+                Expr::Chain(c) => {
+                    if let Some(id) = c.catalog_entry_id.as_ref() {
+                        return Some(id);
+                    }
+                    cursor = &c.source;
+                }
+                Expr::Page(_) | Expr::Wait(_) | Expr::Cancel(_) | Expr::TeachingValue { .. } => {
+                    return None
+                }
+            }
         }
     }
 
@@ -916,16 +1030,22 @@ impl Expr {
 
     /// Get the primary entity type this expression operates on.
     pub fn primary_entity(&self) -> &str {
-        match self {
-            Expr::Query(q) => q.entity.as_str(),
-            Expr::Get(g) => g.reference.entity_type.as_str(),
-            Expr::Create(c) => c.entity.as_str(),
-            Expr::Delete(d) => d.target.entity_type.as_str(),
-            Expr::Invoke(i) => i.target.entity_type.as_str(),
-            Expr::Chain(c) => c.source.primary_entity(),
-            Expr::Page(_) => PAGE_EXPR_PRIMARY_ENTITY,
-            Expr::Wait(_) | Expr::Cancel(_) => OPERATION_EXPR_PRIMARY_ENTITY,
-            Expr::TeachingValue { .. } => "__teaching_value__",
+        let mut cursor = self;
+        loop {
+            match cursor {
+                Expr::Query(q) => return q.entity.as_str(),
+                Expr::Get(g) => return g.reference.entity_type.as_str(),
+                Expr::Create(c) => return c.entity.as_str(),
+                Expr::Delete(d) => return d.target.entity_type.as_str(),
+                Expr::Invoke(i) => return i.target.entity_type.as_str(),
+                Expr::Chain(c) => {
+                    cursor = &c.source;
+                    continue;
+                }
+                Expr::Page(_) => return PAGE_EXPR_PRIMARY_ENTITY,
+                Expr::Wait(_) | Expr::Cancel(_) => return OPERATION_EXPR_PRIMARY_ENTITY,
+                Expr::TeachingValue { .. } => return "__teaching_value__",
+            }
         }
     }
 
@@ -933,47 +1053,57 @@ impl Expr {
     /// Unlike [`primary_entity`](Self::primary_entity), nested chains resolve from the
     /// outermost hop's declared relation target (e.g. `LangItem.summary.detail` → `LangSummary`).
     pub fn relation_navigation_entity(&self, cgs: &CGS) -> Option<String> {
-        match self {
-            Expr::Chain(chain) => {
-                let parent = chain.source.relation_navigation_entity(cgs)?;
-                let ent = cgs.get_entity(&parent)?;
-                let rel = ent.relations.get(chain.selector.as_str())?;
-                Some(rel.target_resource.to_string())
-            }
-            other => Some(other.primary_entity().to_string()),
+        let mut cursor = self;
+        let mut selectors = Vec::new();
+        while let Expr::Chain(chain) = cursor {
+            selectors.push(chain.selector.as_str());
+            cursor = &chain.source;
         }
+        let mut entity = cursor.primary_entity().to_string();
+        for selector in selectors.into_iter().rev() {
+            entity = cgs
+                .get_entity(&entity)?
+                .relations
+                .get(selector)?
+                .target_resource
+                .to_string();
+        }
+        Some(entity)
     }
 }
 
 /// Replace raw call payloads with [`InvokeInputPayload::Typed`] where CGS allows lifting.
 pub fn lift_invoke_payloads_in_expr(expr: &mut Expr, cgs: &CGS) {
-    match expr {
-        Expr::Query(_)
-        | Expr::Get(_)
-        | Expr::Page(_)
-        | Expr::Wait(_)
-        | Expr::Cancel(_)
-        | Expr::TeachingValue { .. } => {}
-        Expr::Create(create) => {
-            if let Some(cap) = cgs.get_capability(&create.capability) {
-                // Dual object lanes stay Raw — Typed lift is single-schema; typecheck partitions.
-                if cap.invocation_object_schemas().count() <= 1 {
-                    if let Some(schema) = cap.primary_invocation_schema() {
-                        create.input = InvokeInputPayload::lift(
-                            &create.input.to_value(),
-                            &schema.input_type,
-                            cgs,
-                        );
+    let mut pending = vec![expr];
+    while let Some(expr) = pending.pop() {
+        match expr {
+            Expr::Query(_)
+            | Expr::Get(_)
+            | Expr::Page(_)
+            | Expr::Wait(_)
+            | Expr::Cancel(_)
+            | Expr::TeachingValue { .. } => {}
+            Expr::Create(create) => {
+                if let Some(cap) = cgs.get_capability(&create.capability) {
+                    // Dual object lanes stay Raw — Typed lift is single-schema; typecheck partitions.
+                    if cap.invocation_object_schemas().count() <= 1 {
+                        if let Some(schema) = cap.primary_invocation_schema() {
+                            create.input = InvokeInputPayload::lift(
+                                &create.input.to_value(),
+                                &schema.input_type,
+                                cgs,
+                            );
+                        }
                     }
                 }
             }
-        }
-        Expr::Invoke(invoke) => lift_targeted_input(&invoke.capability, &mut invoke.input, cgs),
-        Expr::Delete(delete) => lift_targeted_input(&delete.capability, &mut delete.input, cgs),
-        Expr::Chain(chain) => {
-            lift_invoke_payloads_in_expr(chain.source.as_mut(), cgs);
-            if let ChainStep::Explicit { expr: inner } = &mut chain.step {
-                lift_invoke_payloads_in_expr(inner.as_mut(), cgs);
+            Expr::Invoke(invoke) => lift_targeted_input(&invoke.capability, &mut invoke.input, cgs),
+            Expr::Delete(delete) => lift_targeted_input(&delete.capability, &mut delete.input, cgs),
+            Expr::Chain(chain) => {
+                if let ChainStep::Explicit { expr: inner } = &mut chain.step {
+                    pending.push(inner.as_mut());
+                }
+                pending.push(chain.source.as_mut());
             }
         }
     }
@@ -995,5 +1125,24 @@ fn lift_targeted_input(
                 ));
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod iterative_chain_tests {
+    use super::*;
+
+    #[test]
+    fn appended_chains_clone_navigate_and_drop_without_native_recursion() {
+        let mut expr = Expr::Query(QueryExpr::all("Node"));
+        for _ in 0..16_384 {
+            expr = Expr::Chain(ChainExpr::auto_get(expr, "next"));
+        }
+        assert_eq!(expr.primary_entity(), "Node");
+        assert!(expr.session_catalog_entry_id().is_none());
+        let copy = expr.clone();
+        assert_eq!(copy.primary_entity(), "Node");
+        drop(expr);
+        drop(copy);
     }
 }

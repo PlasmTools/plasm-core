@@ -2,8 +2,26 @@ use crate::typed_literal::TypedComparisonValue;
 use crate::{CompOp, Value};
 use serde::{Deserialize, Serialize};
 
+#[cfg(test)]
+mod iterative_ownership_tests {
+    use super::*;
+
+    #[test]
+    fn deep_predicate_clone_rejection_and_drop_use_heap_frames() {
+        let mut predicate = Predicate::True;
+        for _ in 0..16_384 {
+            predicate = Predicate::Not {
+                predicate: Box::new(predicate),
+            };
+        }
+        let copy = predicate.clone();
+        assert!(crate::normalize(copy).is_err());
+        drop(predicate);
+    }
+}
+
 /// A typed predicate for filtering resources.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "type")]
 pub enum Predicate {
     /// Always true
@@ -46,7 +64,126 @@ pub enum Predicate {
     },
 }
 
+impl Clone for Predicate {
+    fn clone(&self) -> Self {
+        let mut work = vec![(self, false)];
+        let mut values = Vec::new();
+        while let Some((node, finish)) = work.pop() {
+            if !finish {
+                match node {
+                    Predicate::True => values.push(Predicate::True),
+                    Predicate::False => values.push(Predicate::False),
+                    Predicate::Comparison { field, op, value } => {
+                        values.push(Predicate::Comparison {
+                            field: field.clone(),
+                            op: *op,
+                            value: value.clone(),
+                        })
+                    }
+                    Predicate::And { args } | Predicate::Or { args } => {
+                        work.push((node, true));
+                        work.extend(args.iter().rev().map(|child| (child, false)));
+                    }
+                    Predicate::Not { predicate } => {
+                        work.push((node, true));
+                        work.push((predicate, false));
+                    }
+                    Predicate::ExistsRelation { predicate, .. } => {
+                        work.push((node, true));
+                        if let Some(child) = predicate {
+                            work.push((child, false));
+                        }
+                    }
+                }
+                continue;
+            }
+            let cloned = match node {
+                Predicate::And { args } | Predicate::Or { args } => {
+                    let args = values.split_off(values.len() - args.len());
+                    if matches!(node, Predicate::And { .. }) {
+                        Predicate::And { args }
+                    } else {
+                        Predicate::Or { args }
+                    }
+                }
+                Predicate::Not { .. } => Predicate::Not {
+                    predicate: Box::new(values.pop().expect("cloned predicate child")),
+                },
+                Predicate::ExistsRelation {
+                    relation,
+                    predicate,
+                } => Predicate::ExistsRelation {
+                    relation: relation.clone(),
+                    predicate: predicate
+                        .as_ref()
+                        .map(|_| Box::new(values.pop().expect("cloned relation child"))),
+                },
+                _ => unreachable!("only compound predicates need a continuation"),
+            };
+            values.push(cloned);
+        }
+        values.pop().expect("cloned predicate root")
+    }
+}
+
+impl Drop for Predicate {
+    fn drop(&mut self) {
+        fn composite(predicate: &Predicate) -> bool {
+            matches!(
+                predicate,
+                Predicate::And { .. }
+                    | Predicate::Or { .. }
+                    | Predicate::Not { .. }
+                    | Predicate::ExistsRelation {
+                        predicate: Some(_),
+                        ..
+                    }
+            )
+        }
+        fn detach(predicate: &mut Predicate, pending: &mut Vec<Predicate>) {
+            match predicate {
+                Predicate::And { args } | Predicate::Or { args } => {
+                    pending.extend(std::mem::take(args))
+                }
+                Predicate::Not { predicate } if composite(predicate) => {
+                    pending.push(*std::mem::replace(predicate, Box::new(Predicate::True)));
+                }
+                Predicate::ExistsRelation {
+                    predicate: Some(child),
+                    ..
+                } if composite(child) => {
+                    pending.push(*std::mem::replace(child, Box::new(Predicate::True)));
+                }
+                _ => {}
+            }
+        }
+        let mut pending = Vec::new();
+        detach(self, &mut pending);
+        while let Some(mut child) = pending.pop() {
+            detach(&mut child, &mut pending);
+        }
+    }
+}
+
 impl Predicate {
+    pub fn walk(&self) -> impl Iterator<Item = &Predicate> {
+        let mut pending = vec![self];
+        std::iter::from_fn(move || {
+            let node = pending.pop()?;
+            match node {
+                Predicate::And { args } | Predicate::Or { args } => {
+                    pending.extend(args.iter().rev())
+                }
+                Predicate::Not { predicate } => pending.push(predicate),
+                Predicate::ExistsRelation {
+                    predicate: Some(child),
+                    ..
+                } => pending.push(child),
+                _ => {}
+            }
+            Some(node)
+        })
+    }
     /// Create a field comparison predicate.
     pub fn comparison(
         field: impl Into<String>,

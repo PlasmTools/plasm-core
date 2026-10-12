@@ -109,6 +109,128 @@ fn stub_item_node_result(id: &str, title: &str) -> ExecutionResult {
 }
 
 #[test]
+fn preflight_same_entity_view_preserves_inner_capability_and_embedded_source() {
+    let mut cgs = matrix_views_cgs();
+    cgs.entities.get_mut("LangItem").unwrap().primary_read = Some("langitem_composed_get".into());
+    // An embedded target does not need an independently callable GET.
+    cgs.capabilities.shift_remove("langline_get");
+    let compiled = plasm_compile::compile_cgs_capability_templates(&cgs).unwrap();
+    let proof = crate::view_preflight::preflight_view_scoped_with_proof(
+        "langitem_composed",
+        indexmap::IndexMap::from([("id".into(), Value::String("item-1".into()))]),
+        &cgs,
+        &compiled,
+        &ViewAmbientContext::default(),
+        &crate::SessionMaterialization::new(),
+    )
+    .expect("same-entity view preflight must terminate without reacquiring its outer view");
+    assert_eq!(
+        proof.output_fields.get("id"),
+        Some(&Value::String("item-1".into()))
+    );
+    assert_eq!(
+        proof.output_fields.get("title"),
+        Some(&Value::String(String::new()))
+    );
+}
+
+#[test]
+fn preflight_peels_deep_expression_chains_iteratively() {
+    let cgs = matrix_views_cgs();
+    let compiled = plasm_compile::compile_cgs_capability_templates(&cgs).unwrap();
+    let mut expr = plasm_core::Expr::Get(plasm_core::GetExpr::new("LangItem", "item-1"));
+    for _ in 0..8192 {
+        expr = plasm_core::Expr::Chain(plasm_core::ChainExpr::auto_get(expr, "lines"));
+    }
+    let result = crate::execution::preflight_compile_expr(
+        &expr,
+        &cgs,
+        &compiled,
+        &ViewAmbientContext::default(),
+        &crate::SessionMaterialization::new(),
+    );
+    result.expect("chain length must not grow the compiler call stack");
+    drop(expr);
+}
+
+#[test]
+fn appended_view_nodes_do_not_reenter_preflight_driver() {
+    for appended in [1, 128, 1024] {
+        let mut cgs = matrix_views_cgs();
+        let view = cgs.views.get_mut("langitem_composed").unwrap();
+        let wire = view.nodes[0].clone();
+        for index in 0..appended {
+            let mut node = wire.clone();
+            node.id = format!("appended_{index}");
+            view.nodes.push(node);
+        }
+        let compiled = plasm_compile::compile_cgs_capability_templates(&cgs).unwrap();
+        let proof = crate::view_preflight::preflight_view_scoped_with_proof(
+            "langitem_composed",
+            indexmap::IndexMap::from([("id".into(), Value::String("item-1".into()))]),
+            &cgs,
+            &compiled,
+            &ViewAmbientContext::default(),
+            &crate::SessionMaterialization::new(),
+        )
+        .expect("appending DAG nodes must consume heap state, not native stack frames");
+        assert_eq!(proof.node_results.len(), appended + 2);
+        assert_eq!(proof.output_fields["id"], Value::String("item-1".into()));
+    }
+}
+
+#[test]
+fn implicit_parent_view_reentry_is_a_catalog_fault() {
+    let mut cgs = matrix_views_cgs();
+    cgs.entities.get_mut("LangItem").unwrap().primary_read = Some("langitem_composed_get".into());
+    let wire = &mut cgs.views.get_mut("langitem_composed").unwrap().nodes[0];
+    wire.capability = "langitem_query".into();
+    wire.bind.clear();
+    let compiled = plasm_compile::compile_cgs_capability_templates(&cgs).unwrap();
+    let error = crate::view_preflight::preflight_view_scoped_with_proof(
+        "langitem_composed",
+        indexmap::IndexMap::from([("id".into(), Value::String("item-1".into()))]),
+        &cgs,
+        &compiled,
+        &ViewAmbientContext::default(),
+        &crate::SessionMaterialization::new(),
+    )
+    .expect_err("implicit hydration must not recursively enter the outer view");
+    assert!(matches!(error, crate::RuntimeError::CatalogTemplate(
+        plasm_compile::CatalogTemplateError::NestedView { ref view, ref node }
+    ) if view == "langitem_composed" && node == "lines"));
+}
+
+#[test]
+fn preflight_view_query_preserves_declared_capability_among_matching_reads() {
+    let mut cgs = matrix_views_cgs();
+    let mut competing = cgs.get_capability("langtag_query").unwrap().clone();
+    competing.name = "langtag_other_query".into();
+    cgs.capabilities.insert(competing.name.clone(), competing);
+    // Reconstruct after fixture edits so the derived capability index sees both reads.
+    let cgs: CGS = serde_json::from_value(serde_json::to_value(cgs).unwrap()).unwrap();
+    let generic = QueryExpr::filtered("LangTag", plasm_core::Predicate::eq("item_id", "item-1"));
+    assert!(
+        plasm_core::resolve_query_capability(&generic, &cgs).is_err(),
+        "an unqualified query cannot select between the two scoped reads"
+    );
+    let compiled = plasm_compile::compile_cgs_capability_templates(&cgs).unwrap();
+    let proof = crate::view_preflight::preflight_view_scoped_with_proof(
+        "lang_triage_context",
+        lang_digest_scope(),
+        &cgs,
+        &compiled,
+        &ViewAmbientContext::default(),
+        &crate::SessionMaterialization::new(),
+    )
+    .expect("the view names its query capability explicitly");
+    assert_eq!(
+        proof.output_fields.get("tag_count"),
+        Some(&Value::Integer(1))
+    );
+}
+
+#[test]
 fn preflight_proof_matches_fixture_runner_on_lang_digest() {
     let cgs = matrix_views_cgs();
     let scope = lang_digest_scope();

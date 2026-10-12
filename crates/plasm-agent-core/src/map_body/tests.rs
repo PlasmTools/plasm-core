@@ -22,7 +22,84 @@ use std::{
 mod python_lowering;
 mod rowset_properties;
 mod support;
+
+#[tokio::test]
+async fn appended_row_contract_dependencies_have_no_depth_limit() {
+    use crate::plasm_plan::{parse_plan_value, validate_plan_artifact};
+    let (es, _, _) = support::fixture(1);
+    let mut plan = parse_plan_value(&json!({
+        "version": 1, "kind": "program",
+        "nodes": [
+            {"id": "seed", "kind": "data", "effect_class": "artifact_read", "result_shape": "artifact",
+                "data": {"kind": "literal", "value": {"id": "row"}}},
+            {"id": "copy", "kind": "compute", "effect_class": "artifact_read", "result_shape": "list",
+                "compute": {"source": "seed", "op": {"kind": "limit", "count": 2},
+                    "schema": {"fields": [{"name": "id", "value_kind": "string", "source": ["id"]}]}},
+                "depends_on": ["seed"], "uses_result": [{"node": "seed", "as": "source"}]}
+        ], "return": {"kind": "node", "node": "n0"}
+    })).unwrap();
+    plan.nodes[1].compute.as_mut().unwrap().schema.fields[0].value_type = Some(
+        plasm_core::value_contract::ValueContract::scalar(plasm_core::FieldType::String),
+    );
+    let count = 8_192;
+    let seed = plan.nodes[0].clone();
+    let copy = plan.nodes[1].clone();
+    plan.nodes.clear();
+    for index in 0..count {
+        let mut node = if index + 1 == count {
+            seed.clone()
+        } else {
+            copy.clone()
+        };
+        node.id = format!("n{index}");
+        if let Some(compute) = &mut node.compute {
+            compute.source = format!("n{}", index + 1);
+            node.depends_on = vec![compute.source.clone()];
+            node.uses_result[0].node = compute.source.clone();
+        }
+        plan.nodes.push(node);
+    }
+    let plan = validate_plan_artifact(&plan).unwrap();
+    let contract = crate::map_body_schema::row_contract(&es, plan.nodes(), "n0").unwrap();
+    assert_eq!(
+        contract.field("id").unwrap().summary(),
+        SyntheticValueKind::String
+    );
+    let field = crate::python_compute::source_field_kind(&es, plan.nodes(), "n0", "id").unwrap();
+    assert_eq!(field.summary(), SyntheticValueKind::String);
+}
 use support::*;
+
+#[tokio::test]
+async fn iterative_scope_canonicalization_preserves_exact_wire_bytes() {
+    fn reference(comp: &PlasmComp, depth: usize) -> serde_json::Value {
+        assert!(depth < 16, "bounded reference oracle");
+        let mut steps = serde_json::to_value(&comp.steps).unwrap();
+        for (id, payload) in &comp.steps {
+            if let PlasmStepPayload::MapBody(body) = payload {
+                steps[id]["body"] = reference(&body.body, depth + 1);
+            }
+            if let PlasmStepPayload::UnfoldUntil(unfold) = payload {
+                if let Some(body) = &unfold.step_scope {
+                    steps[id]["step_scope"]["body"] = reference(&body.body, depth + 1);
+                }
+                if let Some(body) = &unfold.until_scope {
+                    steps[id]["until_scope"]["body"] = reference(&body.body, depth + 1);
+                }
+            }
+        }
+        json!({"version": comp.version, "steps": steps, "bind": comp.bind, "return": comp.return_})
+    }
+    let (es, _, _) = fixture(1);
+    let (bundle, _) = program(&es);
+    assert_eq!(
+        serde_json::to_vec(&plasm_core::plasm_comp_commit_canonical(
+            &bundle.artifact().comp
+        ))
+        .unwrap(),
+        serde_json::to_vec(&reference(&bundle.artifact().comp, 0)).unwrap()
+    );
+}
 
 #[test]
 fn map_body_relation_materialization_canonical_contract() {

@@ -88,25 +88,24 @@ fn row_predicate_from_optional_predicate(
 }
 
 fn flatten_flat_and(pred: &Predicate) -> Result<Vec<RowComparison>, RowPredicateError> {
-    match pred {
-        Predicate::True => Ok(vec![]),
-        Predicate::False => Err(RowPredicateError::False),
-        Predicate::Comparison { field, op, value } => Ok(vec![RowComparison {
-            field: field.clone(),
-            op: *op,
-            value: value.clone(),
-        }]),
-        Predicate::And { args } => {
-            let mut out = Vec::new();
-            for arg in args {
-                out.extend(flatten_flat_and(arg)?);
-            }
-            Ok(out)
+    let mut pending = vec![pred];
+    let mut out = Vec::new();
+    while let Some(pred) = pending.pop() {
+        match pred {
+            Predicate::True => {}
+            Predicate::False => return Err(RowPredicateError::False),
+            Predicate::Comparison { field, op, value } => out.push(RowComparison {
+                field: field.clone(),
+                op: *op,
+                value: value.clone(),
+            }),
+            Predicate::And { args } => pending.extend(args.iter().rev()),
+            Predicate::Or { .. } => return Err(RowPredicateError::Or),
+            Predicate::Not { .. } => return Err(RowPredicateError::Not),
+            Predicate::ExistsRelation { .. } => return Err(RowPredicateError::ExistsRelation),
         }
-        Predicate::Or { .. } => Err(RowPredicateError::Or),
-        Predicate::Not { .. } => Err(RowPredicateError::Not),
-        Predicate::ExistsRelation { .. } => Err(RowPredicateError::ExistsRelation),
     }
+    Ok(out)
 }
 
 /// Type-check row comparisons against the owning entity (empty capability params).

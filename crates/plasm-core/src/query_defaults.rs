@@ -50,17 +50,13 @@ pub fn apply_required_selection_defaults_in_expr(
     cgs: &CGS,
     expression: &str,
 ) -> Result<(), TypeError> {
-    match expr {
-        crate::Expr::Query(q) => apply_required_selection_defaults(q, cgs, expression),
-        crate::Expr::Chain(chain) => {
-            apply_required_selection_defaults_in_expr(&mut chain.source, cgs, expression)?;
-            if let crate::ChainStep::Explicit { expr } = &mut chain.step {
-                apply_required_selection_defaults_in_expr(expr, cgs, expression)?;
-            }
+    expr.try_for_each_leaf_mut(|leaf| {
+        if let crate::Expr::Query(query) = leaf {
+            apply_required_selection_defaults(query, cgs, expression)
+        } else {
             Ok(())
         }
-        _ => Ok(()),
-    }
+    })
 }
 
 fn selection_fields_present(pred: Option<&Predicate>) -> std::collections::BTreeSet<String> {
@@ -73,23 +69,12 @@ fn collect_comparison_fields(
     pred: Option<&Predicate>,
     out: &mut std::collections::BTreeSet<String>,
 ) {
-    let Some(pred) = pred else {
-        return;
-    };
-    match pred {
-        Predicate::Comparison { field, .. } => {
-            out.insert(field.clone());
-        }
-        Predicate::And { args } | Predicate::Or { args } => {
-            for arg in args {
-                collect_comparison_fields(Some(arg), out);
+    if let Some(pred) = pred {
+        for node in pred.walk() {
+            if let Predicate::Comparison { field, .. } = node {
+                out.insert(field.clone());
             }
         }
-        Predicate::Not { predicate } => collect_comparison_fields(Some(predicate), out),
-        Predicate::ExistsRelation { predicate, .. } => {
-            collect_comparison_fields(predicate.as_deref(), out);
-        }
-        Predicate::True | Predicate::False => {}
     }
 }
 
@@ -108,11 +93,11 @@ fn merge_predicates(existing: Option<Predicate>, mut injected: Vec<Predicate>) -
     match existing {
         None if injected.len() == 1 => injected.pop().expect("one injected"),
         None => Predicate::and(injected),
-        Some(Predicate::And { mut args }) => {
-            args.extend(injected);
-            Predicate::and(args)
-        }
-        Some(other) => {
+        Some(mut other) => {
+            if let Predicate::And { args } = &mut other {
+                args.extend(injected);
+                return other;
+            }
             let mut args = vec![other];
             args.extend(injected);
             Predicate::and(args)

@@ -14,32 +14,8 @@ pub fn normalize(predicate: Predicate) -> Result<Predicate, NormalizationError> 
         return Err(NormalizationError::MaxDepthExceeded);
     }
 
-    let normalized = normalize_recursive(predicate);
+    let normalized = normalize_iterative(&predicate);
     Ok(normalized)
-}
-
-fn normalize_recursive(predicate: Predicate) -> Predicate {
-    match predicate {
-        // Base cases
-        Predicate::True | Predicate::False | Predicate::Comparison { .. } => predicate,
-
-        // Normalize logical operations
-        Predicate::And { args } => normalize_junction(Junction::And, args),
-        Predicate::Or { args } => normalize_junction(Junction::Or, args),
-        Predicate::Not { predicate } => normalize_not(*predicate),
-
-        // Normalize relation predicates
-        Predicate::ExistsRelation {
-            relation,
-            predicate,
-        } => {
-            let normalized_predicate = predicate.map(|p| Box::new(normalize_recursive(*p)));
-            Predicate::ExistsRelation {
-                relation,
-                predicate: normalized_predicate,
-            }
-        }
-    }
 }
 
 #[derive(Clone, Copy)]
@@ -48,141 +24,150 @@ enum Junction {
     Or,
 }
 
+fn normalize_iterative(root: &Predicate) -> Predicate {
+    enum Work<'a> {
+        Visit(&'a Predicate, bool),
+        Join(Junction, usize),
+        Relation(&'a str, bool, bool),
+    }
+    let mut pending = vec![Work::Visit(root, false)];
+    let mut values = Vec::new();
+    while let Some(step) = pending.pop() {
+        match step {
+            Work::Visit(predicate, negate) => match predicate {
+                Predicate::And { args } | Predicate::Or { args } => {
+                    let and = matches!(predicate, Predicate::And { .. }) != negate;
+                    pending.push(Work::Join(
+                        if and { Junction::And } else { Junction::Or },
+                        args.len(),
+                    ));
+                    pending.extend(args.iter().rev().map(|child| Work::Visit(child, negate)));
+                }
+                Predicate::Not { predicate } => pending.push(Work::Visit(predicate, !negate)),
+                Predicate::ExistsRelation {
+                    relation,
+                    predicate,
+                } => {
+                    pending.push(Work::Relation(relation, predicate.is_some(), negate));
+                    if let Some(child) = predicate {
+                        pending.push(Work::Visit(child, false));
+                    }
+                }
+                Predicate::True => values.push(if negate {
+                    Predicate::False
+                } else {
+                    Predicate::True
+                }),
+                Predicate::False => values.push(if negate {
+                    Predicate::True
+                } else {
+                    Predicate::False
+                }),
+                Predicate::Comparison { .. } => {
+                    let leaf = predicate.clone();
+                    values.push(if negate {
+                        Predicate::Not {
+                            predicate: Box::new(leaf),
+                        }
+                    } else {
+                        leaf
+                    });
+                }
+            },
+            Work::Join(kind, count) => {
+                let args = values.split_off(values.len() - count);
+                values.push(normalize_junction(kind, args));
+            }
+            Work::Relation(relation, child, negate) => {
+                let predicate =
+                    child.then(|| Box::new(values.pop().expect("normalized relation child")));
+                let relation = Predicate::ExistsRelation {
+                    relation: relation.to_owned(),
+                    predicate,
+                };
+                values.push(if negate {
+                    Predicate::Not {
+                        predicate: Box::new(relation),
+                    }
+                } else {
+                    relation
+                });
+            }
+        }
+    }
+    values.pop().expect("normalized root")
+}
+
+/// Combine already-normalized children; never reenter the normalization driver.
 fn normalize_junction(kind: Junction, args: Vec<Predicate>) -> Predicate {
     let mut normalized_args = Vec::new();
-
-    for arg in args {
-        let normalized = normalize_recursive(arg);
-
-        match (kind, normalized) {
-            (Junction::And, Predicate::And { args: nested_args }) => {
-                normalized_args.extend(nested_args);
-            }
-            (Junction::Or, Predicate::Or { args: nested_args }) => {
-                normalized_args.extend(nested_args);
+    for mut normalized in args {
+        match (kind, &mut normalized) {
+            (Junction::And, Predicate::And { args }) | (Junction::Or, Predicate::Or { args }) => {
+                normalized_args.extend(std::mem::take(args));
             }
             (Junction::And, Predicate::False) => return Predicate::False,
             (Junction::Or, Predicate::True) => return Predicate::True,
             (Junction::And, Predicate::True) | (Junction::Or, Predicate::False) => {}
-            (_, other) => normalized_args.push(other),
+            _ => normalized_args.push(normalized),
         }
     }
-
-    normalized_args.sort_by(|a, b| {
-        serde_json::to_string(a)
-            .unwrap_or_default()
-            .cmp(&serde_json::to_string(b).unwrap_or_default())
-    });
+    normalized_args.sort_by_cached_key(|p| serde_json::to_string(p).unwrap_or_default());
     normalized_args.dedup();
-
+    if normalized_args.len() == 1 {
+        return normalized_args.pop().unwrap();
+    }
     match kind {
-        Junction::And => match normalized_args.len() {
-            0 => Predicate::True,
-            1 => normalized_args.into_iter().next().unwrap(),
-            _ => Predicate::And {
-                args: normalized_args,
-            },
+        Junction::And if normalized_args.is_empty() => Predicate::True,
+        Junction::Or if normalized_args.is_empty() => Predicate::False,
+        Junction::And => Predicate::And {
+            args: normalized_args,
         },
-        Junction::Or => match normalized_args.len() {
-            0 => Predicate::False,
-            1 => normalized_args.into_iter().next().unwrap(),
-            _ => Predicate::Or {
-                args: normalized_args,
-            },
+        Junction::Or => Predicate::Or {
+            args: normalized_args,
         },
     }
 }
 
-fn normalize_not(predicate: Predicate) -> Predicate {
-    let normalized = normalize_recursive(predicate);
-
-    match normalized {
-        // Double negation
-        Predicate::Not { predicate } => normalize_recursive(*predicate),
-
-        // DeMorgan's laws
-        Predicate::And { args } => {
-            let negated_args = args.into_iter().map(normalize_not).collect();
-            normalize_junction(Junction::Or, negated_args)
-        }
-        Predicate::Or { args } => {
-            let negated_args = args.into_iter().map(normalize_not).collect();
-            normalize_junction(Junction::And, negated_args)
-        }
-
-        // Trivial cases
-        Predicate::True => Predicate::False,
-        Predicate::False => Predicate::True,
-
-        // Base cases
-        _ => Predicate::Not {
-            predicate: Box::new(normalized),
-        },
-    }
-}
-
-/// Check if a predicate is in normalized form.
+/// Check normalized structure using an explicit worklist.
 pub fn is_normalized(predicate: &Predicate) -> bool {
-    match predicate {
-        Predicate::True | Predicate::False | Predicate::Comparison { .. } => true,
-
-        Predicate::And { args } => {
-            // Check for no nested Ands, no True/False, and sorted/deduped
-            let mut has_nested_and = false;
-            let mut has_trivial = false;
-
-            for arg in args {
-                if !is_normalized(arg) {
+    let mut pending = vec![predicate];
+    while let Some(node) = pending.pop() {
+        match node {
+            Predicate::True | Predicate::False | Predicate::Comparison { .. } => {}
+            Predicate::And { args } | Predicate::Or { args } => {
+                let and = matches!(node, Predicate::And { .. });
+                if args.iter().any(|child| {
+                    child.is_trivial()
+                        || (and && matches!(child, Predicate::And { .. }))
+                        || (!and && matches!(child, Predicate::Or { .. }))
+                }) || !is_sorted_and_deduped(args)
+                {
                     return false;
                 }
-                if matches!(arg, Predicate::And { .. }) {
-                    has_nested_and = true;
-                }
-                if arg.is_trivial() {
-                    has_trivial = true;
-                }
+                pending.extend(args.iter().rev());
             }
-
-            !has_nested_and && !has_trivial && is_sorted_and_deduped(args)
-        }
-
-        Predicate::Or { args } => {
-            // Check for no nested Ors, no True/False, and sorted/deduped
-            let mut has_nested_or = false;
-            let mut has_trivial = false;
-
-            for arg in args {
-                if !is_normalized(arg) {
+            Predicate::Not { predicate } => {
+                if matches!(
+                    predicate.as_ref(),
+                    Predicate::Not { .. }
+                        | Predicate::And { .. }
+                        | Predicate::Or { .. }
+                        | Predicate::True
+                        | Predicate::False
+                ) {
                     return false;
                 }
-                if matches!(arg, Predicate::Or { .. }) {
-                    has_nested_or = true;
-                }
-                if arg.is_trivial() {
-                    has_trivial = true;
+                pending.push(predicate);
+            }
+            Predicate::ExistsRelation { predicate, .. } => {
+                if let Some(child) = predicate {
+                    pending.push(child);
                 }
             }
-
-            !has_nested_or && !has_trivial && is_sorted_and_deduped(args)
-        }
-
-        Predicate::Not { predicate } => {
-            match predicate.as_ref() {
-                // No double negation
-                Predicate::Not { .. } => false,
-                // No negated And/Or (should be DeMorgan'd)
-                Predicate::And { .. } | Predicate::Or { .. } => false,
-                // No negated trivials
-                Predicate::True | Predicate::False => false,
-                // Other cases are ok if normalized
-                _ => is_normalized(predicate),
-            }
-        }
-
-        Predicate::ExistsRelation { predicate, .. } => {
-            predicate.as_ref().is_none_or(|p| is_normalized(p))
         }
     }
+    true
 }
 
 fn is_sorted_and_deduped(args: &[Predicate]) -> bool {
@@ -217,7 +202,7 @@ mod tests {
 
         let normalized = normalize(predicate).unwrap();
 
-        if let Predicate::And { args } = normalized {
+        if let Predicate::And { args } = &normalized {
             assert_eq!(args.len(), 3);
             // All three comparisons should be at the same level
         } else {
@@ -237,7 +222,7 @@ mod tests {
 
         let normalized = normalize(predicate).unwrap();
 
-        if let Predicate::And { args } = normalized {
+        if let Predicate::And { args } = &normalized {
             assert_eq!(args.len(), 2);
             // True should be eliminated
         } else {
@@ -274,7 +259,7 @@ mod tests {
         let normalized = normalize(predicate).unwrap();
 
         // Should become Or(Not(a=1), Not(b=2))
-        if let Predicate::Or { args } = normalized {
+        if let Predicate::Or { args } = &normalized {
             assert_eq!(args.len(), 2);
             for arg in args {
                 assert!(matches!(arg, Predicate::Not { .. }));
@@ -310,7 +295,7 @@ mod tests {
 
         let normalized = normalize(predicate).unwrap();
 
-        if let Predicate::And { args } = normalized {
+        if let Predicate::And { args } = &normalized {
             assert_eq!(args.len(), 2); // Duplicate should be removed
         } else {
             panic!("Expected And predicate");

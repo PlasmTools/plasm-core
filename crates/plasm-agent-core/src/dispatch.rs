@@ -81,11 +81,14 @@ pub async fn dispatch<E: ExprExecutor>(
 }
 
 fn expr_primary_ref(expr: &Expr) -> Option<&Ref> {
-    match expr {
-        Expr::Get(g) => Some(&g.reference),
-        Expr::Delete(d) => Some(&d.target),
-        Expr::Invoke(i) => Some(&i.target),
-        Expr::Chain(ch) => expr_primary_ref(&ch.source),
+    let mut cursor = expr;
+    while let Expr::Chain(chain) = cursor {
+        cursor = &chain.source;
+    }
+    match cursor {
+        Expr::Get(get) => Some(&get.reference),
+        Expr::Delete(delete) => Some(&delete.target),
+        Expr::Invoke(invoke) => Some(&invoke.target),
         _ => None,
     }
 }

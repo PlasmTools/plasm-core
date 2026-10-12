@@ -88,7 +88,7 @@ fn parse_chained_brace_groups_and_conjoin() {
     let Some(pred) = q.predicate else {
         panic!("expected predicate");
     };
-    let Predicate::And { args } = pred else {
+    let Predicate::And { args } = &pred else {
         panic!("expected AND of chained groups, got {pred:?}");
     };
     assert_eq!(args.len(), 2);

@@ -2,7 +2,7 @@
 
 use crate::plan_read_bounds::{pushed_budget_to_stream_fields, PushedReadBudget};
 use plasm_compile::{parse_capability_template, template_pagination};
-use plasm_core::{resolve_query_capability, ChainStep, Expr, QueryExpr, CGS};
+use plasm_core::{resolve_query_capability, Expr, QueryExpr, CGS};
 use plasm_runtime::StreamConsumeOpts;
 
 /// Consumption policy when a validated surface may carry a pushed read budget.
@@ -86,17 +86,8 @@ pub(crate) fn stream_consume_for_surface_read(
 }
 
 fn expr_has_paginated_query(cgs: &CGS, expr: &Expr) -> bool {
-    match expr {
-        Expr::Query(q) => query_has_pagination(cgs, q),
-        Expr::Chain(ch) => {
-            expr_has_paginated_query(cgs, &ch.source)
-                || matches!(
-                    &ch.step,
-                    ChainStep::Explicit { expr: step } if expr_has_paginated_query(cgs, step)
-                )
-        }
-        _ => false,
-    }
+    expr.walk()
+        .any(|node| matches!(node, Expr::Query(query) if query_has_pagination(cgs, query)))
 }
 
 fn query_has_pagination(cgs: &CGS, q: &QueryExpr) -> bool {

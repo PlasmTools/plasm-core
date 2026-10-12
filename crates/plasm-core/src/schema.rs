@@ -2835,27 +2835,64 @@ impl CGS {
         view: &ViewDefinition,
         node_id: &str,
     ) -> Result<EntityName, ViewNodeResolutionError> {
-        let index = view
+        let by_id = view
             .nodes
             .iter()
-            .position(|n| n.id == node_id)
-            .ok_or_else(|| ViewNodeResolutionError::UnknownNode {
-                node: node_id.to_owned(),
-            })?;
-        let node = &view.nodes[index];
-        if let Some(traverse) = &node.traverse {
-            if !view.nodes[..index].iter().any(|n| n.id == traverse.node) {
-                return Err(ViewNodeResolutionError::SourceNotEarlier {
-                    node: node_id.to_owned(),
-                    source_id: traverse.node.clone(),
-                });
+            .enumerate()
+            .map(|(index, node)| (node.id.as_str(), index))
+            .collect();
+        self.resolve_view_node_entity(view, node_id, &by_id, &mut std::collections::HashMap::new())
+    }
+
+    fn resolve_view_node_entity(
+        &self,
+        view: &ViewDefinition,
+        node_id: &str,
+        by_id: &std::collections::HashMap<&str, usize>,
+        resolved: &mut std::collections::HashMap<String, EntityName>,
+    ) -> Result<EntityName, ViewNodeResolutionError> {
+        let mut cursor = node_id;
+        let mut traversals = Vec::new();
+        let mut entity = loop {
+            if let Some(entity) = resolved.get(cursor) {
+                break entity.clone();
             }
-            let source = self.view_node_entity(view, &traverse.node)?;
+            let index = *by_id
+                .get(cursor)
+                .ok_or_else(|| ViewNodeResolutionError::UnknownNode {
+                    node: cursor.to_owned(),
+                })?;
+            let node = &view.nodes[index];
+            if let Some(traverse) = &node.traverse {
+                if !by_id
+                    .get(traverse.node.as_str())
+                    .is_some_and(|source| *source < index)
+                {
+                    return Err(ViewNodeResolutionError::SourceNotEarlier {
+                        node: cursor.to_owned(),
+                        source_id: traverse.node.clone(),
+                    });
+                }
+                traversals.push((node.id.as_str(), traverse));
+                cursor = &traverse.node;
+            } else {
+                let entity = self
+                    .capabilities
+                    .get(node.capability.as_str())
+                    .map(|capability| capability.domain.clone())
+                    .ok_or_else(|| ViewNodeResolutionError::UnknownCapability {
+                        capability: node.capability.clone(),
+                    })?;
+                resolved.insert(node.id.clone(), entity.clone());
+                break entity;
+            }
+        };
+        for (node, traverse) in traversals.into_iter().rev() {
             let relation = self
-                .get_entity(source.as_str())
-                .and_then(|e| e.relations.get(traverse.relation.as_str()))
+                .get_entity(entity.as_str())
+                .and_then(|entity| entity.relations.get(traverse.relation.as_str()))
                 .ok_or_else(|| ViewNodeResolutionError::UnknownRelation {
-                    entity: source.to_string(),
+                    entity: entity.to_string(),
                     relation: traverse.relation.clone(),
                 })?;
             if matches!(
@@ -2863,24 +2900,24 @@ impl CGS {
                 Some(RelationMaterialization::Unavailable)
             ) {
                 return Err(ViewNodeResolutionError::UnavailableRelation {
-                    entity: source.to_string(),
+                    entity: entity.to_string(),
                     relation: traverse.relation.clone(),
                 });
             }
-            Ok(relation.target_resource.clone())
-        } else {
-            self.capabilities
-                .get(node.capability.as_str())
-                .map(|c| c.domain.clone())
-                .ok_or_else(|| ViewNodeResolutionError::UnknownCapability {
-                    capability: node.capability.clone(),
-                })
+            entity = relation.target_resource.clone();
+            resolved.insert(node.to_owned(), entity.clone());
         }
+        Ok(entity)
     }
 
     fn validate_views(&self) -> Result<(), SchemaError> {
         use std::collections::HashSet;
         for (view_key, view) in &self.views {
+            let mut by_id = std::collections::HashMap::new();
+            for (index, node) in view.nodes.iter().enumerate() {
+                by_id.entry(node.id.as_str()).or_insert(index);
+            }
+            let mut resolved_entities = std::collections::HashMap::new();
             let ent =
                 self.entities
                     .get(&view.entity)
@@ -2956,12 +2993,11 @@ impl CGS {
                             ref_node: traverse.node.clone(),
                         });
                     }
-                    self.view_node_entity(view, &node.id).map_err(|source| {
-                        SchemaError::ViewNodeResolution {
+                    self.resolve_view_node_entity(view, &node.id, &by_id, &mut resolved_entities)
+                        .map_err(|source| SchemaError::ViewNodeResolution {
                             view: view_key.clone(),
                             source,
-                        }
-                    })?;
+                        })?;
                     continue;
                 }
                 let nc = self
@@ -3161,12 +3197,17 @@ impl CGS {
                             });
                         }
                         for node in nodes {
-                            let target = self.view_node_entity(view, node).map_err(|source| {
-                                SchemaError::ViewNodeResolution {
+                            let target = self
+                                .resolve_view_node_entity(
+                                    view,
+                                    node,
+                                    &by_id,
+                                    &mut resolved_entities,
+                                )
+                                .map_err(|source| SchemaError::ViewNodeResolution {
                                     view: view_key.clone(),
                                     source,
-                                }
-                            })?;
+                                })?;
                             if target != ro.target {
                                 return Err(SchemaError::ViewRelationOutputTargetMismatch {
                                     view: view_key.clone(),

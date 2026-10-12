@@ -2291,14 +2291,18 @@ For example: `{te}(<id>)` when you already know the id, instead of relying on `{
             );
             StepError::type_correction(correction, error)
         }
-        TypeError::RecursiveError { relation, source } => {
+        TypeError::RelationPredicate { relations, source } => {
             let inner = render_type_error_with_feedback(source, cgs, style.clone());
             let mut nested = error;
             if let Some(ref e) = inner.error {
                 nested.push('\n');
                 nested.push_str(e);
             }
-            let rel = ident_label_for_feedback(relation, &style);
+            let rel = relations
+                .iter()
+                .map(|relation| ident_label_for_feedback(relation, &style))
+                .collect::<Vec<_>>()
+                .join(".");
             let correction = format!(
                 "Fix the inner part first (relation `{rel}`): {}",
                 inner.correction

@@ -519,9 +519,7 @@ impl PrerequisiteCatalog {
                     }
                 }
             }
-            for requirement in requirements {
-                validate_argument_cycles(requirements, &requirement.id, &mut BTreeSet::new())?;
-            }
+            validate_argument_cycles(requirements)?;
         }
         Ok(())
     }
@@ -533,35 +531,66 @@ impl PrerequisiteCatalog {
     }
 }
 
-fn validate_argument_cycles<'a>(
-    requirements: &'a [Requirement],
-    id: &'a str,
-    visiting: &mut BTreeSet<&'a str>,
-) -> Result<(), PrerequisiteError> {
-    if !visiting.insert(id) {
-        return Err(PrerequisiteError::ArgumentCycle);
-    }
-    let requirement = requirements
+fn validate_argument_cycles(requirements: &[Requirement]) -> Result<(), PrerequisiteError> {
+    let by_id: BTreeMap<_, _> = requirements
         .iter()
-        .find(|r| r.id == id)
-        .ok_or(PrerequisiteError::MissingResolutionReference)?;
-    for source in requirement.arguments.values() {
-        match source {
-            ArgumentSource::RequirementOutput { requirement, .. } => {
-                validate_argument_cycles(requirements, requirement, visiting)?
-            }
-            ArgumentSource::ConsumerInput { input } => {
-                for owner in requirements
-                    .iter()
-                    .filter(|r| r.bindings.iter().any(|b| &b.input == input))
-                {
-                    validate_argument_cycles(requirements, &owner.id, visiting)?;
+        .enumerate()
+        .map(|(index, requirement)| (requirement.id.as_str(), index))
+        .collect();
+    let owners: BTreeMap<_, _> = requirements
+        .iter()
+        .enumerate()
+        .flat_map(|(index, requirement)| {
+            requirement.bindings.iter().map(move |b| (&b.input, index))
+        })
+        .collect();
+    let mut edges = Vec::with_capacity(requirements.len());
+    for requirement in requirements {
+        let mut dependencies = Vec::new();
+        for source in requirement.arguments.values() {
+            match source {
+                ArgumentSource::RequirementOutput { requirement, .. } => {
+                    dependencies.push(
+                        *by_id
+                            .get(requirement.as_str())
+                            .ok_or(PrerequisiteError::MissingResolutionReference)?,
+                    );
                 }
+                ArgumentSource::ConsumerInput { input } => {
+                    if let Some(&owner) = owners.get(input) {
+                        dependencies.push(owner);
+                    }
+                }
+                ArgumentSource::Constant { .. } | ArgumentSource::ConsumerIdentity { .. } => {}
             }
-            ArgumentSource::Constant { .. } | ArgumentSource::ConsumerIdentity { .. } => {}
+        }
+        edges.push(dependencies);
+    }
+    let mut marks = vec![0u8; requirements.len()];
+    let mut frames = Vec::new();
+    for root in 0..requirements.len() {
+        if marks[root] != 0 {
+            continue;
+        }
+        marks[root] = 1;
+        frames.push((root, 0));
+        while let Some((node, next)) = frames.last_mut() {
+            if let Some(&child) = edges[*node].get(*next) {
+                *next += 1;
+                match marks[child] {
+                    1 => return Err(PrerequisiteError::ArgumentCycle),
+                    0 => {
+                        marks[child] = 1;
+                        frames.push((child, 0));
+                    }
+                    _ => {}
+                }
+            } else {
+                marks[*node] = 2;
+                frames.pop();
+            }
         }
     }
-    visiting.remove(id);
     Ok(())
 }
 
@@ -572,8 +601,13 @@ fn required_inputs(cap: &CapabilitySchema) -> Result<Vec<InputPath>, Prerequisit
         prefix: &[String],
         out: &mut Vec<InputPath>,
     ) -> Result<(), PrerequisiteError> {
-        for field in fields.iter().filter(|f| f.required && f.default.is_none()) {
-            let mut path = prefix.to_vec();
+        let mut pending: Vec<_> = fields
+            .iter()
+            .rev()
+            .filter(|field| field.required && field.default.is_none())
+            .map(|field| (field, prefix.to_vec()))
+            .collect();
+        while let Some((field, mut path)) = pending.pop() {
             path.push(field.name.clone());
             match &field.wire {
                 InputFieldWire::Registry(_) => out.push(InputPath {
@@ -581,7 +615,15 @@ fn required_inputs(cap: &CapabilitySchema) -> Result<Vec<InputPath>, Prerequisit
                     path,
                 }),
                 InputFieldWire::Inline(ty) => match ty.as_ref() {
-                    InputType::Object { fields, .. } => collect(fields, lane, &path, out)?,
+                    InputType::Object { fields, .. } => {
+                        pending.extend(
+                            fields
+                                .iter()
+                                .rev()
+                                .filter(|field| field.required && field.default.is_none())
+                                .map(|field| (field, path.clone())),
+                        );
+                    }
                     InputType::Value { .. } => out.push(InputPath {
                         lane: lane.clone(),
                         path,
@@ -693,27 +735,32 @@ fn input_type<'a>(
 
 fn descend_input<'a>(
     cgs: &'a CGS,
-    fields: &'a [InputFieldSchema],
-    path: &[String],
+    mut fields: &'a [InputFieldSchema],
+    mut path: &[String],
 ) -> Result<&'a NamedValueSchema, PrerequisiteError> {
-    let (head, rest) = path
-        .split_first()
-        .ok_or(PrerequisiteError::InvalidInputPath)?;
-    let field = fields
-        .iter()
-        .find(|f| &f.name == head)
-        .ok_or(PrerequisiteError::MissingInputField)?;
-    if rest.is_empty() {
-        return field
-            .named_value(cgs)
-            .map_err(|_| PrerequisiteError::InvalidInputPath);
-    }
-    match &field.wire {
-        InputFieldWire::Inline(ty) => match ty.as_ref() {
-            InputType::Object { fields, .. } => descend_input(cgs, fields, rest),
-            _ => Err(PrerequisiteError::InvalidInputPath),
-        },
-        _ => Err(PrerequisiteError::InvalidInputPath),
+    loop {
+        let (head, rest) = path
+            .split_first()
+            .ok_or(PrerequisiteError::InvalidInputPath)?;
+        let field = fields
+            .iter()
+            .find(|f| &f.name == head)
+            .ok_or(PrerequisiteError::MissingInputField)?;
+        if rest.is_empty() {
+            return field
+                .named_value(cgs)
+                .map_err(|_| PrerequisiteError::InvalidInputPath);
+        }
+        match &field.wire {
+            InputFieldWire::Inline(ty) => match ty.as_ref() {
+                InputType::Object { fields: nested, .. } => {
+                    fields = nested;
+                    path = rest;
+                }
+                _ => return Err(PrerequisiteError::InvalidInputPath),
+            },
+            _ => return Err(PrerequisiteError::InvalidInputPath),
+        }
     }
 }
 
@@ -942,6 +989,8 @@ fn prerequisite_closure_with_input_sources(
         edges: Vec::new(),
         order: Vec::new(),
         acquisitions: Vec::new(),
+        validated: BTreeSet::new(),
+        ordered: BTreeSet::new(),
     };
     for selected in business {
         walker.visit(selected, None, &BTreeMap::new())?;
@@ -1426,28 +1475,33 @@ fn input_value_ref<'a>(
 }
 
 fn descend_input_value_ref<'a>(
-    fields: &'a [InputFieldSchema],
-    path: &[String],
+    mut fields: &'a [InputFieldSchema],
+    mut path: &[String],
 ) -> Result<Option<&'a crate::ValueDomainKey>, PrerequisiteError> {
-    let (head, rest) = path
-        .split_first()
-        .ok_or(PrerequisiteError::InvalidInputPath)?;
-    let field = fields
-        .iter()
-        .find(|field| &field.name == head)
-        .ok_or(PrerequisiteError::MissingInputField)?;
-    if rest.is_empty() {
-        return match &field.wire {
-            InputFieldWire::Registry(value_ref) => Ok(Some(value_ref)),
-            InputFieldWire::Inline(_) => Ok(None),
-        };
-    }
-    match &field.wire {
-        InputFieldWire::Inline(input) => match input.as_ref() {
-            InputType::Object { fields, .. } => descend_input_value_ref(fields, rest),
-            _ => Err(PrerequisiteError::InvalidInputPath),
-        },
-        InputFieldWire::Registry(_) => Err(PrerequisiteError::InvalidInputPath),
+    loop {
+        let (head, rest) = path
+            .split_first()
+            .ok_or(PrerequisiteError::InvalidInputPath)?;
+        let field = fields
+            .iter()
+            .find(|field| &field.name == head)
+            .ok_or(PrerequisiteError::MissingInputField)?;
+        if rest.is_empty() {
+            return match &field.wire {
+                InputFieldWire::Registry(value_ref) => Ok(Some(value_ref)),
+                InputFieldWire::Inline(_) => Ok(None),
+            };
+        }
+        match &field.wire {
+            InputFieldWire::Inline(input) => match input.as_ref() {
+                InputType::Object { fields: nested, .. } => {
+                    fields = nested;
+                    path = rest;
+                }
+                _ => return Err(PrerequisiteError::InvalidInputPath),
+            },
+            InputFieldWire::Registry(_) => return Err(PrerequisiteError::InvalidInputPath),
+        }
     }
 }
 
@@ -1460,6 +1514,8 @@ struct ClosureWalker<'a> {
     edges: Vec<PrerequisiteEdge>,
     order: Vec<CapabilityRef>,
     acquisitions: Vec<Acquisition>,
+    validated: BTreeSet<String>,
+    ordered: BTreeSet<CapabilityRef>,
 }
 
 #[derive(Default)]
@@ -1468,64 +1524,301 @@ struct RequirementResolutionState {
     visiting: BTreeSet<String>,
 }
 
+struct ConsumerFrame {
+    consumer: CapabilityRef,
+    instance: Option<String>,
+    inputs: BTreeMap<InputPath, ResolvedArgument>,
+    requirements: Vec<Requirement>,
+    by_id: BTreeMap<String, usize>,
+    input_owners: BTreeMap<InputPath, (usize, String)>,
+    resolution: RequirementResolutionState,
+}
+
+struct PreparedRequirement {
+    requirement: Requirement,
+    provider: Provider,
+    provider_catalog: String,
+    provider_name: String,
+}
+
+struct ArgumentFrame {
+    consumer: usize,
+    prepared: PreparedRequirement,
+    ports: Vec<(String, ArgumentSource)>,
+    next: usize,
+    arguments: BTreeMap<String, ResolvedArgument>,
+}
+
+enum ClosureWork {
+    Enter {
+        consumer: CapabilityRef,
+        instance: Option<String>,
+        inputs: BTreeMap<InputPath, ResolvedArgument>,
+    },
+    Exit(usize),
+    Requirement {
+        consumer: usize,
+        id: String,
+    },
+    Arguments(Box<ArgumentFrame>),
+    Complete {
+        frame: Box<ArgumentFrame>,
+        id: String,
+        acquire: bool,
+    },
+}
+
 impl ClosureWalker<'_> {
+    /// Flat interpreter for consumer visits and requirement continuations. Neither
+    /// prerequisite depth nor argument dependency depth consumes native frames.
     fn visit(
         &mut self,
         consumer: &CapabilityRef,
         instance: Option<&str>,
         inputs: &BTreeMap<InputPath, ResolvedArgument>,
     ) -> Result<(), PrerequisiteError> {
-        if !self.allowed.contains(&consumer.catalog) {
-            return Err(PrerequisiteError::UnauthorizedProviderCatalog);
-        }
-        if !self.visiting.insert(consumer.clone()) {
-            return Err(PrerequisiteError::CapabilityCycle);
-        }
-        let cgs = *self
-            .catalogs
-            .get(&consumer.catalog)
-            .ok_or(PrerequisiteError::MissingPrerequisiteCatalog)?;
-        capability(cgs, &consumer.capability)?;
-        cgs.prerequisites.validate(cgs)?;
-        let requirements = cgs
-            .prerequisites
-            .requirements
-            .get(&consumer.capability)
-            .cloned()
-            .unwrap_or_default();
-        let mut resolution = RequirementResolutionState::default();
-        for requirement in &requirements {
-            self.resolve_requirement(
-                consumer,
-                instance,
-                inputs,
-                &requirements,
-                requirement,
-                &mut resolution,
-            )?;
-        }
-        self.visiting.remove(consumer);
-        if !self.order.contains(consumer) {
-            self.order.push(consumer.clone());
+        let mut frames: Vec<ConsumerFrame> = Vec::new();
+        let mut work = vec![ClosureWork::Enter {
+            consumer: consumer.clone(),
+            instance: instance.map(str::to_owned),
+            inputs: inputs.clone(),
+        }];
+        while let Some(step) = work.pop() {
+            match step {
+                ClosureWork::Enter {
+                    consumer,
+                    instance,
+                    inputs,
+                } => {
+                    if !self.allowed.contains(&consumer.catalog) {
+                        return Err(PrerequisiteError::UnauthorizedProviderCatalog);
+                    }
+                    if !self.visiting.insert(consumer.clone()) {
+                        return Err(PrerequisiteError::CapabilityCycle);
+                    }
+                    let cgs = *self
+                        .catalogs
+                        .get(&consumer.catalog)
+                        .ok_or(PrerequisiteError::MissingPrerequisiteCatalog)?;
+                    capability(cgs, &consumer.capability)?;
+                    if self.validated.insert(consumer.catalog.clone()) {
+                        cgs.prerequisites.validate(cgs)?;
+                    }
+                    let requirements = cgs
+                        .prerequisites
+                        .requirements
+                        .get(&consumer.capability)
+                        .cloned()
+                        .unwrap_or_default();
+                    let index = frames.len();
+                    let by_id = requirements
+                        .iter()
+                        .enumerate()
+                        .map(|(i, r)| (r.id.clone(), i))
+                        .collect();
+                    let input_owners = requirements
+                        .iter()
+                        .enumerate()
+                        .flat_map(|(i, r)| {
+                            r.bindings
+                                .iter()
+                                .map(move |b| (b.input.clone(), (i, b.output.clone())))
+                        })
+                        .collect();
+                    work.push(ClosureWork::Exit(index));
+                    for requirement in requirements.iter().rev() {
+                        work.push(ClosureWork::Requirement {
+                            consumer: index,
+                            id: requirement.id.clone(),
+                        });
+                    }
+                    frames.push(ConsumerFrame {
+                        consumer,
+                        instance,
+                        inputs,
+                        requirements,
+                        by_id,
+                        input_owners,
+                        resolution: RequirementResolutionState::default(),
+                    });
+                }
+                ClosureWork::Exit(index) => {
+                    debug_assert_eq!(index + 1, frames.len());
+                    let frame = frames.pop().expect("entered consumer frame");
+                    self.visiting.remove(&frame.consumer);
+                    if self.ordered.insert(frame.consumer.clone()) {
+                        self.order.push(frame.consumer);
+                    }
+                }
+                ClosureWork::Requirement { consumer, id } => {
+                    let frame = &mut frames[consumer];
+                    if frame.resolution.resolved.contains_key(&id) {
+                        continue;
+                    }
+                    if !frame.resolution.visiting.insert(id.clone()) {
+                        return Err(PrerequisiteError::ArgumentCycle);
+                    }
+                    let requirement = &frame.requirements[*frame
+                        .by_id
+                        .get(&id)
+                        .ok_or(PrerequisiteError::MissingResolutionReference)?];
+                    let prepared = self.prepare_requirement(&frame.consumer, requirement)?;
+                    let ports = prepared
+                        .requirement
+                        .arguments
+                        .iter()
+                        .map(|(port, source)| (port.clone(), source.clone()))
+                        .collect();
+                    work.push(ClosureWork::Arguments(Box::new(ArgumentFrame {
+                        consumer,
+                        prepared,
+                        ports,
+                        next: 0,
+                        arguments: BTreeMap::new(),
+                    })));
+                }
+                ClosureWork::Arguments(mut args) => {
+                    let frame = &frames[args.consumer];
+                    if let Some((port, source)) = args.ports.get(args.next) {
+                        let dependency = match source {
+                            ArgumentSource::RequirementOutput {
+                                requirement,
+                                output,
+                            } => Some((requirement.as_str(), output.as_str())),
+                            ArgumentSource::ConsumerInput { input } => {
+                                frame.input_owners.get(input).map(|(index, output)| {
+                                    (frame.requirements[*index].id.as_str(), output.as_str())
+                                })
+                            }
+                            _ => None,
+                        };
+                        let argument = if let Some((id, output)) = dependency {
+                            if let Some((instance, outputs)) = frame.resolution.resolved.get(id) {
+                                ResolvedArgument::ProviderOutput {
+                                    instance: instance.clone(),
+                                    field: outputs
+                                        .get(output)
+                                        .ok_or(PrerequisiteError::MissingResolutionReference)?
+                                        .clone(),
+                                }
+                            } else {
+                                let id = id.to_owned();
+                                let consumer = args.consumer;
+                                work.push(ClosureWork::Arguments(args));
+                                work.push(ClosureWork::Requirement { consumer, id });
+                                continue;
+                            }
+                        } else {
+                            match source {
+                                ArgumentSource::ConsumerIdentity { field } => {
+                                    ResolvedArgument::BusinessIdentity {
+                                        consumer: frame.consumer.clone(),
+                                        field: field.clone(),
+                                    }
+                                }
+                                ArgumentSource::Constant { value } => ResolvedArgument::Constant {
+                                    value: value.clone(),
+                                },
+                                ArgumentSource::ConsumerInput { input } => {
+                                    frame.inputs.get(input).cloned().unwrap_or_else(|| {
+                                        ResolvedArgument::BusinessInput {
+                                            consumer: frame.consumer.clone(),
+                                            input: input.clone(),
+                                        }
+                                    })
+                                }
+                                ArgumentSource::RequirementOutput { .. } => {
+                                    return Err(PrerequisiteError::UnresolvedOutput)
+                                }
+                            }
+                        };
+                        args.arguments.insert(port.clone(), argument);
+                        args.next += 1;
+                        work.push(ClosureWork::Arguments(args));
+                        continue;
+                    }
+                    let identity = serde_json::to_vec(&(
+                        &args.prepared.provider_catalog,
+                        &args.prepared.provider_name,
+                        &args.arguments,
+                    ))
+                    .map_err(|_| PrerequisiteError::Serialization)?;
+                    let id = crate::catalog_discovery::content_hash(&identity);
+                    let acquire = !self.done.contains(&id);
+                    let enter = acquire.then(|| ClosureWork::Enter {
+                        consumer: CapabilityRef {
+                            catalog: args.prepared.provider_catalog.clone(),
+                            capability: args.prepared.provider.capability.clone(),
+                        },
+                        instance: Some(id.clone()),
+                        inputs: args
+                            .prepared
+                            .provider
+                            .inputs
+                            .iter()
+                            .map(|(port, input)| (input.clone(), args.arguments[port].clone()))
+                            .collect(),
+                    });
+                    work.push(ClosureWork::Complete {
+                        frame: args,
+                        id,
+                        acquire,
+                    });
+                    if let Some(enter) = enter {
+                        work.push(enter);
+                    }
+                }
+                ClosureWork::Complete {
+                    frame: args,
+                    id,
+                    acquire,
+                } => {
+                    let consumer = &mut frames[args.consumer];
+                    let PreparedRequirement {
+                        requirement,
+                        provider,
+                        provider_catalog,
+                        provider_name,
+                    } = args.prepared;
+                    let provider_ref = CapabilityRef {
+                        catalog: provider_catalog.clone(),
+                        capability: provider.capability.clone(),
+                    };
+                    if acquire {
+                        self.acquisitions.push(Acquisition {
+                            id: id.clone(),
+                            provider_catalog,
+                            provider: provider_name,
+                            capability: provider_ref.clone(),
+                            arguments: args.arguments,
+                        });
+                        self.done.insert(id.clone());
+                    }
+                    consumer.resolution.visiting.remove(&requirement.id);
+                    consumer.resolution.resolved.insert(
+                        requirement.id.clone(),
+                        (id.clone(), provider.outputs.clone()),
+                    );
+                    self.edges.push(PrerequisiteEdge {
+                        consumer: consumer.consumer.clone(),
+                        consumer_instance: consumer.instance.clone(),
+                        provider_instance: id,
+                        requirement,
+                        provider: provider_ref,
+                        provider_inputs: provider.inputs,
+                        provider_outputs: provider.outputs,
+                    });
+                }
+            }
         }
         Ok(())
     }
 
-    fn resolve_requirement(
-        &mut self,
+    fn prepare_requirement(
+        &self,
         consumer: &CapabilityRef,
-        consumer_instance: Option<&str>,
-        inputs: &BTreeMap<InputPath, ResolvedArgument>,
-        requirements: &[Requirement],
         requirement: &Requirement,
-        resolution: &mut RequirementResolutionState,
-    ) -> Result<(String, BTreeMap<String, String>), PrerequisiteError> {
-        if let Some(result) = resolution.resolved.get(&requirement.id) {
-            return Ok(result.clone());
-        }
-        if !resolution.visiting.insert(requirement.id.clone()) {
-            return Err(PrerequisiteError::ArgumentCycle);
-        }
+    ) -> Result<PreparedRequirement, PrerequisiteError> {
         let cgs = *self
             .catalogs
             .get(&consumer.catalog)
@@ -1570,111 +1863,69 @@ impl ClosureWalker<'_> {
                 port,
             )?;
         }
-        let mut arguments = BTreeMap::new();
-        for (port, source) in &requirement.arguments {
-            let dependency = match source {
-                ArgumentSource::RequirementOutput {
-                    requirement,
-                    output,
-                } => Some((requirement.as_str(), output.as_str())),
-                ArgumentSource::ConsumerInput { input } => requirements.iter().find_map(|r| {
-                    r.bindings
-                        .iter()
-                        .find(|b| &b.input == input)
-                        .map(|b| (r.id.as_str(), b.output.as_str()))
-                }),
-                _ => None,
-            };
-            let argument = if let Some((id, output)) = dependency {
-                let other = requirements
-                    .iter()
-                    .find(|r| r.id == id)
-                    .ok_or(PrerequisiteError::MissingResolutionReference)?;
-                let (instance, outputs) = self.resolve_requirement(
-                    consumer,
-                    consumer_instance,
-                    inputs,
-                    requirements,
-                    other,
-                    resolution,
-                )?;
-                ResolvedArgument::ProviderOutput {
-                    instance,
-                    field: outputs
-                        .get(output)
-                        .ok_or(PrerequisiteError::MissingResolutionReference)?
-                        .clone(),
-                }
-            } else {
-                match source {
-                    ArgumentSource::ConsumerIdentity { field } => {
-                        ResolvedArgument::BusinessIdentity {
-                            consumer: consumer.clone(),
-                            field: field.clone(),
-                        }
-                    }
-                    ArgumentSource::Constant { value } => ResolvedArgument::Constant {
-                        value: value.clone(),
-                    },
-                    ArgumentSource::ConsumerInput { input } => inputs
-                        .get(input)
-                        .cloned()
-                        .unwrap_or_else(|| ResolvedArgument::BusinessInput {
-                            consumer: consumer.clone(),
-                            input: input.clone(),
-                        }),
-                    ArgumentSource::RequirementOutput { .. } => {
-                        return Err(PrerequisiteError::UnresolvedOutput)
-                    }
-                }
-            };
-            arguments.insert(port.clone(), argument);
-        }
-        let identity =
-            serde_json::to_vec(&(&binding.provider_catalog, &binding.provider, &arguments))
-                .map_err(|_| PrerequisiteError::Serialization)?;
-        let id = crate::catalog_discovery::content_hash(&identity);
-        let provider_ref = CapabilityRef {
-            catalog: binding.provider_catalog.clone(),
-            capability: provider.capability.clone(),
-        };
-        if !self.done.contains(&id) {
-            let provider_inputs = provider
-                .inputs
-                .iter()
-                .map(|(port, input)| (input.clone(), arguments[port].clone()))
-                .collect();
-            self.visit(&provider_ref, Some(&id), &provider_inputs)?;
-            self.acquisitions.push(Acquisition {
-                id: id.clone(),
-                provider_catalog: binding.provider_catalog.clone(),
-                provider: binding.provider.clone(),
-                capability: provider_ref.clone(),
-                arguments,
-            });
-            self.done.insert(id.clone());
-        }
-        self.edges.push(PrerequisiteEdge {
-            consumer: consumer.clone(),
-            consumer_instance: consumer_instance.map(str::to_owned),
-            provider_instance: id.clone(),
+        Ok(PreparedRequirement {
             requirement: requirement.clone(),
-            provider: provider_ref,
-            provider_inputs: provider.inputs,
-            provider_outputs: provider.outputs.clone(),
-        });
-        let result = (id, provider.outputs);
-        resolution
-            .resolved
-            .insert(requirement.id.clone(), result.clone());
-        resolution.visiting.remove(&requirement.id);
-        Ok(result)
+            provider,
+            provider_catalog: binding.provider_catalog.clone(),
+            provider_name: binding.provider.clone(),
+        })
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn prerequisite_chain_growth_uses_heap_frames() {
+        let count = 2_048;
+        let base = fixture();
+        let mut chain = Vec::with_capacity(count);
+        let mut bindings = DeploymentBindings::default();
+        for index in 0..count {
+            let mut catalog = base.clone();
+            if index + 1 < count {
+                let mut requirement = catalog.prerequisites.requirements["read"][0].clone();
+                requirement.bindings.clear();
+                catalog
+                    .prerequisites
+                    .requirements
+                    .insert("acquire".into(), vec![requirement]);
+                bindings.bindings.push(DeploymentBinding {
+                    consumer: CapabilityRef {
+                        catalog: format!("c{index}"),
+                        capability: "acquire".into(),
+                    },
+                    requirement: "scoped_access".into(),
+                    provider_catalog: format!("c{}", index + 1),
+                    provider: "value_source".into(),
+                });
+            }
+            chain.push(catalog);
+        }
+        let catalogs = chain
+            .iter()
+            .enumerate()
+            .map(|(i, c)| (format!("c{i}"), c))
+            .collect();
+        let allowed = (0..count).map(|i| format!("c{i}")).collect();
+        let closure = prerequisite_closure(
+            &catalogs,
+            &bindings,
+            &[CapabilityRef {
+                catalog: "c0".into(),
+                capability: "acquire".into(),
+            }],
+            &allowed,
+        )
+        .unwrap();
+        assert_eq!(closure.acquisitions.len(), count - 1);
+        assert_eq!(
+            closure.acquisitions[0].provider_catalog,
+            format!("c{}", count - 1)
+        );
+        assert_eq!(closure.acquisitions.last().unwrap().provider_catalog, "c1");
+    }
 
     fn fixture() -> CGS {
         crate::loader::load_schema_dir(

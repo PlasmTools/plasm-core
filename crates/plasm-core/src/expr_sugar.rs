@@ -38,28 +38,23 @@ pub fn lower_id_field_brace_to_get_federated(
     expr: Expr,
     layers: &[CgsLayer<'_>],
 ) -> Result<Expr, IdentityLoweringError> {
-    match expr {
-        Expr::Query(q) => {
-            let Some(cgs) = resolve_query_cgs(&q, layers)? else {
-                return Ok(Expr::Query(q));
-            };
-            if let Some(get) = try_brace_query_to_get(&q, cgs)? {
-                Ok(Expr::Get(get))
-            } else {
-                Ok(Expr::Query(q))
+    let mut expr = expr;
+    let mut cursor = &mut expr;
+    loop {
+        match cursor {
+            Expr::Chain(chain) => cursor = &mut chain.source,
+            Expr::Query(query) => {
+                if let Some(cgs) = resolve_query_cgs(query, layers)? {
+                    if let Some(get) = try_brace_query_to_get(query, cgs)? {
+                        *cursor = Expr::Get(get);
+                    }
+                }
+                break;
             }
+            _ => break,
         }
-        Expr::Chain(ch) => {
-            let source = lower_id_field_brace_to_get_federated(*ch.source, layers)?;
-            Ok(Expr::Chain(crate::expr::ChainExpr {
-                source: Box::new(source),
-                selector: ch.selector,
-                catalog_entry_id: ch.catalog_entry_id,
-                step: ch.step,
-            }))
-        }
-        other => Ok(other),
     }
+    Ok(expr)
 }
 
 fn resolve_query_cgs<'a>(
@@ -149,25 +144,26 @@ fn try_brace_query_to_get(
 }
 
 fn pred_references_only_field(pred: &Predicate, field: &str) -> bool {
-    match pred {
-        Predicate::Comparison { field: f, .. } => f == field,
-        Predicate::And { args } => args.iter().all(|p| pred_references_only_field(p, field)),
-        Predicate::Or { args } => args.len() == 1 && pred_references_only_field(&args[0], field),
-        Predicate::Not { .. } => false,
-        Predicate::True | Predicate::False => false,
-        Predicate::ExistsRelation { .. } => false,
-    }
+    pred.walk().all(|node| match node {
+        Predicate::Comparison { field: name, .. } => name == field,
+        Predicate::And { .. } => true,
+        Predicate::Or { args } => args.len() == 1,
+        _ => false,
+    })
 }
 
 fn single_eq_field(pred: &Predicate) -> Option<(&str, Value)> {
-    match pred {
-        Predicate::Comparison {
-            field,
-            op: CompOp::Eq,
-            value,
-        } => Some((field.as_str(), typed_to_value(value))),
-        Predicate::And { args } if args.len() == 1 => single_eq_field(&args[0]),
-        _ => None,
+    let mut cursor = pred;
+    loop {
+        match cursor {
+            Predicate::Comparison {
+                field,
+                op: CompOp::Eq,
+                value,
+            } => return Some((field.as_str(), typed_to_value(value))),
+            Predicate::And { args } if args.len() == 1 => cursor = &args[0],
+            _ => return None,
+        }
     }
 }
 

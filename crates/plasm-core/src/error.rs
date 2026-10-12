@@ -139,9 +139,9 @@ pub enum TypeError {
         expression: String,
     },
 
-    #[error("Recursive type error in relation '{relation}': {source}")]
-    RecursiveError {
-        relation: String,
+    #[error("Type error in relation path '{}': {source}", relations.join("."))]
+    RelationPredicate {
+        relations: Vec<String>,
         #[source]
         source: Box<TypeError>,
     },
@@ -191,8 +191,8 @@ impl TypeError {
             } => format!(
                 "Replace the teaching placeholder for `{field}` with an actual {expected_type} value."
             ),
-            Self::RecursiveError { relation, source } => {
-                format!("Relation `{relation}`: {}", source.python_correction())
+            Self::RelationPredicate { relations, source } => {
+                format!("Relation `{}`: {}", relations.join("."), source.python_correction())
             }
             Self::ChainTargetMissingGet { target_entity, .. } => format!(
                 "The relation target `{target_entity}` has no Get capability. Use a declared materialized relation or source."

@@ -4,7 +4,7 @@
 
 use std::collections::{HashMap, HashSet};
 
-use plasm_core::{ChainStep, Expr, PlasmComp, Predicate, TypedComparisonValue};
+use plasm_core::{Expr, PlasmComp, Predicate, TypedComparisonValue};
 
 use crate::execute_session::ExecuteSession;
 use crate::plan_dry_display::PlanDryReview;
@@ -82,15 +82,13 @@ pub(crate) fn build_prepared_validated_plan(
     executable: &ExecutablePlasmComp,
 ) -> Result<ValidatedPlan, crate::plasm_step_convert::StepPayloadLiftError> {
     let mut validated = build_validated_plan_from_executable(comp, executable)?;
-    fn prepare_scopes(plan: &mut ValidatedPlan) {
+    let mut pending = vec![&mut validated];
+    while let Some(plan) = pending.pop() {
         apply_read_budgets(plan);
         for node in plan.nodes_mut() {
-            for nested in node.nested_plans_mut() {
-                prepare_scopes(nested);
-            }
+            pending.extend(node.nested_plans_mut());
         }
     }
-    prepare_scopes(&mut validated);
     Ok(validated)
 }
 
@@ -98,73 +96,72 @@ pub(crate) fn build_prepared_validated_plan(
 #[must_use]
 pub fn analyze_read_boundedness(plan: &Plan<ValidatedPlanState>) -> ReadBoundedness {
     let mut out = ReadBoundedness::default();
-    let reachable = crate::plan_node_graph::nodes_reachable_from_return(plan);
-    for n in &plan.nodes {
-        if !reachable.contains(n.id().as_str()) {
-            continue;
-        }
-        for plan in n.nested_plans() {
-            let nested = analyze_read_boundedness(plan.artifact());
-            out.has_foreach_fanout_risk |= nested.has_foreach_fanout_risk;
-            out.has_unbounded_read_root |= nested.has_unbounded_read_root;
-            out.has_paginated_list_fetch_all_default |= nested.has_paginated_list_fetch_all_default;
-            out.has_relation_many_source_fanout |= nested.has_relation_many_source_fanout;
-        }
-        if let ValidatedPlanNode::MapBody(map) = n {
-            out.has_foreach_fanout_risk |= matches!(
-                map.body.effect_class(),
-                crate::plasm_plan::EffectClass::Write | crate::plasm_plan::EffectClass::SideEffect
-            ) && map.body.max_parents.get() > 1
-                && !crate::plasm_plan::validated_source_is_static_singleton(
+    let mut pending = vec![plan];
+    while let Some(plan) = pending.pop() {
+        let reachable = crate::plan_node_graph::nodes_reachable_from_return(plan);
+        for n in &plan.nodes {
+            if !reachable.contains(n.id().as_str()) {
+                continue;
+            }
+            pending.extend(n.nested_plans().map(|plan| plan.artifact()));
+            if let ValidatedPlanNode::MapBody(map) = n {
+                out.has_foreach_fanout_risk |= matches!(
+                    map.body.effect_class(),
+                    crate::plasm_plan::EffectClass::Write
+                        | crate::plasm_plan::EffectClass::SideEffect
+                ) && map.body.max_parents.get() > 1
+                    && !crate::plasm_plan::validated_source_is_static_singleton(
+                        plan,
+                        map.body.parent.source.as_str(),
+                    );
+                out.has_relation_many_source_fanout |= map.body.max_parents.get() > 1;
+            }
+            if let ValidatedPlanNode::RelationTraversal(rel) = n {
+                if rel.relation.source_cardinality
+                    == crate::plasm_plan::RelationSourceCardinality::Many
+                    && crate::plan_read_bounds::effective_relation_read_cap(rel).is_none()
+                {
+                    out.has_relation_many_source_fanout = true;
+                }
+            }
+            if let ValidatedPlanNode::ForEach(fe) = n {
+                // D1: a provably-singleton source runs the effect exactly once — not a fanout.
+                if crate::plasm_plan_run::for_each_body_mutates_remote(
+                    fe.effect_template.kind,
+                    fe.effect_template.effect_class,
+                ) && !crate::plasm_plan::validated_source_is_static_singleton(
                     plan,
-                    map.body.parent.source.as_str(),
-                );
-            out.has_relation_many_source_fanout |= map.body.max_parents.get() > 1;
-        }
-        if let ValidatedPlanNode::RelationTraversal(rel) = n {
-            if rel.relation.source_cardinality == crate::plasm_plan::RelationSourceCardinality::Many
-                && crate::plan_read_bounds::effective_relation_read_cap(rel).is_none()
-            {
-                out.has_relation_many_source_fanout = true;
+                    fe.source.as_str(),
+                ) {
+                    out.has_foreach_fanout_risk = true;
+                }
             }
-        }
-        if let ValidatedPlanNode::ForEach(fe) = n {
-            // D1: a provably-singleton source runs the effect exactly once — not a fanout.
-            if crate::plasm_plan_run::for_each_body_mutates_remote(
-                fe.effect_template.kind,
-                fe.effect_template.effect_class,
-            ) && !crate::plasm_plan::validated_source_is_static_singleton(
-                plan,
-                fe.source.as_str(),
+            let ValidatedPlanNode::Surface(surface) = n else {
+                continue;
+            };
+            if surface.effect_class != crate::plasm_plan::EffectClass::Read {
+                continue;
+            }
+            if !matches!(
+                surface.result_shape,
+                crate::plasm_plan::ResultShape::List | crate::plasm_plan::ResultShape::Page
             ) {
-                out.has_foreach_fanout_risk = true;
+                continue;
             }
-        }
-        let ValidatedPlanNode::Surface(surface) = n else {
-            continue;
-        };
-        if surface.effect_class != crate::plasm_plan::EffectClass::Read {
-            continue;
-        }
-        if !matches!(
-            surface.result_shape,
-            crate::plasm_plan::ResultShape::List | crate::plasm_plan::ResultShape::Page
-        ) {
-            continue;
-        }
-        if !matches!(surface.kind, PlanNodeKind::Query | PlanNodeKind::Search) {
-            continue;
-        }
-        if surface_is_read_bounded(surface) {
-            continue;
-        }
-        // Unnarrowed root → structural advisory (`needs_review`) even when the default host
-        // page caps the first fetch. Default page alone is not "expensive" live work.
-        if crate::plan_node_graph::node_dependencies(n).is_empty() {
-            out.has_unbounded_read_root = true;
-        }
-        if crate::plan_read_bounds::effective_host_page_size(surface).is_none() {
-            out.has_paginated_list_fetch_all_default = true;
+            if !matches!(surface.kind, PlanNodeKind::Query | PlanNodeKind::Search) {
+                continue;
+            }
+            if surface_is_read_bounded(surface) {
+                continue;
+            }
+            // Unnarrowed root → structural advisory (`needs_review`) even when the default host
+            // page caps the first fetch. Default page alone is not "expensive" live work.
+            if crate::plan_node_graph::node_dependencies(n).is_empty() {
+                out.has_unbounded_read_root = true;
+            }
+            if crate::plan_read_bounds::effective_host_page_size(surface).is_none() {
+                out.has_paginated_list_fetch_all_default = true;
+            }
         }
     }
     out
@@ -348,110 +345,74 @@ pub(crate) fn return_path_has_unbounded_relation_embed_hydrate(
 #[must_use]
 pub fn collect_plan_entity_names(plan: &Plan<ValidatedPlanState>) -> HashSet<String> {
     let mut out = HashSet::new();
-    for n in &plan.nodes {
-        for nested in n.nested_plans() {
-            out.extend(collect_plan_entity_names(nested.artifact()));
-        }
-        if let ValidatedPlanNode::Capture(capture) = n {
-            out.insert(capture.entity.entity.clone());
-        }
-        if let ValidatedPlanNode::Surface(s) = n {
-            if let Some(q) = &s.qualified_entity {
-                out.insert(q.entity.clone());
+    let mut pending = vec![plan];
+    while let Some(plan) = pending.pop() {
+        for n in &plan.nodes {
+            for nested in n.nested_plans() {
+                pending.push(nested.artifact());
             }
-            if let Some(ir) = &s.ir {
-                collect_entities_from_expr(&ir.expr, &mut out);
+            if let ValidatedPlanNode::Capture(capture) = n {
+                out.insert(capture.entity.entity.clone());
             }
-            for pred in &s.predicates {
-                collect_entities_from_plan_value(&pred.value, &mut out);
+            if let ValidatedPlanNode::Surface(s) = n {
+                if let Some(q) = &s.qualified_entity {
+                    out.insert(q.entity.clone());
+                }
+                if let Some(ir) = &s.ir {
+                    collect_entities_from_expr(&ir.expr, &mut out);
+                }
+                for pred in &s.predicates {
+                    collect_entities_from_plan_value(&pred.value, &mut out);
+                }
             }
-        }
-        if let ValidatedPlanNode::RelationTraversal(r) = n {
-            out.insert(r.relation.target.entity.clone());
-            collect_entities_from_expr(&r.relation.ir.expr, &mut out);
+            if let ValidatedPlanNode::RelationTraversal(r) = n {
+                out.insert(r.relation.target.entity.clone());
+                collect_entities_from_expr(&r.relation.ir.expr, &mut out);
+            }
         }
     }
     out
 }
 
 fn collect_entities_from_plan_value(value: &PlanValue, out: &mut HashSet<String>) {
-    match value {
-        PlanValue::Quantified {
-            collection,
-            predicate,
-            ..
-        } => {
-            collect_entities_from_plan_value(collection, out);
-            collect_entities_from_plan_value(predicate, out);
-        }
-        PlanValue::Expression { expression } => {
-            let _: Result<_, std::convert::Infallible> = expression.try_map(|value| {
-                collect_entities_from_plan_value(value, out);
-                Ok(())
-            });
-        }
-        PlanValue::EntityRefKey { entity, key, .. } => {
+    for value in value.walk() {
+        if let PlanValue::EntityRefKey { entity, .. } = value {
             out.insert(entity.clone());
-            collect_entities_from_plan_value(key, out);
         }
-        PlanValue::Array { items } => {
-            for item in items {
-                collect_entities_from_plan_value(item, out);
-            }
-        }
-        PlanValue::Object { fields } => {
-            for v in fields.values() {
-                collect_entities_from_plan_value(v, out);
-            }
-        }
-        _ => {}
     }
 }
 
 fn collect_entities_from_expr(expr: &Expr, out: &mut HashSet<String>) {
-    match expr {
-        Expr::Query(q) => {
-            out.insert(q.entity.as_str().to_string());
-            if let Some(pred) = &q.predicate {
-                collect_entities_from_predicate(pred, out);
+    for expr in expr.walk() {
+        match expr {
+            Expr::Query(q) => {
+                out.insert(q.entity.as_str().to_string());
+                if let Some(pred) = &q.predicate {
+                    collect_entities_from_predicate(pred, out);
+                }
             }
-        }
-        Expr::Get(g) => {
-            out.insert(g.reference.entity_type.as_str().to_string());
-        }
-        Expr::Create(c) => {
-            out.insert(c.entity.as_str().to_string());
-        }
-        Expr::Delete(d) => {
-            out.insert(d.target.entity_type.as_str().to_string());
-        }
-        Expr::Invoke(i) => {
-            out.insert(i.target.entity_type.as_str().to_string());
-        }
-        Expr::Chain(c) => {
-            collect_entities_from_expr(&c.source, out);
-            if let ChainStep::Explicit { expr: inner } = &c.step {
-                collect_entities_from_expr(inner, out);
+            Expr::Get(g) => {
+                out.insert(g.reference.entity_type.as_str().to_string());
             }
+            Expr::Create(c) => {
+                out.insert(c.entity.as_str().to_string());
+            }
+            Expr::Delete(d) => {
+                out.insert(d.target.entity_type.as_str().to_string());
+            }
+            Expr::Invoke(i) => {
+                out.insert(i.target.entity_type.as_str().to_string());
+            }
+            Expr::Chain(_) => {}
+            Expr::Page(_) | Expr::Wait(_) | Expr::Cancel(_) | Expr::TeachingValue { .. } => {}
         }
-        Expr::Page(_) | Expr::Wait(_) | Expr::Cancel(_) | Expr::TeachingValue { .. } => {}
     }
 }
 
 fn collect_entities_from_predicate(pred: &Predicate, out: &mut HashSet<String>) {
-    match pred {
-        Predicate::True | Predicate::False => {}
-        Predicate::Comparison { value, .. } => collect_entities_from_comparison_value(value, out),
-        Predicate::And { args } | Predicate::Or { args } => {
-            for a in args {
-                collect_entities_from_predicate(a, out);
-            }
-        }
-        Predicate::Not { predicate } => collect_entities_from_predicate(predicate, out),
-        Predicate::ExistsRelation { predicate, .. } => {
-            if let Some(inner) = predicate {
-                collect_entities_from_predicate(inner, out);
-            }
+    for node in pred.walk() {
+        if let Predicate::Comparison { value, .. } = node {
+            collect_entities_from_comparison_value(value, out);
         }
     }
 }

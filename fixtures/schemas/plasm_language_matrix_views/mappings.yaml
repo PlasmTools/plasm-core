@@ -40,6 +40,10 @@ langitem_get:
   - type: var
     name: id
 
+langitem_composed_get:
+  transport: view
+  view: langitem_composed
+
 langitem_create:
   method: POST
   path:

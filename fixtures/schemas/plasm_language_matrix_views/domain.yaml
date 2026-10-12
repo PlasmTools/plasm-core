@@ -70,6 +70,7 @@ entities:
     relations: {}
   LangItem:
     id_field: id
+    primary_read: langitem_get
     description: Primary matrix item
     fields:
       id:
@@ -320,6 +321,15 @@ capabilities:
     - title
     - score
     - owner
+  langitem_composed_get:
+    description: Compose a raw GET and embedded lines on the same entity.
+    kind: get
+    entity: LangItem
+    scope:
+    - name: id
+      value_ref: nv_lang_item_id
+      required: true
+    provides: [id, title, score, owner]
   langitem_create:
     description: Create LangItem
     kind: create
@@ -822,6 +832,31 @@ values:
   nv_lang_pivot_row_title:
     type: string
 views:
+  langitem_composed:
+    description: Same-entity view dispatch and embedded traversal conformance.
+    capability: langitem_composed_get
+    entity: LangItem
+    scope:
+    - name: id
+      value_ref: nv_lang_item_id
+      required: true
+    nodes:
+    - id: wire
+      capability: langitem_get
+      bind:
+        id: {kind: scope, param: id}
+    - id: lines
+      traverse: {node: wire, relation: lines}
+    output:
+      id: {kind: scope, param: id}
+      title: {kind: node_field, node: wire, field: title}
+      score: {kind: node_field, node: wire, field: score}
+      owner: {kind: node_field, node: wire, field: owner}
+    relation_outputs:
+    - relation: lines
+      target: LangLine
+      cardinality: many
+      binding: {kind: node_all_rows, node: lines}
   lang_digest:
     description: Fetch LangItem by scope item_id and echo title (view transport conformance).
     capability: lang_digest_query

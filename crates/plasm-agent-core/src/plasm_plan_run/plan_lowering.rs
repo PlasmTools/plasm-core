@@ -34,10 +34,12 @@ impl LoweredIrDigest {
 }
 
 fn collect_get_exprs(expr: &Expr, out: &mut Vec<GetExpr>) {
-    match expr {
-        Expr::Get(g) => out.push(g.clone()),
-        Expr::Chain(c) => collect_get_exprs(&c.source, out),
-        _ => {}
+    let mut cursor = expr;
+    while let Expr::Chain(chain) = cursor {
+        cursor = &chain.source;
+    }
+    if let Expr::Get(get) = cursor {
+        out.push(get.clone());
     }
 }
 
@@ -55,19 +57,22 @@ fn collect_plan_gets(
     gets: &mut Vec<GetExpr>,
 ) {
     use crate::plasm_plan::ValidatedPlanNode;
-    for node in &plan.nodes {
-        if let ValidatedPlanNode::MapBody(map) = node {
-            collect_plan_gets(map.plan.artifact(), gets);
-        }
-        if let ValidatedPlanNode::RelationTraversal(rel) = node {
-            collect_get_exprs(&rel.relation.ir.expr, gets);
-        }
-        if let ValidatedPlanNode::Surface(surface) = node {
-            if let Some(ir) = &surface.ir {
-                collect_get_exprs(&ir.expr, gets);
+    let mut pending = vec![plan];
+    while let Some(plan) = pending.pop() {
+        for node in &plan.nodes {
+            if let ValidatedPlanNode::MapBody(map) = node {
+                pending.push(map.plan.artifact());
             }
-            if let Some(t) = &surface.ir_template {
-                collect_get_exprs(&t.expr, gets);
+            if let ValidatedPlanNode::RelationTraversal(rel) = node {
+                collect_get_exprs(&rel.relation.ir.expr, gets);
+            }
+            if let ValidatedPlanNode::Surface(surface) = node {
+                if let Some(ir) = &surface.ir {
+                    collect_get_exprs(&ir.expr, gets);
+                }
+                if let Some(t) = &surface.ir_template {
+                    collect_get_exprs(&t.expr, gets);
+                }
             }
         }
     }

@@ -3,8 +3,10 @@ use super::*;
 
 #[derive(Debug, thiserror::Error)]
 pub enum PythonSchemaError {
-    #[error("Python source schema dependency depth exceeded")]
-    DependencyDepthExceeded,
+    #[error("Python source schema dependencies contain a cycle")]
+    DependencyCycle,
+    #[error("internal Python source schema dependency is pending")]
+    DependencyPending,
     #[error("Python source schema node is absent")]
     SourceNodeMissing,
     #[error("Python source schema owner is absent")]
@@ -127,23 +129,28 @@ pub(crate) fn source_field_kind(
     nodes: &[crate::plasm_plan::ValidatedPlanNode],
     id: &str,
     field: &str,
-    depth: usize,
+) -> Result<plasm_core::value_contract::ValueContract, PythonSchemaError> {
+    crate::map_body_schema::dependencies::field(es, nodes, id, field)
+}
+
+pub(crate) fn classify_source_field_kind(
+    es: &crate::execute_session::ExecuteSession,
+    _nodes: &[crate::plasm_plan::ValidatedPlanNode],
+    id: &str,
+    field: &str,
+    lookup: &mut crate::map_body_schema::dependencies::SchemaLookup<'_>,
 ) -> Result<plasm_core::value_contract::ValueContract, PythonSchemaError> {
     use crate::plasm_plan::ValidatedPlanNode as Node;
     use plasm_core::plasm_monad::ComputeOp;
-    if depth > 256 {
-        return Err(PythonSchemaError::DependencyDepthExceeded);
-    }
     if let Some((head, tail)) = field.split_once('.') {
-        let mut value = source_field_kind(es, nodes, id, head, depth + 1)?;
+        let mut value = lookup.field(id, head)?;
         for name in tail.split('.') {
             value = value.field(name)?;
         }
         return Ok(value);
     }
-    let node = nodes
-        .iter()
-        .find(|n| n.id().as_str() == id)
+    let node = lookup
+        .node(id)
         .ok_or(PythonSchemaError::SourceNodeMissing)?;
     let owner = match node {
         Node::Capture(c) => {
@@ -187,9 +194,7 @@ pub(crate) fn source_field_kind(
             }
             &source.effect_template.qualified_entity
         }
-        Node::IterateUntil(iteration) => {
-            return source_field_kind(es, nodes, iteration.source.as_str(), field, depth + 1)
-        }
+        Node::IterateUntil(iteration) => return lookup.field(iteration.source.as_str(), field),
         Node::MapBody(map) => {
             return crate::map_body_schema::output_schema(es, &map.body)
                 .map_err(|error| PythonSchemaError::MapBody(Box::new(error)))?
@@ -200,8 +205,7 @@ pub(crate) fn source_field_kind(
                 .ok_or(PythonSchemaError::SourceFieldMissing);
         }
         Node::Data(_) | Node::Derive(_) => {
-            let t =
-                crate::map_body_schema::row_contract_at(es, nodes, node.id().as_str(), depth + 1)?;
+            let t = lookup.record(node.id().as_str(), false)?;
             return plasm_core::plasm_monad::SyntheticResultSchema::for_value(t)?
                 .fields
                 .into_iter()
@@ -210,8 +214,7 @@ pub(crate) fn source_field_kind(
                 .ok_or(PythonSchemaError::SourceFieldMissing);
         }
         Node::Compute(c) => {
-            let next =
-                |field: &str| source_field_kind(es, nodes, &c.compute.source, field, depth + 1);
+            let mut next = |field: &str| lookup.field(&c.compute.source, field);
             return match &c.compute.op {
                 ComputeOp::Project { fields } => next(
                     &fields
@@ -255,12 +258,12 @@ pub(crate) fn source_field_kind(
                 ComputeOp::MergeBranches { other } => {
                     Ok(plasm_core::value_contract::ValueContract::join(
                         next(field)?,
-                        source_field_kind(es, nodes, other.as_str(), field, depth + 1)?,
+                        lookup.field(other.as_str(), field)?,
                     ))
                 }
                 ComputeOp::Union { other } => {
                     let left = next(field)?;
-                    let right = source_field_kind(es, nodes, other.as_str(), field, depth + 1)?;
+                    let right = lookup.field(other.as_str(), field)?;
                     if left.shape != right.shape {
                         return Err(PythonSchemaError::UnionFieldMismatch);
                     }
@@ -314,78 +317,156 @@ pub(crate) fn source_field_kind(
     Ok(t)
 }
 
-pub(super) fn validate_source_owner<'a>(
-    nodes: &'a [crate::plasm_plan::ValidatedPlanNode],
-    id: &'a str,
+pub(super) fn validate_source_owner(
+    nodes: &[crate::plasm_plan::ValidatedPlanNode],
+    id: &str,
     expected: &EntityBinding,
-) -> Result<(), PythonSchemaError> {
-    validate_source_owner_at(nodes, id, expected, 0)
-}
-
-fn validate_source_owner_at<'a>(
-    nodes: &'a [crate::plasm_plan::ValidatedPlanNode],
-    mut id: &'a str,
-    expected: &EntityBinding,
-    depth: usize,
 ) -> Result<(), PythonSchemaError> {
     use crate::plasm_plan::ValidatedPlanNode as Node;
-    for depth in depth..256 {
-        let node = nodes
-            .iter()
-            .find(|n| n.id().as_str() == id)
-            .ok_or(PythonSchemaError::SourceNodeMissing)?;
-        let owner = match node {
-            Node::MapBody(map) => {
-                if let plasm_core::plasm_monad::ScopedOutput::Rows { entity, .. } = &map.body.output
-                {
-                    return if entity.entry_id == expected.entry_id.as_str()
-                        && entity.entity == expected.entity.as_str()
+    #[derive(Clone, Copy)]
+    enum Fault {
+        Cycle,
+        Missing,
+        OwnerMissing,
+        Unsupported,
+        Mismatch,
+        CatalogMismatch,
+    }
+    impl Fault {
+        fn error(self) -> PythonSchemaError {
+            match self {
+                Self::Cycle => PythonSchemaError::DependencyCycle,
+                Self::Missing => PythonSchemaError::SourceNodeMissing,
+                Self::OwnerMissing => PythonSchemaError::SourceOwnerMissing,
+                Self::Unsupported => PythonSchemaError::UnsupportedSource,
+                Self::Mismatch => PythonSchemaError::InputSchemaOwnershipMismatch,
+                Self::CatalogMismatch => PythonSchemaError::CatalogOwnershipMismatch,
+            }
+        }
+    }
+    enum Work {
+        Visit(String),
+        Alias(String),
+        Alternatives {
+            id: String,
+            sources: Vec<String>,
+            next: usize,
+        },
+    }
+    let by_id: std::collections::HashMap<_, _> = nodes
+        .iter()
+        .map(|node| (node.id().as_str(), node))
+        .collect();
+    let mut pending = vec![Work::Visit(id.to_owned())];
+    let mut complete = std::collections::HashMap::new();
+    let mut active = std::collections::HashSet::new();
+    let mut values: Vec<Result<(), Fault>> = Vec::new();
+    while let Some(work) = pending.pop() {
+        let (id, result) = match work {
+            Work::Alias(id) => (id, values.pop().expect("source ownership")),
+            Work::Alternatives { id, sources, next } => {
+                let result = values.pop().expect("candidate ownership");
+                if result.is_err() && next < sources.len() {
+                    let source = sources[next].clone();
+                    pending.push(Work::Alternatives {
+                        id,
+                        sources,
+                        next: next + 1,
+                    });
+                    pending.push(Work::Visit(source));
+                    continue;
+                }
+                (id, result)
+            }
+            Work::Visit(id) => {
+                if let Some(&result) = complete.get(&id) {
+                    values.push(result);
+                    continue;
+                }
+                if !active.insert(id.clone()) {
+                    values.push(Err(Fault::Cycle));
+                    continue;
+                }
+                let mut source = None;
+                let owner = match by_id.get(id.as_str()) {
+                    Some(Node::MapBody(map)) => {
+                        if let plasm_core::plasm_monad::ScopedOutput::Rows { entity, .. } =
+                            &map.body.output
+                        {
+                            let result = if entity.entry_id == expected.entry_id.as_str()
+                                && entity.entity == expected.entity.as_str()
+                            {
+                                Ok(())
+                            } else {
+                                Err(Fault::CatalogMismatch)
+                            };
+                            active.remove(&id);
+                            complete.insert(id, result);
+                            values.push(result);
+                            continue;
+                        } else {
+                            source = Some(map.body.parent.source.as_str());
+                            None
+                        }
+                    }
+                    Some(Node::Derive(derive)) => {
+                        let mut sources: Vec<_> = derive
+                            .inputs
+                            .iter()
+                            .map(|input| input.node.as_str().to_owned())
+                            .collect();
+                        sources.push(derive.source.as_str().to_owned());
+                        let first = sources[0].clone();
+                        pending.push(Work::Alternatives {
+                            id,
+                            sources,
+                            next: 1,
+                        });
+                        pending.push(Work::Visit(first));
+                        continue;
+                    }
+                    Some(Node::Compute(compute)) => {
+                        source = Some(compute.compute.source.as_str());
+                        None
+                    }
+                    Some(Node::IterateUntil(iteration)) => {
+                        source = Some(iteration.source.as_str());
+                        None
+                    }
+                    Some(Node::Capture(capture)) => Some(Ok(&capture.entity)),
+                    Some(Node::Surface(surface)) => {
+                        Some(surface.qualified_entity.as_ref().ok_or(Fault::OwnerMissing))
+                    }
+                    Some(Node::RelationTraversal(relation)) => Some(Ok(&relation.relation.target)),
+                    Some(Node::ForEach(each)) => Some(Ok(&each.effect_template.qualified_entity)),
+                    None => Some(Err(Fault::Missing)),
+                    _ => Some(Err(Fault::Unsupported)),
+                };
+                if let Some(source) = source {
+                    pending.push(Work::Alias(id));
+                    pending.push(Work::Visit(source.to_owned()));
+                    continue;
+                }
+                let result = owner.expect("terminal schema owner").and_then(|owner| {
+                    if owner.entry_id == expected.entry_id.as_str()
+                        && owner.entity == expected.entity.as_str()
                     {
                         Ok(())
                     } else {
-                        Err(PythonSchemaError::CatalogOwnershipMismatch)
-                    };
-                }
-                id = map.body.parent.source.as_str();
-                continue;
+                        Err(Fault::Mismatch)
+                    }
+                });
+                (id, result)
             }
-            Node::Derive(d) => {
-                // Value records carry dependencies, not receiver ownership. A
-                // catalog dependency supplies the checking context; field
-                // contracts are independently re-derived below.
-                if d.inputs.iter().any(|input| {
-                    validate_source_owner_at(nodes, input.node.as_str(), expected, depth + 1)
-                        .is_ok()
-                }) {
-                    return Ok(());
-                }
-                id = d.source.as_str();
-                continue;
-            }
-            Node::Compute(c) => {
-                id = &c.compute.source;
-                continue;
-            }
-            Node::Capture(c) => &c.entity,
-            Node::IterateUntil(iteration) => {
-                id = iteration.source.as_str();
-                continue;
-            }
-            Node::Surface(s) => s
-                .qualified_entity
-                .as_ref()
-                .ok_or(PythonSchemaError::SourceOwnerMissing)?,
-            Node::RelationTraversal(s) => &s.relation.target,
-            Node::ForEach(s) => &s.effect_template.qualified_entity,
-            _ => return Err(PythonSchemaError::UnsupportedSource),
         };
-        if owner.entry_id != expected.entry_id.as_str() || owner.entity != expected.entity.as_str()
-        {
-            return Err(PythonSchemaError::InputSchemaOwnershipMismatch);
-        }
-        return Ok(());
+        active.remove(&id);
+        complete.insert(id, result);
+        values.push(result);
     }
-    Err(PythonSchemaError::DependencyDepthExceeded)
+    values
+        .pop()
+        .expect("root schema ownership")
+        .map_err(Fault::error)
 }
 
 #[cfg(test)]

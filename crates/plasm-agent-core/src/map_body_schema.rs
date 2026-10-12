@@ -4,6 +4,7 @@ use plasm_core::plasm_monad::*;
 use plasm_core::value_contract::{ValueContract, ValueShape};
 use std::collections::BTreeMap;
 use thiserror::Error;
+pub(crate) mod dependencies;
 pub(crate) mod refinements;
 
 #[derive(Debug, Error)]
@@ -28,8 +29,10 @@ pub enum MapBodySchemaError {
     RecordEntityMissing,
     #[error("record source node is absent")]
     RecordSourceMissing,
-    #[error("value contract dependency depth exceeded")]
-    DependencyDepthExceeded,
+    #[error("value contract dependencies contain a cycle")]
+    DependencyCycle,
+    #[error("internal value contract dependency is pending")]
+    DependencyPending,
     #[error(transparent)]
     ValueContract(#[from] plasm_core::value_contract::ValueContractError),
     #[error(transparent)]
@@ -113,7 +116,6 @@ pub(crate) fn body_result_schema(
                 plan.nodes(),
                 source,
                 &path.join("."),
-                0,
             )
             .map_err(MapBodySchemaError::from);
         }
@@ -146,7 +148,7 @@ pub(crate) fn row_contract(
     nodes: &[ValidatedPlanNode],
     source: &str,
 ) -> Result<ValueContract, MapBodySchemaError> {
-    row_contract_at(es, nodes, source, 0)
+    dependencies::record(es, nodes, source, false)
 }
 
 /// Row operators may explicitly select observed relation slots. Capturing an
@@ -156,7 +158,7 @@ pub(crate) fn row_operation_contract(
     nodes: &[ValidatedPlanNode],
     source: &str,
 ) -> Result<ValueContract, MapBodySchemaError> {
-    record_contract_at(es, nodes, source, 0, RecordUse::RowOperation)
+    dependencies::record(es, nodes, source, true)
 }
 
 #[derive(Clone, Copy)]
@@ -165,29 +167,16 @@ enum RecordUse {
     RowOperation,
 }
 
-pub(crate) fn row_contract_at(
+fn classify_record_contract(
     es: &ExecuteSession,
-    nodes: &[ValidatedPlanNode],
+    _nodes: &[ValidatedPlanNode],
     source: &str,
-    depth: usize,
-) -> Result<ValueContract, MapBodySchemaError> {
-    record_contract_at(es, nodes, source, depth, RecordUse::Value)
-}
-
-fn record_contract_at(
-    es: &ExecuteSession,
-    nodes: &[ValidatedPlanNode],
-    source: &str,
-    depth: usize,
     purpose: RecordUse,
+    lookup: &mut dependencies::SchemaLookup<'_>,
 ) -> Result<ValueContract, MapBodySchemaError> {
-    if depth > 256 {
-        return Err(MapBodySchemaError::DependencyDepthExceeded);
-    }
     use ValidatedPlanNode as N;
-    let node = nodes
-        .iter()
-        .find(|n| n.id().as_str() == source)
+    let node = lookup
+        .node(source)
         .ok_or(MapBodySchemaError::RecordSourceMissing)?;
     let schema = match node {
         N::Data(d) => {
@@ -205,16 +194,11 @@ fn record_contract_at(
                     binding
                 };
                 if !path.is_empty() {
-                    return crate::python_compute::source_field_kind(
-                        es,
-                        nodes,
-                        source,
-                        &path.join("."),
-                        depth + 1,
-                    )
-                    .map_err(MapBodySchemaError::from);
+                    return lookup
+                        .field(source, &path.join("."))
+                        .map_err(MapBodySchemaError::from);
                 }
-                let value = row_contract_at(es, nodes, source, depth + 1)?;
+                let value = lookup.record(source, false)?;
                 Ok(
                     if d.inputs.iter().any(|i| {
                         i.node.as_str() == source
@@ -235,7 +219,10 @@ fn record_contract_at(
         }
         // Iteration re-observes the seed receiver; it does not create a new domain.
         N::IterateUntil(iteration) => {
-            return record_contract_at(es, nodes, iteration.source.as_str(), depth + 1, purpose)
+            return lookup.record(
+                iteration.source.as_str(),
+                matches!(purpose, RecordUse::RowOperation),
+            )
         }
         N::MapBody(map) => Some(output_schema(es, &map.body)?),
         N::Compute(c) => match &c.compute.op {
@@ -249,7 +236,7 @@ fn record_contract_at(
                 // Row-preserving operators retain navigation for subsequent DAG
                 // operations, but capturing their values must not invent fields
                 // for relations that have never been materialized.
-                let source = row_contract_at(es, nodes, c.compute.source.as_str(), depth + 1)?;
+                let source = lookup.record(c.compute.source.as_str(), false)?;
                 let fields = match source.shape {
                     ValueShape::Record { fields } | ValueShape::ObservedRecord { fields, .. } => {
                         fields
@@ -340,12 +327,7 @@ fn record_contract_at(
     };
     let fields = names
         .into_iter()
-        .map(|name| {
-            Ok((
-                name.to_string(),
-                crate::python_compute::source_field_kind(es, nodes, source, name, depth + 1)?,
-            ))
-        })
+        .map(|name| Ok((name.to_string(), lookup.field(source, name)?)))
         .collect::<Result<_, MapBodySchemaError>>()?;
     Ok(ValueContract::record(fields, optional_fields))
 }

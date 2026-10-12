@@ -194,6 +194,31 @@ impl TryFrom<crate::Value> for PlasmDataValue {
 }
 
 impl PlasmDataValue {
+    /// Structural traversal independent of expression depth.
+    pub fn walk(&self) -> impl Iterator<Item = &Self> {
+        let mut pending = vec![self];
+        std::iter::from_fn(move || {
+            let node = pending.pop()?;
+            match node {
+                Self::Quantified {
+                    collection,
+                    predicate,
+                    ..
+                } => {
+                    pending.push(predicate);
+                    pending.push(collection);
+                }
+                Self::Expression { expression } => {
+                    pending.extend(expression.operands().rev().map(Box::as_ref))
+                }
+                Self::EntityRefKey { key, .. } => pending.push(key),
+                Self::Array { items } => pending.extend(items.iter().rev()),
+                Self::Object { fields } => pending.extend(fields.values().rev()),
+                _ => {}
+            }
+            Some(node)
+        })
+    }
     fn substitute_local(
         &self,
         binding: &str,

@@ -122,8 +122,34 @@ pub fn stub_get_result(
             .ok_or_else(|| RuntimeError::EntityUnknown {
                 entity: cap.domain.to_string(),
             })?;
+    stub_get_entity_result(entity, Some(cap), cgs, bound)
+}
+
+/// Embedded rows are supplied by the parent transport, not a target GET capability.
+pub(crate) fn stub_embedded_result(
+    entity_name: &str,
+    cgs: &CGS,
+    bound: &BTreeMap<String, String>,
+) -> Result<ExecutionResult, RuntimeError> {
+    let entity = cgs
+        .get_entity(entity_name)
+        .ok_or_else(|| RuntimeError::EntityUnknown {
+            entity: entity_name.to_owned(),
+        })?;
+    stub_get_entity_result(entity, None, cgs, bound)
+}
+
+fn stub_get_entity_result(
+    entity: &EntityDef,
+    cap: Option<&CapabilitySchema>,
+    cgs: &CGS,
+    bound: &BTreeMap<String, String>,
+) -> Result<ExecutionResult, RuntimeError> {
+    let names = cap
+        .map(|cap| field_names_for_stub(cap, entity))
+        .unwrap_or_else(|| entity.fields.keys().map(ToString::to_string).collect());
     let mut fields = IndexMap::new();
-    for name in field_names_for_stub(cap, entity) {
+    for name in names {
         let v = bound
             .get(name.as_str())
             .cloned()

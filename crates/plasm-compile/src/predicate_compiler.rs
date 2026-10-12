@@ -42,43 +42,70 @@ fn compile_predicate_internal(
     cap_params: &[InputFieldSchema],
     cgs: &CGS,
 ) -> Result<BackendFilter, CompileError> {
-    match predicate {
-        Predicate::True => Ok(BackendFilter::True),
-
-        Predicate::False => Ok(BackendFilter::False),
-
-        Predicate::Comparison { field, op, value } => {
-            compile_comparison(field, *op, value, entity, cap_params, cgs)
-        }
-
-        Predicate::And { args } => {
-            let filters = args
-                .iter()
-                .map(|arg| compile_predicate_internal(arg, entity, cap_params, cgs))
-                .collect::<Result<Vec<_>, _>>()?;
-
-            Ok(BackendFilter::and(filters).simplify())
-        }
-
-        Predicate::Or { args } => {
-            let filters = args
-                .iter()
-                .map(|arg| compile_predicate_internal(arg, entity, cap_params, cgs))
-                .collect::<Result<Vec<_>, _>>()?;
-
-            Ok(BackendFilter::or(filters).simplify())
-        }
-
-        Predicate::Not { predicate } => {
-            let filter = compile_predicate_internal(predicate, entity, cap_params, cgs)?;
-            Ok(BackendFilter::negate(filter).simplify())
-        }
-
-        Predicate::ExistsRelation {
-            relation,
-            predicate,
-        } => compile_relation(relation, predicate.as_deref(), entity, cgs),
+    enum Work<'a> {
+        Visit(&'a Predicate, &'a EntityDef, &'a [InputFieldSchema]),
+        Join(bool, usize),
+        Not,
+        Relation(&'a str, bool),
     }
+    let mut pending = vec![Work::Visit(predicate, entity, cap_params)];
+    let mut values = Vec::new();
+    while let Some(step) = pending.pop() {
+        match step {
+            Work::Visit(predicate, entity, cap_params) => match predicate {
+                Predicate::True => values.push(BackendFilter::True),
+                Predicate::False => values.push(BackendFilter::False),
+                Predicate::Comparison { field, op, value } => values.push(compile_comparison(
+                    field, *op, value, entity, cap_params, cgs,
+                )?),
+                Predicate::And { args } | Predicate::Or { args } => {
+                    pending.push(Work::Join(
+                        matches!(predicate, Predicate::And { .. }),
+                        args.len(),
+                    ));
+                    pending.extend(
+                        args.iter()
+                            .rev()
+                            .map(|arg| Work::Visit(arg, entity, cap_params)),
+                    );
+                }
+                Predicate::Not { predicate } => {
+                    pending.push(Work::Not);
+                    pending.push(Work::Visit(predicate, entity, cap_params));
+                }
+                Predicate::ExistsRelation {
+                    relation,
+                    predicate,
+                } => {
+                    let target = relation_target(relation, entity, cgs)?;
+                    pending.push(Work::Relation(relation, predicate.is_some()));
+                    if let Some(child) = predicate {
+                        pending.push(Work::Visit(child, target, &[]));
+                    }
+                }
+            },
+            Work::Join(and, count) => {
+                let filters = values.split_off(values.len() - count);
+                values.push(
+                    if and {
+                        BackendFilter::and(filters)
+                    } else {
+                        BackendFilter::or(filters)
+                    }
+                    .simplify_shallow(),
+                );
+            }
+            Work::Not => {
+                let child = values.pop().expect("compiled predicate child");
+                values.push(BackendFilter::negate(child).simplify_shallow());
+            }
+            Work::Relation(relation, child) => {
+                let filter = child.then(|| values.pop().expect("compiled relation child"));
+                values.push(BackendFilter::relation(relation, filter));
+            }
+        }
+    }
+    Ok(values.pop().expect("compiled predicate root"))
 }
 
 fn compile_comparison(
@@ -108,14 +135,12 @@ fn compile_comparison(
     .into())
 }
 
-fn compile_relation(
+fn relation_target<'a>(
     relation: &str,
-    predicate: Option<&Predicate>,
     entity: &EntityDef,
-    cgs: &CGS,
-) -> Result<BackendFilter, CompileError> {
-    // Get relation schema
-    let relation_schema =
+    cgs: &'a CGS,
+) -> Result<&'a EntityDef, CompileError> {
+    let schema =
         entity
             .relations
             .get(relation)
@@ -123,22 +148,12 @@ fn compile_relation(
                 relation: relation.to_owned(),
                 entity: entity.name.to_string(),
             })?;
-
-    // Get target entity
-    let target_entity = cgs
-        .get_entity(&relation_schema.target_resource)
-        .ok_or_else(|| plasm_core::TypeError::EntityNotFound {
-            entity: relation_schema.target_resource.to_string(),
-        })?;
-
-    // Compile nested predicate if present
-    let nested_filter = if let Some(pred) = predicate {
-        Some(compile_predicate_internal(pred, target_entity, &[], cgs)?)
-    } else {
-        None
-    };
-
-    Ok(BackendFilter::relation(relation, nested_filter))
+    cgs.get_entity(&schema.target_resource).ok_or_else(|| {
+        plasm_core::TypeError::EntityNotFound {
+            entity: schema.target_resource.to_string(),
+        }
+        .into()
+    })
 }
 
 /// Compile a query expression to a backend filter.

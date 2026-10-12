@@ -214,37 +214,31 @@ pub fn predicate_scope_map(predicate: &Predicate) -> Result<IndexMap<String, Val
 }
 
 fn collect_predicate_vars(predicate: &Predicate, acc: &mut IndexMap<String, Vec<Value>>) {
-    match predicate {
-        Predicate::Comparison { field, op, value } => {
-            let rhs = value.to_value();
-            match op {
-                plasm_core::CompOp::In | plasm_core::CompOp::Contains => match &rhs {
-                    Value::Array(arr) => {
-                        acc.entry(field.clone())
-                            .or_default()
-                            .extend(arr.iter().cloned());
+    let mut pending = vec![predicate];
+    while let Some(predicate) = pending.pop() {
+        match predicate {
+            Predicate::Comparison { field, op, value } => {
+                let rhs = value.to_value();
+                match op {
+                    plasm_core::CompOp::In | plasm_core::CompOp::Contains => match &rhs {
+                        Value::Array(arr) => {
+                            acc.entry(field.clone())
+                                .or_default()
+                                .extend(arr.iter().cloned());
+                        }
+                        other => {
+                            acc.entry(field.clone()).or_default().push(other.clone());
+                        }
+                    },
+                    _ => {
+                        acc.entry(field.clone()).or_default().clear();
+                        acc.entry(field.clone()).or_default().push(rhs);
                     }
-                    other => {
-                        acc.entry(field.clone()).or_default().push(other.clone());
-                    }
-                },
-                _ => {
-                    acc.entry(field.clone()).or_default().clear();
-                    acc.entry(field.clone()).or_default().push(rhs);
                 }
             }
+            Predicate::And { args } | Predicate::Or { args } => pending.extend(args.iter().rev()),
+            _ => {}
         }
-        Predicate::And { args } => {
-            for arg in args {
-                collect_predicate_vars(arg, acc);
-            }
-        }
-        Predicate::Or { args } => {
-            for arg in args {
-                collect_predicate_vars(arg, acc);
-            }
-        }
-        _ => {}
     }
 }
 
@@ -777,7 +771,9 @@ pub(crate) fn prepare_view_node<'a>(
             let reference = ref_from_view_get_node(target_ent, cap, &bound)?;
             Ok(PreparedViewNode::Get {
                 cap,
-                get: GetExpr::from_ref(reference),
+                // The declared view node owns dispatch; never reselect the entity's
+                // primary read when this prepared expression reaches either runner.
+                get: GetExpr::from_ref(reference).with_capability(cap.name.clone()),
                 bound,
             })
         }

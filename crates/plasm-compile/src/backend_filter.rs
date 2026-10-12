@@ -102,9 +102,65 @@ impl BackendFilter {
 
     /// Simplify this filter by eliminating trivial cases.
     pub fn simplify(self) -> Self {
+        enum Work {
+            Visit(BackendFilter),
+            Join(bool, usize),
+            Not,
+            Relation(String, bool),
+        }
+        let mut pending = vec![Work::Visit(self)];
+        let mut values = Vec::new();
+        while let Some(step) = pending.pop() {
+            match step {
+                Work::Visit(mut node) => match &mut node {
+                    BackendFilter::And { filters } | BackendFilter::Or { filters } => {
+                        let count = filters.len();
+                        let filters = std::mem::take(filters);
+                        pending.push(Work::Join(matches!(node, BackendFilter::And { .. }), count));
+                        pending.extend(filters.into_iter().rev().map(Work::Visit));
+                    }
+                    BackendFilter::Not { filter } => {
+                        let child = *std::mem::replace(filter, Box::new(BackendFilter::True));
+                        pending.push(Work::Not);
+                        pending.push(Work::Visit(child));
+                    }
+                    BackendFilter::Relation { relation, filter } => {
+                        let child = filter.take();
+                        pending.push(Work::Relation(std::mem::take(relation), child.is_some()));
+                        if let Some(child) = child {
+                            pending.push(Work::Visit(*child));
+                        }
+                    }
+                    _ => values.push(node),
+                },
+                Work::Join(and, count) => {
+                    let filters = values.split_off(values.len() - count);
+                    values.push(
+                        if and {
+                            BackendFilter::and(filters)
+                        } else {
+                            BackendFilter::or(filters)
+                        }
+                        .simplify_shallow(),
+                    );
+                }
+                Work::Not => {
+                    let child = values.pop().expect("simplified child");
+                    values.push(BackendFilter::negate(child).simplify_shallow());
+                }
+                Work::Relation(relation, child) => {
+                    let filter = child.then(|| values.pop().expect("simplified relation child"));
+                    values.push(BackendFilter::relation(relation, filter));
+                }
+            }
+        }
+        values.pop().expect("simplified root")
+    }
+
+    pub(crate) fn simplify_shallow(self) -> Self {
         match self {
             BackendFilter::And { filters } => {
-                let simplified: Vec<_> = filters.into_iter().map(|f| f.simplify()).collect();
+                let simplified: Vec<_> = filters;
 
                 // If any filter is False, the entire AND is False
                 if simplified.iter().any(|f| matches!(f, BackendFilter::False)) {
@@ -127,7 +183,7 @@ impl BackendFilter {
             }
 
             BackendFilter::Or { filters } => {
-                let simplified: Vec<_> = filters.into_iter().map(|f| f.simplify()).collect();
+                let simplified: Vec<_> = filters;
 
                 // If any filter is True, the entire OR is True
                 if simplified.iter().any(|f| matches!(f, BackendFilter::True)) {
@@ -150,21 +206,20 @@ impl BackendFilter {
             }
 
             BackendFilter::Not { filter } => {
-                let simplified = filter.simplify();
+                let simplified = *filter;
                 match simplified {
                     BackendFilter::True => BackendFilter::False,
                     BackendFilter::False => BackendFilter::True,
-                    BackendFilter::Not { filter } => filter.simplify(),
+                    BackendFilter::Not { filter } => *filter,
                     _ => BackendFilter::Not {
                         filter: Box::new(simplified),
                     },
                 }
             }
 
-            BackendFilter::Relation { relation, filter } => BackendFilter::Relation {
-                relation,
-                filter: filter.map(|f| Box::new(f.simplify())),
-            },
+            BackendFilter::Relation { relation, filter } => {
+                BackendFilter::Relation { relation, filter }
+            }
 
             // Base cases
             filter => filter,

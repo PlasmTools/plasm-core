@@ -156,8 +156,8 @@ pub enum PlanValidationError {
     UnknownProvenanceNode { node: String },
     #[error("uses_result provenance node `{node}` has no catalog domain")]
     MissingProvenanceDomain { node: String },
-    #[error("uses_result provenance exceeded source walk depth from `{node}`")]
-    ProvenanceDepthExceeded { node: String },
+    #[error("uses_result provenance contains a source cycle at `{node}`")]
+    ProvenanceCycle { node: String },
     #[error(
         "plan node `{consumer}` alias `{alias}` has contradictory provenance for source `{node}`"
     )]
@@ -607,20 +607,22 @@ pub fn validate_plan_artifact(plan: &Plan) -> Result<ValidatedPlan, PlanValidati
             }
         }
     }
-    if has_cycle(&adj) {
-        return Err(PlanValidationError::DependencyCycle);
-    }
+    let order = dependency_order(&adj).ok_or(PlanValidationError::DependencyCycle)?;
     let return_value = validate_return_refs(&plan.return_value, &by_id)?;
-    let topo = topological_order(plan, &adj)?;
+    let topo = order
+        .into_iter()
+        .map(|index| PlanNodeId::new(plan.nodes[index].id.clone()))
+        .collect::<Result<Vec<_>, _>>()?;
     let mut node_indices = HashMap::new();
     for (id, idx) in &by_id {
         node_indices.insert(PlanNodeId::new(id.clone())?, *idx);
     }
+    let mut provenance = ProvenanceResolver::new(plan);
     let nodes = plan
         .nodes
         .iter()
         .enumerate()
-        .map(|(i, node)| validated_node_from_raw(plan, node, i, &by_id))
+        .map(|(i, node)| validated_node_from_raw(plan, node, i, &by_id, &mut provenance))
         .collect::<Result<Vec<_>, _>>()?;
     let approval_gates = plan
         .nodes
@@ -658,86 +660,129 @@ pub fn resolve_plan_node_qualified_entity(
     plan: &Plan,
     node_id: &str,
 ) -> Result<Option<QualifiedEntityKey>, PlanValidationError> {
-    let by_id: HashMap<&str, &PlanNode> = plan.nodes.iter().map(|n| (n.id.as_str(), n)).collect();
-    let mut cur = node_id.to_string();
-    for _ in 0..512 {
-        let n = by_id
-            .get(cur.as_str())
-            .ok_or_else(|| PlanValidationError::UnknownProvenanceNode { node: cur.clone() })?;
-        if n.kind == PlanNodeKind::Data {
-            return Ok(None);
-        }
-        if let Some(qe) = &n.qualified_entity {
-            return Ok(Some(qe.clone()));
-        }
-        if let Some(rel) = &n.relation {
-            return Ok(Some(rel.target.clone()));
-        }
-        if let Some(effect) = &n.effect_template {
-            return Ok(Some(effect.qualified_entity.clone()));
-        }
-        if let Some(body) = &n.map_body {
-            cur = body.parent.source.to_string();
-            continue;
-        }
-        if let Some(compute) = &n.compute {
-            cur = compute.source.clone();
-            continue;
-        }
-        if let Some(derive) = &n.derive_template {
-            if let Some(src) = &derive.source {
-                cur = src.clone();
-                continue;
-            }
-        }
-        if let Some(src) = &n.source {
-            cur = src.clone();
-            continue;
-        }
-        return Err(PlanValidationError::MissingProvenanceDomain { node: cur.clone() });
-    }
-    Err(PlanValidationError::ProvenanceDepthExceeded {
-        node: node_id.to_owned(),
-    })
+    ProvenanceResolver::new(plan).resolve(node_id)
 }
 
-/// Stamp each `uses_result` edge with the source node's [`QualifiedEntityKey`] when the source is
-/// catalog-backed. Data literal sources remain unqualified. Rejects contradictory provenance.
+struct ProvenanceResolver<'a> {
+    nodes: HashMap<&'a str, &'a PlanNode>,
+    domains: HashMap<&'a str, Option<QualifiedEntityKey>>,
+}
+
+impl<'a> ProvenanceResolver<'a> {
+    fn new(plan: &'a Plan) -> Self {
+        Self {
+            nodes: plan
+                .nodes
+                .iter()
+                .map(|node| (node.id.as_str(), node))
+                .collect(),
+            domains: HashMap::new(),
+        }
+    }
+
+    fn resolve(
+        &mut self,
+        node_id: &str,
+    ) -> Result<Option<QualifiedEntityKey>, PlanValidationError> {
+        let mut cursor = node_id;
+        let mut path = Vec::new();
+        let mut active = std::collections::HashSet::new();
+        let domain = loop {
+            if let Some(domain) = self.domains.get(cursor) {
+                break domain.clone();
+            }
+            let node = *self.nodes.get(cursor).ok_or_else(|| {
+                PlanValidationError::UnknownProvenanceNode {
+                    node: cursor.to_owned(),
+                }
+            })?;
+            if !active.insert(node.id.as_str()) {
+                return Err(PlanValidationError::ProvenanceCycle {
+                    node: node.id.clone(),
+                });
+            }
+            path.push(node.id.as_str());
+            if node.kind == PlanNodeKind::Data {
+                break None;
+            }
+            if let Some(domain) = &node.qualified_entity {
+                break Some(domain.clone());
+            }
+            if let Some(relation) = &node.relation {
+                break Some(relation.target.clone());
+            }
+            if let Some(effect) = &node.effect_template {
+                break Some(effect.qualified_entity.clone());
+            }
+            cursor = if let Some(body) = &node.map_body {
+                body.parent.source.as_str()
+            } else if let Some(compute) = &node.compute {
+                &compute.source
+            } else if let Some(source) = node
+                .derive_template
+                .as_ref()
+                .and_then(|derive| derive.source.as_deref())
+            {
+                source
+            } else if let Some(source) = &node.source {
+                source
+            } else {
+                return Err(PlanValidationError::MissingProvenanceDomain {
+                    node: node.id.clone(),
+                });
+            };
+        };
+        for node in path {
+            self.domains.insert(node, domain.clone());
+        }
+        Ok(domain)
+    }
+
+    fn enrich(
+        &mut self,
+        uses: &[PlanResultUse],
+        consumer_id: &str,
+    ) -> Result<Vec<PlanResultUse>, PlanValidationError> {
+        let mut out = Vec::with_capacity(uses.len());
+        for u in uses {
+            let resolved = self.resolve(u.node.as_str())?;
+            match (u.qualified_entity.as_ref(), resolved) {
+                (Some(existing), Some(resolved)) if existing != &resolved => {
+                    return Err(PlanValidationError::ContradictoryProvenance {
+                        consumer: consumer_id.to_owned(),
+                        alias: u.r#as.to_string(),
+                        node: u.node.to_string(),
+                        expected: Box::new(resolved),
+                        actual: Box::new(existing.clone()),
+                    });
+                }
+                (_, Some(resolved)) => {
+                    out.push(PlanResultUse {
+                        node: u.node.clone(),
+                        r#as: u.r#as.clone(),
+                        qualified_entity: Some(resolved),
+                    });
+                }
+                (existing, None) => {
+                    out.push(PlanResultUse {
+                        node: u.node.clone(),
+                        r#as: u.r#as.clone(),
+                        qualified_entity: existing.cloned(),
+                    });
+                }
+            }
+        }
+        Ok(out)
+    }
+}
+
+/// Stamp source provenance using the same memoized resolver as plan validation.
 pub fn enrich_uses_result_provenance(
     uses: &[PlanResultUse],
     plan: &Plan,
     consumer_id: &str,
 ) -> Result<Vec<PlanResultUse>, PlanValidationError> {
-    let mut out = Vec::with_capacity(uses.len());
-    for u in uses {
-        let resolved = resolve_plan_node_qualified_entity(plan, u.node.as_str())?;
-        match (u.qualified_entity.as_ref(), resolved) {
-            (Some(existing), Some(resolved)) if existing != &resolved => {
-                return Err(PlanValidationError::ContradictoryProvenance {
-                    consumer: consumer_id.to_owned(),
-                    alias: u.r#as.to_string(),
-                    node: u.node.to_string(),
-                    expected: Box::new(resolved),
-                    actual: Box::new(existing.clone()),
-                });
-            }
-            (_, Some(resolved)) => {
-                out.push(PlanResultUse {
-                    node: u.node.clone(),
-                    r#as: u.r#as.clone(),
-                    qualified_entity: Some(resolved),
-                });
-            }
-            (existing, None) => {
-                out.push(PlanResultUse {
-                    node: u.node.clone(),
-                    r#as: u.r#as.clone(),
-                    qualified_entity: existing.cloned(),
-                });
-            }
-        }
-    }
-    Ok(out)
+    ProvenanceResolver::new(plan).enrich(uses, consumer_id)
 }
 
 fn validated_node_from_raw(
@@ -745,10 +790,11 @@ fn validated_node_from_raw(
     node: &PlanNode,
     node_index: usize,
     by_id: &HashMap<String, usize>,
+    provenance: &mut ProvenanceResolver<'_>,
 ) -> Result<ValidatedPlanNode, PlanValidationError> {
     let id = PlanNodeId::new(node.id.clone())?;
     let depends_on = typed_node_ids(&node.depends_on)?;
-    let uses_result = enrich_uses_result_provenance(&node.uses_result, plan, node.id.as_str())?;
+    let uses_result = provenance.enrich(&node.uses_result, node.id.as_str())?;
     match node.kind {
         PlanNodeKind::MapBody => {
             let body = node.map_body.as_ref().ok_or_else(|| {
@@ -1170,40 +1216,6 @@ fn validate_row_effect_source_and_template<'a>(
     };
     validate_expression_operands(&template.ir_template.expr, i, &ctx)?;
     Ok((binding, template))
-}
-
-fn topological_order(
-    plan: &Plan,
-    adj: &[Vec<usize>],
-) -> Result<Vec<PlanNodeId>, PlanValidationError> {
-    fn visit(
-        i: usize,
-        plan: &Plan,
-        adj: &[Vec<usize>],
-        mark: &mut [u8],
-        out: &mut Vec<PlanNodeId>,
-    ) -> Result<(), PlanValidationError> {
-        if mark[i] == 2 {
-            return Ok(());
-        }
-        if mark[i] == 1 {
-            return Err(PlanValidationError::DependencyCycle);
-        }
-        mark[i] = 1;
-        for &d in &adj[i] {
-            visit(d, plan, adj, mark, out)?;
-        }
-        mark[i] = 2;
-        out.push(PlanNodeId::new(plan.nodes[i].id.clone())?);
-        Ok(())
-    }
-    let mut mark = vec![0u8; plan.nodes.len()];
-    let mut out = Vec::with_capacity(plan.nodes.len());
-    for i in 0..plan.nodes.len() {
-        visit(i, plan, adj, &mut mark, &mut out)?;
-    }
-    out.dedup();
-    Ok(out)
 }
 
 /// Deserialize and validate a program-shaped plan value (same serialized IR as traces/archives).

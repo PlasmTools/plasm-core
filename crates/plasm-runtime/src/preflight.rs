@@ -674,7 +674,7 @@ mod tests {
         );
         let p = scope_to_predicate(&env, &scope).unwrap();
         assert!(matches!(
-            p,
+            &p,
             Predicate::Comparison { field, .. } if field == "team_key"
         ));
     }

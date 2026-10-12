@@ -156,18 +156,12 @@ impl ViewNodeRunnerAsync for LiveViewNodeRunner<'_> {
         &mut self,
         _ctx: &ViewRunContext<'_>,
         _node: &ViewNodeSpec,
-        cap: &CapabilitySchema,
+        _cap: &CapabilitySchema,
         get: &GetExpr,
         _bound: &BTreeMap<String, String>,
     ) -> Result<ExecutionResult, RuntimeError> {
         self.engine
-            .execute_get_for_view_dag(
-                &get.clone().with_capability(cap.name.clone()),
-                self.cgs,
-                self.cache,
-                self.mode,
-                None,
-            )
+            .execute_get_for_view_dag(get, self.cgs, self.cache, self.mode, None)
             .await
     }
 

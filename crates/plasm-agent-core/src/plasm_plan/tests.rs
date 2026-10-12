@@ -8,6 +8,56 @@ use crate::plasm_plan::{
 };
 
 #[test]
+fn dependency_chain_growth_does_not_grow_native_stack() {
+    let count = 65_536;
+    let mut edges: Vec<Vec<usize>> = (0..count)
+        .map(|index| {
+            if index + 1 < count {
+                vec![index + 1]
+            } else {
+                vec![]
+            }
+        })
+        .collect();
+    assert_eq!(
+        dependency_order(&edges).unwrap(),
+        (0..count).rev().collect::<Vec<_>>()
+    );
+    edges[count - 1].push(0);
+    assert!(dependency_order(&edges).is_none());
+}
+
+proptest::proptest! {
+    #[test]
+    fn dependency_order_preserves_all_edges(
+        size in 1usize..64,
+        candidates in proptest::collection::vec((0usize..64, 0usize..64), 0..256),
+    ) {
+        let mut edges = vec![Vec::new(); size];
+        for (a, b) in candidates {
+            let (a, b) = (a % size, b % size);
+            if a < b {
+                edges[a].push(b);
+            }
+        }
+        let order = dependency_order(&edges).unwrap();
+        let mut positions = vec![usize::MAX; size];
+        for (position, &node) in order.iter().enumerate() {
+            proptest::prop_assert_eq!(positions[node], usize::MAX);
+            positions[node] = position;
+        }
+        proptest::prop_assert_eq!(order.len(), size);
+        for (node, dependencies) in edges.iter().enumerate() {
+            for &dependency in dependencies {
+                proptest::prop_assert!(positions[dependency] < positions[node]);
+            }
+        }
+        edges[0].push(0);
+        proptest::prop_assert!(dependency_order(&edges).is_none());
+    }
+}
+
+#[test]
 fn program_query_ok() {
     let v = serde_json::json!({
         "version": 1,

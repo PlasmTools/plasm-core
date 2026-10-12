@@ -3,7 +3,14 @@
 use super::*;
 use crate::preflight::apply_preflight_compile_stubs;
 use crate::view_plan::ViewAmbientContext;
-use crate::view_preflight::{preflight_view_get, preflight_view_query};
+use crate::view_plan::{derive_view_get_scope, derive_view_query_scope};
+use crate::view_preflight::preflight_view_scoped_with_proof;
+
+struct PreparedViewPreflight {
+    name: String,
+    scope: indexmap::IndexMap<String, Value>,
+    ambient: ViewAmbientContext,
+}
 
 /// Compile capability templates for `expr` without dispatching HTTP.
 ///
@@ -16,14 +23,65 @@ pub fn preflight_compile_expr(
     ambient: &ViewAmbientContext,
     mat: &SessionMaterialization,
 ) -> Result<(), RuntimeError> {
-    match expr {
-        Expr::Query(query) => preflight_compile_query(query, cgs, compiled, ambient, mat),
-        Expr::Get(get) => preflight_compile_get(get, cgs, compiled, ambient, mat),
-        Expr::Create(create) => preflight_compile_create(create, cgs, compiled),
-        Expr::Delete(delete) => preflight_compile_delete(delete, cgs, compiled),
-        Expr::Invoke(invoke) => preflight_compile_invoke(invoke, cgs, compiled),
-        Expr::Chain(chain) => preflight_compile_expr(&chain.source, cgs, compiled, ambient, mat),
-        Expr::Page(_) | Expr::Wait(_) | Expr::Cancel(_) | Expr::TeachingValue { .. } => Ok(()),
+    if let Some(view) = preflight_compile_leaf(expr, cgs, compiled, ambient, mat)? {
+        preflight_view_scoped_with_proof(
+            &view.name,
+            view.scope,
+            cgs,
+            compiled,
+            &view.ambient,
+            mat,
+        )?;
+    }
+    Ok(())
+}
+
+/// A view node compiles one transport operation; it cannot invoke the DAG driver.
+/// Nested compositions are catalog faults, as in static view validation.
+pub(crate) fn preflight_compile_view_node(
+    expr: &Expr,
+    cgs: &CGS,
+    compiled: &plasm_compile::CompiledCatalog,
+    ambient: &ViewAmbientContext,
+    mat: &SessionMaterialization,
+    view: &str,
+    node: &str,
+) -> Result<(), RuntimeError> {
+    if preflight_compile_leaf(expr, cgs, compiled, ambient, mat)?.is_some() {
+        return Err(plasm_compile::CatalogTemplateError::NestedView {
+            view: view.to_owned(),
+            node: node.to_owned(),
+        }
+        .into());
+    }
+    Ok(())
+}
+
+fn preflight_compile_leaf(
+    mut expr: &Expr,
+    cgs: &CGS,
+    compiled: &plasm_compile::CompiledCatalog,
+    ambient: &ViewAmbientContext,
+    mat: &SessionMaterialization,
+) -> Result<Option<PreparedViewPreflight>, RuntimeError> {
+    loop {
+        match expr {
+            Expr::Chain(chain) => expr = &chain.source,
+            Expr::Query(query) => return preflight_compile_query(query, cgs, compiled, ambient),
+            Expr::Get(get) => return preflight_compile_get(get, cgs, compiled, ambient, mat),
+            Expr::Create(create) => {
+                return preflight_compile_create(create, cgs, compiled).map(|_| None)
+            }
+            Expr::Delete(delete) => {
+                return preflight_compile_delete(delete, cgs, compiled).map(|_| None)
+            }
+            Expr::Invoke(invoke) => {
+                return preflight_compile_invoke(invoke, cgs, compiled).map(|_| None)
+            }
+            Expr::Page(_) | Expr::Wait(_) | Expr::Cancel(_) | Expr::TeachingValue { .. } => {
+                return Ok(None)
+            }
+        }
     }
 }
 
@@ -32,8 +90,7 @@ fn preflight_compile_query(
     cgs: &CGS,
     compiled: &plasm_compile::CompiledCatalog,
     ambient: &ViewAmbientContext,
-    mat: &SessionMaterialization,
-) -> Result<(), RuntimeError> {
+) -> Result<Option<PreparedViewPreflight>, RuntimeError> {
     let filter = compile_query_dispatch(query, cgs)?;
     let capability = resolve_query_capability(query, cgs)?;
     let mut env = CmlEnv::new();
@@ -54,9 +111,13 @@ fn preflight_compile_query(
     }
     let capability_template = compiled.capability(capability.name.as_str())?.clone();
     if let CapabilityTemplate::View(vt) = &capability_template {
-        return preflight_view_query(vt.view.as_str(), query, cgs, compiled, ambient, mat);
+        return Ok(Some(PreparedViewPreflight {
+            name: vt.view.to_string(),
+            scope: derive_view_query_scope(vt.view.as_str(), query, cgs)?,
+            ambient: ambient.clone(),
+        }));
     }
-    compile_operation_dispatch(&capability_template, &env).map(|_| ())
+    compile_operation_dispatch(&capability_template, &env).map(|_| None)
 }
 
 fn preflight_compile_get(
@@ -65,7 +126,7 @@ fn preflight_compile_get(
     compiled: &plasm_compile::CompiledCatalog,
     ambient: &ViewAmbientContext,
     mat: &SessionMaterialization,
-) -> Result<(), RuntimeError> {
+) -> Result<Option<PreparedViewPreflight>, RuntimeError> {
     let request = ResolvedGet::resolve(
         get,
         cgs,
@@ -77,13 +138,17 @@ fn preflight_compile_get(
     let capability = request.capability;
     // List-backed derived Gets have no CML mapping; schema load already validated the plan.
     if capability.derived.is_some() {
-        return Ok(());
+        return Ok(None);
     }
     let capability_template = compiled.capability(capability.name.as_str())?.clone();
     if let CapabilityTemplate::View(vt) = &capability_template {
-        return preflight_view_get(vt.view.as_str(), get, cgs, compiled, &request.ambient, mat);
+        return Ok(Some(PreparedViewPreflight {
+            name: vt.view.to_string(),
+            scope: derive_view_get_scope(vt.view.as_str(), get, cgs)?,
+            ambient: request.ambient,
+        }));
     }
-    compile_operation_dispatch(&capability_template, &request.env).map(|_| ())
+    compile_operation_dispatch(&capability_template, &request.env).map(|_| None)
 }
 
 fn preflight_compile_create(

@@ -5,7 +5,7 @@ use std::collections::BTreeMap;
 use indexmap::IndexMap;
 use plasm_core::{GetExpr, Predicate, QueryExpr, Value, CGS};
 
-use crate::execution::preflight_compile_expr;
+use crate::execution::preflight_compile_view_node;
 use crate::execution::ExecutionResult;
 use crate::materialization::SessionMaterialization;
 use crate::view_dag_run::run_view_dag_sync;
@@ -13,7 +13,7 @@ use crate::view_plan::{
     derive_view_get_scope, derive_view_query_scope, resolve_binding, ViewAmbientContext,
     ViewNodeFieldMap, ViewNodeRunner, ViewRunContext, ViewRunProof,
 };
-use crate::view_stub_rows::{stub_get_result, stub_query_result};
+use crate::view_stub_rows::{stub_embedded_result, stub_get_result, stub_query_result};
 use crate::RuntimeError;
 
 /// Preflight one view-backed query (derive scope from predicate, walk DAG with stubs).
@@ -81,6 +81,26 @@ pub(crate) struct PreflightViewNodeRunner<'a> {
     pub(crate) mat: &'a SessionMaterialization,
 }
 
+impl PreflightViewNodeRunner<'_> {
+    fn compile_node(
+        &self,
+        ctx: &ViewRunContext<'_>,
+        node: &plasm_core::schema::ViewNodeSpec,
+        expr: &plasm_core::Expr,
+        mat: &SessionMaterialization,
+    ) -> Result<(), RuntimeError> {
+        preflight_compile_view_node(
+            expr,
+            self.cgs,
+            self.compiled,
+            self.ambient,
+            mat,
+            ctx.view_name,
+            &node.id,
+        )
+    }
+}
+
 impl ViewNodeRunner for PreflightViewNodeRunner<'_> {
     fn run_traversal_node(
         &self,
@@ -109,20 +129,29 @@ impl ViewNodeRunner for PreflightViewNodeRunner<'_> {
             SessionMaterialization::provide_catalog_key(self.cgs, None),
             ctx.scope.clone(),
         );
-        if matches!(
-            relation.materialize,
-            Some(RelationMaterialization::FromParentGet { .. })
-        ) {
+        let source_is_get = view
+            .nodes
+            .iter()
+            .find(|source_node| source_node.id == traverse.node)
+            .and_then(|source_node| self.cgs.get_capability(&source_node.capability))
+            .is_some_and(|cap| cap.kind == CapabilityKind::Get);
+        if !source_is_get
+            && matches!(
+                relation.materialize,
+                Some(RelationMaterialization::FromParentGet { .. })
+            )
+        {
             let parent = GetExpr::new(source_name.as_str(), "1");
-            preflight_compile_expr(
-                &plasm_core::Expr::Get(parent),
-                self.cgs,
-                self.compiled,
-                self.ambient,
-                &mat,
-            )?;
+            self.compile_node(ctx, node, &plasm_core::Expr::Get(parent), &mat)?;
         }
         let result = match &relation.materialize {
+            Some(RelationMaterialization::FromParentGet { .. }) => {
+                // The source GET already compiled its transport and supplies embedded
+                // rows. Reacquiring either entity would select its outer primary view.
+                let target_def = self.cgs.get_entity(target.as_str()).expect("target");
+                let bound = BTreeMap::from([(target_def.id_field.to_string(), "1".into())]);
+                stub_embedded_result(target.as_str(), self.cgs, &bound)?
+            }
             Some(RelationMaterialization::QueryScoped { capability, param }) => {
                 let cap = self
                     .cgs
@@ -138,13 +167,7 @@ impl ViewNodeRunner for PreflightViewNodeRunner<'_> {
                 );
                 let mut query = QueryExpr::filtered(target.as_str(), predicate);
                 query.capability_name = Some(cap.name.clone());
-                preflight_compile_expr(
-                    &plasm_core::Expr::Query(query),
-                    self.cgs,
-                    self.compiled,
-                    self.ambient,
-                    &mat,
-                )?;
+                self.compile_node(ctx, node, &plasm_core::Expr::Query(query), &mat)?;
                 stub_query_result(cap, self.cgs, &values)?
             }
             Some(RelationMaterialization::QueryScopedBindings {
@@ -167,13 +190,7 @@ impl ViewNodeRunner for PreflightViewNodeRunner<'_> {
                 );
                 let mut query = QueryExpr::filtered(target.as_str(), predicate);
                 query.capability_name = Some(cap.name.clone());
-                preflight_compile_expr(
-                    &plasm_core::Expr::Query(query),
-                    self.cgs,
-                    self.compiled,
-                    self.ambient,
-                    &mat,
-                )?;
+                self.compile_node(ctx, node, &plasm_core::Expr::Query(query), &mat)?;
                 stub_query_result(cap, self.cgs, &values)?
             }
             _ => {
@@ -195,14 +212,9 @@ impl ViewNodeRunner for PreflightViewNodeRunner<'_> {
                 bound.insert(target_def.id_field.to_string(), "1".into());
                 bound.insert("id".into(), "1".into());
                 let result = stub_get_result(cap, self.cgs, &bound)?;
-                let get = GetExpr::from_ref(result.entities()[0].reference.clone());
-                preflight_compile_expr(
-                    &plasm_core::Expr::Get(get),
-                    self.cgs,
-                    self.compiled,
-                    self.ambient,
-                    &mat,
-                )?;
+                let get = GetExpr::from_ref(result.entities()[0].reference.clone())
+                    .with_capability(cap.name.clone());
+                self.compile_node(ctx, node, &plasm_core::Expr::Get(get), &mat)?;
                 result
             }
         };
@@ -227,20 +239,16 @@ impl ViewNodeRunner for PreflightViewNodeRunner<'_> {
         pred: &Predicate,
         node_fields: &ViewNodeFieldMap,
     ) -> Result<ExecutionResult, RuntimeError> {
-        let q = QueryExpr::filtered(cap.domain.as_str(), pred.clone());
-        preflight_compile_expr(
-            &plasm_core::Expr::Query(q),
-            self.cgs,
-            self.compiled,
-            self.ambient,
-            self.mat,
-        )
-        .map_err(|source| RuntimeError::ViewNode {
-            view: ctx.view_name.to_owned(),
-            node: node.id.clone(),
-            capability: node.capability.clone(),
-            source: Box::new(source),
-        })?;
+        let mut q = QueryExpr::filtered(cap.domain.as_str(), pred.clone());
+        q.capability_name = Some(cap.name.clone());
+        q.hydrate = Some(false);
+        self.compile_node(ctx, node, &plasm_core::Expr::Query(q), self.mat)
+            .map_err(|source| RuntimeError::ViewNode {
+                view: ctx.view_name.to_owned(),
+                node: node.id.clone(),
+                capability: node.capability.clone(),
+                source: Box::new(source),
+            })?;
         let mut bound_values = IndexMap::with_capacity(node.bind.len());
         for (param, bspec) in &node.bind {
             bound_values.insert(
@@ -259,19 +267,13 @@ impl ViewNodeRunner for PreflightViewNodeRunner<'_> {
         get: &GetExpr,
         bound: &BTreeMap<String, String>,
     ) -> Result<ExecutionResult, RuntimeError> {
-        preflight_compile_expr(
-            &plasm_core::Expr::Get(get.clone()),
-            self.cgs,
-            self.compiled,
-            self.ambient,
-            self.mat,
-        )
-        .map_err(|source| RuntimeError::ViewNode {
-            view: ctx.view_name.to_owned(),
-            node: node.id.clone(),
-            capability: node.capability.clone(),
-            source: Box::new(source),
-        })?;
+        self.compile_node(ctx, node, &plasm_core::Expr::Get(get.clone()), self.mat)
+            .map_err(|source| RuntimeError::ViewNode {
+                view: ctx.view_name.to_owned(),
+                node: node.id.clone(),
+                capability: node.capability.clone(),
+                source: Box::new(source),
+            })?;
         stub_get_result(cap, self.cgs, bound)
     }
 
@@ -282,11 +284,10 @@ impl ViewNodeRunner for PreflightViewNodeRunner<'_> {
         cap: &plasm_core::CapabilitySchema,
         create: &plasm_core::CreateExpr,
     ) -> Result<ExecutionResult, RuntimeError> {
-        preflight_compile_expr(
+        self.compile_node(
+            ctx,
+            node,
             &plasm_core::Expr::Create(create.clone()),
-            self.cgs,
-            self.compiled,
-            self.ambient,
             self.mat,
         )
         .map_err(|source| RuntimeError::ViewNode {

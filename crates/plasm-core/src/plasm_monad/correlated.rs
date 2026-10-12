@@ -107,20 +107,78 @@ pub struct ScopedCapture {
     pub singleton: bool,
 }
 
+struct ScopeValidation {
+    inputs: BTreeSet<StepId>,
+    step_ids: BTreeSet<StepId>,
+    layers: Vec<Vec<StepId>>,
+}
+
 impl CorrelatedBody {
     /// Check a closed scope and return layers from the shared bind scheduler.
     /// No rows, code or remote reads are evaluated to establish this schedule.
     pub fn execution_layers(&self) -> Result<Vec<Vec<StepId>>, CorrelatedBodyError> {
-        self.execution_layers_at_depth(0)
+        struct Frame<'a> {
+            body: &'a CorrelatedBody,
+            checked: ScopeValidation,
+        }
+        enum Work<'a> {
+            Enter(&'a CorrelatedBody, usize),
+            Node(usize, &'a String, &'a PlasmStepPayload),
+            FinishNode(usize, &'a String, &'a PlasmStepPayload),
+            Exit(usize),
+        }
+        let mut frames = Vec::new();
+        let mut pending = vec![Work::Enter(self, 0)];
+        while let Some(work) = pending.pop() {
+            match work {
+                Work::Enter(body, depth) => {
+                    if depth >= 16 {
+                        return Err(CorrelatedBodyError::NestingDepthExceeded);
+                    }
+                    let checked = body.start_scope_validation()?;
+                    let index = frames.len();
+                    pending.push(Work::Exit(index));
+                    for (id, payload) in body.body.steps.iter().rev() {
+                        pending.push(Work::Node(index, id, payload));
+                    }
+                    frames.push(Frame { body, checked });
+                }
+                Work::Node(index, id, payload) => {
+                    pending.push(Work::FinishNode(index, id, payload));
+                    match payload {
+                        PlasmStepPayload::MapBody(child) => {
+                            pending.push(Work::Enter(child, frames.len()))
+                        }
+                        PlasmStepPayload::UnfoldUntil(unfold) => {
+                            if let Some(child) = &unfold.step_scope {
+                                pending.push(Work::Enter(child, frames.len()));
+                            }
+                            if let Some(child) = &unfold.until_scope {
+                                pending.push(Work::Enter(child, frames.len()));
+                            }
+                        }
+                        _ => {}
+                    }
+                }
+                Work::FinishNode(index, id, payload) => {
+                    frames[index].body.validate_scope_node(id, payload)?
+                }
+                Work::Exit(index) => {
+                    debug_assert_eq!(index + 1, frames.len());
+                    let frame = frames.pop().expect("entered scope validation");
+                    frame
+                        .body
+                        .finish_scope_validation(&frame.checked.inputs, &frame.checked.step_ids)?;
+                    if frames.is_empty() {
+                        return Ok(frame.checked.layers);
+                    }
+                }
+            }
+        }
+        unreachable!("root scope always returns layers")
     }
 
-    fn execution_layers_at_depth(
-        &self,
-        depth: usize,
-    ) -> Result<Vec<Vec<StepId>>, CorrelatedBodyError> {
-        if depth >= 16 {
-            return Err(CorrelatedBodyError::NestingDepthExceeded);
-        }
+    fn start_scope_validation(&self) -> Result<ScopeValidation, CorrelatedBodyError> {
         // All scopes share the execution occurrence budget. Surface operators
         // may impose a smaller authored bound (for example explicit map).
         let maximum = 65_536;
@@ -160,81 +218,82 @@ impl CorrelatedBody {
         ) {
             return Err(CorrelatedBodyError::EffectfulPredicateScope);
         }
-        for (id, payload) in &self.body.steps {
-            match payload {
-                PlasmStepPayload::MapBody(child) => {
-                    child.execution_layers_at_depth(depth + 1)?;
-                }
-                PlasmStepPayload::UnfoldUntil(unfold) => {
-                    for child in [&unfold.until_scope, &unfold.step_scope]
-                        .into_iter()
-                        .flatten()
-                    {
-                        child.execution_layers_at_depth(depth + 1)?;
-                    }
-                }
-                _ => {}
+        Ok(ScopeValidation {
+            inputs,
+            step_ids,
+            layers,
+        })
+    }
+
+    fn validate_scope_node(
+        &self,
+        id: &str,
+        payload: &PlasmStepPayload,
+    ) -> Result<(), CorrelatedBodyError> {
+        if let PlasmStepPayload::Invoke(p) = payload {
+            let read = matches!(
+                p.plan_kind,
+                super::SurfaceKind::Query | super::SurfaceKind::Search | super::SurfaceKind::Get
+            );
+            if read
+                && !matches!(
+                    p.effect_class,
+                    EffectClass::Read | EffectClass::ArtifactRead
+                )
+            {
+                return Err(CorrelatedBodyError::ReadEffectMismatch);
             }
-            if let PlasmStepPayload::Invoke(p) = payload {
-                let read = matches!(
-                    p.plan_kind,
-                    super::SurfaceKind::Query
-                        | super::SurfaceKind::Search
-                        | super::SurfaceKind::Get
-                );
-                if read
-                    && !matches!(
-                        p.effect_class,
-                        EffectClass::Read | EffectClass::ArtifactRead
-                    )
-                {
-                    return Err(CorrelatedBodyError::ReadEffectMismatch);
-                }
-                if !read && !matches!(p.effect_class, EffectClass::Write | EffectClass::SideEffect)
-                {
-                    return Err(CorrelatedBodyError::MutationEffectMismatch);
-                }
-            }
-            scope::check(&self.body, id, payload)?;
-            let mut reads = Vec::new();
-            match payload {
-                PlasmStepPayload::Map(p) => {
-                    reads.push(p.compute.source.as_str());
-                    match &p.compute.op {
-                        ComputeOp::Union { other } | ComputeOp::MergeBranches { other } => {
-                            reads.push(other.as_str())
-                        }
-                        ComputeOp::Render {
-                            render_bindings, ..
-                        } => {
-                            reads.extend(render_bindings.iter().map(|s| s.as_str()));
-                        }
-                        _ => {}
-                    }
-                }
-                PlasmStepPayload::Derive(p) => {
-                    reads.extend(p.derive.source.as_deref());
-                    reads.extend(p.derive.inputs.iter().map(|i| i.node.as_str()));
-                }
-                PlasmStepPayload::FlatMapRelation(p) => reads.push(p.relation.source.as_str()),
-                PlasmStepPayload::FlatMapApply(p) => reads.push(p.source.as_str()),
-                PlasmStepPayload::UnfoldUntil(p) => reads.push(p.source.as_str()),
-                PlasmStepPayload::MapBody(child) => {
-                    reads.push(child.parent.source.as_str());
-                    reads.extend(child.captures.iter().map(|c| c.source.as_str()));
-                }
-                _ => {}
-            }
-            let deps = self.body.bind.deps.get(&StepId(id.clone()));
-            for read in reads {
-                if !deps.is_some_and(|deps| deps.contains(&StepId(read.into()))) {
-                    return Err(CorrelatedBodyError::UndeclaredDependency {
-                        step: id.clone(),
-                        dependency: read.into(),
-                    });
-                }
+            if !read && !matches!(p.effect_class, EffectClass::Write | EffectClass::SideEffect) {
+                return Err(CorrelatedBodyError::MutationEffectMismatch);
             }
         }
+        scope::check(&self.body, id, payload)?;
+        let mut reads = Vec::new();
+        match payload {
+            PlasmStepPayload::Map(p) => {
+                reads.push(p.compute.source.as_str());
+                match &p.compute.op {
+                    ComputeOp::Union { other } | ComputeOp::MergeBranches { other } => {
+                        reads.push(other.as_str())
+                    }
+                    ComputeOp::Render {
+                        render_bindings, ..
+                    } => {
+                        reads.extend(render_bindings.iter().map(|s| s.as_str()));
+                    }
+                    _ => {}
+                }
+            }
+            PlasmStepPayload::Derive(p) => {
+                reads.extend(p.derive.source.as_deref());
+                reads.extend(p.derive.inputs.iter().map(|i| i.node.as_str()));
+            }
+            PlasmStepPayload::FlatMapRelation(p) => reads.push(p.relation.source.as_str()),
+            PlasmStepPayload::FlatMapApply(p) => reads.push(p.source.as_str()),
+            PlasmStepPayload::UnfoldUntil(p) => reads.push(p.source.as_str()),
+            PlasmStepPayload::MapBody(child) => {
+                reads.push(child.parent.source.as_str());
+                reads.extend(child.captures.iter().map(|c| c.source.as_str()));
+            }
+            _ => {}
+        }
+        let deps = self.body.bind.deps.get(&StepId(id.to_owned()));
+        for read in reads {
+            if !deps.is_some_and(|deps| deps.contains(&StepId(read.into()))) {
+                return Err(CorrelatedBodyError::UndeclaredDependency {
+                    step: id.to_owned(),
+                    dependency: read.into(),
+                });
+            }
+        }
+        Ok(())
+    }
+
+    fn finish_scope_validation(
+        &self,
+        inputs: &BTreeSet<StepId>,
+        step_ids: &BTreeSet<StepId>,
+    ) -> Result<(), CorrelatedBodyError> {
         let PlasmReturn::Step { step } = &self.body.return_ else {
             return Err(CorrelatedBodyError::ParallelReturn);
         };
@@ -245,7 +304,7 @@ impl CorrelatedBody {
             if !step_ids.contains(step) && !inputs.contains(step) {
                 return Err(CorrelatedBodyError::ReturnOutsideScope);
             }
-            return Ok(layers);
+            return Ok(());
         }
         if !step_ids.contains(step) {
             return Err(CorrelatedBodyError::ReturnOutsideScope);
@@ -264,13 +323,18 @@ impl CorrelatedBody {
                 if p.compute.schema.entity.is_none() && !p.compute.op.preserves_row_identity() => {}
             _ => return Err(CorrelatedBodyError::OutputHasEntityAuthority),
         }
-        Ok(layers)
+        Ok(())
     }
 
     /// Conservative transitive effect classification; payload validation checks labels against IR.
     pub fn effect_class(&self) -> EffectClass {
         let mut result = EffectClass::Read;
-        for step in self.body.steps.values() {
+        let mut pending: Vec<_> = self.body.steps.values().collect();
+        while let Some(step) = pending.pop() {
+            if let PlasmStepPayload::MapBody(body) = step {
+                pending.extend(body.body.steps.values());
+                continue;
+            }
             match step.effect_class() {
                 EffectClass::SideEffect => return EffectClass::SideEffect,
                 EffectClass::Write => result = EffectClass::Write,

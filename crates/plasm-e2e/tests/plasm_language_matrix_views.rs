@@ -56,6 +56,66 @@ fn matrix_views_catalog_passes_static_validation() {
     validate_cgs_views(&cgs).expect("views DAG");
 }
 
+#[test]
+fn matrix_views_same_entity_get_dry_and_live() {
+    block_on_views_live(|| async move {
+        let base = hermit_lang_matrix::fresh_python_parity_hermit_base_url().await;
+        let mut cgs = matrix_views_cgs();
+        cgs.entities.get_mut("LangItem").unwrap().primary_read =
+            Some("langitem_composed_get".into());
+        let cgs = Arc::new(cgs);
+        let es = language_matrix_views::execute_session_for_entities(cgs.clone(), &["LangItem"]);
+        let symbols = es.teaching_exposure.as_ref().unwrap().symbol_map_arc();
+        let symbol = symbols.entity_sym_for(VIEWS_MATRIX_ENTRY_ID, "LangItem");
+        let source = format!("class SameEntity(Program):\n    def build(self):\n        return {symbol}.get(\"i1\")\n");
+        let bundle = plasm_agent::plasm_compile::compile_python_program(&es, &source)
+            .await
+            .expect("same-entity view admission");
+        evaluate_plasm_comp_dry(&es, &bundle).expect("same-entity view planning");
+        let st = views_matrix_host_state(
+            ExecutionEngine::new(ExecutionConfig {
+                base_url: Some(base),
+                ..Default::default()
+            })
+            .unwrap(),
+            cgs,
+        );
+        let live = run_plasm_comp(
+            &es,
+            &st,
+            es.prompt_hash.as_str(),
+            "same_entity_view",
+            &bundle,
+            true,
+            None,
+            None,
+            None,
+            None,
+        )
+        .await
+        .expect("same-entity view live execution");
+        let result = &live
+            .return_steps
+            .first()
+            .expect("published view rows")
+            .result;
+        assert_eq!(result.count(), 1);
+        let row = &result.entities()[0];
+        assert_eq!(
+            row.fields["id"].to_value(),
+            plasm_core::Value::String("i1".into())
+        );
+        assert!(
+            row.relations.contains_key("lines"),
+            "source GET must supply its embed"
+        );
+        assert_eq!(
+            result.stats.network_requests, 1,
+            "embedded traversal must reuse its source"
+        );
+    });
+}
+
 #[tokio::test]
 async fn matrix_views_all_preflight() {
     let cgs = matrix_views_cgs();

@@ -233,10 +233,8 @@ pub fn validate_from_parent_get_embed_acyclic(cgs: &crate::CGS) -> Result<(), En
         }
         adj.entry(from.clone()).or_default().push(to.clone());
     }
-    for start in adj.keys().cloned().collect::<Vec<_>>() {
-        if let Some(cycle) = find_entity_cycle(&adj, &start) {
-            return Err(EntityCycle { entities: cycle });
-        }
+    if let Some(cycle) = find_entity_cycle_from_roots(&adj, adj.keys().map(String::as_str)) {
+        return Err(EntityCycle { entities: cycle });
     }
     Ok(())
 }
@@ -254,45 +252,49 @@ impl EntityCycle {
     }
 }
 
+#[cfg(test)]
 pub(crate) fn find_entity_cycle(
     adj: &std::collections::HashMap<String, Vec<String>>,
     start: &str,
 ) -> Option<Vec<String>> {
-    fn dfs(
-        adj: &std::collections::HashMap<String, Vec<String>>,
-        node: &str,
-        stack: &mut Vec<String>,
-        on_stack: &mut std::collections::HashSet<String>,
-        visited: &mut std::collections::HashSet<String>,
-    ) -> Option<Vec<String>> {
-        if on_stack.contains(node) {
-            let pos = stack.iter().position(|n| n == node).unwrap_or(stack.len());
-            let mut cycle = stack[pos..].to_vec();
-            cycle.push(node.to_string());
-            return Some(cycle);
+    find_entity_cycle_from_roots(adj, [start])
+}
+
+fn find_entity_cycle_from_roots<'a>(
+    adj: &'a std::collections::HashMap<String, Vec<String>>,
+    roots: impl IntoIterator<Item = &'a str>,
+) -> Option<Vec<String>> {
+    let mut visited = std::collections::HashSet::new();
+    let mut active = std::collections::HashMap::new();
+    let mut frames: Vec<(&str, usize)> = Vec::new();
+    for root in roots {
+        if !visited.insert(root) {
+            continue;
         }
-        if visited.contains(node) {
-            return None;
-        }
-        visited.insert(node.to_string());
-        on_stack.insert(node.to_string());
-        stack.push(node.to_string());
-        if let Some(nexts) = adj.get(node) {
-            for next in nexts {
-                if let Some(cycle) = dfs(adj, next, stack, on_stack, visited) {
+        active.insert(root, 0);
+        frames.push((root, 0));
+        while let Some((node, next)) = frames.last_mut() {
+            if let Some(child) = adj.get(*node).and_then(|children| children.get(*next)) {
+                *next += 1;
+                if let Some(&start) = active.get(child.as_str()) {
+                    let mut cycle: Vec<String> = frames[start..]
+                        .iter()
+                        .map(|(node, _)| (*node).to_owned())
+                        .collect();
+                    cycle.push(child.clone());
                     return Some(cycle);
                 }
+                if visited.insert(child.as_str()) {
+                    active.insert(child.as_str(), frames.len());
+                    frames.push((child.as_str(), 0));
+                }
+            } else {
+                active.remove(*node);
+                frames.pop();
             }
         }
-        stack.pop();
-        on_stack.remove(node);
-        None
     }
-
-    let mut stack = Vec::new();
-    let mut on_stack = std::collections::HashSet::new();
-    let mut visited = std::collections::HashSet::new();
-    dfs(adj, start, &mut stack, &mut on_stack, &mut visited)
+    None
 }
 
 /// Flatten extracted path values across parent rows (plan materialize helper).
@@ -334,6 +336,19 @@ pub fn prefer_hydrate_embed_path<'a>(
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn entity_dependency_chains_do_not_grow_the_native_stack() {
+        let count = 32_768;
+        let mut edges = std::collections::HashMap::new();
+        for index in 0..count - 1 {
+            edges.insert(format!("n{index}"), vec![format!("n{}", index + 1)]);
+        }
+        assert!(super::find_entity_cycle(&edges, "n0").is_none());
+        edges.insert(format!("n{}", count - 1), vec!["n0".into()]);
+        let cycle = super::find_entity_cycle(&edges, "n0").unwrap();
+        assert_eq!(cycle.len(), count + 1);
+        assert_eq!(cycle.first(), cycle.last());
+    }
     use super::*;
     use crate::{RelationMaterialization, RelationScopedFallback};
     use indexmap::IndexMap;

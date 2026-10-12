@@ -135,31 +135,23 @@ impl ExecStep {
     }
 
     /// Stable tag for the schedule digest (kind + node id), independent of volatile display text.
-    pub(crate) fn schedule_tag(&self) -> String {
-        match self {
-            ExecStep::Pure(p) => format!("pure:{}:{}", p.kind_tag(), p.id().as_str()),
-            ExecStep::Io(io) => format!("io:{}:{}", io.kind_tag(), io.id().as_str()),
-        }
+    pub(crate) fn schedule_tag(node: &ValidatedPlanNode) -> String {
+        let (phase, kind) = match node {
+            ValidatedPlanNode::Data(_) => ("pure", "data"),
+            ValidatedPlanNode::Derive(_) => ("pure", "derive"),
+            ValidatedPlanNode::Compute(_) => ("pure", "compute"),
+            ValidatedPlanNode::MapBody(_) => ("io", "map_body"),
+            ValidatedPlanNode::Capture(_) => ("io", "capture"),
+            ValidatedPlanNode::Surface(_) => ("io", "surface"),
+            ValidatedPlanNode::RelationTraversal(_) => ("io", "relation"),
+            ValidatedPlanNode::ForEach(_) => ("io", "foreach"),
+            ValidatedPlanNode::IterateUntil(_) => ("io", "iterate_until"),
+        };
+        format!("{phase}:{kind}:{}", node.id().as_str())
     }
 }
 
 impl PureStep {
-    fn kind_tag(&self) -> &'static str {
-        match self {
-            PureStep::Data(_) => "data",
-            PureStep::Derive(_) => "derive",
-            PureStep::Compute(_) => "compute",
-        }
-    }
-
-    pub(crate) fn id(&self) -> &PlanNodeId {
-        match self {
-            PureStep::Data(n) => &n.id,
-            PureStep::Derive(n) => &n.id,
-            PureStep::Compute(n) => &n.id,
-        }
-    }
-
     /// The dependency whose rows feed this step (`None` for literal `Data`).
     pub(crate) fn source(&self) -> Result<Option<PlanNodeId>, crate::plasm_plan::PlanAtomError> {
         match self {
@@ -312,17 +304,6 @@ impl IoStep {
         matches!(effect, EffectClass::Read | EffectClass::ArtifactRead)
     }
 
-    fn kind_tag(&self) -> &'static str {
-        match self {
-            IoStep::MapBody(_) => "map_body",
-            IoStep::Capture(_) => "capture",
-            IoStep::Surface(_) => "surface",
-            IoStep::Relation(_) => "relation",
-            IoStep::ForEach(_) => "foreach",
-            IoStep::IterateUntil(_) => "iterate_until",
-        }
-    }
-
     pub(crate) fn id(&self) -> &PlanNodeId {
         match self {
             IoStep::MapBody(n) => &n.id,
@@ -353,33 +334,74 @@ impl ScheduleDigest {
         plan: &crate::plasm_plan::Plan<crate::plasm_plan::ValidatedPlanState>,
         order: &[String],
     ) -> Self {
-        let by_id: std::collections::HashMap<&str, &ValidatedPlanNode> =
-            plan.nodes.iter().map(|n| (n.id().as_str(), n)).collect();
-        let mut hasher = Sha256::new();
-        for step_id in order {
-            let Some(node) = by_id.get(step_id.as_str()) else {
-                continue;
-            };
-            let step = ExecStep::classify((*node).clone());
-            if let ValidatedPlanNode::MapBody(n) = node {
-                let order: Vec<_> = n
-                    .plan
-                    .topological_order()
-                    .iter()
-                    .map(|id| id.as_str().to_string())
-                    .collect();
-                hasher.update(Self::from_validated_plan(n.plan.artifact(), &order).0);
-                hasher.update(serde_json::to_vec(&n.body.parent).expect("serializable capture"));
-                hasher.update(serde_json::to_vec(&n.body.body.bind).expect("serializable bind"));
-            }
-            hasher.update(step_id.as_bytes());
+        enum Work<'a> {
+            Plan(
+                &'a crate::plasm_plan::Plan<crate::plasm_plan::ValidatedPlanState>,
+                Vec<String>,
+            ),
+            Node(&'a ValidatedPlanNode),
+            MapDone(&'a ValidatedPlanNode),
+            Finish,
+        }
+        fn tag(hasher: &mut Sha256, node: &ValidatedPlanNode) {
+            hasher.update(node.id().as_str().as_bytes());
             hasher.update(b"\x1f");
-            hasher.update(step.schedule_tag().as_bytes());
+            hasher.update(ExecStep::schedule_tag(node).as_bytes());
             hasher.update(b"\n");
         }
-        let mut bytes = [0u8; 32];
-        bytes.copy_from_slice(&hasher.finalize());
-        ScheduleDigest(bytes)
+        let mut pending = vec![Work::Plan(plan, order.to_vec())];
+        let mut hashers = Vec::new();
+        let mut values = Vec::new();
+        while let Some(work) = pending.pop() {
+            match work {
+                Work::Plan(plan, order) => {
+                    let by_id: std::collections::HashMap<_, _> =
+                        plan.nodes.iter().map(|n| (n.id().as_str(), n)).collect();
+                    hashers.push(Sha256::new());
+                    pending.push(Work::Finish);
+                    for id in order.iter().rev() {
+                        if let Some(&node) = by_id.get(id.as_str()) {
+                            pending.push(Work::Node(node));
+                        }
+                    }
+                }
+                Work::Node(node @ ValidatedPlanNode::MapBody(map)) => {
+                    pending.push(Work::MapDone(node));
+                    pending.push(Work::Plan(
+                        map.plan.artifact(),
+                        map.plan
+                            .topological_order()
+                            .iter()
+                            .map(ToString::to_string)
+                            .collect(),
+                    ));
+                }
+                Work::Node(node) => tag(hashers.last_mut().expect("scope hasher"), node),
+                Work::MapDone(node) => {
+                    let ValidatedPlanNode::MapBody(map) = node else {
+                        unreachable!()
+                    };
+                    let child: ScheduleDigest = values.pop().expect("child schedule");
+                    let hasher = hashers.last_mut().expect("parent hasher");
+                    hasher.update(child.0);
+                    hasher.update(
+                        serde_json::to_vec(&map.body.parent).expect("serializable capture"),
+                    );
+                    hasher.update(
+                        serde_json::to_vec(&map.body.body.bind).expect("serializable bind"),
+                    );
+                    tag(hasher, node);
+                }
+                Work::Finish => {
+                    let mut bytes = [0u8; 32];
+                    bytes.copy_from_slice(
+                        &hashers.pop().expect("completed scope hasher").finalize(),
+                    );
+                    values.push(ScheduleDigest(bytes));
+                }
+            }
+        }
+        values.pop().expect("root schedule")
     }
 
     pub(crate) fn to_hex(&self) -> String {

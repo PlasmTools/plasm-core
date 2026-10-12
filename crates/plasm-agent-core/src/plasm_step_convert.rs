@@ -364,6 +364,10 @@ fn step_payload_to_validated_node(
     step_id: &StepId,
     payload: &PlasmStepPayload,
     bind: &PlasmBindGraph,
+    bodies: &mut std::collections::HashMap<
+        *const plasm_core::plasm_monad::CorrelatedBody,
+        ValidatedPlan,
+    >,
 ) -> Result<ValidatedPlanNode, StepPayloadLiftError> {
     let id = PlanNodeId::new(step_id.as_str().to_string())?;
     let depends_on = step_depends_on(step_id, bind);
@@ -371,7 +375,9 @@ fn step_payload_to_validated_node(
     match payload {
         PlasmStepPayload::MapBody(body) => {
             body.execution_layers()?;
-            let plan = lift_body(body)?;
+            let plan = bodies
+                .remove(&(body.as_ref() as *const _))
+                .expect("postorder map-body plan");
             Ok(ValidatedPlanNode::MapBody(
                 crate::plasm_plan::ValidatedMapBodyNode {
                     id,
@@ -488,14 +494,20 @@ fn step_payload_to_validated_node(
                 until_plan: p
                     .until_scope
                     .as_deref()
-                    .map(crate::plasm_step_convert::lift_body)
-                    .transpose()?
+                    .map(|body| {
+                        bodies
+                            .remove(&(body as *const _))
+                            .expect("postorder iteration scope")
+                    })
                     .map(Box::new),
                 step_plan: p
                     .step_scope
                     .as_deref()
-                    .map(crate::plasm_step_convert::lift_body)
-                    .transpose()?
+                    .map(|body| {
+                        bodies
+                            .remove(&(body as *const _))
+                            .expect("postorder iteration scope")
+                    })
                     .map(Box::new),
                 take: p.take,
                 seed_ir: p.seed_ir.as_ref().map(plan_expr_ir_to_validated),
@@ -514,8 +526,14 @@ pub(crate) fn build_validated_plan_from_executable(
 ) -> Result<ValidatedPlan, StepPayloadLiftError> {
     let mut nodes = Vec::with_capacity(executable.steps_topo.len());
     let mut node_indices = HashMap::new();
+    let mut bodies = lift_nested_bodies(
+        executable
+            .steps_topo
+            .iter()
+            .flat_map(|(_, payload)| payload_bodies(payload)),
+    )?;
     for (i, (step_id, payload)) in executable.steps_topo.iter().enumerate() {
-        let node = step_payload_to_validated_node(step_id, payload, &executable.bind)?;
+        let node = step_payload_to_validated_node(step_id, payload, &executable.bind, &mut bodies)?;
         node_indices.insert(node.id().clone(), i);
         nodes.push(node);
     }
@@ -759,41 +777,97 @@ fn plan_result_shape(value: ResultShape) -> PlanResultShape {
 pub(crate) fn lift_body(
     body: &plasm_core::plasm_monad::CorrelatedBody,
 ) -> Result<ValidatedPlan, StepPayloadLiftError> {
-    let parent = lift_capture_port(&body.parent)?;
-    let mut topo = vec![parent.id.clone()];
-    let mut nodes = vec![ValidatedPlanNode::Capture(parent)];
-    for port in &body.captures {
-        let capture = lift_capture_port(port)?;
-        topo.push(capture.id.clone());
-        nodes.push(ValidatedPlanNode::Capture(capture));
+    let mut bodies = lift_nested_bodies([body])?;
+    Ok(bodies
+        .remove(&(body as *const _))
+        .expect("postorder root body"))
+}
+
+fn payload_bodies(
+    payload: &PlasmStepPayload,
+) -> impl DoubleEndedIterator<Item = &plasm_core::plasm_monad::CorrelatedBody> {
+    match payload {
+        PlasmStepPayload::MapBody(body) => [Some(body.as_ref()), None],
+        PlasmStepPayload::UnfoldUntil(unfold) => {
+            [unfold.until_scope.as_deref(), unfold.step_scope.as_deref()]
+        }
+        _ => [None, None],
     }
-    for id in body.execution_layers()?.iter().flatten() {
-        nodes.push(step_payload_to_validated_node(
-            id,
-            &body.body.steps[id.as_str()],
-            &body.body.bind,
-        )?);
-        topo.push(PlanNodeId::new(id.as_str())?);
+    .into_iter()
+    .flatten()
+}
+
+fn lift_nested_bodies<'a>(
+    roots: impl IntoIterator<Item = &'a plasm_core::plasm_monad::CorrelatedBody>,
+) -> Result<
+    std::collections::HashMap<*const plasm_core::plasm_monad::CorrelatedBody, ValidatedPlan>,
+    StepPayloadLiftError,
+> {
+    enum Work<'a> {
+        Enter(&'a plasm_core::plasm_monad::CorrelatedBody),
+        Finish(
+            &'a plasm_core::plasm_monad::CorrelatedBody,
+            Vec<ValidatedPlanNode>,
+            Vec<PlanNodeId>,
+            Vec<StepId>,
+        ),
     }
-    let indices = nodes
-        .iter()
-        .enumerate()
-        .map(|(i, n)| (n.id().clone(), i))
-        .collect();
-    let plan = Plan::new_program(
-        body.body.version,
-        body.body.name.clone(),
-        nodes,
-        plasm_return_to_validated(&body.body.return_)?,
-        body.body.metadata.clone(),
-    );
-    validate_rehydrated_cardinality_proofs(&plan)?;
-    Ok(ValidatedPlanArtifact::from_validated_parts(
-        plan,
-        topo,
-        indices,
-        vec![],
-    ))
+    let roots: Vec<_> = roots.into_iter().collect();
+    let mut pending: Vec<_> = roots.into_iter().rev().map(Work::Enter).collect();
+    let mut bodies = std::collections::HashMap::new();
+    while let Some(work) = pending.pop() {
+        match work {
+            Work::Enter(body) => {
+                if bodies.contains_key(&(body as *const _)) {
+                    continue;
+                }
+                let parent = lift_capture_port(&body.parent)?;
+                let mut topo = vec![parent.id.clone()];
+                let mut nodes = vec![ValidatedPlanNode::Capture(parent)];
+                for port in &body.captures {
+                    let capture = lift_capture_port(port)?;
+                    topo.push(capture.id.clone());
+                    nodes.push(ValidatedPlanNode::Capture(capture));
+                }
+                let order: Vec<_> = body.execution_layers()?.into_iter().flatten().collect();
+                let children: Vec<_> = order
+                    .iter()
+                    .flat_map(|id| payload_bodies(&body.body.steps[id.as_str()]))
+                    .collect();
+                pending.push(Work::Finish(body, nodes, topo, order));
+                pending.extend(children.into_iter().rev().map(Work::Enter));
+            }
+            Work::Finish(body, mut nodes, mut topo, order) => {
+                for id in order {
+                    nodes.push(step_payload_to_validated_node(
+                        &id,
+                        &body.body.steps[id.as_str()],
+                        &body.body.bind,
+                        &mut bodies,
+                    )?);
+                    topo.push(PlanNodeId::new(id.as_str())?);
+                }
+                let indices = nodes
+                    .iter()
+                    .enumerate()
+                    .map(|(i, node)| (node.id().clone(), i))
+                    .collect();
+                let plan = Plan::new_program(
+                    body.body.version,
+                    body.body.name.clone(),
+                    nodes,
+                    plasm_return_to_validated(&body.body.return_)?,
+                    body.body.metadata.clone(),
+                );
+                validate_rehydrated_cardinality_proofs(&plan)?;
+                bodies.insert(
+                    body as *const _,
+                    ValidatedPlanArtifact::from_validated_parts(plan, topo, indices, vec![]),
+                );
+            }
+        }
+    }
+    Ok(bodies)
 }
 
 fn lift_capture_port(
@@ -900,7 +974,9 @@ mod tests {
             deps,
             ..Default::default()
         };
-        let back = step_payload_to_validated_node(&step_id, &payload, &bind).expect("from payload");
+        let mut bodies = lift_nested_bodies(payload_bodies(&payload)).expect("scope plans");
+        let back = step_payload_to_validated_node(&step_id, &payload, &bind, &mut bodies)
+            .expect("from payload");
         let ValidatedPlanNode::Compute(c) = back else {
             panic!("round-trip node");
         };

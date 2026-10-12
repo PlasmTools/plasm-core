@@ -123,25 +123,28 @@ fn get_inputs(
     entry: &str,
     expr: &Expr,
 ) -> Result<Vec<ProvisionKey>, SessionProvisionError> {
-    let get = match expr {
-        Expr::Get(get) => get,
-        Expr::Chain(chain) => {
-            // The chain source is a reference to an already-produced row, not
-            // necessarily a Get request (query-only view producers are lawful).
-            if let Expr::Get(source) = chain.source.as_ref() {
-                let source_entry = source.catalog_entry_id.as_deref().unwrap_or(entry);
-                let cgs = catalog(es, source_entry)?;
-                if source.capability_name.is_none()
-                    && cgs
-                        .find_capability(&source.reference.entity_type, CapabilityKind::Get)
-                        .is_none()
-                {
-                    return Ok(vec![]);
+    let mut cursor = expr;
+    let get = loop {
+        match cursor {
+            Expr::Get(get) => break get,
+            Expr::Chain(chain) => {
+                // The chain source is a reference to an already-produced row, not
+                // necessarily a Get request (query-only view producers are lawful).
+                if let Expr::Get(source) = chain.source.as_ref() {
+                    let source_entry = source.catalog_entry_id.as_deref().unwrap_or(entry);
+                    let cgs = catalog(es, source_entry)?;
+                    if source.capability_name.is_none()
+                        && cgs
+                            .find_capability(&source.reference.entity_type, CapabilityKind::Get)
+                            .is_none()
+                    {
+                        return Ok(vec![]);
+                    }
                 }
+                cursor = &chain.source;
             }
-            return get_inputs(es, entry, &chain.source);
+            _ => return Ok(vec![]),
         }
-        _ => return Ok(vec![]),
     };
     let entry = get.catalog_entry_id.as_deref().unwrap_or(entry);
     // Authored reads carry their declared inputs and ordinary DAG dependencies.

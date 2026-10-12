@@ -161,8 +161,8 @@ pub enum ScopeContractError {
         declared: Box<plasm_core::RelationMaterialization>,
         lowered: Box<plasm_core::RelationMaterialization>,
     },
-    #[error("scope capture source depth exceeded")]
-    CaptureDepthExceeded,
+    #[error("scope capture dependencies contain a cycle")]
+    CaptureDependencyCycle,
     #[error("map parent source is missing")]
     ParentSourceMissing,
     #[error("scope capture owner is missing")]
@@ -305,7 +305,7 @@ pub(crate) fn validate(
         }
         validate_port_schema(es, map.plan.nodes(), step.as_str(), schema)?;
         if *entity_authority {
-            let owner = capture_owner(map.plan.nodes(), step.as_str(), 0)?;
+            let owner = capture_owner(map.plan.nodes(), step.as_str())?;
             if owner.entry_id != entity.entry_id || owner.entity != entity.entity {
                 return Err(ScopeContractError::ScopeAcquiredAuthority.into());
             }
@@ -325,7 +325,6 @@ pub(crate) fn validate(
                             nodes,
                             body.parent.source.as_str(),
                             field.name.as_str(),
-                            0,
                         )
                         .map_err(|_| PythonFieldError::Unavailable {
                             node: body.parent.source.to_string(),
@@ -468,15 +467,16 @@ fn validate_capture_port(
             .fields
             .keys()
         {
-            crate::python_compute::source_field_kind(es, nodes, source, field.as_str(), 0)
-                .map_err(|_| PythonFieldError::Unavailable {
+            crate::python_compute::source_field_kind(es, nodes, source, field.as_str()).map_err(
+                |_| PythonFieldError::Unavailable {
                     node: source.to_owned(),
                     field: field.to_string(),
-                })?;
+                },
+            )?;
         }
     }
     if port.contract().entity_authority() {
-        let owner = capture_owner(nodes, source, 0)?;
+        let owner = capture_owner(nodes, source)?;
         if owner.entry_id != port.entity().entry_id || owner.entity != port.entity().entity {
             return Err(if cardinality == CaptureCardinality::ParentOccurrence {
                 ScopeContractError::ParentIdentityChanged
@@ -493,63 +493,150 @@ fn validate_capture_port(
 fn capture_owner<'a>(
     nodes: &'a [ValidatedPlanNode],
     id: &str,
-    depth: usize,
 ) -> Result<&'a QualifiedEntityKey, MapBodyValidationError> {
-    if depth > 256 {
-        return Err(ScopeContractError::CaptureDepthExceeded.into());
+    #[derive(Clone, Copy)]
+    enum Fault {
+        Cycle,
+        Missing,
+        OwnerMissing,
+        ReturnMissing,
+        Synthetic,
+        Union,
+        Identity,
     }
-    let node = nodes
-        .iter()
-        .find(|n| n.id().as_str() == id)
-        .ok_or(ScopeContractError::ParentSourceMissing)?;
-    match node {
-        ValidatedPlanNode::Capture(c) if c.contract.entity_authority() => Ok(&c.entity),
-        ValidatedPlanNode::Surface(s)
-            if s.result_shape != crate::plasm_plan::ResultShape::SideEffectAck =>
-        {
-            s.qualified_entity
-                .as_ref()
-                .ok_or(ScopeContractError::CaptureOwnerMissing.into())
-        }
-        ValidatedPlanNode::RelationTraversal(r) => Ok(&r.relation.target),
-        ValidatedPlanNode::MapBody(map) => {
-            if matches!(
-                map.body.output,
-                plasm_core::plasm_monad::ScopedOutput::Filter
-            ) {
-                return capture_owner(nodes, map.body.parent.source.as_str(), depth + 1);
+    impl Fault {
+        fn error(self) -> ScopeContractError {
+            match self {
+                Self::Cycle => ScopeContractError::CaptureDependencyCycle,
+                Self::Missing => ScopeContractError::ParentSourceMissing,
+                Self::OwnerMissing => ScopeContractError::CaptureOwnerMissing,
+                Self::ReturnMissing => ScopeContractError::ScopeReturnMissing,
+                Self::Synthetic => ScopeContractError::SyntheticScopeNoAuthority,
+                Self::Union => ScopeContractError::UnionAuthorityMismatch,
+                Self::Identity => ScopeContractError::IdentityNotPreserved,
             }
-            let plasm_core::PlasmReturn::Step { step } = &map.body.body.return_ else {
-                return Err(ScopeContractError::ScopeReturnMissing.into());
-            };
-            if !matches!(
-                map.body.output,
-                plasm_core::plasm_monad::ScopedOutput::Rows {
-                    entity_authority: true,
-                    ..
+        }
+    }
+    type Key = (*const ValidatedPlanNode, usize, String);
+    enum Work<'a> {
+        Visit(&'a [ValidatedPlanNode], String),
+        Alias(Key),
+        Union(Key, &'a ComputeOp),
+    }
+    let mut pending = vec![Work::Visit(nodes, id.to_owned())];
+    let mut complete = std::collections::HashMap::new();
+    let mut active = std::collections::HashSet::new();
+    let mut values: Vec<Result<&'a QualifiedEntityKey, Fault>> = Vec::new();
+    let mut indices = std::collections::HashMap::new();
+    while let Some(work) = pending.pop() {
+        let (key, result) = match work {
+            Work::Alias(key) => (key, values.pop().expect("source authority")),
+            Work::Union(key, op) => {
+                let right = values.pop().expect("right authority").ok();
+                let left = values.pop().expect("left authority").ok();
+                (key, op.preserved_identity(left, right).ok_or(Fault::Union))
+            }
+            Work::Visit(nodes, id) => {
+                let key = (nodes.as_ptr(), nodes.len(), id.clone());
+                if let Some(&result) = complete.get(&key) {
+                    values.push(result);
+                    continue;
                 }
-            ) {
-                return Err(ScopeContractError::SyntheticScopeNoAuthority.into());
+                if !active.insert(key.clone()) {
+                    values.push(Err(Fault::Cycle));
+                    continue;
+                }
+                let index = indices
+                    .entry((nodes.as_ptr(), nodes.len()))
+                    .or_insert_with(|| {
+                        nodes
+                            .iter()
+                            .enumerate()
+                            .map(|(i, n)| (n.id().as_str(), i))
+                            .collect::<std::collections::HashMap<_, _>>()
+                    });
+                let node = index.get(id.as_str()).map(|&i| &nodes[i]);
+                let result = match node {
+                    None => Err(Fault::Missing),
+                    Some(ValidatedPlanNode::Capture(c)) if c.contract.entity_authority() => {
+                        Ok(&c.entity)
+                    }
+                    Some(ValidatedPlanNode::Surface(s))
+                        if s.result_shape != crate::plasm_plan::ResultShape::SideEffectAck =>
+                    {
+                        s.qualified_entity.as_ref().ok_or(Fault::OwnerMissing)
+                    }
+                    Some(ValidatedPlanNode::RelationTraversal(r)) => Ok(&r.relation.target),
+                    Some(ValidatedPlanNode::MapBody(map)) => {
+                        let dependency = if matches!(
+                            map.body.output,
+                            plasm_core::plasm_monad::ScopedOutput::Filter
+                        ) {
+                            Some((nodes, map.body.parent.source.as_str()))
+                        } else if !matches!(
+                            map.body.body.return_,
+                            plasm_core::PlasmReturn::Step { .. }
+                        ) {
+                            values.push(Err(Fault::ReturnMissing));
+                            complete.insert(key.clone(), Err(Fault::ReturnMissing));
+                            active.remove(&key);
+                            continue;
+                        } else if !matches!(
+                            map.body.output,
+                            plasm_core::plasm_monad::ScopedOutput::Rows {
+                                entity_authority: true,
+                                ..
+                            }
+                        ) {
+                            values.push(Err(Fault::Synthetic));
+                            complete.insert(key.clone(), Err(Fault::Synthetic));
+                            active.remove(&key);
+                            continue;
+                        } else if let plasm_core::PlasmReturn::Step { step } =
+                            &map.body.body.return_
+                        {
+                            Some((map.plan.nodes(), step.as_str()))
+                        } else {
+                            None
+                        };
+                        if let Some((nodes, source)) = dependency {
+                            pending.push(Work::Alias(key));
+                            pending.push(Work::Visit(nodes, source.to_owned()));
+                            continue;
+                        }
+                        Err(Fault::ReturnMissing)
+                    }
+                    Some(ValidatedPlanNode::Compute(c))
+                        if matches!(c.compute.op, ComputeOp::Union { .. }) =>
+                    {
+                        let ComputeOp::Union { other } = &c.compute.op else {
+                            unreachable!()
+                        };
+                        pending.push(Work::Union(key, &c.compute.op));
+                        pending.push(Work::Visit(nodes, other.as_str().to_owned()));
+                        pending.push(Work::Visit(nodes, c.compute.source.clone()));
+                        continue;
+                    }
+                    Some(ValidatedPlanNode::Compute(c))
+                        if c.compute.op.preserves_row_identity() =>
+                    {
+                        pending.push(Work::Alias(key));
+                        pending.push(Work::Visit(nodes, c.compute.source.clone()));
+                        continue;
+                    }
+                    _ => Err(Fault::Identity),
+                };
+                (key, result)
             }
-            capture_owner(map.plan.nodes(), step.as_str(), depth + 1)
-        }
-        ValidatedPlanNode::Compute(c) if matches!(c.compute.op, ComputeOp::Union { .. }) => {
-            let ComputeOp::Union { other } = &c.compute.op else {
-                unreachable!()
-            };
-            let left = capture_owner(nodes, &c.compute.source, depth + 1).ok();
-            let right = capture_owner(nodes, other.as_str(), depth + 1).ok();
-            c.compute
-                .op
-                .preserved_identity(left, right)
-                .ok_or(ScopeContractError::UnionAuthorityMismatch.into())
-        }
-        ValidatedPlanNode::Compute(c) if c.compute.op.preserves_row_identity() => {
-            let owner = capture_owner(nodes, &c.compute.source, depth + 1)?;
-            Ok(owner)
-        }
-        _ => Err(ScopeContractError::IdentityNotPreserved.into()),
+        };
+        active.remove(&key);
+        complete.insert(key, result);
+        values.push(result);
     }
+    values
+        .pop()
+        .expect("root authority")
+        .map_err(|fault| fault.error().into())
 }
 
 fn validate_port_schema(
@@ -560,7 +647,7 @@ fn validate_port_schema(
 ) -> Result<(), MapBodyValidationError> {
     for field in &schema.fields {
         let actual =
-            crate::python_compute::source_field_kind(es, nodes, source, field.name.as_str(), 0)
+            crate::python_compute::source_field_kind(es, nodes, source, field.name.as_str())
                 .map_err(|_| PythonFieldError::Unavailable {
                     node: source.to_owned(),
                     field: field.name.to_string(),

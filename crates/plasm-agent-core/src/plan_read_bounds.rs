@@ -138,6 +138,18 @@ pub fn cap_execution_result_page(
 
 /// Walk return-reachable limit chains and push row budgets onto upstream surface reads.
 pub fn apply_read_budgets(plan: &mut ValidatedPlanArtifact) {
+    // Pure scopes have no local transport onto which a limit can be pushed.
+    // Avoid repeatedly scanning their entire source chains; complete demands
+    // still traverse captures and nested scopes below.
+    if !plan.nodes().iter().any(|node| {
+        matches!(
+            node,
+            ValidatedPlanNode::Surface(_) | ValidatedPlanNode::RelationTraversal(_)
+        )
+    }) {
+        apply_complete_demands(plan);
+        return;
+    }
     let by_id: HashMap<String, usize> = plan
         .nodes()
         .iter()

@@ -91,6 +91,26 @@ pub enum ValueOperation<T> {
     },
 }
 impl<T> ValueOperation<T> {
+    /// Structural operands in source order; evaluation still owns lazy branching.
+    pub fn operands(&self) -> impl DoubleEndedIterator<Item = &T> {
+        use ValueOperation::*;
+        match self {
+            Field { value, .. } | Length { value } | Refine { value, .. } | Not { value } => {
+                [Some(value), None, None]
+            }
+            Arithmetic { left, right, .. }
+            | Compare { left, right, .. }
+            | And { left, right }
+            | Or { left, right } => [Some(left), Some(right), None],
+            Choose {
+                condition,
+                then,
+                otherwise,
+            } => [Some(condition), Some(then), Some(otherwise)],
+        }
+        .into_iter()
+        .flatten()
+    }
     pub fn try_map<U, E>(
         &self,
         mut map: impl FnMut(&T) -> Result<U, E>,

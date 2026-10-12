@@ -220,36 +220,21 @@ fn validate_value_phrase_idents(
     program_labels: &BTreeSet<String>,
     ctx: Option<&PhraseIdentFieldContext<'_>>,
 ) -> Result<(), PhraseIdentError> {
-    match value {
-        Value::PhraseIdent(ident) => validate_identifier_phrase(ident, program_labels, ctx),
-        Value::Array(items) => {
-            for item in items {
-                validate_value_phrase_idents(item, program_labels, None)?;
-            }
-            Ok(())
+    let mut pending = vec![(value, ctx)];
+    while let Some((value, ctx)) = pending.pop() {
+        match value {
+            Value::PhraseIdent(ident) => validate_identifier_phrase(ident, program_labels, ctx)?,
+            Value::Array(items) => pending.extend(items.iter().rev().map(|value| (value, None))),
+            Value::Object(fields)
+            | Value::UnionCtor {
+                ctor_fields: fields,
+                ..
+            } => pending.extend(fields.values().rev().map(|value| (value, None))),
+            Value::GetScalarExtract(extract) => pending.push((&extract.identity, None)),
+            _ => {}
         }
-        Value::Object(map)
-        | Value::UnionCtor {
-            ctor_fields: map, ..
-        } => {
-            for v in map.values() {
-                validate_value_phrase_idents(v, program_labels, None)?;
-            }
-            Ok(())
-        }
-        Value::GetScalarExtract(extract) => {
-            validate_value_phrase_idents(&extract.identity, program_labels, None)
-        }
-        Value::PlasmInputRef(_)
-        | Value::Null
-        | Value::Bool(_)
-        | Value::Unsigned(_)
-        | Value::Integer(_)
-        | Value::Float(_)
-        | Value::String(_)
-        | Value::StringTemplate(_)
-        | Value::Money(_) => Ok(()),
     }
+    Ok(())
 }
 
 fn validate_invoke_input_object(
@@ -325,9 +310,8 @@ fn validate_predicate_phrase_idents(
     cap_params: &[InputFieldSchema],
     cgs: &CGS,
 ) -> Result<(), PhraseIdentError> {
-    match predicate {
-        Predicate::True | Predicate::False => Ok(()),
-        Predicate::Comparison { field, value, .. } => {
+    for node in predicate.walk() {
+        if let Predicate::Comparison { field, value, .. } = node {
             let ctx = cap_params
                 .iter()
                 .find(|p| p.name == *field)
@@ -338,24 +322,10 @@ fn validate_predicate_phrase_idents(
                         .get(field.as_str())
                         .and_then(|f| field_context_from_entity_field(f, cgs))
                 });
-            validate_value_phrase_idents(&value.to_value(), program_labels, ctx.as_ref())
-        }
-        Predicate::And { args } | Predicate::Or { args } => {
-            for arg in args {
-                validate_predicate_phrase_idents(arg, program_labels, entity, cap_params, cgs)?;
-            }
-            Ok(())
-        }
-        Predicate::Not { predicate } => {
-            validate_predicate_phrase_idents(predicate, program_labels, entity, cap_params, cgs)
-        }
-        Predicate::ExistsRelation { predicate, .. } => {
-            if let Some(inner) = predicate {
-                validate_predicate_phrase_idents(inner, program_labels, entity, cap_params, cgs)?;
-            }
-            Ok(())
+            validate_value_phrase_idents(&value.to_value(), program_labels, ctx.as_ref())?;
         }
     }
+    Ok(())
 }
 
 fn cap_params_for_capability(cap: &CapabilitySchema) -> Vec<InputFieldSchema> {
@@ -382,44 +352,40 @@ fn normalize_comparison_value(value: &mut TypedComparisonValue) {
 }
 
 fn normalize_predicate(pred: &mut Predicate) {
-    match pred {
-        Predicate::Comparison { value, .. } => normalize_comparison_value(value),
-        Predicate::And { args } | Predicate::Or { args } => {
-            for arg in args {
-                normalize_predicate(arg);
+    let mut pending = vec![pred];
+    while let Some(pred) = pending.pop() {
+        match pred {
+            Predicate::Comparison { value, .. } => normalize_comparison_value(value),
+            Predicate::And { args } | Predicate::Or { args } => {
+                pending.extend(args.iter_mut().rev())
             }
+            Predicate::Not { predicate } => pending.push(predicate),
+            Predicate::ExistsRelation {
+                predicate: Some(child),
+                ..
+            } => pending.push(child),
+            _ => {}
         }
-        Predicate::Not { predicate } => normalize_predicate(predicate),
-        Predicate::ExistsRelation { predicate, .. } => {
-            if let Some(inner) = predicate {
-                normalize_predicate(inner);
-            }
-        }
-        Predicate::True | Predicate::False => {}
     }
 }
 
 fn normalize_typed_invoke_input(input: &mut TypedInvokeInput) {
-    match input {
-        TypedInvokeInput::Leaf(_) => {}
-        TypedInvokeInput::Json(v) => normalize_value_phrase_idents(v),
-        TypedInvokeInput::Array(items) => {
-            for item in items {
-                normalize_typed_invoke_input(item);
-            }
-        }
-        TypedInvokeInput::Object { fields, extra } => {
-            for item in fields.values_mut() {
-                normalize_typed_invoke_input(item);
-            }
-            if let Some(ex) = extra {
-                for v in ex.values_mut() {
-                    normalize_value_phrase_idents(v);
+    let mut pending = vec![input];
+    while let Some(input) = pending.pop() {
+        match input {
+            TypedInvokeInput::Json(value) => normalize_value_phrase_idents(value),
+            TypedInvokeInput::Array(items) => pending.extend(items.iter_mut().rev()),
+            TypedInvokeInput::Object { fields, extra } => {
+                pending.extend(fields.values_mut().rev());
+                if let Some(extra) = extra {
+                    for value in extra.values_mut() {
+                        normalize_value_phrase_idents(value);
+                    }
                 }
             }
+            TypedInvokeInput::Union { value, .. } => pending.push(value),
+            _ => {}
         }
-        TypedInvokeInput::Union { value, .. } => normalize_typed_invoke_input(value),
-        TypedInvokeInput::PlasmInputRef(_) => {}
     }
 }
 
@@ -466,7 +432,7 @@ fn lower_expr_phrase_idents(
     scope: PhraseIdentCgsScope<'_>,
     validate: bool,
 ) -> Result<(), PhraseIdentError> {
-    match expr {
+    expr.try_for_each_leaf_mut(|expr| match expr {
         Expr::Invoke(inv) => {
             let cgs = scope.resolve_capability_cgs(
                 inv.catalog_entry_id.as_deref(),
@@ -545,15 +511,9 @@ fn lower_expr_phrase_idents(
             }
             Ok(())
         }
-        Expr::Chain(c) => {
-            lower_expr_phrase_idents(&mut c.source, program_labels, scope, validate)?;
-            if let crate::ChainStep::Explicit { expr } = &mut c.step {
-                lower_expr_phrase_idents(expr, program_labels, scope, validate)?;
-            }
-            Ok(())
-        }
+        Expr::Chain(_) => unreachable!("transport leaf visitor"),
         Expr::TeachingValue { .. } | Expr::Page(_) | Expr::Wait(_) | Expr::Cancel(_) => Ok(()),
-    }
+    })
 }
 
 /// Validate then lower program-context [`Value::PhraseIdent`] nodes in an expression tree.

@@ -931,118 +931,227 @@ pub(crate) fn preflight_nodes(
     es: &ExecuteSession,
     plan: &Plan<ValidatedPlanState>,
 ) -> Result<(Vec<serde_json::Value>, Vec<String>), crate::program_diagnostic::ProgramStageError> {
+    use crate::plan_session_provisions::DryProvisionSession;
     use crate::program_diagnostic::ProgramStageError;
-    let mut out = Vec::new();
-    let mut staged_nodes = Vec::new();
-    let dry_session = crate::plan_session_provisions::DryProvisionSession::new(es)
-        .map_err(|error| ProgramStageError::SessionProvision { error })?;
-    let es = dry_session.session();
-    for (step_idx, n) in plan.nodes.iter().enumerate() {
-        if let ValidatedPlanNode::IterateUntil(it) = n {
-            if let Some(predicate) =
-                crate::map_body::iteration_predicate(it).map_err(ProgramStageError::plan)?
-            {
-                crate::map_body::validate(es, &predicate, &plan.nodes)
-                    .map_err(ProgramStageError::plan)?;
-                let (body_results, _) = preflight_nodes(es, predicate.plan.artifact())?;
-                out.push(serde_json::json!({"ok": true, "id": format!("{}/{}", it.id, predicate.id), "kind": "until_predicate", "body": body_results, "capture": predicate.body.parent}));
-            }
+    struct ReturnBody {
+        metadata: serde_json::Value,
+        key: &'static str,
+        stage: Option<String>,
+    }
+    struct Frame<'a> {
+        plan: &'a Plan<ValidatedPlanState>,
+        dry: DryProvisionSession,
+        index: usize,
+        phase: u8,
+        out: Vec<serde_json::Value>,
+        staged: Vec<String>,
+        return_body: Option<ReturnBody>,
+    }
+    impl<'a> Frame<'a> {
+        fn new(
+            es: &ExecuteSession,
+            plan: &'a Plan<ValidatedPlanState>,
+            return_body: Option<ReturnBody>,
+        ) -> Result<Self, ProgramStageError> {
+            Ok(Self {
+                plan,
+                dry: DryProvisionSession::new(es)
+                    .map_err(|error| ProgramStageError::SessionProvision { error })?,
+                index: 0,
+                phase: 0,
+                out: Vec::new(),
+                staged: Vec::new(),
+                return_body,
+            })
         }
-        if let ValidatedPlanNode::IterateUntil(it) = n {
-            if let Some(step) =
-                crate::map_body::iteration_step(it).map_err(ProgramStageError::plan)?
-            {
-                crate::map_body::validate(es, &step, &plan.nodes)
-                    .map_err(ProgramStageError::plan)?;
-                let (body_results, _) = preflight_nodes(es, step.plan.artifact())?;
-                out.push(serde_json::json!({"ok":true,"id":it.id.as_str(),"kind":"iterate_until","step_body":body_results,"take":it.take}));
-                staged_nodes.push(format!("{} (iterate_until)", it.id));
+    }
+    let mut frames = vec![Frame::new(es, plan, None)?];
+    loop {
+        let frame = frames.last_mut().expect("active preflight frame");
+        if frame.index == frame.plan.nodes.len() {
+            dry_validate_staged_surfaces(frame.dry.session(), frame.plan).map_err(|error| {
+                ProgramStageError::plan(crate::program_diagnostic::PlanStageError::DryStaging(
+                    error,
+                ))
+            })?;
+            let done = frames.pop().expect("completed preflight frame");
+            if let Some(mut body) = done.return_body {
+                body.metadata[body.key] = serde_json::Value::Array(done.out);
+                let parent = frames.last_mut().expect("scope parent");
+                parent.out.push(body.metadata);
+                if let Some(stage) = body.stage {
+                    parent.staged.push(stage);
+                }
                 continue;
+            }
+            return Ok((done.out, done.staged));
+        }
+        let n = &frame.plan.nodes[frame.index];
+        let es = frame.dry.session();
+        if let ValidatedPlanNode::IterateUntil(it) = n {
+            if frame.phase == 0 {
+                frame.phase = 1;
+                if let Some(predicate) =
+                    crate::map_body::iteration_predicate(it).map_err(ProgramStageError::plan)?
+                {
+                    crate::map_body::validate(es, &predicate, &frame.plan.nodes)
+                        .map_err(ProgramStageError::plan)?;
+                    let child = Frame::new(
+                        es,
+                        it.until_plan
+                            .as_ref()
+                            .expect("validated predicate plan")
+                            .artifact(),
+                        Some(ReturnBody {
+                            metadata: serde_json::json!({"ok": true, "id": format!("{}/{}", it.id, predicate.id),
+                                "kind": "until_predicate", "capture": predicate.body.parent}),
+                            key: "body",
+                            stage: None,
+                        }),
+                    )?;
+                    frames.push(child);
+                    continue;
+                }
+            }
+            if frame.phase == 1 {
+                frame.phase = 2;
+                if let Some(step) =
+                    crate::map_body::iteration_step(it).map_err(ProgramStageError::plan)?
+                {
+                    crate::map_body::validate(es, &step, &frame.plan.nodes)
+                        .map_err(ProgramStageError::plan)?;
+                    let child = Frame::new(
+                        es,
+                        it.step_plan
+                            .as_ref()
+                            .expect("validated step plan")
+                            .artifact(),
+                        Some(ReturnBody {
+                            metadata: serde_json::json!({"ok": true, "id": it.id.as_str(), "kind": "iterate_until", "take": it.take}),
+                            key: "step_body",
+                            stage: Some(format!("{} (iterate_until)", it.id)),
+                        }),
+                    )?;
+                    frame.index += 1;
+                    frame.phase = 0;
+                    frames.push(child);
+                    continue;
+                }
             }
         }
         if let ValidatedPlanNode::MapBody(map) = n {
-            crate::map_body::validate(es, map, &plan.nodes).map_err(ProgramStageError::plan)?;
-            let (body_results, _) = preflight_nodes(es, map.plan.artifact())?;
-            out.push(serde_json::json!({"ok": true, "id": map.id.as_str(), "kind": "map_body", "body": body_results,
-                "capture": map.body.parent, "max_parents": map.body.max_parents}));
-            staged_nodes.push(format!("{} (map_body)", map.id));
+            crate::map_body::validate(es, map, &frame.plan.nodes)
+                .map_err(ProgramStageError::plan)?;
+            let child = Frame::new(
+                es,
+                map.plan.artifact(),
+                Some(ReturnBody {
+                    metadata: serde_json::json!({"ok": true, "id": map.id.as_str(), "kind": "map_body",
+                    "capture": map.body.parent, "max_parents": map.body.max_parents}),
+                    key: "body",
+                    stage: Some(format!("{} (map_body)", map.id)),
+                }),
+            )?;
+            frame.index += 1;
+            frame.phase = 0;
+            frames.push(child);
             continue;
         }
-        ensure_node_dispatchable(es, n, step_idx)?;
-        if let ValidatedPlanNode::Compute(compute) = n {
-            if matches!(compute.compute.op, ComputeOp::Python { .. }) {
-                crate::python_compute::validate_plan_compute(es, compute, &plan.nodes)
-                    .map_err(|error| ProgramStageError::PythonCompute { error })?;
-            }
+        preflight_leaf(
+            &frame.dry,
+            frame.plan,
+            frame.index,
+            n,
+            &mut frame.out,
+            &mut frame.staged,
+        )?;
+        frame.index += 1;
+        frame.phase = 0;
+    }
+}
+
+fn preflight_leaf(
+    dry_session: &crate::plan_session_provisions::DryProvisionSession,
+    plan: &Plan<ValidatedPlanState>,
+    step_idx: usize,
+    n: &ValidatedPlanNode,
+    out: &mut Vec<serde_json::Value>,
+    staged_nodes: &mut Vec<String>,
+) -> Result<(), crate::program_diagnostic::ProgramStageError> {
+    use crate::program_diagnostic::ProgramStageError;
+    let es = dry_session.session();
+    ensure_node_dispatchable(es, n, step_idx)?;
+    if let ValidatedPlanNode::Compute(compute) = n {
+        if matches!(compute.compute.op, ComputeOp::Python { .. }) {
+            crate::python_compute::validate_plan_compute(es, compute, &plan.nodes)
+                .map_err(|error| ProgramStageError::PythonCompute { error })?;
         }
-        if let ValidatedPlanNode::RelationTraversal(relation) = n {
-            let pe = ParsedExpr {
-                expr: relation.relation.ir.expr.clone(),
-                projection: relation.relation.ir.projection.clone(),
-                field_dot_extract: None,
-            };
-            typecheck_parsed_for_session(es, &pe)
-                .map_err(|error| ProgramStageError::CoreType { error })?;
-            ensure_relation_expr_matches_plan(es, relation, &pe, step_idx)?;
-        }
-        let nested_effect = match n {
-            ValidatedPlanNode::ForEach(node) => Some(&node.effect_template),
-            ValidatedPlanNode::IterateUntil(node) => Some(&node.effect_template),
-            _ => None,
+    }
+    if let ValidatedPlanNode::RelationTraversal(relation) = n {
+        let pe = ParsedExpr {
+            expr: relation.relation.ir.expr.clone(),
+            projection: relation.relation.ir.projection.clone(),
+            field_dot_extract: None,
         };
-        if let Some(effect) = nested_effect {
-            let scoped = entry_scoped_execute_session(es, Some(&effect.qualified_entity))
-                .map_err(|error| ProgramStageError::SessionCatalog { error })?;
-            let parsed = ParsedExpr {
-                expr: effect.ir_template.expr.clone(),
-                projection: effect.ir_template.projection.clone(),
-                field_dot_extract: None,
-            };
-            crate::execute_pipeline::PlasmPreflight::preflight_template_surface(
-                es, &scoped, &parsed, step_idx,
-            )?;
-        }
-        if let Some(surface) = n.as_surface() {
-            match surface_parsed_expr(surface) {
-                Some(pe) => {
-                    let scoped_es =
-                        entry_scoped_execute_session(es, surface.qualified_entity.as_ref())
-                            .map_err(|error| ProgramStageError::SessionCatalog { error })?;
-                    let normalized = if surface.ir.is_some() {
-                        crate::execute_pipeline::PlasmPreflight::preflight_node_compile_dispatch(
-                            es, &scoped_es, surface, &pe, step_idx,
-                        )?
-                    } else {
-                        crate::execute_pipeline::PlasmPreflight::preflight_template_surface(
-                            es, &scoped_es, &pe, step_idx,
-                        )?
-                    };
-                    let parsed = normalized.parsed();
-                    let simulation = if normalized.is_simulatable() {
-                        let (intent, il, bindings) =
-                            dry_run_simulation_for_session(&scoped_es, parsed);
-                        serde_json::json!({
-                            "intent": intent,
-                            "il": il,
-                            "bindings": bindings
-                        })
-                    } else {
-                        serde_json::json!({
-                            "kind": "template_stage",
-                            "execution": "typechecked only; row holes prevent CML compile at dry time"
-                        })
-                    };
-                    let expr = crate::plan_dry_display::render_executable_expr(
-                        &parsed.expr,
-                        parsed.projection.as_deref(),
-                        Some(&scoped_es),
-                    );
-                    let compact_expr = crate::plan_dry_compact::compact_agent_surface_expr(&expr);
-                    let compact_ir =
-                        crate::plan_dry_compact::compact_ir_expr_json_for_agent_snapshot(
-                            serde_json::to_value(&parsed.expr).unwrap_or_default(),
-                        );
-                    out.push(serde_json::json!({
+        typecheck_parsed_for_session(es, &pe)
+            .map_err(|error| ProgramStageError::CoreType { error })?;
+        ensure_relation_expr_matches_plan(es, relation, &pe, step_idx)?;
+    }
+    let nested_effect = match n {
+        ValidatedPlanNode::ForEach(node) => Some(&node.effect_template),
+        ValidatedPlanNode::IterateUntil(node) => Some(&node.effect_template),
+        _ => None,
+    };
+    if let Some(effect) = nested_effect {
+        let scoped = entry_scoped_execute_session(es, Some(&effect.qualified_entity))
+            .map_err(|error| ProgramStageError::SessionCatalog { error })?;
+        let parsed = ParsedExpr {
+            expr: effect.ir_template.expr.clone(),
+            projection: effect.ir_template.projection.clone(),
+            field_dot_extract: None,
+        };
+        crate::execute_pipeline::PlasmPreflight::preflight_template_surface(
+            es, &scoped, &parsed, step_idx,
+        )?;
+    }
+    if let Some(surface) = n.as_surface() {
+        match surface_parsed_expr(surface) {
+            Some(pe) => {
+                let scoped_es = entry_scoped_execute_session(es, surface.qualified_entity.as_ref())
+                    .map_err(|error| ProgramStageError::SessionCatalog { error })?;
+                let normalized = if surface.ir.is_some() {
+                    crate::execute_pipeline::PlasmPreflight::preflight_node_compile_dispatch(
+                        es, &scoped_es, surface, &pe, step_idx,
+                    )?
+                } else {
+                    crate::execute_pipeline::PlasmPreflight::preflight_template_surface(
+                        es, &scoped_es, &pe, step_idx,
+                    )?
+                };
+                let parsed = normalized.parsed();
+                let simulation = if normalized.is_simulatable() {
+                    let (intent, il, bindings) = dry_run_simulation_for_session(&scoped_es, parsed);
+                    serde_json::json!({
+                        "intent": intent,
+                        "il": il,
+                        "bindings": bindings
+                    })
+                } else {
+                    serde_json::json!({
+                        "kind": "template_stage",
+                        "execution": "typechecked only; row holes prevent CML compile at dry time"
+                    })
+                };
+                let expr = crate::plan_dry_display::render_executable_expr(
+                    &parsed.expr,
+                    parsed.projection.as_deref(),
+                    Some(&scoped_es),
+                );
+                let compact_expr = crate::plan_dry_compact::compact_agent_surface_expr(&expr);
+                let compact_ir = crate::plan_dry_compact::compact_ir_expr_json_for_agent_snapshot(
+                    serde_json::to_value(&parsed.expr).unwrap_or_default(),
+                );
+                out.push(serde_json::json!({
                         "index": step_idx,
                         "ok": true,
                         "id": n.id().as_str(),
@@ -1068,28 +1177,24 @@ pub(crate) fn preflight_nodes(
                         "type_check": "ok",
                         "simulation": simulation
                     }));
-                    dry_session
-                        .stage(n)
-                        .map_err(|error| ProgramStageError::SessionProvision { error })?;
-                    continue;
-                }
-                None => {
-                    if n.depends_on().is_empty() && n.uses_result().is_empty() {
-                        return Err(ProgramStageError::plan(
-                            crate::program_diagnostic::PlanStageError::ExecutableSurfaceMissing {
-                                index: step_idx,
-                            },
-                        ));
-                    }
+                dry_session
+                    .stage(n)
+                    .map_err(|error| ProgramStageError::SessionProvision { error })?;
+                return Ok(());
+            }
+            None => {
+                if n.depends_on().is_empty() && n.uses_result().is_empty() {
+                    return Err(ProgramStageError::plan(
+                        crate::program_diagnostic::PlanStageError::ExecutableSurfaceMissing {
+                            index: step_idx,
+                        },
+                    ));
                 }
             }
         }
-
-        staged_nodes.push(format!("{} ({:?})", n.id(), n.kind()));
-        out.push(dry_stage_result(step_idx, n));
     }
-    dry_validate_staged_surfaces(es, plan).map_err(|error| {
-        ProgramStageError::plan(crate::program_diagnostic::PlanStageError::DryStaging(error))
-    })?;
-    Ok((out, staged_nodes))
+
+    staged_nodes.push(format!("{} ({:?})", n.id(), n.kind()));
+    out.push(dry_stage_result(step_idx, n));
+    Ok(())
 }

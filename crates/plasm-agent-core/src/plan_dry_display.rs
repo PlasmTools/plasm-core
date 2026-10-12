@@ -237,9 +237,24 @@ fn render_selection_effects(selections: &[PlanDrySelection]) -> String {
 
 fn map_body_effects(plan: &ValidatedPlan) -> Vec<PlanDryEffect> {
     let mut effects = Vec::new();
-    for id in plan.topological_order() {
-        let Some(node) = plan.nodes().iter().find(|node| node.id() == id) else {
-            continue;
+    enum Work<'a> {
+        Plan(&'a ValidatedPlan),
+        Node(&'a ValidatedPlanNode),
+    }
+    let mut pending = vec![Work::Plan(plan)];
+    while let Some(work) = pending.pop() {
+        let node = match work {
+            Work::Node(node) => node,
+            Work::Plan(plan) => {
+                let by_id: std::collections::HashMap<_, _> =
+                    plan.nodes().iter().map(|node| (node.id(), node)).collect();
+                for id in plan.topological_order().iter().rev() {
+                    if let Some(&node) = by_id.get(id) {
+                        pending.push(Work::Node(node));
+                    }
+                }
+                continue;
+            }
         };
         if let ValidatedPlanNode::Surface(surface) = node {
             if matches!(
@@ -269,9 +284,7 @@ fn map_body_effects(plan: &ValidatedPlan) -> Vec<PlanDryEffect> {
                 });
             }
         }
-        for nested in node.nested_plans() {
-            effects.extend(map_body_effects(nested));
-        }
+        pending.extend(node.nested_plans().rev().map(Work::Plan));
     }
     effects
 }
@@ -415,17 +428,18 @@ pub fn render_plan_dry_compact_text(
         seen: &mut std::collections::HashSet<String>,
         result: &mut Vec<String>,
     ) {
-        if !seen.insert(id.to_owned()) {
-            return;
-        }
-        if hidden.contains(id) {
-            if let Some(step) = by_id.get(id) {
-                for dependency in &step.uses {
-                    visible_dependency(dependency, hidden, by_id, seen, result);
-                }
+        let mut pending = vec![id];
+        while let Some(id) = pending.pop() {
+            if !seen.insert(id.to_owned()) {
+                continue;
             }
-        } else {
-            result.push(id.to_owned());
+            if hidden.contains(id) {
+                if let Some(step) = by_id.get(id) {
+                    pending.extend(step.uses.iter().rev().map(String::as_str));
+                }
+            } else {
+                result.push(id.to_owned());
+            }
         }
     }
     let shown = view

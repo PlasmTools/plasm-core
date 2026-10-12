@@ -1219,7 +1219,7 @@ pub(crate) fn validate_plan_compute(
             .into_iter()
             .flat_map(|f| f.keys())
         {
-            let actual = source_field_kind(es, nodes, compute.compute.source.as_str(), field, 0)
+            let actual = source_field_kind(es, nodes, compute.compute.source.as_str(), field)
                 .map_err(PythonComputeRejection::from)?;
             if Some(actual)
                 != checked

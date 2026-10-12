@@ -556,7 +556,7 @@ pub struct ValidatedPlanRelationTraversal {
 
 impl ValidatedPlanNode {
     /// Every nested executable scope, independent of its surface consumer.
-    pub(crate) fn nested_plans(&self) -> impl Iterator<Item = &ValidatedPlan> {
+    pub(crate) fn nested_plans(&self) -> impl DoubleEndedIterator<Item = &ValidatedPlan> {
         let plans = match self {
             Self::MapBody(map) => [Some(map.plan.as_ref()), None],
             Self::IterateUntil(it) => [it.until_plan.as_deref(), it.step_plan.as_deref()],
@@ -565,7 +565,9 @@ impl ValidatedPlanNode {
         plans.into_iter().flatten()
     }
 
-    pub(crate) fn nested_plans_mut(&mut self) -> impl Iterator<Item = &mut ValidatedPlan> {
+    pub(crate) fn nested_plans_mut(
+        &mut self,
+    ) -> impl DoubleEndedIterator<Item = &mut ValidatedPlan> {
         let plans = match self {
             Self::MapBody(map) => [Some(map.plan.as_mut()), None],
             Self::IterateUntil(it) => [it.until_plan.as_deref_mut(), it.step_plan.as_deref_mut()],
@@ -944,31 +946,40 @@ pub const PLAN_RENDER_MAX_TEMPLATE_CHARS: usize = 64 * 1024;
 pub const PLAN_RENDER_MAX_ROWS: usize = 10_000;
 pub const PLAN_RENDER_MAX_OUTPUT_CHARS: usize = 1024 * 1024;
 
-pub(super) fn has_cycle(adj: &[Vec<usize>]) -> bool {
-    let n = adj.len();
-    let mut vis = vec![0u8; n];
-    fn dfs(u: usize, adj: &[Vec<usize>], vis: &mut [u8]) -> bool {
-        vis[u] = 1;
-        for &v in &adj[u] {
-            if v >= vis.len() {
-                continue;
-            }
-            if vis[v] == 1 {
-                return true;
-            }
-            if vis[v] == 0 && dfs(v, adj, vis) {
-                return true;
+/// Dependency-first DFS order, or `None` for a cycle. Frames live on the heap:
+/// appending dependencies never increases native call depth.
+pub(super) fn dependency_order(adj: &[Vec<usize>]) -> Option<Vec<usize>> {
+    let mut marks = vec![0u8; adj.len()];
+    let mut order = Vec::with_capacity(adj.len());
+    let mut frames = Vec::new();
+    for root in 0..adj.len() {
+        if marks[root] != 0 {
+            continue;
+        }
+        marks[root] = 1;
+        frames.push((root, 0));
+        while let Some((node, next)) = frames.last_mut() {
+            if let Some(&child) = adj[*node].get(*next) {
+                *next += 1;
+                if child >= marks.len() {
+                    continue;
+                }
+                match marks[child] {
+                    1 => return None,
+                    0 => {
+                        marks[child] = 1;
+                        frames.push((child, 0));
+                    }
+                    _ => {}
+                }
+            } else {
+                marks[*node] = 2;
+                order.push(*node);
+                frames.pop();
             }
         }
-        vis[u] = 2;
-        false
     }
-    for i in 0..n {
-        if vis[i] == 0 && dfs(i, adj, &mut vis) {
-            return true;
-        }
-    }
-    false
+    Some(order)
 }
 
 pub(super) fn return_refs(ret: &PlanReturn) -> Vec<&str> {

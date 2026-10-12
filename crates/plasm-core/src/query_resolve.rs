@@ -505,24 +505,13 @@ pub fn normalize_expr_query_capabilities(
     expr: &mut crate::Expr,
     cgs: &CGS,
 ) -> Result<(), QueryCapabilityResolveError> {
-    match expr {
-        crate::Expr::Query(_) => normalize_query_arm(expr, cgs),
-        crate::Expr::Chain(c) => {
-            normalize_expr_query_capabilities(&mut c.source, cgs)?;
-            if let crate::ChainStep::Explicit { expr: inner } = &mut c.step {
-                normalize_expr_query_capabilities(inner.as_mut(), cgs)?;
-            }
+    expr.try_for_each_leaf_mut(|leaf| {
+        if matches!(leaf, crate::Expr::Query(_)) {
+            normalize_query_arm(leaf, cgs)
+        } else {
             Ok(())
         }
-        crate::Expr::Get(_)
-        | crate::Expr::Create(_)
-        | crate::Expr::Delete(_)
-        | crate::Expr::Invoke(_)
-        | crate::Expr::Page(_)
-        | crate::Expr::Wait(_)
-        | crate::Expr::Cancel(_)
-        | crate::Expr::TeachingValue { .. } => Ok(()),
-    }
+    })
 }
 
 /// Like [`normalize_expr_query_capabilities`], but resolves the owning [`CGS`] per query domain.
@@ -539,7 +528,7 @@ pub fn normalize_expr_query_capabilities_federated(
         )
         .unwrap_or(fallback)
     };
-    match expr {
+    expr.try_for_each_leaf_mut(|leaf| match leaf {
         crate::Expr::Query(q) => {
             let cgs = if let Some(eid) = q.catalog_entry_id.as_deref() {
                 fed.cgs_for_catalog_entry_id(eid, q.entity.as_str())
@@ -552,24 +541,10 @@ pub fn normalize_expr_query_capabilities_federated(
             } else {
                 cgs_for(q.entity.as_str())
             };
-            normalize_query_arm(expr, cgs)
+            normalize_query_arm(leaf, cgs)
         }
-        crate::Expr::Chain(c) => {
-            normalize_expr_query_capabilities_federated(&mut c.source, fed, fallback)?;
-            if let crate::ChainStep::Explicit { expr: inner } = &mut c.step {
-                normalize_expr_query_capabilities_federated(inner.as_mut(), fed, fallback)?;
-            }
-            Ok(())
-        }
-        crate::Expr::Get(_)
-        | crate::Expr::Create(_)
-        | crate::Expr::Delete(_)
-        | crate::Expr::Invoke(_)
-        | crate::Expr::Page(_)
-        | crate::Expr::Wait(_)
-        | crate::Expr::Cancel(_)
-        | crate::Expr::TeachingValue { .. } => Ok(()),
-    }
+        _ => Ok(()),
+    })
 }
 
 #[cfg(test)]
