@@ -16,6 +16,8 @@ enum PythonValueConversionError {
     Temporal(#[from] plasm_core::temporal_value::TemporalValueError),
     #[error("Python union value has no matching representation")]
     UnionRepresentationMissing,
+    #[error("Python union value has ambiguous container representations")]
+    UnionRepresentationAmbiguous,
     #[error("Python record contains an undeclared field")]
     UndeclaredRecordField,
     #[error("mapping input requires a record contract")]
@@ -26,6 +28,10 @@ enum PythonValueConversionError {
     UndeclaredMappingField,
     #[error("set input requires an array")]
     SetRequiresArray,
+    #[error("tuple input requires an array")]
+    TupleRequiresArray,
+    #[error(transparent)]
+    TupleContract(#[from] plasm_core::value_contract::ValueContractError),
     #[error("Python input contains an unresolved or non-finite value")]
     UnsupportedValue,
     #[error("temporal component `{name}` is absent after component validation")]
@@ -484,11 +490,21 @@ fn value_object(
         ..
     }) = contract
     {
-        let branch = variants
+        let mut representation = None;
+        for branch in variants
             .iter()
-            .find(|branch| representation_matches(branch, &value))
-            .ok_or(PythonValueConversionError::UnionRepresentationMissing)?;
-        return value_object(value, Some(branch));
+            .filter(|branch| representation_matches(branch, &value))
+        {
+            let candidate = value_object(value.clone(), Some(branch))?;
+            if representation
+                .as_ref()
+                .is_some_and(|prior| prior != &candidate)
+            {
+                return Err(PythonValueConversionError::UnionRepresentationAmbiguous);
+            }
+            representation = Some(candidate);
+        }
+        return representation.ok_or(PythonValueConversionError::UnionRepresentationMissing);
     }
     if let (
         Some(plasm_core::value_contract::ValueContract {
@@ -576,6 +592,18 @@ fn value_object(
                         .map(|v| value_object(v.clone(), Some(element)))
                         .collect::<Result<Vec<_>, PythonValueConversionError>>()?,
                 ));
+            }
+            ValueShape::Tuple { members } => {
+                let values = value
+                    .as_array()
+                    .ok_or(PythonValueConversionError::TupleRequiresArray)?;
+                members.validate_arity(values.len())?;
+                return Ok(MontyObject::tuple(values.iter().enumerate().map(|(i, value)| {
+                    let contract = members.element(i, values.len()).ok_or(
+                        plasm_core::value_contract::ValueContractError::TuplePositionMissing { index: i },
+                    )?;
+                    value_object(value.clone(), Some(contract))
+                }).collect::<Result<Vec<_>, PythonValueConversionError>>()?));
             }
             _ => {}
         }
@@ -670,6 +698,14 @@ fn representation_matches(
         ValueShape::Array { element } | ValueShape::Set { element } => value
             .as_array()
             .is_some_and(|a| a.iter().all(|v| representation_matches(element, v))),
+        ValueShape::Tuple { members } => value.as_array().is_some_and(|values| {
+            members.validate_arity(values.len()).is_ok()
+                && values.iter().enumerate().all(|(i, value)| {
+                    members
+                        .element(i, values.len())
+                        .is_some_and(|t| representation_matches(t, value))
+                })
+        }),
         ValueShape::ObservedRecord {
             fields,
             optional_fields,

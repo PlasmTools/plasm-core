@@ -165,7 +165,12 @@ impl DagNodeSource {
                     )
                     .collect();
                 out.derive_template = Some(DeriveTemplate {
-                    kind: if value_type.as_ref().is_some_and(|t| !t.is_non_null_record()) {
+                    kind: if value_type
+                        .as_ref()
+                        .is_some_and(|t| t.is_collection_result())
+                    {
+                        DeriveKind::Data
+                    } else if value_type.as_ref().is_some_and(|t| !t.is_non_null_record()) {
                         DeriveKind::Cell
                     } else {
                         DeriveKind::Map

@@ -67,6 +67,7 @@ impl Lower<'_> {
             _ => unreachable!(),
         };
         let index = self.state.labels[id];
+        let collection = value_type.is_collection_result();
         let super::super::types::DagNodeSource::Derive {
             value_type: target, ..
         } = &mut std::sync::Arc::make_mut(&mut self.state.nodes[index]).source
@@ -74,6 +75,9 @@ impl Lower<'_> {
             unreachable!("record construction inserted a derivation")
         };
         *target = Some(value_type);
+        if collection {
+            std::sync::Arc::make_mut(&mut self.state.nodes[index]).singleton = false;
+        }
         Ok(id.into())
     }
 }

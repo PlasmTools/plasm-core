@@ -53,6 +53,7 @@ pub(crate) fn inferred_helper_input_annotation(
         let base = match &required.shape {
             ValueShape::Record { .. } | ValueShape::ObservedRecord { .. } => "Row".into(),
             ValueShape::Array { element } => format!("list[{}]", annotation(element)?),
+            ValueShape::Tuple { members } => members.python_annotation(annotation)?,
             ValueShape::Set { element } => format!("set[{}]", annotation(element)?),
             ValueShape::Dictionary { key, value } => {
                 format!("dict[{}, {}]", annotation(key)?, annotation(value)?)
@@ -1156,7 +1157,7 @@ pub(crate) fn validate_plan_compute(
         return Err(PythonComputeError::InputModeMismatch.into());
     }
     if compute.compute.schema
-        != plasm_core::plasm_monad::SyntheticResultSchema::for_value(checked.output.clone())
+        != plasm_core::plasm_monad::SyntheticResultSchema::for_result(&checked.output)
             .map_err(PythonComputeRejection::from)?
     {
         return Err(PythonComputeError::OutputSchemaMismatch.into());
@@ -1164,7 +1165,15 @@ pub(crate) fn validate_plan_compute(
     if checked.per_row && compute.result_shape != plasm_core::plasm_monad::ResultShape::List {
         return Err(PythonComputeError::PerRowRenderRequiresRowset.into());
     }
-    if !checked.per_row && compute.result_shape != plasm_core::plasm_monad::ResultShape::Single {
+    if checked.output.is_collection_result()
+        && compute.result_shape != plasm_core::plasm_monad::ResultShape::List
+    {
+        return Err(PythonComputeError::CollectionRequiresRowset.into());
+    }
+    if !checked.per_row
+        && !checked.output.is_collection_result()
+        && compute.result_shape != plasm_core::plasm_monad::ResultShape::Single
+    {
         return Err(PythonComputeError::ReductionRequiresSingleton.into());
     }
 

@@ -116,6 +116,9 @@ fn render(
         ValueShape::Array { element } => {
             format!("list[{}]", render(element, cgs, catalogs, out, depth + 1)?)
         }
+        ValueShape::Tuple { members } => {
+            members.python_annotation(|member| render(member, cgs, catalogs, out, depth + 1))?
+        }
         ValueShape::Record { fields } | ValueShape::ObservedRecord { fields, .. } => {
             use sha2::{Digest, Sha256};
             let name = format!(

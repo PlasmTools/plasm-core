@@ -105,10 +105,11 @@ pub(crate) async fn materialize_synthetic_node(
                     PayloadResidency::Materialized(full_entities),
                 )?
             }
-            ComputeOp::Project { .. }
-            | ComputeOp::With { .. }
-            | ComputeOp::Sort { .. }
-            | ComputeOp::Python { per_row: true, .. } => {
+            op if matches!(
+                op,
+                ComputeOp::Project { .. } | ComputeOp::With { .. } | ComputeOp::Sort { .. }
+            ) || matches!(op, ComputeOp::Python { per_row: true, output_type, .. } if !output_type.is_collection_result()) =>
+            {
                 let mut inputs = vec![source];
                 inputs.extend(
                     node.depends_on()

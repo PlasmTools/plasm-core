@@ -54,7 +54,7 @@ finite premise witnesses, not exhaustive invalid Python generation.
   },
   {
     "operation": "binding",
-    "premise": "One local name, no supplied symbol or method shadowing; admitted DAG-producing RHS",
+    "premise": "One local name or a nested tuple/list target with a non-null fixed tuple RHS; all alternatives have matching arity; no supplied symbol or method shadowing; admitted DAG-producing RHS",
     "transfer": "Create a fresh immutable DAG version with inferred shape, cardinality, coverage, ordering, authority and effects; publish after resolving RHS; earlier captures keep their version; no IO during build",
     "law": "BC-03",
     "witnesses": [
@@ -67,7 +67,7 @@ finite premise witnesses, not exhaustive invalid Python generation.
       },
       {
         "body": "a, b = E.get(\"i1\")\nreturn a",
-        "error": "MutableLocalAssignment"
+        "error": "UnpackRequiresFixedTuple"
       },
       {
         "body": "a = b = E.get(\"i1\")\nreturn a",
@@ -125,7 +125,7 @@ finite premise witnesses, not exhaustive invalid Python generation.
     "invalid": [
       {
         "body": "return",
-        "error": "BranchingReturnUnsupported"
+        "error": "EmptyReturn"
       },
       {
         "body": "return ()",
@@ -133,7 +133,7 @@ finite premise witnesses, not exhaustive invalid Python generation.
       },
       {
         "body": "a = E.get(\"i1\")",
-        "error": "BranchingReturnUnsupported"
+        "error": "EmptyReturn"
       }
     ]
   }

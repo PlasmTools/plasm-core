@@ -71,6 +71,7 @@ pub(super) mod build {
         UnusedNonWriteExpression,
         ReservedBindingName,
         MutableLocalAssignment,
+        UnpackRequiresFixedTuple,
         BuildAssignmentTargets,
         BuildAugmentedAssignment,
         StaticIterationRequiresLiteralIds,
@@ -111,6 +112,10 @@ pub(super) mod build {
                             | (
                                 Self::MutableLocalAssignment,
                                 PythonSourceError::MutableLocalAssignment
+                            )
+                            | (
+                                Self::UnpackRequiresFixedTuple,
+                                PythonSourceError::UnpackRequiresFixedTuple
                             )
                             | (
                                 Self::BuildAssignmentTargets,

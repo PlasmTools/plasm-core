@@ -133,6 +133,9 @@ fn lower_python_program(
             source_expression: Some(value),
             ..
         } => value,
+        monty_analysis::FlowExit::Return(None) => {
+            return Err(PythonProgramError::EmptyReturn.into())
+        }
         _ => return Err(PythonProgramError::BranchingReturnUnsupported.into()),
     };
     let roots = if let PyExpr::Tuple(tuple) = value {

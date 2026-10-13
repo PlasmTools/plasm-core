@@ -506,8 +506,7 @@ pub(super) fn validate_compute_template(
     }
     match &t.op {
         ComputeOp::Python { output_type, .. } => {
-            if t.schema
-                != plasm_core::plasm_monad::SyntheticResultSchema::for_value(output_type.clone())?
+            if t.schema != plasm_core::plasm_monad::SyntheticResultSchema::for_result(output_type)?
                 || t.page_size.is_some()
                 || t.collection_alias.is_some()
             {

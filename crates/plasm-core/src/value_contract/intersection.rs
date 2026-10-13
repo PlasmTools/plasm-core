@@ -117,6 +117,15 @@ fn intersect(a: &T, b: &T, depth: usize) -> Result<T, ValueContractError> {
         (S::Array { element: a }, S::Array { element: b }) => S::Array {
             element: Box::new(recur(a, b)?),
         },
+        (S::Tuple { members: a }, S::Tuple { members: b }) => {
+            let Some(members) = a.try_zip(b, recur)? else {
+                if a.variable.is_some() && b.variable.is_some() {
+                    return Err(ValueContractError::UnrepresentableTupleIntersection);
+                }
+                return Ok(bottom());
+            };
+            S::Tuple { members }
+        }
         (
             S::Record { fields: af } | S::ObservedRecord { fields: af, .. },
             S::Record { fields: bf } | S::ObservedRecord { fields: bf, .. },

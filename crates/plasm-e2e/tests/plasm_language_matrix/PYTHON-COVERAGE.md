@@ -277,7 +277,29 @@ The production build-statement inventory is now gated by
 and thirteen rejecting programs with specific diagnostics. The registry tests
 reject omissions, duplicate rules, missing negatives and witnesses whose AST does
 not contain the constructor. `root_build_statements` retains an unreturned write
-and verifies its completed receipt alongside exact returned data; `parallel`
+and verifies its completed receipt alongside exact returned data, including nested
+immutable tuple unpacking. Compute codec properties cover nested tuple/list
+identity, positional arity, wire round trips and branch-order-independent rejection
+of ambiguous container unions; these do not establish arbitrary recursive products.
+The abstract `python_dag_slice` witnesses
+`audit_workthrough_dictionary_collection_keeps_callback_row_fields` and
+`computed_tuple_selection_interleaves_with_dag_rows_and_effects` cover computed
+array rowsets feeding ordinary DAG callbacks and ordered effects. The former
+checks the pinned identity field contract and absence of entity receiver authority;
+the latter generates 32 selection cases, including empty collections. The
+`native_output_shape_tests` property family verifies expansion of only the outer
+array axis, with embedded arrays and tuple elements retained intact. These
+witnesses do not close nullable/union-container materialization.
+`nested_array_rowsets_reenter_compute_without_losing_an_axis` checks nested-array
+recapture through literal and computed sources. `tuple_unpack_targets_can_shadow_the_acquired_tuple`
+checks original-name, nested and duplicate targets against the acquired RHS.
+`computed_dictionary_counts_preserve_row_order_and_tuple_fields` adds 16
+generated cases for unannotated empty/seeded accumulation, checking exact counts,
+tuple fields, empty output, completeness and one source read. Standalone upstream
+analysis witnesses verify closed numeric/string equations, incompatible-update
+rejection and explicitly unresolved recursive containers. This closes the named
+accumulation regression rather than claiming arbitrary mutable-container inference.
+`parallel`
 retains ordered tuple-return evidence. The seven catalog capability kinds are registered in
 [the catalog constructor contract](../../../../doc-site/docs/reference/python-catalog-constructors.md).
 The gate checks resolved typed IL against existing live witnesses and exact

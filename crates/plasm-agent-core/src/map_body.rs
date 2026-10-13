@@ -441,10 +441,8 @@ fn validate_capture_port(
         return Err(ScopeContractError::PluralCapturePromoted.into());
     }
     if let Some(value) = port.contract().value_contract() {
-        if cardinality == CaptureCardinality::Collection
-            || &crate::map_body_schema::row_contract(es, nodes, source)
-                .map_err(MapSchemaError::from)?
-                != value
+        if &crate::map_body_schema::row_contract(es, nodes, source).map_err(MapSchemaError::from)?
+            != value
         {
             return Err(ScopeContractError::ScalarCaptureContractChanged.into());
         }

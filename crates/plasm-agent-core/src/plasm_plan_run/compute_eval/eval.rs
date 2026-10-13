@@ -60,6 +60,10 @@ pub(crate) enum DataOperandError {
     IdentityUnsupported,
     #[error("data operand contains an unresolved runtime value")]
     UnresolvedOperandValue,
+    #[error("a typed collection result must contain an array")]
+    CollectionResultRequiresArray,
+    #[error(transparent)]
+    ValueContract(#[from] plasm_core::value_contract::ValueContractError),
     #[error("plan data value evaluation failed")]
     DataValueEvaluation(#[source] Box<plasm_core::PlasmDataValueEvaluationError<DataOperandError>>),
     #[error(transparent)]
@@ -444,27 +448,49 @@ pub(crate) fn resolve_input_reference(
         }
     }
 }
-/// Keep the scalar/record distinction explicit while storing every row as a native record.
-fn native_output_rows(
+pub(crate) fn typed_result_rows(
+    output_type: &plasm_core::value_contract::ValueContract,
+    values: Vec<plasm_core::Value>,
+) -> Result<(Vec<plasm_core::ValueRow>, Vec<MaterializedValueShape>), DataOperandError> {
+    let mut elements = Vec::new();
+    for value in values {
+        let values = if output_type.is_collection_result() {
+            let plasm_core::Value::Array(values) = value else {
+                return Err(DataOperandError::CollectionResultRequiresArray);
+            };
+            values
+        } else {
+            vec![value]
+        };
+        elements.extend(values);
+    }
+    Ok(typed_value_rows(output_type.result_row_type(), elements))
+}
+
+fn typed_value_rows(
+    row_type: &plasm_core::value_contract::ValueContract,
     values: Vec<plasm_core::Value>,
 ) -> (Vec<plasm_core::ValueRow>, Vec<MaterializedValueShape>) {
-    let shapes = values
-        .iter()
+    let record = row_type.is_non_null_record();
+    let rows = values
+        .into_iter()
         .map(|value| {
-            if value.is_object() {
-                MaterializedValueShape::Record
+            if record {
+                plasm_core::ValueRow::from_output(value)
             } else {
-                MaterializedValueShape::ScalarColumn
+                plasm_core::ValueRow::from_iter([("value".into(), value)])
             }
         })
-        .collect();
-    (
-        values
-            .into_iter()
-            .map(plasm_core::ValueRow::from_output)
-            .collect(),
-        shapes,
-    )
+        .collect::<Vec<_>>();
+    let shapes = vec![
+        if record {
+            MaterializedValueShape::Record
+        } else {
+            MaterializedValueShape::ScalarColumn
+        };
+        rows.len()
+    ];
+    (rows, shapes)
 }
 
 pub(crate) fn plan_value_to_rows(
@@ -482,10 +508,8 @@ pub(crate) fn plan_value_to_rows(
         wire_coercion_by_alias: &empty_coercion,
     };
     let value = eval_plan_value(value, &env)?;
-    match value {
-        plasm_core::Value::Array(items) => Ok(native_output_rows(items)),
-        value => Ok(native_output_rows(vec![value])),
-    }
+    let contract = plasm_core::value_contract::ValueContract::literal(&value)?;
+    typed_result_rows(&contract, vec![value])
 }
 
 /// Pure `derive` (map) row production: evaluate `value` once per source row under the item binding
@@ -498,6 +522,7 @@ pub(crate) fn derive_node_rows(
     value: &PlanValue,
     source_rows: &[plasm_core::ValueRow],
     input_rows: &BTreeMap<InputAlias, MaterializedInputRow>,
+    row_type: &plasm_core::value_contract::ValueContract,
 ) -> Result<(Vec<plasm_core::ValueRow>, Vec<MaterializedValueShape>), DataOperandError> {
     let empty_coercion = BTreeMap::new();
     let mut rows = Vec::with_capacity(source_rows.len());
@@ -521,8 +546,17 @@ pub(crate) fn derive_node_rows(
             .map(|value| plasm_core::ValueRow::from_iter([("value".into(), value)]))
             .collect();
         Ok((rows, shapes))
+    } else if kind == crate::plasm_plan::DeriveKind::Data {
+        let mut elements = Vec::new();
+        for value in rows {
+            let plasm_core::Value::Array(values) = value else {
+                return Err(DataOperandError::CollectionResultRequiresArray);
+            };
+            elements.extend(values);
+        }
+        Ok(typed_value_rows(row_type, elements))
     } else {
-        Ok(native_output_rows(rows))
+        Ok(typed_value_rows(row_type, rows))
     }
 }
 
@@ -733,7 +767,7 @@ pub(crate) fn synthetic_projection(node: &ValidatedPlanNode) -> Option<Vec<Strin
     match node {
         ValidatedPlanNode::Compute(compute)
             if matches!(&compute.compute.op, ComputeOp::Python { output_type, .. }
-                if !output_type.is_non_null_record()) =>
+                if !output_type.result_row_type().is_non_null_record()) =>
         {
             None
         }
@@ -753,9 +787,83 @@ pub(crate) fn synthetic_projection(node: &ValidatedPlanNode) -> Option<Vec<Strin
 #[cfg(test)]
 mod native_output_shape_tests {
     use super::*;
+    fn array(
+        element: plasm_core::value_contract::ValueContract,
+    ) -> plasm_core::value_contract::ValueContract {
+        plasm_core::value_contract::ValueContract {
+            shape: plasm_core::value_contract::ValueShape::Array {
+                element: Box::new(element),
+            },
+            domain: None,
+            nullable: false,
+        }
+    }
+    proptest::proptest! {
+        #[test]
+        fn typed_results_expand_only_the_outer_array(
+            groups in proptest::collection::vec(proptest::collection::vec(-100i64..100, 0..8), 0..16)
+        ) {
+            use plasm_core::{value_contract::ValueContract as T, Value, FieldType};
+            let inner = array(T::scalar(FieldType::Integer));
+            let values = groups.iter().map(|group| Value::Array(group.iter().copied().map(Value::Integer).collect())).collect::<Vec<_>>();
+            let (rows, shapes) = typed_result_rows(&array(inner), vec![Value::Array(values.clone())]).unwrap();
+            proptest::prop_assert_eq!(rows.len(), groups.len());
+            proptest::prop_assert!(shapes.iter().all(|shape| *shape == MaterializedValueShape::ScalarColumn));
+            for (row, value) in rows.iter().zip(values) {
+                proptest::prop_assert_eq!(row.get("value"), Some(&value));
+            }
+        }
+    }
+
+    #[test]
+    fn typed_record_arrays_keep_embedded_arrays_and_tuple_results_atomic() {
+        use plasm_core::{
+            value_contract::{TupleContract, ValueContract as T},
+            FieldType, Value,
+        };
+        let integer = T::scalar(FieldType::Integer);
+        let record = Value::Object(indexmap::IndexMap::from([(
+            "items".into(),
+            Value::Array(vec![Value::Integer(1), Value::Integer(2)]),
+        )]));
+        let record_type = T::record(
+            BTreeMap::from([("items".into(), array(integer.clone()))]),
+            Default::default(),
+        );
+        let (rows, shapes) = typed_result_rows(
+            &array(record_type),
+            vec![Value::Array(vec![record.clone()])],
+        )
+        .unwrap();
+        assert_eq!(rows, [plasm_core::ValueRow::from_output(record)]);
+        assert_eq!(shapes, [MaterializedValueShape::Record]);
+        let tuple_type = T {
+            shape: plasm_core::value_contract::ValueShape::Tuple {
+                members: TupleContract {
+                    prefix: vec![integer.clone(), integer],
+                    variable: None,
+                    suffix: vec![],
+                },
+            },
+            domain: None,
+            nullable: false,
+        };
+        let tuple = Value::Array(vec![Value::Integer(1), Value::Integer(2)]);
+        let (rows, shapes) = typed_result_rows(&tuple_type, vec![tuple.clone()]).unwrap();
+        assert_eq!(
+            rows,
+            [plasm_core::ValueRow::from_iter([("value".into(), tuple)])]
+        );
+        assert_eq!(shapes, [MaterializedValueShape::ScalarColumn]);
+    }
+
     #[test]
     fn row_scoped_derivation_binds_records_and_requires_explicit_scalar_extraction() {
-        let (source, _) = native_output_rows(vec![plasm_core::Value::Integer(7)]);
+        use plasm_core::{value_contract::ValueContract, FieldType};
+        let (source, _) = typed_value_rows(
+            &ValueContract::scalar(FieldType::Integer),
+            vec![plasm_core::Value::Integer(7)],
+        );
         let binding = BindingName::new("item").unwrap();
         let reference = |path| PlanValue::BindingSymbol {
             binding: "item".into(),
@@ -767,6 +875,10 @@ mod native_output_shape_tests {
             &reference(vec![]),
             &source,
             &BTreeMap::new(),
+            &ValueContract::record(
+                BTreeMap::from([("value".into(), ValueContract::scalar(FieldType::Integer))]),
+                Default::default(),
+            ),
         )
         .unwrap();
         assert_eq!(records, source);
@@ -777,6 +889,7 @@ mod native_output_shape_tests {
             &reference(vec!["value".into()]),
             &source,
             &BTreeMap::new(),
+            &ValueContract::scalar(FieldType::Integer),
         )
         .unwrap();
         assert_eq!(scalars, source);
@@ -810,6 +923,7 @@ mod native_output_shape_tests {
                 },
                 &source,
                 &BTreeMap::new(),
+                &plasm_core::value_contract::ValueContract::scalar(plasm_core::FieldType::Json),
             )
             .unwrap();
             assert_eq!(rows, vec![ValueRow::from_iter([("value".into(), payload)])]);
@@ -818,20 +932,19 @@ mod native_output_shape_tests {
     }
 
     #[test]
-    fn normalization_retains_each_value_shape_without_inspecting_encoded_rows() {
+    fn mixed_value_results_use_the_declared_union_layout() {
         use plasm_core::Value;
         let record = Value::Object(indexmap::IndexMap::from([(
             "value".into(),
             Value::Integer(7),
         )]));
-        let (rows, shapes) = native_output_rows(vec![Value::Integer(7), record]);
-        assert_eq!(rows[0], rows[1]);
-        assert_eq!(
-            shapes,
-            [
-                MaterializedValueShape::ScalarColumn,
-                MaterializedValueShape::Record
-            ]
-        );
+        let values = Value::Array(vec![Value::Integer(7), record]);
+        let contract = plasm_core::value_contract::ValueContract::literal(&values).unwrap();
+        let (rows, shapes) = typed_result_rows(&contract, vec![values.clone()]).unwrap();
+        assert_ne!(rows[0], rows[1]);
+        assert_eq!(shapes, [MaterializedValueShape::ScalarColumn; 2]);
+        for (row, value) in rows.iter().zip(values.as_array().unwrap()) {
+            assert_eq!(row.get("value"), Some(value));
+        }
     }
 }

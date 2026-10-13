@@ -17,6 +17,16 @@ impl T {
             t.domain = None;
             match &mut t.shape {
                 S::Array { element } | S::Set { element } => erase(element, depth + 1)?,
+                S::Tuple { members } => {
+                    for member in members
+                        .prefix
+                        .iter_mut()
+                        .chain(members.variable.iter_mut().map(Box::as_mut))
+                        .chain(members.suffix.iter_mut())
+                    {
+                        erase(member, depth + 1)?;
+                    }
+                }
                 S::MappingRecord { record } => erase(record, depth + 1)?,
                 S::Union { variants } => {
                     for value in variants {
@@ -93,6 +103,18 @@ fn meet(original: &T, evidence: &T, depth: usize) -> Result<T, ValueContractErro
             },
             ..original.clone()
         },
+        (S::Tuple { members: a }, S::Tuple { members: b }) => {
+            match a.try_zip(b, |a, b| meet(a, b, depth + 1))? {
+                Some(members) => T {
+                    shape: S::Tuple { members },
+                    ..original.clone()
+                },
+                None if a.variable.is_some() && b.variable.is_some() => {
+                    return Err(ValueContractError::UnrepresentableTupleIntersection)
+                }
+                None => bottom(),
+            }
+        }
         (
             S::Record { fields: a } | S::ObservedRecord { fields: a, .. },
             S::Record { fields: b } | S::ObservedRecord { fields: b, .. },
@@ -131,6 +153,22 @@ fn meet(original: &T, evidence: &T, depth: usize) -> Result<T, ValueContractErro
 mod tests {
     use super::*;
     use crate::{value_contract::DomainRef, FieldType, Value, ValueDomainKey};
+    proptest::proptest! {
+        #[test]
+        fn tuple_refinement_preserves_member_provenance(text in ".{0,64}") {
+            use crate::value_contract::TupleContract;
+            let plain = T::scalar(FieldType::String);
+            let mut pinned = plain.clone();
+            pinned.domain = Some(DomainRef { entry_id: "matrix".into(), catalog_hash: "pinned".into(), value_ref: ValueDomainKey::new("label").unwrap() });
+            let tuple = |member| T { shape: S::Tuple { members: TupleContract { prefix: vec![member], variable: None, suffix: vec![] } }, domain: None, nullable: false };
+            let original = tuple(pinned);
+            let evidence = tuple(plain);
+            let refined = original.refined_by(&evidence).unwrap();
+            proptest::prop_assert_eq!(&refined, &original);
+            proptest::prop_assert!(refined.validate_refinement_value(&Value::Array(vec![Value::String(text)])).is_ok());
+            proptest::prop_assert_eq!(original.intersect_constraints(&evidence).unwrap(), original);
+        }
+    }
     #[test]
     fn refinement_intersects_unions_without_granting_domains() {
         let text = T::scalar(FieldType::String);

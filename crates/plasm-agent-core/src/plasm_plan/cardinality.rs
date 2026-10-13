@@ -99,6 +99,7 @@ pub(super) fn analyze_static_cardinality(
             PlanNodeKind::Derive => node
                 .derive_template
                 .as_ref()
+                .filter(|t| t.kind != super::DeriveKind::Data)
                 .and_then(|t| t.source.as_deref())
                 .map(source_proof)
                 .unwrap_or(RowCardinalityProof::StaticPlural),
@@ -199,6 +200,9 @@ fn validated_analyze_static_cardinality(
                 | PlanValue::EntityRefKey { .. } => RowCardinalityProof::StaticPlural,
                 _ => RowCardinalityProof::StaticSingleton,
             },
+            ValidatedPlanNode::Derive(d) if d.kind == super::DeriveKind::Data => {
+                RowCardinalityProof::StaticPlural
+            }
             ValidatedPlanNode::Derive(d) => source_proof(d.source.as_str()),
             ValidatedPlanNode::Compute(c) => compute_cardinality_transfer(&c.compute.op, || {
                 source_proof(c.compute.source.as_str())

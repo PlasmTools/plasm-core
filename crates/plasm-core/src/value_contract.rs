@@ -8,6 +8,33 @@ mod intersection;
 mod refinement;
 mod transfer;
 
+#[cfg(test)]
+mod tuple_tests {
+    use super::*;
+    use proptest::prelude::*;
+
+    proptest! {
+        #[test]
+        fn positional_tuple_arity_and_contracts(prefix in 0usize..8, middle in 0usize..16, suffix in 0usize..8, variadic in any::<bool>()) {
+            let text = ValueContract::scalar(FieldType::String);
+            let number = ValueContract::scalar(FieldType::Integer);
+            let boolean = ValueContract::scalar(FieldType::Boolean);
+            let tuple = TupleContract { prefix: vec![text.clone(); prefix], variable: variadic.then(|| Box::new(number.clone())), suffix: vec![boolean.clone(); suffix] };
+            let length = prefix + suffix + middle;
+            prop_assert_eq!(tuple.validate_arity(length).is_ok(), variadic || middle == 0);
+            if variadic || middle == 0 {
+                for index in 0..length {
+                    let expected = if index < prefix { &text } else if index >= length - suffix { &boolean } else { &number };
+                    prop_assert_eq!(tuple.element(index, length), Some(expected));
+                }
+            }
+            prop_assert_eq!(tuple.element(length, length), None);
+            let restored: TupleContract = serde_json::from_str(&serde_json::to_string(&tuple).unwrap()).unwrap();
+            prop_assert_eq!(&tuple, &restored);
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct DomainRef {
     pub entry_id: String,
@@ -22,6 +49,139 @@ pub struct ValueContract {
     pub nullable: bool,
 }
 
+/// Python tuple positions; JSON arrays are only their wire representation.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct TupleContract {
+    pub prefix: Vec<ValueContract>,
+    pub variable: Option<Box<ValueContract>>,
+    pub suffix: Vec<ValueContract>,
+}
+
+impl TupleContract {
+    pub(super) fn try_zip<E>(
+        &self,
+        other: &Self,
+        mut combine: impl FnMut(&ValueContract, &ValueContract) -> Result<ValueContract, E>,
+    ) -> Result<Option<Self>, E> {
+        if self.variable.is_none() || other.variable.is_none() {
+            let length = if self.variable.is_none() {
+                self.prefix.len() + self.suffix.len()
+            } else {
+                other.prefix.len() + other.suffix.len()
+            };
+            if self.validate_arity(length).is_err() || other.validate_arity(length).is_err() {
+                return Ok(None);
+            }
+            let mut prefix = Vec::with_capacity(length);
+            for index in 0..length {
+                let (Some(a), Some(b)) =
+                    (self.element(index, length), other.element(index, length))
+                else {
+                    return Ok(None);
+                };
+                prefix.push(combine(a, b)?);
+            }
+            return Ok(Some(Self {
+                prefix,
+                variable: None,
+                suffix: Vec::new(),
+            }));
+        }
+        if self.prefix.len() != other.prefix.len()
+            || self.suffix.len() != other.suffix.len()
+            || self.variable.is_some() != other.variable.is_some()
+        {
+            return Ok(None);
+        }
+        let prefix = self
+            .prefix
+            .iter()
+            .zip(&other.prefix)
+            .map(|(a, b)| combine(a, b))
+            .collect::<Result<_, _>>()?;
+        let variable = match (&self.variable, &other.variable) {
+            (Some(a), Some(b)) => Some(Box::new(combine(a, b)?)),
+            _ => None,
+        };
+        let suffix = self
+            .suffix
+            .iter()
+            .zip(&other.suffix)
+            .map(|(a, b)| combine(a, b))
+            .collect::<Result<_, _>>()?;
+        Ok(Some(Self {
+            prefix,
+            variable,
+            suffix,
+        }))
+    }
+
+    pub fn python_annotation<E>(
+        &self,
+        mut render: impl FnMut(&ValueContract) -> Result<String, E>,
+    ) -> Result<String, E> {
+        let mut parts = self
+            .prefix
+            .iter()
+            .map(&mut render)
+            .collect::<Result<Vec<_>, _>>()?;
+        if let Some(variable) = &self.variable {
+            let ty = render(variable)?;
+            if self.prefix.is_empty() && self.suffix.is_empty() {
+                parts.extend([ty, "...".into()]);
+            } else {
+                parts.push(format!("*tuple[{ty}, ...]"));
+            }
+        }
+        parts.extend(
+            self.suffix
+                .iter()
+                .map(render)
+                .collect::<Result<Vec<_>, _>>()?,
+        );
+        Ok(format!(
+            "tuple[{}]",
+            if parts.is_empty() {
+                "()".into()
+            } else {
+                parts.join(", ")
+            }
+        ))
+    }
+    pub fn members(&self) -> impl Iterator<Item = &ValueContract> {
+        self.prefix
+            .iter()
+            .chain(self.variable.iter().map(Box::as_ref))
+            .chain(self.suffix.iter())
+    }
+
+    pub fn validate_arity(&self, actual: usize) -> Result<(), ValueContractError> {
+        let minimum = self.prefix.len() + self.suffix.len();
+        if actual < minimum || (self.variable.is_none() && actual != minimum) {
+            return Err(ValueContractError::TupleArity {
+                minimum,
+                variadic: self.variable.is_some(),
+                actual,
+            });
+        }
+        Ok(())
+    }
+
+    pub fn element(&self, index: usize, length: usize) -> Option<&ValueContract> {
+        if self.validate_arity(length).is_err() || index >= length {
+            return None;
+        }
+        if index < self.prefix.len() {
+            return self.prefix.get(index);
+        }
+        let suffix_start = length - self.suffix.len();
+        if index >= suffix_start {
+            return self.suffix.get(index - suffix_start);
+        }
+        self.variable.as_deref()
+    }
+}
+
 /// Semantic type notation for corrections; catalog pins and internal ownership
 /// records stay in the typed contract.
 impl std::fmt::Display for ValueContract {
@@ -30,6 +190,11 @@ impl std::fmt::Display for ValueContract {
             ValueShape::Scalar { field_type } => write!(f, "{field_type}")?,
             ValueShape::Temporal { kind, .. } => write!(f, "{kind}")?,
             ValueShape::Array { element } => write!(f, "list[{element}]")?,
+            ValueShape::Tuple { members } => {
+                let notation = members
+                    .python_annotation(|member| Ok::<_, std::fmt::Error>(member.to_string()))?;
+                write!(f, "{notation}")?;
+            }
             ValueShape::Set { element } => write!(f, "set[{element}]")?,
             ValueShape::Dictionary { key, value } => write!(f, "dict[{key}, {value}]")?,
             ValueShape::MappingRecord { record } => write!(f, "mapping[{record}]")?,
@@ -70,6 +235,14 @@ impl std::fmt::Display for ValueContract {
 
 #[derive(Debug, Clone, PartialEq, Eq, Error)]
 pub enum ValueContractError {
+    #[error("tuple requires {minimum} positions (variadic: {variadic}); received {actual}")]
+    TupleArity {
+        minimum: usize,
+        variadic: bool,
+        actual: usize,
+    },
+    #[error("tuple position {index} is absent from its contract")]
+    TuplePositionMissing { index: usize },
     #[error("field `{name}` is absent from the record contract")]
     FieldMissing { name: String },
     #[error("field `{name}` requires a record contract")]
@@ -125,6 +298,8 @@ pub enum ValueContractError {
     ConflictingTemporalEncodings,
     #[error("value contract intersection has no representable specialized carrier")]
     UnrepresentableSpecializedIntersection,
+    #[error("tuple constraint intersection requires matching variadic positional layouts")]
+    UnrepresentableTupleIntersection,
     #[error("value-domain recursion exceeded the supported materialization limit")]
     DomainResolutionDepthExceeded,
     #[error("value domain is absent from the catalog")]
@@ -210,6 +385,9 @@ pub enum ValueShape {
     Array {
         element: Box<ValueContract>,
     },
+    Tuple {
+        members: TupleContract,
+    },
     /// Python dictionary data. Keys are strings at the materialization boundary;
     /// no particular key is guaranteed present and no receiver authority is implied.
     Dictionary {
@@ -241,6 +419,18 @@ enum ValidationBoundary {
 }
 
 impl ValueContract {
+    /// A non-null result array produces one value row per element. Nested
+    /// arrays remain values because this projects only the result's outer axis.
+    pub fn result_row_type(&self) -> &Self {
+        match &self.shape {
+            ValueShape::Array { element } if !self.nullable => element,
+            _ => self,
+        }
+    }
+
+    pub fn is_collection_result(&self) -> bool {
+        !self.nullable && matches!(self.shape, ValueShape::Array { .. })
+    }
     /// Whether every inhabitant is a record, suitable for direct row storage.
     pub fn is_non_null_record(&self) -> bool {
         !self.nullable
@@ -360,6 +550,20 @@ impl ValueContract {
                 .map(|value| element.observed_value_at(value, cgs, entry, depth + 1, catalogs))
                 .collect::<Result<Vec<_>, _>>()
                 .map(crate::Value::Array),
+            (ValueShape::Tuple { members }, crate::Value::Array(values)) => {
+                members.validate_arity(values.len())?;
+                values
+                    .iter()
+                    .enumerate()
+                    .map(|(i, value)| {
+                        members
+                            .element(i, values.len())
+                            .ok_or(ValueContractError::TuplePositionMissing { index: i })?
+                            .observed_value_at(value, cgs, entry, depth + 1, catalogs)
+                    })
+                    .collect::<Result<Vec<_>, _>>()
+                    .map(crate::Value::Array)
+            }
             (ValueShape::Record { fields }, crate::Value::Object(values)) => values
                 .iter()
                 .map(|(name, value)| {
@@ -604,7 +808,9 @@ impl ValueContract {
             ValueShape::Temporal { .. } => K::Temporal,
             ValueShape::Never | ValueShape::Union { .. } => K::Unknown,
             ValueShape::Null => K::Null,
-            ValueShape::Array { .. } | ValueShape::Set { .. } => K::Array,
+            ValueShape::Array { .. } | ValueShape::Set { .. } | ValueShape::Tuple { .. } => {
+                K::Array
+            }
             ValueShape::MappingRecord { .. } => K::Object,
             ValueShape::Record { .. }
             | ValueShape::ObservedRecord { .. }
@@ -816,6 +1022,30 @@ impl ValueContract {
                         catalogs,
                         boundary,
                     )?;
+                }
+                true
+            }
+            ValueShape::Tuple { members } => {
+                let values = value
+                    .as_array()
+                    .ok_or_else(|| ValueContractError::ShapeMismatch {
+                        path: path.into(),
+                        expected: "tuple",
+                    })?;
+                members.validate_arity(values.len())?;
+                for (i, value) in values.iter().enumerate() {
+                    members
+                        .element(i, values.len())
+                        .ok_or(ValueContractError::TuplePositionMissing { index: i })?
+                        .validate_at(
+                            value,
+                            cgs,
+                            entry,
+                            &format!("{path}[{i}]"),
+                            depth + 1,
+                            catalogs,
+                            boundary,
+                        )?;
                 }
                 true
             }
@@ -1083,6 +1313,9 @@ impl ValueContract {
                 .join(" | "),
             ValueShape::Null => "None".into(),
             ValueShape::Array { element } => format!("list[{}]", element.python_type()),
+            ValueShape::Tuple { members } => members
+                .python_annotation(|member| Ok::<_, std::convert::Infallible>(member.python_type()))
+                .unwrap_or_else(|never| match never {}),
             ValueShape::Set { element } => format!("set[{}]", element.python_type()),
             ValueShape::MappingRecord { record } => record.python_type(),
             ValueShape::Dictionary { key, value } => {

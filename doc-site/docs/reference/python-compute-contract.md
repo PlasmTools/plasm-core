@@ -52,6 +52,15 @@ through a float or discard ordinary blob objects. This does not widen the signed
 domain. Temporal and money domains use their declared canonical encodings;
 normalization is distinct from loss of value or field presence.
 
+Python tuples retain their ordered positional contracts and Python tuple identity
+when nested values cross compute boundaries. JSON arrays are their artifact wire
+representation; materialization must restore tuples rather than lists. Tuple/list
+or tuple/set unions whose wire values admit distinct Python representations fail
+explicitly instead of selecting a branch by declaration order. Fixed tuple values
+can bind nested tuple/list assignment targets in `build`; every return alternative
+must have matching arity and the unpacked container must be non-null. The RHS is
+acquired once in the previous binding environment.
+
 ## Dependency closure
 
 All accessible workflow values MUST be explicit node inputs. Pure compute has
@@ -89,7 +98,14 @@ Compute returns use the recursive Plasm value contract. Annotations admit
 `bool`, `int`, `float`, `str`, session `vN`, `Row`, `Value[eN]`, record type fields
 such as `Row.price`, `list[T]`, and `T | U` (including `None`). `Row` is the actual
 input row contract, including field presence. A returned record may be an input
-record or a matching Python dictionary. Arrays remain typed values; they do not implicitly become entity rowsets. Every output is
+record or a matching Python dictionary. A non-null array returned by a compute
+node materializes as a value rowset: one row per outer element, in order, including
+zero rows for an empty array. Records expose their fields; scalar and tuple
+elements use the scalar value column. Embedded arrays remain field values; only
+the outer result axis expands. These rows retain their element and field contracts
+without acquiring entity receiver authority. Nullable or union-valued containers
+remain values unless their contract establishes the collection result axis.
+Every output is
 validated before publication and dependent effects. Arbitrary Python objects,
 non-string dictionary keys, nonfinite numbers, cycles and out-of-range integers
 are rejected. Each named domain resolves against its own loaded, pinned catalog,
@@ -284,6 +300,34 @@ differential evidence remains open in BC-04.
 | Whole-input dependencies without heuristic field pruning | Whole declared schemas replace used-field inference; projection omission is checked |
 | Profile inventory and complete conformance classification | [Profile ledger](python-compute-profile.md); syntax families and every bundled module classified with policy/admission witnesses |
 | Existing rowset/identity/effect laws | Retained; original matrix remains mandatory |
+
+## Mutable collection inference
+
+The checker distinguishes pending inference from resolved overload ambiguity.
+A pending cycle marker cannot justify pruning matching overloads: their provisional
+return union retains finite evidence until the fixed point closes. This state
+does not introduce an `Any` or `Unknown` output contract.
+
+An unannotated mutable initializer has a fixed collection shell and inferred
+element variables. Normalize the equations for those variables at their own
+roots, including the expression and definition results. Treating the fixed shell
+as another recursive value layer discards finite evidence such as `int | pending`
+and can leave ordinary accumulation unresolved. Actual recursive values inside
+elements still use recursive-type normalization and remain inadmissible when no
+closed materialized contract exists.
+
+Standalone `monty-analysis` witnesses cover empty and seeded dictionary
+accumulation, numeric and string element equations, incompatible-update rejection,
+and an explicitly unresolved recursive collection. The Plasm fixture witness
+`audit_workthrough_compute_dictionary_accumulation_returns_primitive_tuple`
+checks admission and execution with annotated, seeded and empty initializers and
+the exact returned tuple. No catalogue-specific inference, annotation injection,
+second Python checker or increased recursion bound implements these rules.
+
+Compute input schema shaping and nominal-owner admission share one iterative
+ownership classification. Field contracts survive value projection and compute;
+they do not themselves acquire an entity receiver. Side-effect acknowledgements
+carry their own result fields, rather than the producer entity's fields.
 
 ## Maintenance rule
 

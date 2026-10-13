@@ -224,6 +224,13 @@ impl SyntheticResultSchema {
         })
     }
 
+    /// Storage columns for the logical rows of a typed result.
+    pub fn for_result(
+        value: &crate::value_contract::ValueContract,
+    ) -> Result<Self, SyntheticResultSchemaError> {
+        Self::for_value(value.result_row_type().clone())
+    }
+
     pub fn row_contract(
         &self,
     ) -> Result<crate::value_contract::ValueContract, SyntheticResultSchemaError> {

@@ -95,9 +95,9 @@ pub(in crate::plasm_dag) fn resolve_immediate_compute_schema(
         DagNodeSource::Compute { schema, .. } | DagNodeSource::MapBody { schema, .. } => {
             Some(schema.clone())
         }
-        DagNodeSource::Derive { value_type, .. } => value_type.as_ref().and_then(|t| {
-            plasm_core::plasm_monad::SyntheticResultSchema::for_value(t.clone()).ok()
-        }),
+        DagNodeSource::Derive { value_type, .. } => value_type
+            .as_ref()
+            .and_then(|t| plasm_core::plasm_monad::SyntheticResultSchema::for_result(t).ok()),
         _ => None,
     }
 }

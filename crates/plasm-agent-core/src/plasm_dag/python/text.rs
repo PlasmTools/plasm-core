@@ -325,9 +325,10 @@ impl Lower<'_> {
         };
         let per_row = *per_row;
         let output = crate::python_compute::check_op(self.es, &op)?.output;
-        let singleton = !per_row
-            || super::super::binding_contract(&self.state, &source)
-                .is_some_and(|c| c.row_cardinality.permits_scalar_field_extract());
+        let singleton = !output.is_collection_result()
+            && (!per_row
+                || super::super::binding_contract(&self.state, &source)
+                    .is_some_and(|c| c.row_cardinality.permits_scalar_field_extract()));
         self.insert(DagNode {
             id: id.into(),
             expr: String::new(),
@@ -336,7 +337,7 @@ impl Lower<'_> {
             source: super::super::types::DagNodeSource::Compute {
                 source,
                 op,
-                schema: SyntheticResultSchema::for_value(output)?,
+                schema: SyntheticResultSchema::for_result(&output)?,
                 collection_alias: None,
             },
         })
@@ -361,7 +362,7 @@ pub(super) fn inferred_schema(
         ..
     } = &node.source
     {
-        return SyntheticResultSchema::for_value(schema.clone()).map_err(Into::into);
+        return SyntheticResultSchema::for_result(schema).map_err(Into::into);
     }
     if let DagNodeSource::ScalarExtract { source, wire } = &node.source {
         let schema = inferred_schema(es, state, source, depth + 1)?;
@@ -381,7 +382,7 @@ pub(super) fn inferred_schema(
     }
     if let DagNodeSource::Data(PlanValue::Literal { value }) = &node.source {
         let value_type = plasm_core::value_contract::ValueContract::literal(value.value())?;
-        return SyntheticResultSchema::for_value(value_type).map_err(Into::into);
+        return SyntheticResultSchema::for_result(&value_type).map_err(Into::into);
     }
     if let DagNodeSource::Derive {
         value_type: _,
@@ -391,7 +392,7 @@ pub(super) fn inferred_schema(
     } = &node.source
     {
         let t = derive_contract(es, state, source, value, inputs, depth)?;
-        return SyntheticResultSchema::for_value(t).map_err(Into::into);
+        return SyntheticResultSchema::for_result(&t).map_err(Into::into);
     }
     let mut schema = super::super::schema_validate::compute_passthrough_or_fallback_schema(
         es,
@@ -402,9 +403,7 @@ pub(super) fn inferred_schema(
     );
     // A captured entity value contains data fields, not unexecuted navigation
     // capabilities. Apply this recursively, before constructing capture records.
-    if implicit_entity_value(state, id, 0) {
-        let owner = compute_owner(state, id, 0)
-            .ok_or(PythonLoweringInvariantError::InputEntityOwnerMissing)?;
+    if let Some(owner) = compute_owner(state, id) {
         let cgs = crate::catalog_ownership::resolve_cgs_for_entry_entity(
             es,
             &owner.entry_id,
@@ -494,7 +493,7 @@ pub(super) fn prepare_op(
     let owner = if multiple {
         None
     } else {
-        compute_owner(state, source, 0)
+        compute_owner(state, source)
     };
     let entry = if let Some(owner) = &owner {
         owner.entry_id.clone()
@@ -557,57 +556,63 @@ pub(super) fn prepare_op(
 fn compute_owner(
     state: &super::super::types::CompileState<'_>,
     source: &str,
-    depth: usize,
 ) -> Option<QualifiedEntityKey> {
-    if depth >= 64 {
-        return None;
-    }
-    if let Some(owner) = super::super::schema_validate::resolve_qualified_entity_for_dag_source(
-        state,
-        &[],
-        source.to_string(),
-    ) {
-        return Some(owner);
-    }
-    match &state.get(source)?.source {
-        super::super::types::DagNodeSource::Derive { inputs, .. } => inputs
-            .iter()
-            .find_map(|input| compute_owner(state, &input.node, depth + 1)),
-        super::super::types::DagNodeSource::ScalarExtract { source, .. }
-        | super::super::types::DagNodeSource::Compute { source, .. } => {
-            compute_owner(state, source, depth + 1)
-        }
-        _ => None,
-    }
-}
-
-fn implicit_entity_value(
-    state: &super::super::types::CompileState<'_>,
-    source: &str,
-    depth: usize,
-) -> bool {
     use super::super::types::DagNodeSource;
-    if depth >= 64 {
-        return false;
-    }
-    match state.get(source).map(|node| &node.source) {
-        Some(DagNodeSource::Surface { .. } | DagNodeSource::RelationTraversal { .. }) => true,
-        Some(DagNodeSource::MapBody { body, .. }) => matches!(
-            body.output,
-            ScopedOutput::Rows {
-                entity_authority: true,
+    let mut current = source;
+    let mut visited = std::collections::HashSet::new();
+    while visited.insert(current) {
+        match &state.get(current)?.source {
+            DagNodeSource::Surface {
+                qualified_entity,
+                result_shape,
+                ..
+            } => {
+                return (*result_shape != ResultShape::SideEffectAck)
+                    .then(|| qualified_entity.clone());
+            }
+            DagNodeSource::RelationTraversal {
+                qualified_entity, ..
+            }
+            | DagNodeSource::ForEach {
+                qualified_entity,
+                effect_kind:
+                    PlanNodeKind::Get
+                    | PlanNodeKind::Query
+                    | PlanNodeKind::Search
+                    | PlanNodeKind::Create,
                 ..
             }
-        ),
-        Some(DagNodeSource::Compute {
-            source,
-            op:
-                ComputeOp::Limit { .. }
-                | ComputeOp::Filter { .. }
-                | ComputeOp::Sort { .. }
-                | ComputeOp::DedupeBy { .. },
-            ..
-        }) => implicit_entity_value(state, source, depth + 1),
-        _ => false,
+            | DagNodeSource::IterateUntil {
+                qualified_entity, ..
+            } => {
+                return Some(qualified_entity.clone());
+            }
+            DagNodeSource::MapBody { body, .. } => match &body.output {
+                ScopedOutput::Filter => current = body.parent.source.as_str(),
+                ScopedOutput::Rows {
+                    entity,
+                    entity_authority: true,
+                    ..
+                } => {
+                    return Some(QualifiedEntityKey {
+                        entry_id: entity.entry_id.clone(),
+                        entity: entity.entity.clone(),
+                    });
+                }
+                _ => return None,
+            },
+            DagNodeSource::Compute {
+                source,
+                op:
+                    ComputeOp::Limit { .. }
+                    | ComputeOp::Filter { .. }
+                    | ComputeOp::Sort { .. }
+                    | ComputeOp::DedupeBy { .. },
+                ..
+            } => current = source,
+            // Computed/projected values retain field contracts, not entity ownership.
+            _ => return None,
+        }
     }
+    None
 }

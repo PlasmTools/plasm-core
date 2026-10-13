@@ -33,6 +33,8 @@ pub enum PythonComputeError {
     PerRowRenderRequiresRowset,
     #[error("Python reduction must declare a singleton result")]
     ReductionRequiresSingleton,
+    #[error("Python array results require a rowset result shape")]
+    CollectionRequiresRowset,
     #[error("Python input schema differs from its source")]
     InputSchemaMismatch,
     #[error("Python compute projection must preserve consumed catalog field `{field}`")]
@@ -441,6 +443,12 @@ pub enum PythonSourceError {
     UnusedNonWriteExpression,
     #[error("Python source is invalid: only immutable local assignments are admitted")]
     MutableLocalAssignment,
+    #[error(
+        "build unpacking requires a non-null tuple with the same fixed arity on every return path; unpack variable-length or nullable values inside @compute"
+    )]
+    UnpackRequiresFixedTuple,
+    #[error("tuple unpacking has {targets} targets but the value has {positions} positions")]
+    UnpackArity { targets: usize, positions: usize },
     #[error("Python source is invalid: reserved binding name: `{name}`")]
     ReservedBindingName { name: String },
     #[error("Python source is invalid: unknown local rowset: `{binding}`")]
@@ -624,7 +632,9 @@ pub enum PythonProgramError {
     BuildLocalShadowsReservedBinding,
     #[error("build requires materialized return roots; branching roots have no DAG return representation")]
     BranchingReturnUnsupported,
-    #[error("return must contain at least one rowset")]
+    #[error(
+        "build requires a returned result; add an explicit return of rows, a computed value or an effect"
+    )]
     EmptyReturn,
     #[error("compute {name} requires a typed DAG callsite")]
     UnusedCompute { name: String },
@@ -872,8 +882,6 @@ pub enum PythonLoweringInvariantError {
     ComputeContextMissing,
     #[error("lowering could not resolve a row source")]
     RowSourceMissing,
-    #[error("lowering could not resolve an input entity owner")]
-    InputEntityOwnerMissing,
     #[error("lowering could not resolve an input entity")]
     InputEntityMissing,
     #[error("lowering could not resolve a required input")]

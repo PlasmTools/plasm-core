@@ -307,7 +307,7 @@ pub(in crate::plasm_dag) fn program_binding_contract_for_source(
             ..
         } => {
             let mut contract = synthetic_terminal_contract(label, schema);
-            if !output_type.is_non_null_record() {
+            if !output_type.result_row_type().is_non_null_record() {
                 contract.value_kind = BindingValueKind::ScalarCell;
             }
             contract.row_cardinality = crate::plasm_plan::compute_cardinality_transfer(op, || {
@@ -366,14 +366,18 @@ pub(in crate::plasm_dag) fn program_binding_contract_for_source(
             value_type: Some(schema),
             ..
         } => {
-            let schema = plasm_core::plasm_monad::SyntheticResultSchema::for_value(schema.clone())
+            let collection = schema.is_collection_result();
+            let row_record = schema.result_row_type().is_non_null_record();
+            let schema = plasm_core::plasm_monad::SyntheticResultSchema::for_result(schema)
                 .expect("validated value contract");
             let mut contract = synthetic_row_contract(label, &schema);
-            if !matches!(&source, DagNodeSource::Derive { value_type: Some(t), .. } if t.is_non_null_record())
-            {
+            if !row_record {
                 contract.value_kind = BindingValueKind::ScalarCell;
             }
-            if state.get(label).is_some_and(|node| node.singleton) {
+            if collection {
+                contract.row_cardinality = RowCardinalityProof::StaticPlural;
+                contract.result_shape = crate::plasm_plan::ResultShape::List;
+            } else if state.get(label).is_some_and(|node| node.singleton) {
                 contract.row_cardinality = RowCardinalityProof::StaticSingleton;
                 contract.result_shape = crate::plasm_plan::ResultShape::Single;
             }
@@ -426,36 +430,45 @@ struct DataLiteralShape {
 /// Single classifier for `DagNodeSource::Data` — cardinality and value-kind stay aligned.
 fn data_literal_shape(value: &PlanValue) -> DataLiteralShape {
     match value {
-        PlanValue::Literal { value: lit } => match lit.value() {
-            plasm_core::Value::Null
-            | plasm_core::Value::Bool(_)
-            | plasm_core::Value::Unsigned(_)
-            | plasm_core::Value::Integer(_)
-            | plasm_core::Value::Float(_)
-            | plasm_core::Value::Money(_)
-            | plasm_core::Value::String(_) => DataLiteralShape {
-                result_shape: crate::plasm_plan::ResultShape::Single,
-                row_cardinality: RowCardinalityProof::StaticSingleton,
-                value_kind: BindingValueKind::ScalarCell,
-            },
-            plasm_core::Value::Array(items) if items.len() <= 1 => DataLiteralShape {
-                result_shape: crate::plasm_plan::ResultShape::Single,
-                row_cardinality: RowCardinalityProof::StaticSingleton,
-                value_kind: BindingValueKind::EntityRow,
-            },
-            plasm_core::Value::Array(_) => DataLiteralShape {
-                result_shape: crate::plasm_plan::ResultShape::List,
-                row_cardinality: RowCardinalityProof::StaticPlural,
-                value_kind: BindingValueKind::EntityRow,
-            },
-            // Objects are non-array literals → prior `as_array().is_none_or(…)` treated them
-            // as singleton rows, not scalar cells.
-            _ => DataLiteralShape {
-                result_shape: crate::plasm_plan::ResultShape::Single,
-                row_cardinality: RowCardinalityProof::StaticSingleton,
-                value_kind: BindingValueKind::EntityRow,
-            },
-        },
+        PlanValue::Literal { value: lit } => {
+            let row_kind = if plasm_core::value_contract::ValueContract::literal(lit.value())
+                .is_ok_and(|contract| contract.result_row_type().is_non_null_record())
+            {
+                BindingValueKind::EntityRow
+            } else {
+                BindingValueKind::ScalarCell
+            };
+            match lit.value() {
+                plasm_core::Value::Null
+                | plasm_core::Value::Bool(_)
+                | plasm_core::Value::Unsigned(_)
+                | plasm_core::Value::Integer(_)
+                | plasm_core::Value::Float(_)
+                | plasm_core::Value::Money(_)
+                | plasm_core::Value::String(_) => DataLiteralShape {
+                    result_shape: crate::plasm_plan::ResultShape::Single,
+                    row_cardinality: RowCardinalityProof::StaticSingleton,
+                    value_kind: BindingValueKind::ScalarCell,
+                },
+                plasm_core::Value::Array(items) if items.len() <= 1 => DataLiteralShape {
+                    result_shape: crate::plasm_plan::ResultShape::Single,
+                    row_cardinality: RowCardinalityProof::StaticSingleton,
+                    value_kind: row_kind,
+                },
+                plasm_core::Value::Array(_) => DataLiteralShape {
+                    result_shape: crate::plasm_plan::ResultShape::List,
+                    row_cardinality: RowCardinalityProof::StaticPlural,
+                    value_kind: row_kind,
+                },
+                // Objects are non-array literals → prior `as_array().is_none_or(…)` treated them
+                // as singleton rows, not scalar cells.
+                _ => DataLiteralShape {
+                    result_shape: crate::plasm_plan::ResultShape::Single,
+                    row_cardinality: RowCardinalityProof::StaticSingleton,
+                    value_kind: BindingValueKind::EntityRow,
+                },
+            }
+        }
         _ => DataLiteralShape {
             result_shape: crate::plasm_plan::ResultShape::List,
             row_cardinality: RowCardinalityProof::StaticPlural,
@@ -685,7 +698,7 @@ mod tests {
             value: plasm_core::operand_binding::ResolvedValue::from_wire(serde_json::json!([1]))
                 .expect("literal data"),
         });
-        assert_eq!(arr1.value_kind, BindingValueKind::EntityRow);
+        assert_eq!(arr1.value_kind, BindingValueKind::ScalarCell);
         assert!(matches!(
             arr1.row_cardinality,
             RowCardinalityProof::StaticSingleton
@@ -695,7 +708,7 @@ mod tests {
             value: plasm_core::operand_binding::ResolvedValue::from_wire(serde_json::json!([1, 2]))
                 .expect("literal data"),
         });
-        assert_eq!(arr_many.value_kind, BindingValueKind::EntityRow);
+        assert_eq!(arr_many.value_kind, BindingValueKind::ScalarCell);
         assert!(matches!(
             arr_many.row_cardinality,
             RowCardinalityProof::StaticPlural

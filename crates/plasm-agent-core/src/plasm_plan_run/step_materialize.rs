@@ -363,25 +363,9 @@ async fn live_materialize_pure(
             let ComputeOp::Python { output_type, .. } = &compute.compute.op else {
                 unreachable!()
             };
-            let record = output_type.is_non_null_record();
-            value_shapes = vec![
-                if record {
-                    MaterializedValueShape::Record
-                } else {
-                    MaterializedValueShape::ScalarColumn
-                };
-                rendered.len()
-            ];
-            let rows = rendered
-                .into_iter()
-                .map(|value| {
-                    if record {
-                        plasm_core::ValueRow::from_output(value)
-                    } else {
-                        plasm_core::ValueRow::from_iter([("value".into(), value)])
-                    }
-                })
-                .collect();
+            let (rows, shapes) = super::compute_eval::typed_result_rows(output_type, rendered)
+                .map_err(|error| step_failure("compute_result_shape_invalid", error.to_string()))?;
+            value_shapes = shapes;
             ComputedRows::synthetic(rows)
         } else {
             let input_contract = crate::map_body_schema::row_operation_contract(

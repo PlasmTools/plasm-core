@@ -225,21 +225,35 @@ fn upstream_expression_contracts_preserve_python_semantics() {
 }
 
 #[test]
-fn inferred_tuples_materialize_as_closed_ordered_arrays() {
+fn inferred_tuples_preserve_closed_positional_contracts() {
+    let tuple = |prefix| Type {
+        shape: ValueShape::Tuple {
+            members: plasm_core::value_contract::TupleContract {
+                prefix,
+                variable: None,
+                suffix: vec![],
+            },
+        },
+        domain: None,
+        nullable: false,
+    };
     let input = fields(&[
         ("number", Type::scalar(FieldType::Integer)),
         ("title", Type::scalar(FieldType::String)),
     ]);
     assert_eq!(
         infer("(row.number, row.number + 1)", "row", &input, "").unwrap(),
-        array(Type::scalar(FieldType::Integer))
+        tuple(vec![
+            Type::scalar(FieldType::Integer),
+            Type::scalar(FieldType::Integer)
+        ])
     );
     assert_eq!(
         infer("(row.number, row.title)", "row", &input, "").unwrap(),
-        array(Type::join(
+        tuple(vec![
             Type::scalar(FieldType::Integer),
             Type::scalar(FieldType::String),
-        ))
+        ])
     );
 }
 

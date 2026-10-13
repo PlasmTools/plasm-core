@@ -227,12 +227,18 @@ impl PureStep {
                     )
                     .into());
                 }
+                let row_type = crate::map_body_schema::row_contract(
+                    inputs.es,
+                    inputs.schema_nodes,
+                    d.id.as_str(),
+                )?;
                 let (rows, value_shapes) = derive_node_rows(
                     d.kind,
                     &d.item_binding,
                     &d.value,
                     inputs.source_rows,
                     inputs.input_rows,
+                    &row_type,
                 )
                 .map_err(PureStepError::DeriveEvaluation)?;
                 let row_identities = vec![None; rows.len()];

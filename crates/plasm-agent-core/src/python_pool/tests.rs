@@ -1,6 +1,52 @@
 use super::*;
 use monty_pool::{PoolError, ResumeValue};
 
+fn tuple_contract(
+    fields: Vec<plasm_core::value_contract::ValueContract>,
+) -> plasm_core::value_contract::ValueContract {
+    use plasm_core::value_contract::{TupleContract, ValueContract, ValueShape};
+    ValueContract {
+        shape: ValueShape::Tuple {
+            members: TupleContract {
+                prefix: fields,
+                variable: None,
+                suffix: Vec::new(),
+            },
+        },
+        domain: None,
+        nullable: false,
+    }
+}
+
+proptest::proptest! {
+    #[test]
+    fn nested_tuple_codec_roundtrip_preserves_python_container_identity(values in proptest::collection::vec((proptest::prelude::any::<i64>(), ".{0,32}"), 0..64)) {
+        use plasm_core::{FieldType, Value};
+        use plasm_core::value_contract::{ValueContract, ValueShape};
+        let pair = tuple_contract(vec![ValueContract::scalar(FieldType::Integer), ValueContract::scalar(FieldType::String)]);
+        let contract = ValueContract { shape: ValueShape::Array { element: Box::new(pair) }, domain: None, nullable: false };
+        let wire = Value::Array(values.iter().map(|(n,s)| Value::Array(vec![Value::Integer(*n), Value::String(s.clone())])).collect());
+        let expected = MontyObject::list(values.iter().map(|(n,s)| MontyObject::tuple(vec![MontyObject::int(*n), MontyObject::string(s)])));
+        let restored = value_object(wire.clone(), Some(&contract)).unwrap();
+        proptest::prop_assert_eq!(&restored, &expected);
+        let output = output_value(restored.as_ref(), 0, &mut 1_048_576).unwrap();
+        proptest::prop_assert_eq!(&output, &wire);
+        proptest::prop_assert_eq!(value_object(output, Some(&contract)).unwrap(), expected);
+    }
+
+    #[test]
+    fn tuple_list_union_conversion_rejects_ambiguity_in_either_order(n in proptest::prelude::any::<i64>()) {
+        use plasm_core::{FieldType, Value};
+        use plasm_core::value_contract::{ValueContract, ValueShape};
+        let tuple = tuple_contract(vec![ValueContract::scalar(FieldType::Integer)]);
+        let list = ValueContract { shape: ValueShape::Array { element: Box::new(ValueContract::scalar(FieldType::Integer)) }, domain: None, nullable: false };
+        for variants in [vec![tuple.clone(), list.clone()], vec![list, tuple]] {
+            let contract = ValueContract { shape: ValueShape::Union { variants }, domain: None, nullable: false };
+            proptest::prop_assert!(matches!(value_object(Value::Array(vec![Value::Integer(n)]), Some(&contract)), Err(PythonValueConversionError::UnionRepresentationAmbiguous)));
+        }
+    }
+}
+
 #[tokio::test]
 async fn datetime_typed_codec_and_clock_matrix() {
     use crate::fixture_value as json;

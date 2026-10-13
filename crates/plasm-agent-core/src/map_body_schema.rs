@@ -167,6 +167,19 @@ enum RecordUse {
     RowOperation,
 }
 
+fn synthetic_result_contract(
+    value: ValueContract,
+    purpose: RecordUse,
+) -> Result<ValueContract, MapBodySchemaError> {
+    let row = value.result_row_type().clone();
+    match purpose {
+        RecordUse::Value => Ok(row),
+        RecordUse::RowOperation => SyntheticResultSchema::for_value(row)?
+            .row_contract()
+            .map_err(Into::into),
+    }
+}
+
 fn classify_record_contract(
     es: &ExecuteSession,
     _nodes: &[ValidatedPlanNode],
@@ -180,14 +193,15 @@ fn classify_record_contract(
         .ok_or(MapBodySchemaError::RecordSourceMissing)?;
     let schema = match node {
         N::Data(d) => {
-            return ValueContract::data_value(&d.data, &mut |_, _| {
+            let value = ValueContract::data_value(&d.data, &mut |_, _| {
                 Err(MapBodySchemaError::ValueContract(
                     plasm_core::value_contract::ValueContractError::UnresolvedSymbol,
                 ))
-            });
+            })?;
+            return synthetic_result_contract(value, purpose);
         }
         N::Derive(d) => {
-            return ValueContract::data_value(&d.value, &mut |binding, path| {
+            let value = ValueContract::data_value(&d.value, &mut |binding, path| {
                 let source = if binding == d.item_binding.as_str() {
                     d.source.as_str()
                 } else {
@@ -215,7 +229,8 @@ fn classify_record_contract(
                         value
                     },
                 )
-            })
+            })?;
+            return synthetic_result_contract(value, purpose);
         }
         // Iteration re-observes the seed receiver; it does not create a new domain.
         N::IterateUntil(iteration) => {
@@ -226,7 +241,9 @@ fn classify_record_contract(
         }
         N::MapBody(map) => Some(output_schema(es, &map.body)?),
         N::Compute(c) => match &c.compute.op {
-            ComputeOp::Python { output_type, .. } => return Ok(output_type.clone()),
+            ComputeOp::Python { output_type, .. } => {
+                return synthetic_result_contract(output_type.clone(), purpose)
+            }
             ComputeOp::Limit { .. }
             | ComputeOp::Filter { .. }
             | ComputeOp::Sort { .. }

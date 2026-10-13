@@ -108,6 +108,9 @@ impl Declarations {
             ValueShape::Null => "None".into(),
             ValueShape::Never => "Never".into(),
             ValueShape::Array { element } => format!("list[{}]", self.render(element, depth + 1)?),
+            ValueShape::Tuple { members } => {
+                members.python_annotation(|t| self.render(t, depth + 1))?
+            }
             ValueShape::Set { element } => format!("set[{}]", self.render(element, depth + 1)?),
             ValueShape::MappingRecord { .. } => unreachable!(),
             ValueShape::Union { variants } => super::super::upstream::balanced_union(

@@ -157,12 +157,19 @@ impl Lower<'_> {
         );
         let id = self.fresh();
         self.emit_python_compute(source, &code, &id)?;
+        let cardinality = if super::super::binding_contract(&self.state, &id)
+            .is_some_and(|contract| !contract.row_cardinality.permits_scalar_field_extract())
+        {
+            InputCardinality::Collection
+        } else {
+            InputCardinality::Singleton
+        };
         inputs.insert(
             id.clone(),
             PlanDataInput {
                 node: id.clone(),
                 alias: id.clone(),
-                cardinality: InputCardinality::Singleton,
+                cardinality,
             },
         );
         Ok(PlasmDataValue::NodeSymbol {

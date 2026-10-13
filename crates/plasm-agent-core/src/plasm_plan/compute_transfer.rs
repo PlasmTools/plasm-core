@@ -13,6 +13,9 @@ enum CardinalityRule {
 
 fn cardinality_rule(op: &ComputeOp) -> CardinalityRule {
     match op {
+        ComputeOp::Python { output_type, .. } if output_type.is_collection_result() => {
+            CardinalityRule::Plural
+        }
         ComputeOp::MergeBranches { .. }
         | ComputeOp::Aggregate { .. }
         | ComputeOp::Python { per_row: false, .. } => CardinalityRule::Singleton,
@@ -68,6 +71,9 @@ pub(crate) fn map_body_cardinality_transfer(
 /// exactly one row. Only explicit render singleton selection changes its shape.
 pub(crate) fn compute_result_shape(op: &ComputeOp, explicit_singleton: bool) -> ResultShape {
     match op {
+        ComputeOp::Python { output_type, .. } if output_type.is_collection_result() => {
+            ResultShape::List
+        }
         ComputeOp::Python { per_row: false, .. } | ComputeOp::MergeBranches { .. } => {
             ResultShape::Single
         }

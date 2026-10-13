@@ -50,6 +50,7 @@ enum KeyKind<'a> {
     Native(&'a Value),
     Temporal(TemporalKind, bool, i128),
     Array(Vec<ValueKey<'a>>),
+    Tuple(Vec<ValueKey<'a>>),
     Set(UnorderedKeys<'a>),
     Record(Vec<(&'a str, ValueKey<'a>)>),
 }
@@ -69,6 +70,11 @@ impl Equatable for ValueContract {
             match &c.shape {
                 ValueShape::Array { element } | ValueShape::Set { element } => {
                     check(element, depth + 1)?
+                }
+                ValueShape::Tuple { members } => {
+                    for member in members.members() {
+                        check(member, depth + 1)?;
+                    }
                 }
                 ValueShape::MappingRecord { record } => check(record, depth + 1)?,
                 ValueShape::Dictionary { key, value } => {
@@ -133,6 +139,26 @@ fn key<'a>(
                 .map(|v| key(element, v, depth + 1))
                 .collect::<Result<_, _>>()?,
         ),
+        ValueShape::Tuple { members } => {
+            let values = v
+                .as_array()
+                .ok_or(ValueEqualityError::InvalidContainer("tuple"))?;
+            members
+                .validate_arity(values.len())
+                .map_err(|_| ValueEqualityError::InvalidRepresentation)?;
+            KeyKind::Tuple(
+                values
+                    .iter()
+                    .enumerate()
+                    .map(|(i, value)| {
+                        let contract = members
+                            .element(i, values.len())
+                            .ok_or(ValueEqualityError::InvalidRepresentation)?;
+                        key(contract, value, depth + 1)
+                    })
+                    .collect::<Result<_, _>>()?,
+            )
+        }
         ValueShape::Dictionary { value: element, .. } => {
             let mut keys = v
                 .as_object()
@@ -225,6 +251,13 @@ impl ValueKey<'_> {
                     item.hash_into(h)?;
                 }
             }
+            KeyKind::Tuple(items) => {
+                h.write_u8(5);
+                h.write_usize(items.len());
+                for item in items {
+                    item.hash_into(h)?;
+                }
+            }
             KeyKind::Set(items) => {
                 h.write_u8(4);
                 let mut hashes = items
@@ -267,6 +300,21 @@ mod tests {
         h.finish()
     }
     proptest! {
+        #[test]
+        fn tuple_keys_preserve_positions_and_differ_from_lists(numbers in proptest::collection::vec(any::<i64>(), 0..64)) {
+            use crate::value_contract::TupleContract;
+            let integer = ValueContract::scalar(FieldType::Integer);
+            let tuple = ValueContract { shape: ValueShape::Tuple { members: TupleContract { prefix: vec![integer.clone(); numbers.len()], variable: None, suffix: vec![] } }, domain: None, nullable: false };
+            let list = ValueContract { shape: ValueShape::Array { element: Box::new(integer) }, domain: None, nullable: false };
+            let wire = Value::Array(numbers.iter().copied().map(Value::Integer).collect());
+            let tuple_key = tuple.equality().unwrap().key(&wire).unwrap();
+            let list_key = list.equality().unwrap().key(&wire).unwrap();
+            prop_assert_ne!(&tuple_key, &list_key);
+            prop_assert_eq!(digest(&tuple_key), digest(&tuple.equality().unwrap().key(&wire).unwrap()));
+            let restored: ValueContract = serde_json::from_str(&serde_json::to_string(&tuple).unwrap()).unwrap();
+            prop_assert_eq!(tuple, restored);
+        }
+
         #[test]
         fn offset_equivalence_is_transitive_and_hash_congruent(seconds in 0i64..2_000_000_000, a in -1439i32..1439, b in -1439i32..1439) {
             let t = TemporalKind::Datetime.contract();

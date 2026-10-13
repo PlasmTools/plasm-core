@@ -554,27 +554,29 @@ impl Decoder<'_> {
                 .into_iter()
                 .reduce(Type::join)
                 .unwrap_or_else(never),
-            // Monty tuples materialize as ordered JSON arrays. Preserve a
-            // closed element contract by joining every positional and variadic
-            // member; indexing remains conservative for heterogeneous tuples.
+            // Arrays are the wire encoding, not the Python container identity.
+            // Preserve each position so captures rehydrate as tuples.
             Node::Tuple {
                 prefix,
                 variable,
                 suffix,
-            } => {
-                let elements = prefix
-                    .iter()
-                    .chain(variable.iter())
-                    .chain(suffix.iter())
-                    .map(|id| recur(*id))
-                    .collect::<Result<Vec<_>, _>>()?;
-                array(
-                    elements
-                        .into_iter()
-                        .reduce(Type::join)
-                        .unwrap_or_else(never),
-                )
-            }
+            } => Type {
+                shape: ValueShape::Tuple {
+                    members: plasm_core::value_contract::TupleContract {
+                        prefix: prefix
+                            .iter()
+                            .map(|id| recur(*id))
+                            .collect::<Result<_, _>>()?,
+                        variable: variable.map(|id| recur(id).map(Box::new)).transpose()?,
+                        suffix: suffix
+                            .iter()
+                            .map(|id| recur(*id))
+                            .collect::<Result<_, _>>()?,
+                    },
+                },
+                domain: None,
+                nullable: false,
+            },
             Node::Protocol { identity, .. }
             | Node::NewType { identity, .. }
             | Node::Instance { identity, .. }

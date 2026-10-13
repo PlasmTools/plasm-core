@@ -1,6 +1,287 @@
 use super::*;
 use crate::plasm_compile::compile_python_program;
 
+fn returned_fields(run: &crate::plasm_plan_run::PlasmPlanRunResult) -> Vec<Value> {
+    run.return_steps[0]
+        .result
+        .entities()
+        .iter()
+        .map(|entity| serde_json::to_value(&entity.fields).unwrap())
+        .collect()
+}
+
+#[test]
+fn nested_array_rowsets_reenter_compute_without_losing_an_axis() {
+    on_runtime(async {
+        for input in ["groups", "self.identity(groups)"] {
+            let (es, host, calls) = fixture(0);
+            let identity = if input == "groups" {
+                ""
+            } else {
+                "    @compute\n    def identity(self, groups):\n        return groups\n"
+            };
+            let source = format!("class Nested(Program):\n    def build(self):\n        groups = [[1, 2], [3, 4]]\n        return self.lengths({input})\n{identity}    @compute\n    def lengths(self, groups):\n        return [len(group) for group in groups]\n");
+            let bundle = compile_python_program(&es, &source).await.unwrap();
+            let run = execute(&es, &host, &bundle).await.unwrap();
+            assert_eq!(returned_fields(&run), [json!({"value": 2}), json!({"value": 2})]);
+            assert!(calls.lock().unwrap().is_empty());
+        }
+    });
+}
+
+#[test]
+fn tuple_unpack_targets_can_shadow_the_acquired_tuple() {
+    on_runtime(async {
+        for (target, value, returned, expected) in [
+            ("pair, second", "(1, 2)", "second", 2),
+            ("first, pair", "(1, 2)", "pair", 2),
+            ("pair, (second, third)", "(1, (2, 3))", "third", 3),
+            ("pair, pair", "(1, 2)", "pair", 2),
+        ] {
+            let (es, host, calls) = fixture(0);
+            let source = format!("class Shadow(Program):\n    def build(self):\n        pair = {value}\n        {target} = pair\n        return {returned}\n");
+            let bundle = compile_python_program(&es, &source).await.unwrap();
+            let run = execute(&es, &host, &bundle).await.unwrap();
+            assert_eq!(returned_fields(&run), [json!({"value": expected})]);
+            assert!(calls.lock().unwrap().is_empty());
+        }
+    });
+}
+
+proptest::proptest! {
+    #![proptest_config(proptest::test_runner::Config::with_cases(16))]
+    #[test]
+    fn computed_dictionary_counts_preserve_row_order_and_tuple_fields(count in 0usize..9, seeded in proptest::prelude::any::<bool>()) {
+        on_runtime(async move {
+            let (es, host, calls) = fixture(count);
+            let item = es.teaching_exposure.as_ref().unwrap().to_symbol_map().entity_sym_for("fixture", "Item");
+            let initializer = if seeded { "{'open': 0}" } else { "{}" };
+            let source = format!("class Counts(Program):\n    def build(self):\n        return self.total({item}.query())\n    @compute\n    def total(self, rows):\n        counts = {initializer}\n        for row in rows:\n            counts[row.state] = counts.get(row.state, 0) + 1\n        return [(row.id, counts[row.state]) for row in rows]\n");
+            let bundle = compile_python_program(&es, &source).await.unwrap();
+            assert!(calls.lock().unwrap().is_empty());
+            let run = execute(&es, &host, &bundle).await.unwrap();
+            let expected = (0..count).map(|index| json!({"value": [format!("i{index}"), count]})).collect::<Vec<_>>();
+            assert_eq!(returned_fields(&run), expected);
+            assert_eq!(run.return_steps[0].result.coverage(), plasm_runtime::ResultCoverage::Complete);
+            assert_eq!(*calls.lock().unwrap(), ["/items"]);
+        });
+    }
+}
+
+proptest::proptest! {
+    #![proptest_config(proptest::test_runner::Config::with_cases(32))]
+    #[test]
+    fn computed_tuple_selection_interleaves_with_dag_rows_and_effects(count in 0usize..9, mask in proptest::prelude::any::<u16>()) {
+        on_runtime(async move {
+            let (es, host, calls) = fixture(count);
+            let symbols = es.teaching_exposure.as_ref().unwrap().to_symbol_map();
+            let item = symbols.entity_sym_for("fixture", "Item");
+            let publish = symbols.method_sym_for("fixture", "Item", "publish");
+            let expected = (0..count).filter(|i| mask & (1 << i) != 0).map(|i| format!("i{i}")).collect::<Vec<_>>();
+            let allowed = expected.iter().map(|id| format!("'{id}'")).collect::<Vec<_>>().join(", ");
+            let source = format!("class P(Program):\n    def build(self):\n        rows = {item}.query().map(lambda r: {{'id': r.id, 'title': r.title}}, max_parents=8)\n        wanted = self.choose(rows)\n        return rows.where(lambda r: (r.id, r.title) in wanted).flat_map(lambda r: {item}.{publish}(content=r.id))\n    @compute\n    def choose(self, rows):\n        return [(r.id, r.title) for r in rows if r.id in [{allowed}]]\n");
+            let bundle = compile_python_program(&es, &source).await.unwrap();
+            assert!(calls.lock().unwrap().is_empty());
+            execute(&es, &host, &bundle).await.unwrap();
+            let writes = calls.lock().unwrap().iter().filter_map(|path| path.strip_prefix("/publish:").map(str::to_owned)).collect::<Vec<_>>();
+            assert_eq!(writes, expected);
+        });
+    }
+}
+
+#[test]
+fn audit_workthrough_immutable_tuple_unpack_feeds_a_write() {
+    on_runtime(async {
+        let (es, host, calls) = fixture(1);
+        let symbols = es.teaching_exposure.as_ref().unwrap().to_symbol_map();
+        let item = symbols.entity_sym_for("fixture", "Item");
+        let publish = symbols.method_sym_for("fixture", "Item", "publish");
+        let source = format!(
+            "class P(Program):\n    def build(self):\n        left, right = self.parts({item}.query())\n        return {item}.{publish}(content=left + right)\n    @compute\n    def parts(self, rows):\n        return ('left', 'right')\n"
+        );
+        let bundle = compile_python_program(&es, &source).await.unwrap();
+        assert!(calls.lock().unwrap().is_empty());
+        execute(&es, &host, &bundle).await.unwrap();
+        assert_eq!(*calls.lock().unwrap(), ["/items", "/publish:leftright"]);
+    });
+}
+
+#[test]
+fn audit_workthrough_mapped_rows_filter_by_computed_tuple_membership() {
+    on_runtime(async {
+        let (es, host, calls) = fixture(3);
+        let symbols = es.teaching_exposure.as_ref().unwrap().to_symbol_map();
+        let item = symbols.entity_sym_for("fixture", "Item");
+        let publish = symbols.method_sym_for("fixture", "Item", "publish");
+        let source = format!(
+            "class P(Program):\n    def build(self):\n        rows = {item}.query().map(lambda r: {{'id': r.id, 'title': r.title}}, max_parents=8)\n        wanted = self.choose(rows)\n        selected = rows.where(lambda r: (r.id, r.title) in wanted)\n        return selected.flat_map(lambda r: {item}.{publish}(content=r.id))\n    @compute\n    def choose(self, rows):\n        return [(r.id, r.title) for r in rows if r.id != 'i0']\n"
+        );
+        let bundle = compile_python_program(&es, &source).await.unwrap();
+        execute(&es, &host, &bundle).await.unwrap();
+        let mut writes = calls
+            .lock()
+            .unwrap()
+            .iter()
+            .filter(|path| path.starts_with("/publish:"))
+            .cloned()
+            .collect::<Vec<_>>();
+        writes.sort();
+        assert_eq!(writes, ["/publish:i1", "/publish:i2"]);
+    });
+}
+
+#[test]
+fn audit_workthrough_compute_dictionary_accumulation_returns_primitive_tuple() {
+    on_runtime(async {
+        let (es, host, _) = fixture(3);
+        let item = es
+            .teaching_exposure
+            .as_ref()
+            .unwrap()
+            .to_symbol_map()
+            .entity_sym_for("fixture", "Item");
+        let source = format!(
+            "class P(Program):\n    def build(self):\n        return self.total({item}.query())\n    @compute\n    def total(self, rows):\n        totals = {{}}\n        for row in rows:\n            totals[row.state] = totals.get(row.state, 0) + 1\n        for row in rows:\n            if totals[row.state] >= 2:\n                return (row.id, totals[row.state])\n        return ('none', 0)\n"
+        );
+        for initializer in [
+            "totals: dict[str, int] = {}",
+            "totals = {'open': 0}",
+            "totals = {}",
+        ] {
+            let program = source.replace("totals = {}", initializer);
+            let bundle = compile_python_program(&es, &program).await.unwrap();
+            let result = execute(&es, &host, &bundle).await.unwrap();
+            assert_eq!(rows(&result).len(), 1);
+            assert_eq!(returned_fields(&result), [json!({"value": ["i0", 3]})]);
+        }
+    });
+}
+
+#[test]
+fn audit_workthrough_nested_unpack_preserves_prior_bindings() {
+    on_runtime(async {
+        let (es, host, calls) = fixture(1);
+        let symbols = es.teaching_exposure.as_ref().unwrap().to_symbol_map();
+        let item = symbols.entity_sym_for("fixture", "Item");
+        let publish = symbols.method_sym_for("fixture", "Item", "publish");
+        let source = format!(
+            "class P(Program):\n    def build(self):\n        value = 'prior'\n        before = value\n        value, (middle, tail) = self.parts({item}.query(), value)\n        return {item}.{publish}(content=value + middle + tail + before)\n    @compute\n    def parts(self, rows, previous):\n        return ('next', (previous, 'tail'))\n"
+        );
+        let bundle = compile_python_program(&es, &source).await.unwrap();
+        execute(&es, &host, &bundle).await.unwrap();
+        assert!(calls
+            .lock()
+            .unwrap()
+            .contains(&"/publish:nextpriortailprior".into()));
+    });
+}
+
+#[test]
+fn audit_workthrough_unpack_arity_rejects_before_effects() {
+    on_runtime(async {
+        let (es, _, calls) = fixture(1);
+        let source = "class P(Program):\n    def build(self):\n        first, second, third = (1, 2)\n        return first\n";
+        let error = compile_python_program(&es, source).await.unwrap_err();
+        assert!(
+            error
+                .to_string()
+                .contains("3 targets but the value has 2 positions"),
+            "{error}"
+        );
+        assert!(calls.lock().unwrap().is_empty());
+    });
+}
+
+#[test]
+fn audit_workthrough_missing_return_reports_the_missing_result() {
+    on_runtime(async {
+        let (es, _, calls) = fixture(1);
+        let item = es
+            .teaching_exposure
+            .as_ref()
+            .unwrap()
+            .to_symbol_map()
+            .entity_sym_for("fixture", "Item");
+        for body in [format!("rows = {item}.query()"), "return".to_owned()] {
+            let source = format!("class P(Program):\n    def build(self):\n        {body}\n");
+            let error = compile_python_program(&es, &source).await.unwrap_err();
+            assert!(
+                error
+                    .to_string()
+                    .contains("build requires a returned result"),
+                "{error}"
+            );
+            assert!(!error.to_string().contains("branching roots"), "{error}");
+        }
+        assert!(calls.lock().unwrap().is_empty());
+    });
+}
+
+#[test]
+fn audit_workthrough_dictionary_collection_keeps_callback_row_fields() {
+    on_runtime(async {
+        let (es, host, calls) = fixture(3);
+        let symbols = es.teaching_exposure.as_ref().unwrap().to_symbol_map();
+        let item = symbols.entity_sym_for("fixture", "Item");
+        let publish = symbols.method_sym_for("fixture", "Item", "publish");
+        let source = format!(
+            "class P(Program):\n    def build(self):\n        rows = {item}.query().map(lambda r: {{'id': r.id, 'title': r.title}}, max_parents=8)\n        changes = self.choose(rows)\n        additions = changes['adds']\n        return additions.flat_map(lambda r: {item}.{publish}(content=r.id))\n    @compute\n    def choose(self, rows):\n        return {{'adds': [r for r in rows if r.id != 'i0'], 'removes': [r for r in rows if r.id == 'i0']}}\n"
+        );
+        let bundle = compile_python_program(&es, &source).await.unwrap();
+        let expected_id = plasm_core::value_contract::ValueContract::from_domain(
+            &es.cgs,
+            "fixture",
+            &plasm_core::ValueDomainKey::new("item_id").unwrap(),
+        )
+        .unwrap();
+        let mut collection_outputs = 0;
+        for payload in bundle.artifact().comp.steps.values() {
+            if let PlasmStepPayload::Map(payload) = payload {
+                if let ComputeOp::Python { output_type, .. } = &payload.compute.op {
+                    if output_type.is_collection_result() {
+                        assert_eq!(
+                            output_type.result_row_type().field("id").unwrap(),
+                            expected_id
+                        );
+                        assert_eq!(payload.result_shape, ResultShape::List);
+                        assert!(payload.compute.schema.entity.is_none());
+                        collection_outputs += 1;
+                    }
+                }
+            }
+        }
+        assert!(
+            collection_outputs > 0,
+            "extracted collection must retain a typed rowset output"
+        );
+        execute(&es, &host, &bundle).await.unwrap();
+        let writes = calls
+            .lock()
+            .unwrap()
+            .iter()
+            .filter(|path| path.starts_with("/publish:"))
+            .cloned()
+            .collect::<Vec<_>>();
+        assert_eq!(writes, ["/publish:i1", "/publish:i2"]);
+    });
+}
+
+#[test]
+fn audit_workthrough_unpack_accepts_same_arity_return_alternatives() {
+    on_runtime(async {
+        let (es, host, calls) = fixture(1);
+        let symbols = es.teaching_exposure.as_ref().unwrap().to_symbol_map();
+        let item = symbols.entity_sym_for("fixture", "Item");
+        let publish = symbols.method_sym_for("fixture", "Item", "publish");
+        let source = format!(
+            "class P(Program):\n    def build(self):\n        key, count = self.parts({item}.query())\n        return {item}.{publish}(content=key + str(count))\n    @compute\n    def parts(self, rows):\n        if len(rows) > 0:\n            return (rows[0].id, 1)\n        return ('none', 'empty')\n"
+        );
+        let bundle = compile_python_program(&es, &source).await.unwrap();
+        execute(&es, &host, &bundle).await.unwrap();
+        assert!(calls.lock().unwrap().contains(&"/publish:i01".into()));
+    });
+}
+
 #[test]
 fn python_action_output_entity_feeds_a_later_write_without_provides() {
     on_runtime(async {
@@ -1066,8 +1347,12 @@ fn unannotated_materialized_helper_preserves_independent_input_collections() {
         let bundle = compile_python_program(&es, source).await.unwrap();
         let run = execute(&es, &host, &bundle).await.unwrap();
         assert_eq!(
-            serde_json::to_value(&run.return_steps[0].result.entities()[0].fields).unwrap(),
-            json!({"value": [1, 2, 3]})
+            returned_fields(&run),
+            [
+                json!({"value": 1}),
+                json!({"value": 2}),
+                json!({"value": 3})
+            ]
         );
     });
 }
@@ -1219,8 +1504,12 @@ fn python_compute_infers_structural_return_at_public_admission() {
         let bundle = compile_python_program(&es, &source).await.unwrap();
         let run = execute(&es, &host, &bundle).await.unwrap();
         assert_eq!(
-            serde_json::to_value(&run.return_steps[0].result.entities()[0].fields).unwrap(),
-            json!({"value":[{"key":"i0","title":"Title 0"},{"key":"i1","title":"Title 1"},{"key":"i2","title":"Title 2"}]})
+            returned_fields(&run),
+            [
+                json!({"value":{"key":"i0","title":"Title 0"}}),
+                json!({"value":{"key":"i1","title":"Title 1"}}),
+                json!({"value":{"key":"i2","title":"Title 2"}})
+            ]
         );
         let bare_dict = source.replace("rows: list[Row]):", "rows: list[Row]) -> list[dict]:");
         let inferred = compile_python_program(&es, &bare_dict).await.unwrap();
@@ -1258,8 +1547,11 @@ fn python_compute_closes_unannotated_local_helper_at_public_admission() {
         let bundle = compile_python_program(&es, &source).await.unwrap();
         let run = execute(&es, &host, &bundle).await.unwrap();
         assert_eq!(
-            serde_json::to_value(&run.return_steps[0].result.entities()[0].fields).unwrap(),
-            json!({"value":[{"key":"i0","title":"Title 0"},{"key":"i1","title":"Title 1"}]})
+            returned_fields(&run),
+            [
+                json!({"value":{"key":"i0","title":"Title 0"}}),
+                json!({"value":{"key":"i1","title":"Title 1"}})
+            ]
         );
         let wrong = source.replace(
             "def describe(self, rows: list[Row]):",
