@@ -9,6 +9,117 @@ use std::sync::{
 };
 
 #[tokio::test]
+async fn spotify_shelves_reject_unsupported_filters_before_dispatch() {
+    let count = Arc::new(AtomicUsize::new(0));
+    let seen = count.clone();
+    let app = axum::Router::new().route(
+        "/spotify/{*path}",
+        axum::routing::get(
+            move |axum::extract::Path(path): axum::extract::Path<String>,
+                  axum::extract::Query(q): axum::extract::Query<
+                std::collections::HashMap<String, String>,
+            >| {
+                let seen = seen.clone();
+                async move {
+                    match path.as_str() {
+                        "songs" => assert!(q.contains_key("min_release_date")),
+                        "library/songs" => {
+                            assert_eq!(q.get("query").map(String::as_str), Some("probe"));
+                            assert!(q.keys().all(|key| [
+                                "query",
+                                "sort_by",
+                                "page_index",
+                                "page_limit"
+                            ]
+                            .contains(&key.as_str())));
+                        }
+                        "recommendations" => {
+                            assert!(q
+                                .keys()
+                                .all(|key| ["page_index", "page_limit"].contains(&key.as_str())))
+                        }
+                        _ => panic!("unexpected shelf route"),
+                    }
+                    seen.fetch_add(1, Ordering::SeqCst);
+                    axum::Json(serde_json::json!([]))
+                }
+            },
+        ),
+    );
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let url = format!("http://{}", listener.local_addr().unwrap());
+    let server = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+    let cgs = plasm_core::load_schema_dir(
+        &std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../apis/appworld/spotify"),
+    )
+    .unwrap();
+    let compiled = Arc::new(plasm_compile::compile_cgs_capability_templates(&cgs).unwrap());
+    let engine = ExecutionEngine::new(ExecutionConfig {
+        base_url: Some(url),
+        ..Default::default()
+    })
+    .unwrap();
+    for source in [
+        r#"Song{access_token="fixture",shelf="catalog",min_release_date="2030-01-02T00:00:00"}"#,
+        r#"Song{access_token="fixture",shelf="library",query="probe"}"#,
+        r#"Song{access_token="fixture",shelf="recommendations"}"#,
+    ] {
+        let expr = plasm_core::expr_parser::parse_session_line(source, &cgs, None)
+            .unwrap()
+            .expr;
+        engine
+            .execute(
+                &expr,
+                &cgs,
+                &mut SessionMaterialization::new(),
+                None,
+                StreamConsumeOpts::default(),
+                ExecuteOptions {
+                    compiled_catalog: Some(compiled.clone()),
+                    ..Default::default()
+                },
+            )
+            .await
+            .unwrap();
+    }
+    for (shelf, input) in [
+        ("library", r#"min_release_date="2030-01-02T00:00:00""#),
+        ("library", r#"genre="rock""#),
+        ("recommendations", r#"query="probe""#),
+        ("recommendations", r#"min_duration=1"#),
+    ] {
+        let source = format!(r#"Song{{access_token="fixture",shelf="{shelf}",{input}}}"#);
+        let expr = plasm_core::expr_parser::parse_session_line(&source, &cgs, None)
+            .unwrap()
+            .expr;
+        let error = engine
+            .execute(
+                &expr,
+                &cgs,
+                &mut SessionMaterialization::new(),
+                None,
+                StreamConsumeOpts::default(),
+                ExecuteOptions {
+                    compiled_catalog: Some(compiled.clone()),
+                    ..Default::default()
+                },
+            )
+            .await
+            .unwrap_err();
+        assert!(
+            error.to_string().contains(if shelf == "library" {
+                "Library songs do not support catalog filters"
+            } else {
+                "Recommended songs support pagination only"
+            }),
+            "{error}"
+        );
+    }
+    assert_eq!(count.load(Ordering::SeqCst), 3);
+    server.abort();
+}
+
+#[tokio::test]
 async fn phone_message_variant_contracts_dispatch_only_supported_parameters() {
     let count = Arc::new(AtomicUsize::new(0));
     let seen = count.clone();

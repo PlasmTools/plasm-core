@@ -1,4 +1,4 @@
-version: 39
+version: 40
 entry_id: spotify
 auth:
   scheme: none
@@ -2232,6 +2232,16 @@ capabilities:
       value_ref: nv_song_shelf
       required: true
       description: catalog | library | recommendations
+    input_validation:
+      cross_field_rules:
+      - when: {field: shelf, equals: library}
+        rule_type: forbidden
+        fields: [artist_id, album_id, genre, min_release_date, max_release_date, min_duration, max_duration, min_rating, max_rating, min_like_count, max_like_count, min_play_count, max_play_count]
+        error_message: Library songs do not support catalog filters; apply predicates to the returned saved songs.
+      - when: {field: shelf, equals: recommendations}
+        rule_type: forbidden
+        fields: [artist_id, album_id, genre, min_release_date, max_release_date, min_duration, max_duration, min_rating, max_rating, min_like_count, max_like_count, min_play_count, max_play_count, query, sort_by]
+        error_message: Recommended songs support pagination only; apply content predicates to the returned songs.
     # Common list fields across catalog, library, and recommendations shelves.
     # Genre and play statistics are supplied by song_get hydration.
     provides:
