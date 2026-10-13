@@ -149,7 +149,7 @@ pub(crate) const ROWS: &[MatrixRow] = &[
         federated: false,
         features: &["for_each_effect", "effect_action", "pipe_where"],
         min_node_results: 2,
-        expect_markdown_substrings: &["No actions dispatched."],
+        expect_markdown_substrings: &["langitem_ping`: 0 actions dispatched."],
         expect_live_error: None,
     },
     MatrixRow {

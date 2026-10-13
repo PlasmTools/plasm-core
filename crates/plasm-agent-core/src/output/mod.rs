@@ -172,23 +172,14 @@ pub(crate) fn format_operations_block(result: &ExecutionResult) -> String {
     if result.operations.is_empty() {
         return String::new();
     }
-    if result
-        .operations
-        .entries()
-        .iter()
-        .all(|ack| ack.logical_invocations == 0)
-    {
-        return "\nNo actions dispatched.\n".into();
-    }
     let mut out = String::new();
     let mut any_failed = false;
-    for ack in result
-        .operations
-        .entries()
-        .iter()
-        .filter(|ack| ack.logical_invocations > 0)
-    {
+    for ack in result.operations.entries() {
         out.push_str(&format!("\n`{}/{}`: ", ack.entry_id, ack.capability));
+        if ack.logical_invocations == 0 {
+            out.push_str("0 actions dispatched.\n");
+            continue;
+        }
         let recorded = !matches!(ack.source, plasm_runtime::ExecutionSource::Live);
         if recorded {
             out.push_str("Recorded outcome: ");
@@ -1542,7 +1533,10 @@ mod tests {
         );
         let empty_md = format_operations_block(&empty_loop);
         let done_md = format_operations_block(&completed);
-        assert!(empty_md.contains("No actions dispatched."), "{empty_md}");
+        assert!(
+            empty_md.contains("`langmatrix/langitem_ping`: 0 actions dispatched."),
+            "{empty_md}"
+        );
         assert!(!empty_md.contains("completed"), "{empty_md}");
         assert!(done_md.contains("1 completed."), "{done_md}");
         assert!(!done_md.contains("applied"), "{done_md}");
@@ -1572,9 +1566,29 @@ mod tests {
             ExecutionSource::Cache,
         );
         let text = format_operations_block(&result);
-        assert!(text.contains("No actions dispatched."));
+        assert!(text.contains("`langmatrix/langitem_ping`: 0 actions dispatched."));
         assert!(!text.contains("completed"));
         assert!(!text.contains("LangItem:1"));
+    }
+
+    #[test]
+    fn completed_action_and_empty_fanout_have_scoped_receipts() {
+        let mut ledger = plasm_runtime::OperationLedger::from_ack(ack(
+            "langitem_ping",
+            1,
+            0,
+            ExecutionSource::Live,
+        ));
+        ledger.merge_ack(ack("langitem_delete", 0, 0, ExecutionSource::Live));
+        let result = result_with_operations(ledger, ExecutionSource::Live);
+        let text = format_operations_block(&result);
+        assert!(text.contains("`langmatrix/langitem_ping`: 1 completed."));
+        assert!(text.contains("`langmatrix/langitem_delete`: 0 actions dispatched."));
+        assert!(!text.contains("No actions dispatched."));
+        assert_eq!(
+            http_execute_results_value(&result)["operations"][0]["completed"],
+            1
+        );
     }
 
     #[test]
