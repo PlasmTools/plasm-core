@@ -10,8 +10,9 @@ mod with_expr;
 pub use crate::identity::RelationName;
 pub use atoms::{BindingName, FieldPath, OutputName, PlanAtomError, PlanQualifiedEntityKey};
 pub use compute::{
-    AggregateFunction, AggregateSpec, ComputeOp, ComputeTemplate, PythonRowSelection, PythonSelectionPort, SyntheticFieldSchema,
-    SyntheticResultSchema, SyntheticResultSchemaError, SyntheticValueKind,
+    AggregateFunction, AggregateSpec, ComputeOp, ComputeTemplate, PythonRowSelection,
+    PythonSelectionPort, SyntheticFieldSchema, SyntheticResultSchema, SyntheticResultSchemaError,
+    SyntheticValueKind,
 };
 pub use expr::{PlanExprIr, PlanExprTemplate};
 pub use relation::{PlanRelationTraversal, RelationCardinality, RelationSourceCardinality};

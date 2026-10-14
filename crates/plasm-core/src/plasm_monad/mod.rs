@@ -31,16 +31,16 @@ pub use operators::{
     plasm_parallel_return, plasm_pure_step, EmptyParallelReturn,
 };
 pub use payload::{
-    PythonRowSelection, PythonSelectionPort,
     AggregateFunction, AggregateSpec, ArithOp, BindingName, ComputeOp, ComputeTemplate, DeriveKind,
     DerivePayload, DeriveTemplate, EffectTemplate, FieldPath, FlatMapApplyPayload,
     FlatMapRelationPayload, InputCardinality, InvokePayload, MapPayload, OutputName, PlanAtomError,
     PlanDataInput, PlanExprIr, PlanExprTemplate, PlanInputBinding, PlanPredicate, PlanPredicateOp,
     PlanQualifiedEntityKey, PlanRelationTraversal, PlanResultUse, PlasmDataValue,
     PlasmDataValueError, PlasmDataValueEvaluationError, PlasmStepPayload, PurePayload,
-    RelationCardinality, RelationName, RelationSourceCardinality, SyntheticFieldSchema,
-    SyntheticResultSchema, SyntheticResultSchemaError, SyntheticValueKind, UnfoldUntilPayload,
-    WithColumn, WithExpr, WithExprError, WithLiteral,
+    PythonRowSelection, PythonSelectionPort, RelationCardinality, RelationName,
+    RelationSourceCardinality, SyntheticFieldSchema, SyntheticResultSchema,
+    SyntheticResultSchemaError, SyntheticValueKind, UnfoldUntilPayload, WithColumn, WithExpr,
+    WithExprError, WithLiteral,
 };
 pub use step::{
     EffectBarrier, EffectClass, EffectEvidence, PlasmStep, PlasmStepKind, ResultShape, SurfaceKind,
