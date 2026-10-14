@@ -34,9 +34,7 @@ pub(super) fn validate_contract(
             }
         })
     {
-        return Err(
-            PythonComputeError::Selection(SelectionContractError::InferredPorts).into(),
-        );
+        return Err(PythonComputeError::Selection(SelectionContractError::InferredPorts).into());
     }
     Ok(())
 }
@@ -52,10 +50,9 @@ pub(super) fn validate_sources(
         let mut visited = std::collections::BTreeSet::new();
         loop {
             if !visited.insert(current.clone()) {
-                return Err(PythonComputeError::Selection(
-                    SelectionContractError::ArgumentSource,
-                )
-                .into());
+                return Err(
+                    PythonComputeError::Selection(SelectionContractError::ArgumentSource).into(),
+                );
             }
             if path.is_empty() {
                 break;
@@ -63,10 +60,9 @@ pub(super) fn validate_sources(
             let Some(ValidatedPlanNode::Derive(node)) =
                 nodes.iter().find(|n| n.id().as_str() == current)
             else {
-                return Err(PythonComputeError::Selection(
-                    SelectionContractError::ArgumentSource,
-                )
-                .into());
+                return Err(
+                    PythonComputeError::Selection(SelectionContractError::ArgumentSource).into(),
+                );
             };
             let mut value = &node.value;
             while let Some(field) = path.first() {
@@ -84,20 +80,18 @@ pub(super) fn validate_sources(
                 path: suffix,
             } = value
             else {
-                return Err(PythonComputeError::Selection(
-                    SelectionContractError::ArgumentSource,
-                )
-                .into());
+                return Err(
+                    PythonComputeError::Selection(SelectionContractError::ArgumentSource).into(),
+                );
             };
             if !node
                 .inputs
                 .iter()
                 .any(|input| input.node.as_str() == next && input.alias.as_str() == alias)
             {
-                return Err(PythonComputeError::Selection(
-                    SelectionContractError::ArgumentSource,
-                )
-                .into());
+                return Err(
+                    PythonComputeError::Selection(SelectionContractError::ArgumentSource).into(),
+                );
             }
             let mut next_path = suffix.clone();
             next_path.extend(path);
@@ -105,17 +99,14 @@ pub(super) fn validate_sources(
             current = next.clone();
         }
         if current != port.source {
-            return Err(PythonComputeError::Selection(
-                SelectionContractError::ArgumentSource,
-            )
-            .into());
+            return Err(
+                PythonComputeError::Selection(SelectionContractError::ArgumentSource).into(),
+            );
         }
         let owner = crate::map_body::capture_owner(nodes, &current)
             .map_err(|_| PythonComputeError::Selection(SelectionContractError::Owner))?;
         if owner.entry_id != selection.owner.entry_id || owner.entity != selection.owner.entity {
-            return Err(
-                PythonComputeError::Selection(SelectionContractError::Owner).into(),
-            );
+            return Err(PythonComputeError::Selection(SelectionContractError::Owner).into());
         }
     }
     Ok(())
