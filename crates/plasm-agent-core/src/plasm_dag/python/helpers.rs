@@ -71,7 +71,7 @@ impl Lower<'_> {
                     annotation,
                     PythonSourceError::DagHandleEntityMissing {
                         entity: entity.to_owned(),
-                        source,
+                        source: Box::new(source),
                     },
                 )
             })?;

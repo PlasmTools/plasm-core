@@ -7,11 +7,11 @@ use plasm_core::plasm_monad::{PlasmDataValue, PythonRowSelection};
 #[derive(Debug, Clone, thiserror::Error)]
 pub enum SelectionContractError {
     #[error("selection ports differ from inferred input occurrences")]
-    InferredPortsMismatch,
+    InferredPorts,
     #[error("selection source differs from the actual compute argument")]
-    ArgumentSourceMismatch,
+    ArgumentSource,
     #[error("selection owner differs from its source row identity")]
-    OwnerMismatch,
+    Owner,
 }
 
 pub(super) fn validate_contract(
@@ -35,7 +35,7 @@ pub(super) fn validate_contract(
         })
     {
         return Err(
-            PythonComputeError::Selection(SelectionContractError::InferredPortsMismatch).into(),
+            PythonComputeError::Selection(SelectionContractError::InferredPorts).into(),
         );
     }
     Ok(())
@@ -53,7 +53,7 @@ pub(super) fn validate_sources(
         loop {
             if !visited.insert(current.clone()) {
                 return Err(PythonComputeError::Selection(
-                    SelectionContractError::ArgumentSourceMismatch,
+                    SelectionContractError::ArgumentSource,
                 )
                 .into());
             }
@@ -64,7 +64,7 @@ pub(super) fn validate_sources(
                 nodes.iter().find(|n| n.id().as_str() == current)
             else {
                 return Err(PythonComputeError::Selection(
-                    SelectionContractError::ArgumentSourceMismatch,
+                    SelectionContractError::ArgumentSource,
                 )
                 .into());
             };
@@ -74,7 +74,7 @@ pub(super) fn validate_sources(
                     break;
                 };
                 value = fields.get(field).ok_or(PythonComputeError::Selection(
-                    SelectionContractError::ArgumentSourceMismatch,
+                    SelectionContractError::ArgumentSource,
                 ))?;
                 path.remove(0);
             }
@@ -85,7 +85,7 @@ pub(super) fn validate_sources(
             } = value
             else {
                 return Err(PythonComputeError::Selection(
-                    SelectionContractError::ArgumentSourceMismatch,
+                    SelectionContractError::ArgumentSource,
                 )
                 .into());
             };
@@ -95,7 +95,7 @@ pub(super) fn validate_sources(
                 .any(|input| input.node.as_str() == next && input.alias.as_str() == alias)
             {
                 return Err(PythonComputeError::Selection(
-                    SelectionContractError::ArgumentSourceMismatch,
+                    SelectionContractError::ArgumentSource,
                 )
                 .into());
             }
@@ -106,15 +106,15 @@ pub(super) fn validate_sources(
         }
         if current != port.source {
             return Err(PythonComputeError::Selection(
-                SelectionContractError::ArgumentSourceMismatch,
+                SelectionContractError::ArgumentSource,
             )
             .into());
         }
         let owner = crate::map_body::capture_owner(nodes, &current)
-            .map_err(|_| PythonComputeError::Selection(SelectionContractError::OwnerMismatch))?;
+            .map_err(|_| PythonComputeError::Selection(SelectionContractError::Owner))?;
         if owner.entry_id != selection.owner.entry_id || owner.entity != selection.owner.entity {
             return Err(
-                PythonComputeError::Selection(SelectionContractError::OwnerMismatch).into(),
+                PythonComputeError::Selection(SelectionContractError::Owner).into(),
             );
         }
     }

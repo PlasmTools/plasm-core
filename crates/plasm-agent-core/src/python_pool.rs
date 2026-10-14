@@ -244,6 +244,7 @@ impl PythonPool {
             .await?;
         Ok(value.as_str().expect("validated string").to_owned())
     }
+    #[cfg(test)]
     pub(crate) async fn compute_value(
         &self,
         source: String,

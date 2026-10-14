@@ -479,7 +479,7 @@ pub enum PythonSourceError {
     DagHandleEntityMissing {
         entity: String,
         #[source]
-        source: plasm_core::symbol_tuning::SymbolResolveError,
+        source: Box<plasm_core::symbol_tuning::SymbolResolveError>,
     },
     #[error("Python source is invalid: DAG handle annotation does not match the argument's entity authority or cardinality")]
     DagHandleContractMismatch,

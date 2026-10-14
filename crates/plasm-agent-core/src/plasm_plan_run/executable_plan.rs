@@ -290,7 +290,7 @@ impl PureStep {
         match self {
             PureStep::Data(d) => {
                 let (rows, value_shapes) = eval_data_plan_value(&d.data, inputs.binding_rows)?;
-                PureMaterialization::plain(&inputs, d.id.as_str(), rows, value_shapes)
+                PureMaterialization::plain(inputs, d.id.as_str(), rows, value_shapes)
             }
             PureStep::Derive(d) => {
                 if matches!(d.result_shape, crate::plasm_plan::ResultShape::Single)
@@ -318,7 +318,7 @@ impl PureStep {
                     &row_type,
                 )
                 .map_err(PureStepError::DeriveEvaluation)?;
-                PureMaterialization::plain(&inputs, d.id.as_str(), rows, value_shapes)
+                PureMaterialization::plain(inputs, d.id.as_str(), rows, value_shapes)
             }
             PureStep::Compute(c) => {
                 if let ComputeOp::MergeBranches { other } = &c.compute.op {
