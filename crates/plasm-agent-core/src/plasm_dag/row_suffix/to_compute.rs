@@ -67,7 +67,7 @@ pub enum RowSuffixLoweringError {
     UnionRhsNotBound { binding: String },
     #[error("union requires known row columns on both inputs")]
     UnionColumnsUnknown,
-    #[error("union input columns differ: left {left:?}, right {right:?}; project matching columns explicitly before union")]
+    #[error("union input columns differ: left [{left}], right [{right}]; project matching columns explicitly before union", left = .left.join(", "), right = .right.join(", "))]
     UnionColumnsDiffer {
         left: Vec<String>,
         right: Vec<String>,
