@@ -314,13 +314,13 @@ impl Lower<'_> {
             let ComputeOp::Python { selection, .. } = &mut op else {
                 unreachable!()
             };
-            *selection = Some(plasm_core::plasm_monad::PythonRowSelection {
+            *selection = Some(Box::new(plasm_core::plasm_monad::PythonRowSelection {
                 owner: plasm_core::plasm_monad::PlanQualifiedEntityKey {
                     entry_id: owner.entry_id,
                     entity: owner.entity,
                 },
                 ports,
-            });
+            }));
         }
         let ComputeOp::Python { per_row, .. } = &op else {
             unreachable!()

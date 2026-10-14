@@ -44,7 +44,7 @@ pub enum ComputeOp {
         input_schema: Option<SyntheticResultSchema>,
         output_type: crate::value_contract::ValueContract,
         per_row: bool,
-        selection: Option<PythonRowSelection>,
+        selection: Option<Box<PythonRowSelection>>,
     },
     Project {
         fields: std::collections::BTreeMap<OutputName, FieldPath>,
