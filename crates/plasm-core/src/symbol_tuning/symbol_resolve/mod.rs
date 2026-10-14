@@ -216,7 +216,12 @@ impl SymbolMap {
             return None;
         }
         let e = self.entity_sym_for(catalog_entry_id, entity);
-        Some(format!("{e}{{{param}=...}}"))
+        let operation = match kind {
+            CapabilityKind::Query => "query",
+            CapabilityKind::Search => "search",
+            _ => return None,
+        };
+        Some(format!("{e}.{operation}({param}=...)"))
     }
 
     /// When `token` is a taught create/action/update/delete param on `entity`, return `e#.m#(... token=...)`.

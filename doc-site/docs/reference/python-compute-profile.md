@@ -77,7 +77,10 @@ Records use attributes/subscripts; dict/list[dict] compute inputs expose typed m
 Python attribute identifiers fail explicitly. JSON has a recursive union type,
 not `Any`; dynamic JSON operations require upstream narrowing.
 
-Every compute requires a typed DAG callsite. Constant defaults use upstream argument binding;
+Every invoked compute requires a typed DAG callsite; unused declarations emit no
+compute node and need no inferred input contract. Declaration shape and capability
+policy are still checked. Single leading underscores are ordinary method names;
+double-underscore names are reserved. Constant defaults use upstream argument binding;
 only the root `@compute` decorator and admitted boundary annotations are allowed.
 Admission rebuilds a definition using generated annotations, and never invokes
 its body. Nested definitions execute only when the outer compute runs.

@@ -8,32 +8,65 @@ use crate::plasm_plan_run::evaluate_plasm_plan_dry;
 use indexmap::IndexMap;
 
 fn session_token_get_session() -> ExecuteSession {
+    get_fixture_session("session_token_get", "Wallet")
+}
+
+fn get_fixture_session(entry: &str, entity: &str) -> ExecuteSession {
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     let cgs = Arc::new(
-        plasm_core::loader::load_schema_dir(&root.join("../../fixtures/schemas/session_token_get"))
-            .expect("load session_token_get"),
+        plasm_core::loader::load_schema_dir(&root.join("../../fixtures/schemas").join(entry))
+            .expect("load Get matrix fixture"),
     );
     let mut ctxs = IndexMap::new();
     ctxs.insert(
-        "session_token_get".into(),
-        Arc::new(CgsContext::entry("session_token_get", cgs.clone())),
+        entry.into(),
+        Arc::new(CgsContext::entry(entry, cgs.clone())),
     );
-    let exp = TeachingExposureSession::new(cgs.as_ref(), "session_token_get", &["Wallet"]);
+    let exp = TeachingExposureSession::new(cgs.as_ref(), entry, &[entity]);
     ExecuteSession::new(
         "ph".into(),
         String::new(),
         cgs.clone(),
         ctxs,
-        "session_token_get".into(),
+        entry.into(),
         String::new(),
         String::new(),
         None,
-        vec!["Wallet".into()],
+        vec![entity.into()],
         Some(exp),
         None,
         cgs.catalog_cgs_hash_hex(),
         None,
     )
+}
+
+#[tokio::test]
+async fn get_without_identity_rejects_positional_capability_inputs() {
+    let session = get_fixture_session("sole_nullary_get", "Profile");
+    let entity = session
+        .teaching_exposure
+        .as_ref()
+        .unwrap()
+        .to_symbol_map()
+        .entity_sym_for("sole_nullary_get", "Profile");
+    let named = format!(
+        "class P(Program):\n    def build(self):\n        return {entity}.get(phone_number='+15551234567')\n"
+    );
+    crate::plasm_compile::compile_python_program(&session, &named)
+        .await
+        .unwrap();
+    let positional = format!(
+        "class P(Program):\n    def build(self):\n        return {entity}.get('+15551234567')\n"
+    );
+    let error = crate::plasm_compile::compile_python_program(&session, &positional)
+        .await
+        .unwrap_err();
+    let diagnostic = error.to_string();
+    assert!(
+        diagnostic.contains("pass declared capability inputs by keyword"),
+        "{diagnostic}"
+    );
+    assert!(!diagnostic.contains("input object"), "{diagnostic}");
 }
 
 fn compile_wallet(name: &str, source: &str) -> Result<crate::PlasmCompBundle, String> {
@@ -47,7 +80,10 @@ fn compile_wallet(name: &str, source: &str) -> Result<crate::PlasmCompBundle, St
     .map_err(|e| e.to_string())
 }
 
-fn wallet_plan(name: &str, source: &str) -> Result<(ExecuteSession, serde_json::Value), crate::plasm_dag::error::DagCompilationError> {
+fn wallet_plan(
+    name: &str,
+    source: &str,
+) -> Result<(ExecuteSession, serde_json::Value), crate::plasm_dag::error::DagCompilationError> {
     let session = session_token_get_session();
     let plan = compile_plasm_dag_to_plan(
         &PromptPipelineConfig::default(),

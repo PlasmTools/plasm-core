@@ -121,13 +121,18 @@ fn nested_helper_captures_preserve_recursive_value_cells() {
             );
             let bundle = compile_python_program(&es, &source).await.unwrap();
             let result = execute(&es, &host, &bundle).await.unwrap();
-            let row = plasm_runtime::entity_to_agent_row_json(
-                &result.return_steps[0].result.entities()[0],
-                None,
-            );
+            let rows = result.return_steps[0]
+                .result
+                .entities()
+                .iter()
+                .map(|row| serde_json::to_value(&row.fields).unwrap())
+                .collect::<Vec<_>>();
             assert_eq!(
-                row["value"],
-                json!([{"value":value,"child":"L0"},{"value":value,"child":"L1"}])
+                rows,
+                vec![
+                    json!({"value":value,"child":"L0"}),
+                    json!({"value":value,"child":"L1"})
+                ]
             );
         }
     });
@@ -151,15 +156,14 @@ fn nested_flat_map_captures_helper_scalar_and_parent_record() {
             .result
             .entities()
             .iter()
-            .map(|row| plasm_runtime::entity_to_agent_row_json(row, None))
+            .map(|row| serde_json::to_value(&row.fields).unwrap())
             .collect();
-        assert_eq!(actual.len(), 1);
         assert_eq!(
-            actual[0]["value"],
-            json!([
-                {"parent":"Title 2","child":"L0"},
-                {"parent":"Title 2","child":"L1"}
-            ])
+            actual,
+            vec![
+                json!({"parent":"Title 2","child":"L0"}),
+                json!({"parent":"Title 2","child":"L1"})
+            ]
         );
     });
 }

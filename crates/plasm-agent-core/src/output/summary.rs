@@ -172,7 +172,6 @@ fn format_tsv_inner(
                         serde_json::to_string(&value).expect("materialized value serialization"),
                         policy,
                     ),
-                    _ if col == "_ref" => sanitize_tsv_cell_with_flag(&raw, policy),
                     _ if cell_report.any_loss() => {
                         omitted.insert(col.clone());
                         (

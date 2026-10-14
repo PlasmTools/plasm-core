@@ -9,8 +9,8 @@ impl Default for Declarations {
     fn default() -> Self {
         Self {
             source: format!(
-                "from typing import NewType, Never, Literal, TypeAlias, Protocol, overload, TypedDict, NotRequired\nimport datetime\n{}",
-                crate::python_money::STUBS
+                "from typing import NewType, Never, Literal, TypeAlias, Protocol, overload, TypedDict, NotRequired\nimport datetime\n{}{}",
+                crate::python_money::STUBS, super::super::upstream::selection_stubs()
             ),
             contracts: BTreeMap::from([("PlasmMoney".into(), Type::scalar(FieldType::Money))]),
         }

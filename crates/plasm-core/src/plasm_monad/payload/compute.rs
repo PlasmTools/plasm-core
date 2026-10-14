@@ -38,12 +38,13 @@ pub enum ComputeOp {
         entry_id: String,
         entity: Option<String>,
         catalog_hash: String,
-        /// Version 9 seals direct result types without a synthetic content field.
+        /// Version 13 seals occurrence-source claims alongside direct result types.
         contract_version: u32,
         language_profile: String,
         input_schema: Option<SyntheticResultSchema>,
         output_type: crate::value_contract::ValueContract,
         per_row: bool,
+        selection: Option<PythonRowSelection>,
     },
     Project {
         fields: std::collections::BTreeMap<OutputName, FieldPath>,
@@ -98,6 +99,22 @@ pub enum ComputeOp {
         )]
         render_bindings: Vec<OutputName>,
     },
+}
+
+/// Candidate occurrence sources established by Python's nominal return type.
+/// These are plan dependencies, never fields in an agent-visible record.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PythonRowSelection {
+    pub owner: super::atoms::PlanQualifiedEntityKey,
+    pub ports: Vec<PythonSelectionPort>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PythonSelectionPort {
+    pub parameter: String,
+    pub source: String,
+    /// A named field of the private argument packet; None means direct rows.
+    pub packet_field: Option<String>,
 }
 
 impl ComputeOp {

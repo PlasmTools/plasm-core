@@ -10,6 +10,12 @@ impl Lower<'_> {
         {
             build_statements::BuildStatement::Documentation(()) => {}
             build_statements::BuildStatement::Effect(s) => {
+                // Outer build statements can dispatch effects, not mutate a
+                // materialized Python value. Reject before incidental inference
+                // errors (for example append into an inferred list[Never]).
+                if self.expression_placement(&s.value) != ExpressionPlacement::Host {
+                    return Err(at(stmt, PythonSourceError::UnusedNonWriteExpression));
+                }
                 let id = self.expr(&s.value, None)?;
                 let node = self.state.get(&id).ok_or(
                     crate::program_rejection::PythonLoweringInvariantError::StatementNodeMissing,

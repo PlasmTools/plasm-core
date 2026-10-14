@@ -151,9 +151,9 @@ impl Lower<'_> {
         !scan.found
     }
 
-    /// A single unannotated DAG expression keeps its value shape when expanded.
-    /// Python bodies and comprehensions cross the materialization boundary as
-    /// one checked computation, so their local state never becomes DAG state.
+    /// Structural expressions elaborate as DAG values, retaining record columns
+    /// and handle aliases. Python calls, indexing and comprehensions require
+    /// materialized inputs, just as multi-statement pure functions do.
     fn materialized_helper(&self, def: &ruff_python_ast::StmtFunctionDef) -> bool {
         if def.returns.is_some()
             || def
@@ -178,7 +178,9 @@ impl Lower<'_> {
             fn visit_expr(&mut self, expr: &'a PyExpr) {
                 if matches!(
                     expr,
-                    PyExpr::ListComp(_)
+                    PyExpr::Call(_)
+                        | PyExpr::Subscript(_)
+                        | PyExpr::ListComp(_)
                         | PyExpr::SetComp(_)
                         | PyExpr::DictComp(_)
                         | PyExpr::Generator(_)
@@ -191,6 +193,80 @@ impl Lower<'_> {
         let mut scan = MaterializedExpression(false);
         scan.visit_expr(value);
         scan.0
+    }
+
+    /// A scoped function is invoked once; arguments retain their own cardinality.
+    pub(super) fn invocation_port(
+        &mut self,
+    ) -> Result<(String, ruff_python_ast::ExprLambda), PythonLoweringError> {
+        let unit = *ruff_python_parser::parse_expression("None")
+            .map_err(PythonLoweringError::parse_error)?
+            .into_syntax()
+            .body;
+        let source = self.expr(&unit, None)?;
+        let row = self.fresh_parameter("method");
+        let lambda = match *ruff_python_parser::parse_expression(&format!("lambda {row}: None"))
+            .map_err(PythonLoweringError::parse_error)?
+            .into_syntax()
+            .body
+        {
+            PyExpr::Lambda(lambda) => lambda,
+            _ => unreachable!(),
+        };
+        Ok((source, lambda))
+    }
+
+    pub(super) fn invocation_value_type(
+        &self,
+        binding: &str,
+    ) -> Result<plasm_core::value_contract::ValueContract, PythonLoweringError> {
+        let schema = text::inferred_schema(self.es, &self.state, binding, 0)?;
+        let contract = super::super::binding_contract(&self.state, binding).ok_or(
+            crate::program_rejection::PythonLoweringInvariantError::HelperArgumentContractMissing,
+        )?;
+        let actual = if contract.value_kind == BindingValueKind::ScalarCell {
+            schema
+                .fields
+                .first()
+                .and_then(|f| f.value_type.clone())
+                .ok_or(
+                crate::program_rejection::PythonLoweringInvariantError::HelperScalarContractMissing,
+            )?
+        } else {
+            schema.row_contract()?
+        };
+        Ok(
+            if !contract.row_cardinality.permits_scalar_field_extract() {
+                plasm_core::value_contract::ValueContract {
+                    shape: plasm_core::value_contract::ValueShape::Array {
+                        element: Box::new(actual),
+                    },
+                    domain: None,
+                    nullable: false,
+                }
+            } else {
+                actual
+            },
+        )
+    }
+
+    pub(super) fn check_invocation_input(
+        &self,
+        annotation: &PyExpr,
+        binding: &str,
+    ) -> Result<(), PythonLoweringError> {
+        if self.check_dag_handle_annotation(annotation, binding)? {
+            return Ok(());
+        }
+        let schema = text::inferred_schema(self.es, &self.state, binding, 0)?;
+        crate::python_compute::check_callback_return(
+            self.es,
+            annotation,
+            &schema.row_contract()?,
+            &self.invocation_value_type(binding)?,
+            &self.imports.source,
+        )?;
+        Ok(())
     }
 
     pub(super) fn helper_call(
@@ -307,56 +383,11 @@ impl Lower<'_> {
         }
         // A method executes once. All authored arguments remain independent
         // captures, including plural rowsets; the unit port is only scheduling.
-        let unit = *ruff_python_parser::parse_expression("None")
-            .map_err(PythonLoweringError::parse_error)?
-            .into_syntax()
-            .body;
-        let source = self.expr(&unit, None)?;
-        let row = self.fresh_parameter("method");
-        let lambda = match *ruff_python_parser::parse_expression(&format!("lambda {row}: None"))
-            .map_err(PythonLoweringError::parse_error)?
-            .into_syntax()
-            .body
-        {
-            PyExpr::Lambda(lambda) => lambda,
-            _ => unreachable!(),
-        };
+        let (source, lambda) = self.invocation_port()?;
         for parameter in &parameters {
             if let Some(annotation) = &parameter.parameter.annotation {
                 let binding = &closure[parameter.parameter.name.as_str()];
-                if self.check_dag_handle_annotation(annotation, binding)? {
-                    continue;
-                }
-                let schema = text::inferred_schema(self.es, &self.state, binding, 0)?;
-                let contract = super::super::binding_contract(&self.state, binding)
-                    .ok_or(crate::program_rejection::PythonLoweringInvariantError::HelperArgumentContractMissing)?;
-                let actual = if contract.value_kind == BindingValueKind::ScalarCell {
-                    schema
-                        .fields
-                        .first()
-                        .and_then(|f| f.value_type.clone())
-                        .ok_or(crate::program_rejection::PythonLoweringInvariantError::HelperScalarContractMissing)?
-                } else {
-                    schema.row_contract()?
-                };
-                let actual = if !contract.row_cardinality.permits_scalar_field_extract() {
-                    plasm_core::value_contract::ValueContract {
-                        shape: plasm_core::value_contract::ValueShape::Array {
-                            element: Box::new(actual),
-                        },
-                        domain: None,
-                        nullable: false,
-                    }
-                } else {
-                    actual
-                };
-                crate::python_compute::check_callback_return(
-                    self.es,
-                    annotation,
-                    &schema.row_contract()?,
-                    &actual,
-                    &self.imports.source,
-                )?;
+                self.check_invocation_input(annotation, binding)?;
             }
         }
         let span = monty_analysis::Span {

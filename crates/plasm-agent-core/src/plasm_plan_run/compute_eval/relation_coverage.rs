@@ -260,7 +260,11 @@ mod tests {
             assert!(stored.relations["wire_notes"].is_exhaustive());
             let values = RowCodec::new(Some(&cgs)).values(&stored);
             let public = RowCodec::new(Some(&cgs))
-                .decode_values("Folder", &values)
+                .decode_values(
+                    "Folder",
+                    &values,
+                    plasm_core::row_contract::RowFieldContract::Observation,
+                )
                 .unwrap();
             let public =
                 CachedEntity::from_row(&public, 0, plasm_runtime::EntityCompleteness::Complete);

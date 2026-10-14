@@ -496,7 +496,7 @@ fn stamp_fanout_outcomes(
                 source_index: failure.index,
                 source_identity: failure.source_identity.clone(),
                 status: OperationInvocationStatus::Failed,
-                error: Some(failure.message.to_string()),
+                error: Some(failure.message.clone()),
             });
         }
     }

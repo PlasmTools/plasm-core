@@ -116,7 +116,7 @@ impl Lower<'_> {
         call: &ruff_python_ast::ExprCall,
         id: &str,
     ) -> Result<String, PythonLoweringError> {
-        let callback = self.callback(&call.func)?;
+        let mut callback = self.callback(&call.func)?;
         let mut arguments = call
             .arguments
             .args
@@ -138,7 +138,7 @@ impl Lower<'_> {
             &projection::callable_signature(&callback.lambda)?,
             &shape,
         )?;
-        let row = projection::projection_parameter(&callback.lambda)?;
+        let row = projection::projection_parameter(&callback.lambda)?.to_owned();
         if binding.len() != 1 || binding[0].variadic || binding[0].parameter != row {
             return Err(at(
                 site,
@@ -147,13 +147,50 @@ impl Lower<'_> {
                 },
             ));
         }
-        let source = self.expr(arguments[0].1, None)?;
-        let contract = super::super::binding_contract(&self.state, &source).ok_or(
-            crate::program_rejection::PythonLoweringInvariantError::CallbackInputContractMissing,
-        )?;
-        if !contract.row_cardinality.permits_scalar_field_extract() {
-            return Err(at(site, PythonSourceError::CallbackValueNeedsSingleton));
+        if row == "self"
+            || row.starts_with("__")
+            || self
+                .state
+                .sym_map_for(self.es)
+                .resolve_session_entity(&row)
+                .is_ok()
+        {
+            return Err(at(
+                site,
+                PythonSourceError::CallbackParameterShadowsHost { name: row },
+            ));
         }
+        let argument = self.expr(arguments[0].1, None)?;
+        let (source, unit_lambda) = self.invocation_port()?;
+        let parameters = callback
+            .lambda
+            .parameters
+            .as_mut()
+            .expect("one callback port");
+        let parameter = parameters
+            .posonlyargs
+            .iter_mut()
+            .chain(&mut parameters.args)
+            .next()
+            .expect("one callback port");
+        if let Some(annotation) = &parameter.parameter.annotation {
+            self.check_invocation_input(annotation, &argument)?;
+        }
+        // The scheduling port is independent of the authored argument. Keeping
+        // that argument as a capture preserves empty and plural collections.
+        parameter.parameter = unit_lambda
+            .parameters
+            .as_ref()
+            .expect("unit lambda parameters")
+            .args[0]
+            .parameter
+            .clone();
+        parameter.default = None;
+        callback
+            .closure
+            .get_or_insert_with(BTreeMap::new)
+            .insert(row, argument.clone());
+        let return_annotation = callback.returns.take();
         let body = self.scoped_callback_body(
             site,
             &source,
@@ -179,7 +216,7 @@ impl Lower<'_> {
                 schema,
             },
         })?;
-        self.emit_value(
+        let lowered = self.emit_value(
             PlasmDataValue::NodeSymbol {
                 node: scope.clone(),
                 alias: scope.clone(),
@@ -191,7 +228,19 @@ impl Lower<'_> {
                 cardinality: crate::plasm_plan::InputCardinality::Singleton,
             }],
             id,
-        )
+        )?;
+        if let Some(annotation) = return_annotation {
+            let input =
+                text::inferred_schema(self.es, &self.state, &argument, 0)?.row_contract()?;
+            crate::python_compute::check_callback_return(
+                self.es,
+                &annotation,
+                &input,
+                &self.invocation_value_type(&lowered)?,
+                &self.imports.source,
+            )?;
+        }
+        Ok(lowered)
     }
     pub(super) fn callback(
         &mut self,

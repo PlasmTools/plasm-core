@@ -31,7 +31,7 @@
 //!
 //! Plasm language / instructions body (first update on `plasm_context` open plus append-only deltas when you add
 //! capability picks via `plasm_context`'s `seeds`) is counted in Unicode scalar values per MCP transport session.
-//! `plasm` calls also accumulate invocation text (`program` plus optional `reasoning`); both
+//! `plasm` calls also accumulate invocation source text (`program`); both
 //! `plasm` and `plasm_run` accumulate returned Markdown on success. Server logs use a rough **token estimate** ≈ `ceil(chars / 4)` per
 //! bucket (`prompt` / `invocation` / `tool_response`). When the session leaves the SDK session store,
 //! an `INFO` line logs cumulative character totals and token estimates (`plasm_agent::mcp`).

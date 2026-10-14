@@ -86,20 +86,37 @@ impl Lower<'_> {
                     });
                 }
                 q.catalog_entry_id = plasm_core::CatalogEntryStamp::some(owner.entry_id.clone());
-                plasm_core::rowset::normalize_query_expr_to_rowset(
-                    &q,
-                    cgs,
-                    owner.entry_id.as_str(),
-                )?;
                 plasm_core::Expr::Query(q)
             }
             CatalogReadKind::Get => {
                 let mut g = plasm_core::GetExpr::pathless_nullary(owner.entity.as_str());
                 g.capability_name = specific.clone();
-                let cap = g.capability(cgs).map_err(PythonLoweringError::from)?;
+                let cap = g.capability(cgs).map_err(|error| match error {
+                    error @ plasm_core::TypeError::CapabilityNotFound { .. } => at(
+                        site,
+                        PythonSourceError::GetMethodUnavailable {
+                            entity: owner.entity.to_string(),
+                            source: std::sync::Arc::new(error),
+                        },
+                    ),
+                    error => PythonLoweringError::from(error)
+                        .with_span((site.start().to_u32(), site.end().to_u32())),
+                })?;
                 let entity = cgs.get_entity(owner.entity.as_str()).ok_or(
                     crate::program_rejection::PythonLoweringInvariantError::GetEntityMissing,
                 )?;
+                // Validate the consumer's call shape before resolving input
+                // values. A positional capability input is not a missing field on
+                // the producer that supplied it.
+                if !cap.get_requires_identity_anchor(cgs) && !call.arguments.args.is_empty() {
+                    return Err(at(
+                        site,
+                        PythonSourceError::GetIdentityArgumentNotDeclared {
+                            positional: call.arguments.args.len(),
+                            keywords: 0,
+                        },
+                    ));
+                }
                 let (identity_keywords, input_keywords): (Vec<_>, Vec<_>) =
                     call.arguments.keywords.iter().partition(|kw| {
                         cap.get_requires_identity_anchor(cgs)
@@ -124,7 +141,7 @@ impl Lower<'_> {
                     if !call.arguments.args.is_empty() || !identity_keywords.is_empty() {
                         return Err(at(
                             site,
-                            PythonSourceError::NullaryGetArguments {
+                            PythonSourceError::GetIdentityArgumentNotDeclared {
                                 positional: call.arguments.args.len(),
                                 keywords: identity_keywords.len(),
                             },
@@ -209,8 +226,22 @@ impl Lower<'_> {
                 plasm_core::Expr::Get(g)
             }
         };
-        plasm_core::apply_required_selection_defaults_in_expr(&mut expr, cgs, "")
-            .map_err(PythonLoweringError::from)?;
+        let method = monty::expression_source(&call.func);
+        plasm_core::apply_required_selection_defaults_in_expr(&mut expr, cgs, &method).map_err(
+            |error| {
+                PythonLoweringError::from(error)
+                    .with_span((site.start().to_u32(), site.end().to_u32()))
+            },
+        )?;
+        // Resolve required/defaulted language arguments before validating the
+        // normalized rowset's scope inputs.
+        if let plasm_core::Expr::Query(query) = &expr {
+            plasm_core::rowset::normalize_query_expr_to_rowset(query, cgs, owner.entry_id.as_str())
+                .map_err(|error| {
+                    PythonLoweringError::from(error)
+                        .with_span((site.start().to_u32(), site.end().to_u32()))
+                })?;
+        }
         self.emit_catalog(id, expr)
     }
     fn identity_slot(

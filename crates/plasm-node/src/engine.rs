@@ -203,7 +203,7 @@ impl RunPlanResult {
     fn failure(failure: plasm_runtime::ExecutionFailure) -> Self {
         Self {
             ok: false,
-            message: failure.diagnostic().to_owned(),
+            message: plasm_agent_core::agent_presentation::render_failure(&failure).into_string(),
             rows_json: None,
             meta_json: None,
             artifacts_json: None,
@@ -706,7 +706,8 @@ impl AgentEngine {
                     write_count: 0,
                     failure_json: Some(serde_json::to_string(&failure)?),
                     plan_commit_ref: String::new(),
-                    summary: failure.to_string(),
+                    summary: plasm_agent_core::agent_presentation::render_failure(&failure)
+                        .into_string(),
                     comp_json: serde_json::Value::Null,
                     fused_clean_read: false,
                 });
@@ -849,7 +850,8 @@ impl AgentEngine {
             Err(failure) => {
                 return Ok(RunPlanResult {
                     ok: false,
-                    message: failure.to_string(),
+                    message: plasm_agent_core::agent_presentation::render_failure(&failure)
+                        .into_string(),
                     rows_json: None,
                     meta_json: None,
                     artifacts_json: None,
@@ -902,7 +904,8 @@ impl AgentEngine {
                 }
                 Ok(RunPlanResult {
                     ok: false,
-                    message: failure.to_string(),
+                    message: plasm_agent_core::agent_presentation::render_failure(&failure)
+                        .into_string(),
                     rows_json: None,
                     meta_json: None,
                     artifacts_json: None,

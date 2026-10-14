@@ -1,5 +1,5 @@
 import { DrainingLifecycle } from "./lifecycle.js";
-import { AgentExecutionFailure, executionFailureSchema } from "./execution-failure.js";
+import { AgentExecutionFailure, executionFailureSchema, type ExecutionFailure } from "./execution-failure.js";
 import { routingExplanationLines, routingRecoveryMarkdown, routingSupportMarkdown } from "../engine/routing.js";
 import path from "node:path";
 import { createHash, randomUUID } from "node:crypto";
@@ -72,13 +72,11 @@ export interface PlasmContextInput {
 export interface PlasmPlanInput {
   logicalSessionRef: string;
   program: string;
-  reasoning?: string;
 }
 
 export interface PlasmRunInput {
   logicalSessionRef: string;
   runRef: string;
-  reasoning?: string;
 }
 
 function seedKey(seed: { api: string; entity: string }): string {
@@ -349,7 +347,6 @@ export class AgentRuntime {
 
   private async plasmAdmitted(input: PlasmPlanInput): Promise<string> {
     const session = await this.requireSessionByRef(input.logicalSessionRef);
-    void input.reasoning;
     const entryId = session.seeds[0]?.api;
     const catalogCgsHash = entryId ? this.catalogHashForEntry(entryId) : undefined;
 
@@ -367,7 +364,7 @@ export class AgentRuntime {
         if (dry.failureJson) {
           const failure = executionFailureSchema.parse(JSON.parse(dry.failureJson));
           if (failure.cause === "program" && failure.recovery === "repair_program") return dry.summary;
-          throw new AgentExecutionFailure(failure);
+          throw new AgentExecutionFailure(failure, dry.summary);
         }
         if (!Number.isSafeInteger(dry.writeCount) || dry.writeCount < 0) {
           throw new Error("Engine did not provide a valid typed write count");
@@ -437,9 +434,8 @@ export class AgentRuntime {
         cause: "program", recovery: "repair_program", code: "invalid_run_reference",
         diagnostic: "Copy the reviewed commit reference from plasm or a continuation handle from plasm_run verbatim. Run artifact IDs identify observations, not executable plans.",
         node: null, occurrence_path: [], catalog_digest: null, effects: [], dispatches: [], effects_unresolved: false,
-      });
+      }, "Execution stopped: copy the reviewed run reference verbatim. Revise the program and plan again.");
     }
-    void input.reasoning;
     const entryId = session.seeds[0]?.api;
     const catalogCgsHash = entryId ? this.catalogHashForEntry(entryId) : undefined;
 
@@ -462,7 +458,7 @@ export class AgentRuntime {
           : await this.engine.runPlan(input.runRef, session.logicalSessionId);
         if (result.failureJson) {
           const failure = executionFailureSchema.parse(JSON.parse(result.failureJson));
-          throw new AgentExecutionFailure(failure);
+          throw new AgentExecutionFailure(failure, result.message);
         }
         const runMeta = parseRunMeta(result.metaJson);
         const requestFingerprints = collectRequestFingerprints(runMeta);
@@ -528,6 +524,11 @@ export class AgentRuntime {
     await writeWorkspaceFile(this.artefactWorkspaceRoot, "artefacts/latest.json", body);
   }
 
+  /** Machine evidence belongs to the existing trace archive, not model context. */
+  async recordExecutionFailure(toolName: string, failure: ExecutionFailure): Promise<void> {
+    await this.recordToolTrace("tool", toolName, Date.now(), { status: "execution_failed", failure_json: JSON.stringify(failure) });
+  }
+
   private async emitHook(
     event: "plan:commit" | "run:complete",
     detail: Record<string, unknown>,
@@ -582,12 +583,13 @@ export class AgentRuntime {
 
   private sessionInputFailure(code: "invalid_context_input" | "invalid_logical_session_ref" | "unknown_logical_session_ref", diagnostic: string): AgentExecutionFailure {
     const open = this.workflowSession?.logicalSessionRef;
-    return new AgentExecutionFailure({
+    const failure: ExecutionFailure = {
       cause: "program", recovery: "repair_program", code,
       diagnostic: `${diagnostic}. ${open ? `Open workflow logical_session_ref is \`${open}\`; copy it verbatim.` : 'Call plasm_context with session_mode "new" first, then copy its logical_session_ref verbatim.'}`,
       node: null, occurrence_path: [], catalog_digest: null,
       effects: [], dispatches: [], effects_unresolved: false,
-    });
+    };
+    return new AgentExecutionFailure(failure, `Execution stopped: ${failure.diagnostic}\nRevise the program and plan again.`);
   }
 
   private parseSessionRef(ref: string | undefined): string {

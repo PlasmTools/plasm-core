@@ -1,5 +1,13 @@
 # Python language conformance matrix
 
+Declaration reachability and private compute naming are covered by the live
+`compute_private_unused` case and the declaration-constructor registry. Abstract
+`python_admission_corrections` tests additionally preserve typed causes, validate
+rejected double-underscore/decorator forms, execute annotation and required-input
+repairs, and distinguish immutable build statements from mutable pure compute.
+Unused declaration erasure preserves the semantic plan; invoked methods still
+check actual input and output contracts.
+
 Nominal Boolean branch decoding has a focused type-bridge witness:
 `cargo test -p plasm-agent-core --lib boolean_membership_branches_preserve_materialized_contracts`.
 It checks domain retention and nullability for both branches of Boolean identity

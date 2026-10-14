@@ -17,6 +17,7 @@ export type PromptAssetName =
   | "discover_tool.txt"
   | "initialize_workflow.txt"
   | "plasm_context_tool.txt"
+  | "program_param.txt"
   | "plasm_tool.txt"
   | "python-plasm-dag.txt"
   | "plasm_run_tool_base.txt";

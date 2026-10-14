@@ -8,7 +8,8 @@ use crate::mcp_run_markdown::ArtifactAccessMode;
 /// Which lanes a finalized [`CallToolResult`](rust_mcp_sdk::schema::CallToolResult) exposes.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum McpDeliveryProfile {
-    /// MCP Apps disabled: content only; no `_meta.ui`, no `structuredContent`.
+    /// MCP Apps disabled: agent content only; no `_meta.ui`, no `structuredContent`.
+    /// Opaque machine failure evidence may still be carried in `_meta.plasm`.
     ContentOnly,
     /// Tool-only host (Claude ToolFallback): content + optional `_meta.ui` mount; no `structuredContent`.
     ToolFallback,

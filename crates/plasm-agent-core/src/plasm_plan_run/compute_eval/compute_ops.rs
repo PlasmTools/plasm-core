@@ -653,6 +653,7 @@ pub(crate) fn compute_fingerprint(
     node: &ValidatedPlanNode,
     rows: &[plasm_core::ValueRow],
     value_shapes: &[MaterializedValueShape],
+    identities: &[Option<plasm_core::RowIdentity>],
 ) -> Result<String, ComputeFingerprintError> {
     use sha2::{Digest, Sha256};
     let mut hasher = Sha256::new();
@@ -682,6 +683,24 @@ pub(crate) fn compute_fingerprint(
             value_shapes.get(i) == Some(&MaterializedValueShape::ScalarColumn),
         )]);
         plasm_core::visit_stored_value_bytes(row, |bytes| hasher.update(bytes))?;
+    }
+    // Equal values with different original receivers are different results.
+    // Hash the typed host identity without adding it to the visible row.
+    for identity in identities {
+        let encoded = identity.as_ref().map(|identity| {
+            (
+                &identity.qualified_entity,
+                &identity.reference,
+                &identity.ambient,
+                match identity.id_encoding {
+                    plasm_core::IdEncoding::Simple => 0u8,
+                    plasm_core::IdEncoding::Compound => 1,
+                    plasm_core::IdEncoding::Url => 2,
+                },
+            )
+        });
+        hasher
+            .update(serde_json::to_vec(&encoded).map_err(ComputeFingerprintError::Serialization)?);
     }
     Ok(format!("plan-compute:{}", hex::encode(hasher.finalize())))
 }

@@ -166,12 +166,13 @@ annotation/domain combinations; those remain separate semantic obligations.
   },
   {
     "operation": "compute",
-    "premise": "A public synchronous @compute method has a bound self receiver and annotated or callsite-inferred materialization inputs. Upstream Python binding resolves positional-only, keyword-only and scalar constant defaults. Whole-body checking validates annotated or inferred return contracts against actual callsite inputs.",
+    "premise": "A synchronous @compute method with an ordinary name (including a single leading underscore) has a bound self receiver and annotated or callsite-inferred materialization inputs. Upstream Python binding resolves positional-only, keyword-only and scalar constant defaults. Whole-body checking validates annotated or inferred return contracts against actual callsite inputs.",
     "transfer": "Extract source without evaluating decorators; resolve catalog-qualified annotations and prepare the sealed compute contract. Row contracts resolve at typed callsites.",
     "law": "BC-03",
     "witnesses": [
       "type_projected_integer",
       "compute_inferred_callsite_inputs",
+      "compute_private_unused",
       "text_bindings_row",
       "text_synthetic_count",
       "text_collection_report"
@@ -208,8 +209,8 @@ annotation/domain combinations; those remain separate semantic obligations.
         "module": true
       },
       {
-        "body": "class Example(Program):\n    @compute\n    def _text(self, row: Row) -> str:\n        return row.title\n    def build(self):\n        return self.text(E.get(\"i1\"))\n",
-        "error": "ComputeDecoratorShape",
+        "body": "class Example(Program):\n    @compute\n    def __text(self, row: Row) -> str:\n        return row.title\n    def build(self):\n        return self.text(E.get(\"i1\"))\n",
+        "error": "ReservedComputeName",
         "module": true
       },
       {

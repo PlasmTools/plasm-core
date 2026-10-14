@@ -752,7 +752,7 @@ export async function runEveToolLoop(
         { role: "user", content: INVALID_TOOL_INPUT_REPAIR_DIAGNOSTIC },
       ];
     }
-    executionFailure = terminalExecutionFailure(delta);
+    executionFailure = terminalExecutionFailure(stepToolResults);
     if (executionFailure) {
       stopReason = "execution_failed";
       break;

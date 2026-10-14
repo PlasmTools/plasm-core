@@ -222,7 +222,7 @@ pub(crate) async fn finalize_empty_relation_materialized_node(
                 paging_handle: None,
                 source: ExecutionSource::Cache,
                 stats: ExecutionStats::default(),
-                request_fingerprints: vec![compute_fingerprint(node, &[], &[]).map_err(
+                request_fingerprints: vec![compute_fingerprint(node, &[], &[], &[]).map_err(
                     |diagnostic| {
                         relation_failure("relation_fingerprint_failed", diagnostic.to_string())
                     },
@@ -652,8 +652,11 @@ pub(crate) fn rows_to_entities_with_refs(
                         object.shift_remove(key);
                     }
                 }
-                let semantic =
-                    plasm_core::row_contract::RowCodec::new(cgs).decode_values(entity, &wire)?;
+                let semantic = plasm_core::row_contract::RowCodec::new(cgs).decode_values(
+                    entity,
+                    &wire,
+                    plasm_core::row_contract::RowFieldContract::Observation,
+                )?;
                 return Ok(CachedEntity::from_row(
                     &semantic,
                     0,
@@ -765,6 +768,7 @@ pub(crate) async fn finalize_embed_relation_materialized_node(
         request_fingerprints: vec![compute_fingerprint(
             node,
             fingerprint_rows.unwrap_or(&wire_rows),
+            &[],
             &[],
         )
         .map_err(|diagnostic| {

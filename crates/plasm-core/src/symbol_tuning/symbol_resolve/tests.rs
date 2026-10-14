@@ -351,7 +351,7 @@ fn mutator_param_misused_as_row_or_filter_hints_invoke_form() {
 }
 
 #[test]
-fn query_selection_param_misused_as_row_field_hints_brace_not_method() {
+fn query_selection_param_misused_as_row_field_hints_python_read() {
     let dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .join("../../fixtures/schemas/plasm_language_matrix");
     let Ok(cgs) = load_schema_dir(&dir) else {
@@ -366,8 +366,8 @@ fn query_selection_param_misused_as_row_field_hints_brace_not_method() {
         .expect_err("q is search selection, not a row field");
     let row_msg = row_err.to_string();
     assert!(
-        row_msg.contains("query selection") && row_msg.contains("{q=...}"),
-        "expected query-brace redirect, got: {row_msg}"
+        row_msg.contains("query selection") && row_msg.contains(".search(q=...)"),
+        "expected Python search redirect, got: {row_msg}"
     );
     assert!(
         !row_msg.contains(".m") && !row_msg.contains("<method>"),

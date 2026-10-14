@@ -20,123 +20,74 @@ impl From<plasm_runtime::ExecutionFailure> for HostFault {
 impl HostFault {
     pub fn into_tool_result(
         self,
-        delivery: crate::mcp_delivery::McpDeliveryProfile,
+        _delivery: crate::mcp_delivery::McpDeliveryProfile,
     ) -> rust_mcp_sdk::schema::CallToolResult {
         use rust_mcp_sdk::schema::schema_utils::CallToolError;
         use rust_mcp_sdk::schema::CallToolResult;
-        let mut result =
-            CallToolResult::with_error(CallToolError::from_message(agent_failure_summary(&self.0)));
-        if delivery.emits_structured_ui() {
-            result.structured_content = serde_json::json!({
-                "status": "execution_failed",
-                "failure": self.0,
-                "recovery_instructions": self.0.recovery_instructions()
-            })
-            .as_object()
-            .cloned();
-        }
+        let mut result = CallToolResult::with_error(CallToolError::from_message(
+            crate::agent_presentation::render_failure(&self.0).into_string(),
+        ));
+        // Structured content can be forwarded into model context by a host.
+        // Full machine evidence therefore belongs to the existing opaque meta
+        // lane for every delivery profile, never the agent content projection.
+        result.meta = serde_json::json!({"plasm": {
+            "status": "execution_failed", "failure": self.0
+        }})
+        .as_object()
+        .cloned();
         result
     }
-}
-
-fn agent_failure_summary(failure: &plasm_runtime::ExecutionFailure) -> String {
-    use plasm_runtime::{MutationDispatchStatus, RecoveryDisposition};
-    let visible_node = failure
-        .node
-        .as_deref()
-        .filter(|node| !crate::plan_dry_display::is_synthetic_plan_node_id_public(node));
-    let mut lines = vec![match visible_node {
-        Some(node) => format!("Execution stopped at {node}: {}", failure.diagnostic()),
-        None => format!("Execution stopped: {}", failure.diagnostic()),
-    }];
-    let mut effects = Vec::new();
-    for receipt in &failure.effects {
-        let identities = |status: plasm_runtime::OperationInvocationStatus| {
-            receipt
-                .occurrences
-                .iter()
-                .filter(|occurrence| occurrence.status == status)
-                .map(|occurrence| {
-                    occurrence
-                        .source_identity
-                        .clone()
-                        .unwrap_or_else(|| format!("row #{}", occurrence.source_index))
-                })
-                .collect::<Vec<_>>()
-        };
-        if receipt.completed > 0 {
-            let completed = identities(plasm_runtime::OperationInvocationStatus::Completed);
-            effects.push(format!(
-                "{}/{}: {} completed{}",
-                receipt.entry_id,
-                receipt.capability,
-                receipt.completed,
-                if completed.is_empty() {
-                    String::new()
-                } else {
-                    format!(" [{}]", completed.join(", "))
-                }
-            ));
-        }
-        if receipt.failed > 0 {
-            let failed = identities(plasm_runtime::OperationInvocationStatus::Failed);
-            effects.push(format!(
-                "{}/{}: {} failed{}",
-                receipt.entry_id,
-                receipt.capability,
-                receipt.failed,
-                if failed.is_empty() {
-                    String::new()
-                } else {
-                    format!(" [{}]", failed.join(", "))
-                }
-            ));
-        }
-    }
-    let has_dispatch_evidence = !failure.dispatches.is_empty();
-    let mut dispatches = std::collections::BTreeMap::new();
-    for dispatch in &failure.dispatches {
-        let status = match dispatch.status {
-            MutationDispatchStatus::Unresolved => "without transport response",
-            MutationDispatchStatus::ResponseReceived => "with transport response",
-        };
-        *dispatches
-            .entry((
-                dispatch.operation.entry_id.as_str(),
-                dispatch.operation.capability.as_str(),
-                status,
-            ))
-            .or_insert(0usize) += 1;
-    }
-    for ((entry, capability, status), count) in dispatches {
-        effects.push(format!("{entry}/{capability}: {count} {status}"));
-    }
-    if !effects.is_empty() {
-        lines.push(format!("Effects: {}.", effects.join("; ")));
-        if has_dispatch_evidence {
-            lines.push("Dispatch history may overlap completed and failed effects above.".into());
-        }
-    }
-    if failure.effects_unresolved && !has_dispatch_evidence {
-        lines.push("Some effects remain unresolved.".into());
-    }
-    lines.push(
-        match failure.recovery {
-            RecoveryDisposition::RepairProgram => "Revise the program and plan again.",
-            RecoveryDisposition::ObtainAuthorization => "Obtain authorization before another run.",
-            RecoveryDisposition::ReconcileEffects => {
-                "Check completed and unresolved effects before another run; this run did not roll back."
-            }
-            RecoveryDisposition::Stop => "Stop this execution.",
-        }
-        .into(),
-    );
-    lines.join("\n")
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn nested_machine_paths_are_not_agent_locations() {
+        let failure = plasm_runtime::ExecutionFailure::new(
+            plasm_runtime::FailureCause::Upstream,
+            "provider_rejected",
+            "Insufficient balance",
+        )
+        .at("ack/__py5/__scope7/selected", vec![1]);
+        let result = HostFault(failure.clone())
+            .into_tool_result(crate::mcp_delivery::McpDeliveryProfile::ContentOnly);
+        let text = serde_json::to_string(&result.content).unwrap();
+        assert!(text.contains("ack/selected"));
+        assert!(!text.contains("__py"));
+        assert!(!text.contains("__scope"));
+        assert_eq!(
+            result.meta.unwrap()["plasm"]["failure"]["node"],
+            "ack/__py5/__scope7/selected"
+        );
+    }
+    #[test]
+    fn every_delivery_profile_separates_agent_text_from_machine_evidence() {
+        use crate::mcp_delivery::McpDeliveryProfile;
+        let failure = plasm_runtime::ExecutionFailure::new(
+            plasm_runtime::FailureCause::Transport,
+            "transport_error",
+            "provider response unavailable",
+        )
+        .at("__py0", vec![1, 2]);
+        for profile in [
+            McpDeliveryProfile::ContentOnly,
+            McpDeliveryProfile::ToolFallback,
+            McpDeliveryProfile::FullApps,
+        ] {
+            let result = HostFault(failure.clone()).into_tool_result(profile);
+            assert!(result.structured_content.is_none());
+            let text = serde_json::to_string(&result.content).unwrap();
+            assert!(text.contains("provider response unavailable"));
+            assert!(!text.contains("occurrence_path"));
+            assert!(!text.contains("__py0"));
+            assert_eq!(
+                result.meta.unwrap()["plasm"]["failure"],
+                serde_json::to_value(&failure).unwrap()
+            );
+        }
+    }
+
     #[test]
     fn partial_write_mcp_reports_execution_scoped_uncertainty() {
         let mut failure = plasm_runtime::ExecutionFailure::new(
@@ -156,7 +107,7 @@ mod tests {
             .unwrap()
             .contains("service rejected the requested state"));
         assert_eq!(
-            result.structured_content.as_ref().unwrap()["failure"]["diagnostic"],
+            result.meta.as_ref().unwrap()["plasm"]["failure"]["diagnostic"],
             "service rejected the requested state"
         );
     }
@@ -175,7 +126,7 @@ mod tests {
         assert!(wire.contains("repair program: field rejected by service"));
         assert_eq!(result.is_error, Some(true));
         let decoded: plasm_runtime::ExecutionFailure =
-            serde_json::from_value(result.structured_content.unwrap()["failure"].clone()).unwrap();
+            serde_json::from_value(result.meta.unwrap()["plasm"]["failure"].clone()).unwrap();
         assert_eq!(
             serde_json::to_value(decoded).unwrap(),
             serde_json::to_value(failure).unwrap()
@@ -206,7 +157,7 @@ mod tests {
         assert!(!text.contains("CollectionIdentity"));
         assert!(!text.contains("EvidenceGap"));
         assert!(!text.contains("Revise the program"));
-        let failure = &result.structured_content.unwrap()["failure"];
+        let failure = &result.meta.unwrap()["plasm"]["failure"];
         assert_eq!(failure["cause"], "response_contract");
         assert_eq!(failure["code"], "collection_incomplete");
         assert_eq!(failure["recovery"], "stop");
@@ -250,7 +201,7 @@ mod tests {
                 failed: 0,
                 occurrences: Vec::new(),
             });
-        let text = agent_failure_summary(&failure);
+        let text = crate::agent_presentation::render_failure(&failure);
         assert!(text.contains("fixture/write: 1 completed"), "{text}");
         assert!(text.contains("Some effects remain unresolved"), "{text}");
     }

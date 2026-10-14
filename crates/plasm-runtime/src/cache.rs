@@ -270,8 +270,11 @@ impl CachedEntity {
         for field in ["_version", "_last_updated", "_completeness"] {
             semantic.shift_remove(field);
         }
-        let record = plasm_core::row_contract::RowCodec::new(Some(cgs))
-            .decode_values(entity_type, &semantic)?;
+        let record = plasm_core::row_contract::RowCodec::new(Some(cgs)).decode_values(
+            entity_type,
+            &semantic,
+            plasm_core::row_contract::RowFieldContract::Projection,
+        )?;
         let (reference, fields, relations, unavailable_fields) = record.into_parts();
         let completeness = obj
             .get("_completeness")

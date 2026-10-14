@@ -1,5 +1,140 @@
 use super::*;
+
+#[test]
+fn selection_evidence_follows_nominal_records_not_equal_shapes() {
+    let row = Type::record(
+        BTreeMap::from([("id".into(), Type::scalar(FieldType::Integer))]),
+        Default::default(),
+    );
+    let rows = Type {
+        shape: ValueShape::Array {
+            element: Box::new(row),
+        },
+        domain: None,
+        nullable: false,
+    };
+    for body in [
+        "\n    return rows\n",
+        "\n    return sorted(rows, key=lambda r: r.id)\n",
+        "\n    return [r for r in rows if r.id > 0]\n",
+        "\n    selected = []\n    for r in rows:\n        if r.id > 0:\n            selected.append(r)\n    return selected\n",
+        "\n    return max(rows, key=lambda r: r.id)\n",
+        "\n    def pick(xs):\n        return xs[0]\n    return pick(rows)\n",
+    ] {
+        let output = infer_output(body, &[("rows", &rows)], "").unwrap();
+        assert_eq!(output.selected_parameters, std::collections::BTreeSet::from(["rows".into()]), "{body}");
+    }
+    for body in [
+        "\n    return [{'id': r.id} for r in rows]\n",
+        "\n    return [r.id for r in rows]\n",
+    ] {
+        assert!(infer_output(body, &[("rows", &rows)], "")
+            .unwrap()
+            .selected_parameters
+            .is_empty());
+    }
+}
 use plasm_core::{value_contract::DomainRef, ValueDomainKey};
+
+#[test]
+fn ordered_selection_preserves_materialized_field_contracts() {
+    let number = Type::scalar(FieldType::Integer);
+    let row = fields(&[("number", number.clone()), ("rank", number.clone())]);
+    let rows = array(row.clone());
+    for operation in ["min", "max"] {
+        let body = format!("\n    if not rows:\n        raise ValueError('empty selection')\n    chosen = {operation}(rows, key=lambda row: row.rank)\n    return chosen.number\n");
+        assert_eq!(
+            infer_body(&body, &[("rows", &rows)], "").unwrap(),
+            number,
+            "{operation}"
+        );
+    }
+    assert_eq!(
+        infer_body(
+            "\n    return sorted(rows, key=lambda row: row.rank)\n",
+            &[("rows", &rows)],
+            ""
+        )
+        .unwrap(),
+        rows
+    );
+}
+
+#[test]
+fn temporal_ordered_selection_preserves_numeric_arithmetic() {
+    let number = Type::scalar(FieldType::Number);
+    let rows = array(fields(&[
+        ("amount", number.clone()),
+        ("created_at", Type::scalar(FieldType::Date)),
+    ]));
+    let body = "\n    if not rows:\n        raise ValueError('empty selection')\n    selected = max(rows, key=lambda row: row.created_at)\n    return selected.amount * 3\n";
+    let output = infer_body(body, &[("rows", &rows)], "").unwrap();
+    assert_eq!(output, Type::join(Type::scalar(FieldType::Integer), number));
+}
+
+#[test]
+fn guarded_nominal_temporal_selection_retains_field_contract() {
+    let mut number = Type::scalar(FieldType::Number);
+    number.domain = Some(DomainRef {
+        entry_id: "matrix".into(),
+        catalog_hash: "pin".into(),
+        value_ref: ValueDomainKey::new("amount").unwrap(),
+    });
+    let mut time = plasm_core::temporal_value::TemporalKind::Datetime.contract();
+    time.nullable = true;
+    let rows = array(fields(&[("amount", number.clone()), ("created_at", time)]));
+    let body = "\n    dated = [row for row in rows if row.created_at is not None]\n    if not dated:\n        raise ValueError('empty selection')\n    selected = max(dated, key=lambda row: row.created_at)\n    return selected.amount\n";
+    assert_eq!(infer_body(body, &[("rows", &rows)], "").unwrap(), number);
+}
+
+#[test]
+fn selection_signatures_keep_defaults_and_validate_call_shape() {
+    let row = fields(&[("rank", Type::scalar(FieldType::Integer))]);
+    let rows = array(row.clone());
+    for operation in ["min", "max"] {
+        let selected = infer(
+            &format!("{operation}(rows, key=lambda r: r.rank, default=None)"),
+            "rows",
+            &rows,
+            "",
+        )
+        .unwrap();
+        let mut optional = row.clone();
+        optional.nullable = true;
+        assert_eq!(selected, optional);
+        for expression in [
+            format!("{operation}(rows, key=3)"),
+            format!("{operation}(rows, reverse=True)"),
+            format!("{operation}()"),
+            format!("{operation}(1)"),
+        ] {
+            assert!(
+                infer(&expression, "rows", &rows, "").is_err(),
+                "{expression}"
+            );
+        }
+    }
+    assert!(infer("sorted(rows, reverse='yes')", "rows", &rows, "").is_err());
+}
+
+#[test]
+fn empty_collection_annotations_use_context_without_widening_nonempty_inputs() {
+    let aliases = BTreeMap::new();
+    let empty = array(never());
+    for annotation in ["list[int]", "list[str]", "list[list[int]]"] {
+        annotation_with_imports(annotation, &aliases, "", Some(&empty)).unwrap();
+    }
+    for annotation in ["int", "str", "dict[str, int]"] {
+        assert!(annotation_with_imports(annotation, &aliases, "", Some(&empty)).is_err());
+    }
+    let integers = array(Type::scalar(FieldType::Integer));
+    assert!(annotation_with_imports("list[str]", &aliases, "", Some(&integers)).is_err());
+    let mut nullable_bottom = never();
+    nullable_bottom.nullable = true;
+    assert!(
+        annotation_with_imports("list[int]", &aliases, "", Some(&array(nullable_bottom))).is_err()
+    );
+}
 
 proptest::proptest! {
     #![proptest_config(proptest::test_runner::Config::with_cases(128))]
@@ -17,6 +152,30 @@ proptest::proptest! {
         proptest::prop_assert_eq!(&copied, &number);
         let transformed = infer_body(&format!("\n    return row.number + ({offset})\n"), &[("row", &input)], "").unwrap();
         proptest::prop_assert_eq!(transformed, Type::scalar(FieldType::Integer));
+    }
+
+    #[test]
+    fn nested_collection_projection_preserves_field_contracts(domain in "[a-z]{1,20}") {
+        let mut number = Type::scalar(FieldType::Integer);
+        number.domain = Some(DomainRef {
+            entry_id: "matrix".into(), catalog_hash: "pin".into(),
+            value_ref: ValueDomainKey::new(domain).unwrap(),
+        });
+        let groups = array(array(fields(&[("number", number.clone())])));
+        let copied = infer_body("\n    return [[row.number for row in group] for group in groups]\n", &[("groups", &groups)], "").unwrap();
+        proptest::prop_assert_eq!(copied, array(array(number)));
+    }
+
+    #[test]
+    fn dictionary_held_accumulator_preserves_appended_field_provenance(domain in "[a-z]{1,20}") {
+        let mut number = Type::scalar(FieldType::Integer);
+        number.domain = Some(DomainRef {
+            entry_id: "matrix".into(), catalog_hash: "pin".into(),
+            value_ref: ValueDomainKey::new(domain).unwrap(),
+        });
+        let rows = array(fields(&[("number", number.clone())]));
+        let output = infer_body("\n    result = {'items': []}\n    for row in rows:\n        result['items'].append(row.number)\n    return result\n", &[("rows", &rows)], "").unwrap();
+        proptest::prop_assert_eq!(output, dictionary(array(number)));
     }
 }
 
@@ -39,6 +198,59 @@ fn dictionary(value: Type) -> Type {
         domain: None,
         nullable: false,
     }
+}
+
+#[test]
+fn dictionary_held_list_mutation_closes_its_element_contract() {
+    for body in [
+        "\n    result = {'items': []}\n    result['items'].append(1)\n    return result\n",
+        "\n    items = []\n    items.append(1)\n    return {'items': items}\n",
+    ] {
+        assert_eq!(
+            infer_body(body, &[], "").unwrap(),
+            dictionary(array(Type::scalar(FieldType::Integer)))
+        );
+    }
+}
+
+#[test]
+fn inferred_graph_aliases_use_a_worklist_and_reject_cycles() {
+    let declarations = declarations::Declarations::default();
+    let mut graph = Graph {
+        roots: vec![TypeId(0)],
+        nodes: (1..8192).map(|id| Node::Alias(TypeId(id))).collect(),
+    };
+    graph.nodes.push(Node::IntLiteral(1));
+    assert_eq!(
+        Decoder {
+            graph: &graph,
+            declarations: &declarations
+        }
+        .decode(TypeId(0))
+        .unwrap(),
+        Type::scalar(FieldType::Integer)
+    );
+    graph.nodes[8191] = Node::Alias(TypeId(0));
+    assert!(matches!(
+        Decoder {
+            graph: &graph,
+            declarations: &declarations
+        }
+        .decode(TypeId(0)),
+        Err(InferenceError::Graph(InferenceGraphError::RecursiveType))
+    ));
+    graph.nodes[0] = Node::Intersection {
+        positive: vec![TypeId(8192)],
+        negative: vec![],
+    };
+    assert!(matches!(
+        Decoder {
+            graph: &graph,
+            declarations: &declarations
+        }
+        .decode(TypeId(0)),
+        Err(InferenceError::Graph(InferenceGraphError::InvalidReference))
+    ));
 }
 
 #[test]
@@ -527,7 +739,7 @@ fn decode_intersection_contracts(values: &[Type]) -> Result<Type, InferenceError
         graph: &graph,
         declarations: &declarations,
     }
-    .decode(root, 0)
+    .decode(root)
 }
 
 #[test]
@@ -615,7 +827,11 @@ fn complete_body_inference_uses_upstream_locals_and_returns() {
 #[test]
 fn mutated_dictionary_inference_preserves_upstream_element_types() {
     let input = array(fields(&[("number", Type::scalar(FieldType::Integer))]));
-    let result = infer_body("\n    result = []\n    for row in rows:\n        result.append({'value': row.number})\n    return result\n", &[("rows", &input)], "");
+    let result = infer_body(
+        "\n    result = []\n    for row in rows:\n        result.append({'value': row.number})\n    return result\n",
+        &[("rows", &input)],
+        "",
+    );
     assert_eq!(
         result.unwrap(),
         array(dictionary(Type::scalar(FieldType::Integer)))

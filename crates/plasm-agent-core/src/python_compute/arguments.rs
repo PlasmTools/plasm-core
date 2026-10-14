@@ -8,9 +8,9 @@ pub enum PythonArgumentError {
     PluralSourceRequiresMapCallback,
     #[error("singleton compute source supplies Row, not list[Row]")]
     SingletonSourceRequiresRow,
-    #[error("value compute requires exactly one value column; project the intended field")]
-    ValueSourceRequiresOneColumn,
-    #[error("compute source input differs from its annotation")]
+    #[error("compute input annotation mismatches the row shape; omit it for inference, use Row/list[Row] for rows, or pass singleton.field for a scalar")]
+    SourceShapeAnnotationMismatch,
+    #[error("compute input differs from its annotation; omit the annotation to retain the inferred type, or match the input's row/collection shape and nullable fields")]
     AnnotationMismatch(#[source] Box<crate::python_compute::inference::InferenceError>),
     #[error(transparent)]
     Inference(#[from] crate::python_compute::inference::InferenceError),
@@ -162,7 +162,7 @@ pub(super) fn resolve(
     }
     let mut columns = fields.iter();
     let Some((field, actual)) = columns.next().filter(|_| fields.len() == 1) else {
-        return Err(PythonArgumentError::ValueSourceRequiresOneColumn);
+        return Err(PythonArgumentError::SourceShapeAnnotationMismatch);
     };
     // Check only the source-selected materialization mode. Monty owns Python
     // subtyping and annotation compatibility.

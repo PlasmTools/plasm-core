@@ -30,6 +30,93 @@ impl LiteralIds {
 }
 
 impl Lower<'_> {
+    /// Eliminate a local, non-escaping collection builder before DAG lowering.
+    /// The fresh list is consumed only by append until the bounded loop ends;
+    /// the published binding is one immutable value with ordered dependencies.
+    pub(super) fn static_collection_builder(
+        &mut self,
+        initialization: &Stmt,
+        iteration: &Stmt,
+    ) -> Result<bool, PythonLoweringError> {
+        let (Stmt::Assign(initialization), Stmt::For(iteration)) = (initialization, iteration)
+        else {
+            return Ok(false);
+        };
+        let [target] = initialization.targets.as_slice() else {
+            return Ok(false);
+        };
+        let Some(collection) = name(target) else {
+            return Ok(false);
+        };
+        if !matches!(initialization.value.as_ref(), PyExpr::List(list) if list.elts.is_empty())
+            || iteration.is_async
+            || !iteration.orelse.is_empty()
+        {
+            return Ok(false);
+        }
+        let [Stmt::Expr(statement)] = iteration.body.as_slice() else {
+            return Ok(false);
+        };
+        let PyExpr::Call(call) = statement.value.as_ref() else {
+            return Ok(false);
+        };
+        let PyExpr::Attribute(method) = call.func.as_ref() else {
+            return Ok(false);
+        };
+        let [element] = call.arguments.args.as_slice() else {
+            return Ok(false);
+        };
+        if method.attr.as_str() != "append"
+            || name(&method.value) != Some(collection)
+            || !call.arguments.keywords.is_empty()
+        {
+            return Ok(false);
+        }
+        let collection = self.static_target(target)?;
+        let label = self.static_target(&iteration.target)?;
+        if collection == label
+            || [element, iteration.iter.as_ref()]
+                .into_iter()
+                .any(|expression| name(expression) == Some(collection.as_str()))
+            || monty_analysis::external_names(&monty::expression_source(element))?
+                .iter()
+                .any(|(_, name)| name == &collection)
+        {
+            return Ok(false);
+        }
+        let items = self.literal_ids(&iteration.iter)?;
+        let mut inputs = BTreeMap::new();
+        let values = self.static_values(&label, items, element, &mut inputs)?;
+        let binding = self.fresh();
+        self.emit_value(
+            PlasmDataValue::Array { items: values },
+            inputs.into_values().collect(),
+            &binding,
+        )?;
+        self.frame.names.insert(collection.clone(), binding);
+        self.callbacks.remove(&collection);
+        Ok(true)
+    }
+
+    fn static_values(
+        &mut self,
+        label: &str,
+        items: LiteralIds,
+        expression: &PyExpr,
+        inputs: &mut BTreeMap<String, PlanDataInput>,
+    ) -> Result<Vec<PlasmDataValue>, PythonLoweringError> {
+        let mut values = Vec::with_capacity(items.items.len());
+        for item in items.items {
+            self.bind_static_item(label, &item)?;
+            // A sibling's captures are not this element's dependencies. Merge
+            // ports only after its expression has been lowered in isolation.
+            let mut element_inputs = BTreeMap::new();
+            values.push(self.scoped_value(expression, &mut element_inputs)?);
+            inputs.extend(element_inputs);
+        }
+        Ok(values)
+    }
+
     fn literal_ids(&self, iter: &PyExpr) -> Result<LiteralIds, PythonLoweringError> {
         let known = match iter {
             PyExpr::Name(name) => self
@@ -143,11 +230,7 @@ impl Lower<'_> {
         let items = self.literal_ids(&generator.iter)?;
         let previous = self.frame.names.get(&label).cloned();
         let previous_callback = self.callbacks.get(&label).cloned();
-        let mut values = Vec::with_capacity(items.items.len());
-        for item in items.items {
-            self.bind_static_item(&label, &item)?;
-            values.push(self.scoped_value(&comprehension.elt, inputs)?);
-        }
+        let values = self.static_values(&label, items, &comprehension.elt, inputs)?;
         match previous {
             Some(binding) => {
                 self.frame.names.insert(label.clone(), binding);

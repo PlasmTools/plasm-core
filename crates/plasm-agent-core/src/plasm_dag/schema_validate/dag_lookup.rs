@@ -128,6 +128,19 @@ pub(in crate::plasm_dag) fn resolve_qualified_entity_for_dag_source(
             } => {
                 return Some(qualified_entity.clone());
             }
+            DagNodeSource::Compute {
+                op:
+                    plasm_core::plasm_monad::ComputeOp::Python {
+                        selection: Some(selection),
+                        ..
+                    },
+                ..
+            } => {
+                return Some(QualifiedEntityKey {
+                    entry_id: selection.owner.entry_id.clone(),
+                    entity: selection.owner.entity.clone(),
+                });
+            }
             DagNodeSource::Compute { source, .. }
             | DagNodeSource::Derive { source, .. }
             | DagNodeSource::ScalarExtract { source, .. } => node_id = source.clone(),

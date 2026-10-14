@@ -1,4 +1,175 @@
 use super::*;
+
+#[test]
+fn python_compute_selection_retains_only_original_occurrences() {
+    on_runtime(async {
+        let (es, host, calls) = fixture(3);
+        let symbols = es.teaching_exposure.as_ref().unwrap().to_symbol_map();
+        let item = symbols.entity_sym_for("fixture", "Item");
+        let mark = symbols.method_sym_for("fixture", "Item", "mark");
+        for parameter in ["rows", "rows: list[Row]"] {
+            let source = format!("class P(Program):\n    @compute\n    def choose(self, {parameter}):\n        selected = []\n        for row in rows:\n            if row.id != 'i0':\n                selected.append(row)\n        return sorted(selected, key=lambda row: row.id, reverse=True)\n    def build(self):\n        selected = self.choose({item}.query())\n        return selected.flat_map(lambda row: row.{mark}())\n");
+            let bundle = compile_python_program(&es, &source)
+                .await
+                .expect("selection admits entity continuation");
+            calls.lock().unwrap().clear();
+            execute(&es, &host, &bundle)
+                .await
+                .expect("selected occurrence witnesses execute");
+            let effects = calls
+                .lock()
+                .unwrap()
+                .iter()
+                .filter(|path| path.starts_with("/marks/"))
+                .cloned()
+                .collect::<Vec<_>>();
+            assert_eq!(effects, ["/marks/i2", "/marks/i1"]);
+        }
+        let copied = format!("class P(Program):\n    @compute\n    def choose(self, rows):\n        return [{{'id': row.id}} for row in rows]\n    def build(self):\n        return self.choose({item}.query()).flat_map(lambda row: row.{mark}())\n");
+        assert!(compile_python_program(&es, &copied).await.is_err());
+    });
+}
+
+#[test]
+fn python_refined_fields_survive_projection_helper_and_selection() {
+    on_runtime(async {
+        let (es, host, _) = fixture(3);
+        let item = es
+            .teaching_exposure
+            .as_ref()
+            .unwrap()
+            .to_symbol_map()
+            .entity_sym_for("fixture", "Item");
+        let source = format!("class P(Program):\n    @compute\n    def choose(self, rows):\n        def latest(values):\n            return max(values, key=lambda row: row.title)\n        return latest(rows)\n    @compute\n    def title(self, row):\n        return row.title.upper()\n    def build(self):\n        rows = {item}.query().where(lambda r: r.title is not None).select('id', 'title')\n        return self.title(self.choose(rows))\n");
+        let source = source.replace(".query().where", ".query().map(lambda r: {'id': r.id, 'title': r.title if r.id != 'i0' else None}, max_parents=8).where");
+        let bundle = compile_python_program(&es, &source)
+            .await
+            .expect("refinement survives all transfers");
+        execute(&es, &host, &bundle).await.unwrap();
+        let unguarded = source.replace(".where(lambda r: r.title is not None)", "");
+        assert!(
+            compile_python_program(&es, &unguarded).await.is_err(),
+            "unguarded nullable field remains nullable"
+        );
+    });
+}
+
+#[test]
+fn python_compute_selection_seals_ports_and_supports_multiple_inputs() {
+    on_runtime(async {
+        let (es, host, calls) = fixture(3);
+        let symbols = es.teaching_exposure.as_ref().unwrap().to_symbol_map();
+        let item = symbols.entity_sym_for("fixture", "Item");
+        let mark = symbols.method_sym_for("fixture", "Item", "mark");
+        let source = format!("class P(Program):\n    @compute\n    def choose(self, left, right):\n        def last(xs):\n            return max(xs, key=lambda row: row.id)\n        return [last(right), min(left, key=lambda row: row.id)]\n    def build(self):\n        left = {item}.query().where(lambda r: r.id != 'i2')\n        right = {item}.query().where(lambda r: r.id != 'i0')\n        selected = self.choose(left, right)\n        return selected.flat_map(lambda row: row.{mark}())\n");
+        let bundle = compile_python_program(&es, &source).await.unwrap();
+        execute(&es, &host, &bundle).await.unwrap();
+        assert_eq!(
+            calls
+                .lock()
+                .unwrap()
+                .iter()
+                .filter(|path| path.starts_with("/marks/"))
+                .cloned()
+                .collect::<Vec<_>>(),
+            ["/marks/i2", "/marks/i0"]
+        );
+        for change in 0..3 {
+            let mut artifact = bundle.artifact().clone();
+            let selection = artifact
+                .comp
+                .steps
+                .values_mut()
+                .find_map(|step| match step {
+                    PlasmStepPayload::Map(map) => match &mut map.compute.op {
+                        ComputeOp::Python {
+                            selection: Some(selection),
+                            ..
+                        } => Some(selection),
+                        _ => None,
+                    },
+                    _ => None,
+                })
+                .unwrap();
+            match change {
+                0 => selection.ports[0].source = selection.ports[1].source.clone(),
+                1 => selection.owner.entity = "Tag".into(),
+                _ => selection.ports[0].parameter = "invented".into(),
+            }
+            let tampered = crate::plasm_comp_bundle::PlasmCompBundle::new(artifact).unwrap();
+            calls.lock().unwrap().clear();
+            assert!(execute(&es, &host, &tampered).await.is_err());
+            assert!(
+                calls.lock().unwrap().is_empty(),
+                "replay rejection precedes reads and writes"
+            );
+        }
+    });
+}
+
+#[test]
+fn python_compute_selected_singleton_and_empty_rows_continue_lawfully() {
+    on_runtime(async {
+        for count in [0, 3] {
+            let (es, host, calls) = fixture(count);
+            let symbols = es.teaching_exposure.as_ref().unwrap().to_symbol_map();
+            let item = symbols.entity_sym_for("fixture", "Item");
+            let mark = symbols.method_sym_for("fixture", "Item", "mark");
+            let (body, continuation) = if count == 0 {
+                (
+                    "return rows[:]",
+                    format!("selected.flat_map(lambda r: r.{mark}())"),
+                )
+            } else {
+                (
+                    "return max(rows, key=lambda r: r.id)",
+                    format!("selected.{mark}()"),
+                )
+            };
+            let source = format!("class P(Program):\n    def choose(self, rows):\n        {body}\n    def build(self):\n        selected = self.choose({item}.query())\n        return {continuation}\n");
+            let bundle = compile_python_program(&es, &source).await.unwrap();
+            execute(&es, &host, &bundle).await.unwrap();
+            let effects = calls
+                .lock()
+                .unwrap()
+                .iter()
+                .filter(|path| path.starts_with("/marks/"))
+                .cloned()
+                .collect::<Vec<_>>();
+            assert_eq!(
+                effects,
+                if count == 0 {
+                    vec![]
+                } else {
+                    vec!["/marks/i2"]
+                }
+            );
+        }
+    });
+}
+
+#[test]
+fn python_compute_selection_keeps_identity_without_projected_id_fields() {
+    on_runtime(async {
+        let (es, host, calls) = fixture(3);
+        let symbols = es.teaching_exposure.as_ref().unwrap().to_symbol_map();
+        let item = symbols.entity_sym_for("fixture", "Item");
+        let mark = symbols.method_sym_for("fixture", "Item", "mark");
+        let source = format!("class P(Program):\n    def choose(self, rows):\n        return rows[1:]\n    def build(self):\n        selected = self.choose({item}.query().select('title'))\n        return selected.flat_map(lambda r: r.{mark}())\n");
+        let bundle = compile_python_program(&es, &source).await.unwrap();
+        execute(&es, &host, &bundle).await.unwrap();
+        assert_eq!(
+            calls
+                .lock()
+                .unwrap()
+                .iter()
+                .filter(|p| p.starts_with("/marks/"))
+                .cloned()
+                .collect::<Vec<_>>(),
+            ["/marks/i1", "/marks/i2"]
+        );
+    });
+}
 use crate::plasm_compile::compile_python_program;
 
 fn returned_fields(run: &crate::plasm_plan_run::PlasmPlanRunResult) -> Vec<Value> {
@@ -8,6 +179,137 @@ fn returned_fields(run: &crate::plasm_plan_run::PlasmPlanRunResult) -> Vec<Value
         .iter()
         .map(|entity| serde_json::to_value(&entity.fields).unwrap())
         .collect()
+}
+
+#[test]
+fn nested_acquired_rowsets_are_independent_compute_values() {
+    on_runtime(async {
+        for count in [0, 1, 3] {
+            for independent in [false, true] {
+                let (es, host, _) = fixture(count);
+                let item = es
+                    .teaching_exposure
+                    .as_ref()
+                    .unwrap()
+                    .to_symbol_map()
+                    .entity_sym_for("fixture", "Item");
+                let (arguments, parameters) = if independent {
+                    (
+                        format!("[1, 2], [{item}.query(), {item}.query()]"),
+                        "labels, groups",
+                    )
+                } else {
+                    (format!("[{item}.query(), {item}.query()]"), "groups")
+                };
+                let source = format!(
+                    "class Nested(Program):\n    def build(self):\n        return self.lengths({arguments})\n    @compute\n    def lengths(self, {parameters}):\n        return [len(group) for group in groups]\n"
+                );
+                let bundle = compile_python_program(&es, &source).await.unwrap();
+                let run = execute(&es, &host, &bundle).await.unwrap();
+                assert_eq!(
+                    returned_fields(&run),
+                    [json!({"value": count}), json!({"value": count})]
+                );
+            }
+        }
+    });
+}
+
+#[test]
+fn dictionary_held_accumulators_execute_with_native_rows() {
+    on_runtime(async {
+        for count in [0, 1, 3] {
+            let (es, host, _) = fixture(count);
+            let item = es
+                .teaching_exposure
+                .as_ref()
+                .unwrap()
+                .to_symbol_map()
+                .entity_sym_for("fixture", "Item");
+            let source = format!(
+                "class P(Program):\n    def build(self):\n        return self.pack({item}.query())\n    @compute\n    def pack(self, rows):\n        result = {{'title': 'result', 'items': []}}\n        for row in rows:\n            result['items'].append({{'id': row.id, 'title': row.title}})\n        return result\n"
+            );
+            let bundle = compile_python_program(&es, &source).await.unwrap();
+            let run = execute(&es, &host, &bundle).await.unwrap();
+            let items = (0..count)
+                .map(|i| json!({"id": format!("i{i}"), "title": format!("Title {i}")}))
+                .collect::<Vec<_>>();
+            assert_eq!(
+                returned_fields(&run),
+                [json!({"value": {"title": "result", "items": items}})]
+            );
+        }
+    });
+}
+
+#[test]
+fn dictionary_held_literal_accumulators_pass_final_admission() {
+    on_runtime(async {
+        for title in [false, true] {
+            let (es, host, calls) = fixture(0);
+            let initializer = if title {
+                "{'title': 'result', 'items': []}"
+            } else {
+                "{'items': []}"
+            };
+            let source = format!("class P(Program):\n    def build(self):\n        return self.pack()\n    @compute\n    def pack(self):\n        result = {initializer}\n        result['items'].append(1)\n        return result\n");
+            let bundle = compile_python_program(&es, &source).await.unwrap();
+            let run = execute(&es, &host, &bundle).await.unwrap();
+            let expected = if title {
+                json!({"value": {"title": "result", "items": [1]}})
+            } else {
+                json!({"value": {"items": [1]}})
+            };
+            assert_eq!(returned_fields(&run), [expected]);
+            assert!(calls.lock().unwrap().is_empty());
+        }
+    });
+}
+
+#[test]
+fn nesting_compute_inputs_does_not_hide_the_row_budget() {
+    on_runtime(async {
+        let (es, host, _) = fixture(129);
+        let item = es
+            .teaching_exposure
+            .as_ref()
+            .unwrap()
+            .to_symbol_map()
+            .entity_sym_for("fixture", "Item");
+        let source = format!(
+            "class P(Program):\n    def build(self):\n        return self.count([{item}.query(), {item}.query()])\n    @compute\n    def count(self, groups):\n        return sum(len(group) for group in groups)\n"
+        );
+        let bundle = compile_python_program(&es, &source).await.unwrap();
+        let error = execute(&es, &host, &bundle).await.unwrap_err();
+        assert!(
+            error
+                .to_string()
+                .contains("compute input row budget exceeded"),
+            "{error}"
+        );
+    });
+}
+
+proptest::proptest! {
+    #![proptest_config(proptest::test_runner::Config::with_cases(24))]
+    #[test]
+    fn nested_compute_values_preserve_cardinality_and_field_values(
+        count in 0usize..9, copies in 1usize..5,
+    ) {
+        on_runtime(async move {
+            let (es, host, calls) = fixture(count);
+            let item = es.teaching_exposure.as_ref().unwrap().to_symbol_map().entity_sym_for("fixture", "Item");
+            let groups = std::iter::repeat_n(format!("{item}.query()"), copies).collect::<Vec<_>>().join(", ");
+            let source = format!("class P(Program):\n    def build(self):\n        return self.copy([{groups}])\n    @compute\n    def copy(self, groups):\n        return [(len(group), [row.id for row in group]) for group in groups]\n");
+            let bundle = compile_python_program(&es, &source).await.unwrap();
+            assert!(calls.lock().unwrap().is_empty());
+            let run = execute(&es, &host, &bundle).await.unwrap();
+            let ids = (0..count).map(|i| format!("i{i}")).collect::<Vec<_>>();
+            let expected = std::iter::repeat_n(json!({"value": [count, ids]}), copies).collect::<Vec<_>>();
+            assert_eq!(returned_fields(&run), expected);
+            assert_eq!(run.return_steps[0].result.coverage(), plasm_runtime::ResultCoverage::Complete);
+        });
+    }
 }
 
 #[test]
@@ -23,7 +325,10 @@ fn nested_array_rowsets_reenter_compute_without_losing_an_axis() {
             let source = format!("class Nested(Program):\n    def build(self):\n        groups = [[1, 2], [3, 4]]\n        return self.lengths({input})\n{identity}    @compute\n    def lengths(self, groups):\n        return [len(group) for group in groups]\n");
             let bundle = compile_python_program(&es, &source).await.unwrap();
             let run = execute(&es, &host, &bundle).await.unwrap();
-            assert_eq!(returned_fields(&run), [json!({"value": 2}), json!({"value": 2})]);
+            assert_eq!(
+                returned_fields(&run),
+                [json!({"value": 2}), json!({"value": 2})]
+            );
             assert!(calls.lock().unwrap().is_empty());
         }
     });
@@ -49,7 +354,7 @@ fn tuple_unpack_targets_can_shadow_the_acquired_tuple() {
 }
 
 proptest::proptest! {
-    #![proptest_config(proptest::test_runner::Config::with_cases(16))]
+    #![proptest_config(proptest::test_runner::Config::with_cases(32))]
     #[test]
     fn computed_dictionary_counts_preserve_row_order_and_tuple_fields(count in 0usize..9, seeded in proptest::prelude::any::<bool>()) {
         on_runtime(async move {
@@ -69,7 +374,7 @@ proptest::proptest! {
 }
 
 proptest::proptest! {
-    #![proptest_config(proptest::test_runner::Config::with_cases(32))]
+    #![proptest_config(proptest::test_runner::Config::with_cases(16))]
     #[test]
     fn computed_tuple_selection_interleaves_with_dag_rows_and_effects(count in 0usize..9, mask in proptest::prelude::any::<u16>()) {
         on_runtime(async move {
@@ -366,7 +671,7 @@ fn python_action_output_single_entity_rejects_wrong_row_count_before_downstream_
 }
 
 #[test]
-fn declared_compute_requires_a_lowered_callsite() {
+fn unused_compute_does_not_require_a_lowered_callsite() {
     on_runtime(async {
         let (es, _, calls) = fixture(1);
         let item = es
@@ -375,13 +680,24 @@ fn declared_compute_requires_a_lowered_callsite() {
             .unwrap()
             .to_symbol_map()
             .entity_sym_for("fixture", "Item");
-        let error = compile_python_program(
+        let bundle = compile_python_program(
             &es,
             &format!("class Unused(Program):\n    @compute\n    def unused(self, row: Row) -> str:\n        return row.title\n    def build(self):\n        return {item}.get(\"i1\")\n"),
         )
         .await
-        .expect_err("an unused declaration has no input contract witness");
-        assert!(error.to_string().contains("requires a typed DAG callsite"));
+        .expect("unused declarations do not emit compute nodes");
+        let plain = compile_python_program(
+            &es,
+            &format!(
+                "class Unused(Program):\n    def build(self):\n        return {item}.get(\"i1\")\n"
+            ),
+        )
+        .await
+        .unwrap();
+        assert!(plasm_core::plasm_monad::comp_semantic_eq(
+            &bundle.artifact().comp,
+            &plain.artifact().comp,
+        ));
         assert!(calls.lock().unwrap().is_empty());
     });
 }
@@ -407,7 +723,7 @@ fn discarded_statement_requires_resolved_write_evidence() {
             .expect_err("discarding a pure rowset is not an effect");
         assert!(error
             .to_string()
-            .contains("unused expression statements must be writes"));
+            .contains("standalone calls in build must be declared effects"));
         assert!(calls.lock().unwrap().is_empty());
     });
 }
@@ -651,7 +967,7 @@ fn python_lowering_rejects_invalid_roots_and_captures_without_io() {
             ("capture escape",valid.replace("self.joined_labels(item.","self.joined_labels(other.")),
             ("zero bound",valid.replace("max_parents=256","max_parents=0")),
             ("huge bound",valid.replace("max_parents=256","max_parents=257")),
-            ("unused bad compute",valid.replace("    def build(self):","    @compute\n    def bad(self, rows):\n        return self.secret\n\n    def build(self):")),
+            ("invoked bad compute",valid.replace("    def build(self):","    @compute\n    def bad(self, rows):\n        return self.secret\n\n    def build(self):").replace("        items =", "        invalid = self.bad([])\n        items =")),
             ("dynamic control",valid.replace("        items = e1.query()","        if True:\n            items = e1.query()")),
         ] {
             assert!(compile_python_program(&es,&src).await.is_err(),"accepted {case}");
@@ -1382,6 +1698,140 @@ fn python_union_catalog_rows_preserve_effect_arguments() {
 }
 
 #[test]
+fn python_ordered_selection_executes_with_observed_optional_keys() {
+    on_runtime(async {
+        let (es, host, _) = fixture(3);
+        let item = es
+            .teaching_exposure
+            .as_ref()
+            .unwrap()
+            .to_symbol_map()
+            .entity_sym_for("fixture", "Item");
+        let source = format!("class Choose(Program):\n    @compute\n    def choose(self, rows):\n        named = [r for r in rows if r.title is not None]\n        if not named:\n            raise ValueError('no named rows')\n        return max(named, key=lambda r: r.title).id\n    def build(self):\n        return self.choose({item}.query())\n");
+        let bundle = compile_python_program(&es, &source).await.unwrap();
+        let run = execute(&es, &host, &bundle).await.unwrap();
+        assert_eq!(returned_fields(&run), [json!({"value": "i2"})]);
+    });
+}
+
+proptest::proptest! {
+    #![proptest_config(proptest::test_runner::Config::with_cases(32))]
+    #[test]
+    fn bounded_collection_builder_matches_comprehension(values in proptest::collection::vec(-100i64..100, 0..6)) {
+        on_runtime(async move {
+            let (es, host, _) = fixture(1);
+            let input = serde_json::to_string(&values).unwrap();
+            let mut results = Vec::new();
+            for body in [format!("result = []\n        for n in {input}:\n            result.append(n * 2)"), format!("result = [n * 2 for n in {input}]")] {
+                let source = format!("class Build(Program):\n    def build(self):\n        {body}\n        return result\n");
+                let bundle = compile_python_program(&es, &source).await.unwrap();
+                for step in bundle.artifact().comp.steps.values() {
+                    if let plasm_core::plasm_monad::PlasmStepPayload::Map(map) = step {
+                        if let Some(plasm_core::plasm_monad::PlasmStepPayload::Derive(input)) = bundle.artifact().comp.steps.get(map.compute.source.as_str()) {
+                            assert!(input.derive.inputs.len() <= 1, "one element must not capture sibling dependencies");
+                        }
+                    }
+                }
+                results.push(returned_fields(&execute(&es, &host, &bundle).await.unwrap()));
+            }
+            let expected: Vec<_> = values.iter().map(|n| json!({"value": n * 2})).collect();
+            assert_eq!(results[0], expected);
+            assert_eq!(results[1], expected);
+        });
+    }
+}
+
+#[test]
+fn python_bounded_local_collection_builder_preserves_effects_and_values() {
+    on_runtime(async {
+        let (es, host, calls) = fixture(1);
+        let symbols = es.teaching_exposure.as_ref().unwrap().to_symbol_map();
+        let item = symbols.entity_sym_for("fixture", "Item");
+        let publish = symbols.method_sym_for("fixture", "Item", "publish");
+        for (expression, expected) in [
+            (
+                "sid".to_owned(),
+                vec![json!({"value": "a"}), json!({"value": "b"})],
+            ),
+            (format!("{item}.{publish}(content=sid)"), Vec::new()),
+        ] {
+            let source = format!("class Build(Program):\n    def build(self):\n        values = []\n        for sid in ['a', 'b']:\n            values.append({expression})\n        return values\n");
+            let bundle = compile_python_program(&es, &source).await.unwrap();
+            let run = execute(&es, &host, &bundle).await.unwrap();
+            if !expected.is_empty() {
+                assert_eq!(returned_fields(&run), expected);
+            }
+        }
+        let effects: Vec<_> = calls
+            .lock()
+            .unwrap()
+            .iter()
+            .filter(|p| p.starts_with("/publish:"))
+            .cloned()
+            .collect();
+        assert_eq!(effects, ["/publish:a", "/publish:b"]);
+        for body in [
+            "values = []\n        alias = values\n        for sid in ['a']:\n            values.append(sid)",
+            "values = []\n        for sid in ['a']:\n            values.append(values)",
+        ] {
+            let source = format!("class Build(Program):\n    def build(self):\n        {body}\n        return values\n");
+            assert!(compile_python_program(&es, &source).await.is_err());
+        }
+    });
+}
+
+#[test]
+fn bounded_builder_keeps_unreturned_writes_in_order() {
+    on_runtime(async {
+        let (es, host, calls) = fixture(1);
+        let symbols = es.teaching_exposure.as_ref().unwrap().to_symbol_map();
+        let item = symbols.entity_sym_for("fixture", "Item");
+        let publish = symbols.method_sym_for("fixture", "Item", "publish");
+        let values: Vec<_> = (0..12).map(|n| format!("item{n}")).collect();
+        let input = serde_json::to_string(&values).unwrap();
+        let source = format!("class Build(Program):\n    def build(self):\n        effects = []\n        for value in {input}:\n            effects.append({item}.{publish}(content=value))\n        return 1\n");
+        let bundle = compile_python_program(&es, &source).await.unwrap();
+        execute(&es, &host, &bundle).await.unwrap();
+        let actual: Vec<_> = calls
+            .lock()
+            .unwrap()
+            .iter()
+            .filter(|p| p.starts_with("/publish:"))
+            .cloned()
+            .collect();
+        let expected: Vec<_> = values.iter().map(|s| format!("/publish:{s}")).collect();
+        assert_eq!(actual, expected);
+    });
+}
+
+#[test]
+fn python_union_joins_value_contracts_without_coercing_rows() {
+    on_runtime(async {
+        let (es, host, _) = fixture(1);
+        let symbols = es.teaching_exposure.as_ref().unwrap().to_symbol_map();
+        let item = symbols.entity_sym_for("fixture", "Item");
+        for (right, expected) in [("2.5", json!(2.5)), ("'two'", json!("two"))] {
+            let source = format!(
+                "class Values(Program):\n    def build(self):\n        rows = {item}.query()\n        left = rows.map(lambda r: {{'value': 1}}, max_parents=1)\n        right = rows.map(lambda r: {{'value': {right}}}, max_parents=1)\n        return left.union(right)\n"
+            );
+            let bundle = compile_python_program(&es, &source).await.unwrap();
+            let run = execute(&es, &host, &bundle).await.unwrap();
+            assert_eq!(
+                returned_fields(&run),
+                [json!({"value": 1}), json!({"value": expected})]
+            );
+            let projected = source.replace(
+                "return left.union(right)",
+                "return left.union(right).map(lambda r: {'text': str(r.value)}, max_parents=2)",
+            );
+            let bundle = compile_python_program(&es, &projected).await.unwrap();
+            let run = execute(&es, &host, &bundle).await.unwrap();
+            assert_eq!(returned_fields(&run).len(), 2);
+        }
+    });
+}
+
+#[test]
 fn python_union_distinct_entity_projections_remain_typed_values() {
     on_runtime(async {
         let (es, host, _) = fixture(3);
@@ -1673,7 +2123,7 @@ fn python_compute_rejects_implicit_input_shape_adaptation() {
                 matches!(
                     (plural, error.as_ref()),
                     (true, PythonArgumentError::PluralSourceRequiresMapCallback)
-                        | (false, PythonArgumentError::ValueSourceRequiresOneColumn)
+                        | (false, PythonArgumentError::SourceShapeAnnotationMismatch)
                 ),
                 "unexpected argument rejection: {error:?}"
             );

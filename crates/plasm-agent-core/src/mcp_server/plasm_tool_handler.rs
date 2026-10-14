@@ -74,10 +74,6 @@ impl PlasmMcpHandler {
                 return Ok(result);
             }
         };
-        let reasoning = v
-            .get("reasoning")
-            .and_then(|x| x.as_str())
-            .filter(|s| !s.is_empty());
         let wait_live = true;
         let force_run = false;
         let plasm_tool_span = if dry_run_only {
@@ -89,8 +85,7 @@ impl PlasmMcpHandler {
         let (binding, this_invocation_chars, meta_index) = {
             let g = state.lock().await;
             let binding = g.binding.clone();
-            let this_invocation_chars =
-                plasm_invocation_char_count(invocation.invocation_text(), reasoning);
+            let this_invocation_chars = plasm_invocation_char_count(invocation.invocation_text());
             let meta_index = Arc::clone(&g.meta_index);
             drop(g);
             let mut g = state.lock().await;
@@ -147,18 +142,10 @@ impl PlasmMcpHandler {
             .trace_hub
             .ensure_logical_session(&ls_key, Some(key), trace_meta)
             .await;
-        let reasoning_chars = reasoning.map(|r| r.chars().count() as u64);
         let call_index = self
             .plasm
             .trace_hub
-            .trace_record_plasm_invocation(
-                &ls_key,
-                false,
-                1,
-                reasoning_chars,
-                this_invocation_chars,
-                reasoning.map(str::to_string),
-            )
+            .trace_record_plasm_invocation(&ls_key, false, 1, this_invocation_chars)
             .await;
         let mcp_trace = PlasmTraceContext {
             trace_id,

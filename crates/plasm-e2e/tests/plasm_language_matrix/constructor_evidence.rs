@@ -120,7 +120,9 @@ pub(super) async fn assert_registry_with_rejections(
                 &python::write_tokens(case.python, &symbols, matrix::MATRIX_ENTRY_ID),
                 &entity,
             );
-            let compiled = compile_python_program(&es, &source).await.unwrap();
+            let compiled = compile_python_program(&es, &source)
+                .await
+                .unwrap_or_else(|error| panic!("declaration witness {id}: {error}"));
             let kinds = observe(&compiled.artifact().comp, &source);
             evidence.insert(id.clone(), kinds);
         }

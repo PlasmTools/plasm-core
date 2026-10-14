@@ -67,13 +67,11 @@ pub enum RowSuffixLoweringError {
     UnionRhsNotBound { binding: String },
     #[error("union requires known row columns on both inputs")]
     UnionColumnsUnknown,
-    #[error("union input columns differ")]
+    #[error("union input columns differ: left {left:?}, right {right:?}; project matching columns explicitly before union")]
     UnionColumnsDiffer {
         left: Vec<String>,
         right: Vec<String>,
     },
-    #[error("union field `{field}` has incompatible value shapes")]
-    UnionFieldShapeMismatch { field: String },
     #[error("singleton and page_size modifiers must be handled before compute lowering")]
     TailModifierInComputeLowering,
     #[error("relation suffix must be lowered through binding continuation")]
@@ -576,11 +574,6 @@ pub(in crate::plasm_dag) fn row_suffix_to_compute(
                     .expect("union columns checked above");
                 field.value_type = match (field.value_type.take(), other.value_type.clone()) {
                     (Some(left), Some(right)) => {
-                        if left.shape != right.shape {
-                            return Err(RowSuffixLoweringError::UnionFieldShapeMismatch {
-                                field: field.name.to_string(),
-                            });
-                        }
                         Some(plasm_core::value_contract::ValueContract::join(left, right))
                     }
                     _ => None,

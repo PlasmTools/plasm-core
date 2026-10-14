@@ -3,6 +3,21 @@
 use super::*;
 use plasm_core::value_contract::{ValueContract as Type, ValueShape};
 
+/// Selection returns an input element (or the explicit default), even when a
+/// comparison can raise. Comparability is not a precondition on the return
+/// contract: singleton inputs need no comparison at all. Keep the runtime
+/// Python builtins unchanged and describe their partial-function contracts.
+pub(super) fn selection_stubs() -> String {
+    let mut source = String::from("from typing import TypeVar, Iterable, Callable, overload\n_PlasmSelected = TypeVar('_PlasmSelected')\n_PlasmDefault = TypeVar('_PlasmDefault')\n");
+    for name in ["min", "max"] {
+        source.push_str(&format!(
+            "@overload\ndef {name}(iterable: Iterable[_PlasmSelected], /, *, key: Callable[[_PlasmSelected], object] | None = None) -> _PlasmSelected: ...\n@overload\ndef {name}(iterable: Iterable[_PlasmSelected], /, *, key: Callable[[_PlasmSelected], object] | None = None, default: _PlasmDefault) -> _PlasmSelected | _PlasmDefault: ...\n@overload\ndef {name}(first: _PlasmSelected, second: _PlasmSelected, /, *rest: _PlasmSelected, key: Callable[[_PlasmSelected], object] | None = None) -> _PlasmSelected: ...\n"
+        ));
+    }
+    source.push_str("def sorted(iterable: Iterable[_PlasmSelected], /, *, key: Callable[[_PlasmSelected], object] | None = None, reverse: bool = False) -> list[_PlasmSelected]: ...\n");
+    source
+}
+
 #[cfg(test)]
 pub(super) fn stubs(
     fields: &BTreeMap<String, Type>,
@@ -17,6 +32,7 @@ pub(super) fn stubs_in(
 ) -> Result<String, PythonComputeRejection> {
     let mut declarations = String::from("from typing import Never, Literal, TypeAlias, overload\nPlasmJson: TypeAlias = None | bool | int | float | str | list[PlasmJson] | dict[str, PlasmJson]\nPlasmRef: TypeAlias = bool | int | float | str | dict[str, PlasmRef]\n");
     declarations.push_str(crate::python_money::STUBS);
+    declarations.push_str(&selection_stubs());
     let input = Type::record(fields.clone(), Default::default());
     declarations.push_str(crate::python_datetime::PRELUDE);
     declarations.push_str("import datetime as PlasmDatetime\n");
@@ -440,17 +456,6 @@ pub(super) fn output_annotation(
     }
     declarations.push_str("from typing import TypedDict, NotRequired\n");
     output(t, cgs, catalogs, declarations, 0)
-}
-
-pub(super) fn output_type(
-    t: &Type,
-    cgs: &CGS,
-    catalogs: &BTreeMap<String, std::sync::Arc<CGS>>,
-    declarations: &mut String,
-) -> Result<String, PythonComputeRejection> {
-    let ty = output_annotation(t, cgs, catalogs, declarations)?;
-    declarations.push_str(&format!("PlasmOutput: TypeAlias = {ty}\n"));
-    Ok("PlasmOutput".into())
 }
 
 pub(super) fn domain_aliases(

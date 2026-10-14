@@ -37,7 +37,7 @@ await checkSessionExtension(async () => {}, async (runtime, ref, engine) => {
       assert.equal(value.failure.recovery, "repair_program");
       assert.equal(value.failure.effects_unresolved, false);
       assert.ok(value.failure.diagnostic.includes(ref), "correction supplies the open workflow ref verbatim");
-      assert.equal(terminalExecutionFailure([{ role: "tool", content: [{ toolName: name, output: { type: "json", value: observed } }] }]), undefined);
+      assert.equal(terminalExecutionFailure([{ toolName: name, output: observed }]), undefined);
     }
   }
   assert.equal(admissions, 0, "bad handles never reach the engine");
@@ -46,7 +46,7 @@ await checkSessionExtension(async () => {}, async (runtime, ref, engine) => {
     assert.equal(observed.failure.code, "invalid_run_reference");
     assert.equal(observed.failure.recovery, "repair_program");
     assert.equal(observed.failure.effects_unresolved, false);
-    assert.equal(terminalExecutionFailure([{ role: "tool", content: [{ toolName: "plasm_run", output: { type: "json", value: observed } }] }]), undefined);
+    assert.equal(terminalExecutionFailure([{ toolName: "plasm_run", output: observed }]), undefined);
   }
   let requests = 0;
   const model = new MockLanguageModelV3({ doStream: async () => {

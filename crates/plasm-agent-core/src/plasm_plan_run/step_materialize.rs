@@ -13,6 +13,56 @@ fn step_failure(code: &'static str, diagnostic: impl Into<String>) -> ExecutionF
     ExecutionFailure::new(plasm_runtime::FailureCause::Program, code, diagnostic)
 }
 
+fn selection_identities(
+    selection: &plasm_core::plasm_monad::PythonRowSelection,
+    occurrences: &[Option<crate::python_pool::SelectedOccurrence>],
+    direct_offset: usize,
+    materialized: &BTreeMap<PlanNodeId, MaterializedNode>,
+) -> Result<Vec<Option<plasm_core::RowIdentity>>, ExecutionFailure> {
+    occurrences
+        .iter()
+        .map(|occurrence| {
+            let Some(occurrence) = occurrence else {
+                return Ok(None);
+            };
+            let port = selection.ports.get(occurrence.port).ok_or_else(|| {
+                step_failure(
+                    "python_selection_port_invalid",
+                    "Selected source port is absent",
+                )
+            })?;
+            let source = materialized
+                .get(&PlanNodeId::new(port.source.as_str())?)
+                .ok_or_else(|| {
+                    step_failure(
+                        "python_selection_source_absent",
+                        "Selected source is not materialized",
+                    )
+                })?;
+            if source.qualified_entity.entry_id != selection.owner.entry_id
+                || source.qualified_entity.entity != selection.owner.entity
+            {
+                return Err(step_failure(
+                    "python_selection_owner_mismatch",
+                    "Selected occurrence has a different entity owner",
+                ));
+            }
+            let index = occurrence.index
+                + if port.packet_field.is_none() {
+                    direct_offset
+                } else {
+                    0
+                };
+            source.row_identities.get(index).cloned().ok_or_else(|| {
+                step_failure(
+                    "python_selection_occurrence_absent",
+                    "Selected occurrence is outside its source collection",
+                )
+            })
+        })
+        .collect()
+}
+
 pub(crate) struct PlanStepMaterializeOutcome {
     pub(crate) node_id: PlanNodeId,
     pub(crate) mat: MaterializedNode,
@@ -248,6 +298,19 @@ async fn live_materialize_pure(
             }
         }
         let mut value_shapes = Vec::new();
+        let selection = match &compute.compute.op {
+            ComputeOp::Python { selection, .. } => selection.as_ref(),
+            _ => None,
+        };
+        let ports = selection
+            .map(|s| {
+                s.ports
+                    .iter()
+                    .map(|p| p.packet_field.clone())
+                    .collect::<Vec<_>>()
+            })
+            .unwrap_or_default();
+        let mut selected_identities = Vec::new();
         let computed = if matches!(compute.compute.op, ComputeOp::Python { .. }) {
             use crate::occurrence_progress::{ExecutionStage, OccurrenceProgress};
             let report = |stage| {
@@ -334,10 +397,24 @@ async fn live_materialize_pure(
                     )?;
                     let content = crate::python_compute::await_checked(
                         ctx.execution_scope,
-                        checked.run(&ctx.st.python_pool, &owner, &membership, &[row]),
+                        checked.run_observed(
+                            &ctx.st.python_pool,
+                            &owner,
+                            &membership,
+                            &[row],
+                            &ports,
+                        ),
                     )
                     .await?;
-                    plasm_core::charge_value_budget(&content, &mut remaining).map_err(
+                    if let Some(selection) = selection {
+                        selected_identities.extend(selection_identities(
+                            selection,
+                            &content.occurrences,
+                            index,
+                            materialized,
+                        )?);
+                    }
+                    plasm_core::charge_value_budget(&content.value, &mut remaining).map_err(
                         |diagnostic| {
                             step_failure(
                                 "python_compute_value_budget_exceeded",
@@ -345,19 +422,29 @@ async fn live_materialize_pure(
                             )
                         },
                     )?;
-                    rendered.push(content);
+                    rendered.push(content.value);
                 }
             } else {
-                let content = crate::python_compute::run_worker(
-                    &ctx.st.python_pool,
-                    checked,
-                    owner,
-                    source_mat.result.collection.membership(),
-                    input,
+                let content = crate::python_compute::await_checked(
                     ctx.execution_scope,
+                    checked.run_observed(
+                        &ctx.st.python_pool,
+                        &owner,
+                        source_mat.result.collection.membership(),
+                        &input,
+                        &ports,
+                    ),
                 )
                 .await?;
-                rendered.push(content);
+                if let Some(selection) = selection {
+                    selected_identities.extend(selection_identities(
+                        selection,
+                        &content.occurrences,
+                        0,
+                        materialized,
+                    )?);
+                }
+                rendered.push(content.value);
             }
             report(ExecutionStage::Validating);
             let ComputeOp::Python { output_type, .. } = &compute.compute.op else {
@@ -398,20 +485,35 @@ async fn live_materialize_pure(
             )
             .await?
         };
-        let row_identities = propagate_row_identities(
-            &source_id,
-            &compute.compute.op,
-            materialized,
-            &computed.occurrences,
-            computed.rows.len(),
-        )
-        .map_err(|diagnostic| {
-            step_failure(
-                "compute_row_identity_propagation_failed",
-                diagnostic.to_string(),
+        let row_identities = if selection.is_some() {
+            if selected_identities.len() != computed.rows.len() {
+                return Err(step_failure(
+                    "python_selection_count_mismatch",
+                    "Selected occurrence count differs from result rows",
+                ));
+            }
+            selected_identities
+        } else {
+            propagate_row_identities(
+                &source_id,
+                &compute.compute.op,
+                materialized,
+                &computed.occurrences,
+                computed.rows.len(),
             )
-        })?;
-        let entity_override = compute.compute.schema.entity.as_deref().map(str::to_string);
+            .map_err(|diagnostic| {
+                step_failure(
+                    "compute_row_identity_propagation_failed",
+                    diagnostic.to_string(),
+                )
+            })?
+        };
+        let entity_override = selection
+            .map(|s| s.owner.entity.clone())
+            .or_else(|| compute.compute.schema.entity.clone());
+        let owner_entry_id = selection
+            .map(|s| s.owner.entry_id.clone())
+            .unwrap_or(owner_entry_id);
         return materialize_synthetic_node(
             ctx.st,
             ctx.es,

@@ -34,7 +34,10 @@ impl Lower<'_> {
                         matches!(
                             node.source,
                             super::super::types::DagNodeSource::Compute {
-                                op: ComputeOp::Python { .. },
+                                op: ComputeOp::Python {
+                                    selection: None,
+                                    ..
+                                },
                                 ..
                             }
                         )

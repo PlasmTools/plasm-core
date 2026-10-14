@@ -39,7 +39,7 @@ pub struct OperationInvocationOutcome {
     pub source_identity: Option<String>,
     pub status: OperationInvocationStatus,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub error: Option<String>,
+    pub error: Option<crate::ExecutionFailure>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]

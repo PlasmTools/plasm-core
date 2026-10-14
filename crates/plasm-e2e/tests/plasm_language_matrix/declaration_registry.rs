@@ -26,6 +26,7 @@ enum DeclarationRejection {
     VariadicBuildInputs,
     ArgumentBinding,
     ComputeDecoratorShape,
+    ReservedComputeName,
     ComputeRowsHandleAnnotation,
     InvalidReturnType,
     UnresolvedAttribute,
@@ -103,6 +104,10 @@ impl DeclarationRejection {
                     | (
                         Self::ComputeDecoratorShape,
                         PythonSourceError::ComputeDecoratorShape
+                    )
+                    | (
+                        Self::ReservedComputeName,
+                        PythonSourceError::ReservedComputeName { .. }
                     )
                     | (
                         Self::ComputeRowsHandleAnnotation,
@@ -211,4 +216,35 @@ async fn class_documentation_erasure_preserves_the_live_plan() {
         &documented.artifact().comp,
         &plain.artifact().comp
     ));
+}
+
+#[tokio::test]
+async fn required_selection_correction_preserves_the_python_callsite() {
+    use super::{language_matrix as matrix, python};
+    let case = python::cases()
+        .find(|case| case.id == "cert_required_selection_multi")
+        .unwrap();
+    let (es, _) = python::parity_context(case, "http://127.0.0.1:1");
+    let symbols = es.teaching_exposure.as_ref().unwrap().to_symbol_map();
+    let entity = symbols.entity_sym_for(matrix::MATRIX_ENTRY_ID, "LangLane");
+    let source = python::program(&format!("return {entity}.query()"), &entity);
+    let error = compile_python_program(&es, &source).await.unwrap_err();
+    let CompilationError::Program(stage) = &error else {
+        panic!("expected program rejection")
+    };
+    let ProgramStageError::PythonLowering { error } = stage.as_ref() else {
+        panic!("expected lowering rejection")
+    };
+    assert!(error.span_offset().is_some());
+    let PythonLoweringError::Located { error: cause, .. } = error else {
+        panic!("expected located rejection")
+    };
+    assert!(
+        matches!(cause.as_ref(), PythonLoweringError::Type(cause) if matches!(cause.as_ref(), plasm_core::TypeError::RequiredParameterOmitted { parameter, expression } if parameter == "shelf" && expression == &format!("{entity}.query"))),
+        "{cause:?}"
+    );
+    assert!(error.to_string().contains("shelf=value"));
+    compile_python_program(&es, &source.replace(".query()", ".query(shelf='alpha')"))
+        .await
+        .unwrap();
 }

@@ -940,7 +940,7 @@ async fn mcp_plan_trace_hooks_emit_plasm_line_and_network_totals() {
     let call_index = fx
         .st
         .trace_hub
-        .trace_record_plasm_invocation(ls_key, false, 1, None, fx.program.len() as u64, None)
+        .trace_record_plasm_invocation(ls_key, false, 1, fx.program.len() as u64)
         .await;
     let plan_trace = PlanRunTraceHooks {
         trace: PlasmTraceContext {

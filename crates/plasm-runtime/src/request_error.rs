@@ -14,7 +14,49 @@ pub struct HttpStatusFailure {
     pub retry_budget_exhausted: bool,
 }
 
+/// Semantic provider presentation contains neither a URL nor request/body data.
+pub struct ProviderDiagnostic<'a> {
+    status: u16,
+    explanation: ProviderExplanation<'a>,
+}
+enum ProviderExplanation<'a> {
+    Correction(&'a str),
+    Incomplete(&'a str),
+    Missing,
+}
+impl std::fmt::Display for ProviderDiagnostic<'_> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "Provider rejected the operation (status {}): ",
+            self.status
+        )?;
+        match self.explanation {
+            ProviderExplanation::Correction(detail) => f.write_str(detail),
+            ProviderExplanation::Incomplete(detail) => write!(f, "{detail} The provider supplied no specific correction after this explanation. Check the declared inputs and inspect the recorded provider response."),
+            ProviderExplanation::Missing => f.write_str("The provider rejected the inputs but supplied no specific correction. Check the declared inputs and inspect the recorded provider response."),
+        }
+    }
+}
+
 impl HttpStatusFailure {
+    /// Provider correction, independent of the transport request and credentials.
+    /// Full request evidence remains on this failure, outside agent presentation.
+    pub fn agent_diagnostic(&self) -> ProviderDiagnostic<'_> {
+        let detail = self.detail.trim();
+        let explanation = if detail.is_empty() {
+            ProviderExplanation::Missing
+        } else if detail.ends_with(':') {
+            ProviderExplanation::Incomplete(detail)
+        } else {
+            ProviderExplanation::Correction(detail)
+        };
+        ProviderDiagnostic {
+            status: self.status,
+            explanation,
+        }
+    }
+
     pub fn without_request(status: u16, detail: String) -> Self {
         Self {
             method: String::new(),
@@ -98,6 +140,24 @@ pub enum RequestFailure {
     #[cfg(test)]
     #[error("test transport rejected an unexpected request")]
     UnexpectedTestRequest,
+}
+
+impl RequestFailure {
+    /// Closed semantic projection. A new request-failure variant must choose its
+    /// presentation here rather than inheriting transport Display formatting.
+    pub fn agent_diagnostic(&self) -> String {
+        match self {
+            Self::HttpStatus(failure) => failure.agent_diagnostic().to_string(),
+            Self::ResponseJson { status, .. } => format!("Provider response (status {status}) could not be decoded as declared. Inspect the response contract and provider evidence."),
+            Self::CommandRejected { code, message } => format!("Provider command rejected ({code}): {message}"),
+            Self::CommandRowsEmpty => "Provider command returned no rows. Check the connected account and the declared read criteria.".into(),
+            Self::EntityNull { field, hint } => format!("Provider returned no entity for '{field}'. Check identity and read criteria.{hint}"),
+            Self::GraphQlMutation(failure) => failure.to_string(),
+            Self::MockServer { status, .. } => format!("Test provider rejected the operation (status {status})."),
+            #[cfg(test)]
+            Self::UnexpectedTestRequest => "Test provider rejected an unexpected request.".into(),
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

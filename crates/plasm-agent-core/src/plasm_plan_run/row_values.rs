@@ -3,7 +3,48 @@
 use super::*;
 
 pub(crate) fn cached_entity_row_values(entity: &CachedEntity, cgs: &CGS) -> plasm_core::ValueRow {
-    plasm_runtime::entity_to_row_values(entity, Some(cgs))
+    plasm_core::row_contract::RowCodec::new(Some(cgs)).values(entity)
+}
+
+#[cfg(test)]
+mod presentation_contract_tests {
+    use super::*;
+    #[test]
+    fn execution_values_use_domain_fields_not_the_storage_envelope() {
+        let cgs = plasm_core::loader::load_schema_dir(
+            &std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+                .join("../../fixtures/schemas/plasm_language_matrix"),
+        )
+        .unwrap();
+        let values = plasm_core::ValueRow::try_from(plasm_core::json_value_to_plasm_value(
+            &serde_json::json!({
+                "_ref":{"kind":"simple","entity":"LangItem","id":"a"},
+                "id":"a","title":"domain","_version":99
+            }),
+        ))
+        .unwrap();
+        let row = plasm_core::row_contract::RowCodec::new(Some(&cgs))
+            .decode_values(
+                "LangItem",
+                &values,
+                plasm_core::row_contract::RowFieldContract::Projection,
+            )
+            .unwrap();
+        let mut cached =
+            CachedEntity::from_row(&row, 7, plasm_runtime::EntityCompleteness::Complete);
+        cached.version = 42;
+        let execution = cached_entity_row_values(&cached, &cgs);
+        assert_eq!(
+            execution.get("_version"),
+            Some(&plasm_core::Value::Integer(99))
+        );
+        assert!(execution.get("_last_updated").is_none());
+        assert!(execution.get("_completeness").is_none());
+        assert!(
+            execution.get("_ref").is_some(),
+            "typed identity bindings still require their structural execution reference"
+        );
+    }
 }
 
 pub(crate) fn value_at_segments<'a>(

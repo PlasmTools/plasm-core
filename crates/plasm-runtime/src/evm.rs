@@ -48,6 +48,44 @@ pub enum EvmError {
     LogIndexMissing,
 }
 
+impl EvmError {
+    /// Closed provider projection: RPC payload data, URLs and ABI internals stay
+    /// in machine evidence rather than being serialized into agent corrections.
+    pub fn agent_diagnostic(&self) -> String {
+        match self {
+            Self::Rpc { source, .. } => match source.as_error_resp() {
+                Some(response) => format!("Provider rejected the operation (code {}): {}", response.code, response.message),
+                None => "Provider operation could not complete. Inspect provider transport evidence and reconcile any dispatched effects before another execution.".into(),
+            },
+            Self::RpcUrl(_) | Self::HttpClient(_) | Self::HeaderName(_) | Self::HeaderValue(_) => "The provider connection is not configured correctly. Check the provider connection and authorization settings.".into(),
+            Self::Abi { .. } | Self::DecodeIndex { .. } | Self::CallDecodeSource | Self::LogDecodeSource | Self::TransactionHashMissing | Self::LogIndexMissing => "The provider result or declared operation does not satisfy its compiled contract. The host must inspect the response and repair the catalog mapping.".into(),
+        }
+    }
+}
+
+#[cfg(test)]
+mod presentation_tests {
+    use super::*;
+    #[test]
+    fn provider_rpc_data_is_evidence_not_correction_text() {
+        let error = EvmError::Rpc {
+            operation: EvmRpcOperation::Call,
+            source: alloy_provider::transport::TransportError::ErrorResp(serde_json::from_value(serde_json::json!({
+                "code":-32000,"message":"Insufficient balance","data":{"private":"do-not-render","trace":[1,2,3]}
+            })).unwrap()),
+        };
+        let text = error.agent_diagnostic();
+        assert!(text.contains("-32000"));
+        assert!(text.contains("Insufficient balance"));
+        assert!(!text.contains("do-not-render"));
+        assert!(!text.contains("trace"));
+        let EvmError::Rpc { source, .. } = error else {
+            unreachable!()
+        };
+        assert!(source.as_error_resp().unwrap().data.is_some());
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum EvmAbiPhase {
     EncodeCall,

@@ -125,7 +125,7 @@ impl From<ruff_python_parser::ParseError> for InferenceError {
 
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum InferenceGraphError {
-    #[error("recursive inferred type exceeds the maximum depth")]
+    #[error("cyclic inferred type cannot be materialized")]
     RecursiveType,
     #[error("inferred type graph contains an invalid reference")]
     InvalidReference,
@@ -204,8 +204,23 @@ pub(super) fn infer_body(
     parameters: &[(&str, &Type)],
     imports: &str,
 ) -> Result<Type, InferenceError> {
+    Ok(infer_output(body, parameters, imports)?.contract)
+}
+
+/// A nominal return is evidence of a possible input occurrence, not authority.
+/// Execution must still prove unchanged instance identity before continuation.
+pub(super) struct InferredOutput {
+    pub contract: Type,
+    pub selected_parameters: std::collections::BTreeSet<String>,
+}
+
+pub(super) fn infer_output(
+    body: &str,
+    inputs: &[(&str, &Type)],
+    imports: &str,
+) -> Result<InferredOutput, InferenceError> {
     let mut declarations = declarations::Declarations::default();
-    let parameters = parameters
+    let parameters = inputs
         .iter()
         .map(|(name, ty)| {
             declarations
@@ -275,16 +290,85 @@ pub(super) fn infer_body(
             graph: &graph,
             declarations: &declarations,
         };
-        return graph
-            .roots
-            .iter()
-            .map(|id| decoder.decode(*id, 0))
-            .collect::<Result<Vec<_>, _>>()?
+        let contract = decoder
+            .decode_roots(&graph.roots)?
             .into_iter()
             .reduce(Type::join)
-            .ok_or(ReturnContractError::ReturnContractMissing.into());
+            .ok_or(ReturnContractError::ReturnContractMissing)?;
+        let selected_parameters = selection_parameters(&graph, &declarations, inputs);
+        return Ok(InferredOutput {
+            contract,
+            selected_parameters,
+        });
     }
     unreachable!("local closure uses at most three whole-body passes")
+}
+
+fn selection_parameters(
+    graph: &Graph,
+    declarations: &declarations::Declarations,
+    inputs: &[(&str, &Type)],
+) -> std::collections::BTreeSet<String> {
+    use std::collections::BTreeSet;
+    // Traverse the exported type graph, not Python syntax. Only a record or a
+    // flat list of the input's nominal records can carry occurrence evidence.
+    let mut pending = graph
+        .roots
+        .iter()
+        .map(|id| (*id, false))
+        .collect::<Vec<_>>();
+    let mut visited = BTreeSet::new();
+    let mut selected = BTreeSet::new();
+    while let Some((id, in_list)) = pending.pop() {
+        if !visited.insert((id.0, in_list)) {
+            continue;
+        }
+        match graph.nodes.get(id.0 as usize) {
+            Some(Node::Alias(next)) => pending.push((*next, in_list)),
+            Some(Node::Union(items)) => pending.extend(items.iter().map(|id| (*id, in_list))),
+            Some(Node::Never) => {}
+            Some(Node::Instance {
+                identity,
+                arguments,
+            }) if !in_list
+                && identity.path.last().is_some_and(|name| name == "list")
+                && arguments.len() == 1 =>
+            {
+                pending.push((arguments[0], true));
+            }
+            Some(Node::Protocol { identity, .. }) | Some(Node::Instance { identity, .. }) => {
+                let Some(contract) = identity
+                    .path
+                    .last()
+                    .and_then(|name| declarations.contracts.get(name))
+                else {
+                    return BTreeSet::new();
+                };
+                if !matches!(
+                    contract.shape,
+                    ValueShape::Record { .. } | ValueShape::ObservedRecord { .. }
+                ) {
+                    return BTreeSet::new();
+                }
+                let candidates = inputs
+                    .iter()
+                    .filter_map(|(name, input)| {
+                        let row = match &input.shape {
+                            ValueShape::Array { element } => element.as_ref(),
+                            _ => input,
+                        };
+                        (row == contract).then(|| (*name).to_owned())
+                    })
+                    .collect::<BTreeSet<_>>();
+                if candidates.is_empty() {
+                    return BTreeSet::new();
+                }
+                selected.extend(candidates);
+            }
+            _ => return BTreeSet::new(),
+        }
+    }
+    selected
 }
 
 /// Check the original annotation before materialization widens Python literals.
@@ -352,12 +436,8 @@ pub(super) fn check_annotated_body(
     let mut source =
         format!("{imports}\ndef __plasm_return({parameters}) -> {annotation}:{body}\n");
     if helpers::has_local_calls(&source)? {
-        let mut evidence = declarations::Declarations {
-            source: format!(
-                "from typing import NewType, Protocol, TypedDict, NotRequired\n{stubs}"
-            ),
-            ..Default::default()
-        };
+        let mut evidence = declarations::Declarations::default();
+        evidence.source.push_str(&stubs);
         source = helpers::close_local_calls(&source, &mut evidence)?;
         stubs = evidence.source;
         let inferred = monty_analysis::analyze_function(
@@ -376,7 +456,7 @@ pub(super) fn check_annotated_body(
             AnalysisOutcome::Rejected(errors) => {
                 return Err(InferenceError::Diagnostics {
                     diagnostics: body_diagnostics(errors, &source),
-                })
+                });
             }
             AnalysisOutcome::Inferred(_) => {}
         }
@@ -466,8 +546,19 @@ pub(super) fn annotation_with_imports(
             .push_str(&format!("{name}: TypeAlias = {rendered}\n"));
     }
     let source = if let Some(actual) = actual {
+        // An array whose element type is bottom is provably empty. Check its
+        // empty literal contextually: invariant list[Never] is not a mutable
+        // list[int], but materializing this value as an empty list is lawful.
+        // Nonempty and nullable containers retain ordinary assignment checking.
+        let argument = if !actual.nullable
+            && matches!(&actual.shape, ValueShape::Array { element } if !element.nullable && matches!(element.shape, ValueShape::Never))
+        {
+            "[]"
+        } else {
+            "value"
+        };
         let actual = declarations.render(actual, 0)?;
-        format!("{imports}\ndef __plasm_expected(value: {source}) -> None:\n    pass\ndef __plasm_annotation(value: {actual}):\n    __plasm_expected(value)\n    return value\n")
+        format!("from typing import Never\n{imports}\ndef __plasm_expected(value: {source}) -> None:\n    pass\ndef __plasm_annotation(value: {actual}):\n    __plasm_expected({argument})\n    return value\n")
     } else {
         format!("{imports}\ndef __plasm_annotation(value: {source}):\n    return value\n")
     };
@@ -496,7 +587,7 @@ pub(super) fn annotation_with_imports(
             let [root] = graph.roots.as_slice() else {
                 return Err(ReturnContractError::AnnotationContractCount.into());
             };
-            decoder.decode(*root, 0).map(Some)
+            decoder.decode(*root).map(Some)
         }
         AnalysisOutcome::Rejected(errors) => Err(InferenceError::Diagnostics {
             diagnostics: errors.into(),
@@ -526,11 +617,102 @@ struct Decoder<'a> {
     declarations: &'a declarations::Declarations,
 }
 impl Decoder<'_> {
-    fn decode(&self, id: TypeId, depth: usize) -> Result<Type, InferenceError> {
-        if depth >= 64 {
-            return Err(InferenceGraphError::RecursiveType.into());
+    fn decode(&self, root: TypeId) -> Result<Type, InferenceError> {
+        self.decode_roots(&[root])?
+            .into_iter()
+            .next()
+            .ok_or_else(|| InferenceGraphError::InvalidReference.into())
+    }
+
+    fn decode_roots(&self, roots: &[TypeId]) -> Result<Vec<Type>, InferenceError> {
+        let mut decoded = vec![None; self.graph.nodes.len()];
+        let mut active = vec![false; self.graph.nodes.len()];
+        let mut pending = roots
+            .iter()
+            .rev()
+            .map(|root| (*root, false))
+            .collect::<Vec<_>>();
+        while let Some((id, finish)) = pending.pop() {
+            let index = id.0 as usize;
+            let node = self
+                .graph
+                .nodes
+                .get(index)
+                .ok_or(InferenceGraphError::InvalidReference)?;
+            if finish {
+                decoded[index] = Some(self.decode_node(id, &decoded)?);
+                active[index] = false;
+                continue;
+            }
+            if decoded[index].is_some() {
+                continue;
+            }
+            if active[index] {
+                return Err(InferenceGraphError::RecursiveType.into());
+            }
+            active[index] = true;
+            pending.push((id, true));
+            let children: Vec<TypeId> = match node {
+                Node::Alias(child) => vec![*child],
+                Node::Union(items) => items.clone(),
+                Node::Tuple {
+                    prefix,
+                    variable,
+                    suffix,
+                } => prefix
+                    .iter()
+                    .chain(variable)
+                    .chain(suffix)
+                    .copied()
+                    .collect(),
+                Node::Instance {
+                    identity,
+                    arguments,
+                } if identity.source.ends_with("/builtins.pyi") => arguments.clone(),
+                Node::Intersection { positive, negative } => {
+                    // Validate exclusions too, although they do not require
+                    // materialization of their value types.
+                    for child in negative {
+                        self.graph
+                            .nodes
+                            .get(child.0 as usize)
+                            .ok_or(InferenceGraphError::InvalidReference)?;
+                    }
+                    let mut children = Vec::new();
+                    for child in positive {
+                        let node = self
+                            .graph
+                            .nodes
+                            .get(child.0 as usize)
+                            .ok_or(InferenceGraphError::InvalidReference)?;
+                        if !matches!(node, Node::Truthy | Node::Falsy) {
+                            children.push(*child);
+                        }
+                    }
+                    children
+                }
+                _ => Vec::new(),
+            };
+            pending.extend(children.into_iter().rev().map(|id| (id, false)));
         }
-        let recur = |id| self.decode(id, depth + 1);
+        roots
+            .iter()
+            .map(|root| {
+                decoded
+                    .get(root.0 as usize)
+                    .and_then(Clone::clone)
+                    .ok_or_else(|| InferenceGraphError::InvalidReference.into())
+            })
+            .collect()
+    }
+
+    fn decode_node(&self, id: TypeId, decoded: &[Option<Type>]) -> Result<Type, InferenceError> {
+        let recur = |id: TypeId| {
+            decoded
+                .get(id.0 as usize)
+                .and_then(Clone::clone)
+                .ok_or_else(|| InferenceError::from(InferenceGraphError::InvalidReference))
+        };
         let node = self
             .graph
             .nodes
@@ -636,7 +818,7 @@ impl Decoder<'_> {
                             return Err(InferenceGraphError::UnsupportedNamedType {
                                 name: name.to_owned(),
                             }
-                            .into())
+                            .into());
                         }
                     }
                 } else if identity.source.ends_with("/datetime.pyi") {
@@ -739,48 +921,40 @@ pub(crate) fn branch_contracts(
         AnalysisOutcome::Rejected(errors) => {
             return Err(InferenceError::Diagnostics {
                 diagnostics: errors.into(),
-            })
+            });
         }
     };
     let decoder = Decoder {
         graph: &graph,
         declarations: &declarations,
     };
-    graph.roots[..paths.len()]
-        .iter()
-        .zip(&graph.roots[paths.len()..])
-        .map(|(yes, no)| Ok((decoder.decode(*yes, 0)?, decoder.decode(*no, 0)?)))
-        .collect::<Result<Vec<_>, InferenceError>>()
-        .map(Some)
+    let values = decoder.decode_roots(&graph.roots)?;
+    if values.len() != paths.len().saturating_mul(2) {
+        return Err(InferenceGraphError::InvalidReference.into());
+    }
+    let mut values = values.into_iter();
+    let yes = values.by_ref().take(paths.len()).collect::<Vec<_>>();
+    Ok(Some(yes.into_iter().zip(values).collect()))
 }
 
 pub(crate) fn observation_paths(value: &Type) -> Result<Vec<Vec<String>>, InferenceError> {
-    fn walk(
-        value: &Type,
-        path: Vec<String>,
-        out: &mut Vec<Vec<String>>,
-        depth: usize,
-    ) -> Result<(), InferenceError> {
-        if depth >= 64 {
-            return Err(InferenceError::ControlFlowBoundExceeded);
-        }
+    let mut paths = Vec::new();
+    let mut pending = vec![(value, Vec::new())];
+    while let Some((value, path)) = pending.pop() {
         if !path.is_empty() {
-            out.push(path.clone());
+            paths.push(path.clone());
         }
         if !value.nullable {
             if let ValueShape::Record { fields } | ValueShape::ObservedRecord { fields, .. } =
                 &value.shape
             {
-                for (name, value) in fields {
+                for (name, value) in fields.iter().rev() {
                     let mut path = path.clone();
                     path.push(name.clone());
-                    walk(value, path, out, depth + 1)?;
+                    pending.push((value, path));
                 }
             }
         }
-        Ok(())
     }
-    let mut paths = Vec::new();
-    walk(value, Vec::new(), &mut paths, 0)?;
     Ok(paths)
 }

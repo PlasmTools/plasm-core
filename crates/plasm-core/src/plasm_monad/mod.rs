@@ -31,6 +31,7 @@ pub use operators::{
     plasm_parallel_return, plasm_pure_step, EmptyParallelReturn,
 };
 pub use payload::{
+    PythonRowSelection, PythonSelectionPort,
     AggregateFunction, AggregateSpec, ArithOp, BindingName, ComputeOp, ComputeTemplate, DeriveKind,
     DerivePayload, DeriveTemplate, EffectTemplate, FieldPath, FlatMapApplyPayload,
     FlatMapRelationPayload, InputCardinality, InvokePayload, MapPayload, OutputName, PlanAtomError,

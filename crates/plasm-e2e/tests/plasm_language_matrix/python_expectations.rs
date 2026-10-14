@@ -253,6 +253,8 @@ pub(super) fn assert_supplemental(id: &str, run: &PlasmPlanRunResult) {
         "text_conditional_membership" => json!([{"value":"i1:matched"}]),
         "text_row_duplicates" => json!([{"value":"Alpha"},{"value":"Beta"}]),
         "text_empty_aggregate" => json!([{"value":"count=0"}]),
+        "callback_collection_argument" => json!([{"value":0}]),
+        "compute_private_unused" => json!([{"value":2}]),
         "text_synthetic_count" => json!([{"value":"count=2"}]),
         "text_synthetic_group" => json!([{"value":"Alpha: 1"},{"value":"Beta: 1"}]),
         "text_multiline_whitespace" => {

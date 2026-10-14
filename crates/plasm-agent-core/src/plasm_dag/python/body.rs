@@ -323,7 +323,6 @@ impl Lower<'_> {
             es: self.es,
             methods: self.methods,
             helpers: self.helpers,
-            used_methods: self.used_methods.clone(),
             callbacks,
             active_callbacks: self.active_callbacks.clone(),
             return_check: if let Some(annotation) = &callback.returns {
@@ -509,7 +508,6 @@ impl Lower<'_> {
         }
         self.serial = scoped.serial;
         self.static_expansions = scoped.static_expansions;
-        self.used_methods = scoped.used_methods;
         let result = CorrelatedBody {
             output: output_contract,
             parent: ParentCapture {

@@ -230,18 +230,6 @@ impl TraceHubBuilder {
     }
 }
 
-const MAX_TRACE_REASONING_CHARS: usize = 8192;
-
-pub(super) fn truncate_trace_reasoning(s: &str) -> String {
-    let count = s.chars().count();
-    if count <= MAX_TRACE_REASONING_CHARS {
-        return s.to_string();
-    }
-    let mut t: String = s.chars().take(MAX_TRACE_REASONING_CHARS).collect();
-    t.push('…');
-    t
-}
-
 pub(super) fn now_ms() -> u64 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)

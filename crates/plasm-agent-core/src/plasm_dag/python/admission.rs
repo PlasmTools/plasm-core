@@ -207,8 +207,15 @@ impl<'a> Root<'a> {
                 }
                 continue;
             }
-            if def.name.as_str().starts_with('_')
-                || def.decorator_list.len() != 1
+            if def.name.as_str().starts_with("__") {
+                return Err(at(
+                    def,
+                    PythonSourceError::ReservedComputeName {
+                        name: def.name.to_string(),
+                    },
+                ));
+            }
+            if def.decorator_list.len() != 1
                 || name(&def.decorator_list[0].expression) != Some("compute")
             {
                 return Err(at(def, PythonSourceError::ComputeDecoratorShape));
@@ -286,7 +293,7 @@ impl<'a> Root<'a> {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum ComputeAnnotationProblem {
     DagRowHandle(plasm_core::python_row_shape::PythonRowShape),
-    EntityAsCollectionElement,
+    EntityBinding,
 }
 
 impl ComputeAnnotationProblem {
@@ -303,13 +310,16 @@ impl ComputeAnnotationProblem {
         {
             return Some(Self::DagRowHandle(shape));
         }
+        if name(annotation).is_some_and(|token| symbols.resolve_session_entity(token).is_ok()) {
+            return Some(Self::EntityBinding);
+        }
         match head {
             Some("list") => match annotation {
                 PyExpr::Subscript(subscript)
                     if name(&subscript.slice)
                         .is_some_and(|token| symbols.resolve_session_entity(token).is_ok()) =>
                 {
-                    Some(Self::EntityAsCollectionElement)
+                    Some(Self::EntityBinding)
                 }
                 _ => None,
             },
@@ -327,7 +337,7 @@ impl ComputeAnnotationProblem {
                     PythonSourceError::ComputeSingletonHandleAnnotation
                 }
             },
-            Self::EntityAsCollectionElement => PythonSourceError::ComputeEntityElementAnnotation,
+            Self::EntityBinding => PythonSourceError::ComputeEntityBindingAnnotation,
         }
     }
 }

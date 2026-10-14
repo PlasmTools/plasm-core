@@ -5,6 +5,7 @@
 // budget when proving nested HTTP/hyper futures are `Send` (rustc 1.87+).
 #![recursion_limit = "512"]
 
+pub mod agent_presentation;
 pub mod appliance_mcp_defaults;
 pub mod appliance_services;
 pub mod secret_store_host;

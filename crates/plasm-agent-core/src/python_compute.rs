@@ -6,6 +6,7 @@ pub(crate) mod arguments;
 mod multiple;
 pub(crate) use arguments::is_row as is_row_annotation;
 pub(crate) mod inference;
+pub(crate) mod selection;
 pub use arguments::PythonArgumentError;
 pub use inference::{InferenceError, InferenceGraphError};
 pub mod predicate_facts;
@@ -29,76 +30,13 @@ use std::collections::BTreeMap;
 
 use crate::program_rejection::{PythonComputeError, PythonComputeRejection};
 
-/// Infer a pure helper's materialization port from the already typed DAG
-/// dependency. `Row` denotes the complete incoming record contract; Monty
-/// checks the helper body against that contract before the plan is admitted.
-pub(crate) fn inferred_helper_input_annotation(
-    row: &plasm_core::value_contract::ValueContract,
-    scalar_cell: bool,
-    collection: bool,
-) -> Result<String, crate::program_rejection::PythonProgramError> {
-    let value = if scalar_cell {
-        row.field("value").map_err(|_| {
-            crate::program_rejection::PythonProgramError::HelperScalarCellValueMissing
-        })?
-    } else {
-        row.clone()
-    };
-    fn annotation(
-        value: &plasm_core::value_contract::ValueContract,
-    ) -> Result<String, crate::program_rejection::PythonProgramError> {
-        use plasm_core::value_contract::ValueShape;
-        let mut required = value.clone();
-        required.nullable = false;
-        let base = match &required.shape {
-            ValueShape::Record { .. } | ValueShape::ObservedRecord { .. } => "Row".into(),
-            ValueShape::Array { element } => format!("list[{}]", annotation(element)?),
-            ValueShape::Tuple { members } => members.python_annotation(annotation)?,
-            ValueShape::Set { element } => format!("set[{}]", annotation(element)?),
-            ValueShape::Dictionary { key, value } => {
-                format!("dict[{}, {}]", annotation(key)?, annotation(value)?)
-            }
-            ValueShape::Scalar { field_type } => match field_type {
-                FieldType::Boolean => "bool",
-                FieldType::Integer => "int",
-                FieldType::Number => "float",
-                FieldType::MultiSelect => "list[str]",
-                FieldType::Money => "PlasmMoney",
-                FieldType::Date | FieldType::Array => {
-                    return Err(crate::program_rejection::PythonProgramError::HelperInputRequiresTemporalOrArrayContract);
-                }
-                FieldType::EntityRef { .. } | FieldType::Json | FieldType::Blob => {
-                    return Err(crate::program_rejection::PythonProgramError::HelperInputRequiresMaterializedValueContract);
-                }
-                _ => "str",
-            }
-            .into(),
-            ValueShape::Temporal { kind, .. } => format!("datetime.{}", kind.python_name()),
-            ValueShape::Union { variants } => variants
-                .iter()
-                .map(annotation)
-                .collect::<Result<Vec<_>, _>>()?
-                .join(" | "),
-            ValueShape::Null => "None".into(),
-            ValueShape::Never => "Never".into(),
-            ValueShape::MappingRecord { .. } => {
-                return Err(crate::program_rejection::PythonProgramError::HelperInputRequiresMappingAnnotation);
-            }
-        };
-        Ok(
-            if value.nullable && !matches!(value.shape, ValueShape::Null) {
-                format!("{base} | None")
-            } else {
-                base
-            },
-        )
-    }
-    let value = annotation(&value)?;
-    Ok(if collection {
-        format!("list[{value}]")
-    } else {
-        value
-    })
+pub(crate) fn uses_dependency_packet(def: &ruff_python_ast::StmtFunctionDef) -> bool {
+    def.parameters.args.len() > 1
+        || def
+            .parameters
+            .args
+            .iter()
+            .any(|arg| arg.parameter.annotation.is_none())
 }
 
 /// A callback receives one materialized row. The checker judges any declared
@@ -224,7 +162,7 @@ pub(crate) fn check_callback_record_return(
 pub(crate) const LANGUAGE_PROFILE: &str =
     "monty-e007685fbb06494c13b9a7b3fede9f8e6a54a2be-typed-v11-money-v2-branches-v2";
 
-pub(crate) const CONTRACT_VERSION: u32 = 12;
+pub(crate) const CONTRACT_VERSION: u32 = 13;
 
 pub(crate) const MAX_INPUT_ROWS: usize = 256;
 
@@ -370,7 +308,7 @@ impl ValueContract {
                 None => {
                     return Err(PythonComputeError::ValueContractSymbolMissing {
                         field: field_name.clone(),
-                    })
+                    });
                 }
             };
             for line in value.description.lines() {
@@ -506,6 +444,7 @@ fn diagnostic_imports(
 }
 
 pub struct PreparedCompute {
+    pub(crate) selected_parameters: std::collections::BTreeSet<String>,
     independent_inputs: bool,
     optional_fields: std::collections::BTreeSet<String>,
     pub contract: Option<ValueContract>,
@@ -590,7 +529,7 @@ impl PreparedCompute {
         {
             return Err(PythonComputeError::FunctionShape.into());
         }
-        if def.parameters.args.len() > 1 {
+        if uses_dependency_packet(def) {
             if mode != ComputeInputMode::Singleton {
                 return Err(PythonComputeError::DependencyPacketNotSingleton.into());
             }
@@ -746,7 +685,7 @@ impl PreparedCompute {
         }
         let inferred = if declared_output.is_none() {
             Some(
-                inference::infer_body(
+                inference::infer_output(
                     &definition_body(source, def)?,
                     &[(param.name.as_str(), &input_type)],
                     &body_imports,
@@ -756,7 +695,11 @@ impl PreparedCompute {
         } else {
             None
         };
-        let output = match (declared_output, inferred) {
+        let selected_parameters = inferred
+            .as_ref()
+            .map(|output| output.selected_parameters.clone())
+            .unwrap_or_default();
+        let output = match (declared_output, inferred.map(|output| output.contract)) {
             (Some(output), _) => output,
             (None, Some(output)) => {
                 if let Some(annotation) = &annotation {
@@ -770,7 +713,6 @@ impl PreparedCompute {
         };
         let mut stubs = upstream::stubs_in(&fields, cgs, &domains.catalogs)?;
         upstream::domain_aliases(&domains.types, cgs, &domains.catalogs, &mut stubs)?;
-        let output_type = upstream::output_type(&output, cgs, &domains.catalogs, &mut stubs)?;
         let body = definition_body(source, def)?;
         let argument_type = if argument.field.is_some() || argument.mapping.is_some() {
             upstream::input_type(&argument.value_type, cgs, &domains.catalogs, &mut stubs)?
@@ -787,11 +729,12 @@ impl PreparedCompute {
                 .saturating_sub(imports.source.lines().count() + 1),
         );
         let definition = format!(
-            "import datetime as PlasmDatetime\n{}{padding}def {}({}: {}) -> {}:{}\n",
-            imports.source, def.name, param.name, argument_type, output_type, body
+            "import datetime as PlasmDatetime\n{}{padding}def {}({}: {}):{}\n",
+            imports.source, def.name, param.name, argument_type, body
         );
         let executable = format!("{}\n{}({})", definition, def.name, argument.expression());
         Ok(Self {
+            selected_parameters,
             independent_inputs: false,
             optional_fields: rows
                 .map(|(schema, _)| schema.optional_fields.clone())
@@ -825,6 +768,20 @@ impl PreparedCompute {
         membership: &RecordedCollection<plasm_core::Ref>,
         rows: &[ValueRow],
     ) -> Result<Value, plasm_runtime::ExecutionFailure> {
+        Ok(self
+            .run_observed(pool, owner, membership, rows, &[])
+            .await?
+            .value)
+    }
+
+    pub(crate) async fn run_observed(
+        &self,
+        pool: &crate::python_pool::PythonPool,
+        owner: &EntityBinding,
+        membership: &RecordedCollection<plasm_core::Ref>,
+        rows: &[ValueRow],
+        ports: &[Option<String>],
+    ) -> Result<crate::python_pool::ComputeOutput, plasm_runtime::ExecutionFailure> {
         if let Some(contract) = &self.contract {
             if self.row_fields.is_none() && owner != &contract.owner {
                 return Err(plasm_runtime::ExecutionFailure::new(
@@ -878,25 +835,7 @@ impl PreparedCompute {
                 })?
         };
         if self.independent_inputs {
-            input
-                .iter()
-                .flat_map(|row| row.values())
-                .try_fold(0usize, |count, value| {
-                    let rows = match value {
-                        Value::Array(rows) => rows.len(),
-                        _ => 1,
-                    };
-                    count
-                        .checked_add(rows)
-                        .filter(|count| *count <= MAX_INPUT_ROWS)
-                        .ok_or_else(|| {
-                            plasm_runtime::ExecutionFailure::new(
-                                plasm_runtime::FailureCause::Program,
-                                "compute_input_row_budget_exceeded",
-                                "compute input row budget exceeded",
-                            )
-                        })
-                })?;
+            validate_materialized_input_budget(input.iter().flat_map(|row| row.values()))?;
         }
         let types = match &self.row_fields {
             Some(fields) => fields.clone(),
@@ -925,7 +864,7 @@ impl PreparedCompute {
                 )
             })?;
         let value = pool
-            .compute_value(self.executable.clone(), input, &types, |value| {
+            .compute_observed(self.executable.clone(), input, &types, ports, |value| {
                 let value = self.encode_domain_output(value, &self.output)?;
                 self.output.validate_in(
                     &value,
@@ -1085,6 +1024,7 @@ pub(crate) fn check_op(
         input_schema,
         output_type,
         per_row,
+        selection,
     } = op
     else {
         return Err(PythonComputeError::ExpectedPythonCompute.into());
@@ -1135,6 +1075,9 @@ pub(crate) fn check_op(
     if &checked.output != output_type {
         return Err(PythonComputeError::StoredOutputTypeMismatch.into());
     }
+    if let Some(selection) = selection {
+        selection::validate_contract(selection, &checked)?;
+    }
     Ok(checked)
 }
 
@@ -1145,6 +1088,13 @@ pub(crate) fn validate_plan_compute(
 ) -> Result<(), PythonComputeRejection> {
     use crate::plasm_plan::ValidatedPlanNode;
     let checked = check_op(es, &compute.compute.op)?;
+    if let plasm_core::plasm_monad::ComputeOp::Python {
+        selection: Some(selection),
+        ..
+    } = &compute.compute.op
+    {
+        selection::validate_sources(selection, compute.compute.source.as_str(), nodes)?;
+    }
     let source_mode = if crate::plasm_plan::scoped_capture_permits_singleton(
         nodes,
         compute.compute.source.as_str(),
@@ -1367,17 +1317,6 @@ pub(crate) fn require_complete_collection(
 }
 
 /// Cancellation drops the process session; its supervisor kills and reaps before releasing capacity.
-pub(crate) async fn run_worker(
-    pool: &crate::python_pool::PythonPool,
-    checked: PreparedCompute,
-    owner: EntityBinding,
-    membership: &RecordedCollection<plasm_core::Ref>,
-    rows: Vec<ValueRow>,
-    scope: Option<&crate::operation::ExecutionScope>,
-) -> Result<Value, plasm_runtime::ExecutionFailure> {
-    await_checked(scope, checked.run(pool, &owner, membership, &rows)).await
-}
-
 pub(crate) async fn await_checked<T, E: From<plasm_runtime::ExecutionFailure>>(
     scope: Option<&crate::operation::ExecutionScope>,
     future: impl std::future::Future<Output = Result<T, E>>,
@@ -1414,6 +1353,40 @@ pub(crate) fn validate_input_budget(rows: &[ValueRow]) -> Result<(), ComputeInpu
         plasm_core::charge_value_budget(row, &mut remaining)?;
     }
 
+    Ok(())
+}
+
+fn validate_materialized_input_budget<'a>(
+    values: impl Iterator<Item = &'a Value>,
+) -> Result<(), plasm_runtime::ExecutionFailure> {
+    let mut pending = values.collect::<Vec<_>>();
+    let mut count = 0;
+    while let Some(value) = pending.pop() {
+        match value {
+            Value::Array(values) => {
+                pending.extend(values);
+                continue;
+            }
+            Value::Object(fields) => {
+                // A record counts once; nested containers carry additional
+                // materialized rows, while its scalar fields remain that row.
+                pending.extend(
+                    fields
+                        .values()
+                        .filter(|value| matches!(value, Value::Array(_) | Value::Object(_))),
+                );
+            }
+            _ => {}
+        }
+        count += 1;
+        if count > MAX_INPUT_ROWS {
+            return Err(plasm_runtime::ExecutionFailure::new(
+                plasm_runtime::FailureCause::Program,
+                "compute_input_row_budget_exceeded",
+                "compute input row budget exceeded",
+            ));
+        }
+    }
     Ok(())
 }
 
@@ -1454,32 +1427,4 @@ fn validate_collection_input(
         return Err(CollectionFault::Conservation);
     }
     Ok(())
-}
-
-#[cfg(test)]
-mod typed_helper_input_error_tests {
-    use super::*;
-
-    #[test]
-    fn helper_input_contract_failures_are_semantic() {
-        use crate::program_rejection::PythonProgramError;
-        use plasm_core::value_contract::ValueContract;
-
-        assert!(matches!(
-            inferred_helper_input_annotation(
-                &ValueContract::scalar(FieldType::Array),
-                false,
-                false,
-            ),
-            Err(PythonProgramError::HelperInputRequiresTemporalOrArrayContract)
-        ));
-        assert!(matches!(
-            inferred_helper_input_annotation(
-                &ValueContract::record(BTreeMap::new(), Default::default()),
-                true,
-                false,
-            ),
-            Err(PythonProgramError::HelperScalarCellValueMissing)
-        ));
-    }
 }

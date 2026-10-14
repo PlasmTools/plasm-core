@@ -52,7 +52,6 @@ fn lower_python_program(
         program_source: source,
         methods: &root.methods,
         helpers: &root.helpers,
-        used_methods: BTreeSet::new(),
         state: CompileState::new(&pipeline, None),
         callbacks: BTreeMap::new(),
         active_callbacks: Vec::new(),
@@ -81,7 +80,9 @@ fn lower_python_program(
                     .resolve_session_entity(&local)
                     .is_ok())
         {
-            return Err(PythonProgramError::BuildLocalShadowsReservedBinding.into());
+            return Err(
+                PythonProgramError::BuildLocalShadowsReservedBinding { name: local }.into(),
+            );
         }
     }
     for parameter in root
@@ -124,7 +125,14 @@ fn lower_python_program(
             end: root.build.end().to_u32(),
         },
     )?;
-    for stmt in &flow.statements {
+    let mut statements = flow.statements.iter().peekable();
+    while let Some(stmt) = statements.next() {
+        if let Some(next) = statements.peek() {
+            if lower.static_collection_builder(stmt, next)? {
+                statements.next();
+                continue;
+            }
+        }
         lower.statement(stmt)?;
     }
     let value = match &flow.exit {
@@ -179,14 +187,8 @@ fn lower_python_program(
         .comp
         .metadata
         .insert("python_source_spans".into(), serde_json::json!(lower.spans));
-    // A declared compute is valid only after a typed callsite was emitted.
-    // The frontend records that witness where lowering succeeds; it never
-    // reparses serialized runtime steps to infer whether a declaration was used.
-    for name in root.methods.keys() {
-        if !lower.used_methods.contains(name) {
-            return Err(PythonProgramError::UnusedCompute { name: name.clone() }.into());
-        }
-    }
+    // Declarations have no effects. Only emitted invocations require a sealed
+    // input/output contract; text_compute_source checks each actual callsite.
     let bundle = PlasmCompBundle::new(artifact)?;
 
     Ok(bundle)
@@ -259,7 +261,6 @@ struct Lower<'a> {
     program_source: &'a str,
     methods: &'a BTreeMap<String, String>,
     helpers: &'a BTreeMap<String, ruff_python_ast::StmtFunctionDef>,
-    used_methods: BTreeSet<String>,
     state: CompileState<'a>,
     callbacks: BTreeMap<String, callbacks::Callback>,
     active_callbacks: Vec<String>,

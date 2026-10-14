@@ -12,7 +12,7 @@ pub(crate) use crate::mcp_transport_store::PlasmExecBinding;
 pub(crate) struct McpSessionPlasmStats {
     /// Plasm instructions body from `plasm_context` tool results.
     pub(crate) teaching_prompt_chars: u64,
-    /// `plasm` program text plus optional `reasoning`; `plasm_run` contributes only token args.
+    /// `plasm` program source text; `plasm_run` contributes only token args.
     pub(crate) plasm_invocation_chars: u64,
     /// Successful `plasm` / `plasm_run` tool Markdown bodies.
     pub(crate) plasm_response_chars: u64,
@@ -87,11 +87,7 @@ pub(crate) fn mcp_chars_to_token_est(chars: u64) -> u64 {
     chars.saturating_add(3) / 4
 }
 
-/// Per planning call: count program + optional reasoning for invocation telemetry.
-pub(crate) fn plasm_invocation_char_count(program: &str, reasoning: Option<&str>) -> u64 {
-    let mut n = program.chars().count() as u64;
-    if let Some(r) = reasoning {
-        n = n.saturating_add(r.chars().count() as u64);
-    }
-    n
+/// Count submitted source or run-token characters for invocation telemetry.
+pub(crate) fn plasm_invocation_char_count(program: &str) -> u64 {
+    program.chars().count() as u64
 }

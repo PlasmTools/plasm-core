@@ -19,6 +19,7 @@ use std::{
     sync::{Arc, Mutex},
 };
 
+mod python_admission_corrections;
 mod python_lowering;
 mod rowset_properties;
 mod support;

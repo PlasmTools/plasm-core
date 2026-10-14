@@ -74,9 +74,9 @@ fn resolve_logical_session_wire_ref_round_trip() {
 }
 
 #[test]
-fn plasm_invocation_char_count_sums_program_and_reasoning() {
-    assert_eq!(super::plasm_invocation_char_count("a", None), 1);
-    assert_eq!(super::plasm_invocation_char_count("a", Some("#c")), 1 + 2);
+fn plasm_invocation_char_count_includes_python_comments() {
+    assert_eq!(super::plasm_invocation_char_count("a"), 1);
+    assert_eq!(super::plasm_invocation_char_count("# λ\na"), 5);
 }
 
 /// Serialize Insta reads/writes under `src/snapshots` (parallel `cargo nextest` threads otherwise flake).
@@ -467,10 +467,40 @@ fn plasm_input_schema_advertises_single_program_string() {
         Some("string")
     );
     assert!(!props.contains_key("expressions"));
+    assert!(!props.contains_key("reasoning"));
     assert!(
         !props.contains_key("execute"),
         "`plasm` input_schema must not advertise `execute` (use `plasm_run` for live execution)"
     );
+}
+
+#[test]
+fn plasm_tools_reject_separate_reasoning_and_preserve_literate_source() {
+    let program = "class P(Program):\n    \"\"\"A workflow explanation.\"\"\"\n    def build(self):\n        # Literal markup inside Python is source data.\n        return '</parameter>'";
+    let invocation =
+        super::parse_mcp_plasm_invocation("plasm", &serde_json::json!({"program": program}), true)
+            .expect("comments, docstrings and string literals remain source");
+    assert_eq!(invocation.invocation_text(), program);
+    for (tool, dry, args) in [
+        (
+            "plasm",
+            true,
+            serde_json::json!({"program": program, "reasoning": "explain"}),
+        ),
+        (
+            "plasm_run",
+            false,
+            serde_json::json!({"run_ref": "pc0", "reasoning": "explain"}),
+        ),
+    ] {
+        assert!(super::parse_mcp_plasm_invocation(tool, &args, dry).is_err());
+        let definition = default_plasm_tools()
+            .into_iter()
+            .find(|t| t.name == tool)
+            .unwrap();
+        let schema = serde_json::to_value(definition.input_schema).unwrap();
+        assert!(schema["properties"].get("reasoning").is_none());
+    }
 }
 
 #[test]

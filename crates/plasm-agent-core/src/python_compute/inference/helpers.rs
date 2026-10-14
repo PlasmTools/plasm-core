@@ -119,12 +119,8 @@ fn checked_type(
         .map(|id| literal_annotation(&graph, id, 0))
         .collect::<Option<Vec<_>>>()
         .map(|items| super::super::upstream::balanced_union(&items));
-    let contract = graph
-        .roots
-        .iter()
-        .copied()
-        .map(|id: TypeId| decoder.decode(id, 0))
-        .collect::<Result<Vec<_>, _>>()?
+    let contract = decoder
+        .decode_roots(&graph.roots)?
         .into_iter()
         .reduce(Type::join)
         .ok_or(InferenceError::HelperContractMissing)?;

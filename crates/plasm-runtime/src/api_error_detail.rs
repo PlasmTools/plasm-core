@@ -28,62 +28,103 @@ pub fn cap_detail(s: &str, max_chars: usize) -> String {
 /// Ordered lines for **correction** / multi-line hints (Atlassian field errors, multiple messages).
 /// Preserve every declared correction, including field errors accompanying a
 /// summary. Arbitrary response properties are never diagnostic text.
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum ProviderCorrection {
+    Message(String),
+    Field { name: String, message: String },
+}
+impl std::fmt::Display for ProviderCorrection {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Message(message) => f.write_str(message),
+            Self::Field { name, message } => write!(f, "{name}: {message}"),
+        }
+    }
+}
+
 pub fn json_api_error_lines(value: &Value) -> Vec<String> {
-    let mut lines = Vec::new();
-
-    if let Some(s) = value
-        .get("message")
-        .and_then(|v| v.as_str())
-        .filter(|s| !s.is_empty())
-    {
-        lines.push(s.to_string());
-    }
-
-    if let Some(arr) = value.get("errorMessages").and_then(|v| v.as_array()) {
-        for v in arr {
-            if let Some(s) = v.as_str().filter(|s| !s.is_empty()) {
-                lines.push(s.to_string());
+    let mut corrections = Vec::new();
+    let mut pending = vec![value];
+    while let Some(value) = pending.pop() {
+        let text = |key| {
+            value
+                .get(key)
+                .and_then(Value::as_str)
+                .map(str::trim)
+                .filter(|s| !s.is_empty())
+        };
+        if let Some(message) = text("message") {
+            corrections.push(ProviderCorrection::Message(message.into()));
+        }
+        if let Some(errors) = value.get("errorMessages").and_then(Value::as_array) {
+            corrections.extend(
+                errors
+                    .iter()
+                    .filter_map(Value::as_str)
+                    .map(str::trim)
+                    .filter(|s| !s.is_empty())
+                    .map(|s| ProviderCorrection::Message(s.into())),
+            );
+        }
+        if let Some(errors) = value.get("errors").and_then(Value::as_object) {
+            for (name, error) in errors {
+                if let Some(message) = error.as_str().map(str::trim).filter(|s| !s.is_empty()) {
+                    corrections.push(ProviderCorrection::Field {
+                        name: name.clone(),
+                        message: message.into(),
+                    });
+                }
             }
         }
-    }
-
-    if let Some(obj) = value.get("errors").and_then(|v| v.as_object()) {
-        for (k, v) in obj {
-            if let Some(s) = v.as_str().filter(|s| !s.is_empty()) {
-                lines.push(format!("{k}: {s}"));
-            }
+        if let Some(error) = text("error") {
+            let message = match text("error_description") {
+                Some(detail) => format!("{error}: {detail}"),
+                None => error.into(),
+            };
+            corrections.push(ProviderCorrection::Message(message));
         }
-    }
-
-    if let Some(e) = value
-        .get("error")
-        .and_then(|v| v.as_str())
-        .filter(|s| !s.is_empty())
-    {
-        let mut line = e.to_string();
-        if let Some(d) = value
-            .get("error_description")
-            .and_then(|v| v.as_str())
-            .filter(|s| !s.is_empty())
+        if let Some(message) = value.as_str().map(str::trim).filter(|s| !s.is_empty()) {
+            corrections.push(ProviderCorrection::Message(message.into()));
+        }
+        // Typed validation entries: location + correction, never input/context payloads.
+        if let (Some(location), Some(message)) =
+            (value.get("loc").and_then(Value::as_array), text("msg"))
         {
-            line.push_str(": ");
-            line.push_str(d);
+            let name = location
+                .iter()
+                .filter_map(|part| match part {
+                    Value::String(s) if s == "body" || s == "query" || s == "path" => None,
+                    Value::String(s) => Some(s.clone()),
+                    Value::Number(n) => Some(n.to_string()),
+                    _ => None,
+                })
+                .collect::<Vec<_>>()
+                .join(".");
+            corrections.push(if name.is_empty() {
+                ProviderCorrection::Message(message.into())
+            } else {
+                ProviderCorrection::Field {
+                    name,
+                    message: message.into(),
+                }
+            });
         }
-        lines.push(line);
-    }
-
-    if let Some(s) = value.as_str().filter(|s| !s.is_empty()) {
-        lines.push(s.to_string());
-    }
-
-    if let Some(errors) = value.get("errors").and_then(Value::as_array) {
-        for error in errors {
-            lines.extend(json_api_error_lines(error));
+        for key in ["detail", "errors"] {
+            match value.get(key) {
+                Some(Value::Array(errors)) => pending.extend(errors.iter().rev()),
+                Some(detail @ (Value::Object(_) | Value::String(_))) if key == "detail" => {
+                    pending.push(detail)
+                }
+                _ => {}
+            }
         }
     }
     let mut seen = std::collections::BTreeSet::new();
-    lines.retain(|line| seen.insert(line.clone()));
-    lines
+    corrections
+        .into_iter()
+        .map(|c| c.to_string())
+        .filter(|line| seen.insert(line.clone()))
+        .collect()
 }
 
 /// GraphQL responses: `{ "errors": [ { "message": "…" } ], "data": null }` when auth fails, validation fails, or a field cannot be resolved.
@@ -275,6 +316,18 @@ pub fn summarize_text_error_body(bytes: &[u8], content_type: Option<&str>) -> St
 mod tests {
     use super::*;
     use serde_json::json;
+
+    #[test]
+    fn typed_validation_entries_render_corrections_without_input_dumps() {
+        let value = json!({"detail":[{"loc":["body","amount"],"msg":"must be positive","input":{"private":"do-not-render"},"type":"greater_than"}]});
+        assert_eq!(
+            json_api_error_lines(&value),
+            vec!["amount: must be positive"]
+        );
+        let text = summarize_json_api_error_for_http(&value);
+        assert!(!text.contains("do-not-render"));
+        assert!(!text.contains("greater_than"));
+    }
 
     #[test]
     fn corrections_preserve_all_fields_without_raw_payloads_or_truncation() {

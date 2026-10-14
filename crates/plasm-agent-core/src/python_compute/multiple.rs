@@ -55,13 +55,18 @@ impl PreparedCompute {
         let mut arguments = Vec::new();
         for argument in &p.args {
             let parameter = &argument.parameter;
-            let annotation = parameter
-                .annotation
-                .as_deref()
-                .ok_or(PythonComputeError::InputAnnotationMissing)?;
             let actual = fields
                 .get(parameter.name.as_str())
                 .ok_or(PythonComputeError::NamedDependencyMissing)?;
+            let Some(annotation) = parameter.annotation.as_deref() else {
+                parameters.push(format!(
+                    "{}: {}",
+                    parameter.name,
+                    upstream::input_type(actual, cgs, &domains.catalogs, &mut stubs)?
+                ));
+                arguments.push(format!("__input[0].{}", parameter.name));
+                continue;
+            };
             let (row_annotation, row_type) = match annotation {
                 Expr::Subscript(s)
                     if name(&s.value) == Some("list") && arguments::is_row(&s.slice) =>
@@ -222,6 +227,7 @@ impl PreparedCompute {
             .transpose()
             .map_err(PythonComputeRejection::from)?
             .flatten();
+        let mut selected_parameters = std::collections::BTreeSet::new();
         let output = if let Some(output) = declared_output {
             output
         } else {
@@ -233,9 +239,11 @@ impl PreparedCompute {
                     (name, &typed_inputs[name])
                 })
                 .collect::<Vec<_>>();
-            let output =
-                inference::infer_body(&definition_body(source, def)?, &inputs, &body_imports)
+            let inferred =
+                inference::infer_output(&definition_body(source, def)?, &inputs, &body_imports)
                     .map_err(PythonComputeRejection::from)?;
+            selected_parameters = inferred.selected_parameters;
+            let output = inferred.contract;
             if let Some(annotation) = &annotation {
                 annotation
                     .check(&output)
@@ -243,18 +251,20 @@ impl PreparedCompute {
             }
             output
         };
-        let output_type = upstream::output_type(&output, cgs, &domains.catalogs, &mut stubs)?;
         let body = definition_body(source, def)?;
+        // Authored annotations and inferred return contracts were checked above.
+        // A serialization contract is not another Python return annotation:
+        // mutable-container invariance must not reject a valid narrower value.
         let definition = format!(
-            "import datetime as PlasmDatetime\n{}\ndef {}({}) -> {}:{}\n",
+            "import datetime as PlasmDatetime\n{}\ndef {}({}):{}\n",
             imports.source,
             def.name,
             parameters.join(", "),
-            output_type,
             body
         );
         let executable = format!("{}\n{}({})", definition, def.name, arguments.join(", "));
         Ok(Self {
+            selected_parameters,
             independent_inputs: true,
             optional_fields: schema.optional_fields.clone(),
             contract: None,

@@ -42,7 +42,7 @@ pub struct EffectReceipt {
 pub struct ExecutionFailure(Box<ExecutionFailureDetails>);
 
 /// Owned failure evidence, allocated only on the failure path.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ExecutionFailureDetails {
     pub cause: FailureCause,
     pub recovery: RecoveryDisposition,
@@ -259,13 +259,32 @@ impl ExecutionFailure {
     }
 }
 impl From<crate::RuntimeError> for ExecutionFailure {
-    fn from(error: crate::RuntimeError) -> Self {
+    fn from(mut error: crate::RuntimeError) -> Self {
         use crate::RuntimeError::*;
-        if let HydrationGet { source, .. } = error {
-            return Self::from(*source);
+        let mut locations = Vec::new();
+        loop {
+            match error {
+                HydrationGet { source, .. } => error = *source,
+                ViewNode {
+                    view, node, source, ..
+                } => {
+                    locations.push(view);
+                    locations.push(node);
+                    error = *source;
+                }
+                inner => {
+                    error = inner;
+                    break;
+                }
+            }
         }
         if let Collection(fault) = error {
-            return Self::from(fault);
+            let failure = Self::from(fault);
+            return if locations.is_empty() {
+                failure
+            } else {
+                failure.at(locations.join("/"), vec![])
+            };
         }
         let (cause, code) = match &error {
             FieldUnavailable { .. } => (FailureCause::ResponseContract, "field_unavailable"),
@@ -296,17 +315,141 @@ impl From<crate::RuntimeError> for ExecutionFailure {
             _ => (FailureCause::Unclassified, "unclassified_execution_failure"),
         };
         let diagnostic = match &error {
+            HostTransport { .. } => "Provider transport failed without a usable response. Inspect the host transport evidence before another execution.".into(),
+            Evm(source) => source.agent_diagnostic(),
+            HttpTransport { source, .. } if source.is_timeout() => "Provider transport timed out. Check provider availability and reconcile any dispatched effects before another execution.".into(),
+            HttpTransport { source, .. } if source.is_connect() => "Could not connect to the provider. Check provider availability and the configured connection.".into(),
+            HttpTransport { .. } => "Provider transport could not complete the exchange. Inspect the transport evidence and reconcile any dispatched effects before another execution.".into(),
+            RequestError {
+                source: crate::RequestFailure::HttpStatus(failure),
+                ..
+            } => failure.agent_diagnostic().to_string(),
+            RateLimited {
+                source: crate::RateLimitCause::Upstream(failure),
+                ..
+            } => failure.agent_diagnostic().to_string(),
             // Decoder errors may embed whole response values. Explain the contract
             // failure without promoting those values into the diagnostic channel.
             DecodeError { source } => match source {
                 plasm_compile::DecodeError::FieldContract { field, .. } => {
                     format!("Response field '{field}' violates its declared type")
                 }
-                _ => source.to_string(),
+                plasm_compile::DecodeError::JsonPath(_)
+                | plasm_compile::DecodeError::PathNotFound { .. }
+                | plasm_compile::DecodeError::TypeMismatch { .. }
+                | plasm_compile::DecodeError::StringTransformInput
+                | plasm_compile::DecodeError::NumberTransformInput
+                | plasm_compile::DecodeError::NumberRepresentation
+                | plasm_compile::DecodeError::NumberParse { .. }
+                | plasm_compile::DecodeError::BooleanTransformInput
+                | plasm_compile::DecodeError::BooleanLiteral
+                | plasm_compile::DecodeError::EnumTransformInput
+                | plasm_compile::DecodeError::SegmentDeriveInput
+                | plasm_compile::DecodeError::SegmentPrefixMissing
+                | plasm_compile::DecodeError::SegmentIndex { .. }
+                | plasm_compile::DecodeError::NameValueDeriveInput
+                | plasm_compile::DecodeError::ObjectKeyDeriveInput
+                | plasm_compile::DecodeError::NestedRelationDecoder { .. }
+                | plasm_compile::DecodeError::IdentityPathEmpty
+                | plasm_compile::DecodeError::IdentityScalarRequired
+                | plasm_compile::DecodeError::EntitySourceShape
+                | plasm_compile::DecodeError::IdentityFieldTypeMissing { .. }
+                | plasm_compile::DecodeError::IdentityFieldContract { .. }
+                | plasm_compile::DecodeError::CompoundKeyPartMissing { .. }
+                | plasm_compile::DecodeError::ExhaustiveEmbedPathEmpty { .. }
+                | plasm_compile::DecodeError::ExhaustiveEmbedBranch { .. }
+                | plasm_compile::DecodeError::RelationMembership { .. }
+                | plasm_compile::DecodeError::IdentityMissing => source.to_string(),
             },
-            _ => error.to_string(),
+            RequestError { source, .. } => source.agent_diagnostic(),
+            RateLimited { .. } => "Provider concurrency or retry capacity was exhausted. Check provider availability before another execution.".into(),
+            CacheSource(_) | CacheError(_) => "Observation storage failed. The host must repair storage before execution can continue.".into(),
+            CredentialProvider { .. } | Credential(_) | AuthenticationError(_) => "Configured authorization could not be resolved or used. Check the configured account and inspect the authorization evidence before another execution.".into(),
+            // Explicit semantic-display whitelist: adding a runtime variant must
+            // select its agent projection; no wildcard can promote a new payload.
+            RequestIdentityAuthOpaque
+            | RequestIdentityCardinality { .. }
+            | DeclaredOutputCardinality { .. }
+            | ResponseNarrowing(_)
+            | HttpWire(_)
+            | Chain(_)
+            | ViewPlan(_)
+            | Preflight(_)
+            | HttpLimiter(_)
+            | PaginationFault(_)
+            | RelationParametersMissing { .. }
+            | MaterializeBindingMissing { .. }
+            | EmbeddedHydrationPlanRequired
+            | ReadIdentityType
+            | CompiledCatalogMissing
+            | CompiledCatalogScopeMissing
+            | ViewQueryDispatchRequired
+            | EvmRpcUrlMissing
+            | ContinuationDispatchRequired { .. }
+            | TeachingValueNotExecutable
+            | CapabilityUnknown { .. }
+            | ReadCapabilityRequired { .. }
+            | GetCapabilityRequired { .. }
+            | DerivedGetNestingForbidden { .. }
+            | ViewGetNestingForbidden
+            | GetIdentityMismatch { .. }
+            | HttpQueryTemplateRequired
+            | ViewPaginationUnsupported
+            | PaginationPageLimit { .. }
+            | LiveAbsolutePaginationRequired
+            | Ordering(_)
+            | TopKFieldUnobserved
+            | TopKSequenceOverflow
+            | TopKFieldEmpty
+            | FieldUnknown { .. }
+            | EntityUnknown { .. }
+            | ViewNodeMissing { .. }
+            | ComputedOutputPhaseRequired
+            | TraversalParentTypeMismatch { .. }
+            | PaginationContract(_)
+            | CatalogTemplate(_)
+            | IdentityProjection(_)
+            | EntityRefScope(_)
+            | QueryResolution(_)
+            | SchemaContract(_)
+            | OperandResolution(_)
+            | ViewTemplate { .. }
+            | ViewTemplateEmpty
+            | ViewTemplateTooLong { .. }
+            | ViewNode { .. }
+            | ViewNodeResolution(_)
+            | FieldUnavailable { .. }
+            | Collection(_)
+            | ValueContract(_)
+            | TemporalInput(_)
+            | ValueCoercion(_)
+            | RowPredicate(_)
+            | CompilationError { .. }
+            | TypeError { .. }
+            | CmlError { .. }
+            | WorkflowConflict { .. }
+            | CacheValueRow(_)
+            | CacheRowDecode(_)
+            | UnsupportedExecutionMode { .. }
+            | CapabilityNotFound { .. }
+            | FingerprintNotFound
+            | ReplayEntryNotFound { .. }
+            | ReplayStoreError(_)
+            | DerivedGetNotFound { .. }
+            | DerivedGetNonUnique { .. }
+            | DerivedGetSourceFieldMissing { .. }
+            | DerivedGetIncompleteSource { .. }
+            | PaginationProgress { .. }
+            | SerializationError(_)
+            | Cancelled
+            | HydrationGet { .. } => error.to_string(),
         };
-        Self::new(cause, code, diagnostic)
+        let failure = Self::new(cause, code, diagnostic);
+        if locations.is_empty() {
+            failure
+        } else {
+            failure.at(locations.join("/"), vec![])
+        }
     }
 }
 impl std::fmt::Display for ExecutionFailure {
@@ -345,7 +488,11 @@ mod tests {
                     source_index: 1,
                     source_identity: Some("Item/b".into()),
                     status: crate::OperationInvocationStatus::Failed,
-                    error: Some("opaque service private-password-sentinel".into()),
+                    error: Some(ExecutionFailure::new(
+                        FailureCause::Upstream,
+                        "fixture_rejection",
+                        "opaque service private-password-sentinel",
+                    )),
                 },
             ],
         };
@@ -417,6 +564,55 @@ mod tests {
             assert_eq!(failure.recovery, RecoveryDisposition::Stop);
             assert!(!failure.effects_unresolved);
         }
+    }
+
+    #[test]
+    fn provider_presentation_is_transport_independent_and_never_empty() {
+        let mut evidence =
+            crate::HttpStatusFailure::without_request(422, "Validation error. Reason: ".into());
+        evidence.method = "POST".into();
+        evidence.url = "https://provider.invalid/request?private=do-not-render".into();
+        let failure = ExecutionFailure::from(crate::RuntimeError::RequestError {
+            source: evidence.into(),
+            attempts: 1,
+            status: Some(422),
+            body: Some(Box::new(
+                serde_json::json!({"detail":"Validation error. Reason: "}),
+            )),
+        });
+        assert_eq!(failure.cause, FailureCause::Upstream);
+        assert_eq!(failure.recovery, RecoveryDisposition::Stop);
+        assert!(failure.diagnostic().contains("no specific correction"));
+        assert!(!failure.diagnostic().contains("do-not-render"));
+        assert!(!failure.diagnostic().contains("POST"));
+    }
+
+    #[test]
+    fn nested_view_failures_use_the_same_provider_projection_without_recursion() {
+        let mut failure = crate::RuntimeError::RequestError {
+            source: crate::HttpStatusFailure::without_request(422, "Insufficient balance".into())
+                .into(),
+            attempts: 1,
+            status: Some(422),
+            body: Some(Box::new(serde_json::json!({"private":"do-not-render"}))),
+        };
+        for index in 0..128 {
+            failure = crate::RuntimeError::ViewNode {
+                view: "ReadView".into(),
+                node: format!("__py{index}"),
+                capability: "read".into(),
+                source: Box::new(failure),
+            };
+        }
+        let failure = ExecutionFailure::from(failure);
+        assert_eq!(failure.cause, FailureCause::Upstream);
+        assert!(failure.diagnostic().contains("Insufficient balance"));
+        assert!(!failure.diagnostic().contains("do-not-render"));
+        assert!(!failure.diagnostic().contains("__py"));
+        assert!(
+            failure.node.as_ref().unwrap().contains("__py"),
+            "machine scope survives projection"
+        );
     }
 
     #[test]

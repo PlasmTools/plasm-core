@@ -25,8 +25,6 @@ pub enum PythonSchemaError {
     CatalogFieldMissing,
     #[error("Python source schema cannot represent the requested operation")]
     UnsupportedSource,
-    #[error("Python union field contracts are incompatible")]
-    UnionFieldMismatch,
     #[error("Python input catalog ownership does not match its source")]
     CatalogOwnershipMismatch,
     #[error("Python schema owner does not match its input contract")]
@@ -264,9 +262,6 @@ pub(crate) fn classify_source_field_kind(
                 ComputeOp::Union { other } => {
                     let left = next(field)?;
                     let right = lookup.field(other.as_str(), field)?;
-                    if left.shape != right.shape {
-                        return Err(PythonSchemaError::UnionFieldMismatch);
-                    }
                     Ok(plasm_core::value_contract::ValueContract::join(left, right))
                 }
                 ComputeOp::Python { .. } => c

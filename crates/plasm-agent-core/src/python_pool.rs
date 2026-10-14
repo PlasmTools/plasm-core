@@ -1,8 +1,10 @@
 //! Plasm policy over the pinned upstream Monty pool. Transport and process supervision are upstream-owned.
+mod selection;
 mod temporal_codec;
 use monty_pool::{on_print_sync, Checkout, Pool, PoolConfig, ReplConfig, TurnEvent};
 use monty_types::{MontyObject, MontyUuid, ResourceLimits};
 use plasm_runtime::{ExecutionFailure, FailureCause};
+pub(crate) use selection::{ComputeOutput, SelectedOccurrence};
 use std::{collections::BTreeMap, path::PathBuf, time::Duration};
 use thiserror::Error;
 use tokio::sync::OnceCell;
@@ -249,6 +251,20 @@ impl PythonPool {
         types: &BTreeMap<String, plasm_core::value_contract::ValueContract>,
         validate: impl FnOnce(plasm_core::Value) -> Result<plasm_core::Value, PythonReturnValueError>,
     ) -> Result<plasm_core::Value, ExecutionFailure> {
+        Ok(self
+            .compute_observed(source, rows, types, &[], validate)
+            .await?
+            .value)
+    }
+
+    pub(crate) async fn compute_observed(
+        &self,
+        source: String,
+        rows: TypedRecords,
+        types: &BTreeMap<String, plasm_core::value_contract::ValueContract>,
+        ports: &[Option<String>],
+        validate: impl FnOnce(plasm_core::Value) -> Result<plasm_core::Value, PythonReturnValueError>,
+    ) -> Result<ComputeOutput, ExecutionFailure> {
         let mut session = self.checkout_with_suspensions(4096).await?;
         let class = MontyObject::record_type("Value", fresh_uuid());
         let input = MontyObject::list(
@@ -276,6 +292,13 @@ impl PythonPool {
                     )
                 })?,
         );
+        let witnesses = selection::Witnesses::capture(input.as_ref(), ports).map_err(|error| {
+            ExecutionFailure::new(
+                FailureCause::Runtime,
+                "python_selection_input_invalid",
+                error.to_string(),
+            )
+        })?;
         let mut inputs = vec![("__input".into(), input)];
         inputs.extend(
             crate::python_money::FUNCTIONS
@@ -351,6 +374,13 @@ impl PythonPool {
                 error.to_string(),
             )
         })?;
+        let occurrences = witnesses.select(output.as_ref()).map_err(|error| {
+            ExecutionFailure::new(
+                FailureCause::Program,
+                "python_selection_output_invalid",
+                error.to_string(),
+            )
+        })?;
         let result = validate(result).map_err(|detail| {
             ExecutionFailure::new(
                 FailureCause::Program,
@@ -361,7 +391,10 @@ impl PythonPool {
         // Only successful, validated executions return a reset worker to the pool.
         // Every error/cancellation drops the checkout and upstream kills its worker.
         session.finish().await.map_err(pool_failure)?;
-        Ok(result)
+        Ok(ComputeOutput {
+            value: result,
+            occurrences,
+        })
     }
     pub async fn close(&self) {
         if let Some(pool) = self.pool.get() {

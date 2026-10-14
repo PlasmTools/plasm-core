@@ -53,11 +53,7 @@ pub(super) fn close_collection_initializers(
             graph: &graph,
             declarations,
         };
-        let contracts = graph
-            .roots
-            .iter()
-            .map(|id| decoder.decode(*id, 0))
-            .collect::<Result<Vec<Type>, _>>();
+        let contracts = decoder.decode_roots(&graph.roots);
         let Some(contracts) = supported_candidate(contracts)? else {
             continue;
         };

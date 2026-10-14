@@ -2130,15 +2130,15 @@ fn python_reference_includes_composition_contract() {
         "flat_map(",
         "@compute",
         "Row.field retains its contract",
-        "validate returns before effects",
+        "check returns before effects",
         "T | U/None",
         "iterate(",
         "max_steps",
         "one-column RHS",
-        "immutable DAG versions",
-        "Return rowsets directly; tuple returns multiple results",
+        "immutable DAG",
+        "Return rowsets; tuples=results",
         "None",
-        "completed/unknown effect receipts",
+        "completed/unknown receipts",
     ] {
         assert!(
             reference.contains(required),
@@ -2284,7 +2284,7 @@ fn language_matrix_search_tilde_teaches_search_text_not_exact_or_complete() {
         );
     }
     let card = include_str!("assets/python-plasm-dag.txt");
-    assert!(card.contains("Verify search matches/identities before effects"));
+    assert!(card.contains("Verify matches/identities before effects"));
     assert!(card.contains("where filters acquired rows"));
     assert!(card.contains("one-column RHS membership"));
     let run = include_str!("assets/plasm_run_tool_base.txt");
@@ -2301,13 +2301,13 @@ fn plasm_tool_teaches_semantic_operation_receivers() {
     for law in [
         "eN.method=root",
         "row.method=entity row/singleton",
-        "Entity rows/captures retain identity",
+        "Entity rows/captures keep identity",
         "empty extraction fails",
-        "records/compute do not",
-        "both arms carry the same catalog/entity authority",
-        "Monty infers bodies/loops/implicit None",
-        "completed/unknown effect receipts",
-        "New programs may read/write in-session",
+        "records/compute lack it",
+        "both arms share catalog/entity authority",
+        "Monty infers returns/bodies/loops/implicit None",
+        "completed/unknown receipts",
+        "New programs read/write in-session",
     ] {
         assert!(card.contains(law), "missing receiver law: {law}");
     }
@@ -2317,9 +2317,9 @@ fn plasm_tool_teaches_semantic_operation_receivers() {
 fn plasm_tool_teaches_typed_identity_holes() {
     let card = include_str!("assets/python-plasm-dag.txt");
     assert!(card.contains("eN.get(value) or eN.get(identity=value)"));
-    assert!(card.contains("compound Get uses exact named keys"));
+    assert!(card.contains("compound Get: exact named keys"));
     assert!(card.contains("vN=domain identity"));
-    assert!(card.contains("vN annotates, not constructs"));
+    assert!(card.contains("vN=annotation, not constructor"));
     assert!(card.contains("exact signatures"));
 }
 
@@ -2948,9 +2948,9 @@ fn static_grammar_includes_symbols_only_rule() {
     assert!(tool.contains("wire names"));
     assert!(reference.contains("session-local/append-only"));
     assert!(reference.contains("exact signatures"));
-    assert!(reference.contains("Literal-ID for loops and one-clause list comprehensions"));
-    assert!(reference.contains("optional bound 1..65536"));
-    assert!(reference.contains("required bound 1..256"));
+    assert!(reference.contains("Literal-ID for/one-clause comprehensions"));
+    assert!(reference.contains("bound 1..65536 optional"));
+    assert!(reference.contains("bound 1..256 required"));
     assert!(!reference.contains("inspection cannot authorize writes"));
     assert!(!tool.contains("label = e#"));
 }
@@ -4264,7 +4264,7 @@ proptest::proptest! {
 #[test]
 fn scalar_compute_adaptation_is_not_taught() {
     let reference = include_str!("assets/python-plasm-dag.txt");
-    assert!(reference.contains("query -> list of rows; proven singleton -> one row"));
+    assert!(reference.contains("query -> rows; proven singleton -> row"));
     assert!(reference.contains("return e1.query()") && reference.contains(".select(\"title\")"));
     for untaught in [
         "scalar compute",

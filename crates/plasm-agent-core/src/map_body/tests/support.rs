@@ -287,6 +287,7 @@ pub(super) fn program(es: &ExecuteSession) -> (PlasmCompBundle, CorrelatedBody) 
                         plasm_core::FieldType::String,
                     ),
                     per_row: false,
+                    selection: None,
                 },
                 schema: SyntheticResultSchema {
                     optional_fields: Default::default(),

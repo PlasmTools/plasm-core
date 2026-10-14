@@ -23,32 +23,40 @@ export const executionFailureSchema = z.object({
 }, "recovery authority must agree with cause and effect evidence");
 export type ExecutionFailure = z.infer<typeof executionFailureSchema>;
 export class AgentExecutionFailure extends Error {
-  constructor(readonly failure: ExecutionFailure) { super(`${failure.code}: ${failure.diagnostic}`); }
+  constructor(readonly failure: ExecutionFailure, readonly summary: string) { super(summary); }
 }
 export function failureObservation(error: unknown) {
-  const failure: ExecutionFailure = error instanceof AgentExecutionFailure && executionFailureSchema.safeParse(error.failure).success ? error.failure : {
+  const admitted = error instanceof AgentExecutionFailure && executionFailureSchema.safeParse(error.failure).success;
+  const failure: ExecutionFailure = admitted ? error.failure : {
     cause: "unclassified", recovery: "stop", code: "unclassified_execution_failure", diagnostic: error instanceof Error ? error.message : typeof error === "string" ? error : "Unclassified host failure", node: null,
     occurrence_path: [], catalog_digest: null, effects: [], dispatches: [], effects_unresolved: true,
   };
   return {
-    status: "execution_failed" as const, failure,
-    ...(failure.recovery === "reconcile_effects" ? {
-      recovery_instructions: "This execution stopped. Inspect its completed writes and unresolved dispatches before choosing the next program. Failed dispatches may have taken effect; service error bodies prove neither success nor absence. A new execution is permitted and does not resume or roll back this execution.",
-    } : {}),
+    status: "execution_failed" as const,
+    failure,
+    summary: admitted
+      ? error.summary
+      : "Execution stopped because the host reported an unclassified failure. Effects may be unresolved. Stop this execution.",
   };
 }
+export const failureObservationSchema = z.object({
+  status: z.literal("execution_failed"),
+  failure: executionFailureSchema,
+  summary: z.string().min(1),
+}).strict();
+
+/** The model receives only presentation; host tool results retain typed evidence. */
+export function plasmModelOutput({ output }: { output: unknown }) {
+  return { type: "text" as const, value: typeof output === "string" ? output : failureObservationSchema.parse(output).summary };
+}
 /** Only structured host observations own recovery authority; prose cannot grant it. */
-export function terminalExecutionFailure(messages: readonly { role: string; content: unknown }[]): ExecutionFailure | undefined {
-  for (const message of messages) {
-    if (message.role !== "tool" || !Array.isArray(message.content)) continue;
-    for (const part of message.content) {
-      if (!part || typeof part !== "object" || !["plasm", "plasm_run", "plasm_context"].includes(part.toolName)) continue;
-      const output = part.output?.type === "json" ? part.output.value : part.output;
-      if (output?.status !== "execution_failed") continue;
-      const result = executionFailureSchema.safeParse(output.failure);
-      if (!result.success) return failureObservation(undefined).failure;
-      if (!["repair_program", "reconcile_effects"].includes(result.data.recovery)) return result.data;
-    }
+export function terminalExecutionFailure(results: readonly { toolName: string; output: unknown }[]): ExecutionFailure | undefined {
+  for (const part of results) {
+    if (!["plasm", "plasm_run", "plasm_context"].includes(part.toolName)) continue;
+    if (!part.output || typeof part.output !== "object" || !("status" in part.output) || part.output.status !== "execution_failed") continue;
+    const result = failureObservationSchema.safeParse(part.output);
+    if (!result.success) return failureObservation(undefined).failure;
+    if (!["repair_program", "reconcile_effects"].includes(result.data.failure.recovery)) return result.data.failure;
   }
   return undefined;
 }

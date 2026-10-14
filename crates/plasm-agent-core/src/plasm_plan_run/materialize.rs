@@ -43,9 +43,11 @@ pub(crate) async fn materialize_synthetic_node(
     let full_entities = rows_to_entities(&entity, &rows)?;
     let request_fingerprints =
         vec![
-            compute_fingerprint(node, &rows, &value_shapes).map_err(|diagnostic| {
-                materialization_failure("synthetic_fingerprint_invalid", diagnostic.to_string())
-            })?,
+            compute_fingerprint(node, &rows, &value_shapes, &row_identities).map_err(
+                |diagnostic| {
+                    materialization_failure("synthetic_fingerprint_invalid", diagnostic.to_string())
+                },
+            )?,
         ];
     let dependencies = node
         .depends_on()

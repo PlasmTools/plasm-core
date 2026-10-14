@@ -302,11 +302,27 @@ pub(in crate::plasm_dag) fn program_binding_contract_for_source(
         }
         DagNodeSource::Compute {
             source,
-            op: op @ ComputeOp::Python { output_type, .. },
+            op:
+                op @ ComputeOp::Python {
+                    output_type,
+                    selection,
+                    ..
+                },
             schema,
             ..
         } => {
             let mut contract = synthetic_terminal_contract(label, schema);
+            if let Some(selection) = selection {
+                contract.row_entity = QualifiedEntityKey {
+                    entry_id: selection.owner.entry_id.clone(),
+                    entity: selection.owner.entity.clone(),
+                };
+                contract.continuation = ContinuationCapability::RelationDot {
+                    segments: SegmentPolicy::MultiSegment,
+                    method_invoke: true,
+                };
+                contract.anchor = ContinuationAnchor::BindingLabel;
+            }
             if !output_type.result_row_type().is_non_null_record() {
                 contract.value_kind = BindingValueKind::ScalarCell;
             }

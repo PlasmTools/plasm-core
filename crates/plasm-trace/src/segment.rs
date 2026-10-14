@@ -71,10 +71,6 @@ pub enum TraceSegment {
         expression_count: usize,
         /// Character weight of this invocation (for aggregate replay from durable rows).
         plasm_invocation_chars_added: u64,
-        #[serde(skip_serializing_if = "Option::is_none")]
-        reasoning_chars: Option<u64>,
-        #[serde(default, skip_serializing_if = "Option::is_none")]
-        reasoning: Option<String>,
     },
     PlasmLine {
         call_index: u64,

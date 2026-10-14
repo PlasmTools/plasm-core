@@ -7,11 +7,11 @@ const failure: ExecutionFailure = {
   effects: [{entry_id: "matrix", capability: "set_state", completed: 1, failed: 0, occurrences: [{source_index: 0, source_identity: "Item/a", status: "completed"}]}],
   dispatches: [], effects_unresolved: true,
 };
-const observation = failureObservation(new AgentExecutionFailure(failure));
+const observation = failureObservation(new AgentExecutionFailure(failure, "Execution stopped: service rejected the write. Check completed and unresolved effects; this run did not roll back."));
 assert.equal(observation.failure.diagnostic, failure.diagnostic);
 assert.equal(observation.failure.recovery, "reconcile_effects");
-assert(observation.recovery_instructions?.includes("A new execution is permitted"));
-assert.equal(terminalExecutionFailure([{role: "tool", content: [{toolName: "plasm_run", output: {type: "json", value: observation}}]}]), undefined);
+assert(observation.summary.includes("did not roll back"));
+assert.equal(terminalExecutionFailure([{toolName: "plasm_run", output: observation}]), undefined);
 await checkSessionExtension(async () => {}, async (runtime, ref, engine) => {
   let calls = 0;
   let next = 0;
@@ -36,24 +36,24 @@ await checkSessionExtension(async () => {}, async (runtime, ref, engine) => {
 });
 await checkSessionExtension(async () => {}, async (runtime, ref, engine) => {
   let calls = 0;
-  engine.dryRun = async () => ({writeCount: 1, planCommitRef: "pc-lost", summary: "write", compJson: {}, fusedCleanRead: false});
+  engine.dryRun = async () => ({writeCount: 1, planCommitRef: "pc2", summary: "write", compJson: {}, fusedCleanRead: false});
   engine.runPlan = async () => { calls++; throw new Error("lost host response"); };
   await runtime.plasm({logicalSessionRef: ref, program: "write"});
-  await assert.rejects(() => runtime.plasmRun({logicalSessionRef: ref, runRef: "pc-lost"}));
+  await assert.rejects(() => runtime.plasmRun({logicalSessionRef: ref, runRef: "pc2"}));
   engine.runPlan = async () => { calls++; return {ok: true, message: "new execution", artifactsJson: "[]"}; };
-  engine.dryRun = async () => ({writeCount: 1, planCommitRef: "pc-new", summary: "write", compJson: {}, fusedCleanRead: false});
+  engine.dryRun = async () => ({writeCount: 1, planCommitRef: "pc3", summary: "write", compJson: {}, fusedCleanRead: false});
   await runtime.plasm({logicalSessionRef: ref, program: "next write"});
-  await runtime.plasmRun({logicalSessionRef: ref, runRef: "pc-new"});
+  await runtime.plasmRun({logicalSessionRef: ref, runRef: "pc3"});
   assert.equal(calls, 2, "a lost response does not poison subsequent executions");
 });
 // The tool wrapper must not blanket-lock discovery or inspection on reconciliation.
 let reads = 0;
-const tools = createPlasmTools({plasmContext: async () => "context", plasm: async () => {reads++; return "read plan";}, plasmRun: async () => {throw new AgentExecutionFailure(failure);}});
+const tools = createPlasmTools({recordExecutionFailure: async () => {}, plasmContext: async () => "context", plasm: async () => {reads++; return "read plan";}, plasmRun: async () => {throw new AgentExecutionFailure(failure, "Execution stopped: service rejected the write. Check completed and unresolved effects; this run did not roll back.");}});
 const options = {toolCallId: "fixture", messages: [], context: {}};
 await tools.plasm_run!.execute!({logical_session_ref:"fixture",run_ref:"pc1"}, options);
 await tools.plasm!.execute!({logical_session_ref:"fixture",program:"read"}, options);
 assert.equal(reads, 1);
-const fatalTools = createPlasmTools({plasmContext: async () => "context", plasm: async () => {reads++; return "new plan";}, plasmRun: async () => {throw new AgentExecutionFailure({...failure, recovery: "stop", cause: "runtime"});}});
+const fatalTools = createPlasmTools({recordExecutionFailure: async () => {}, plasmContext: async () => "context", plasm: async () => {reads++; return "new plan";}, plasmRun: async () => {throw new AgentExecutionFailure({...failure, recovery: "stop", cause: "runtime"}, "Execution stopped: runtime failure. Stop this execution.");}});
 await fatalTools.plasm_run!.execute!({logical_session_ref:"fixture",run_ref:"pc1"}, options);
 await fatalTools.plasm!.execute!({logical_session_ref:"fixture",program:"new write"}, options);
 assert.equal(reads, 2, "even terminal execution failures do not latch the session tool wrapper");

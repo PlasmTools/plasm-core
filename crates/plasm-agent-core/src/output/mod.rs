@@ -202,11 +202,12 @@ pub(crate) fn format_operations_block(result: &ExecutionResult) -> String {
                 .as_deref()
                 .map(|id| format!(" for `{id}`"))
                 .unwrap_or_default();
-            let diagnostic = outcome
-                .error
-                .as_deref()
-                .unwrap_or("No diagnostic available.");
-            out.push_str(&format!("Failed{target}: {diagnostic}\n"));
+            if let Some(failure) = &outcome.error {
+                let diagnostic = crate::agent_presentation::render_failure(failure);
+                out.push_str(&format!("Failed{target}: {diagnostic}\n"));
+            } else {
+                out.push_str(&format!("Failed{target}: No diagnostic available.\n"));
+            }
         }
     }
     if any_failed {
@@ -397,9 +398,6 @@ pub(super) fn format_summary_column_cell(
     omitted: &mut BTreeSet<String>,
     report: Option<&mut InBandSummaryReport>,
 ) -> String {
-    if col == "_ref" {
-        return entity.reference.to_string();
-    }
     if entity.unavailable_fields.contains(col) {
         return UNAVAILABLE_FIELD_PLACEHOLDER.to_string();
     }
@@ -1712,10 +1710,10 @@ mod tests {
         );
         let soft_row =
             plasm_runtime::entity_to_agent_row_json(&soft_result.entities()[0], Some(&cgs));
-        assert_eq!(
-            soft_row.get("_unavailable_fields"),
-            Some(&serde_json::json!(["body"]))
-        );
+        assert!(soft_row.get("_unavailable_fields").is_none());
+        assert!(soft_result.entities()[0]
+            .unavailable_fields
+            .contains("body"));
         assert!(soft_row.get("body").is_none());
         let empty_row =
             plasm_runtime::entity_to_agent_row_json(&empty_result.entities()[0], Some(&cgs));

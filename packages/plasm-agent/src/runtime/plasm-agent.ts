@@ -1,5 +1,5 @@
 import { DrainingLifecycle } from "./lifecycle.js";
-import { AgentExecutionFailure, executionFailureSchema } from "./execution-failure.js";
+import { AgentExecutionFailure, failureObservationSchema } from "./execution-failure.js";
 import { readFile } from "node:fs/promises";
 import path from "node:path";
 
@@ -283,7 +283,8 @@ export class PlasmAgent {
       }, { toolCallId: "host-initial-context", messages, context: {} })).then((result) => {
         if (typeof result !== "string") {
           if (result && typeof result === "object" && "status" in result && result.status === "execution_failed" && "failure" in result) {
-            throw new AgentExecutionFailure(executionFailureSchema.parse(result.failure));
+            const observation = failureObservationSchema.parse(result);
+            throw new AgentExecutionFailure(observation.failure, observation.summary);
           }
           throw new Error("Initial context must return discovery text or a structured execution failure");
         }

@@ -488,7 +488,7 @@ fn validate_capture_port(
 }
 
 /// Catalog authority survives row-preserving operations, never object derivation.
-fn capture_owner<'a>(
+pub(crate) fn capture_owner<'a>(
     nodes: &'a [ValidatedPlanNode],
     id: &str,
 ) -> Result<&'a QualifiedEntityKey, MapBodyValidationError> {
@@ -603,6 +603,29 @@ fn capture_owner<'a>(
                             continue;
                         }
                         Err(Fault::ReturnMissing)
+                    }
+                    Some(ValidatedPlanNode::Compute(c))
+                        if matches!(
+                            c.compute.op,
+                            ComputeOp::Python {
+                                selection: Some(_),
+                                ..
+                            }
+                        ) =>
+                    {
+                        let ComputeOp::Python {
+                            selection: Some(selection),
+                            ..
+                        } = &c.compute.op
+                        else {
+                            unreachable!()
+                        };
+                        let Some(port) = selection.ports.first() else {
+                            return Err(Fault::OwnerMissing.error().into());
+                        };
+                        pending.push(Work::Alias(key));
+                        pending.push(Work::Visit(nodes, port.source.clone()));
+                        continue;
                     }
                     Some(ValidatedPlanNode::Compute(c))
                         if matches!(c.compute.op, ComputeOp::Union { .. }) =>

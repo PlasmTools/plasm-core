@@ -74,7 +74,7 @@ try {
   });
   assert.equal(failureObservation(new Error("repair_program: retry this write")).failure.recovery, "stop", "diagnostic prose cannot grant recovery authority");
   const structured = failureObservation(new Error("original service diagnostic")).failure;
-  failing.runtime.plasmContext = async () => { throw new AgentExecutionFailure(structured); };
+  failing.runtime.plasmContext = async () => { throw new AgentExecutionFailure(structured, "Execution stopped: original service diagnostic. Stop this execution."); };
   await assert.rejects(failing.generate("Task"), (error: unknown) => {
     assert.ok(error instanceof AgentExecutionFailure);
     assert.deepEqual(error.failure, structured);

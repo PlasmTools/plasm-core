@@ -11236,8 +11236,6 @@ dependencies = [
 [[package]]
 name = "ty_python_core"
 version = "0.0.14"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ce875d7dcdf819db79618cdf2023a5493a8173cd7395eb1e9470a8ec7575a6c6"
 dependencies = [
  "bitflags 2.13.1",
  "bitvec",

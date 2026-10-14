@@ -6,8 +6,8 @@ use plasm_trace::{PlasmLineTraceMeta, RunArtifactArchiveRef, TraceEvent, TraceSe
 
 use super::state::TraceIngestJob;
 use super::{
-    now_ms, truncate_trace_reasoning, CodePlanEvaluateTrace, CodePlanExecuteTrace,
-    PlasmContextTrace, TraceHub, TraceSsePayload,
+    now_ms, CodePlanEvaluateTrace, CodePlanExecuteTrace, PlasmContextTrace, TraceHub,
+    TraceSsePayload,
 };
 
 impl TraceHub {
@@ -118,9 +118,7 @@ impl TraceHub {
         mcp_key: &str,
         multi_line: bool,
         expression_count: usize,
-        reasoning_chars: Option<u64>,
         plasm_invocation_chars_added: u64,
-        reasoning: Option<String>,
     ) -> u64 {
         if !self.ensure_active_for_emit(mcp_key).await {
             tracing::warn!(
@@ -131,10 +129,6 @@ impl TraceHub {
             crate::trace_hub_metrics::record_trace_emit_dropped_no_active();
             return 0;
         }
-        let reasoning_stored = reasoning
-            .as_deref()
-            .filter(|s| !s.is_empty())
-            .map(truncate_trace_reasoning);
         let (call_index, trace_id, seq, record, job_opt) = {
             let mut g = self.inner.write().await;
             let Some(a) = g.active.get_mut(mcp_key) else {
@@ -149,8 +143,6 @@ impl TraceHub {
                     multi_line,
                     expression_count,
                     plasm_invocation_chars_added,
-                    reasoning_chars,
-                    reasoning: reasoning_stored.clone(),
                 },
             );
             let dropped = a.data.push_event(ev);

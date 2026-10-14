@@ -43,6 +43,14 @@ to E and B, and a returned value validated against O. Static acceptance does not
 promise termination or absence of Python exceptions. Exhausted budgets and
 exceptions are explicit failures and cannot produce successful output values.
 
+Declared records are closed at observation admission: only declared fields may
+cross from cached observations into plain DAG or compute values. Arrays retain
+their axes and cardinality. Dictionaries remain open and retain authored keys;
+an underscore prefix is not a metadata discriminator. Admission uses the same
+value contract before downstream consumption and presentation. Storage versions,
+completeness and execution evidence remain owned by the source and host, rather
+than becoming ordinary fields of a computed record.
+
 ## Exact wire values
 
 Opaque JSON and blob values preserve recursive JSON structure, including unsigned
@@ -179,6 +187,90 @@ corrections, and reviewed coverage for every profile classification. A passing
 CSV case alone cannot establish completion.
 
 ## Implementation ledger
+
+### Inferred occurrence selection and contract version 13
+
+Inferred compute outputs may retain original entity occurrences when the output
+is a record or flat list of records from inputs with one entity owner. The plan
+seals candidate input parameters and their actual DAG argument sources. Replay
+rechecks type evidence, source paths and ownership. Host-private instance IDs
+identify occurrences; complete contents must still match the observed input.
+Equal-valued copies and modified records do not gain receiver authority. No
+identity witness is added to model-visible record fields. Result fingerprints
+include retained host identities. Explicit output annotations, mixed owners
+and nested output containers do not acquire authority through this rule.
+
+Pure helpers containing Python calls, indexing or comprehensions use the same
+checked compute boundary as multi-statement pure helpers. Structural record
+construction and DAG-handle aliases retain DAG elaboration and their return shape.
+Field refinements follow derived argument packets and projections iteratively,
+using upstream branch evidence and the existing value-contract algebra. This does
+not infer arbitrary dependent collection predicates.
+
+Witnesses: `python_compute_selection_retains_only_original_occurrences`,
+`python_compute_selection_seals_ports_and_supports_multiple_inputs`,
+`python_compute_selected_singleton_and_empty_rows_continue_lawfully`,
+`python_compute_selection_keeps_identity_without_projected_id_fields`,
+`python_refined_fields_survive_projection_helper_and_selection`, and the
+`python_pool::selection::tests` occurrence properties.
+
+### Bounded fresh-list builders
+
+A fresh `out = []` immediately followed by a bounded literal loop containing only
+`out.append(expression)` elaborates to immutable DAG values and existing effect
+dependencies. The expression may not capture the fresh accumulator. Aliased or
+general mutation and dynamic iteration are not admitted. The existing 256-element
+expansion bound applies. Each element receives independent capture ports.
+Witnesses: `bounded_collection_builder_matches_comprehension` and
+`bounded_builder_keeps_unreturned_writes_in_order`.
+
+Selection builtins share their upstream return declarations between inference and
+final admission. Union fields join through the existing contract algebra without
+coercion or newly manufactured entity authority; union traversal is iterative.
+
+### Declaration and correction boundaries
+
+Ordinary method names, including one leading underscore, are valid for `@compute`.
+Double-underscore compute names are reserved and receive a name diagnostic,
+independently of decorator validation. All declarations undergo structural and
+capability-policy admission; unused declarations emit no nodes and need no input
+contract. Each invoked method is checked against its actual materialized inputs
+before a plan is accepted.
+
+Standalone Python value calls in `build` are rejected before value inference,
+apart from the bounded fresh-list builder described above: build binds immutable
+DAG versions and only declared effects may be discarded. Construct a DAG collection
+with a literal comprehension, a bounded builder, or perform pure Python mutation
+inside `@compute`. Bare entity bindings are not annotation types; omit
+input annotations for inference, or use `Row` / `Value[eN]` for materialized rows.
+`select` retains a row contract; explicit singleton field access supplies a cell.
+
+Typed Plasm errors retain their causes and use the shared Python correction
+renderer at the Python boundary, including required-keyword omissions. Reserved
+local diagnostics identify the conflicting name. Query admission resolves
+required/defaulted arguments before normalizing and validating scope inputs
+(RA-15), preserving the authored method and source span on omissions.
+An unavailable `get` identifies its receiver and retains the typed lookup cause;
+the correction refers to declared methods, not transport operations.
+
+Direct local callback calls and Program helper calls use the same single-invocation
+scheduling port. Authored arguments remain typed captures with independent
+cardinality, so an empty or plural Python collection does not become a fanout
+or require a singleton proof. Parameter and return annotations remain checked;
+direct local callback value calls still reject effects. Witnesses:
+`local_callback_invocation_preserves_collection_cardinality_and_annotations` and
+`nested_helper_captures_preserve_recursive_value_cells`.
+
+An array with bottom element type is provably empty. Annotation admission checks
+its empty literal contextually rather than treating `list[Never]` as a mutable
+`list[T]`. Nonempty collections retain normal assignment checks. The live
+`callback_collection_argument` witness and
+`empty_collection_annotations_use_context_without_widening_nonempty_inputs`
+cover acceptance and rejection; inference imports its generated bottom type.
+
+Witnesses: `python_admission_corrections` (abstract fixture, planning and live
+execution), `declarations_require_live_witnesses_and_full_module_rejections`, and
+the `compute_private_unused` language matrix case.
 
 ### Entity-record annotation spelling
 

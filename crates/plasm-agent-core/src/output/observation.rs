@@ -51,6 +51,44 @@ pub(crate) fn render_observation(
 mod tests {
     use super::*;
     use proptest::prelude::*;
+    #[test]
+    fn source_observation_contract_precedes_every_tsv_cell() {
+        use plasm_core::row_contract::{RowCodec, RowFieldContract};
+        let cgs = plasm_core::loader::load_schema_dir(
+            &std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+                .join("../../fixtures/schemas/plasm_language_matrix"),
+        )
+        .unwrap();
+        let wire = plasm_core::ValueRow::try_from(plasm_core::json_value_to_plasm_value(&serde_json::json!({
+            "id":"a","title":"domain","_ref":{"kind":"simple","entity":"LangItem","id":"a"},
+            "wire_embed":{"email":"identity","_ref":{"kind":"simple","entity":"User","id":"identity"}},
+            "computed_alias":42
+        }))).unwrap();
+        let codec = RowCodec::new(Some(&cgs));
+        let semantic = codec
+            .decode_values("LangItem", &wire, RowFieldContract::Observation)
+            .unwrap();
+        let observation = DetachedRows(vec![CachedEntity::from_row(
+            &semantic,
+            0,
+            plasm_runtime::EntityCompleteness::Complete,
+        )]);
+        let text = render_observation(&observation, Some(&cgs), 10, 4000).tsv;
+        assert!(text.contains("domain"));
+        assert!(!text.contains("wire_embed"));
+        assert!(!text.contains("\"_ref\""));
+        let projection = codec
+            .decode_values("LangItem", &wire, RowFieldContract::Projection)
+            .unwrap();
+        let projected = DetachedRows(vec![CachedEntity::from_row(
+            &projection,
+            0,
+            plasm_runtime::EntityCompleteness::Complete,
+        )]);
+        assert!(render_observation(&projected, Some(&cgs), 10, 4000)
+            .tsv
+            .contains("computed_alias"));
+    }
     struct DetachedRows(Vec<CachedEntity>);
     impl RowObservation for DetachedRows {
         fn rows(&self) -> impl ExactSizeIterator<Item = &CachedEntity> {
@@ -81,6 +119,20 @@ mod tests {
         assert_eq!(rendered.tsv.lines().count(), 2);
         let empty = DetachedRows(vec![]);
         assert_eq!(render_observation(&empty, None, 0, 0).shown, 0);
+    }
+
+    #[test]
+    fn authored_reference_named_column_is_data_not_machine_identity() {
+        let step =
+            crate::test_support::execution_fixtures::synthetic_published_result_step(1, None);
+        let mut rows: Vec<_> = step.result.entities().iter().cloned().collect();
+        rows[0].fields.insert(
+            "_ref".into(),
+            plasm_core::TypedFieldValue::String("authored".into()),
+        );
+        let rendered = render_observation(&DetachedRows(rows), None, 10, 4000);
+        assert!(rendered.tsv.contains("\"authored\""));
+        assert!(rendered.tsv.lines().next().unwrap().contains("_ref"));
     }
 
     proptest! {

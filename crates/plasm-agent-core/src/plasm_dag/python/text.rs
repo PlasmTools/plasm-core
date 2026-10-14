@@ -24,9 +24,7 @@ impl Lower<'_> {
                 )
             })?
             .clone();
-        let lowered = self.text_compute_source(site, call, code, id)?;
-        self.used_methods.insert(method.to_owned());
-        Ok(lowered)
+        self.text_compute_source(site, call, code, id)
     }
 
     pub(super) fn text_compute_source(
@@ -138,8 +136,17 @@ impl Lower<'_> {
             .chain(&def.parameters.args)
             .chain(&def.parameters.kwonlyargs)
             .collect::<Vec<_>>();
-        let source = if parameters.len() == 1 {
-            self.expr(bound[0].1, None)?
+        // Unannotated helpers consume the exact materialized dependency packet.
+        // Do not round-trip nested contracts through the single `Row` alias.
+        let packet = parameters.len() != 1
+            || parameters
+                .iter()
+                .any(|parameter| parameter.parameter.annotation.is_none());
+        let mut selection_sources = BTreeMap::new();
+        let source = if !packet {
+            let source = self.expr(bound[0].1, None)?;
+            selection_sources.insert(bound[0].0.clone(), source.clone());
+            source
         } else {
             let mut inputs = BTreeMap::new();
             let mut fields = BTreeMap::new();
@@ -155,6 +162,7 @@ impl Lower<'_> {
                 let annotation = parameter.parameter.annotation.as_deref();
                 if let PlasmDataValue::NodeSymbol { node, path, .. } = &value {
                     if path.is_empty() {
+                        selection_sources.insert(name.clone(), node.clone());
                         let singleton = super::super::binding_contract(&self.state, node)
                             .is_some_and(|c| c.row_cardinality.permits_scalar_field_extract());
                         if annotation.is_some_and(crate::python_compute::is_row_annotation)
@@ -210,66 +218,10 @@ impl Lower<'_> {
             )?;
             packet
         };
-        let parameter_count = parameters.len();
         drop(parameters);
         let input = inferred_schema(self.es, &self.state, &source, 0)?
             .row_contract()
             .map_err(PythonLoweringError::from)?;
-        let needs_inference = def
-            .parameters
-            .posonlyargs
-            .iter()
-            .chain(&def.parameters.args)
-            .chain(&def.parameters.kwonlyargs)
-            .any(|parameter| parameter.parameter.annotation.is_none());
-        let single_contract =
-            if parameter_count == 1 && needs_inference {
-                Some(super::super::binding_contract(&self.state, &source).ok_or(
-                    crate::program_rejection::PythonComputeError::ComputeInputContractMissing,
-                )?)
-            } else {
-                None
-            };
-        for parameter in def
-            .parameters
-            .posonlyargs
-            .iter_mut()
-            .chain(&mut def.parameters.args)
-            .chain(&mut def.parameters.kwonlyargs)
-        {
-            if parameter.parameter.annotation.is_some() {
-                continue;
-            }
-            let value = if parameter_count == 1 {
-                input.clone()
-            } else {
-                // The typed packet preserves each dependency separately;
-                // inference never joins independent collections.
-                input.field(parameter.parameter.name.as_str())?
-            };
-            let scalar_cell = single_contract
-                .as_ref()
-                .is_some_and(|contract| contract.value_kind == BindingValueKind::ScalarCell);
-            let collection = single_contract
-                .as_ref()
-                .is_some_and(|contract| !contract.row_cardinality.permits_scalar_field_extract());
-            let annotation = crate::python_compute::inferred_helper_input_annotation(
-                &value,
-                scalar_cell,
-                collection,
-            )?;
-            parameter.parameter.annotation = Some(
-                ruff_python_parser::parse_expression(&annotation)
-                    .map_err(|error| PythonLoweringError::Source {
-                        error: std::sync::Arc::new(
-                            crate::program_rejection::PythonSourceError::Parse { source: error },
-                        ),
-                        span: None,
-                    })?
-                    .into_syntax()
-                    .body,
-            );
-        }
         let parameters = def
             .parameters
             .posonlyargs
@@ -279,12 +231,10 @@ impl Lower<'_> {
             .collect::<Vec<_>>();
         for parameter in &parameters {
             if let Some(default) = parameter.default.as_deref() {
-                let annotation = parameter
-                    .parameter
-                    .annotation
-                    .as_deref()
-                .ok_or(crate::program_rejection::PythonComputeError::InferredComputeInputContractMissing)?;
-                let argument = if parameters.len() == 1 {
+                let Some(annotation) = parameter.parameter.annotation.as_deref() else {
+                    continue;
+                };
+                let argument = if !packet {
                     input.clone()
                 } else {
                     input.field(parameter.parameter.name.as_str())?
@@ -310,7 +260,7 @@ impl Lower<'_> {
         normalized.parameters.posonlyargs.clear();
         normalized.parameters.kwonlyargs.clear();
         let code = admission::method_source(&self.imports.source, &code, &def, normalized)?;
-        self.emit_python_compute(source, &code, id)
+        self.emit_python_compute_ports(source, &code, id, selection_sources, packet)
     }
 
     pub(super) fn emit_python_compute(
@@ -319,12 +269,64 @@ impl Lower<'_> {
         code: &str,
         id: &str,
     ) -> Result<String, PythonLoweringError> {
-        let op = prepare_op(self.es, &self.state, &source, code)?;
+        self.emit_python_compute_ports(source, code, id, BTreeMap::new(), false)
+    }
+
+    fn emit_python_compute_ports(
+        &mut self,
+        source: String,
+        code: &str,
+        id: &str,
+        sources: BTreeMap<String, String>,
+        packet: bool,
+    ) -> Result<String, PythonLoweringError> {
+        let mut op = prepare_op(self.es, &self.state, &source, code)?;
+        let checked = crate::python_compute::check_op(self.es, &op)?;
+        let mut ports = Vec::new();
+        let mut owner = None;
+        for parameter in &checked.selected_parameters {
+            let Some(node) = sources.get(parameter) else {
+                ports.clear();
+                break;
+            };
+            let Some(contract) = super::super::binding_contract(&self.state, node)
+                .filter(|c| c.supports_method_invoke() && c.anchor.is_present())
+            else {
+                ports.clear();
+                break;
+            };
+            if owner
+                .as_ref()
+                .is_some_and(|owner| owner != &contract.row_entity)
+            {
+                ports.clear();
+                break;
+            }
+            owner = Some(contract.row_entity);
+            ports.push(plasm_core::plasm_monad::PythonSelectionPort {
+                parameter: parameter.clone(),
+                source: node.clone(),
+                packet_field: packet.then(|| parameter.clone()),
+            });
+        }
+        if !ports.is_empty() {
+            let owner = owner.expect("selection ports have an owner");
+            let ComputeOp::Python { selection, .. } = &mut op else {
+                unreachable!()
+            };
+            *selection = Some(plasm_core::plasm_monad::PythonRowSelection {
+                owner: plasm_core::plasm_monad::PlanQualifiedEntityKey {
+                    entry_id: owner.entry_id,
+                    entity: owner.entity,
+                },
+                ports,
+            });
+        }
         let ComputeOp::Python { per_row, .. } = &op else {
             unreachable!()
         };
         let per_row = *per_row;
-        let output = crate::python_compute::check_op(self.es, &op)?.output;
+        let output = checked.output;
         let singleton = !output.is_collection_result()
             && (!per_row
                 || super::super::binding_contract(&self.state, &source)
@@ -489,7 +491,7 @@ pub(super) fn prepare_op(
             }),
             span: None,
         })?;
-    let multiple = matches!(parsed.suite().last(), Some(Stmt::FunctionDef(def)) if def.parameters.args.len() > 1);
+    let multiple = matches!(parsed.suite().last(), Some(Stmt::FunctionDef(def)) if crate::python_compute::uses_dependency_packet(def));
     let owner = if multiple {
         None
     } else {
@@ -548,6 +550,7 @@ pub(super) fn prepare_op(
         input_schema,
         output_type: checked.output,
         per_row: checked.per_row,
+        selection: None,
     })
 }
 

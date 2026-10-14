@@ -2,7 +2,7 @@ pub use crate::chain_error::ChainError;
 pub use crate::http_wire_error::HttpWireError;
 pub use crate::preflight_error::PreflightError;
 pub use crate::request_error::{
-    HttpStatusFailure, MockServerOperation, RateLimitCause, RequestFailure,
+    HttpStatusFailure, MockServerOperation, ProviderDiagnostic, RateLimitCause, RequestFailure,
 };
 pub use crate::response_narrow_error::{ResponseNarrowError, ResponseNarrowHint};
 pub use crate::view_plan_error::ViewPlanError;

@@ -46,27 +46,24 @@ impl ValueContract {
                 return left;
             }
         }
-        fn append(mut value: ValueContract, out: &mut Vec<ValueContract>, nullable: &mut bool) {
-            *nullable |= value.nullable || value.shape == ValueShape::Null;
+        let mut pending = vec![right, left];
+        let mut variants = Vec::new();
+        let mut nullable = false;
+        while let Some(mut value) = pending.pop() {
+            nullable |= value.nullable || value.shape == ValueShape::Null;
             value.nullable = false;
             match value.shape {
                 ValueShape::Null | ValueShape::Never => {}
-                ValueShape::Union { variants } if value.domain.is_none() => {
-                    for variant in variants {
-                        append(variant, out, nullable);
-                    }
+                ValueShape::Union { variants: nested } if value.domain.is_none() => {
+                    pending.extend(nested.into_iter().rev());
                 }
                 _ => {
-                    if !out.contains(&value) {
-                        out.push(value);
+                    if !variants.contains(&value) {
+                        variants.push(value);
                     }
                 }
             }
         }
-        let mut variants = Vec::new();
-        let mut nullable = false;
-        append(left, &mut variants, &mut nullable);
-        append(right, &mut variants, &mut nullable);
         let mut result = if variants.len() == 1 {
             variants.remove(0)
         } else {
@@ -101,6 +98,22 @@ impl ValueContract {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn deeply_nested_choices_join_on_a_worklist() {
+        let integer = ValueContract::scalar(FieldType::Integer);
+        let mut nested = integer.clone();
+        for _ in 0..8192 {
+            nested = ValueContract {
+                shape: ValueShape::Union {
+                    variants: vec![nested],
+                },
+                domain: None,
+                nullable: false,
+            };
+        }
+        assert_eq!(ValueContract::join(nested, integer.clone()), integer);
+    }
 
     #[test]
     fn empty_collections_are_neutral_for_matching_materialized_returns() {

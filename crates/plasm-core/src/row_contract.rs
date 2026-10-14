@@ -8,6 +8,9 @@ use serde_json::{Map, Value as Json};
 use std::collections::BTreeSet;
 use thiserror::Error;
 
+#[cfg(test)]
+mod presentation_tests;
+
 #[derive(Debug, Error)]
 pub enum RowDecodeError {
     #[error(transparent)]
@@ -238,6 +241,14 @@ pub struct RowCodec<'a> {
     cgs: Option<&'a CGS>,
 }
 
+/// The producer owns the field contract. Observations expose catalog fields;
+/// projected rows expose their already-admitted program fields.
+#[derive(Debug, Clone, Copy)]
+pub enum RowFieldContract {
+    Observation,
+    Projection,
+}
+
 impl<'a> RowCodec<'a> {
     pub fn new(cgs: Option<&'a CGS>) -> Self {
         Self { cgs }
@@ -341,8 +352,10 @@ impl<'a> RowCodec<'a> {
 
     /// Presentation payload without synthetic identity or storage metadata.
     pub fn payload(&self, row: &impl EntityRow) -> Json {
+        let unavailable: BTreeSet<_> = row.unavailable_fields().collect();
         let mut object: Map<String, Json> = row
             .fields()
+            .filter(|(name, _)| !unavailable.contains(name))
             .map(|(key, value)| {
                 (
                     key.to_string(),
@@ -366,9 +379,15 @@ impl<'a> RowCodec<'a> {
 
     /// Presentation is a terminal projection, never an execution or storage input.
     pub fn display(&self, row: &impl EntityRow) -> Json {
-        let mut result = self.encode(row);
-        let object = result.as_object_mut().expect("row object");
-        object.remove("_ref");
+        let unavailable: BTreeSet<_> = row.unavailable_fields().collect();
+        let mut values: ValueRow = row
+            .fields()
+            .filter(|(name, _)| !unavailable.contains(name))
+            .map(|(name, value)| (name.to_owned(), value.to_value()))
+            .collect();
+        self.apply_identity(&mut values, row.identity());
+        let mut result = crate::plasm_value_to_json(&values.into_value());
+        let object = result.as_object_mut().expect("domain row object");
         for (name, references) in row.relations() {
             object.insert(
                 name.into(),
@@ -387,12 +406,17 @@ impl<'a> RowCodec<'a> {
     /// adapter before calling this method; it is never inferred from a prefix.
     pub fn decode(&self, entity: &str, wire: &Json) -> Result<RowRecord, RowDecodeError> {
         let value = crate::json_value_to_plasm_value(wire);
-        self.decode_values(entity, &ValueRow::try_from(value)?)
+        self.decode_values(
+            entity,
+            &ValueRow::try_from(value)?,
+            RowFieldContract::Observation,
+        )
     }
     pub fn decode_values(
         &self,
         entity: &str,
         object: &ValueRow,
+        field_contract: RowFieldContract,
     ) -> Result<RowRecord, RowDecodeError> {
         use crate::Value as V;
         let definition = self.cgs.and_then(|cgs| cgs.get_entity(entity));
@@ -491,6 +515,12 @@ impl<'a> RowCodec<'a> {
                     )?,
                 );
             } else {
+                if matches!(field_contract, RowFieldContract::Observation)
+                    && definition
+                        .is_some_and(|definition| !definition.fields.contains_key(key.as_str()))
+                {
+                    continue;
+                }
                 fields.insert(key.clone(), TypedFieldValue::from(value.clone()));
             }
         }

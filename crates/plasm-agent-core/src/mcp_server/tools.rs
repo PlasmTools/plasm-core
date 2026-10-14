@@ -68,10 +68,6 @@ pub(crate) fn plasm_tools(artifact_access: ArtifactAccessMode, ui_apps_enabled: 
         "program".into(),
         json_schema_string_type(PLASM_PROGRAM_PARAM_DESCRIPTION),
     );
-    plasm_program_props.insert(
-        "reasoning".into(),
-        json_schema_string_type("Optional short note explaining the intent of this call."),
-    );
     let mut plasm_run_props = plasm_program_props.clone();
     plasm_run_props.remove("program");
     plasm_run_props.insert(

@@ -6,6 +6,8 @@ pub use monty_analysis::AnalysisError;
 #[derive(Debug, Clone, thiserror::Error)]
 pub enum PythonComputeError {
     #[error(transparent)]
+    Selection(#[from] crate::python_compute::selection::SelectionContractError),
+    #[error(transparent)]
     Inference(#[from] Box<crate::python_compute::inference::InferenceError>),
     #[error("compute source budget exceeded")]
     SourceBudgetExceeded,
@@ -89,8 +91,6 @@ pub enum PythonComputeError {
     DependencyPacketNotRecord,
     #[error("multi-input compute parameter count does not match dependency fields")]
     DependencyCountMismatch,
-    #[error("every compute input requires a type annotation")]
-    InputAnnotationMissing,
     #[error("named compute dependency is missing")]
     NamedDependencyMissing,
     #[error("list[Row] input requires a collection dependency")]
@@ -99,7 +99,7 @@ pub enum PythonComputeError {
     RowInputRequiresRecord,
     #[error("compute row annotation differs from its dependency contract")]
     DependencyAnnotationMismatch,
-    #[error("compute input annotation does not match its dependency contract")]
+    #[error("compute input annotation does not match its materialized dependency; omit the annotation to infer its exact type. A projection remains a row; use singleton.field for a scalar and retain its nullability.")]
     InputContractMismatch,
     #[error("compute function has no body")]
     ComputeBodyMissing,
@@ -123,10 +123,6 @@ pub enum PythonComputeError {
     MaterializationPortMissing,
     #[error("compute row input is missing")]
     ComputeRowInputMissing,
-    #[error("compute input contract is missing")]
-    ComputeInputContractMissing,
-    #[error("compute input contract is missing after inference")]
-    InferredComputeInputContractMissing,
     #[error("compute value contract symbol could not be resolved: {0}")]
     ValueContractSymbol(#[source] plasm_core::symbol_tuning::SymbolResolveError),
     #[error("compute value contract catalog ownership mismatch")]
@@ -298,10 +294,8 @@ pub enum PythonSourceError {
         decorators: usize,
         has_type_parameters: bool,
     },
-    #[error("Python source is invalid: callback value nodes have one row port; capture other dependencies in the callback closure")]
+    #[error("Python source is invalid: a direct local callback call takes one argument; capture other dependencies in its closure")]
     CallbackValuePortShape { ports: usize },
-    #[error("Python source is invalid: callback value invocation requires a singleton row")]
-    CallbackValueNeedsSingleton,
     #[error("Python source is invalid: callback value expressions cannot introduce effects")]
     CallbackValueEffects,
     #[error("Python source is invalid: unknown scoped callback: `{name}`")]
@@ -318,9 +312,11 @@ pub enum PythonSourceError {
     SelectionUnpacking,
     #[error("Python source is invalid: duplicate selection argument: `{argument}`")]
     DuplicateSelectionArgument { argument: String },
-    #[error("Python source is invalid: this Get takes no identity arguments")]
-    NullaryGetArguments { positional: usize, keywords: usize },
-    #[error("Python source is invalid: compound Get requires exactly its named identity keys")]
+    #[error(
+        "Python source is invalid: `get` declares no entity identity argument; pass declared capability inputs by keyword"
+    )]
+    GetIdentityArgumentNotDeclared { positional: usize, keywords: usize },
+    #[error("Python source is invalid: `get` requires exactly its named entity identity keys")]
     CompoundGetArgumentShape {
         entity: String,
         expected: Vec<String>,
@@ -330,17 +326,23 @@ pub enum PythonSourceError {
     IdentityUnpacking,
     #[error("Python source is invalid: duplicate compound identity key: `{entity}.{key}`")]
     DuplicateCompoundIdentityKey { entity: String, key: String },
-    #[error("Python source is invalid: compound Get requires every identity key: {missing}", missing = .missing.join(", "))]
+    #[error("Python source is invalid: `get` requires every entity identity key: {missing}", missing = .missing.join(", "))]
     MissingCompoundIdentityKeys {
         entity: String,
         missing: Vec<String>,
     },
-    #[error("Python source is invalid: Get takes at most one positional identity")]
+    #[error("Python source is invalid: `get` accepts at most one positional entity identity")]
     GetPositionalArgumentCount { actual: usize },
-    #[error("Python source is invalid: Get received multiple values for identity")]
+    #[error("Python source is invalid: `get` received multiple values for entity identity")]
     DuplicateGetIdentity,
-    #[error("Python source is invalid: Get requires identity (positional or keyword)")]
+    #[error("Python source is invalid: `get` requires an entity identity, passed positionally or as `identity=`")]
     MissingGetIdentity,
+    #[error("Python source is invalid: `{entity}` has no declared `get` method; use a read method served for that entity")]
+    GetMethodUnavailable {
+        entity: String,
+        #[source]
+        source: std::sync::Arc<plasm_core::TypeError>,
+    },
     #[error("Python source is invalid: unsupported identity expression")]
     UnsupportedIdentityExpression,
     #[error("Python source is invalid: identity negation requires an integer literal")]
@@ -399,6 +401,8 @@ pub enum PythonSourceError {
     DuplicateProgramMethod { method: String },
     #[error("Python source is invalid: method decorators require exactly @compute")]
     ComputeDecoratorShape,
+    #[error("Python source is invalid: compute method `{name}` uses a reserved double-underscore name; use an ordinary method name or a single leading underscore")]
+    ReservedComputeName { name: String },
     #[error("Python source is invalid: compute requires a bound Program receiver")]
     ComputeReceiverMissing,
     #[error("Python source is invalid: Program receiver must be named self: got `{name}`")]
@@ -439,7 +443,7 @@ pub enum PythonSourceError {
     StaticComprehensionIteratorCount { actual: usize },
     #[error("Python source is invalid: build list comprehension does not admit async or filters; filter rows with where")]
     StaticComprehensionShape { is_async: bool, filters: usize },
-    #[error("Python source is invalid: unused expression statements must be writes")]
+    #[error("Python source is invalid: standalone calls in build must be declared effects or part of a fresh, non-escaping literal-loop collection builder. Other build values are immutable; bind or return pure results, use a literal comprehension for DAG collections, or move Python mutation into @compute.")]
     UnusedNonWriteExpression,
     #[error("Python source is invalid: only immutable local assignments are admitted")]
     MutableLocalAssignment,
@@ -556,7 +560,7 @@ pub enum PythonSourceError {
     #[error("Python source is invalid: `Singleton` is a DAG handle; omit the annotation because @compute infers a Python row from the call")]
     ComputeSingletonHandleAnnotation,
     #[error("Python source is invalid: an eN symbol is a catalog binding, not a Python type; omit the annotation and let @compute infer its input from the call")]
-    ComputeEntityElementAnnotation,
+    ComputeEntityBindingAnnotation,
     #[error("Python source is invalid: imports are not build statements; declare permitted imports at module scope or inside @compute")]
     BuildImport,
     #[error("Python source is invalid: build cannot expand a while loop; use bounded iterate for re-observed effects or @compute for pure Python iteration")]
@@ -628,16 +632,14 @@ pub enum PythonProgramError {
     ProgramDeclarationMissing,
     #[error("an import cannot shadow a session entity or the Program class")]
     ImportShadowsReservedBinding,
-    #[error("a build local cannot shadow a reserved host binding")]
-    BuildLocalShadowsReservedBinding,
+    #[error("build local `{name}` shadows a reserved host binding; choose a different local name")]
+    BuildLocalShadowsReservedBinding { name: String },
     #[error("build requires materialized return roots; branching roots have no DAG return representation")]
     BranchingReturnUnsupported,
     #[error(
         "build requires a returned result; add an explicit return of rows, a computed value or an effect"
     )]
     EmptyReturn,
-    #[error("compute {name} requires a typed DAG callsite")]
-    UnusedCompute { name: String },
     #[error("expected one program class")]
     ProgramClassCount,
     #[error("program class is missing its build method")]
@@ -666,14 +668,6 @@ pub enum PythonProgramError {
     VariadicHelperInputs,
     #[error("unknown projected field `{field}`")]
     UnknownProjectedField { field: String },
-    #[error("helper scalar-cell input has no `value` contract")]
-    HelperScalarCellValueMissing,
-    #[error("helper input needs a concrete temporal or array contract")]
-    HelperInputRequiresTemporalOrArrayContract,
-    #[error("helper input needs a concrete materialized value contract")]
-    HelperInputRequiresMaterializedValueContract,
-    #[error("helper input needs an explicit mapping annotation")]
-    HelperInputRequiresMappingAnnotation,
 }
 
 impl PythonComputeRejection {
@@ -693,19 +687,7 @@ impl PythonComputeRejection {
         }
     }
     pub fn into_correction(self) -> String {
-        match self {
-            Self::Typed(error) => error.to_string(),
-            Self::SyntheticSchema(error) => error.to_string(),
-            Self::Lowering(error) => error.to_string(),
-            Self::RowContract(error) => error.to_string(),
-            Self::Program(error) => error.to_string(),
-            Self::Inference(error) => error.to_string(),
-            Self::PythonSchema(error) => error.to_string(),
-            Self::Argument(error) => error.to_string(),
-            Self::MapBodySchema(error) => error.to_string(),
-            Self::PythonTeaching(error) => error.to_string(),
-            Self::Parse(error) => error.to_string(),
-        }
+        self.correction().into_owned()
     }
 }
 
@@ -936,8 +918,6 @@ pub enum PythonLoweringInvariantError {
     EffectResultNodeMissing,
     #[error("compute callback requires a materialized argument mapping")]
     CallbackArgumentMappingMissing,
-    #[error("callback input contract is absent")]
-    CallbackInputContractMissing,
     #[error("projection unpacking is not admitted")]
     ProjectionUnpackingNotAdmitted,
     #[error("projection requires exactly one row parameter")]
@@ -1062,41 +1042,7 @@ impl PythonLoweringError {
     }
 
     pub fn into_message(self) -> String {
-        match self {
-            Self::Located { error, context, .. } => match context {
-                Some(context) => format!("{context}: {error}"),
-                None => error.to_string(),
-            },
-            Self::Program(error) => error.to_string(),
-            Self::Source { error, .. } => error.to_string(),
-            Self::Internal(error) => error.to_string(),
-            Self::Analysis(error) => error.to_string(),
-            Self::SyntheticSchema(error) => error.to_string(),
-            Self::SymbolResolve(error) => error.to_string(),
-            Self::Type(error) => error.to_string(),
-            Self::Compute(error) => error.into_correction(),
-            Self::ComputeTyped(error) => error.to_string(),
-            Self::Correlated(error) => error.to_string(),
-            Self::PlanValidation(error) => error.to_string(),
-            Self::StepId(error) => error.to_string(),
-            Self::CompBundle(error) => error.to_string(),
-            Self::StepPayloadLift(error) => error.to_string(),
-            Self::Atom(error) => error.to_string(),
-            Self::Iteration(error) => error.to_string(),
-            Self::Dag(error) => error.to_string(),
-            Self::RowSuffix(error) => error.to_string(),
-            Self::RowContract(error) => error.to_string(),
-            Self::MapBodySchema(error) => error.to_string(),
-            Self::ValueContract(error) => error.to_string(),
-            Self::Input(error) => error.to_string(),
-            Self::TypedInvoke(error) => error.to_string(),
-            Self::CatalogOwnership(error) => error.to_string(),
-            Self::RowsetNormalize(error) => error.to_string(),
-            Self::SessionProvision(error) => error.to_string(),
-            Self::InputAt { error, span } => {
-                format!("Python bytes {}..{}: {error}", span.0, span.1)
-            }
-        }
+        self.display_message().into_owned()
     }
 
     fn display_message(&self) -> std::borrow::Cow<'_, str> {
@@ -1111,7 +1057,7 @@ impl PythonLoweringError {
             Self::Analysis(error) => std::borrow::Cow::Owned(error.to_string()),
             Self::SyntheticSchema(error) => std::borrow::Cow::Owned(error.to_string()),
             Self::SymbolResolve(error) => std::borrow::Cow::Owned(error.to_string()),
-            Self::Type(error) => std::borrow::Cow::Owned(error.to_string()),
+            Self::Type(error) => std::borrow::Cow::Owned(error.python_correction()),
             Self::Compute(error) => std::borrow::Cow::Owned(error.correction().into_owned()),
             Self::ComputeTyped(error) => std::borrow::Cow::Owned(error.to_string()),
             Self::Correlated(error) => std::borrow::Cow::Owned(error.to_string()),

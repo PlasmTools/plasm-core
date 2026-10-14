@@ -5,6 +5,8 @@ use std::collections::BTreeMap;
 use thiserror::Error;
 
 mod intersection;
+#[cfg(test)]
+mod observation_tests;
 mod refinement;
 mod transfer;
 
@@ -394,6 +396,8 @@ pub enum ValueShape {
         key: Box<ValueContract>,
         value: Box<ValueContract>,
     },
+    /// A closed record: every declared field is present; undeclared observation
+    /// fields (including storage evidence) are not materialized values.
     Record {
         fields: BTreeMap<String, ValueContract>,
     },
@@ -522,7 +526,10 @@ impl ValueContract {
                     target.as_str(),
                 )?)
             }
-            (ValueShape::ObservedRecord { fields, .. }, crate::Value::Object(values)) => fields
+            (
+                ValueShape::Record { fields } | ValueShape::ObservedRecord { fields, .. },
+                crate::Value::Object(values),
+            ) => fields
                 .iter()
                 .filter_map(|(name, contract)| {
                     values.get(name).map(|value| {
@@ -564,21 +571,6 @@ impl ValueContract {
                     .collect::<Result<Vec<_>, _>>()
                     .map(crate::Value::Array)
             }
-            (ValueShape::Record { fields }, crate::Value::Object(values)) => values
-                .iter()
-                .map(|(name, value)| {
-                    fields
-                        .get(name)
-                        .map_or_else(
-                            || Ok(value.clone()),
-                            |contract| {
-                                contract.observed_value_at(value, cgs, entry, depth + 1, catalogs)
-                            },
-                        )
-                        .map(|value| (name.clone(), value))
-                })
-                .collect::<Result<indexmap::IndexMap<_, _>, _>>()
-                .map(crate::Value::Object),
             (ValueShape::Union { variants }, _) => {
                 let mut candidates = variants.iter().filter_map(|variant| {
                     let projected = variant

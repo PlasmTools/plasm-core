@@ -111,6 +111,10 @@ pub(super) async fn materialize(
         ));
     }
     body.check_parent_count(parents.len())?;
+    if body.parent.contract.entity_authority() && source.row_identities.iter().any(Option::is_none)
+    {
+        return Err(scope_failure("scope_original_occurrence_required", "Entity continuation requires unchanged original row occurrences; a constructed or modified value has no receiver identity"));
+    }
     let schema = crate::map_body_schema::output_schema(ctx.es, body).map_err(|diagnostic| {
         scope_failure("scope_output_schema_invalid", diagnostic.to_string())
     })?;
@@ -449,7 +453,7 @@ pub(super) async fn materialize(
         value_shapes.push(MaterializedValueShape::Record);
     }
     fingerprints.insert(
-        compute_fingerprint(&node, &rows, &value_shapes).map_err(|diagnostic| {
+        compute_fingerprint(&node, &rows, &value_shapes, &identities).map_err(|diagnostic| {
             scope_failure("scope_result_fingerprint_failed", diagnostic.to_string())
         })?,
     );

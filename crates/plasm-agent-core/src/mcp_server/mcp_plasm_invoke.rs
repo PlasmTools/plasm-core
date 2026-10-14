@@ -71,6 +71,13 @@ pub(crate) fn parse_mcp_plasm_invocation(
         ))
     }
 
+    if v.get("reasoning").is_some() {
+        return Err(invalid(
+            tool_name,
+            "remove `reasoning`: put explanations in Python comments or docstrings in `program` on `plasm`",
+        ));
+    }
+
     if dry_run_only && v.get("execute").is_some() {
         return Err(invalid(
             tool_name,

@@ -41,6 +41,12 @@ pub(crate) enum PureStepError {
     RowContract(#[from] plasm_core::row_plan::contracts::RowContractError),
     #[error("pure result identity propagation failed: {0}")]
     IdentityPropagation(#[from] super::parse::RowIdentityPropagationError),
+    #[error(transparent)]
+    PlainValueContract(#[from] plasm_core::value_contract::ValueContractError),
+    #[error(transparent)]
+    PlainRow(#[from] plasm_core::ValueRowError),
+    #[error(transparent)]
+    PlainShape(#[from] super::orchestrator::MaterializedValueShapeError),
 }
 
 impl From<PureStepError> for plasm_runtime::ExecutionFailure {
@@ -59,12 +65,17 @@ impl From<PureStepError> for plasm_runtime::ExecutionFailure {
             | PureStepError::SyntheticSchema(_)
             | PureStepError::RowContract(_) => "plan_compute_schema_invalid",
             PureStepError::IdentityPropagation(_) => "plan_identity_propagation_failed",
+            PureStepError::PlainValueContract(_)
+            | PureStepError::PlainRow(_)
+            | PureStepError::PlainShape(_) => "plan_plain_value_contract_invalid",
         };
-        Self::new(
-            plasm_runtime::FailureCause::Program,
-            code,
-            error.to_string(),
-        )
+        let cause = match &error {
+            PureStepError::PlainValueContract(_)
+            | PureStepError::PlainRow(_)
+            | PureStepError::PlainShape(_) => plasm_runtime::FailureCause::ResponseContract,
+            _ => plasm_runtime::FailureCause::Program,
+        };
+        Self::new(cause, code, error.to_string())
     }
 }
 
@@ -114,6 +125,78 @@ pub(crate) struct PureMaterialization {
     pub rows: Vec<plasm_core::ValueRow>,
     pub row_identities: Vec<Option<plasm_core::RowIdentity>>,
     pub entity_override: Option<String>,
+}
+
+impl PureMaterialization {
+    /// Admit plain values from typed graph observations once, before they enter
+    /// another computation or any presentation adapter. Storage identity and
+    /// evidence stay on their source observations, not inside copied records.
+    fn plain(
+        inputs: &PureInputs<'_>,
+        node: &str,
+        rows: Vec<plasm_core::ValueRow>,
+        value_shapes: Vec<MaterializedValueShape>,
+    ) -> Result<Self, PureStepError> {
+        let contract = crate::map_body_schema::row_contract(inputs.es, inputs.schema_nodes, node)?;
+        let catalogs = |entry: &str| {
+            inputs
+                .es
+                .contexts_by_entry
+                .get(entry)
+                .map(|ctx| ctx.cgs.as_ref())
+        };
+        if rows.len() != value_shapes.len() {
+            return Err(
+                super::orchestrator::MaterializedValueShapeError::MetadataCountMismatch {
+                    metadata: value_shapes.len(),
+                    rows: rows.len(),
+                }
+                .into(),
+            );
+        }
+        let rows = rows
+            .into_iter()
+            .zip(&value_shapes)
+            .map(|(row, shape)| {
+                let value = match shape {
+                    MaterializedValueShape::Record => row.into_value(),
+                    MaterializedValueShape::ScalarColumn => {
+                        row.get("value").cloned().ok_or_else(|| {
+                            plasm_core::value_contract::ValueContractError::RequiredFieldMissing {
+                                path: "result".into(),
+                                field: "value".into(),
+                            }
+                        })?
+                    }
+                };
+                let value = contract.observed_value_in(
+                    &value,
+                    &inputs.es.cgs,
+                    &inputs.es.entry_id,
+                    &catalogs,
+                )?;
+                contract.validate_in(
+                    &value,
+                    &inputs.es.cgs,
+                    &inputs.es.entry_id,
+                    "result",
+                    &catalogs,
+                )?;
+                Ok(match shape {
+                    MaterializedValueShape::Record => plasm_core::ValueRow::try_from(value)?,
+                    MaterializedValueShape::ScalarColumn => {
+                        plasm_core::ValueRow::from_iter([("value".into(), value)])
+                    }
+                })
+            })
+            .collect::<Result<Vec<_>, PureStepError>>()?;
+        Ok(Self {
+            row_identities: vec![None; rows.len()],
+            rows,
+            value_shapes,
+            entity_override: None,
+        })
+    }
 }
 
 impl ExecStep {
@@ -207,13 +290,7 @@ impl PureStep {
         match self {
             PureStep::Data(d) => {
                 let (rows, value_shapes) = eval_data_plan_value(&d.data, inputs.binding_rows)?;
-                let row_identities = vec![None; rows.len()];
-                Ok(PureMaterialization {
-                    value_shapes,
-                    rows,
-                    row_identities,
-                    entity_override: None,
-                })
+                PureMaterialization::plain(&inputs, d.id.as_str(), rows, value_shapes)
             }
             PureStep::Derive(d) => {
                 if matches!(d.result_shape, crate::plasm_plan::ResultShape::Single)
@@ -241,13 +318,7 @@ impl PureStep {
                     &row_type,
                 )
                 .map_err(PureStepError::DeriveEvaluation)?;
-                let row_identities = vec![None; rows.len()];
-                Ok(PureMaterialization {
-                    value_shapes,
-                    rows,
-                    row_identities,
-                    entity_override: None,
-                })
+                PureMaterialization::plain(&inputs, d.id.as_str(), rows, value_shapes)
             }
             PureStep::Compute(c) => {
                 if let ComputeOp::MergeBranches { other } = &c.compute.op {

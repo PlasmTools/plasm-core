@@ -30,7 +30,7 @@ pub(super) fn refine(
     let Some(predicate) = fields.get("predicate") else {
         return Ok(());
     };
-    let Some((source, input, captures)) = predicate_input(body, predicate, 0) else {
+    let Some((source, input, captures)) = predicate_input(body, predicate) else {
         return Ok(());
     };
     let mut observations = Vec::new();
@@ -38,7 +38,7 @@ pub(super) fn refine(
         let Some(value) = captures.get(field.name.as_str()) else {
             continue;
         };
-        let Some(parent_path) = reference(body, value, 0) else {
+        let Some(parent_path) = reference(body, value) else {
             continue;
         };
         if let Some(contract) = &field.value_type {
@@ -86,14 +86,8 @@ type Captures = std::collections::BTreeMap<String, PlasmDataValue>;
 fn predicate_input<'a>(
     body: &'a CorrelatedBody,
     predicate: &'a PlasmDataValue,
-    depth: usize,
 ) -> Option<(&'a str, &'a SyntheticResultSchema, &'a Captures)> {
-    if depth >= 64 {
-        return None;
-    }
-    let PlasmDataValue::NodeSymbol { node, path, .. } = predicate else {
-        return None;
-    };
+    let (node, path) = origin(body, predicate)?;
     match body.body.steps.get(node)? {
         PlasmStepPayload::Map(compute) if path.is_empty() => {
             let ComputeOp::Python {
@@ -114,42 +108,46 @@ fn predicate_input<'a>(
             };
             Some((source, input, fields))
         }
-        PlasmStepPayload::Derive(derive) => {
-            let mut value = &derive.derive.value;
-            for key in path {
-                let PlasmDataValue::Object { fields } = value else {
-                    return None;
-                };
-                value = fields.get(key)?;
-            }
-            predicate_input(body, value, depth + 1)
-        }
         _ => None,
     }
 }
 
 /// Resolve only value provenance; this is independent of the Python predicate.
-fn reference(body: &CorrelatedBody, value: &PlasmDataValue, depth: usize) -> Option<Vec<String>> {
-    if depth >= 64 {
-        return None;
+fn reference(body: &CorrelatedBody, value: &PlasmDataValue) -> Option<Vec<String>> {
+    let (node, path) = origin(body, value)?;
+    (node == body.parent.local.as_str()).then_some(path)
+}
+
+/// Follow projected fields and argument packets with one iterative value-path
+/// rule. Appending another helper cannot consume the Rust call stack or silently
+/// drop evidence at an arbitrary derivation depth.
+fn origin<'a>(
+    body: &'a CorrelatedBody,
+    mut value: &'a PlasmDataValue,
+) -> Option<(&'a str, Vec<String>)> {
+    let mut remaining = std::collections::VecDeque::new();
+    let mut visited = std::collections::HashSet::new();
+    loop {
+        match value {
+            PlasmDataValue::Object { fields } => value = fields.get(&remaining.pop_front()?)?,
+            PlasmDataValue::NodeSymbol { node, path, .. } => {
+                for field in path.iter().rev() {
+                    remaining.push_front(field.clone());
+                }
+                if !visited.insert(node.as_str()) {
+                    return None;
+                }
+                if node == body.parent.local.as_str() {
+                    return Some((node, remaining.into_iter().collect()));
+                }
+                match body.body.steps.get(node)? {
+                    PlasmStepPayload::Derive(derive) => value = &derive.derive.value,
+                    _ => return Some((node, remaining.into_iter().collect())),
+                }
+            }
+            _ => return None,
+        }
     }
-    let PlasmDataValue::NodeSymbol { node, path, .. } = value else {
-        return None;
-    };
-    if node == body.parent.local.as_str() {
-        return Some(path.clone());
-    }
-    let PlasmStepPayload::Derive(derive) = body.body.steps.get(node)? else {
-        return None;
-    };
-    let mut value = &derive.derive.value;
-    for key in path {
-        let PlasmDataValue::Object { fields } = value else {
-            return None;
-        };
-        value = fields.get(key)?;
-    }
-    reference(body, value, depth + 1)
 }
 
 fn replace(
@@ -157,16 +155,18 @@ fn replace(
     path: &[String],
     selected: ValueContract,
 ) -> Result<(), RefinementError> {
-    if let Some((first, rest)) = path.split_first() {
-        if let ValueShape::Record { fields } | ValueShape::ObservedRecord { fields, .. } =
+    let mut contract = contract;
+    for field in path {
+        let (ValueShape::Record { fields } | ValueShape::ObservedRecord { fields, .. }) =
             &mut contract.shape
-        {
-            if let Some(child) = fields.get_mut(first) {
-                replace(child, rest, selected)?;
-            }
-        }
-    } else {
-        *contract = contract.refined_by(&selected)?;
+        else {
+            return Ok(());
+        };
+        let Some(child) = fields.get_mut(field) else {
+            return Ok(());
+        };
+        contract = child;
     }
+    *contract = contract.refined_by(&selected)?;
     Ok(())
 }
