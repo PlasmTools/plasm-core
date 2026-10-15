@@ -5,6 +5,54 @@ use crate::plasm_compile::compile_python_program;
 use proptest::prelude::*;
 
 #[test]
+fn typed_program_excerpts_recover_previewed_unicode_without_repeating_reads() {
+    on_runtime(async {
+        let (es, host, calls) = fixture(1);
+        let item = es
+            .teaching_exposure
+            .as_ref()
+            .unwrap()
+            .to_symbol_map()
+            .entity_sym_for("fixture", "Item");
+        let unit = "é\n\t\"";
+        let text = unit.repeat(1000);
+        let literal = serde_json::to_string(unit).unwrap();
+        let methods = (0..5).map(|index| format!(
+            "    @compute\n    def part_{index}(self, row: Row) -> str:\n        return row.note[{}:{}]\n",
+            index * 1000, (index + 1) * 1000,
+        )).collect::<String>();
+        let bindings = (0..5).map(|index| format!(
+            "        part_{index} = full.map(lambda row: {{'text': self.part_{index}(row)}}, max_parents=1)\n"
+        )).collect::<String>();
+        let returns = (0..5)
+            .map(|index| format!("part_{index}"))
+            .collect::<Vec<_>>()
+            .join(", ");
+        let program = format!(
+            "class Excerpts(Program):\n    @compute\n    def make_note(self, row: Row) -> str:\n        return row.title + {literal} * 1000\n{methods}    def build(self):\n        full = {item}.query().take(1).map(lambda row: {{'note': self.make_note(row)}}, max_parents=1)\n{bindings}        return full, {returns}\n"
+        );
+        let bundle = compile_python_program(&es, &program).await.unwrap();
+        assert!(calls.lock().unwrap().is_empty());
+        let run = execute(&es, &host, &bundle).await.unwrap();
+        let source = &run.return_steps[0].result;
+        let preview = crate::output::render_observation(source.as_ref(), None, 1, 1024);
+        assert!(preview.fidelity.any_loss());
+        assert!(preview.tsv.contains("(preview:"));
+        let mut recovered = String::new();
+        for step in &run.return_steps[1..] {
+            let observation =
+                crate::output::render_observation(step.result.as_ref(), None, 1, 4096);
+            assert!(!observation.fidelity.any_loss(), "{}", observation.tsv);
+            let mut lines = observation.tsv.lines();
+            assert_eq!(lines.next(), Some("text"));
+            recovered.push_str(&serde_json::from_str::<String>(lines.next().unwrap()).unwrap());
+        }
+        assert_eq!(recovered, format!("Title 0{text}"));
+        assert_eq!(*calls.lock().unwrap(), vec!["/items"]);
+    });
+}
+
+#[test]
 fn stored_computed_rows_can_be_delivered_in_full() {
     on_runtime(async {
         let (es, host, calls) = fixture(72);

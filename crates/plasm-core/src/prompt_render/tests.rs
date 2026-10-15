@@ -2284,7 +2284,7 @@ fn language_matrix_search_tilde_teaches_search_text_not_exact_or_complete() {
         );
     }
     let card = include_str!("assets/python-plasm-dag.txt");
-    assert!(card.contains("Verify matches/identities before effects"));
+    assert!(card.contains("Verify targets before effects"));
     assert!(card.contains("where filters acquired rows"));
     assert!(card.contains("one-column RHS membership"));
     let run = include_str!("assets/plasm_run_tool_base.txt");
@@ -2303,11 +2303,12 @@ fn plasm_tool_teaches_semantic_operation_receivers() {
         "row.method=entity row/singleton",
         "Entity rows/captures keep identity",
         "empty extraction fails",
-        "records/compute lack it",
-        "both arms share catalog/entity authority",
-        "Monty infers returns/bodies/loops/implicit None",
+        "Inferred compute selections retain unchanged rows from one entity owner",
+        "constructed/modified records lack authority",
+        "both arms share catalog/entity",
+        "Monty infers bodies/returns/loops/implicit None",
         "completed/unknown receipts",
-        "New programs read/write in-session",
+        "New programs: in-session, no resume/rollback",
     ] {
         assert!(card.contains(law), "missing receiver law: {law}");
     }
@@ -2317,10 +2318,10 @@ fn plasm_tool_teaches_semantic_operation_receivers() {
 fn plasm_tool_teaches_typed_identity_holes() {
     let card = include_str!("assets/python-plasm-dag.txt");
     assert!(card.contains("eN.get(value) or eN.get(identity=value)"));
-    assert!(card.contains("compound Get: exact named keys"));
+    assert!(card.contains("compound Get: named keys"));
     assert!(card.contains("vN=domain identity"));
-    assert!(card.contains("vN=annotation, not constructor"));
-    assert!(card.contains("exact signatures"));
+    assert!(card.contains("vN=annotation only"));
+    assert!(card.contains("Declarations: eN/mN/rN/vN"));
 }
 
 /// `plasm_prompt_matrix` TSV method rows follow catalog seat: pathless `eN.mK(` only when pathless.
@@ -2947,10 +2948,10 @@ fn static_grammar_includes_symbols_only_rule() {
     let reference = include_str!("assets/python-plasm-dag.txt");
     assert!(tool.contains("wire names"));
     assert!(reference.contains("session-local/append-only"));
-    assert!(reference.contains("exact signatures"));
+    assert!(reference.contains("Declarations: eN/mN/rN/vN"));
     assert!(reference.contains("Literal-ID for/one-clause comprehensions"));
-    assert!(reference.contains("bound 1..65536 optional"));
-    assert!(reference.contains("bound 1..256 required"));
+    assert!(reference.contains("optional bound 1..65536"));
+    assert!(reference.contains("required bound 1..256"));
     assert!(!reference.contains("inspection cannot authorize writes"));
     assert!(!tool.contains("label = e#"));
 }

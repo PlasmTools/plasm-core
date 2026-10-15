@@ -310,28 +310,6 @@ impl BindingRenderer<'_> {
             .path
             .split_first()
             .ok_or(PrerequisiteBindingRenderError::EmptyInputPath)?;
-        let cap = self.schema(reference)?;
-        let cgs = self.catalogs.get(&reference.catalog).ok_or_else(|| {
-            PrerequisiteBindingRenderError::MissingCatalog {
-                catalog: reference.catalog.clone(),
-            }
-        })?;
-        // Match the Python Get declaration: non-scope inputs are acquired into
-        // the session, not exposed as Python call arguments.
-        if cap.kind == CapabilityKind::Get
-            && cap.get_requires_identity_anchor(cgs)
-            && cap.input_fields().any(|field| field.name.as_str() == head)
-            && !cap
-                .scope_params()
-                .iter()
-                .any(|scope| scope.name.as_str() == head)
-        {
-            return Ok(format!(
-                "{} session({}) (not a call argument)",
-                self.capability(reference)?,
-                input.path.join(".")
-            ));
-        }
         let param = head.clone();
         let mut path = vec![param];
         path.extend(tail.iter().cloned());

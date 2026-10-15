@@ -34,7 +34,12 @@ pub(crate) fn render_observation(
 ) -> RenderedObservation {
     let mut shown = source.rows().len().min(max_rows.max(1));
     loop {
-        let (tsv, fidelity) = super::summary::format_result_tsv_observation(source, cgs, shown);
+        let (tsv, fidelity) = super::summary::format_result_tsv_observation(
+            source,
+            cgs,
+            shown,
+            (shown <= 1).then_some(target_bytes),
+        );
         if tsv.len() <= target_bytes || shown <= 1 {
             return RenderedObservation {
                 tsv,
@@ -43,6 +48,7 @@ pub(crate) fn render_observation(
                 fidelity,
             };
         }
+        // Prefer fewer complete rows to many rows with abbreviated fields.
         shown = (shown / 2).max(1);
     }
 }
@@ -173,6 +179,139 @@ mod tests {
         fn coverage(&self) -> ResultCoverage {
             ResultCoverage::Unknown
         }
+    }
+
+    fn notes(values: &[String]) -> DetachedRows {
+        DetachedRows(
+            values
+                .iter()
+                .enumerate()
+                .map(|(i, text)| {
+                    let mut row =
+                        CachedEntity::new(plasm_core::Ref::new("Document", i.to_string()), 0);
+                    row.fields.insert(
+                        "note".into(),
+                        plasm_core::TypedFieldValue::String(text.clone()),
+                    );
+                    row.fields
+                        .insert("selected".into(), plasm_core::Value::Bool(false).into());
+                    row
+                })
+                .collect(),
+        )
+    }
+
+    #[test]
+    fn complete_note_is_not_previewed_when_the_table_fits() {
+        for text in ["n".repeat(4_348), "é\n\t\"".repeat(700)] {
+            let source = notes(std::slice::from_ref(&text));
+            let rendered = render_observation(&source, None, 25, 12 * 1024);
+            assert!(!rendered.fidelity.any_loss(), "{}", rendered.tsv);
+            let cell = rendered
+                .tsv
+                .lines()
+                .nth(1)
+                .unwrap()
+                .split('\t')
+                .next()
+                .unwrap();
+            assert_eq!(serde_json::from_str::<String>(cell).unwrap(), text);
+            assert!(rendered.tsv.len() <= 12 * 1024);
+        }
+    }
+
+    #[test]
+    fn page_rows_before_abbreviating_fitting_notes() {
+        let source = notes(&vec!["n".repeat(4_348); 5]);
+        let rendered = render_observation(&source, None, 25, 12 * 1024);
+        assert!(rendered.shown < 5);
+        assert!(!rendered.fidelity.any_loss(), "{}", rendered.tsv);
+        assert!(rendered.tsv.len() <= 12 * 1024);
+        assert_eq!(source.0.len(), 5);
+    }
+
+    #[test]
+    fn enormous_field_does_not_abbreviate_fitting_siblings() {
+        let mut source = notes(&["s".repeat(4500)]);
+        source.0[0].fields.insert(
+            "other_note".into(),
+            plasm_core::TypedFieldValue::String("t".repeat(4500)),
+        );
+        source.0[0].fields.insert(
+            "enormous".into(),
+            plasm_core::TypedFieldValue::String("x".repeat(100_000)),
+        );
+        let rendered = render_observation(&source, None, 25, 12 * 1024);
+        assert!(rendered.tsv.len() <= 12 * 1024);
+        assert!(rendered.tsv.contains(&format!("\"{}\"", "s".repeat(4500))));
+        assert!(rendered.tsv.contains(&format!("\"{}\"", "t".repeat(4500))));
+        assert_eq!(
+            rendered.fidelity.field_names().cloned().collect::<Vec<_>>(),
+            ["enormous"]
+        );
+    }
+
+    #[test]
+    fn oversized_note_preserves_small_fields_and_exact_excerpts() {
+        let text = format!("{}END", "é\n\t\"".repeat(10_000));
+        let source = notes(std::slice::from_ref(&text));
+        let rendered = render_observation(&source, None, 25, 4096);
+        assert!(rendered.fidelity.any_loss());
+        assert!(rendered.tsv.len() <= 4096);
+        assert!(rendered.tsv.contains("(preview:"));
+        assert!(rendered.tsv.contains("\tfalse"));
+        assert_eq!(
+            source.0[0].fields["note"].to_value(),
+            plasm_core::Value::String(text.clone())
+        );
+        // Adjacent character ranges remain exact even for escaped multibyte text.
+        let chars: Vec<_> = text.chars().collect();
+        let mut recovered = String::new();
+        for chunk in chars.chunks(500) {
+            let excerpt: String = chunk.iter().collect();
+            let page = render_observation(&notes(&[excerpt]), None, 1, 4096);
+            assert!(!page.fidelity.any_loss());
+            recovered.push_str(
+                &serde_json::from_str::<String>(
+                    page.tsv.lines().nth(1).unwrap().split('\t').next().unwrap(),
+                )
+                .unwrap(),
+            );
+        }
+        assert_eq!(recovered, text);
+    }
+
+    #[tokio::test]
+    async fn native_compute_excerpts_recover_previewed_text_exactly() {
+        let text = format!("{}END", "é\n\t\"".repeat(2500));
+        let source = notes(std::slice::from_ref(&text));
+        assert!(render_observation(&source, None, 1, 4096)
+            .fidelity
+            .any_loss());
+        let pool = crate::python_pool::PythonPool::default();
+        let mut recovered = String::new();
+        for start in (0..text.chars().count()).step_by(1000) {
+            let excerpt = pool
+                .compute(
+                    format!("__input[0].note[{start}:{}]", start + 1000),
+                    vec![std::collections::BTreeMap::from([(
+                        "note".into(),
+                        text.clone(),
+                    )])],
+                )
+                .await
+                .unwrap();
+            let page = render_observation(&notes(&[excerpt]), None, 1, 4096);
+            assert!(!page.fidelity.any_loss());
+            recovered.push_str(
+                &serde_json::from_str::<String>(
+                    page.tsv.lines().nth(1).unwrap().split('\t').next().unwrap(),
+                )
+                .unwrap(),
+            );
+        }
+        pool.close().await;
+        assert_eq!(recovered, text);
     }
     #[test]
     fn detached_rows_and_execution_results_share_the_renderer() {

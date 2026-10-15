@@ -11,7 +11,8 @@ use crate::output::{InBandSummaryReport, LossySummaryFieldNames};
 use crate::run_artifacts::RunArtifactHandle;
 use std::collections::BTreeSet;
 
-/// Target byte budget for each returned table; at least one bounded row stays visible.
+/// Shared target byte budget for returned tables. Each nonempty result retains
+/// one row; headers and truthful omission markers may exceed a tiny budget.
 pub const MCP_INLINE_TEXT_BUDGET_BYTES: usize = 12 * 1024;
 
 /// Hard cap on entity rows rendered inline in MCP tool Markdown (TSV fence or ASCII table).

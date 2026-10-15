@@ -11,15 +11,11 @@ const readSkillInputSchema = z.object({
   name: z.string().min(1).describe("Skill name from the index"),
 });
 
-const responseObligationQuote = z.string().min(1).optional().describe(
-  "Only when resolving a response-obligation conflict: quote the exact task wording that supports this terminal choice. This records an explicit override of the advisory classifier, not verification of task success.",
-);
-const completeTaskInputSchema = z.object({ response_obligation_quote: responseObligationQuote });
+const completeTaskInputSchema = z.object({}).strict();
 
 const submitAnswerInputSchema = z.object({
   answer: z.string().min(1).describe("Reportable value."),
-  response_obligation_quote: responseObligationQuote,
-});
+}).strict();
 
 /** Domain-general AppWorld complete_task — successful call grades explicit null. */
 export const COMPLETE_TASK_TOOL_DESCRIPTION =
@@ -54,14 +50,14 @@ export type EvalTerminalGate = {
   discoveryCompleted?: () => boolean;
 };
 
-function assertResponseObligation(kind: "no_answer" | "value_required", quote: string | undefined, gate?: EvalTerminalGate): void {
+function assertResponseObligation(kind: "no_answer" | "value_required", gate?: EvalTerminalGate): void {
   const obligation = gate?.responseObligation;
   if (!obligation || obligation.kind === "uncertain" || obligation.kind === kind) return;
-  if (quote?.trim() && obligation.instruction.includes(quote.trim())) return;
   throw new Error(
-    `Response-obligation conflict: the advisory classification is ${obligation.kind}, but this terminal declares ${kind}. ` +
+    `Response-obligation conflict: the host contract is ${obligation.kind}, but this terminal declares ${kind}. ` +
     "Re-read the instruction. Writing a value into an app or sending it to another person is an action, not an answer to the requester. " +
-    "Use the matching terminal, or explicitly override the classification with response_obligation_quote containing exact instruction wording that supports this choice. No terminal has been recorded.",
+    "Repair the unfinished requirement before choosing a terminal: establish the requested effect or value from observations. Switching terminals does not perform missing work. " +
+    "Only the host can revise this contract; quoting the instruction does not change it. No terminal has been recorded.",
   );
 }
 
@@ -80,9 +76,9 @@ export function createCompleteTaskTool(gate?: EvalTerminalGate): ToolSet {
     [COMPLETE_TASK_TOOL_NAME]: tool({
       description: COMPLETE_TASK_TOOL_DESCRIPTION,
       inputSchema: toolInput(completeTaskInputSchema),
-      execute: async ({ response_obligation_quote }) => {
+      execute: async () => {
         assertDiscoveryCompleted(gate);
-        assertResponseObligation("no_answer", response_obligation_quote, gate);
+        assertResponseObligation("no_answer", gate);
         return "Completion claim recorded; task success has not been independently verified.";
       },
     }),
@@ -94,9 +90,9 @@ export function createSubmitAnswerTool(gate?: EvalTerminalGate): ToolSet {
     [SUBMIT_ANSWER_TOOL_NAME]: tool({
       description: SUBMIT_ANSWER_TOOL_DESCRIPTION,
       inputSchema: toolInput(submitAnswerInputSchema),
-      execute: async ({ response_obligation_quote }) => {
+      execute: async () => {
         assertDiscoveryCompleted(gate);
-        assertResponseObligation("value_required", response_obligation_quote, gate);
+        assertResponseObligation("value_required", gate);
         return "Answer submission recorded; correctness and requested effects have not been independently verified.";
       },
     }),

@@ -53,7 +53,8 @@ const truncatedThenRepairModel = new MockLanguageModelV3({
         .flatMap(message => message.content)
         .find(part => part.type === "tool-call" && part.toolCallId === "ledger-trunc");
       assert.equal(previousCall, undefined, "rejected call stays in audit, not assistant replay");
-      assert(JSON.stringify(options.prompt).includes("rejectedInput"), "repair context includes latest candidate");
+      assert(!JSON.stringify(options.prompt).includes("rejectedInput"), "rejected payload is audit-only");
+      assert(JSON.stringify(options.prompt).includes("Regenerate arguments"));
       const validSibling = options.prompt
         .filter(message => message.role === "assistant")
         .flatMap(message => message.content)

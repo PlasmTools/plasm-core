@@ -14,6 +14,17 @@ await checkSessionExtension(async () => {}, async (runtime, ref, engine) => {
     return { writeCount: 0, planCommitRef: "pc1", summary: "corrected reference admitted", fusedCleanRead: false };
   };
   const tools = createPlasmTools(runtime);
+  const contextSchema = asSchema(tools.plasm_context!.inputSchema);
+  assert.ok(contextSchema.validate);
+  assert.equal((await contextSchema.jsonSchema).type, "object");
+  for (const input of [
+    { intent: "Read records", logical_session_ref: ref },
+    { intent: "Read records", session_mode: "new", logical_session_ref: ref },
+    { intent: "Read records", session_mode: "extend" },
+    { intent: "Read records" },
+    { intent: "   ", session_mode: "new" },
+  ]) assert.equal((await contextSchema.validate(input)).success, false, JSON.stringify(input));
+  assert.equal((await contextSchema.validate({ intent: "Read records", session_mode: "new" })).success, true);
   for (const name of ["plasm_context", "plasm", "plasm_run"] as const) {
     const schema = asSchema(tools[name]!.inputSchema);
     assert.ok(schema.validate);

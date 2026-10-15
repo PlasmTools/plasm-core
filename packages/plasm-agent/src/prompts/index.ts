@@ -67,12 +67,17 @@ export const WORKFLOW_COMPLETION_SLOT =
  */
 export const EVAL_TERMINAL_COMPLETION =
   "Plan from the current requirement, taught symbols and observed results. " +
-  "The host supplies initial discovery from the task description. Use plasm_context with session_mode extend and the supplied logical_session_ref for further discovery. " +
   "After observations establish every requested effect, end through complete_task " +
   "when the instruction asked for no reportable value, or submit_answer with that " +
-  "value when it did. A request for a single number, amount, count, name, or other " +
+  "value when it did. Writing a value into an app or sending it to another person is an effect, not an answer to the requester. A request to return a single number, amount, count, name, or other " +
   "value requires that exact one value only: never a labelled breakdown, explanation, " +
   "unit, or table. Intermediate results alone are not completion.";
+
+export const WORKFLOW_INITIALIZATION_SLOT =
+  'Open `plasm_context` with `session_mode: "new"` and the original `intent`.';
+
+export const EVAL_WORKFLOW_INITIALIZATION =
+  'The host supplies initial discovery from the task description. Reuse its `logical_session_ref`; call `plasm_context` with `session_mode: "extend"` for further discovery.';
 
 /**
  * Replace exactly one named slot. Missing or duplicate is a hard error —
@@ -141,6 +146,10 @@ export function buildDefaultSystemLiturgy(options: SystemLiturgyOptions = {}): s
   let workflow = options.includeEvalTerminals
     ? overlayWorkflowCompletion(workflowAsset, EVAL_TERMINAL_COMPLETION)
     : workflowAsset;
+  if (options.includeEvalTerminals) {
+    workflow = overlayNamedSlot(workflow, WORKFLOW_INITIALIZATION_SLOT,
+      EVAL_WORKFLOW_INITIALIZATION, "WORKFLOW_INITIALIZATION_SLOT");
+  }
   if (options.includeTaskLedger) {
     workflow = overlayNamedSlot(
       workflow,

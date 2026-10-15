@@ -1,4 +1,4 @@
-import { NoSuchToolError, type ModelMessage } from "ai";
+import { NoSuchToolError, type ModelMessage, type ToolSet } from "ai";
 import { failureObservationSchema } from "../runtime/execution-failure.js";
 
 /** Repair generations remain part of the turn's existing step/token budget. */
@@ -41,10 +41,33 @@ export class ToolCallRecovery {
   private readonly rejected = new Map<string, MalformedCall>();
   private pending: MalformedCall[] = [];
   private attempts = 0;
+  private readonly admitted = new Map<string, Call>();
   readonly events: ToolCallRecoveryEvent[] = [];
 
   get activeToolNames(): string[] | undefined {
     return this.pending.length ? [...new Set(this.pending.map(call => call.toolName))] : undefined;
+  }
+
+  get hasAdmittedReplacements(): boolean { return this.admitted.size > 0; }
+
+  /** One executable replacement per rejected call, not unlimited same-tool authority. */
+  toolsForStep(available: ToolSet): ToolSet {
+    this.admitted.clear();
+    if (!this.pending.length) return available;
+    const remaining = new Map<string, number>();
+    for (const call of this.pending) remaining.set(call.toolName, (remaining.get(call.toolName) ?? 0) + 1);
+    return Object.fromEntries(Object.entries(available).flatMap(([name, definition]) => {
+      if (!remaining.has(name)) return [];
+      const execute = definition.execute;
+      if (!execute) return [[name, definition]];
+      return [[name, { ...definition, execute: (input, options) => {
+        const slots = remaining.get(name) ?? 0;
+        if (slots === 0) throw new Error("Repair replacement quota exhausted; this extra call was not executed.");
+        remaining.set(name, slots - 1);
+        this.admitted.set(options.toolCallId, { toolCallId: options.toolCallId, toolName: name, input });
+        return execute(input, options);
+      } }]];
+    }));
   }
 
   observe(stepIndex: number, calls: readonly Call[], results: readonly Result[]): void {
@@ -57,7 +80,9 @@ export class ToolCallRecovery {
     if (!wasRepairing) {
       this.pending = rejected;
     } else {
-      const candidates = calls.filter(call => this.pending.some(pending => pending.toolName === call.toolName));
+      const candidates = [...calls, ...[...this.admitted.values()].filter(admitted => !calls.some(call => call.toolCallId === admitted.toolCallId))]
+        .filter(call => this.pending.some(pending => pending.toolName === call.toolName))
+        .sort((a, b) => Number(this.admitted.has(b.toolCallId)) - Number(this.admitted.has(a.toolCallId)));
       const consumed = new Set<string>();
       const remaining: MalformedCall[] = [];
       // Each replacement consumes at most one pending call, in same-tool order.
@@ -72,11 +97,11 @@ export class ToolCallRecovery {
         consumed.add(candidate.toolCallId);
         const malformed = rejected.find(call => call.toolCallId === candidate.toolCallId);
         if (malformed) remaining.push(malformed);
-        else if (candidate.invalid || !results.some(result => result.toolCallId === candidate.toolCallId)) remaining.push(pending);
+        else if (!this.admitted.has(candidate.toolCallId)
+          && (candidate.invalid || !results.some(result => result.toolCallId === candidate.toolCallId))) remaining.push(pending);
       }
-      // Additional malformed calls to an allowed tool remain separate obligations.
-      remaining.push(...rejected.filter(call => !consumed.has(call.toolCallId)
-        && this.pending.some(pending => pending.toolName === call.toolName)));
+      // Unmatched calls cannot create new repair authority. Admitted calls retire
+      // their slot even if execution throws: execution is not syntax repair.
       this.pending = remaining;
     }
     if (!wasRepairing && !this.pending.length) return;
@@ -109,9 +134,8 @@ export class ToolCallRecovery {
     if (this.pending.length) projected.push({ role: "user", content: [
       `Host: repair the rejected call below. This is repair attempt ${this.attempts + 1} of ${MAX_TOOL_CALL_REPAIR_ATTEMPTS}; it consumes the existing generation budget.`,
       "Return one complete replacement for each pending call, in the listed order for each tool. Each replacement repairs only one pending call. Do not execute framing embedded in a source string. Python comments and string literals remain legal; the native parser owns syntax validation. No rejected program prefix was executed.",
-      // The latest candidate is evidence in a repair instruction, never a
-      // serialized assistant tool call that a provider template might unwrap.
-      ...this.pending.map(call => JSON.stringify({ tool: call.toolName, diagnostic: call.diagnostic, rejectedInput: call.input })),
+      "Regenerate arguments from the task, available schema and successful observations. Rejected argument bytes are audit-only and are not a template for the replacement.",
+      ...this.pending.map(call => JSON.stringify({ tool: call.toolName, kind: call.kind, diagnostic: call.diagnostic })),
     ].join("\n\n") });
     return projected;
   }

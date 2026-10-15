@@ -1418,7 +1418,9 @@ mod tests {
             .collect::<Vec<_>>();
         let teaching = engine.expose_seeds("", &seeds).unwrap();
         assert!(!teaching.prompt.contains("Program.build:"));
-        assert!(!teaching.prompt.contains("Cards: exact signatures;"));
+        assert!(!teaching
+            .prompt
+            .contains("Declarations: eN/mN/rN/vN session-local/append-only"));
         for cap in &catalog.capabilities {
             if cap.python.unavailable.is_some() {
                 continue;

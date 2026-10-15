@@ -8,6 +8,11 @@ const declaration = await readFile(new URL("../index.d.ts", import.meta.url), "u
 const signature = declaration.split("\n").find((line) => line.includes("routeIntent("));
 assert.ok(signature, "generated routeIntent declaration missing");
 assert.doesNotMatch(signature, /routingRef|clarifyChoices/);
-await assert.rejects(engine.routeIntent("inspect"), /activateDiscovery/);
-await assert.rejects(engine.routeIntent("inspect", "missing-session"), /activateDiscovery/);
-console.log("PASS: native routing requires activated discovery; generated contract has intent and session only");
+const provenance = JSON.stringify({ nodes: [{ parent: null, intent: "inspect" }] });
+try {
+  await assert.rejects(engine.routeIntent(provenance), /discovery must be activated before routing/);
+  await assert.rejects(engine.routeIntent(provenance, "missing-session"), /discovery must be activated before routing/);
+} finally {
+  await engine.close();
+}
+console.log("PASS: native routing requires activated discovery; generated contract has intent provenance and session only");

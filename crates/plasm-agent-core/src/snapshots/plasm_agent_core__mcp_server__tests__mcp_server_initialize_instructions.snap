@@ -1,15 +1,14 @@
 ---
-source: crates/plasm-agent-core/src/mcp_server/tests.rs
+source: plasm-oss/crates/plasm-agent-core/src/mcp_server/tests.rs
 expression: "plasm_core::prompt_render::MCP_INITIALIZE_WORKFLOW"
 ---
 # Plasm workflow
 
 Plan from the current requirement, taught symbols and observed results. Stop with no tool call when observations establish every requested effect. Intermediate results alone are not completion.
 
-1. Call `plasm_context` with `session_mode: "new"`, the original `intent`. Relevant capabilities open dynamic declarations and a `logical_session_ref`.
-2. Teaching does not authorize execution. Choose capabilities from current intent and evidence. Routing errors are operational failures.
-3. One workflow uses one `logical_session_ref`. Reuse it for `plasm` / `plasm_run`. Extend for discovery; intent ancestry and existing symbols persist. Repair parse errors in the same session. Intent does not select the session.
-4. Follow declared prerequisites and input bindings. Write acquisition as ordinary calls, binding provider outputs into consumer inputs. Discovery and teaching perform no acquisition.
-5. Write a Python `Program` class using the static semantic reference in the `plasm` description and dynamic declarations. `build` declares the DAG; typed `@compute` methods derive values from declared inputs. Submit it to `plasm`. Clean reads may execute directly; a returned `run_ref` identifies a reviewed plan for `plasm_run`.
+1. Open `plasm_context` with `session_mode: "new"` and the original `intent`. Reuse its `logical_session_ref` for `plasm` / `plasm_run`; extend for discovery. Intent does not select sessions. Repair in-session.
+2. Teaching exposes declarations, not execution authority or acquired values. Routing errors are failures. Follow prerequisites: call producers and bind outputs to consumer arguments.
+3. Write a Python `Program` using the `plasm` reference and exact taught symbols, wire names and enum literals. `build` declares the DAG; typed `@compute` derives values. Submit to `plasm`; clean reads may execute inline, reviewed plans return a `run_ref` for `plasm_run`.
 
-Copy symbols, wire names and enum literals exactly. Reuse observed rows and labels. Select, aggregate and compute inside the DAG; return only the requested results. For omitted values, revise the projection or typed compute. For missing effects, revise the plan. Keep the same session.
+4. Before writes, verify targets against observed identity and selection conditions, not rank/count alone. Preserve selection evidence. Previews are incomplete: inspect full values or compute from them. Resolve missing/conflicting evidence. Bind verified targets and observed inputs; calculate inside the DAG. Preserve unrequested properties; distinguish identity updates from replacement. Review all effects, including dependent writes.
+5. Compare observations with requested scope, effects and preserved properties. Calls establish only declared results. After call or terminal rejection, repair the unfinished requirement in-session; changing call shape alone does not complete it.

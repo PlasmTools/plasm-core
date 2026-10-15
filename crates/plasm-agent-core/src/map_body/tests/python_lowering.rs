@@ -830,7 +830,7 @@ fn python_compact_teaching_example_compiles_and_reference_is_not_a_program() {
         let library = format!("{root}{library}");
         ruff_python_parser::parse_module(&library).unwrap();
         compile_python_program(&es, &library).await.unwrap();
-        assert!(LANGUAGE.contains("Cards: exact signatures"));
+        assert!(LANGUAGE.contains("Declarations: eN/mN/rN/vN session-local/append-only"));
         assert!(
             compile_python_program(&es, &wave.declarations)
                 .await

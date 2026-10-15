@@ -2,9 +2,7 @@
 use std::sync::Arc;
 
 use crate::execute_session::{PagingContinuationStore, SyntheticPageCursor, SyntheticPageKind};
-use crate::mcp_run_markdown::McpResultTransportPolicy;
 use crate::output::RenderedObservation;
-use plasm_core::CGS;
 
 use super::PublishedResultStep;
 
@@ -43,8 +41,7 @@ impl PublishedPage {
         store: &impl PagingContinuationStore,
         logical_session_ref: Option<&str>,
         source: &PublishedResultStep,
-        cgs: Option<&CGS>,
-        policy: &McpResultTransportPolicy,
+        observation: RenderedObservation,
     ) -> Result<Self, ResultPublicationError> {
         let range = source.result.collection.delivery_range();
         if source.result.count() != 0
@@ -53,15 +50,6 @@ impl PublishedPage {
         {
             return Err(plasm_core::collection_codec::CollectionFault::NotResident.into());
         }
-        // Reuse the source-independent RowObservation formatter to measure the
-        // physical delivery budget. Neither row limits nor byte limits change
-        // the logical collection used by execution and downstream computation.
-        let observation = crate::output::render_observation(
-            source.result.as_ref(),
-            source.cgs.as_deref().or(cgs),
-            policy.in_band_entity_rows,
-            policy.inline_text_budget_bytes,
-        );
         let source_rows = source.result.entities().len();
         let mut step = source.clone();
         if observation.shown < source_rows {

@@ -13,6 +13,49 @@ const valid = "# </parameter> is legal in a comment\nclass Read(Program):\n    d
 const failure = { cause: "program", recovery: "repair_program", code: "program_syntax", diagnostic: "syntax error", node: null,
   occurrence_path: [], catalog_digest: null, effects: [], dispatches: [], effects_unresolved: false };
 
+// A lost provider result or execution exception cannot grant a second dispatch.
+{
+  const recovery = new ToolCallRecovery();
+  recovery.observe(0, [{ toolCallId: "bad", toolName: "effect", input: {}, invalid: true }], []);
+  let effects = 0;
+  const tools = recovery.toolsForStep({ effect: tool({ inputSchema: z.object({}), execute: async (): Promise<string> => {
+    effects++;
+    throw new Error("execution outcome unavailable");
+  } }) });
+  await assert.rejects(async () => tools.effect!.execute!({}, { toolCallId: "replacement", messages: [], context: {} }), /outcome unavailable/);
+  assert.equal(recovery.hasAdmittedReplacements, true);
+  recovery.observe(1, [], []);
+  assert.equal(effects, 1);
+  assert.equal(recovery.activeToolNames, undefined, "execution uncertainty must not remain malformed-call repair");
+}
+
+// A repair is authority to replace rejected calls, not to multiply effects.
+for (const invalidFirst of [false, true]) {
+  let requests = 0;
+  let effects = 0;
+  const model = new MockLanguageModelV3({ doStream: async () => {
+    const index = requests++;
+    return { stream: new ReadableStream({ start(controller) {
+      const emit = (id: string, name: string, input: string) => controller.enqueue({ type: "tool-call", toolCallId: id, toolName: name, input });
+      if (index === 0) emit("invalid-effect", "effect", '{"value":');
+      else if (index === 1) {
+        if (invalidFirst) emit("invalid-prefix", "effect", '{"value":');
+        emit("replacement", "effect", '{"value":"one"}');
+        emit("extra", "effect", '{"value":"two"}');
+      } else emit("done", "complete_task", "{}");
+      controller.enqueue({ type: "finish", finishReason: { unified: "tool-calls", raw: undefined }, usage: { inputTokens: { total: 8, noCache: 8, cacheRead: 0, cacheWrite: 0 }, outputTokens: { total: 2, text: 2, reasoning: 0 } } });
+      controller.close();
+    } }) };
+  } });
+  const result = await runEveToolLoop({ model, system: "Abstract repair authority fixture", messages: [{ role: "user", content: "Perform one effect" }],
+    tools: { ...createEvalTerminalTools(), effect: tool({ inputSchema: z.object({ value: z.string() }), execute: async () => { effects++; return "done"; } }) },
+    maxSteps: 5, agentName: "repair-quota", telemetry: { isEnabled: false } });
+  assert.equal(effects, 1);
+  assert.equal(requests, 3, "an executed replacement must retire its obligation despite an earlier invalid sibling");
+  assert.equal(result.stopReason, "completed");
+  assert(JSON.stringify(result.messages).includes("Repair replacement quota exhausted"));
+}
+
 // SDK unknown-tool errors must retain ordinary selection authority, not pin a
 // repair to an absent tool and thereby expose an empty tool set.
 {
@@ -84,9 +127,10 @@ for (const repaired of [true, false]) {
         const text = JSON.stringify(request.prompt);
         assert(text.includes("effect already completed"), "effects must not be erased for repair");
         if (index === 1 || !repaired) {
-          assert(text.includes("rejectedInput"));
+          assert(!text.includes("rejectedInput"));
+          assert(!text.includes("<tool_call>"), "rejected source bytes must not contaminate regeneration");
           assert(text.includes("line 4, column 1"));
-        } else assert(!text.includes("rejectedInput"), "repaired call leaves temporary repair context");
+        } else assert(!text.includes("Regenerate arguments"), "repaired call leaves temporary repair context");
       }
       return { stream: new ReadableStream({ start(controller) {
         const emit = (toolName: string, toolCallId: string, input: unknown) => controller.enqueue({ type: "tool-call", toolName, toolCallId, input: JSON.stringify(input) });

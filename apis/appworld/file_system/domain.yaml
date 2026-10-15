@@ -562,7 +562,7 @@ capabilities:
     - created_at
     - updated_at
   file_create:
-    description: Create a file with content.
+    description: Create content with a new file identity. Overwriting deletes the existing file and creates a replacement; use File.update to change content while preserving the existing file identity.
     kind: create
     entity: File
     payload:
@@ -581,11 +581,11 @@ capabilities:
         - name: overwrite
           value_ref: nv_bool
           required: false
-          description: "Whether to overwrite an existing file. If omitted, false."
+          description: "When true, deletes an existing file at this path before creating a replacement. If omitted, false; an existing path is rejected."
     provides:
     - path
   file_update:
-    description: Replace the contents of the file selected by its full path.
+    description: Replace the contents of the file selected by its full path, preserving its file identity. The file must already exist.
     kind: update
     entity: File
     payload:

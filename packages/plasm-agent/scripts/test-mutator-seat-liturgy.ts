@@ -17,9 +17,9 @@ for (const text of [card]) {
   for (const retired of ["rows =>", "<<TAG", "e#(<id>)", "| where"])
     assert.ok(!text.includes(retired), `Retired syntax leaked: ${retired}`);
 }
-assert.match(card, /Program\.build:/);
-assert.match(card, /Cards: exact signatures;/);
+assert.match(card, /^build: immutable DAG/m);
+assert.match(card, /Declarations: eN\/mN\/rN\/vN session-local\/append-only/);
 assert.ok(!liturgy.includes("**Plasm** —"), "system instructions must not duplicate the tool protocol");
-assert.ok(!liturgy.includes("Program.build:"), "system instructions must not duplicate the semantic reference");
+assert.doesNotMatch(liturgy, /^build: immutable DAG/m, "system instructions must not duplicate the semantic reference");
 assert.match(liturgy, /logical_session_ref/);
 console.log("PASS: tool descriptions own the Python reference; system instructions own workflow");

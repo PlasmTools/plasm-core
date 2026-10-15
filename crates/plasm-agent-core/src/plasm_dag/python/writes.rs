@@ -14,6 +14,14 @@ impl Lower<'_> {
         cap: &plasm_core::CapabilitySchema,
     ) -> Result<indexmap::IndexMap<String, Value>, PythonLoweringError> {
         let symbols = self.state.sym_map_for(self.es);
+        let cgs = crate::catalog_ownership::resolve_cgs_for_entry_entity(
+            self.es,
+            owner.entry_id.as_str(),
+            owner.entity.as_str(),
+        )?;
+        let entity = cgs
+            .get_entity(owner.entity.as_str())
+            .ok_or(crate::program_rejection::PythonLoweringInvariantError::ReceiverEntityMissing)?;
         let mut bound_arguments = indexmap::IndexMap::new();
         for kw in keywords {
             let key = kw
@@ -49,6 +57,9 @@ impl Lower<'_> {
             if field.required
                 && field.default.is_none()
                 && !bound_arguments.contains_key(&field.name)
+                && plasm_core::scope_entity_ref_infer::classify_scope_param_supply(
+                    entity, cap, field, cgs,
+                ) == plasm_core::scope_entity_ref_infer::ScopeParamSupply::Explicit
             {
                 return Err(PythonLoweringError::from(
                     plasm_core::TypeError::RequiredParameterOmitted {
@@ -59,7 +70,9 @@ impl Lower<'_> {
                 .with_span((site.start().to_u32(), site.end().to_u32())));
             }
         }
-        // Bind the consumer's required slots before resolving producer expressions.
+        // Bind explicit consumer slots before resolving producer expressions.
+        // Identity-supplied scope follows the same contract as taught declarations;
+        // ordinary invocation arguments still require explicit authored values.
         // Otherwise a missing keyword can masquerade as a field failure on its input.
         bound_arguments
             .into_iter()

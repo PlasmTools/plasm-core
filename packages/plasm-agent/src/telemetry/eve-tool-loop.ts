@@ -490,10 +490,7 @@ export async function runEveToolLoop(
         const availableTools = typeof options.tools === "function"
           ? options.tools({ stepIndex })
           : options.tools;
-        const repairToolNames = recovery.activeToolNames;
-        const stepTools = repairToolNames
-          ? Object.fromEntries(Object.entries(availableTools).filter(([name]) => repairToolNames.includes(name)))
-          : availableTools;
+        const stepTools = recovery.toolsForStep(availableTools);
         const stepToolChoice =
           stepIndex === 0 && options.toolChoice !== undefined
             ? options.toolChoice
@@ -656,7 +653,7 @@ export async function runEveToolLoop(
       };
     });
     messages = [...messages, ...delta];
-    if (!stepResult.providerFailed) recovery.observe(stepIndex, stepCalls, stepToolResults);
+    if (!stepResult.providerFailed || recovery.hasAdmittedReplacements) recovery.observe(stepIndex, stepCalls, stepToolResults);
 
     await options.onStepFinish?.({
       toolCalls: stepCalls.length > 0 ? stepCalls : undefined,

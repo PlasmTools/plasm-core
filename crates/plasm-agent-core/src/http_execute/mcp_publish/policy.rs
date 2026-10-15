@@ -1,9 +1,9 @@
-//! Per-step MCP tool-response transport policy (row caps and text budgets).
+//! Shared MCP tool-response text budget, with per-step row admission.
 
 use crate::mcp_run_markdown::{
     McpFormattedExecuteResult, McpResultTransportPolicy, OmittedReferenceOnlyFields,
 };
-use crate::output::{InBandSummaryReport, LossySummaryFieldNames};
+use crate::output::{InBandSummaryReport, LossySummaryFieldNames, RenderedObservation};
 
 use super::PublishedResultStep;
 
@@ -51,15 +51,15 @@ impl PublishPlan {
         cgs: Option<&plasm_core::CGS>,
         policy: &McpResultTransportPolicy,
     ) -> Result<(Vec<PublishedResultStep>, Self), super::page::ResultPublicationError> {
+        let observations = allocate_observations(steps, cgs, policy);
         let mut delivered = Vec::with_capacity(steps.len());
         let mut resolved = Vec::with_capacity(steps.len());
-        for source in steps {
+        for (source, observation) in steps.iter().zip(observations) {
             let page = super::page::PublishedPage::prepare(
                 store,
                 logical_session_ref,
                 source,
-                cgs,
-                policy,
+                observation,
             )?;
             let (step, observation) = page.into_parts();
             let formatted = McpFormattedExecuteResult {
@@ -100,5 +100,127 @@ impl PublishPlan {
                 artifact_access: policy.artifact_access,
             },
         ))
+    }
+}
+
+/// Allocate table text before publication registers any continuations. Preserve
+/// fitting observations and reclaim paging slack for field fidelity first.
+fn allocate_observations(
+    steps: &[PublishedResultStep],
+    cgs: Option<&plasm_core::CGS>,
+    policy: &McpResultTransportPolicy,
+) -> Vec<RenderedObservation> {
+    let render = |source: &PublishedResultStep, rows, budget| {
+        crate::output::render_observation(
+            source.result.as_ref(),
+            source.cgs.as_deref().or(cgs),
+            rows,
+            budget,
+        )
+    };
+    let complete: Vec<_> = steps
+        .iter()
+        .map(|source| render(source, policy.in_band_entity_rows, usize::MAX))
+        .collect();
+    let demands: Vec<_> = complete
+        .iter()
+        .map(|observation| observation.tsv.len())
+        .collect();
+    let budgets = table_budgets(&demands, policy.inline_text_budget_bytes);
+    let (mut observations, mut reusable): (Vec<_>, Vec<_>) = steps
+        .iter()
+        .zip(complete)
+        .zip(budgets)
+        .map(|((source, complete), budget)| {
+            if complete.tsv.len() <= budget {
+                (complete, None)
+            } else {
+                (
+                    render(source, policy.in_band_entity_rows, budget),
+                    Some(complete),
+                )
+            }
+        })
+        .unzip();
+    let used: usize = observations
+        .iter()
+        .map(|observation| observation.tsv.len())
+        .sum();
+    let mut spare = policy.inline_text_budget_bytes.saturating_sub(used);
+    let mut restorations: Vec<_> = steps
+        .iter()
+        .zip(&observations)
+        .enumerate()
+        .filter(|(_, (_, observation))| observation.fidelity.any_loss())
+        .map(|(index, (source, observation))| {
+            let complete = reusable[index]
+                .take()
+                .filter(|complete| complete.shown == observation.shown)
+                .unwrap_or_else(|| render(source, observation.shown, usize::MAX));
+            (index, complete)
+        })
+        .collect();
+    restorations.sort_by_key(|(index, complete)| {
+        complete
+            .tsv
+            .len()
+            .saturating_sub(observations[*index].tsv.len())
+    });
+    // Complete ordinary values take priority over enlarging lossy previews,
+    // independently of where an enormous result appeared.
+    for (index, complete) in restorations {
+        let needed = complete
+            .tsv
+            .len()
+            .saturating_sub(observations[index].tsv.len());
+        if !complete.fidelity.any_loss() && needed <= spare {
+            spare -= needed;
+            observations[index] = complete;
+        }
+    }
+    // Keep the admitted row count: omitted rows already have exact continuations.
+    for (source, observation) in steps.iter().zip(&mut observations) {
+        if spare == 0 || !observation.fidelity.any_loss() {
+            continue;
+        }
+        let budget = observation.tsv.len() + spare;
+        let expanded = render(source, observation.shown, budget);
+        if expanded.tsv.len() <= budget {
+            spare = budget - expanded.tsv.len();
+            *observation = expanded;
+        }
+    }
+    observations
+}
+
+/// Fair allocation without penalizing a small table for a large sibling.
+/// Allocation is independent of result order and never exceeds the total.
+fn table_budgets(demands: &[usize], total: usize) -> Vec<usize> {
+    let mut order: Vec<_> = demands.iter().copied().enumerate().collect();
+    order.sort_by_key(|(_, demand)| *demand);
+    let mut remaining = total;
+    let mut budgets = vec![0; demands.len()];
+    for (position, (index, demand)) in order.into_iter().enumerate() {
+        let budget = demand.min(remaining / (demands.len() - position));
+        budgets[index] = budget;
+        remaining -= budget;
+    }
+    budgets
+}
+
+#[cfg(test)]
+mod tests {
+    use super::table_budgets;
+
+    #[test]
+    fn small_results_leave_budget_for_large_siblings() {
+        assert_eq!(table_budgets(&[10_000, 100], 12_000), [10_000, 100]);
+        assert_eq!(table_budgets(&[100, 10_000], 12_000), [100, 10_000]);
+        assert_eq!(
+            table_budgets(&[10_000, 100, 10_000], 12_000),
+            [5950, 100, 5950]
+        );
+        assert_eq!(table_budgets(&[10, 10], 0), [0, 0]);
+        assert!(table_budgets(&[], 12_000).is_empty());
     }
 }

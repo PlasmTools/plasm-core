@@ -2382,7 +2382,7 @@ mod tests {
     }
 
     #[test]
-    fn get_prerequisite_is_taught_as_session_input_not_call_argument() {
+    fn function_argument_guidance_agrees_with_python_declaration() {
         let mut cgs = fixture();
         cgs.capabilities.get_mut("read").unwrap().kind = crate::CapabilityKind::Get;
         let catalogs = BTreeMap::from([("matrix".into(), &cgs)]);
@@ -2420,11 +2420,23 @@ mod tests {
             symbols.as_ref(),
         )
         .unwrap();
+        let wave = crate::prompt_render::python::prepare_python_teaching_wave(
+            &exposure,
+            &crate::prompt_render::python::PythonTeachingState::default(),
+        )
+        .unwrap();
         assert!(
-            guidance.contains(".get(...) session(credential) (not a call argument)"),
+            wave.declarations
+                .lines()
+                .any(|line| { line.contains(".get(identity:") && line.contains("credential:") }),
+            "{}",
+            wave.declarations
+        );
+        assert!(
+            guidance.contains(".get(...) Selection.credential"),
             "{guidance}"
         );
-        assert!(!guidance.contains("Selection.credential"), "{guidance}");
+        assert!(!guidance.contains("not a call argument"), "{guidance}");
     }
 
     proptest::proptest! {

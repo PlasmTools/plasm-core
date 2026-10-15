@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 /** Eval terminals require an opened workflow; initialization is host-owned. */
 import assert from "node:assert/strict";
-import { tool } from "ai";
+import { asSchema, tool } from "ai";
 import { MockLanguageModelV3 } from "ai/test";
 import { z } from "zod";
 
@@ -58,12 +58,20 @@ const actionTerminals = createEvalTerminalTools({responseObligation: {kind: "no_
 const conflictingSubmit = actionTerminals[SUBMIT_ANSWER_TOOL_NAME]?.execute;
 assert.ok(conflictingSubmit);
 await assert.rejects(async () => conflictingSubmit({answer:"42"}, executionOptions), /Response-obligation conflict/);
+await assert.rejects(async () => conflictingSubmit({answer:"42"}, executionOptions),
+  /Repair the unfinished requirement before choosing a terminal/);
 await assert.rejects(async () => conflictingSubmit({answer:"42", response_obligation_quote:"invented wording"}, executionOptions), /Response-obligation conflict/);
-// An advisory classifier may be wrong. Overrides must be explicit and grounded in original wording.
+// Even an exact quotation cannot authorize a different terminal destination.
 const advisory = createEvalTerminalTools({responseObligation: {kind: "no_answer", instruction: "Tell me the total."}});
 const overrideSubmit = advisory[SUBMIT_ANSWER_TOOL_NAME]?.execute;
 assert.ok(overrideSubmit);
-assert.match(String(await overrideSubmit({answer:"42",response_obligation_quote:"Tell me the total."}, executionOptions)), /submission recorded/);
+await assert.rejects(async () => overrideSubmit({answer:"42",response_obligation_quote:"Tell me the total."}, executionOptions), /Response-obligation conflict/);
+const submitSchema = asSchema(actionTerminals[SUBMIT_ANSWER_TOOL_NAME]!.inputSchema);
+assert.ok(submitSchema.validate);
+assert.equal((await submitSchema.validate({ answer: "42", response_obligation_quote: "Send the total to my colleague." })).success, false);
+const uncertain = createEvalTerminalTools({ responseObligation: { kind: "uncertain", instruction: "Inspect records." } });
+assert.match(String(await uncertain[SUBMIT_ANSWER_TOOL_NAME]!.execute!({answer:"42"}, executionOptions)), /submission recorded/);
+assert.match(String(await uncertain[COMPLETE_TASK_TOOL_NAME]!.execute!({}, executionOptions)), /claim recorded/);
 const valueTerminals = createEvalTerminalTools({responseObligation:{kind:"value_required", instruction:"How many items?"}});
 const conflictingComplete = valueTerminals[COMPLETE_TASK_TOOL_NAME]?.execute;
 assert.ok(conflictingComplete);
@@ -72,6 +80,8 @@ await assert.rejects(async () => conflictingComplete({}, executionOptions), /Res
 // --- Loop P1-1: discovery false + complete_task → NOT completed / NOT null grade ---
 
 let blockedCalls = 0;
+let attemptedTool: string = COMPLETE_TASK_TOOL_NAME;
+let attemptedInput = "{}";
 const blockedModel = new MockLanguageModelV3({
   doStream: async () => {
     blockedCalls += 1;
@@ -80,9 +90,9 @@ const blockedModel = new MockLanguageModelV3({
         start(controller) {
           controller.enqueue({
             type: "tool-call",
-            toolCallId: "blocked-complete",
-            toolName: COMPLETE_TASK_TOOL_NAME,
-            input: "{}",
+            toolCallId: `blocked-${blockedCalls}`,
+            toolName: attemptedTool,
+            input: attemptedInput,
           });
           controller.enqueue({
             type: "finish",
@@ -131,6 +141,18 @@ assert.deepEqual(
   "discovery-gate refusal must not grade as null/complete_task success",
 );
 assert.ok(blockedCalls >= 1, "model must have attempted complete_task");
+
+attemptedTool = SUBMIT_ANSWER_TOOL_NAME;
+attemptedInput = JSON.stringify({ answer: "42", response_obligation_quote: "Send the total to my colleague." });
+const quoted = await runEveToolLoop({
+  model: blockedModel, system: "Abstract terminal contract fixture",
+  tools: createEvalTerminalTools({ discoveryCompleted: () => true,
+    responseObligation: { kind: "no_answer", instruction: "Send the total to my colleague." } }),
+  messages: [{ role: "user", content: "Send the total to my colleague." }],
+  maxSteps: 3, agentName: "quoted-terminal-conflict", telemetry: { isEnabled: false },
+});
+assert.notEqual(quoted.stopReason, "completed");
+assert.deepEqual(evalTerminalGrade({ messages: quoted.messages, stopReason: quoted.stopReason }), { kind: "unterminated" });
 
 
 console.log("PASS: terminal refusal remains an error until a workflow exists");

@@ -125,6 +125,71 @@ mod tests {
         crate::test_support::graph_fixtures::test_execute_session(cgs, "publish-pages")
     }
 
+    #[test]
+    fn shared_budget_reclaims_paging_slack_for_complete_scalar() {
+        let mut first = synthetic_published_result_step(2, None);
+        let mut second = synthetic_published_result_step(1, None);
+        for (step, size) in [(&mut first, 5000), (&mut second, 7000)] {
+            let result = Arc::make_mut(&mut step.result);
+            for index in 0..result.entities().len() {
+                let mut row = result.entities()[index].clone();
+                row.fields.insert(
+                    "note".into(),
+                    plasm_core::Value::String("n".repeat(size)).into(),
+                );
+                result.collection = result.collection.replace(index, row).unwrap();
+            }
+        }
+        for steps in [[first.clone(), second.clone()], [second, first]] {
+            let output = publish_plasm_result_steps(None, None, &steps);
+            assert!(output
+                .markdown
+                .contains(&format!("\"{}\"", "n".repeat(7000))));
+            assert!(!output.markdown.contains("(preview:"));
+            let table_bytes: usize = output
+                .markdown
+                .split("```tsv\n")
+                .skip(1)
+                .map(|section| section.split("```").next().unwrap().trim_end().len())
+                .sum();
+            assert!(table_bytes <= crate::mcp_run_markdown::MCP_INLINE_TEXT_BUDGET_BYTES);
+            assert!(output
+                .delivered_steps
+                .iter()
+                .any(|step| step.result.paging_handle.is_some()));
+        }
+    }
+
+    #[test]
+    fn complete_scalar_restoration_precedes_enlarging_huge_previews() {
+        let make_step = |count, size| {
+            let mut step = synthetic_published_result_step(count, None);
+            let result = Arc::make_mut(&mut step.result);
+            for index in 0..count {
+                let mut row = result.entities()[index].clone();
+                row.fields.insert(
+                    "note".into(),
+                    plasm_core::Value::String("n".repeat(size)).into(),
+                );
+                result.collection = result.collection.replace(index, row).unwrap();
+            }
+            step
+        };
+        let huge = make_step(1, 100_000);
+        let note = make_step(1, 5000);
+        let paged = make_step(2, 3000);
+        for steps in [
+            [huge.clone(), note.clone(), paged.clone()],
+            [note, huge, paged],
+        ] {
+            let output = publish_plasm_result_steps(None, None, &steps);
+            assert!(output
+                .markdown
+                .contains(&format!("\"{}\"", "n".repeat(5000))));
+            assert!(output.markdown.contains("(preview:"));
+        }
+    }
+
     fn publish_plasm_result_steps(
         cgs: Option<&CGS>,
         index: Option<&mut PlasmMetaIndex>,

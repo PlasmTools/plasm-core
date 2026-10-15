@@ -1,6 +1,67 @@
 use super::*;
 use crate::plasm_compile::compile_python_program;
 
+#[test]
+fn conditional_effects_preserve_source_scope_and_fallthrough() {
+    on_runtime(async {
+        for inside_branch in [true, false] {
+            let (es, host, calls) = fixture(3);
+            let symbols = es.teaching_exposure.as_ref().unwrap().to_symbol_map();
+            let item = symbols.entity_sym_for("fixture", "Item");
+            let publish = symbols.method_sym_for("fixture", "Item", "publish");
+            let indent = if inside_branch {
+                "            "
+            } else {
+                "        "
+            };
+            let code = format!(
+                "class P(Program):\n    def build(self):\n        return {item}.query().flat_map(lambda row: self.process(row))\n    def process(self, row):\n        if row.id == 'i1':\n            {item}.{publish}(content='selected:' + row.id)\n{indent}{item}.{publish}(content='follow:' + row.id)\n"
+            );
+            let bundle = compile_python_program(&es, &code).await.unwrap();
+            assert!(calls.lock().unwrap().is_empty());
+            evaluate_plasm_comp_dry(&es, &bundle).unwrap();
+            execute(&es, &host, &bundle).await.unwrap();
+            let expected = if inside_branch {
+                vec!["/items", "/publish:selected:i1", "/publish:follow:i1"]
+            } else {
+                vec![
+                    "/items",
+                    "/publish:follow:i0",
+                    "/publish:selected:i1",
+                    "/publish:follow:i1",
+                    "/publish:follow:i2",
+                ]
+            };
+            assert_eq!(*calls.lock().unwrap(), expected, "{code}");
+        }
+    });
+}
+
+#[test]
+fn selected_receiver_and_ordered_effects_survive_projection_and_limit() {
+    on_runtime(async {
+        let (es, host, calls) = fixture(3);
+        let symbols = es.teaching_exposure.as_ref().unwrap().to_symbol_map();
+        let item = symbols.entity_sym_for("fixture", "Item");
+        let mark = symbols.method_sym_for("fixture", "Item", "mark");
+        let publish = symbols.method_sym_for("fixture", "Item", "publish");
+        let code = format!(
+            "class P(Program):\n    def build(self):\n        selected = {item}.query().where(lambda row: row.id == 'i2').select('id').take(1)\n        target = {item}.get(selected)\n        return selected.flat_map(lambda row: [target.{mark}(), {item}.{publish}(content=row.id), {item}.{publish}(content=row.id)])\n"
+        );
+        let bundle = compile_python_program(&es, &code).await.unwrap();
+        assert!(calls.lock().unwrap().is_empty());
+        evaluate_plasm_comp_dry(&es, &bundle).unwrap();
+        execute(&es, &host, &bundle).await.unwrap();
+        let actual = calls.lock().unwrap();
+        let effects = actual
+            .iter()
+            .filter(|call| call.starts_with("/marks/") || call.starts_with("/publish:"))
+            .map(String::as_str)
+            .collect::<Vec<_>>();
+        assert_eq!(effects, ["/marks/i2", "/publish:i2", "/publish:i2"]);
+    });
+}
+
 fn nested_source(es: &ExecuteSession, inner: &str, bound: u32) -> String {
     let symbols = es.teaching_exposure.as_ref().unwrap().to_symbol_map();
     let item = symbols.entity_sym_for("fixture", "Item");

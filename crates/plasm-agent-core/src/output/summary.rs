@@ -9,19 +9,33 @@ use plasm_core::CGS;
 use plasm_runtime::ExecutionResult;
 use std::collections::BTreeSet;
 
-/// Unicode-scalar cap on encoded cells for MCP ` ```tsv ` cells.
+/// Even a generously configured response does not inline an unbounded value.
+const MAX_INLINE_CELL_BYTES: usize = 64 * 1024;
+const MIN_PREVIEW_CELL_BYTES: usize = 128;
+
+fn encoded_character_bytes(ch: char) -> usize {
+    match ch {
+        '"' | '\\' | '\n' | '\r' | '\t' | '\u{8}' | '\u{c}' => 2,
+        ch if ch <= '\u{1f}' => 6,
+        ch => ch.len_utf8(),
+    }
+}
+
+/// Byte cap on encoded cells, including quoting and escape sequences.
 #[derive(Debug, Clone, Copy)]
 pub(crate) struct TsvCellPolicy {
-    pub max_scalars: usize,
+    pub max_bytes: usize,
     pub preview: bool,
+    pub table_bytes: Option<usize>,
 }
 
 #[cfg(test)]
 impl TsvCellPolicy {
     pub(crate) const fn mcp_default() -> Self {
         Self {
-            max_scalars: 16_384,
+            max_bytes: 16_384,
             preview: false,
+            table_bytes: None,
         }
     }
 }
@@ -29,23 +43,43 @@ impl TsvCellPolicy {
 /// Encode a string as one JSON string literal, never as a lossy whitespace summary.
 /// Over-budget cells are explicitly withheld; they are not truncated valid-looking values.
 fn sanitize_tsv_cell_with_flag(s: &str, policy: &TsvCellPolicy) -> (String, bool) {
-    let encoded = serde_json::to_string(s).expect("string serialization is infallible");
-    if policy.preview && encoded.chars().count() > policy.max_scalars {
-        let prefix: String = s.chars().take(policy.max_scalars / 6).collect();
+    let (encoded_bytes, total) = s.chars().fold((2usize, 0usize), |(bytes, count), ch| {
+        (bytes + encoded_character_bytes(ch), count + 1)
+    });
+    if policy.preview && encoded_bytes > policy.max_bytes {
+        // Reserve the complete marker and JSON quotes. Count encoded bytes for
+        // each original character so neither Unicode nor escapes are split.
+        let overhead = format!("(preview: \"\"; characters 0..{total} of {total})").len();
+        let mut remaining = policy.max_bytes.saturating_sub(overhead);
+        let mut count = 0;
+        let prefix: String = s
+            .chars()
+            .take_while(|ch| {
+                let bytes = encoded_character_bytes(*ch);
+                if bytes > remaining {
+                    return false;
+                }
+                remaining -= bytes;
+                count += 1;
+                true
+            })
+            .collect();
         return (
             format!(
-                "(preview: {}; {} characters total)",
+                "(preview: {}; characters 0..{count} of {total})",
                 serde_json::to_string(&prefix).expect("string serialization"),
-                s.chars().count()
             ),
             true,
         );
     }
-    bounded_encoded_cell(encoded, policy)
+    bounded_encoded_cell(
+        serde_json::to_string(s).expect("string serialization is infallible"),
+        policy,
+    )
 }
 
 fn bounded_encoded_cell(encoded: String, policy: &TsvCellPolicy) -> (String, bool) {
-    if encoded.chars().count() <= policy.max_scalars {
+    if encoded.len() <= policy.max_bytes {
         (encoded, false)
     } else {
         (
@@ -90,12 +124,14 @@ pub(crate) fn format_result_tsv_observation(
     result: &impl super::RowObservation,
     cgs: Option<&CGS>,
     rows: usize,
+    table_bytes: Option<usize>,
 ) -> (String, InBandSummaryReport) {
     let mut omitted = BTreeSet::new();
     let mut report = InBandSummaryReport::default();
     let policy = TsvCellPolicy {
-        max_scalars: 1024,
+        max_bytes: MAX_INLINE_CELL_BYTES,
         preview: true,
+        table_bytes,
     };
     let text = format_tsv_inner(
         result,
@@ -107,6 +143,56 @@ pub(crate) fn format_result_tsv_observation(
         true,
     );
     (text, report)
+}
+
+struct TsvCell {
+    text: String,
+    source_text: Option<String>,
+    fidelity: InBandSummaryReport,
+    truncatable: bool,
+}
+
+/// Spend an oversized row's reduction on its largest fields first. Smaller
+/// complete values survive whenever a shorter preview of a larger field fits.
+fn fit_cells(cells: &mut [TsvCell], columns: &[String], budget: usize) {
+    let mut excess = cells
+        .iter()
+        .map(|cell| cell.text.len())
+        .sum::<usize>()
+        .saturating_sub(budget);
+    let mut order: Vec<_> = (0..cells.len()).collect();
+    order.sort_by_key(|&index| std::cmp::Reverse(cells[index].text.len()));
+    for index in order {
+        if excess == 0 {
+            break;
+        }
+        let cell = &mut cells[index];
+        if !cell.truncatable || cell.text.len() <= MIN_PREVIEW_CELL_BYTES {
+            continue;
+        }
+        let limit = cell
+            .text
+            .len()
+            .saturating_sub(excess)
+            .max(MIN_PREVIEW_CELL_BYTES);
+        let policy = TsvCellPolicy {
+            max_bytes: limit,
+            preview: true,
+            table_bytes: None,
+        };
+        let (text, lost) = match &cell.source_text {
+            Some(source) => sanitize_tsv_cell_with_flag(source, &policy),
+            None => bounded_encoded_cell(cell.text.clone(), &policy),
+        };
+        excess = excess.saturating_sub(cell.text.len().saturating_sub(text.len()));
+        cell.text = text;
+        if lost {
+            cell.fidelity.record(
+                &columns[index],
+                SummaryFidelityLoss::TsvScalarTransportClamp,
+            );
+        }
+    }
 }
 
 fn format_tsv_inner(
@@ -130,7 +216,7 @@ fn format_tsv_inner(
 
     let row_limit = max_entity_rows.unwrap_or(usize::MAX);
     for entity in result.rows().take(row_limit) {
-        let row: Vec<String> = columns
+        let mut cells: Vec<TsvCell> = columns
             .iter()
             .map(|col| {
                 let mut cell_report = InBandSummaryReport::default();
@@ -182,6 +268,15 @@ fn format_tsv_inner(
                 let unavailable = entity.unavailable_fields.contains(col)
                     || blob_base.is_some_and(|base| entity.unavailable_fields.contains(base));
                 let encode = !unavailable && !cell_report.any_loss();
+                let source_text = if encode {
+                    match &cell_value {
+                        Some(plasm_core::Value::String(text)) => Some(text.clone()),
+                        None if blob_base.is_some() => Some(raw.clone()),
+                        _ => None,
+                    }
+                } else {
+                    None
+                };
                 let (cell, transport_truncated) = match cell_value {
                     _ if !cell_report.projection_errors_for(col).is_empty() => {
                         omitted.insert(col.clone());
@@ -219,8 +314,27 @@ fn format_tsv_inner(
                     cell_report.record(col.as_str(), SummaryFidelityLoss::TsvScalarTransportClamp);
                     omitted.insert(col.clone());
                 }
-                report.merge_from(&cell_report);
-                cell
+                TsvCell {
+                    text: cell,
+                    source_text,
+                    fidelity: cell_report,
+                    truncatable: encode,
+                }
+            })
+            .collect();
+        if let Some(budget) = policy.table_bytes {
+            let framing = lines[0].len() + 1 + cells.len().saturating_sub(1);
+            fit_cells(&mut cells, &columns, budget.saturating_sub(framing));
+        }
+        let row: Vec<_> = cells
+            .into_iter()
+            .enumerate()
+            .map(|(index, cell)| {
+                if cell.fidelity.any_loss() {
+                    omitted.insert(columns[index].clone());
+                }
+                report.merge_from(&cell.fidelity);
+                cell.text
             })
             .collect();
         lines.push(row.join("\t"));
@@ -329,7 +443,7 @@ mod tests {
             operations: OperationLedger::empty(),
         };
         let snapshot = super::super::entity_to_json(&result.entities()[0]);
-        let (body, report) = format_result_tsv_observation(&result, None, usize::MAX);
+        let (body, report) = format_result_tsv_observation(&result, None, usize::MAX, None);
         assert!(!report.any_loss(), "{body}");
         let (summary, omitted, report) = format_result_tsv_with_cgs(&result, None, None);
         assert_eq!(summary, body);

@@ -191,13 +191,14 @@ fn mcp_server_initialize_workflow_uses_session_mode_not_intent_key() {
     assert!(!text.contains("several discovery calls"));
     assert!(!text.contains("pass **`query`**"));
     assert!(!text.contains("syntax guide in MCP initialize"));
-    assert!(text.contains("Reuse it for `plasm` / `plasm_run`"));
+    assert!(text.contains("Reuse its `logical_session_ref` for `plasm` / `plasm_run`"));
     assert!(text.contains("no tool call"));
     assert!(!text.contains("until observation matches"));
     assert!(!text.contains("Then reply with exactly: DONE"));
     assert!(!text.contains("discover_capabilities` first only"));
     assert!(!text.contains("routing_ref") && !text.contains("clarify_choices"));
-    assert!(text.contains("declared prerequisites"));
+    assert!(text
+        .contains("Follow prerequisites: call producers and bind outputs to consumer arguments"));
     assert!(!text.contains("provider brand"));
     assert!(!text.contains("semantic-auto-seed"));
 }
@@ -386,7 +387,7 @@ fn plasm_context_tool_description_contract_append_vs_refresh() {
         "initialize workflow must not treat intent as session key"
     );
     assert!(
-        workflow.contains("Reuse it for `plasm` / `plasm_run`"),
+        workflow.contains("Reuse its `logical_session_ref` for `plasm` / `plasm_run`"),
         "expected steady-state guidance in initialize workflow"
     );
 }

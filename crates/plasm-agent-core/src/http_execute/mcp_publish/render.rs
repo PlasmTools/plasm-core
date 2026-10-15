@@ -94,7 +94,7 @@ fn build_step_section(
         sections.push_str(&format_operations_block(&step.result));
         append_coverage_note(sections, resolved, plan);
         if fmt.in_band.any_loss() {
-            sections.push_str("\nSome cells are previewed or omitted; the displayed text is not exact. Source values remain intact. Use typed `@compute` over the same selection to return a smaller answer, predicate or bounded excerpt. Returning the full text again is subject to the same preview limit. Do not repeat completed actions to inspect their results.\n");
+            sections.push_str("\nSome cells are previewed or omitted; the displayed text is not exact. Source values remain intact. Select fewer rows or fields to display a complete value within the response budget. For a long string, use typed `@compute` on the source value and return `text[start:end]` with bounded, adjacent character ranges; preview ranges are zero-based and end-exclusive. Inspect every needed range before making claims about the whole text. Do not repeat completed actions to inspect their results.\n");
         }
         if let Some(handle) = &resolved.artifact {
             if plan.artifact_access != crate::mcp_run_markdown::ArtifactAccessMode::DagCompute

@@ -10,25 +10,21 @@ import {
 } from "./descriptions.js";
 import { loadPromptAsset } from "../prompts/index.js";
 import { toolInput } from "./tool-input.js";
-import { logicalSessionRefSchema, runReferenceSchema } from "../runtime/session-contract.js";
+import { logicalSessionRefSchema, runReferenceSchema, workflowIntentSchema } from "../runtime/session-contract.js";
 
-const plasmContextInputSchema = z.object({
-  intent: z
-    .string()
-    .min(1)
-    .describe(
-      "The current intent for this discovery turn. The runtime appends it to the workflow provenance chain and retains ancestor context; explicit revisions may replace earlier goals.",
+const contextIntent = workflowIntentSchema.describe(
+  "The current intent for this discovery turn. The runtime appends it to the workflow provenance chain and retains ancestor context; explicit revisions may replace earlier goals.",
+);
+const plasmContextInputSchema = z.discriminatedUnion("session_mode", [
+  z.object({ intent: contextIntent, session_mode: z.literal("new") }).strict(),
+  z.object({
+    intent: contextIntent,
+    session_mode: z.literal("extend"),
+    logical_session_ref: logicalSessionRefSchema.describe(
+      "Copy the existing workflow reference verbatim; do not reconstruct or abbreviate it.",
     ),
-  session_mode: z
-    .enum(["new", "extend"])
-    .optional()
-    .describe(
-      'Use "new" once per workflow; "extend" on later turns with the same logical_session_ref. Defaults to new when omitted.',
-    ),
-  logical_session_ref: logicalSessionRefSchema
-    .optional()
-    .describe("Required on session_mode extend. Copy the logical_session_ref from plasm_context verbatim; do not reconstruct or abbreviate it."),
-}).strict();
+  }).strict(),
+]);
 
 const plasmInputSchema = z.object({
   logical_session_ref: logicalSessionRefSchema
@@ -64,8 +60,8 @@ export function createPlasmTools(
     inputSchema: toolInput(plasmContextInputSchema),
     execute: async (args) => invoke("plasm_context", () => runtime.plasmContext({
       intent: args.intent,
-      sessionMode: args.session_mode ?? "new",
-      logicalSessionRef: args.logical_session_ref,
+      sessionMode: args.session_mode,
+      logicalSessionRef: args.session_mode === "extend" ? args.logical_session_ref : undefined,
     })),
   });
 

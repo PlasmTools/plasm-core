@@ -11,9 +11,12 @@
 import assert from "node:assert/strict";
 import {
   EVAL_TERMINAL_COMPLETION,
+  EVAL_WORKFLOW_INITIALIZATION,
+  WORKFLOW_INITIALIZATION_SLOT,
   WORKFLOW_COMPLETION_SLOT,
   buildDefaultSystemLiturgy,
   overlayWorkflowCompletion,
+  overlayNamedSlot,
 } from "../src/prompts/index.js";
 import {
   COMPLETE_TASK_TOOL_DESCRIPTION,
@@ -53,9 +56,27 @@ assert.equal(
 assert.match(evalLiturgy, /complete_task/);
 assert.match(evalLiturgy, /submit_answer/);
 assert.match(evalLiturgy, /no reportable value/);
-assert.match(evalLiturgy, /Call `plasm_context`/, "workflow steps after the slot must remain");
+assert.ok(product.includes(WORKFLOW_INITIALIZATION_SLOT));
+assert.ok(evalLiturgy.includes(EVAL_WORKFLOW_INITIALIZATION));
+assert.ok(!evalLiturgy.includes(WORKFLOW_INITIALIZATION_SLOT), "host initialization must replace new-session instruction");
+assert.doesNotMatch(evalLiturgy, /session_mode: "new"/);
+for (const source of ["no initialization slot", `${WORKFLOW_INITIALIZATION_SLOT}\n${WORKFLOW_INITIALIZATION_SLOT}`]) {
+  assert.throws(() => overlayNamedSlot(source, WORKFLOW_INITIALIZATION_SLOT,
+    EVAL_WORKFLOW_INITIALIZATION, "WORKFLOW_INITIALIZATION_SLOT"),
+    /exactly one WORKFLOW_INITIALIZATION_SLOT/);
+}
 assert.doesNotMatch(evalLiturgy, /Python source text, not JSON data/, "eval workflow does not duplicate tool semantics");
 assert.equal(evalLiturgy.includes("halt-after"), false);
+
+// The shared workflow must survive terminal overlays. These are exposure
+// checks, not evidence that a language model will obey the planning contract.
+for (const workflow of [product, evalLiturgy]) {
+  assert.match(workflow, /Before writes, verify targets against observed identity and selection conditions/);
+  assert.match(workflow, /Preserve selection evidence/);
+  assert.match(workflow, /Previews are incomplete/);
+  assert.match(workflow, /Preserve unrequested properties/);
+  assert.match(workflow, /repair the unfinished requirement/);
+}
 
 const decoyWorkflow =
   "# Plasm workflow\n\n" +

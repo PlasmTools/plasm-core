@@ -106,8 +106,8 @@ fn python_query_card_advertises_only_source_call_inputs() {
 
 #[test]
 fn python_language_teaches_inferred_compute_inputs() {
-    assert!(LANGUAGE.contains("Inference: query -> rows; proven singleton -> row"));
-    assert!(LANGUAGE.contains("Annotations optional"));
+    assert!(LANGUAGE.contains("query -> rows; proven singleton -> row"));
+    assert!(LANGUAGE.contains("Optional annotations"));
     assert!(!LANGUAGE.contains("list[Row[eN]]"));
 }
 

@@ -13,7 +13,7 @@ pub enum SummaryFidelityLoss {
     SchemaLossyCap,
     /// Default [`plasm_core::ValueTableCellBudget`] string clamp (e.g. 160 UTF-8 bytes + ellipsis).
     DefaultTableBudgetClamp,
-    /// [`super::summary::sanitize_tsv_cell`] Unicode-scalar cap for MCP ` ```tsv ` fences.
+    /// Encoded-cell byte budget for MCP ` ```tsv ` fences.
     TsvScalarTransportClamp,
     /// Cell replaced with `(in artifact)`; full string only in snapshot JSON.
     ReferenceOnlyWithheld,

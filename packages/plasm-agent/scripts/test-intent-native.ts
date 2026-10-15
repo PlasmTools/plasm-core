@@ -7,10 +7,11 @@ import { sessionCases } from "./test-session-contract.js";
 // Rust decodes provenance before looking for a discovery generation. No network
 // or model is involved; the activation error witnesses successful native decode.
 const engine = new PlasmEngine();
+const activationRequired = "discovery must be activated before routing";
 for (const state of sessionCases(128)) {
   await assert.rejects(
     engine.routeIntent(JSON.stringify(state.intentProvenance)),
-    /activateDiscovery/,
+    (error: unknown) => error instanceof Error && error.message === activationRequired,
   );
 }
 for (const nodes of [
@@ -22,7 +23,7 @@ for (const nodes of [
   [{ parent: null, intent: "root\ud800" }],
 ]) {
   await assert.rejects(engine.routeIntent(JSON.stringify({ nodes })),
-    (error: unknown) => error instanceof Error && !error.message.includes("activateDiscovery"));
+    (error: unknown) => error instanceof Error && error.message !== activationRequired);
 }
 console.log("intent-native: 128 generated TypeScript -> JSON -> Rust chains accepted; malformed ancestry and Unicode rejected");
 
@@ -31,5 +32,6 @@ console.log("intent-native: 128 generated TypeScript -> JSON -> Rust chains acce
 for (const [intent, accepted] of [["\u0085", false], ["\ufeff", true], [" \u0085 ", false], ["  intent  ", true]] as const) {
   assert.equal(workflowIntentSchema.safeParse(intent).success, accepted);
   await assert.rejects(engine.routeIntent(JSON.stringify({ nodes: [{ parent: null, intent }] })),
-    (error: unknown) => error instanceof Error && error.message.includes("activateDiscovery") === accepted);
+    (error: unknown) => error instanceof Error && (error.message === activationRequired) === accepted);
 }
+await engine.close();
