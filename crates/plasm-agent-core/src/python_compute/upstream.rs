@@ -118,13 +118,39 @@ fn render(
         ),
         ValueShape::MappingRecord { record } => {
             use sha2::{Digest, Sha256};
-            output_annotation(record, cgs, catalogs, out)?;
-            format!(
-                "PlasmOutput{:x}",
+            let name = format!(
+                "PlasmMapping{:x}",
                 Sha256::digest(serde_json::to_vec(&record.shape).map_err(|error| {
                     PythonComputeError::BoundaryFingerprintEncoding(std::sync::Arc::new(error))
                 })?,)
-            )
+            );
+            // The argument adapter converts only the outer record to a dict.
+            // Nested values retain their materialized contracts. Output construction
+            // accepts additional representations and must not widen this input view.
+            let fields = match &record.shape {
+                ValueShape::Record { fields } | ValueShape::ObservedRecord { fields, .. } => fields,
+                _ => return Err(PythonComputeError::MappingInputRequiresRecord.into()),
+            };
+            if !out.contains(&format!("{name} = TypedDict")) {
+                let mut members = Vec::new();
+                for (key, value) in fields {
+                    let mut ty = render(value, cgs, catalogs, out, depth + 1)?;
+                    if matches!(&record.shape, ValueShape::ObservedRecord { optional_fields, .. } if optional_fields.contains(key))
+                    {
+                        ty = format!("NotRequired[{ty}]");
+                    }
+                    let key = serde_json::to_string(key).map_err(|error| {
+                        PythonComputeError::BoundaryKeyEncoding(std::sync::Arc::new(error))
+                    })?;
+                    members.push(format!("{key}: {ty}"));
+                }
+                out.push_str("from typing import TypedDict, NotRequired\n");
+                out.push_str(&format!(
+                    "{name} = TypedDict(\"{name}\", {{{}}})\n",
+                    members.join(", ")
+                ));
+            }
+            name
         }
         ValueShape::Set { element } => {
             format!("set[{}]", render(element, cgs, catalogs, out, depth + 1)?)

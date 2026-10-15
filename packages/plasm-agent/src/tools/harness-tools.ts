@@ -42,7 +42,10 @@ export const EVAL_TERMINAL_REQUIRES_DISCOVERY =
   "Do not claim unsupported access or abandon before discovery.";
 
 export type EvalTerminalGate = {
-  responseObligation?: { kind: "no_answer" | "value_required" | "uncertain"; instruction: string };
+  responseObligation?: {
+    /** Host-owned resolution. Terminal payloads and agent quotes are not evidence. */
+    resolve: (terminal: "no_answer" | "value_required") => Promise<"no_answer" | "value_required" | "uncertain">;
+  };
   /**
    * Return true once initial `plasm_context` has opened a workflow session.
    * When omitted, terminals are ungated (non-eval or tests that inject tools directly).
@@ -50,11 +53,13 @@ export type EvalTerminalGate = {
   discoveryCompleted?: () => boolean;
 };
 
-function assertResponseObligation(kind: "no_answer" | "value_required", gate?: EvalTerminalGate): void {
+async function assertResponseObligation(kind: "no_answer" | "value_required", gate?: EvalTerminalGate): Promise<void> {
   const obligation = gate?.responseObligation;
-  if (!obligation || obligation.kind === "uncertain" || obligation.kind === kind) return;
+  if (!obligation) return;
+  const resolved = await obligation.resolve(kind);
+  if (resolved === kind) return;
   throw new Error(
-    `Response-obligation conflict: the host contract is ${obligation.kind}, but this terminal declares ${kind}. ` +
+    `Response-obligation conflict: the host contract is ${resolved}, but this terminal declares ${kind}. ` +
     "Re-read the instruction. Writing a value into an app or sending it to another person is an action, not an answer to the requester. " +
     "Repair the unfinished requirement before choosing a terminal: establish the requested effect or value from observations. Switching terminals does not perform missing work. " +
     "Only the host can revise this contract; quoting the instruction does not change it. No terminal has been recorded.",
@@ -78,7 +83,7 @@ export function createCompleteTaskTool(gate?: EvalTerminalGate): ToolSet {
       inputSchema: toolInput(completeTaskInputSchema),
       execute: async () => {
         assertDiscoveryCompleted(gate);
-        assertResponseObligation("no_answer", gate);
+        await assertResponseObligation("no_answer", gate);
         return "Completion claim recorded; task success has not been independently verified.";
       },
     }),
@@ -92,7 +97,7 @@ export function createSubmitAnswerTool(gate?: EvalTerminalGate): ToolSet {
       inputSchema: toolInput(submitAnswerInputSchema),
       execute: async () => {
         assertDiscoveryCompleted(gate);
-        assertResponseObligation("value_required", gate);
+        await assertResponseObligation("value_required", gate);
         return "Answer submission recorded; correctness and requested effects have not been independently verified.";
       },
     }),

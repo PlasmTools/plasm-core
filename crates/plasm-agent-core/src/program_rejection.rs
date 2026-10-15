@@ -147,6 +147,8 @@ pub enum PythonComputeError {
     BoundaryValueDomainMissing { entry_id: String, value_ref: String },
     #[error("Python declaration contract nesting exceeds the maximum depth")]
     BoundaryContractDepthExceeded,
+    #[error("Python mapping input requires a record contract")]
+    MappingInputRequiresRecord,
     #[error("Python declaration requires an explicit temporal contract")]
     BoundaryTemporalShapeRequired,
     #[error("Python declaration requires an explicit array element contract")]

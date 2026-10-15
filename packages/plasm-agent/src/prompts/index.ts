@@ -111,10 +111,10 @@ export function overlayWorkflowCompletion(workflow: string, completion: string):
  * crates asset). Overlay only when the task-ledger experiment is on.
  */
 export const TASK_LEDGER_PLAN_SLOT =
-  "If requested effects remain absent, revise the plan within the same session.";
+  "After call or terminal rejection, repair the unfinished requirement in-session; changing call shape alone does not complete it.";
 
 export const TASK_LEDGER_PLAN_OVERLAY =
-  "If requested effects remain absent, revise the host task ledger; do not reconstruct scope from conversation alone.";
+  "After call or terminal rejection, revise the host task ledger and repair the unfinished requirement in-session; changing call shape alone does not complete it. Do not reconstruct scope from conversation alone.";
 
 /**
  * Static ledger rite — composed as its own section, not spliced into a

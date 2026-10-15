@@ -325,7 +325,7 @@ entities:
           param: owner_email
   Friend:
     id_field: email
-    description: Venmo friendship — peer identity for a payee or payment-request counterparty.
+    description: A saved Venmo friendship. Membership is independent of personal relationships and of whether a user can receive a payment or request. Use User for counterparty identity; adding a friendship changes the saved friend list.
     discovery:
       names:
       - friend

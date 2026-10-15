@@ -54,7 +54,7 @@ const ungatedComplete = ungated[COMPLETE_TASK_TOOL_NAME]?.execute;
 assert.ok(ungatedComplete);
 assert.match(String(await ungatedComplete({}, executionOptions)), /claim recorded/);
 
-const actionTerminals = createEvalTerminalTools({responseObligation: {kind: "no_answer", instruction: "Send the total to my colleague."}});
+const actionTerminals = createEvalTerminalTools({responseObligation: {resolve: async () => "no_answer"}});
 const conflictingSubmit = actionTerminals[SUBMIT_ANSWER_TOOL_NAME]?.execute;
 assert.ok(conflictingSubmit);
 await assert.rejects(async () => conflictingSubmit({answer:"42"}, executionOptions), /Response-obligation conflict/);
@@ -62,17 +62,17 @@ await assert.rejects(async () => conflictingSubmit({answer:"42"}, executionOptio
   /Repair the unfinished requirement before choosing a terminal/);
 await assert.rejects(async () => conflictingSubmit({answer:"42", response_obligation_quote:"invented wording"}, executionOptions), /Response-obligation conflict/);
 // Even an exact quotation cannot authorize a different terminal destination.
-const advisory = createEvalTerminalTools({responseObligation: {kind: "no_answer", instruction: "Tell me the total."}});
+const advisory = createEvalTerminalTools({responseObligation: {resolve: async () => "no_answer"}});
 const overrideSubmit = advisory[SUBMIT_ANSWER_TOOL_NAME]?.execute;
 assert.ok(overrideSubmit);
 await assert.rejects(async () => overrideSubmit({answer:"42",response_obligation_quote:"Tell me the total."}, executionOptions), /Response-obligation conflict/);
 const submitSchema = asSchema(actionTerminals[SUBMIT_ANSWER_TOOL_NAME]!.inputSchema);
 assert.ok(submitSchema.validate);
 assert.equal((await submitSchema.validate({ answer: "42", response_obligation_quote: "Send the total to my colleague." })).success, false);
-const uncertain = createEvalTerminalTools({ responseObligation: { kind: "uncertain", instruction: "Inspect records." } });
-assert.match(String(await uncertain[SUBMIT_ANSWER_TOOL_NAME]!.execute!({answer:"42"}, executionOptions)), /submission recorded/);
-assert.match(String(await uncertain[COMPLETE_TASK_TOOL_NAME]!.execute!({}, executionOptions)), /claim recorded/);
-const valueTerminals = createEvalTerminalTools({responseObligation:{kind:"value_required", instruction:"How many items?"}});
+const uncertain = createEvalTerminalTools({ responseObligation: { resolve: async () => "uncertain" } });
+await assert.rejects(async () => uncertain[SUBMIT_ANSWER_TOOL_NAME]!.execute!({answer:"42"}, executionOptions), /Response-obligation conflict/);
+await assert.rejects(async () => uncertain[COMPLETE_TASK_TOOL_NAME]!.execute!({}, executionOptions), /Response-obligation conflict/);
+const valueTerminals = createEvalTerminalTools({responseObligation:{resolve: async () => "value_required"}});
 const conflictingComplete = valueTerminals[COMPLETE_TASK_TOOL_NAME]?.execute;
 assert.ok(conflictingComplete);
 await assert.rejects(async () => conflictingComplete({}, executionOptions), /Response-obligation conflict/);
@@ -147,7 +147,7 @@ attemptedInput = JSON.stringify({ answer: "42", response_obligation_quote: "Send
 const quoted = await runEveToolLoop({
   model: blockedModel, system: "Abstract terminal contract fixture",
   tools: createEvalTerminalTools({ discoveryCompleted: () => true,
-    responseObligation: { kind: "no_answer", instruction: "Send the total to my colleague." } }),
+    responseObligation: { resolve: async () => "no_answer" } }),
   messages: [{ role: "user", content: "Send the total to my colleague." }],
   maxSteps: 3, agentName: "quoted-terminal-conflict", telemetry: { isEnabled: false },
 });

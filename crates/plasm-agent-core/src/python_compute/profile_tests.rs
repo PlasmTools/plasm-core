@@ -1,6 +1,59 @@
 //! Representatives of syntax families, not a second Python grammar.
 use super::*;
 
+#[test]
+fn mapping_input_preserves_nested_record_provenance() {
+    let cgs = plasm_core::loader::load_schema_dir(
+        &std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../fixtures/schemas/python_value_contract"),
+    )
+    .unwrap();
+    let child = Type::record(
+        BTreeMap::from([("title".into(), Type::scalar(FieldType::String))]),
+        Default::default(),
+    );
+    let record = Type::record(
+        BTreeMap::from([(
+            "children".into(),
+            Type {
+                shape: ValueShape::Array {
+                    element: Box::new(child),
+                },
+                domain: None,
+                nullable: false,
+            },
+        )]),
+        Default::default(),
+    );
+    let input = Type {
+        shape: ValueShape::Array {
+            element: Box::new(Type {
+                shape: ValueShape::MappingRecord {
+                    record: Box::new(record),
+                },
+                domain: None,
+                nullable: false,
+            }),
+        },
+        domain: None,
+        nullable: false,
+    };
+    let mut declarations = stubs(&BTreeMap::new(), &cgs).unwrap();
+    let annotation = input_type(&input, &cgs, &BTreeMap::new(), &mut declarations).unwrap();
+    let source = format!("def names(rows: {annotation}) -> str:\n    return ', '.join(child.title for row in rows for child in row['children'])\n");
+    super::super::admission::check_definition(&source, &declarations).unwrap();
+    assert!(super::super::admission::check_definition(
+        &source.replace("child.title", "child.absent"),
+        &declarations
+    )
+    .is_err());
+    assert!(super::super::admission::check_definition(
+        &source.replace("-> str", "-> int"),
+        &declarations
+    )
+    .is_err());
+}
+
 #[tokio::test]
 async fn profile_syntax_families_check_and_execute() {
     let pool = crate::python_pool::PythonPool::default();
