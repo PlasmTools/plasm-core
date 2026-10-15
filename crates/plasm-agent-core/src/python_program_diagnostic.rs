@@ -19,6 +19,26 @@ pub(crate) fn admission_error(
     }
 }
 
+/// Render the authoritative parser location, with a bounded Unicode-safe excerpt.
+/// No delimiter blacklist: comments and string literals are owned by Python.
+pub(crate) fn syntax_correction(source: &str, error: &ruff_python_parser::ParseError) -> String {
+    let offset = usize::from(error.location.start()).min(source.len());
+    let prefix = &source[..offset];
+    let line = prefix.bytes().filter(|b| *b == b'\n').count() + 1;
+    let line_start = prefix.rfind('\n').map_or(0, |index| index + 1);
+    let column = source[line_start..offset].chars().count();
+    let window_start = column.saturating_sub(60);
+    let excerpt: String = source[line_start..]
+        .split('\n')
+        .next()
+        .unwrap_or("")
+        .chars()
+        .skip(window_start)
+        .take(120)
+        .collect();
+    format!("Python syntax at line {line}, column {}:\n{excerpt}\n{}^\n{error}\nSubmit a complete valid Python program. No program prefix was executed.", column + 1, " ".repeat(column - window_start))
+}
+
 /// Parser recovery is evidence of syntax only, never evidence that a prefix ran.
 pub(crate) fn understood_prefix(
     source: &str,
@@ -68,6 +88,23 @@ pub(crate) fn understood_prefix(
 mod tests {
     use super::*;
     use crate::program_diagnostic::{ProgramDiagnostic, ProgramErrorCategory};
+    #[test]
+    fn syntax_repair_uses_parser_location_without_rejecting_literal_markup() {
+        let valid = "# </parameter>\ntext = '</parameter>'\nname = 'café'\n";
+        assert!(ruff_python_parser::parse_module(valid).is_ok());
+        let invalid = format!("{valid}</parameter\n");
+        let error = ruff_python_parser::parse_module(&invalid).unwrap_err();
+        let diagnostic = syntax_correction(&invalid, &error);
+        assert!(diagnostic.contains("line 4, column 1"), "{diagnostic}");
+        assert!(diagnostic.contains("</parameter\n^"), "{diagnostic}");
+        let failure: plasm_runtime::ExecutionFailure = ProgramStageError::Parse {
+            correction: diagnostic,
+            span_offset: Some(u32::from(error.location.start()) as usize),
+            error: std::sync::Arc::new(crate::program_diagnostic::ProgramParseError::Python(error)),
+        }
+        .into();
+        assert_eq!(failure.code, "program_syntax");
+    }
     fn session() -> ExecuteSession {
         let cgs = std::sync::Arc::new(
             plasm_core::load_schema(
@@ -83,6 +120,39 @@ mod tests {
             .build(cgs);
         session.teaching_exposure = Some(exposure);
         session
+    }
+    #[tokio::test]
+    async fn get_identity_does_not_satisfy_required_keyword_input() {
+        let cgs = std::sync::Arc::new(
+            plasm_core::load_schema(
+                &std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+                    .join("../../fixtures/schemas/plasm_language_matrix"),
+            )
+            .unwrap(),
+        );
+        let exposure =
+            plasm_core::TeachingExposureSession::new(&cgs, "fixture", &["LangSecuredNote"]);
+        let symbol = exposure
+            .to_symbol_map()
+            .entity_sym_for("fixture", "LangSecuredNote");
+        let mut session = crate::test_support::session_fixtures::ExecuteSessionFixture::new()
+            .entry_id("fixture")
+            .entities(vec!["LangSecuredNote".into()])
+            .build(cgs);
+        session.teaching_exposure = Some(exposure);
+        let source = format!(
+            "class Read(Program):\n    def build(self):\n        return {symbol}.get('n1')\n"
+        );
+        let error = compile(&session, &source).unwrap_err();
+        assert!(error.span_offset().is_some());
+        let text = error.correction();
+        assert!(text.contains("access_token=value"), "{text}");
+        assert!(!text.contains("input object"), "{text}");
+        compile(
+            &session,
+            &source.replace(".get('n1')", ".get('n1', access_token='token')"),
+        )
+        .unwrap();
     }
     #[tokio::test]
     async fn compute_mutator_reports_effect_boundary_before_value_typing() {

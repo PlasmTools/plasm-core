@@ -46,13 +46,28 @@ await assert.rejects(
 );
 
 discovered = true;
-assert.equal(await complete({}, executionOptions), "Task marked complete.");
-assert.equal(await submit({ answer: "42" }, executionOptions), "Answer submitted.");
+assert.match(String(await complete({}, executionOptions)), /claim recorded.*not been independently verified/);
+assert.match(String(await submit({ answer: "42" }, executionOptions)), /submission recorded.*not been independently verified/);
 
 const ungated = createEvalTerminalTools();
 const ungatedComplete = ungated[COMPLETE_TASK_TOOL_NAME]?.execute;
 assert.ok(ungatedComplete);
-assert.equal(await ungatedComplete({}, executionOptions), "Task marked complete.");
+assert.match(String(await ungatedComplete({}, executionOptions)), /claim recorded/);
+
+const actionTerminals = createEvalTerminalTools({responseObligation: {kind: "no_answer", instruction: "Send the total to my colleague."}});
+const conflictingSubmit = actionTerminals[SUBMIT_ANSWER_TOOL_NAME]?.execute;
+assert.ok(conflictingSubmit);
+await assert.rejects(async () => conflictingSubmit({answer:"42"}, executionOptions), /Response-obligation conflict/);
+await assert.rejects(async () => conflictingSubmit({answer:"42", response_obligation_quote:"invented wording"}, executionOptions), /Response-obligation conflict/);
+// An advisory classifier may be wrong. Overrides must be explicit and grounded in original wording.
+const advisory = createEvalTerminalTools({responseObligation: {kind: "no_answer", instruction: "Tell me the total."}});
+const overrideSubmit = advisory[SUBMIT_ANSWER_TOOL_NAME]?.execute;
+assert.ok(overrideSubmit);
+assert.match(String(await overrideSubmit({answer:"42",response_obligation_quote:"Tell me the total."}, executionOptions)), /submission recorded/);
+const valueTerminals = createEvalTerminalTools({responseObligation:{kind:"value_required", instruction:"How many items?"}});
+const conflictingComplete = valueTerminals[COMPLETE_TASK_TOOL_NAME]?.execute;
+assert.ok(conflictingComplete);
+await assert.rejects(async () => conflictingComplete({}, executionOptions), /Response-obligation conflict/);
 
 // --- Loop P1-1: discovery false + complete_task → NOT completed / NOT null grade ---
 

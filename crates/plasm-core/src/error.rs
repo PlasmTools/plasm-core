@@ -176,7 +176,7 @@ impl TypeError {
                 "Use a declared Get method on `{entity}`; `{capability}` does not read that entity."
             ),
             Self::RequiredParameterOmitted { parameter, .. } => format!(
-                "Supply the required keyword {parameter}=value on the declared Python method."
+                "Supply the required keyword {parameter}=value on the declared Python method. A positional identity does not supply keyword inputs."
             ),
             Self::InputRequired { capability } => format!(
                 "Capability `{capability}` requires input. Supply its declared required arguments."

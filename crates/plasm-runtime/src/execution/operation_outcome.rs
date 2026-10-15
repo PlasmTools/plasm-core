@@ -34,6 +34,9 @@ pub struct OperationAck {
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct OperationInvocationOutcome {
+    /// Plan scope and nested row coordinates; local row indexes are not unique.
+    pub scope_path: Vec<String>,
+    pub occurrence_path: Vec<usize>,
     pub source_index: usize,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub source_identity: Option<String>,

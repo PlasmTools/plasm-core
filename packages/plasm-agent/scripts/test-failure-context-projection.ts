@@ -8,7 +8,7 @@ for (const recovery of ["reconcile_effects", "stop"] as const) {
   const failure: ExecutionFailure = {
     cause: "runtime", recovery, code: "fixture_failure", diagnostic: "write stopped",
     node: "__py1", occurrence_path: [2], catalog_digest: "fixture-private-digest",
-    effects: [{entry_id: "matrix", capability: "write", completed: 1, failed: 0, occurrences: [{source_index: 0, source_identity: "Item/a", status: "completed"}]}],
+    effects: [{entry_id: "matrix", capability: "write", completed: 1, failed: 0, occurrences: [{scope_path:["outer","inner"], occurrence_path:[1,0], source_index: 0, source_identity: "Item/a", status: "completed"}]}],
     dispatches: [{operation: {entry_id: "matrix", capability: "write"}, request_fingerprint: "fixture-private-fingerprint", status: "unresolved"}],
     effects_unresolved: true,
   };

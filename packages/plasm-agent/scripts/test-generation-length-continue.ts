@@ -14,7 +14,6 @@ import { MockLanguageModelV3 } from "ai/test";
 import {
   GENERATION_TRUNCATED_AFTER_TOOLS_DIAGNOSTIC,
   GENERATION_TRUNCATED_CONTINUE_DIAGNOSTIC,
-  INVALID_TOOL_INPUT_REPAIR_DIAGNOSTIC,
   runEveToolLoop,
   shouldContinueAfterGenerationLength,
 } from "../src/telemetry/eve-tool-loop.js";
@@ -221,15 +220,7 @@ const repaired = await runEveToolLoop({
 
 assert.equal(truncExecuted, 1, "only the repaired call may execute");
 assert.equal(repaired.stopReason, "completed");
-assert.ok(
-  repaired.messages.some(
-    (m) =>
-      m.role === "user" &&
-      typeof m.content === "string" &&
-      m.content.includes(INVALID_TOOL_INPUT_REPAIR_DIAGNOSTIC),
-  ),
-  "InvalidToolInput repair diagnostic required for truncated tool JSON",
-);
+assert.ok(repaired.toolCallRecovery.some(event => event.state === "required"), "invalid arguments enter typed recovery");
 assert.ok(
   !repaired.messages.some(
     (m) =>
@@ -321,15 +312,7 @@ assert.ok(
   ),
   "must not claim budget exhausted before a complete tool call when a tool succeeded",
 );
-assert.ok(
-  !mixedContinued.messages.some(
-    (m) =>
-      m.role === "user" &&
-      typeof m.content === "string" &&
-      m.content.includes(INVALID_TOOL_INPUT_REPAIR_DIAGNOSTIC),
-  ),
-  "successful tool + length must not stack InvalidToolInput repair",
-);
+assert.equal(mixedContinued.toolCallRecovery.length, 0, "successful tool + length must not enter call repair");
 assert.ok(
   mixedContinued.messages.some((m) => {
     if (m.role !== "tool" || !Array.isArray(m.content)) return false;

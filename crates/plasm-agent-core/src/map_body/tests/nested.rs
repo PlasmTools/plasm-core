@@ -233,6 +233,21 @@ fn nested_maps_execute_effects_in_parent_child_order_and_retain_receipts() {
             .map(|a| a.completed as u64)
             .sum();
         assert_eq!(completed, 3);
+        let outcomes = run.return_steps[0]
+            .result
+            .operations
+            .entries()
+            .iter()
+            .flat_map(|ack| &ack.outcomes)
+            .collect::<Vec<_>>();
+        assert_eq!(
+            outcomes
+                .iter()
+                .map(|outcome| outcome.occurrence_path.clone())
+                .collect::<Vec<_>>(),
+            vec![vec![1, 0], vec![2, 0], vec![2, 1]]
+        );
+        assert!(outcomes.iter().all(|outcome| outcome.scope_path.len() >= 3));
     });
 }
 

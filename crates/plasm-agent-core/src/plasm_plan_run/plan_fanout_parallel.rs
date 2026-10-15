@@ -473,6 +473,8 @@ fn stamp_fanout_outcomes(
         let identity = ack.identity();
         if let Some(merged) = operations.get_mut(&identity) {
             merged.outcomes.push(OperationInvocationOutcome {
+                scope_path: vec![result.expr_label.clone()],
+                occurrence_path: vec![result.index],
                 source_index: result.index,
                 source_identity: result.source_identity.clone(),
                 status: OperationInvocationStatus::Completed,
@@ -493,6 +495,8 @@ fn stamp_fanout_outcomes(
         };
         if let Some(merged) = operations.get_mut(&identity) {
             merged.outcomes.push(OperationInvocationOutcome {
+                scope_path: failure.message.node.iter().cloned().collect(),
+                occurrence_path: vec![failure.index],
                 source_index: failure.index,
                 source_identity: failure.source_identity.clone(),
                 status: OperationInvocationStatus::Failed,

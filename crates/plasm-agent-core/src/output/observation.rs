@@ -90,6 +90,82 @@ mod tests {
             .contains("computed_alias"));
     }
     struct DetachedRows(Vec<CachedEntity>);
+    #[test]
+    fn tsv_nested_relation_cells_use_public_projection() {
+        let cgs = plasm_core::loader::load_schema_dir(
+            &std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+                .join("../../fixtures/schemas/plasm_language_matrix"),
+        )
+        .unwrap();
+        let mut row = CachedEntity::new(plasm_core::Ref::new("LangItem", "a"), 0);
+        row.fields.insert("summary".into(), plasm_core::TypedFieldValue::from(
+            plasm_core::json_value_to_plasm_value(&serde_json::json!({
+                "id":"s","headline":"visible", "_ref":{"kind":"simple","entity":"LangSummary","id":"s"},
+                "detail":{"id":"d","body":"visible detail","_version":1}
+            })),
+        ));
+        let text = render_observation(&DetachedRows(vec![row]), Some(&cgs), 10, 4000).tsv;
+        assert!(text.contains("visible detail"), "{text}");
+        assert!(!text.contains("_ref"), "{text}");
+        assert!(!text.contains("_version"), "{text}");
+    }
+
+    #[test]
+    fn invalid_observation_preserves_typed_cause_and_truthful_marker() {
+        use crate::output::in_band_fidelity::SummaryFidelityLoss;
+        use plasm_core::value_contract::ValueContractError;
+
+        let mut cgs = plasm_core::loader::load_schema_dir(
+            &std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+                .join("../../fixtures/schemas/plasm_language_matrix"),
+        )
+        .unwrap();
+        assert!(cgs.entities.shift_remove("LangSummary").is_some());
+        let mut row = CachedEntity::new(plasm_core::Ref::new("LangItem", "a"), 0);
+        row.fields.insert(
+            "summary".into(),
+            plasm_core::json_value_to_plasm_value(
+                &serde_json::json!({"id": "s", "headline": "unprojected"}),
+            )
+            .into(),
+        );
+        let rows = DetachedRows(vec![row]);
+        let rendered = render_observation(&rows, Some(&cgs), 10, 4000);
+        let step =
+            crate::test_support::execution_fixtures::synthetic_published_result_step(1, None);
+        let mut result = step.result.as_ref().clone();
+        result.collection =
+            crate::test_support::execution_fixtures::collection(rows.0, ResultCoverage::Unknown);
+        let (full_tsv, _, full_report) =
+            super::super::summary::format_result_tsv_with_cgs(&result, Some(&cgs), None);
+        for (text, report) in [(rendered.tsv, rendered.fidelity), (full_tsv, full_report)] {
+            assert!(
+                text.contains("(invalid observation: public contract mismatch)"),
+                "{text}"
+            );
+            assert!(
+                !text.contains("non-inline") && !text.contains("in artifact"),
+                "{text}"
+            );
+            assert!(!text.contains("unprojected"), "{text}");
+            let expected = ValueContractError::ReferenceTargetMissing {
+                target: "LangSummary".into(),
+            };
+            assert_eq!(
+                report.projection_errors_for("summary"),
+                std::slice::from_ref(&expected)
+            );
+            let mut merged = InBandSummaryReport::default();
+            merged.record("summary", SummaryFidelityLoss::ReferenceOnlyWithheld);
+            merged.merge_from(&report);
+            merged.record("summary", SummaryFidelityLoss::SchemaLossyCap);
+            assert_eq!(
+                merged.loss_for("summary"),
+                Some(SummaryFidelityLoss::InvalidObservation)
+            );
+            assert_eq!(merged.projection_errors_for("summary"), &[expected]);
+        }
+    }
     impl RowObservation for DetachedRows {
         fn rows(&self) -> impl ExactSizeIterator<Item = &CachedEntity> {
             self.0.iter()

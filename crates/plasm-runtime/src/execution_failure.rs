@@ -24,6 +24,8 @@ pub enum RecoveryDisposition {
 }
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct EffectOccurrence {
+    pub scope_path: Vec<String>,
+    pub occurrence_path: Vec<usize>,
     pub source_index: usize,
     pub source_identity: Option<String>,
     pub status: crate::OperationInvocationStatus,
@@ -219,6 +221,8 @@ impl ExecutionFailure {
                     .outcomes
                     .iter()
                     .map(|outcome| EffectOccurrence {
+                        scope_path: outcome.scope_path.clone(),
+                        occurrence_path: outcome.occurrence_path.clone(),
                         source_index: outcome.source_index,
                         source_identity: outcome.source_identity.clone(),
                         status: outcome.status,
@@ -479,12 +483,16 @@ mod tests {
             description: String::new(),
             outcomes: vec![
                 crate::OperationInvocationOutcome {
+                    scope_path: vec!["write".into()],
+                    occurrence_path: vec![0],
                     source_index: 0,
                     source_identity: Some("Item/a".into()),
                     status: crate::OperationInvocationStatus::Completed,
                     error: None,
                 },
                 crate::OperationInvocationOutcome {
+                    scope_path: vec!["write".into()],
+                    occurrence_path: vec![1],
                     source_index: 1,
                     source_identity: Some("Item/b".into()),
                     status: crate::OperationInvocationStatus::Failed,

@@ -19,7 +19,7 @@ import { resolveGatewayModel } from "../gateway-model.js";
 import { createAgentTelemetry } from "../instrumentation.js";
 import { maybeCompactMessages } from "../runtime/compaction.js";
 import { AgentRuntime, type AgentRuntimeConfig } from "../runtime/agent-runtime.js";
-import { createHarnessTools, renderSkillIndex } from "../tools/harness-tools.js";
+import { createHarnessTools, renderSkillIndex, type EvalTerminalGate } from "../tools/harness-tools.js";
 import { createPlasmTools } from "../tools/plasm-tools.js";
 import { buildDefaultSystemLiturgy } from "../prompts/index.js";
 import { runEveToolLoop, type AgentStepEvent } from "../telemetry/eve-tool-loop.js";
@@ -62,6 +62,7 @@ export interface PlasmAgentConfig extends AgentRuntimeConfig {
 }
 
 export interface AgentGenerateOptions {
+  responseObligation?: EvalTerminalGate["responseObligation"];
   messages?: ModelMessage[];
   resetConversation?: boolean;
   onStepStart?: () => void | Promise<void>;
@@ -104,6 +105,7 @@ export interface AgentTurnResult {
   messages: ModelMessage[];
   stopReason: Awaited<ReturnType<typeof runEveToolLoop>>["stopReason"];
   executionFailure?: Awaited<ReturnType<typeof runEveToolLoop>>["executionFailure"];
+  toolCallRecovery: Awaited<ReturnType<typeof runEveToolLoop>>["toolCallRecovery"];
   /** Per-model-step finish reasons from the tool loop. */
   stepFinishReasons: Awaited<ReturnType<typeof runEveToolLoop>>["stepFinishReasons"];
   /** Per-generation output ceiling applied to the model (if configured). */
@@ -238,6 +240,7 @@ export class PlasmAgent {
     const system = await this.loadInstructions();
     const plasmTools = createPlasmTools(this.runtime);
     const harnessTools = createHarnessTools({
+      responseObligation: options.responseObligation,
       skills: this.skillsMode === "index" ? this.loadedSkills : undefined,
       subagents: this.subagentRegistry,
       includeEvalTerminals: this.includeEvalTerminals,
@@ -359,6 +362,7 @@ export class PlasmAgent {
       messages: result.messages,
       stopReason: result.stopReason,
       executionFailure: result.executionFailure,
+      toolCallRecovery: result.toolCallRecovery,
       stepFinishReasons: result.stepFinishReasons,
       maxOutputTokens: result.maxOutputTokens,
       lengthTruncationCount: result.lengthTruncationCount,

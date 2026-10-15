@@ -9,7 +9,7 @@ export const executionFailureSchema = z.object({
   node: z.string().nullable(),
   occurrence_path: z.array(z.number().int().nonnegative()),
   catalog_digest: z.string().nullable(),
-  effects: z.array(z.object({ entry_id: z.string(), capability: z.string(), completed: z.number().int().nonnegative(), failed: z.number().int().nonnegative(), occurrences: z.array(z.object({ source_index: z.number().int().nonnegative(), source_identity: z.string().nullable(), status: z.enum(["completed", "failed"]) }).strict()) }).strict()),
+  effects: z.array(z.object({ entry_id: z.string(), capability: z.string(), completed: z.number().int().nonnegative(), failed: z.number().int().nonnegative(), occurrences: z.array(z.object({ scope_path: z.array(z.string()), occurrence_path: z.array(z.number().int().nonnegative()), source_index: z.number().int().nonnegative(), source_identity: z.string().nullable(), status: z.enum(["completed", "failed"]) }).strict()) }).strict()),
   dispatches: z.array(z.object({
     operation: z.object({ entry_id: z.string(), capability: z.string() }).strict(),
     request_fingerprint: z.string(), status: z.enum(["unresolved", "response_received"]),

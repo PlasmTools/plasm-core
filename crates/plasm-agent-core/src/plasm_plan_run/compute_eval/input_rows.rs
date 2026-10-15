@@ -76,11 +76,34 @@ impl From<InputRowsError> for plasm_runtime::ExecutionFailure {
             InputRowsError::IncompleteCollection(_) => unreachable!("handled above"),
             InputRowsError::Cardinality { .. } => "plan_input_cardinality_invalid",
         };
-        Self::new(
-            plasm_runtime::FailureCause::Program,
-            code,
-            error.to_string(),
-        )
+        let diagnostic = match &error {
+            InputRowsError::Cardinality {
+                alias,
+                node_id,
+                actual,
+                ..
+            } => {
+                let binding = crate::agent_presentation::source_binding_label(alias)
+                    .or_else(|| crate::agent_presentation::source_binding_label(node_id));
+                let label = binding.map(|name| format!(" `{name}`")).unwrap_or_default();
+                format!("Singleton input{label} expected one row, found {}. This is not a Plasm syntax error; {}", cardinality_rows(*actual), cardinality_remedy(*actual))
+            }
+            InputRowsError::NodeUnavailable { .. } => {
+                "A required program input is unavailable.".into()
+            }
+            InputRowsError::RowsNotInline { .. } => {
+                "A required program input has no materialized rows.".into()
+            }
+            InputRowsError::AcknowledgementMissing { .. } => {
+                "A required operation acknowledgement is unavailable.".into()
+            }
+            InputRowsError::Identifier(_) => "A program input identifier is invalid.".into(),
+            InputRowsError::ScalarValueMissing | InputRowsError::ValueShapeInvalid(_) => {
+                error.to_string()
+            }
+            InputRowsError::IncompleteCollection(_) => unreachable!("handled above"),
+        };
+        Self::new(plasm_runtime::FailureCause::Program, code, diagnostic)
     }
 }
 

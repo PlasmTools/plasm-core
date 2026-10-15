@@ -363,7 +363,6 @@ export class AgentRuntime {
         const dry = await this.engine.dryRun(input.program, session.logicalSessionId);
         if (dry.failureJson) {
           const failure = executionFailureSchema.parse(JSON.parse(dry.failureJson));
-          if (failure.cause === "program" && failure.recovery === "repair_program") return dry.summary;
           throw new AgentExecutionFailure(failure, dry.summary);
         }
         if (!Number.isSafeInteger(dry.writeCount) || dry.writeCount < 0) {

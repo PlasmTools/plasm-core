@@ -14,7 +14,7 @@ impl Lower<'_> {
         cap: &plasm_core::CapabilitySchema,
     ) -> Result<indexmap::IndexMap<String, Value>, PythonLoweringError> {
         let symbols = self.state.sym_map_for(self.es);
-        let mut input = indexmap::IndexMap::new();
+        let mut bound_arguments = indexmap::IndexMap::new();
         for kw in keywords {
             let key = kw
                 .arg
@@ -33,8 +33,7 @@ impl Lower<'_> {
                     )
                     .map_err(|error| at(site, error))?
             };
-            let value = self.write_value(&kw.value)?;
-            if input.insert(wire, value).is_some() {
+            if bound_arguments.insert(wire, &kw.value).is_some() {
                 return Err(at(
                     site,
                     PythonSourceError::DuplicateInvocationArgument {
@@ -43,7 +42,29 @@ impl Lower<'_> {
                 ));
             }
         }
-        Ok(input)
+        for field in cap
+            .invocation_object_fields()
+            .chain(cap.scope_params().iter())
+        {
+            if field.required
+                && field.default.is_none()
+                && !bound_arguments.contains_key(&field.name)
+            {
+                return Err(PythonLoweringError::from(
+                    plasm_core::TypeError::RequiredParameterOmitted {
+                        parameter: field.name.clone(),
+                        expression: monty::expression_source(site),
+                    },
+                )
+                .with_span((site.start().to_u32(), site.end().to_u32())));
+            }
+        }
+        // Bind the consumer's required slots before resolving producer expressions.
+        // Otherwise a missing keyword can masquerade as a field failure on its input.
+        bound_arguments
+            .into_iter()
+            .map(|(wire, expression)| self.write_value(expression).map(|value| (wire, value)))
+            .collect()
     }
 
     pub(super) fn write(

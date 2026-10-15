@@ -76,6 +76,7 @@ mod resume;
 mod scoped_fanout;
 mod session;
 mod task_scopes;
+pub use mutation_evidence::record_transport_response_received;
 pub use mutation_evidence::{MutationDispatch, MutationDispatchStatus, MutationJournal};
 mod template_env;
 mod types;

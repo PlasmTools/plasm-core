@@ -19,16 +19,21 @@ pub enum SummaryFidelityLoss {
     ReferenceOnlyWithheld,
     /// Cell shows reserved `__plasm_attachment` summary (`uri (mime)`); bytes are not inlined.
     AttachmentRefSummary,
+    /// Materialized data could not be projected through its declared public contract.
+    InvalidObservation,
 }
 
 /// Columns where in-band text is not authoritative vs run artifact JSON.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
-pub struct InBandSummaryReport(BTreeMap<String, SummaryFidelityLoss>);
+pub struct InBandSummaryReport {
+    losses: BTreeMap<String, SummaryFidelityLoss>,
+    projection_errors: BTreeMap<String, Vec<plasm_core::value_contract::ValueContractError>>,
+}
 
 impl InBandSummaryReport {
     pub fn record(&mut self, field: impl Into<String>, loss: SummaryFidelityLoss) {
         let field = field.into();
-        self.0
+        self.losses
             .entry(field)
             .and_modify(|existing| {
                 if loss > *existing {
@@ -38,30 +43,57 @@ impl InBandSummaryReport {
             .or_insert(loss);
     }
 
+    /// Keep typed host evidence even when the agent receives only a safe marker.
+    pub fn record_invalid_observation(
+        &mut self,
+        field: impl Into<String>,
+        error: plasm_core::value_contract::ValueContractError,
+    ) {
+        let field = field.into();
+        self.record(field.clone(), SummaryFidelityLoss::InvalidObservation);
+        self.projection_errors.entry(field).or_default().push(error);
+    }
+
+    pub fn projection_errors_for(
+        &self,
+        field: &str,
+    ) -> &[plasm_core::value_contract::ValueContractError] {
+        self.projection_errors
+            .get(field)
+            .map(Vec::as_slice)
+            .unwrap_or_default()
+    }
+
     pub fn is_empty(&self) -> bool {
-        self.0.is_empty()
+        self.losses.is_empty()
     }
 
     /// Any observed in-band loss (including reference-only placeholders).
     pub fn any_loss(&self) -> bool {
-        !self.0.is_empty()
+        !self.losses.is_empty()
     }
 
     pub fn merge_from(&mut self, other: &InBandSummaryReport) {
-        for (k, v) in &other.0 {
+        for (k, v) in &other.losses {
             self.record(k.clone(), *v);
+        }
+        for (field, errors) in &other.projection_errors {
+            self.projection_errors
+                .entry(field.clone())
+                .or_default()
+                .extend(errors.iter().cloned());
         }
     }
 
     pub(crate) fn field_names(&self) -> impl Iterator<Item = &String> {
-        self.0.keys()
+        self.losses.keys()
     }
 }
 
 #[cfg(test)]
 impl InBandSummaryReport {
     pub(crate) fn loss_for(&self, field: &str) -> Option<SummaryFidelityLoss> {
-        self.0.get(field).copied()
+        self.losses.get(field).copied()
     }
 }
 

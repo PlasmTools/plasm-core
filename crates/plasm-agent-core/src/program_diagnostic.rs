@@ -691,9 +691,13 @@ impl From<ProgramStageError> for plasm_runtime::ExecutionFailure {
                 return source.clone().into();
             }
         }
+        let code = match &error {
+            ProgramStageError::Parse { .. } => "program_syntax",
+            _ => "program_admission",
+        };
         Self::new(
             plasm_runtime::FailureCause::Program,
-            "program_admission",
+            code,
             error.into_correction(),
         )
     }

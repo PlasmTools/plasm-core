@@ -163,6 +163,7 @@ impl JsCallbackHttpTransport {
         authorization_header: Option<&str>,
         resp: JsTransportResponse,
     ) -> std::result::Result<(serde_json::Value, Option<String>), RuntimeError> {
+        plasm_runtime::execution::record_transport_response_received();
         plasm_runtime::http_transport::trace_hydration_http_response(resp.status, resp.body.len());
         if !(200..300).contains(&resp.status) {
             return Err(request_error_from_host_http(

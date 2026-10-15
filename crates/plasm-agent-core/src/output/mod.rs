@@ -1554,6 +1554,8 @@ mod tests {
         acknowledgement
             .outcomes
             .push(plasm_runtime::OperationInvocationOutcome {
+                scope_path: vec!["write".into()],
+                occurrence_path: vec![0],
                 source_index: 0,
                 source_identity: Some("LangItem:1".into()),
                 status: plasm_runtime::OperationInvocationStatus::Completed,

@@ -145,15 +145,33 @@ fn format_tsv_inner(
                         Some(&mut cell_report),
                     )
                 };
-                let cell_value = entity.fields.get(col).map(|v| v.to_value()).or_else(|| {
-                    entity.relations.get(col).map(|refs| {
-                        plasm_core::Value::Array(
-                            refs.iter()
-                                .map(|reference| plasm_core::Value::String(reference.to_string()))
-                                .collect(),
-                        )
+                let cell_value = entity
+                    .fields
+                    .get(col)
+                    .and_then(|v| {
+                        match plasm_core::row_contract::RowCodec::new(cgs).public_field_value(
+                            entity.reference.entity_type.as_str(),
+                            col,
+                            &v.to_value(),
+                        ) {
+                            Ok(value) => Some(value),
+                            Err(error) => {
+                                cell_report.record_invalid_observation(col.as_str(), error);
+                                None
+                            }
+                        }
                     })
-                });
+                    .or_else(|| {
+                        entity.relations.get(col).map(|refs| {
+                            plasm_core::Value::Array(
+                                refs.iter()
+                                    .map(|reference| {
+                                        plasm_core::Value::String(reference.to_string())
+                                    })
+                                    .collect(),
+                            )
+                        })
+                    });
                 let blob_base = col
                     .strip_suffix("_ref")
                     .or_else(|| col.strip_suffix("_mime"))
@@ -165,6 +183,13 @@ fn format_tsv_inner(
                     || blob_base.is_some_and(|base| entity.unavailable_fields.contains(base));
                 let encode = !unavailable && !cell_report.any_loss();
                 let (cell, transport_truncated) = match cell_value {
+                    _ if !cell_report.projection_errors_for(col).is_empty() => {
+                        omitted.insert(col.clone());
+                        (
+                            "(invalid observation: public contract mismatch)".into(),
+                            false,
+                        )
+                    }
                     Some(plasm_core::Value::String(s)) if encode => {
                         sanitize_tsv_cell_with_flag(&s, policy)
                     }

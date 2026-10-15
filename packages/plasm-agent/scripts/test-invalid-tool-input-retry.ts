@@ -8,9 +8,7 @@ import assert from "node:assert/strict";
 import { tool } from "ai";
 import { MockLanguageModelV3 } from "ai/test";
 import {
-  INVALID_TOOL_INPUT_REPAIR_DIAGNOSTIC,
   runEveToolLoop,
-  stepHasInvalidToolInput,
 } from "../src/telemetry/eve-tool-loop.js";
 import { evalTerminalGrade } from "../src/tools/format.js";
 import { createEvalTerminalTools } from "../src/tools/harness-tools.js";
@@ -36,65 +34,6 @@ function finish(reason: "tool-calls" | "length" | "stop" | "other") {
   };
 }
 
-assert.equal(
-  stepHasInvalidToolInput([
-    {
-      role: "tool",
-      content: [
-        {
-          type: "tool-result",
-          toolCallId: "x",
-          toolName: "task_ledger",
-          output: {
-            type: "error-text",
-            value:
-              'AI_InvalidToolInputError: Invalid input for tool task_ledger: AI_JSONParseError: JSON parsing failed: Text: {"action": "write", "record": .',
-          },
-        },
-      ],
-    },
-  ]),
-  true,
-  "detector recognizes InvalidToolInputError error-text",
-);
-assert.equal(
-  stepHasInvalidToolInput([
-    {
-      role: "tool",
-      content: [
-        {
-          type: "tool-result",
-          toolCallId: "x",
-          toolName: "plasm",
-          output: { type: "text", value: "plan ok" },
-        },
-      ],
-    },
-  ]),
-  false,
-  "ordinary tool success is not invalid input",
-);
-assert.equal(
-  stepHasInvalidToolInput([
-    {
-      role: "tool",
-      content: [
-        {
-          type: "tool-result",
-          toolCallId: "x",
-          toolName: "plasm",
-          output: { type: "error-text", value: "**plasm** error: vendor 500" },
-        },
-      ],
-    },
-  ]),
-  false,
-  "ordinary execute error-text is not InvalidToolInput",
-);
-
-assert.equal(stepHasInvalidToolInput([], [{ type: "tool-error", error: new Error("backend request failed") }]),
-  false, "execute failures must not be treated as argument validation failures");
-
 const validLedger = {
   action: "write" as const,
   record: {
@@ -113,11 +52,8 @@ const truncatedThenRepairModel = new MockLanguageModelV3({
         .filter(message => message.role === "assistant")
         .flatMap(message => message.content)
         .find(part => part.type === "tool-call" && part.toolCallId === "ledger-trunc");
-      assert.equal(
-        previousCall?.type === "tool-call" ? previousCall.input : undefined,
-        '{"action": "write", "record":',
-        "retry must retain the actual malformed input, never substitute an empty object",
-      );
+      assert.equal(previousCall, undefined, "rejected call stays in audit, not assistant replay");
+      assert(JSON.stringify(options.prompt).includes("rejectedInput"), "repair context includes latest candidate");
       const validSibling = options.prompt
         .filter(message => message.role === "assistant")
         .flatMap(message => message.content)
@@ -193,15 +129,8 @@ assert.deepEqual(
   ["other", "tool-calls", "tool-calls"],
   "per-step finishReason must be preserved (other vs tool-calls)",
 );
-assert.ok(
-  repaired.messages.some(
-    (m) =>
-      m.role === "user" &&
-      typeof m.content === "string" &&
-      m.content.includes(INVALID_TOOL_INPUT_REPAIR_DIAGNOSTIC),
-  ),
-  "repair diagnostic must reach the model",
-);
+assert.equal(repaired.toolCallRecovery[0]?.state, "required");
+assert.equal(repaired.toolCallRecovery[1]?.state, "recovered");
 assert.ok(
   repaired.messages.some((m) => {
     if (m.role !== "tool" || !Array.isArray(m.content)) return false;
@@ -272,14 +201,14 @@ const midBudget = await runEveToolLoop({
 assert.ok(midBudgetCalls >= 2, "truncated step must not end the loop alone");
 assert.equal(
   midBudget.stopReason,
-  "unterminated",
-  "later mid-budget prose stop is unterminated — truncated input did not fake-complete",
+  "repair_exhausted",
+  "prose cannot satisfy bounded call repair",
 );
 assert.equal(
   evalTerminalGrade({ messages: midBudget.messages, stopReason: midBudget.stopReason }).kind,
   "unterminated",
 );
-assert.deepEqual(midBudget.stepFinishReasons, ["length", "stop"]);
+assert.deepEqual(midBudget.stepFinishReasons, ["length", "stop", "stop"]);
 
 
 let providerCalls = 0;
@@ -289,7 +218,7 @@ const providerFailureThenTerminal = new MockLanguageModelV3({
     if (index === 1) {
       const feedback = options.prompt.filter(m => m.role === "user").map(m => JSON.stringify(m.content)).join("\n");
       assert(feedback.includes("provider stream failed"), "provider error must not be described as a model JSON mistake");
-      assert(!feedback.includes(INVALID_TOOL_INPUT_REPAIR_DIAGNOSTIC), "do not append contradictory JSON repair feedback");
+      assert(!feedback.includes("repair attempt"), "do not append contradictory JSON repair feedback");
     }
     return {stream:new ReadableStream({start(controller) {
       if (index === 0) {

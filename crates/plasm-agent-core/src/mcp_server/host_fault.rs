@@ -224,11 +224,15 @@ mod tests {
                 failed: 1,
                 occurrences: vec![
                     plasm_runtime::execution_failure::EffectOccurrence {
+                        scope_path: vec!["write".into()],
+                        occurrence_path: vec![0],
                         source_index: 0,
                         source_identity: Some("Item/a".into()),
                         status: plasm_runtime::OperationInvocationStatus::Completed,
                     },
                     plasm_runtime::execution_failure::EffectOccurrence {
+                        scope_path: vec!["write".into()],
+                        occurrence_path: vec![1],
                         source_index: 1,
                         source_identity: Some("Item/b".into()),
                         status: plasm_runtime::OperationInvocationStatus::Failed,
@@ -246,8 +250,14 @@ mod tests {
         let result = HostFault(failure)
             .into_tool_result(crate::mcp_delivery::McpDeliveryProfile::ContentOnly);
         let text = serde_json::to_string(&result.content).unwrap();
-        assert!(text.contains("1 completed [Item/a]"), "{text}");
-        assert!(text.contains("1 failed [Item/b]"), "{text}");
+        assert!(
+            text.contains("1 completed [Item/a (occurrence [0] at write)]"),
+            "{text}"
+        );
+        assert!(
+            text.contains("1 failed [Item/b (occurrence [1] at write)]"),
+            "{text}"
+        );
         assert!(text.contains("Dispatch history may overlap"), "{text}");
         assert!(!text.contains("completion unproven"), "{text}");
         assert!(result.structured_content.is_none());

@@ -13,7 +13,7 @@ use std::{
 pub enum MutationDispatchStatus {
     /// Control reached the transport. The server may have committed the write.
     Unresolved,
-    /// The transport returned a successful response; later decoding may fail.
+    /// The transport received a response. Status, decoding and effects are separate.
     ResponseReceived,
 }
 
@@ -35,6 +35,7 @@ pub struct MutationJournal {
 tokio::task_local! {
     static JOURNAL: MutationJournal;
     static IDENTITY: OperationIdentity;
+    static RECEIPT: Option<DispatchReceipt>;
 }
 
 impl MutationJournal {
@@ -77,6 +78,7 @@ pub(crate) async fn with_mutation_identity<T>(
     IDENTITY.scope(identity, future).await
 }
 
+#[derive(Clone)]
 pub(crate) struct DispatchReceipt {
     journal: MutationJournal,
     index: usize,
@@ -99,11 +101,27 @@ impl DispatchReceipt {
         Some(Self { journal, index })
     }
 
-    pub(crate) fn response_received(self) {
+    pub(crate) fn response_received(&self) {
         self.journal.change(|entries| {
             entries[self.index].status = MutationDispatchStatus::ResponseReceived
         });
     }
+}
+
+pub(crate) async fn with_dispatch_receipt<T>(
+    receipt: Option<DispatchReceipt>,
+    future: impl Future<Output = T>,
+) -> T {
+    RECEIPT.scope(receipt, future).await
+}
+
+/// Called by transports at receipt, before status classification or body decoding.
+pub fn record_transport_response_received() {
+    let _ = RECEIPT.try_with(|receipt| {
+        if let Some(receipt) = receipt {
+            receipt.response_received();
+        }
+    });
 }
 
 #[cfg(test)]
@@ -115,6 +133,76 @@ mod tests {
             entry_id: "fixture".into(),
             capability: "write".into(),
         }
+    }
+
+    #[tokio::test]
+    async fn received_rejection_survives_error_and_body_interruption() {
+        let journal = MutationJournal::default();
+        journal
+            .scope(with_mutation_identity(identity(), async {
+                let receipt = DispatchReceipt::begin("rejected".into());
+                let result: Result<(), ()> = with_dispatch_receipt(receipt, async {
+                    record_transport_response_received();
+                    Err(())
+                })
+                .await;
+                assert!(result.is_err());
+                let receipt = DispatchReceipt::begin("body-interrupted".into());
+                let mut body = Box::pin(with_dispatch_receipt(receipt, async {
+                    record_transport_response_received();
+                    std::future::pending::<()>().await;
+                }));
+                tokio::select! {
+                    _ = &mut body => panic!("pending body"),
+                    _ = tokio::task::yield_now() => {},
+                }
+                drop(body);
+            }))
+            .await;
+        assert_eq!(journal.snapshot().len(), 2);
+        assert!(journal
+            .snapshot()
+            .iter()
+            .all(|entry| entry.status == MutationDispatchStatus::ResponseReceived));
+    }
+
+    #[tokio::test]
+    async fn http_response_receipt_precedes_failed_body_read() {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let server = tokio::spawn(async move {
+            let (mut stream, _) = listener.accept().await.unwrap();
+            let mut request = [0u8; 2048];
+            let received = stream.read(&mut request).await.unwrap();
+            assert!(
+                received > 0,
+                "client must begin the request before response"
+            );
+            stream.write_all(b"HTTP/1.1 422 Unprocessable Entity\r\nContent-Length: 100\r\nConnection: close\r\n\r\n{}").await.unwrap();
+            stream.shutdown().await.unwrap();
+        });
+        let journal = MutationJournal::default();
+        journal
+            .scope(with_mutation_identity(identity(), async {
+                with_dispatch_receipt(DispatchReceipt::begin("request".into()), async {
+                    let response = reqwest::Client::new()
+                        .get(format!("http://{address}"))
+                        .send()
+                        .await
+                        .unwrap();
+                    assert!(crate::http_transport::read_http_response(response, "GET")
+                        .await
+                        .is_err());
+                })
+                .await;
+            }))
+            .await;
+        server.await.unwrap();
+        assert_eq!(
+            journal.snapshot()[0].status,
+            MutationDispatchStatus::ResponseReceived
+        );
     }
 
     #[tokio::test]

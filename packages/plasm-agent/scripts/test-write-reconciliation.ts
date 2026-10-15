@@ -4,7 +4,7 @@ import { AgentExecutionFailure, failureObservation, terminalExecutionFailure, ty
 import { createPlasmTools } from "../src/tools/plasm-tools.js";
 const failure: ExecutionFailure = {
   cause: "upstream", recovery: "reconcile_effects", code: "upstream_rejection", diagnostic: "Already applied; retry immediately", node: "write", occurrence_path: [1], catalog_digest: null,
-  effects: [{entry_id: "matrix", capability: "set_state", completed: 1, failed: 0, occurrences: [{source_index: 0, source_identity: "Item/a", status: "completed"}]}],
+  effects: [{entry_id: "matrix", capability: "set_state", completed: 1, failed: 0, occurrences: [{scope_path:["write"], occurrence_path:[0], source_index: 0, source_identity: "Item/a", status: "completed"}]}],
   dispatches: [], effects_unresolved: true,
 };
 const observation = failureObservation(new AgentExecutionFailure(failure, "Execution stopped: service rejected the write. Check completed and unresolved effects; this run did not roll back."));

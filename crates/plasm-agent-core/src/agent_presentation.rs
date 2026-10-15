@@ -1,5 +1,10 @@
 //! The agent presentation seam. Machine evidence is input, never serializable output.
 
+pub(crate) fn source_binding_label(label: &str) -> Option<&str> {
+    (!label.is_empty() && !crate::plan_dry_display::is_synthetic_plan_node_id_public(label))
+        .then_some(label)
+}
+
 /// Agent-facing semantic text. Intentionally has no Serialize implementation.
 #[derive(Debug, Clone)]
 pub struct AgentMessage(String);
@@ -29,10 +34,7 @@ impl AgentNodePath {
     fn from_execution_path(path: &str) -> Self {
         Self(
             path.split('/')
-                .filter(|part| {
-                    !part.is_empty()
-                        && !crate::plan_dry_display::is_synthetic_plan_node_id_public(part)
-                })
+                .filter(|part| source_binding_label(part).is_some())
                 .collect::<Vec<_>>()
                 .join("/"),
         )
@@ -65,13 +67,32 @@ pub fn render_failure(failure: &plasm_runtime::ExecutionFailure) -> AgentMessage
             let count = matching.clone().count();
             let mut visible = matching
                 .take(4)
-                .map(|occurrence| match &occurrence.source_identity {
-                    Some(identity) if identity.chars().count() <= 96 => identity.clone(),
-                    Some(_) => format!(
-                        "row #{} (identity exceeds inline limit; see execution evidence)",
-                        occurrence.source_index
-                    ),
-                    None => format!("row #{}", occurrence.source_index),
+                .map(|occurrence| {
+                    let path = occurrence
+                        .occurrence_path
+                        .iter()
+                        .map(usize::to_string)
+                        .collect::<Vec<_>>()
+                        .join("/");
+                    let scope =
+                        AgentNodePath::from_execution_path(&occurrence.scope_path.join("/"));
+                    let coordinate = format!(
+                        "occurrence [{path}]{}",
+                        if scope.0.is_empty() {
+                            String::new()
+                        } else {
+                            format!(" at {scope}")
+                        }
+                    );
+                    match &occurrence.source_identity {
+                        Some(identity) if identity.chars().count() <= 96 => {
+                            format!("{identity} ({coordinate})")
+                        }
+                        Some(_) => format!(
+                            "{coordinate} (identity exceeds inline limit; see execution evidence)"
+                        ),
+                        None => coordinate,
+                    }
                 })
                 .collect::<Vec<_>>();
             if count > visible.len() {
@@ -157,6 +178,36 @@ mod tests {
     use super::*;
     use proptest::prelude::*;
 
+    #[test]
+    fn nested_effects_keep_distinct_coordinates_when_local_indexes_repeat() {
+        let mut failure = plasm_runtime::ExecutionFailure::new(
+            plasm_runtime::FailureCause::Upstream,
+            "rejected",
+            "Rejected",
+        );
+        failure
+            .effects
+            .push(plasm_runtime::execution_failure::EffectReceipt {
+                entry_id: "fixture".into(),
+                capability: "write".into(),
+                completed: 2,
+                failed: 0,
+                occurrences: (0..2)
+                    .map(|outer| plasm_runtime::execution_failure::EffectOccurrence {
+                        scope_path: vec!["batch".into(), "__py12".into()],
+                        occurrence_path: vec![outer, 0],
+                        source_index: 0,
+                        source_identity: None,
+                        status: plasm_runtime::OperationInvocationStatus::Completed,
+                    })
+                    .collect(),
+            });
+        let text = render_failure(&failure);
+        assert!(text.contains("occurrence [0/0] at batch"), "{text}");
+        assert!(text.contains("occurrence [1/0] at batch"), "{text}");
+        assert!(!text.contains("__py12"));
+    }
+
     proptest! {
         #![proptest_config(ProptestConfig::with_cases(48))]
         #[test]
@@ -165,6 +216,7 @@ mod tests {
             failure.effects.push(plasm_runtime::execution_failure::EffectReceipt {
                 entry_id:"matrix".into(), capability:"write".into(), completed:count, failed:0,
                 occurrences:(0..count).map(|source_index|plasm_runtime::execution_failure::EffectOccurrence {
+                    scope_path: vec!["write".into()], occurrence_path:vec![source_index],
                     source_index, source_identity:Some(identity.clone()), status:plasm_runtime::OperationInvocationStatus::Completed,
                 }).collect(),
             });

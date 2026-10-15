@@ -250,6 +250,78 @@ pub enum RowFieldContract {
 }
 
 impl<'a> RowCodec<'a> {
+    /// Project a materialized field for presentation using its declared owner.
+    /// Relation records are closed entity observations; arbitrary authored JSON is not.
+    pub fn public_field_value(
+        &self,
+        entity: &str,
+        field: &str,
+        value: &crate::Value,
+    ) -> Result<crate::Value, crate::value_contract::ValueContractError> {
+        self.public_field_at(entity, field, value, 0)
+    }
+
+    fn public_field_at(
+        &self,
+        entity: &str,
+        field: &str,
+        value: &crate::Value,
+        depth: usize,
+    ) -> Result<crate::Value, crate::value_contract::ValueContractError> {
+        use crate::{
+            value_contract::{ValueContract, ValueContractError},
+            Value,
+        };
+        if depth >= 64 {
+            return Err(ValueContractError::ObservationDepthExceeded);
+        }
+        let Some(cgs) = self.cgs else {
+            return Ok(value.clone());
+        };
+        let Some(owner) = cgs.get_entity(entity) else {
+            return Ok(value.clone());
+        };
+        if let Some(relation) = owner.relations.get(field) {
+            let target = relation.target_resource.as_str();
+            let definition = cgs.get_entity(target).ok_or_else(|| {
+                ValueContractError::ReferenceTargetMissing {
+                    target: target.into(),
+                }
+            })?;
+            let project = |item: &Value| -> Result<Value, ValueContractError> {
+                let Value::Object(fields) = item else {
+                    return Ok(item.clone());
+                };
+                fields
+                    .iter()
+                    .filter(|(name, _)| {
+                        definition.fields.contains_key(name.as_str())
+                            || definition.relations.contains_key(name.as_str())
+                    })
+                    .map(|(name, item)| {
+                        self.public_field_at(target, name, item, depth + 1)
+                            .map(|item| (name.clone(), item))
+                    })
+                    .collect::<Result<indexmap::IndexMap<_, _>, _>>()
+                    .map(Value::Object)
+            };
+            return match value {
+                Value::Array(items) => items
+                    .iter()
+                    .map(project)
+                    .collect::<Result<Vec<_>, _>>()
+                    .map(Value::Array),
+                other => project(other),
+            };
+        }
+        if let Some(definition) = owner.fields.get(field) {
+            let crate::FieldValueKind::Registry(key) = &definition.kind;
+            let entry = cgs.entry_id.as_deref().unwrap_or("");
+            return ValueContract::from_domain(cgs, entry, key)?.observed_value(value, cgs, entry);
+        }
+        // Projection aliases are program-owned, not cache metadata inferred by spelling.
+        Ok(value.clone())
+    }
     pub fn new(cgs: Option<&'a CGS>) -> Self {
         Self { cgs }
     }

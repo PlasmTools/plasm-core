@@ -28,6 +28,20 @@ fn singleton_input_multi_row_error_mentions_ambiguity_remedy() {
     assert!(err.to_string().contains("checked at runtime"), "{err}");
 }
 
+#[test]
+fn singleton_failure_projects_source_names_without_generated_identifiers() {
+    let error =
+        singleton_input_row_count_error("__py25", "__py25", 2, "staged expression rendering");
+    let failure: plasm_runtime::ExecutionFailure = error.into();
+    assert_eq!(failure.code, "plan_input_cardinality_invalid");
+    assert!(!failure.diagnostic().contains("__py"));
+    assert!(failure.diagnostic().contains("2 rows"));
+    let error =
+        singleton_input_row_count_error("__py25", "selected", 0, "staged expression rendering");
+    let failure: plasm_runtime::ExecutionFailure = error.into();
+    assert!(failure.diagnostic().contains("selected"));
+}
+
 fn repository_commit_session() -> ExecuteSession {
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     let cgs = Arc::new(

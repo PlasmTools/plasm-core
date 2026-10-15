@@ -2,6 +2,9 @@
 //!
 //! [`ExecutionEngine`](crate::ExecutionEngine) uses [`ReqwestHttpTransport`] by default;
 //! swap in a custom [`HttpTransport`] for tests, proxies, or alternate clients.
+//! Custom transports must call [`crate::execution::record_transport_response_received`]
+//! when a response arrives, before status classification or body decoding. Receipt
+//! evidence is independent of the operation's result and survives later failure.
 use crate::api_error_detail::{
     sanitize_preview_chars, summarize_json_api_error_for_http, summarize_text_error_body,
 };
@@ -899,6 +902,7 @@ pub async fn read_http_response(
     response: reqwest::Response,
     method: &'static str,
 ) -> Result<HttpParsedResponse, RuntimeError> {
+    crate::execution::record_transport_response_received();
     let status = response.status().as_u16();
     let url = response.url().to_string();
     let headers = response.headers().clone();

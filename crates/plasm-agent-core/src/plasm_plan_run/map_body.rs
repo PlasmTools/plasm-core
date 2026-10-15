@@ -315,6 +315,8 @@ pub(super) async fn materialize(
                         if ack.completed > 0 && ack.outcomes.is_empty() {
                             ack.outcomes
                                 .push(plasm_runtime::OperationInvocationOutcome {
+                                    scope_path: scope_path.iter().cloned().chain(std::iter::once(step.to_string())).collect(),
+                                    occurrence_path: occurrence_path.clone(),
                                     source_index: occurrence,
                                     source_identity: source.row_identities[occurrence]
                                         .as_ref()

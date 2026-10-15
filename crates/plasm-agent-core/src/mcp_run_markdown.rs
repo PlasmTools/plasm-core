@@ -248,6 +248,7 @@ pub(crate) fn slim_result_section_header_label(
     label: &str,
     count_label: &str,
 ) -> String {
+    let label = crate::agent_presentation::source_binding_label(label).unwrap_or("Result");
     format!("{level}{label} ({count_label})\n\n")
 }
 

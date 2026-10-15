@@ -210,7 +210,7 @@ pub(crate) fn compile_python_program_checked(
     }
     let ast =
         ruff_python_parser::parse_module(source).map_err(|error| ProgramStageError::Parse {
-            correction: format!("Python syntax: {error}"),
+            correction: crate::python_program_diagnostic::syntax_correction(source, &error),
             span_offset: Some(u32::from(error.location.start()) as usize),
             error: std::sync::Arc::new(crate::program_diagnostic::ProgramParseError::Python(error)),
         })?;

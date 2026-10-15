@@ -13,6 +13,7 @@ import {
 
 import { successfulEvalTerminalInStep } from "../tools/format.js";
 import { transientProviderFailure } from "./provider-failure.js";
+import { ToolCallRecovery, type ToolCallRecoveryEvent } from "./tool-call-recovery.js";
 import { ensureOtelIntegration } from "../instrumentation.js";
 import {
   buildEveRuntimeContext,
@@ -31,6 +32,7 @@ export interface AgentStepEvent {
   usage?: LanguageModelUsage;
   /** Accumulated turn messages after this step's response delta. */
   messages?: ModelMessage[];
+  toolCallRecovery?: ToolCallRecoveryEvent;
 }
 
 export interface EveToolLoopModelOptions {
@@ -125,6 +127,7 @@ export type EveToolLoopStopReason =
   | "error"
   /** The configured consecutive provider-failure allowance was exhausted. */
   | "provider_exhausted"
+  | "repair_exhausted"
   | "execution_failed";
 
 export interface EveToolLoopResult {
@@ -134,6 +137,7 @@ export interface EveToolLoopResult {
   messages: ModelMessage[];
   stopReason: EveToolLoopStopReason;
   executionFailure?: ExecutionFailure;
+  toolCallRecovery: ToolCallRecoveryEvent[];
   /** Per-model-step finish reasons; raw provider `error` overrides mapped `other`. */
   stepFinishReasons: FinishReason[];
   /**
@@ -146,15 +150,6 @@ export interface EveToolLoopResult {
   /** Generations aborted by the configured wall-clock deadline. */
   generationTimeoutCount: number;
 }
-
-/**
- * Surfaced to the model after InvalidToolInputError / truncated tool JSON.
- * Host never invents truncated fields; the model must re-emit valid args.
- * Budget: the failed generation already consumed one `maxSteps` unit; each
- * repair attempt is another ordinary step — not a free extra.
- */
-export const INVALID_TOOL_INPUT_REPAIR_DIAGNOSTIC =
-  "Host: tool arguments failed JSON or schema validation. Re-emit the same tool with complete, valid arguments. The host does not invent or fill truncated fields. This failed call counted as one step toward the step budget.";
 
 /**
  * Surfaced when `finishReason === length` mid-budget with **no** successful
@@ -185,77 +180,10 @@ export function generationTruncatedContinueDiagnostic(
     : GENERATION_TRUNCATED_CONTINUE_DIAGNOSTIC;
 }
 
-const INVALID_TOOL_INPUT_MARKERS = [
-  "AI_InvalidToolInputError",
-  "InvalidToolInputError",
-] as const;
-
-function textLooksLikeInvalidToolInput(text: string): boolean {
-  return INVALID_TOOL_INPUT_MARKERS.some((marker) => text.includes(marker));
-}
-
 function outputLooksLikeToolError(output: unknown): boolean {
   if (!output || typeof output !== "object") return false;
   const out = output as { type?: unknown };
   return out.type === "error-text" || out.type === "error-json";
-}
-
-/**
- * True when this step produced an invalid/truncated tool-argument failure
- * (AI SDK InvalidToolInputError path), already returned as a tool error to
- * the model. Ordinary execute failures are not included.
- */
-export function stepHasInvalidToolInput(
-  messages: readonly ModelMessage[],
-  toolResults?: ReadonlyArray<Record<string, unknown>>,
-): boolean {
-  for (const result of toolResults ?? []) {
-    if (result.invalid === true) return true;
-    const err = result.error;
-    if (typeof err === "string" && textLooksLikeInvalidToolInput(err))
-      return true;
-    if (err instanceof Error && textLooksLikeInvalidToolInput(err.message))
-      return true;
-    const output = result.output;
-    if (output && typeof output === "object") {
-      const out = output as { type?: unknown; value?: unknown };
-      if (
-        (out.type === "error-text" || out.type === "error-json") &&
-        typeof out.value === "string" &&
-        textLooksLikeInvalidToolInput(out.value)
-      ) {
-        return true;
-      }
-    }
-  }
-  for (const message of messages) {
-    if (message.role !== "tool") continue;
-    const content = message.content;
-    if (!Array.isArray(content)) continue;
-    for (const part of content) {
-      if (!part || typeof part !== "object") continue;
-      const rec = part as Record<string, unknown>;
-      if (rec.invalid === true) return true;
-      const output = rec.output;
-      if (output && typeof output === "object") {
-        const out = output as { type?: unknown; value?: unknown };
-        if (
-          (out.type === "error-text" || out.type === "error-json") &&
-          typeof out.value === "string" &&
-          textLooksLikeInvalidToolInput(out.value)
-        ) {
-          return true;
-        }
-      }
-      if (
-        typeof rec.error === "string" &&
-        textLooksLikeInvalidToolInput(rec.error)
-      ) {
-        return true;
-      }
-    }
-  }
-  return false;
 }
 
 /**
@@ -532,6 +460,7 @@ export async function runEveToolLoop(
   let forceTool = false;
   let consecutiveProviderFailures = 0;
   let generationTimeoutCount = 0;
+  const recovery = new ToolCallRecovery();
 
   while (stepIndex < options.maxSteps) {
     await options.onStepStart?.();
@@ -558,9 +487,13 @@ export async function runEveToolLoop(
         functionId: options.agentName,
       },
       async () => {
-        const stepTools = typeof options.tools === "function"
+        const availableTools = typeof options.tools === "function"
           ? options.tools({ stepIndex })
           : options.tools;
+        const repairToolNames = recovery.activeToolNames;
+        const stepTools = repairToolNames
+          ? Object.fromEntries(Object.entries(availableTools).filter(([name]) => repairToolNames.includes(name)))
+          : availableTools;
         const stepToolChoice =
           stepIndex === 0 && options.toolChoice !== undefined
             ? options.toolChoice
@@ -597,9 +530,9 @@ export async function runEveToolLoop(
           model: options.model,
           system: options.system,
           tools: stepTools,
-          messages: messagesForStep(messages, options.prepareMessages, {
+          messages: recovery.modelMessages(messagesForStep(messages, options.prepareMessages, {
             stepIndex,
-          }),
+          })),
           stopWhen: stepCountIs(1),
           abortSignal: abortController.signal,
           runtimeContext,
@@ -723,6 +656,7 @@ export async function runEveToolLoop(
       };
     });
     messages = [...messages, ...delta];
+    if (!stepResult.providerFailed) recovery.observe(stepIndex, stepCalls, stepToolResults);
 
     await options.onStepFinish?.({
       toolCalls: stepCalls.length > 0 ? stepCalls : undefined,
@@ -731,6 +665,7 @@ export async function runEveToolLoop(
       rawFinishReason: stepResult.rawFinishReason,
       usage: stepResult.usage,
       messages,
+      toolCallRecovery: recovery.events.at(-1)?.stepIndex === stepIndex ? recovery.events.at(-1) : undefined,
     });
     applyRunRefLedger(outstandingRunRefs, delta);
     forceTool = outstandingRunRefs.size > 0;
@@ -739,19 +674,6 @@ export async function runEveToolLoop(
     consecutiveProviderFailures = stepResult.providerFailed
       ? consecutiveProviderFailures + 1
       : 0;
-    const invalidToolInput = stepHasInvalidToolInput(delta, stepToolResults);
-    // Invalid/truncated tool JSON is a recoverable observation, not loop exit.
-    // Append a clear repair diagnostic; do not host-fill the truncated payload.
-    if (
-      !stepResult.providerFailed &&
-      invalidToolInput &&
-      stepIndex < options.maxSteps
-    ) {
-      messages = [
-        ...messages,
-        { role: "user", content: INVALID_TOOL_INPUT_REPAIR_DIAGNOSTIC },
-      ];
-    }
     executionFailure = terminalExecutionFailure(stepToolResults);
     if (executionFailure) {
       stopReason = "execution_failed";
@@ -763,7 +685,7 @@ export async function runEveToolLoop(
       messages: delta,
     });
     const hasValidatedTerminal = Boolean(terminal);
-    if (hasValidatedTerminal) {
+    if (hasValidatedTerminal && !recovery.activeToolNames) {
       stopReason = "completed";
       break;
     }
@@ -787,11 +709,12 @@ export async function runEveToolLoop(
       ];
       continue;
     }
+    if (recovery.exhausted) {
+      stopReason = "repair_exhausted";
+      break;
+    }
+    if (recovery.activeToolNames && stepIndex < options.maxSteps) continue;
     if (stepResult.finishReason !== "tool-calls") {
-      // Invalid/truncated tool JSON: repair path already appended; never execute bad args.
-      if (invalidToolInput && stepIndex < options.maxSteps) {
-        continue;
-      }
       // Providers can finish reasoning with `stop` and emit no usable response.
       // This is not a task decision; preserve history and consume normal budget.
       if (
@@ -859,6 +782,7 @@ export async function runEveToolLoop(
     messages,
     stopReason,
     executionFailure,
+    toolCallRecovery: recovery.events,
     stepFinishReasons,
     maxOutputTokens: options.modelOptions?.maxOutputTokens,
     lengthTruncationCount: stepFinishReasons.filter((r) => r === "length")

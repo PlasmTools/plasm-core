@@ -11,17 +11,21 @@ const readSkillInputSchema = z.object({
   name: z.string().min(1).describe("Skill name from the index"),
 });
 
-const completeTaskInputSchema = z.object({});
+const responseObligationQuote = z.string().min(1).optional().describe(
+  "Only when resolving a response-obligation conflict: quote the exact task wording that supports this terminal choice. This records an explicit override of the advisory classifier, not verification of task success.",
+);
+const completeTaskInputSchema = z.object({ response_obligation_quote: responseObligationQuote });
 
 const submitAnswerInputSchema = z.object({
   answer: z.string().min(1).describe("Reportable value."),
+  response_obligation_quote: responseObligationQuote,
 });
 
 /** Domain-general AppWorld complete_task — successful call grades explicit null. */
 export const COMPLETE_TASK_TOOL_DESCRIPTION =
   "End a no-value task only after observations establish its requested effect or an explicit " +
   "condition authorizes no action. Exhausted exposed options, failed attempts, and unresolved " +
-  "writes are not completion; continue or extend discovery. Success grades null. No answer " +
+  "writes are not completion; continue or extend discovery. An accepted claim submits null for grading; it does not verify task success. No answer " +
   "field. Use submit_answer for a requested value. Initial plasm_context discovery required.";
 
 /** Domain-general AppWorld submit_answer — verbatim asked-for value, then terminate. */
@@ -42,12 +46,24 @@ export const EVAL_TERMINAL_REQUIRES_DISCOVERY =
   "Do not claim unsupported access or abandon before discovery.";
 
 export type EvalTerminalGate = {
+  responseObligation?: { kind: "no_answer" | "value_required" | "uncertain"; instruction: string };
   /**
    * Return true once initial `plasm_context` has opened a workflow session.
    * When omitted, terminals are ungated (non-eval or tests that inject tools directly).
    */
   discoveryCompleted?: () => boolean;
 };
+
+function assertResponseObligation(kind: "no_answer" | "value_required", quote: string | undefined, gate?: EvalTerminalGate): void {
+  const obligation = gate?.responseObligation;
+  if (!obligation || obligation.kind === "uncertain" || obligation.kind === kind) return;
+  if (quote?.trim() && obligation.instruction.includes(quote.trim())) return;
+  throw new Error(
+    `Response-obligation conflict: the advisory classification is ${obligation.kind}, but this terminal declares ${kind}. ` +
+    "Re-read the instruction. Writing a value into an app or sending it to another person is an action, not an answer to the requester. " +
+    "Use the matching terminal, or explicitly override the classification with response_obligation_quote containing exact instruction wording that supports this choice. No terminal has been recorded.",
+  );
+}
 
 /**
  * Discovery refusal must take the tool-error path (throw), never ordinary
@@ -64,9 +80,10 @@ export function createCompleteTaskTool(gate?: EvalTerminalGate): ToolSet {
     [COMPLETE_TASK_TOOL_NAME]: tool({
       description: COMPLETE_TASK_TOOL_DESCRIPTION,
       inputSchema: toolInput(completeTaskInputSchema),
-      execute: async () => {
+      execute: async ({ response_obligation_quote }) => {
         assertDiscoveryCompleted(gate);
-        return "Task marked complete.";
+        assertResponseObligation("no_answer", response_obligation_quote, gate);
+        return "Completion claim recorded; task success has not been independently verified.";
       },
     }),
   };
@@ -77,9 +94,10 @@ export function createSubmitAnswerTool(gate?: EvalTerminalGate): ToolSet {
     [SUBMIT_ANSWER_TOOL_NAME]: tool({
       description: SUBMIT_ANSWER_TOOL_DESCRIPTION,
       inputSchema: toolInput(submitAnswerInputSchema),
-      execute: async () => {
+      execute: async ({ response_obligation_quote }) => {
         assertDiscoveryCompleted(gate);
-        return "Answer submitted.";
+        assertResponseObligation("value_required", response_obligation_quote, gate);
+        return "Answer submission recorded; correctness and requested effects have not been independently verified.";
       },
     }),
   };
@@ -93,6 +111,7 @@ export function createEvalTerminalTools(gate?: EvalTerminalGate): ToolSet {
 }
 
 export function createHarnessTools(options: {
+  responseObligation?: EvalTerminalGate["responseObligation"];
   skills?: SkillDefinition[];
   subagents?: SubagentRegistry;
   /**
@@ -156,11 +175,7 @@ export function createHarnessTools(options: {
   if (options.includeEvalTerminals) {
     Object.assign(
       tools,
-      createEvalTerminalTools(
-        options.discoveryCompleted
-          ? { discoveryCompleted: options.discoveryCompleted }
-          : undefined,
-      ),
+      createEvalTerminalTools({ discoveryCompleted: options.discoveryCompleted, responseObligation: options.responseObligation }),
     );
   }
 
