@@ -97,6 +97,34 @@ fn selected_receiver_and_ordered_effects_survive_projection_and_limit() {
     });
 }
 
+#[test]
+fn relation_record_projection_conserves_parent_occurrences() {
+    on_runtime(async {
+        for count in [0, 1, 3] {
+            let (es, host, _) = fixture(count);
+            let symbols = es.teaching_exposure.as_ref().unwrap().to_symbol_map();
+            let item = symbols.entity_sym_for("fixture", "Item");
+            let relation = symbols.ident_sym_relation_for("fixture", "Item", "tags");
+            let code = format!(
+                "class P(Program):\n    def build(self):\n        parents = {item}.query()\n        return parents.map(lambda parent: {{'title': parent.title, 'children': parent.{relation}}}, max_parents=8)\n"
+            );
+            let bundle = compile_python_program(&es, &code).await.unwrap();
+            let run = execute(&es, &host, &bundle).await.unwrap();
+            let actual: Vec<_> = run.return_steps[0]
+                .result
+                .entities()
+                .iter()
+                .map(|row| plasm_runtime::entity_to_agent_row_json(row, None))
+                .collect();
+            assert_eq!(actual.len(), count);
+            for (index, row) in actual.iter().enumerate() {
+                assert_eq!(row["title"], format!("Title {index}"));
+                assert_eq!(row["children"].as_array().unwrap().len(), index);
+            }
+        }
+    });
+}
+
 fn nested_source(es: &ExecuteSession, inner: &str, bound: u32) -> String {
     let symbols = es.teaching_exposure.as_ref().unwrap().to_symbol_map();
     let item = symbols.entity_sym_for("fixture", "Item");

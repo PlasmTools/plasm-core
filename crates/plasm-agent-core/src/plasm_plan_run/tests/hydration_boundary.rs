@@ -37,6 +37,7 @@ impl HttpTransport for Transport {
                 .iter()
                 .map(|id| json!({"note_id":id}))
                 .collect::<Vec<_>>()),
+            ["notes"] => json!(self.ids.iter().map(|id| json!({"note_id":id,"title":format!("note-{id}"),"body":null,"owners":[{"owner_id":100},{"owner_id":id}]})).collect::<Vec<_>>()),
             ["folders", _] => {
                 json!({"id":"root", "notes":self.ids.iter().map(|id| json!({"note_id":id})).collect::<Vec<_>>(), "payload":{"items":self.ids.iter().map(|id| json!({"id":id})).collect::<Vec<_>>()}})
             }
@@ -85,6 +86,10 @@ impl HttpTransport for Transport {
     }
 }
 fn session() -> ExecuteSession {
+    session_with_primary_catalog(false)
+}
+
+fn session_with_primary_catalog(auxiliary: bool) -> ExecuteSession {
     let mut schema = plasm_core::load_schema(
         &std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
             .join("../../fixtures/schemas/hydration_boundary_matrix"),
@@ -94,25 +99,42 @@ fn session() -> ExecuteSession {
     let cgs = Arc::new(
         serde_json::from_slice::<plasm_core::CGS>(&serde_json::to_vec(&schema).unwrap()).unwrap(),
     );
-    let contexts = indexmap::IndexMap::from([(
+    let mut contexts = indexmap::IndexMap::from([(
         "matrix".into(),
         Arc::new(CgsContext::entry("matrix", cgs.clone())),
     )]);
     let wave = ["Session", "Folder", "Note", "Owner", "SavedNote"];
     let teaching = TeachingExposureSession::new(&cgs, "matrix", &wave);
+    let root_cgs = if auxiliary {
+        let mut other = (*cgs).clone();
+        other.entities.retain(|name, _| name.as_str() == "Session");
+        other
+            .capabilities
+            .retain(|name, _| name.as_str() == "login");
+        other.bind_registry_entry_id("auxiliary");
+        let other = Arc::new(other);
+        contexts.insert(
+            "auxiliary".into(),
+            Arc::new(CgsContext::entry("auxiliary", other.clone())),
+        );
+        other
+    } else {
+        cgs.clone()
+    };
+    let catalog_hash = root_cgs.catalog_cgs_hash_hex();
     ExecuteSession::new(
         "ph".into(),
         "p".into(),
-        cgs.clone(),
+        root_cgs,
         contexts,
-        "matrix".into(),
+        if auxiliary { "auxiliary" } else { "matrix" }.into(),
         String::new(),
         String::new(),
         None,
         wave.iter().map(|s| s.to_string()).collect(),
         Some(teaching),
         None,
-        cgs.catalog_cgs_hash_hex(),
+        catalog_hash,
         None,
     )
 }
@@ -144,7 +166,20 @@ async fn run_source_case(
     full_embed: bool,
     delayed: bool,
 ) -> Result<super::super::PlasmPlanRunResult, ExecutionFailure> {
-    let es = session();
+    let [_, warm] =
+        run_source_case_with_federation(source, token, ids, full_embed, delayed, false).await?;
+    Ok(warm)
+}
+
+async fn run_source_case_with_federation(
+    source: TestSource<'_>,
+    token: String,
+    ids: Vec<i64>,
+    full_embed: bool,
+    delayed: bool,
+    federated: bool,
+) -> Result<[super::super::PlasmPlanRunResult; 2], ExecutionFailure> {
+    let es = session_with_primary_catalog(federated);
     let calls = Arc::new(Mutex::new(vec![]));
     let engine = ExecutionEngine::new_with_transport(
         ExecutionConfig {
@@ -167,7 +202,7 @@ async fn run_source_case(
             "matrix".into(),
             "Matrix".into(),
             vec![],
-            es.cgs.clone(),
+            session().cgs.clone(),
         )])),
         catalog_bootstrap: crate::server_state::CatalogBootstrap::Fixed,
         incoming_auth: None,
@@ -192,7 +227,7 @@ async fn run_source_case(
     )
     .unwrap();
     super::super::evaluate_plasm_comp_dry(&es, &bundle).expect("dry");
-    Box::pin(super::super::run_plasm_comp(
+    let mut cold = Box::pin(super::super::run_plasm_comp(
         &es,
         &host,
         &es.prompt_hash,
@@ -212,6 +247,17 @@ async fn run_source_case(
             calls.lock().unwrap()
         );
     })?;
+    for step in &mut cold.return_steps {
+        step.result = Arc::new(
+            crate::test_support::execution_fixtures::drain_presentation_pages(
+                &es,
+                &host,
+                "boundary",
+                &step.result,
+            )
+            .await?,
+        );
+    }
     let result = Box::pin(super::super::run_plasm_comp(
         &es,
         &host,
@@ -236,8 +282,63 @@ async fn run_source_case(
         .await?;
         step.result = Arc::new(full);
     }
-    Ok(result)
+    Ok([cold, result])
 }
+#[test]
+fn relation_projection_preserves_mixed_cached_and_new_targets() {
+    on_runtime(async {
+        use plasm_core::symbol_tuning::SymbolRender;
+        let es = session();
+        let symbols = es.teaching_exposure.as_ref().unwrap().to_symbol_map();
+        let auth = symbols.entity_sym_for("matrix", "Session");
+        let login = symbols.method_sym_for("matrix", "Session", "login");
+        let note = symbols.entity_sym_for("matrix", "Note");
+        let owners = symbols.ident_sym_relation_for("matrix", "Note", "owners");
+        let source = format!(
+            "class P(Program):\n    def build(self):\n        auth = {auth}.{login}()\n        notes = {note}.query(access_token=auth.access_token)\n        first = notes.map(lambda note: {{'title': note.title, 'owners': note.{owners}}}, max_parents=16)\n        second = notes.map(lambda note: {{'title': note.title, 'owners': note.{owners}}}, max_parents=16)\n        return first, second\n"
+        );
+        for federated in [false, true] {
+            let results = run_source_case_with_federation(
+                TestSource::Python(&source),
+                "token".into(),
+                (1..=12).collect(),
+                false,
+                false,
+                federated,
+            )
+            .await
+            .expect("mixed cached and fresh relation targets must conserve occurrences");
+            for result in results {
+                let projections: Vec<_> = result
+                    .return_steps
+                    .iter()
+                    .filter(|step| matches!(step.node_id.as_deref(), Some("first" | "second")))
+                    .collect();
+                assert_eq!(projections.len(), 2);
+                for step in projections {
+                    let rows: Vec<_> = step
+                        .result
+                        .entities()
+                        .iter()
+                        .map(|row| plasm_runtime::entity_to_agent_row_json(row, None))
+                        .collect();
+                    assert_eq!(rows.len(), 12);
+                    for (index, row) in rows.iter().enumerate() {
+                        let id = index + 1;
+                        assert_eq!(row["title"], format!("note-{id}"));
+                        let owners = row["owners"].as_array().unwrap();
+                        assert_eq!(owners.len(), 2);
+                        assert_eq!(owners[0]["owner_id"], 100);
+                        assert_eq!(owners[0]["name"], "owner-100");
+                        assert_eq!(owners[1]["owner_id"], id);
+                        assert_eq!(owners[1]["name"], format!("owner-{id}"));
+                    }
+                }
+            }
+        }
+    });
+}
+
 #[test]
 fn boundary_relation_hydration_preserves_provision_and_wire_identity() {
     on_runtime(async {

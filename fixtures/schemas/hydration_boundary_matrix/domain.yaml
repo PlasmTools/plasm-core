@@ -99,6 +99,12 @@ capabilities:
         type: object
         fields:
         - {name: access_token, value_ref: text, required: true}
+  note_query:
+    kind: query
+    entity: Note
+    selection:
+    - {name: access_token, value_ref: text, required: true, selection_effect: access}
+    provides: [note_id, title, body]
   owner_get:
     kind: get
     entity: Owner
