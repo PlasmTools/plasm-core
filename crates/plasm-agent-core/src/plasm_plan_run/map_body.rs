@@ -292,39 +292,36 @@ pub(super) async fn materialize(
                     node.effect_class(),
                     EffectClass::Write | EffectClass::SideEffect
                 );
-                let outcome = Box::pin(materialize_executable_plan_step(
+                let selection = plasm_runtime::EffectSelectionReference {
+                    collection: source.result.collection.membership().identity().clone(),
+                    index: occurrence,
+                };
+                let outcome = selection.scope(Box::pin(materialize_executable_plan_step(
                     &child_ctx,
                     step_idx,
                     step,
                     node,
                     map.plan.nodes(),
                     &environment,
-                ))
+                )))
                 .await;
+                let address = plasm_runtime::OperationInvocationAddress {
+                    scope_path: scope_path.iter().cloned().chain(std::iter::once(step.to_string())).collect(),
+                    occurrence_path: occurrence_path.clone(),
+                    source_index: occurrence,
+                    source_identity: source.row_identities[occurrence].as_ref().map(|identity| identity.reference.to_string()),
+                };
                 let outcome = match outcome {
                     Ok(outcome) => outcome,
                     Err(error) => {
                         invocation.fail(error.to_string());
-                        return Err(error.at(step.to_string(), occurrence_path.clone()));
+                        return Err(error.qualify_effects(&address).at(step.to_string(), occurrence_path.clone()));
                     }
                 };
 
                 if has_effects {
                     for mut ack in outcome.mat.result.operations.entries().iter().cloned() {
-                        // Nested scopes already carry their own invocation outcomes.
-                        if ack.completed > 0 && ack.outcomes.is_empty() {
-                            ack.outcomes
-                                .push(plasm_runtime::OperationInvocationOutcome {
-                                    scope_path: scope_path.iter().cloned().chain(std::iter::once(step.to_string())).collect(),
-                                    occurrence_path: occurrence_path.clone(),
-                                    source_index: occurrence,
-                                    source_identity: source.row_identities[occurrence]
-                                        .as_ref()
-                                        .map(|identity| identity.reference.to_string()),
-                                    status: plasm_runtime::OperationInvocationStatus::Completed,
-                                    error: None,
-                                });
-                        }
+                        address.qualify_ack(&mut ack);
                         operations.merge_ack(ack);
                     }
                 }

@@ -54,7 +54,7 @@ finite premise witnesses, not exhaustive invalid Python generation.
   },
   {
     "operation": "binding",
-    "premise": "One local name or a nested tuple/list target with a non-null fixed tuple RHS; all alternatives have matching arity; no supplied symbol or method shadowing; admitted DAG-producing RHS",
+    "premise": "One local name or a nested tuple/list target with a non-null fixed tuple or typed array RHS; fixed tuple alternatives have matching arity; array lengths are checked atomically by pure Python compute before dependent effects; no supplied symbol or method shadowing; admitted DAG-producing RHS",
     "transfer": "Create a fresh immutable DAG version with inferred shape, cardinality, coverage, ordering, authority and effects; publish after resolving RHS; earlier captures keep their version; no IO during build",
     "law": "BC-03",
     "witnesses": [

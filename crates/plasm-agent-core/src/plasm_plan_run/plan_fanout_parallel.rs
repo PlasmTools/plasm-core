@@ -924,6 +924,7 @@ mod tests {
                 failed,
                 source,
                 description: format!("desc-{capability}"),
+                resolved_effects: Vec::new(),
                 outcomes: Vec::new(),
             }),
         }
@@ -1005,6 +1006,7 @@ mod tests {
             failed: 1,
             source: ExecutionSource::Live,
             description: "desc-langitem_delete".into(),
+            resolved_effects: Vec::new(),
             outcomes: Vec::new(),
         });
         let delete = &fold.operations.entries()[0];
@@ -1086,6 +1088,7 @@ mod tests {
                     failed: 1,
                     source: ExecutionSource::Live,
                     description: "desc-langitem_delete".into(),
+                    resolved_effects: Vec::new(),
                     outcomes: Vec::new(),
                 });
             }

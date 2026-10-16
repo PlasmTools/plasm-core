@@ -67,9 +67,40 @@ or tuple/set unions whose wire values admit distinct Python representations fail
 explicitly instead of selecting a branch by declaration order. Fixed tuple values
 can bind nested tuple/list assignment targets in `build`; every return alternative
 must have matching arity and the unpacked container must be non-null. The RHS is
-acquired once in the previous binding environment.
+acquired once in the previous binding environment. Non-null typed arrays also
+support nested tuple/list targets. Their lengths are checked by one pure Python
+compute node before any target value becomes available to dependent nodes.
+Too few or too many elements produce a program failure before dependent effects.
+Fixed tuple arity remains statically checked; starred targets and nullable or
+ambiguous container contracts remain unsupported.
 
 ## Dependency closure
+
+Compute input row/byte limit failures carry optional structured `input_budget`
+evidence: `unit`, `limit`, `observed_at_least`, and `input`. The input identifies
+the plan source or the materialized packet field at which the aggregate crossed
+the limit; it does not assert that this input alone exceeds the limit. Nested
+collection counting remains cumulative across inputs and stops on violation.
+`accounted_bytes` uses native value accounting, including node and key overhead,
+not serialized wire size. Evidence contains no input payload. Recovery authority
+continues to come from the failure cause and effect receipts, not budget evidence.
+The limits and execution semantics are unchanged; no automatic truncation or
+query narrowing occurs.
+
+Admission failures preserve `program_rejection` evidence through the execution
+failure envelope: the structural category, available UTF-8 source byte offset,
+and a typed detail for mismatched union columns, reserved bindings, static
+iteration requirements, and build mutation. Missing detail is explicit; it is
+never inferred from prose. Union details report both actual column sets. Programs
+must supply the intended correspondence with `select(alias="source_field")` and
+be recompiled; the host does not choose a mapping or apply an unverified edit.
+
+Ranked candidates and exact matches are distinct. `take(1)` selects the first row
+and does not establish that only one candidate exists. An explicit pure selector
+can assert exactly one candidate before returning the unchanged row for an effect.
+Complete membership observations can similarly exclude existing targets with
+`not in`. Neither pattern proves read/write atomicity: concurrent changes still
+require provider concurrency/idempotency contracts, and failures retain receipts.
 
 All accessible workflow values MUST be explicit node inputs. Pure compute has
 no catalog objects, credentials, host callables, ambient mutable state or implicit

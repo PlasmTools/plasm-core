@@ -62,7 +62,10 @@ flowchart LR
 ```
 
 Repair consumes the existing turn generation/token budgets; it grants no extra
-calls. During repair only the rejected tools are available. Failed call/result
+calls. During repair only the rejected tools are available, and tool choice is
+required unless `forceToolChoice: false` explicitly disables forced choice for
+the provider. Ignored tool choice and reasoning-only responses still consume the
+same two-attempt repair allowance; no effect is dispatched by the host. Failed call/result
 pairs remain verbatim in the audit but are omitted from assistant replay. The
 latest rejected input and authoritative diagnostic are supplied as temporary
 repair context. Successful sibling calls/results are preserved, including their

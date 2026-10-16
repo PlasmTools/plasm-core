@@ -225,4 +225,7 @@ pub use top_k::TopKSpec;
 mod view_rowset_tests;
 
 pub mod execution_failure;
-pub use execution_failure::{ExecutionFailure, FailureCause, RecoveryDisposition};
+pub use execution_failure::{
+    ExecutionFailure, FailureCause, InputBudgetEvidence, InputBudgetUnit, ProgramRejectionDetail,
+    ProgramRejectionEvidence, RecoveryDisposition,
+};

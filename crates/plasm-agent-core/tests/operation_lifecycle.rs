@@ -158,6 +158,7 @@ async fn execution_failure_async_continuation_preserves_cause_and_dispatch() {
     .at("map/write", vec![1, 2])
     .with_catalog(&"a".repeat(64))
     .with_dispatches(vec![plasm_runtime::MutationDispatch {
+        resolved_effect: None,
         operation: plasm_runtime::OperationIdentity {
             entry_id: "fixture".into(),
             capability: "write".into(),

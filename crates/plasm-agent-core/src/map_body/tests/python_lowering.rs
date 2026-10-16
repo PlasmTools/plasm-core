@@ -1,6 +1,84 @@
 use super::*;
 
 #[test]
+fn named_projection_repairs_union_without_guessing_column_correspondence() {
+    on_runtime(async {
+        let (es, host, calls) = fixture(2);
+        let item = es
+            .teaching_exposure
+            .as_ref()
+            .unwrap()
+            .to_symbol_map()
+            .entity_sym_for("fixture", "Item");
+        let prefix = format!("class P(Program):\n    def build(self):\n        rows = {item}.query()\n        left = rows.select(sender='id')\n        right = rows.select(recipient='id')\n");
+        let rejected =
+            compile_python_program(&es, &format!("{prefix}        return left.union(right)\n"))
+                .await
+                .unwrap_err();
+        let failure: plasm_runtime::ExecutionFailure = rejected.into();
+        assert_eq!(
+            failure.program_rejection.as_ref().unwrap().detail,
+            Some(plasm_runtime::ProgramRejectionDetail::UnionColumnsDiffer {
+                left: vec!["sender".into()],
+                right: vec!["recipient".into()],
+            })
+        );
+        assert!(calls.lock().unwrap().is_empty());
+        let repaired = format!("{prefix}        return left.select(peer='sender').union(right.select(peer='recipient'))\n");
+        let bundle = compile_python_program(&es, &repaired).await.unwrap();
+        let run = execute(&es, &host, &bundle).await.unwrap();
+        assert_eq!(
+            returned_fields(&run),
+            [json!({"peer": "i0"}), json!({"peer": "i1"})]
+        );
+    });
+}
+
+#[test]
+fn explicit_unique_selection_checks_candidates_before_effects() {
+    on_runtime(async {
+        for count in [0, 1, 2] {
+            let (es, host, calls) = fixture(count);
+            let symbols = es.teaching_exposure.as_ref().unwrap().to_symbol_map();
+            let item = symbols.entity_sym_for("fixture", "Item");
+            let mark = symbols.method_sym_for("fixture", "Item", "mark");
+            let source = format!("class P(Program):\n    @compute\n    def unique(self, rows):\n        assert len(rows) == 1, 'selection requires exactly one candidate'\n        return rows[0]\n    def build(self):\n        selected = self.unique({item}.query())\n        return selected.{mark}()\n");
+            let bundle = compile_python_program(&es, &source).await.unwrap();
+            let result = execute(&es, &host, &bundle).await;
+            if count == 1 {
+                result.unwrap();
+                assert_eq!(*calls.lock().unwrap(), ["/items", "/marks/i0"]);
+            } else {
+                let failure = result.unwrap_err();
+                assert_eq!(failure.code, "python_exception");
+                assert_eq!(*calls.lock().unwrap(), ["/items"]);
+            }
+        }
+    });
+}
+
+#[test]
+fn explicit_membership_difference_excludes_existing_effect_targets() {
+    on_runtime(async {
+        let (es, host, calls) = fixture(3);
+        let symbols = es.teaching_exposure.as_ref().unwrap().to_symbol_map();
+        let item = symbols.entity_sym_for("fixture", "Item");
+        let mark = symbols.method_sym_for("fixture", "Item", "mark");
+        let source = format!("class P(Program):\n    def build(self):\n        candidates = {item}.query()\n        existing = candidates.where(lambda row: row.id == 'i0').select('id')\n        missing = candidates.where(lambda row: row.id not in existing)\n        return missing.flat_map(lambda row: row.{mark}())\n");
+        let bundle = compile_python_program(&es, &source).await.unwrap();
+        execute(&es, &host, &bundle).await.unwrap();
+        let effects = calls
+            .lock()
+            .unwrap()
+            .iter()
+            .filter(|call| call.starts_with("/marks/"))
+            .cloned()
+            .collect::<Vec<_>>();
+        assert_eq!(effects, ["/marks/i1", "/marks/i2"]);
+    });
+}
+
+#[test]
 fn python_compute_selection_retains_only_original_occurrences() {
     on_runtime(async {
         let (es, host, calls) = fixture(3);
@@ -267,6 +345,26 @@ fn dictionary_held_literal_accumulators_pass_final_admission() {
 }
 
 #[test]
+fn compute_source_row_budget_reports_evidence_before_effects() {
+    on_runtime(async {
+        let (es, host, calls) = fixture(257);
+        let symbols = es.teaching_exposure.as_ref().unwrap().to_symbol_map();
+        let item = symbols.entity_sym_for("fixture", "Item");
+        let publish = symbols.method_sym_for("fixture", "Item", "publish");
+        let source = format!("class P(Program):\n    @compute\n    def count(self, rows):\n        return str(len(rows))\n    def build(self):\n        return {item}.{publish}(content=self.count({item}.query()))\n");
+        let bundle = compile_python_program(&es, &source).await.unwrap();
+        let error = execute(&es, &host, &bundle).await.unwrap_err();
+        assert_eq!(error.cause, plasm_runtime::FailureCause::Program);
+        let evidence = error.input_budget.as_ref().unwrap();
+        assert_eq!(evidence.unit, plasm_runtime::InputBudgetUnit::Rows);
+        assert_eq!(evidence.limit, 256);
+        assert_eq!(evidence.observed_at_least, 257);
+        assert!(!evidence.input.is_empty());
+        assert_eq!(*calls.lock().unwrap(), ["/items"]);
+    });
+}
+
+#[test]
 fn nesting_compute_inputs_does_not_hide_the_row_budget() {
     on_runtime(async {
         let (es, host, _) = fixture(129);
@@ -281,6 +379,11 @@ fn nesting_compute_inputs_does_not_hide_the_row_budget() {
         );
         let bundle = compile_python_program(&es, &source).await.unwrap();
         let error = execute(&es, &host, &bundle).await.unwrap_err();
+        let evidence = serde_json::to_value(&error).unwrap();
+        assert_eq!(evidence["input_budget"]["unit"], "rows");
+        assert_eq!(evidence["input_budget"]["limit"], 256);
+        assert_eq!(evidence["input_budget"]["observed_at_least"], 257);
+        assert!(evidence["input_budget"]["input"].as_str().is_some());
         assert!(
             error
                 .to_string()
@@ -349,6 +452,82 @@ fn tuple_unpack_targets_can_shadow_the_acquired_tuple() {
             let run = execute(&es, &host, &bundle).await.unwrap();
             assert_eq!(returned_fields(&run), [json!({"value": expected})]);
             assert!(calls.lock().unwrap().is_empty());
+        }
+    });
+}
+
+#[test]
+fn checked_sequence_unpack_in_callback_precedes_dependent_effects() {
+    on_runtime(async {
+        for (separator, succeeds) in [("i", true), ("missing", false)] {
+            let (es, host, calls) = fixture(1);
+            let symbols = es.teaching_exposure.as_ref().unwrap().to_symbol_map();
+            let item = symbols.entity_sym_for("fixture", "Item");
+            let publish = symbols.method_sym_for("fixture", "Item", "publish");
+            let source = format!(
+                "class P(Program):\n    def build(self):\n        def visit(row):\n            left, right = row.id.split('{separator}')\n            return {item}.{publish}(content=left + right)\n        return {item}.query().flat_map(visit)\n"
+            );
+            let bundle = compile_python_program(&es, &source).await.unwrap();
+            assert!(calls.lock().unwrap().is_empty());
+            let result = execute(&es, &host, &bundle).await;
+            if succeeds {
+                result.unwrap();
+                assert_eq!(*calls.lock().unwrap(), ["/items", "/publish:0"]);
+            } else {
+                let failure = result.unwrap_err();
+                assert_eq!(failure.cause, plasm_runtime::FailureCause::Program);
+                assert_eq!(failure.code, "python_exception");
+                assert_eq!(*calls.lock().unwrap(), ["/items"]);
+            }
+        }
+    });
+}
+
+#[test]
+fn checked_sequence_unpack_validates_all_nested_targets_before_effects() {
+    on_runtime(async {
+        for (payload, target, content, expected) in [
+            (
+                "'left/right'.split('/')",
+                "left, right",
+                "left + right",
+                Some("leftright"),
+            ),
+            ("'only'.split('/')", "left, right", "left", None),
+            ("'a/b/c'.split('/')", "left, right", "left", None),
+            (
+                "(['ok'], 'a/b'.split('/'))",
+                "[first], [left, right]",
+                "first + left + right",
+                Some("okab"),
+            ),
+            (
+                "(['ok'], 'only'.split('/'))",
+                "[first], [left, right]",
+                "first",
+                None,
+            ),
+            ("'a/b'.split('/')", "pair, pair", "pair", Some("b")),
+        ] {
+            let (es, host, calls) = fixture(0);
+            let symbols = es.teaching_exposure.as_ref().unwrap().to_symbol_map();
+            let item = symbols.entity_sym_for("fixture", "Item");
+            let publish = symbols.method_sym_for("fixture", "Item", "publish");
+            let source = format!(
+                "class P(Program):\n    def build(self):\n        pair = {payload}\n        {target} = pair\n        return {item}.{publish}(content={content})\n"
+            );
+            let bundle = compile_python_program(&es, &source).await.unwrap();
+            assert!(calls.lock().unwrap().is_empty());
+            let result = execute(&es, &host, &bundle).await;
+            if let Some(expected) = expected {
+                result.unwrap();
+                assert_eq!(*calls.lock().unwrap(), [format!("/publish:{expected}")]);
+            } else {
+                let failure = result.unwrap_err();
+                assert_eq!(failure.cause, plasm_runtime::FailureCause::Program);
+                assert_eq!(failure.code, "python_exception");
+                assert!(calls.lock().unwrap().is_empty());
+            }
         }
     });
 }

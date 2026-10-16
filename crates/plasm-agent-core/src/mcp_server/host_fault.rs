@@ -195,6 +195,7 @@ mod tests {
         failure
             .effects
             .push(plasm_runtime::execution_failure::EffectReceipt {
+                resolved_effects: Vec::new(),
                 entry_id: "fixture".into(),
                 capability: "write".into(),
                 completed: 1,
@@ -218,6 +219,7 @@ mod tests {
         failure
             .effects
             .push(plasm_runtime::execution_failure::EffectReceipt {
+                resolved_effects: Vec::new(),
                 entry_id: "fixture".into(),
                 capability: "write".into(),
                 completed: 1,
@@ -240,6 +242,7 @@ mod tests {
                 ],
             });
         failure.dispatches.push(plasm_runtime::MutationDispatch {
+            resolved_effect: None,
             operation: plasm_runtime::OperationIdentity {
                 entry_id: "fixture".into(),
                 capability: "write".into(),

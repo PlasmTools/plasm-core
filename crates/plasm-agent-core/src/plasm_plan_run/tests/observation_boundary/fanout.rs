@@ -274,13 +274,81 @@ async fn check_one(
     .await;
     let state = state.lock().unwrap();
     if let Some(committed) = cancel_after {
-        assert!(result.unwrap_err().diagnostic().contains("cancel"));
+        let failure = result.unwrap_err();
+        assert_eq!(failure.cause, plasm_runtime::FailureCause::Cancelled);
+        assert_eq!(
+            failure
+                .effects
+                .iter()
+                .flat_map(|receipt| &receipt.resolved_effects)
+                .count(),
+            committed
+        );
+        for receipt in &failure.effects {
+            for effect in &receipt.resolved_effects {
+                assert!(effect.origin.is_some());
+                if let Some(dispatch) = failure.dispatches.iter().find(|dispatch| {
+                    dispatch
+                        .resolved_effect
+                        .as_ref()
+                        .is_some_and(|e| e.invocation == effect.invocation)
+                }) {
+                    assert_eq!(dispatch.resolved_effect.as_ref(), Some(effect));
+                }
+            }
+        }
+        assert_eq!(
+            failure.recovery,
+            plasm_runtime::RecoveryDisposition::ReconcileEffects
+        );
+        assert_eq!(
+            failure
+                .effects
+                .iter()
+                .map(|receipt| receipt.completed)
+                .sum::<usize>(),
+            committed,
+            "cancellation must preserve every acknowledged effect exactly once: {failure:?}"
+        );
+        let occurrences = failure
+            .effects
+            .iter()
+            .flat_map(|receipt| &receipt.occurrences)
+            .filter(|occurrence| {
+                occurrence.status == plasm_runtime::OperationInvocationStatus::Completed
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(
+            occurrences.len(),
+            committed,
+            "cancellation must preserve acknowledged occurrence identities: {failure:?}"
+        );
         assert_eq!(state.values.values().sum::<usize>(), committed);
         assert!(matches!(state.calls.last(), Some(Call::Write(_))));
         return;
     }
     if bad_response || reject.is_some() {
         let failure = result.expect_err("system failures cannot become partial success");
+        let completed_effects: Vec<_> = failure
+            .effects
+            .iter()
+            .flat_map(|receipt| &receipt.resolved_effects)
+            .collect();
+        assert_eq!(
+            completed_effects.len(),
+            failure.effects.iter().map(|r| r.completed).sum::<usize>()
+        );
+        for effect in &completed_effects {
+            assert!(effect.origin.is_some());
+        }
+        for dispatch in &failure.dispatches {
+            let effect = dispatch
+                .resolved_effect
+                .as_ref()
+                .expect("dispatch owns resolved provenance");
+            assert!(effect.origin.is_some());
+            assert_eq!(effect.operation, dispatch.operation);
+        }
         assert_eq!(
             failure.cause,
             if bad_response {
@@ -322,6 +390,20 @@ async fn check_one(
                 .unwrap()
                 .parse::<usize>()
                 .unwrap();
+            assert_eq!(
+                failure
+                    .effects
+                    .iter()
+                    .map(|receipt| receipt.completed)
+                    .sum::<usize>(),
+                failed_index,
+                "failure evidence must account for each completed effect exactly once: {failure:?}"
+            );
+            assert_eq!(
+                failure.recovery,
+                plasm_runtime::RecoveryDisposition::ReconcileEffects,
+                "a rejected dispatched mutation does not establish rollback"
+            );
             let writes: Vec<_> = state
                 .calls
                 .iter()
@@ -397,6 +479,37 @@ async fn check_one(
         assert_eq!(ack.failed, 0);
         assert_eq!(ack.completed, rows - ack.failed);
         assert_eq!(ack.outcomes.len(), rows);
+        assert_eq!(ack.resolved_effects.len(), rows);
+        let invocations: std::collections::HashSet<_> = ack
+            .resolved_effects
+            .iter()
+            .map(|effect| effect.invocation)
+            .collect();
+        assert_eq!(
+            invocations.len(),
+            rows,
+            "identical calls remain distinct occurrences"
+        );
+        for (i, effect) in ack.resolved_effects.iter().enumerate() {
+            assert_eq!(effect.operation.entry_id, ack.entry_id);
+            assert_eq!(effect.operation.capability, ack.capability);
+            assert_eq!(
+                effect.target_kind,
+                if captured {
+                    plasm_runtime::EffectTargetKind::Receiver
+                } else {
+                    plasm_runtime::EffectTargetKind::Capability
+                }
+            );
+            let origin = effect.origin.as_ref().expect("plan provenance");
+            assert_eq!(origin.occurrence_path.last(), Some(&i));
+            assert_eq!(origin.selection.as_ref().expect("selected source").index, i);
+            assert!(!origin.inputs.is_empty());
+            assert_eq!(
+                origin.execution,
+                ack.resolved_effects[0].origin.as_ref().unwrap().execution
+            );
+        }
         for (i, outcome) in ack.outcomes.iter().enumerate() {
             assert_eq!(outcome.source_index, i);
             assert!(outcome

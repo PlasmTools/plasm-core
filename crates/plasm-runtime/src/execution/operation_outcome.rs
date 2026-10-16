@@ -19,6 +19,8 @@ pub struct OperationIdentity {
 /// `description` is presentation only and is never a merge key.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct OperationAck {
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub resolved_effects: Vec<super::ResolvedEffectEvidence>,
     pub entry_id: String,
     pub capability: String,
     pub entity: String,
@@ -43,6 +45,46 @@ pub struct OperationInvocationOutcome {
     pub status: OperationInvocationStatus,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub error: Option<crate::ExecutionFailure>,
+}
+
+/// Scheduler-owned coordinates for one scalar invocation in a selected row.
+/// Qualification is idempotent: nested receipts keep their original addresses.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct OperationInvocationAddress {
+    pub scope_path: Vec<String>,
+    pub occurrence_path: Vec<usize>,
+    pub source_index: usize,
+    pub source_identity: Option<String>,
+}
+
+impl OperationInvocationAddress {
+    pub(crate) fn scalar_status(
+        completed: usize,
+        failed: usize,
+    ) -> Option<OperationInvocationStatus> {
+        match (completed, failed) {
+            (1, 0) => Some(OperationInvocationStatus::Completed),
+            (0, 1) => Some(OperationInvocationStatus::Failed),
+            // Counts alone cannot recover individual identities in an aggregate.
+            _ => None,
+        }
+    }
+
+    pub fn qualify_ack(&self, ack: &mut OperationAck) {
+        if !ack.outcomes.is_empty() {
+            return;
+        }
+        if let Some(status) = Self::scalar_status(ack.completed, ack.failed) {
+            ack.outcomes.push(OperationInvocationOutcome {
+                scope_path: self.scope_path.clone(),
+                occurrence_path: self.occurrence_path.clone(),
+                source_index: self.source_index,
+                source_identity: self.source_identity.clone(),
+                status,
+                error: None,
+            });
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -105,6 +147,9 @@ impl OperationAck {
             failed,
             source,
             description: Self::description_for_capability(capability),
+            resolved_effects: super::resolved_effect::current_effect()
+                .into_iter()
+                .collect(),
             outcomes: Vec::new(),
         }
     }
@@ -135,6 +180,9 @@ impl OperationAck {
             failed,
             source,
             description: String::new(),
+            resolved_effects: super::resolved_effect::current_effect()
+                .into_iter()
+                .collect(),
             outcomes: Vec::new(),
         })
     }
@@ -155,6 +203,7 @@ impl OperationAck {
             failed: 0,
             source,
             description: description.into(),
+            resolved_effects: Vec::new(),
             outcomes: Vec::new(),
         }
     }
@@ -211,6 +260,7 @@ impl OperationLedger {
                 existing.description = ack.description;
             }
             existing.outcomes.extend(ack.outcomes);
+            existing.resolved_effects.extend(ack.resolved_effects);
         } else {
             self.entries.push(ack);
         }
@@ -267,6 +317,7 @@ mod tests {
             failed,
             source: ExecutionSource::Live,
             description: format!("desc-{cap}"),
+            resolved_effects: Vec::new(),
             outcomes: Vec::new(),
         }
     }

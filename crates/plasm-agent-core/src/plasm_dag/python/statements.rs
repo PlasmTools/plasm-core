@@ -96,8 +96,45 @@ impl Lower<'_> {
         {
             return Err(at(target, PythonSourceError::UnpackRequiresFixedTuple));
         }
-        let row = schema.row_contract()?;
-        let contract = row.field("value")?;
+        let contract = self.invocation_value_type(&source)?;
+        let mut leaves = Vec::new();
+        let mut dynamic = false;
+        let pattern = unpack_pattern(target, contract.clone(), &mut leaves, &mut dynamic)?;
+        if dynamic {
+            // Keep Python's arity checks in Monty. One operation validates the
+            // entire target before exposing any leaf, including nested targets.
+            let returned = (0..leaves.len())
+                .map(|index| format!("__unpack_{index}"))
+                .collect::<Vec<_>>()
+                .join(", ");
+            let returned = if leaves.is_empty() {
+                "()".to_owned()
+            } else {
+                format!("({returned},)")
+            };
+            let code = format!(
+                "@compute\ndef checked_unpack(values):\n    {pattern} = values\n    return {returned}\n"
+            );
+            let parsed = ruff_python_parser::parse_expression(&format!("checked_unpack({source})"))
+                .map_err(PythonLoweringError::parse_error)?;
+            let PyExpr::Call(call) = &*parsed.syntax().body else {
+                unreachable!()
+            };
+            let id = self.fresh();
+            let checked = self.text_compute_source(target, call, code, &id)?;
+            let mut acquired = Vec::with_capacity(leaves.len());
+            for (index, label) in leaves.into_iter().enumerate() {
+                let parsed = ruff_python_parser::parse_expression(&format!("{checked}[{index}]"))
+                    .map_err(PythonLoweringError::parse_error)?;
+                acquired.push((label, self.expr(&parsed.syntax().body, None)?));
+            }
+            for (label, source) in acquired {
+                let parsed = ruff_python_parser::parse_expression(&source)
+                    .map_err(PythonLoweringError::parse_error)?;
+                self.bind_local(stmt, &label, &parsed.syntax().body)?;
+            }
+            return Ok(());
+        }
         let mut work = vec![(target, contract, source)];
         let mut bindings = Vec::new();
         while let Some((target, contract, expression)) = work.pop() {
@@ -140,6 +177,52 @@ impl Lower<'_> {
         }
         Ok(())
     }
+}
+
+/// Check the outer structural contract while leaving dynamic sequence lengths
+/// to Python. Leaf names are private generated locals, never user source text.
+fn unpack_pattern(
+    target: &PyExpr,
+    contract: plasm_core::value_contract::ValueContract,
+    leaves: &mut Vec<String>,
+    dynamic: &mut bool,
+) -> Result<String, PythonLoweringError> {
+    use plasm_core::value_contract::ValueShape;
+    if let Some(label) = name(target) {
+        let index = leaves.len();
+        leaves.push(label.to_owned());
+        return Ok(format!("__unpack_{index}"));
+    }
+    let targets = match target {
+        PyExpr::Tuple(tuple) => &tuple.elts,
+        PyExpr::List(list) => &list.elts,
+        _ => return Err(at(target, PythonSourceError::MutableLocalAssignment)),
+    };
+    if contract.nullable {
+        return Err(at(target, PythonSourceError::UnpackRequiresFixedTuple));
+    }
+    let contracts = match contract.shape {
+        ValueShape::Array { element } => {
+            *dynamic = true;
+            vec![*element; targets.len()]
+        }
+        _ => fixed_tuple_positions(contract).map_err(|error| at(target, error))?,
+    };
+    if targets.len() != contracts.len() {
+        return Err(at(
+            target,
+            PythonSourceError::UnpackArity {
+                targets: targets.len(),
+                positions: contracts.len(),
+            },
+        ));
+    }
+    let parts = targets
+        .iter()
+        .zip(contracts)
+        .map(|(target, contract)| unpack_pattern(target, contract, leaves, dynamic))
+        .collect::<Result<Vec<_>, _>>()?;
+    Ok(format!("[{}]", parts.join(", ")))
 }
 
 fn fixed_tuple_positions(

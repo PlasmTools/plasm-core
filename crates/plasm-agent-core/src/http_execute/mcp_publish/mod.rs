@@ -710,6 +710,7 @@ mod tests {
                 failed: 1,
                 source: ExecutionSource::Live,
                 description: "Delete LangItem".into(),
+                resolved_effects: Vec::new(),
                 outcomes: Vec::new(),
             });
         operations.merge_ack(plasm_runtime::OperationAck {
@@ -721,6 +722,7 @@ mod tests {
             failed: 0,
             source: ExecutionSource::Live,
             description: "Records a ping against the item (matrix conformance).".into(),
+            resolved_effects: Vec::new(),
             outcomes: Vec::new(),
         });
         let step = PublishedResultStep {
@@ -791,6 +793,7 @@ mod tests {
             failed: 0,
             source: ExecutionSource::Live,
             description: "Update record".into(),
+            resolved_effects: Vec::new(),
             outcomes: Vec::new(),
         });
         let policy = McpResultTransportPolicy {

@@ -1,5 +1,23 @@
 import { z } from "zod";
 
+const collectionReferenceSchema = z.object({
+  catalog: z.array(z.number().int().min(0).max(255)).length(32),
+  expression: z.array(z.number().int().min(0).max(255)).length(32),
+  epoch: z.number().int().nonnegative(),
+}).strict();
+export const resolvedEffectEvidenceSchema = z.object({
+  invocation: z.string().uuid(),
+  operation: z.object({ entry_id: z.string(), capability: z.string() }).strict(),
+  entity: z.string(),
+  target_kind: z.enum(["create", "receiver", "capability"]),
+  origin: z.object({
+    execution: z.string().uuid(), scope_path: z.array(z.string()),
+    occurrence_path: z.array(z.number().int().nonnegative()),
+    inputs: z.array(z.object({ binding: z.string(), producer: z.string(), collection: collectionReferenceSchema }).strict()),
+    selection: z.object({ collection: collectionReferenceSchema, index: z.number().int().nonnegative() }).strict().nullable(),
+  }).strict().nullable(),
+}).strict();
+
 export const executionFailureSchema = z.object({
   cause: z.enum(["program", "response_contract", "catalog", "runtime", "upstream", "transport", "authorization", "cancelled", "unclassified"]),
   recovery: z.enum(["repair_program", "obtain_authorization", "reconcile_effects", "stop"]),
@@ -9,12 +27,30 @@ export const executionFailureSchema = z.object({
   node: z.string().nullable(),
   occurrence_path: z.array(z.number().int().nonnegative()),
   catalog_digest: z.string().nullable(),
-  effects: z.array(z.object({ entry_id: z.string(), capability: z.string(), completed: z.number().int().nonnegative(), failed: z.number().int().nonnegative(), occurrences: z.array(z.object({ scope_path: z.array(z.string()), occurrence_path: z.array(z.number().int().nonnegative()), source_index: z.number().int().nonnegative(), source_identity: z.string().nullable(), status: z.enum(["completed", "failed"]) }).strict()) }).strict()),
+  effects: z.array(z.object({ resolved_effects: z.array(resolvedEffectEvidenceSchema).optional(), entry_id: z.string(), capability: z.string(), completed: z.number().int().nonnegative(), failed: z.number().int().nonnegative(), occurrences: z.array(z.object({ scope_path: z.array(z.string()), occurrence_path: z.array(z.number().int().nonnegative()), source_index: z.number().int().nonnegative(), source_identity: z.string().nullable(), status: z.enum(["completed", "failed"]) }).strict()) }).strict()),
   dispatches: z.array(z.object({
+    resolved_effect: resolvedEffectEvidenceSchema.optional(),
     operation: z.object({ entry_id: z.string(), capability: z.string() }).strict(),
     request_fingerprint: z.string(), status: z.enum(["unresolved", "response_received"]),
   }).strict()),
   effects_unresolved: z.boolean(),
+  input_budget: z.object({
+    unit: z.enum(["rows", "accounted_bytes"]),
+    limit: z.number().int().nonnegative(),
+    observed_at_least: z.number().int().nonnegative(),
+    input: z.string(),
+  }).strict().refine(evidence => evidence.observed_at_least > evidence.limit,
+    "budget evidence must establish a violation").optional(),
+  program_rejection: z.object({
+    category: z.enum(["parse", "type", "plan", "flow"]),
+    span_offset: z.number().int().nonnegative().nullable(),
+    detail: z.discriminatedUnion("kind", [
+      z.object({kind: z.literal("union_columns_differ"), left: z.array(z.string()), right: z.array(z.string())}).strict(),
+      z.object({kind: z.literal("reserved_binding"), name: z.string()}).strict(),
+      z.object({kind: z.literal("static_iteration_required")}).strict(),
+      z.object({kind: z.literal("build_mutation")}).strict(),
+    ]).nullable(),
+  }).strict().optional(),
 }).strict().refine(failure => {
   const effects = failure.effects_unresolved || failure.dispatches.length > 0 || failure.effects.some(effect => effect.completed > 0);
   if (failure.recovery === "repair_program") return failure.cause === "program" && !effects;

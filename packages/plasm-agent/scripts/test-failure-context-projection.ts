@@ -1,8 +1,26 @@
 import assert from "node:assert/strict";
 import { MockLanguageModelV3 } from "ai/test";
 import { createPlasmTools } from "../src/tools/plasm-tools.js";
-import { AgentExecutionFailure, failureObservation, plasmModelOutput, terminalExecutionFailure, type ExecutionFailure } from "../src/runtime/execution-failure.js";
+import { AgentExecutionFailure, executionFailureSchema, failureObservation, plasmModelOutput, terminalExecutionFailure, type ExecutionFailure } from "../src/runtime/execution-failure.js";
 import { runEveToolLoop } from "../src/telemetry/eve-tool-loop.js";
+
+const reference = {catalog: Array(32).fill(1), expression: Array(32).fill(2), epoch: 0};
+const effect = {
+  invocation: "00000000-0000-4000-8000-000000000001",
+  operation: {entry_id: "matrix", capability: "write"}, entity: "Item", target_kind: "receiver",
+  origin: {execution: "00000000-0000-4000-8000-000000000002", scope_path: ["outer", "write"], occurrence_path: [1],
+    inputs: [{binding: "receiver", producer: "selected", collection: reference}],
+    selection: {collection: reference, index: 1}},
+};
+const evidenceFailure = {
+  cause: "upstream", recovery: "reconcile_effects", code: "fixture", diagnostic: "stopped",
+  node: null, occurrence_path: [], catalog_digest: null,
+  effects: [{entry_id: "matrix", capability: "write", completed: 1, failed: 0, occurrences: [], resolved_effects: [effect]}],
+  dispatches: [{operation: effect.operation, request_fingerprint: "fixture", status: "unresolved", resolved_effect: effect}],
+  effects_unresolved: true,
+};
+assert.equal(executionFailureSchema.safeParse(evidenceFailure).success, true);
+assert.equal(executionFailureSchema.safeParse({...evidenceFailure, dispatches: [{...evidenceFailure.dispatches[0], resolved_effect: {...effect, arguments: {password: "secret"}}}]}).success, false);
 
 for (const recovery of ["reconcile_effects", "stop"] as const) {
   const failure: ExecutionFailure = {
@@ -11,7 +29,10 @@ for (const recovery of ["reconcile_effects", "stop"] as const) {
     effects: [{entry_id: "matrix", capability: "write", completed: 1, failed: 0, occurrences: [{scope_path:["outer","inner"], occurrence_path:[1,0], source_index: 0, source_identity: "Item/a", status: "completed"}]}],
     dispatches: [{operation: {entry_id: "matrix", capability: "write"}, request_fingerprint: "fixture-private-fingerprint", status: "unresolved"}],
     effects_unresolved: true,
+    input_budget: {unit: "rows", limit: 256, observed_at_least: 257, input: "fixture-input"},
+    program_rejection: {category: "type", span_offset: 23, detail: {kind: "union_columns_differ", left: ["sender"], right: ["recipient"]}},
   };
+  assert.equal(executionFailureSchema.safeParse({...failure, input_budget: {...failure.input_budget, observed_at_least: 256}}).success, false);
   const summary = `Execution stopped: write stopped.\nEffects: matrix/write: 1 completed; 1 unresolved.\n${recovery === "stop" ? "Stop this execution." : "Check completed and unresolved effects before another run; this run did not roll back."}`;
   let requests = 0;
   let traced = 0;

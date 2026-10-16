@@ -107,7 +107,7 @@ export interface EveToolLoopOptions {
     | "none"
     | { type: "tool"; toolName: string };
   /**
-   * Whether pending run refs may force a provider tool choice.
+   * Whether pending run refs or malformed-call repair may force tool choice.
    * Defaults true.
    * Set false for reasoning endpoints that reject forced tool choice; the
    * corresponding lifecycle gates still hold.
@@ -494,7 +494,7 @@ export async function runEveToolLoop(
         const stepToolChoice =
           stepIndex === 0 && options.toolChoice !== undefined
             ? options.toolChoice
-            : forceTool && options.forceToolChoice !== false
+            : (forceTool || recovery.activeToolNames !== undefined) && options.forceToolChoice !== false
               ? ("required" as const)
               : undefined;
         let providerStreamErrorCount = 0;

@@ -647,7 +647,7 @@ impl ExecutionEngine {
             Expr::Create(create) => {
                 let create = create.clone();
                 let stream = Box::pin(async_stream::try_stream! {
-                    let res = Box::pin(self.execute_create(&create, cgs, mat, execution_mode)).await?;
+                    let res = Box::pin(super::resolved_effect::ResolvedEffect::Create(create).execute(self, cgs, mat, execution_mode)).await?;
                     yield ExecutionEvent::Complete(Box::new(res));
                 });
                 Ok(stream)
@@ -655,7 +655,7 @@ impl ExecutionEngine {
             Expr::Delete(delete) => {
                 let delete = delete.clone();
                 let stream = Box::pin(async_stream::try_stream! {
-                    let res = Box::pin(self.execute_delete(&delete, cgs, mat, execution_mode)).await?;
+                    let res = Box::pin(super::resolved_effect::ResolvedEffect::Delete(delete).execute(self, cgs, mat, execution_mode)).await?;
                     yield ExecutionEvent::Complete(Box::new(res));
                 });
                 Ok(stream)
@@ -663,7 +663,7 @@ impl ExecutionEngine {
             Expr::Invoke(invoke) => {
                 let invoke = invoke.clone();
                 let stream = Box::pin(async_stream::try_stream! {
-                    let res = Box::pin(self.execute_invoke(&invoke, cgs, mat, execution_mode)).await?;
+                    let res = Box::pin(super::resolved_effect::ResolvedEffect::Invoke(invoke).execute(self, cgs, mat, execution_mode)).await?;
                     yield ExecutionEvent::Complete(Box::new(res));
                 });
                 Ok(stream)

@@ -71,8 +71,8 @@ assert.equal(evalLiturgy.includes("halt-after"), false);
 // The shared workflow must survive terminal overlays. These are exposure
 // checks, not evidence that a language model will obey the planning contract.
 for (const workflow of [product, evalLiturgy]) {
-  assert.match(workflow, /Before writes, verify targets against observed identity and selection conditions/);
-  assert.match(workflow, /Preserve selection evidence/);
+  assert.match(workflow, /Before writes, bind each requested selection condition and destination to observed evidence/);
+  assert.match(workflow, /Preserve source identity through joins and aggregation/);
   assert.match(workflow, /Previews are incomplete/);
   assert.match(workflow, /Preserve unrequested properties/);
   assert.match(workflow, /repair the unfinished requirement/);

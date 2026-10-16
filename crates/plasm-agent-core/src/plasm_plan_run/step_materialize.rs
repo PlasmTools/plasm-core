@@ -152,6 +152,35 @@ pub(crate) async fn materialize_executable_plan_step(
         .approval_gate_for_node(&qualified_step)
         .map(|gate| ctx.approval_policy.review(gate));
     let node_id = node.id().clone();
+    let origin = plasm_runtime::EffectOrigin {
+        execution: ctx.plan_shared.execution_id,
+        scope_path: ctx
+            .scope_path
+            .iter()
+            .cloned()
+            .chain(std::iter::once(step_id.to_string()))
+            .collect(),
+        occurrence_path: ctx.occurrence_path.clone(),
+        selection: plasm_runtime::EffectSelectionReference::current(),
+        inputs: node
+            .uses_result()
+            .iter()
+            .map(|input| {
+                let id = PlanNodeId::new(input.node.clone())?;
+                let source = materialized.get(&id).ok_or_else(|| {
+                    step_failure(
+                        "effect_input_not_materialized",
+                        format!("input {} is not materialized", input.node),
+                    )
+                })?;
+                Ok(plasm_runtime::EffectInputReference {
+                    binding: input.r#as.clone(),
+                    producer: input.node.clone(),
+                    collection: source.result.collection.membership().identity().clone(),
+                })
+            })
+            .collect::<Result<Vec<_>, ExecutionFailure>>()?,
+    };
     // Classify once: pure steps use the shared kernel; runtime steps stay inside this closed
     // execution machine until a compiled request reaches the transport boundary.
     let mut scope_instances = None;
@@ -192,7 +221,7 @@ pub(crate) async fn materialize_executable_plan_step(
     };
     let mat = match occurrence
         .mutation_journal()
-        .scope(Box::pin(execution))
+        .scope(origin.scope(Box::pin(execution)))
         .await
     {
         Ok(mat) => mat,
@@ -335,8 +364,13 @@ async fn live_materialize_pure(
             if source_mat.result.count() > crate::python_compute::MAX_INPUT_ROWS {
                 return Err(step_failure(
                     "compute_input_row_budget_exceeded",
-                    "compute input row budget exceeded",
-                ));
+                    format!("compute input row budget exceeded for source `{source_id}`: {} rows; limit {}", source_mat.result.count(), crate::python_compute::MAX_INPUT_ROWS),
+                ).with_input_budget(plasm_runtime::InputBudgetEvidence {
+                    unit: plasm_runtime::InputBudgetUnit::Rows,
+                    limit: crate::python_compute::MAX_INPUT_ROWS,
+                    observed_at_least: source_mat.result.count(),
+                    input: source_id.to_string(),
+                }));
             }
             let context = QualifiedEntityKey {
                 entry_id: checked.context_entry().into(),
@@ -372,12 +406,7 @@ async fn live_materialize_pure(
                     "Python compute materialization does not match the complete source count",
                 ));
             }
-            crate::python_compute::validate_input_budget(&input).map_err(|diagnostic| {
-                step_failure(
-                    "python_compute_input_budget_invalid",
-                    diagnostic.to_string(),
-                )
-            })?;
+            crate::python_compute::validate_named_input_budget(&input, source_id.as_str())?;
             report(ExecutionStage::Executing);
             let mut rendered = Vec::new();
             if checked.per_row {

@@ -19,6 +19,8 @@ pub enum MutationDispatchStatus {
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct MutationDispatch {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub resolved_effect: Option<super::ResolvedEffectEvidence>,
     pub operation: OperationIdentity,
     pub request_fingerprint: String,
     pub status: MutationDispatchStatus,
@@ -92,6 +94,7 @@ impl DispatchReceipt {
         let index = journal.change(|entries| {
             let index = entries.len();
             entries.push(MutationDispatch {
+                resolved_effect: super::resolved_effect::current_effect(),
                 operation,
                 request_fingerprint,
                 status: MutationDispatchStatus::Unresolved,

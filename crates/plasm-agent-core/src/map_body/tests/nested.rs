@@ -51,7 +51,42 @@ fn selected_receiver_and_ordered_effects_survive_projection_and_limit() {
         let bundle = compile_python_program(&es, &code).await.unwrap();
         assert!(calls.lock().unwrap().is_empty());
         evaluate_plasm_comp_dry(&es, &bundle).unwrap();
-        execute(&es, &host, &bundle).await.unwrap();
+        let run = execute(&es, &host, &bundle).await.unwrap();
+        let evidence: Vec<_> = run
+            .return_steps
+            .iter()
+            .flat_map(|step| step.result.operations.entries())
+            .flat_map(|ack| &ack.resolved_effects)
+            .collect();
+        assert_eq!(evidence.len(), 3);
+        assert_eq!(
+            evidence
+                .iter()
+                .filter(|e| e.target_kind == plasm_runtime::EffectTargetKind::Receiver)
+                .count(),
+            1
+        );
+        assert_eq!(
+            evidence
+                .iter()
+                .filter(|e| e.target_kind == plasm_runtime::EffectTargetKind::Capability)
+                .count(),
+            2
+        );
+        assert_eq!(
+            evidence
+                .iter()
+                .map(|e| e.invocation)
+                .collect::<std::collections::HashSet<_>>()
+                .len(),
+            3
+        );
+        for effect in &evidence {
+            let origin = effect.origin.as_ref().unwrap();
+            // Position zero belongs to the derived singleton, whose transported key is i2.
+            assert_eq!(origin.selection.as_ref().unwrap().index, 0);
+            assert_eq!(origin.occurrence_path, vec![0]);
+        }
         let actual = calls.lock().unwrap();
         let effects = actual
             .iter()

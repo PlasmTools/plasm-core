@@ -53,6 +53,11 @@ pub(crate) use collection::test_collection;
 pub use collection::{ExecutionCollection, PayloadResidency};
 mod embed_cache;
 mod engine;
+mod resolved_effect;
+pub use resolved_effect::{
+    EffectInputReference, EffectOrigin, EffectSelectionReference, EffectTargetKind,
+    ResolvedEffectEvidence,
+};
 mod engine_get;
 mod resolved_get;
 use resolved_get::{GetPurpose, ResolvedGet};
@@ -113,8 +118,8 @@ pub(crate) use plasm_core::json_value_to_plasm_value as json_to_plasm_value;
 
 pub use coverage::ResultCoverage;
 pub use operation_outcome::{
-    OperationAck, OperationIdentity, OperationInvocationOutcome, OperationInvocationStatus,
-    OperationLedger,
+    OperationAck, OperationIdentity, OperationInvocationAddress, OperationInvocationOutcome,
+    OperationInvocationStatus, OperationLedger,
 };
 pub use types::{
     ConsumeBoundKind, ExecutionConfig, ExecutionEvent, ExecutionMode, ExecutionResult,

@@ -22,6 +22,46 @@ pub enum RecoveryDisposition {
     ReconcileEffects,
     Stop,
 }
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum InputBudgetUnit {
+    Rows,
+    /// Native value accounting, including node/key overhead; not wire bytes.
+    AccountedBytes,
+}
+
+/// Bounded evidence: counting stops on violation, so totals are lower bounds.
+/// Input names identify plan sources or materialized packet fields, never values.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct InputBudgetEvidence {
+    pub unit: InputBudgetUnit,
+    pub limit: usize,
+    pub observed_at_least: usize,
+    pub input: String,
+}
+
+/// Compiler-owned evidence; presentation text never selects these variants.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum ProgramRejectionDetail {
+    UnionColumnsDiffer {
+        left: Vec<String>,
+        right: Vec<String>,
+    },
+    ReservedBinding {
+        name: String,
+    },
+    StaticIterationRequired,
+    BuildMutation,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ProgramRejectionEvidence {
+    pub category: String,
+    /// UTF-8 byte offset in submitted Python, not a line or character index.
+    pub span_offset: Option<usize>,
+    pub detail: Option<ProgramRejectionDetail>,
+}
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct EffectOccurrence {
     pub scope_path: Vec<String>,
@@ -32,6 +72,8 @@ pub struct EffectOccurrence {
 }
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct EffectReceipt {
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub resolved_effects: Vec<crate::ResolvedEffectEvidence>,
     pub entry_id: String,
     pub capability: String,
     pub completed: usize,
@@ -56,6 +98,10 @@ pub struct ExecutionFailureDetails {
     pub dispatches: Vec<crate::MutationDispatch>,
     /// A failure after dispatch is not evidence that no effect occurred.
     pub effects_unresolved: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub input_budget: Option<InputBudgetEvidence>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub program_rejection: Option<ProgramRejectionEvidence>,
     /// Agent-visible diagnostic prose; never grants recovery authority.
     diagnostic: String,
 }
@@ -180,8 +226,14 @@ impl ExecutionFailure {
             effects: Vec::new(),
             dispatches: Vec::new(),
             effects_unresolved: false,
+            input_budget: None,
+            program_rejection: None,
             diagnostic: diagnostic.into(),
         }))
+    }
+    pub fn with_input_budget(mut self, evidence: InputBudgetEvidence) -> Self {
+        self.input_budget = Some(evidence);
+        self
     }
     /// Guidance follows typed recovery authority, never a service diagnostic.
     pub fn recovery_instructions(&self) -> Option<&'static str> {
@@ -213,6 +265,7 @@ impl ExecutionFailure {
     pub fn with_effects(mut self, ledger: &crate::OperationLedger) -> Self {
         for ack in ledger.entries() {
             self.effects.push(EffectReceipt {
+                resolved_effects: ack.resolved_effects.clone(),
                 entry_id: ack.entry_id.clone(),
                 capability: ack.capability.clone(),
                 completed: ack.completed,
@@ -232,6 +285,27 @@ impl ExecutionFailure {
         }
         if self.effects.iter().any(|x| x.completed > 0) || self.effects_unresolved {
             self.recovery = RecoveryDisposition::ReconcileEffects;
+        }
+        self
+    }
+    /// Qualify scalar receipts at the same scheduler boundary as successful acks.
+    /// This changes attribution only, never counts, certainty or recovery authority.
+    pub fn qualify_effects(mut self, address: &crate::OperationInvocationAddress) -> Self {
+        for receipt in &mut self.effects {
+            if !receipt.occurrences.is_empty() {
+                continue;
+            }
+            if let Some(status) =
+                crate::OperationInvocationAddress::scalar_status(receipt.completed, receipt.failed)
+            {
+                receipt.occurrences.push(EffectOccurrence {
+                    scope_path: address.scope_path.clone(),
+                    occurrence_path: address.occurrence_path.clone(),
+                    source_index: address.source_index,
+                    source_identity: address.source_identity.clone(),
+                    status,
+                });
+            }
         }
         self
     }
@@ -471,6 +545,58 @@ impl std::error::Error for ExecutionFailure {}
 mod tests {
     use super::*;
     #[test]
+    fn occurrence_qualification_preserves_counts_and_nested_addresses() {
+        let address = crate::OperationInvocationAddress {
+            scope_path: vec!["outer".into(), "write".into()],
+            occurrence_path: vec![2, 1],
+            source_index: 1,
+            source_identity: Some("Item/a".into()),
+        };
+        for (completed, failed) in [(0, 0), (1, 0), (0, 1), (2, 0), (1, 1)] {
+            let mut ack = crate::OperationAck {
+                entry_id: "fixture".into(),
+                capability: "set_state".into(),
+                entity: "Item".into(),
+                logical_invocations: completed + failed,
+                completed,
+                failed,
+                source: crate::ExecutionSource::Live,
+                description: String::new(),
+                resolved_effects: Vec::new(),
+                outcomes: vec![],
+            };
+            let original = ExecutionFailure::new(FailureCause::Cancelled, "cancelled", "stopped")
+                .with_effects(&crate::OperationLedger::from_ack(ack.clone()));
+            let qualified = original.clone().qualify_effects(&address);
+            address.qualify_ack(&mut ack);
+            assert_eq!(qualified.effects[0].completed, completed);
+            assert_eq!(qualified.effects[0].failed, failed);
+            assert_eq!(qualified.recovery, original.recovery);
+            assert_eq!(qualified.effects_unresolved, original.effects_unresolved);
+            assert_eq!(qualified.effects[0].occurrences.len(), ack.outcomes.len());
+            if let Some(occurrence) = qualified.effects[0].occurrences.first() {
+                assert_eq!(occurrence.occurrence_path, [2, 1]);
+                assert_eq!(occurrence.source_identity.as_deref(), Some("Item/a"));
+                assert_eq!(occurrence.status, ack.outcomes[0].status);
+            }
+            let parent = crate::OperationInvocationAddress {
+                scope_path: vec!["parent".into()],
+                occurrence_path: vec![9],
+                source_index: 9,
+                source_identity: None,
+            };
+            assert_eq!(qualified, qualified.clone().qualify_effects(&parent));
+            let before = ack.clone();
+            parent.qualify_ack(&mut ack);
+            assert_eq!(ack, before);
+            let wire = serde_json::to_vec(&qualified).unwrap();
+            assert_eq!(
+                qualified,
+                serde_json::from_slice::<ExecutionFailure>(&wire).unwrap()
+            );
+        }
+    }
+    #[test]
     fn effect_occurrences_survive_without_opaque_error_details() {
         let ack = crate::OperationAck {
             entry_id: "fixture".into(),
@@ -481,6 +607,7 @@ mod tests {
             failed: 1,
             source: crate::ExecutionSource::Live,
             description: String::new(),
+            resolved_effects: Vec::new(),
             outcomes: vec![
                 crate::OperationInvocationOutcome {
                     scope_path: vec!["write".into()],

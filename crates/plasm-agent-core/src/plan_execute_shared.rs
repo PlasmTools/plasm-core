@@ -17,6 +17,7 @@ use crate::server_state::PlasmHostState;
 
 /// Session-stable fields reused for every surface line inside one live plan run.
 pub struct PlanLineExecuteShared {
+    pub(crate) execution_id: uuid::Uuid,
     secret_provider: Arc<dyn SecretProvider>,
     federation: Option<Arc<plasm_core::cgs_federation::FederationDispatch>>,
     graph_page_spill: Option<GraphPageSpillHandle>,
@@ -37,6 +38,7 @@ impl PlanLineExecuteShared {
         );
         let cancel = plan_execute_cancel_signal();
         Self {
+            execution_id: uuid::Uuid::new_v4(),
             secret_provider,
             federation,
             graph_page_spill,

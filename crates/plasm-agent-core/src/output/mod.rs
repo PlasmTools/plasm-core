@@ -1453,6 +1453,7 @@ mod tests {
             failed,
             source,
             description: "Records a ping against the item (matrix conformance).".into(),
+            resolved_effects: Vec::new(),
             outcomes: Vec::new(),
         }
     }

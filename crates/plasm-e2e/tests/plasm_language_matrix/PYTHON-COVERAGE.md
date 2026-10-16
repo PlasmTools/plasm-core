@@ -301,6 +301,20 @@ witnesses do not close nullable/union-container materialization.
 `nested_array_rowsets_reenter_compute_without_losing_an_axis` checks nested-array
 recapture through literal and computed sources. `tuple_unpack_targets_can_shadow_the_acquired_tuple`
 checks original-name, nested and duplicate targets against the acquired RHS.
+`checked_sequence_unpack_in_callback_precedes_dependent_effects` and
+`checked_sequence_unpack_validates_all_nested_targets_before_effects` extend
+these abstract fixture witnesses to typed arrays: split results, nested targets,
+duplicate names, and too few/many values. One Python check validates the entire
+target before exposing any leaf; failures carry `python_exception` and dispatch
+no dependent writes. This does not admit starred or nullable container targets.
+`explicit_unique_selection_checks_candidates_before_effects` checks zero, one,
+and two candidates using an explicit pure assertion; ambiguous/empty selections
+dispatch no writes. `explicit_membership_difference_excludes_existing_effect_targets`
+checks a complete membership difference before fanout.
+`named_projection_repairs_union_without_guessing_column_correspondence` first
+rejects unequal column sets with structured evidence, then recompiles and executes
+an explicit `select` alias repair. These witnesses do not establish atomic
+ensure-present semantics or implicit interpretation of ranked search results.
 `computed_dictionary_counts_preserve_row_order_and_tuple_fields` adds 16
 generated cases for unannotated empty/seeded accumulation, checking exact counts,
 tuple fields, empty output, completeness and one source read. Standalone upstream

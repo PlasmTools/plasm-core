@@ -307,6 +307,32 @@ fn late_compute_failure_retains_acknowledged_write_receipts() {
                 || error.diagnostic().contains("out of range"),
             "{error}"
         );
+        assert_eq!(
+            error.recovery,
+            plasm_runtime::RecoveryDisposition::ReconcileEffects
+        );
+        assert_eq!(
+            error
+                .effects
+                .iter()
+                .map(|receipt| receipt.completed)
+                .sum::<usize>(),
+            1
+        );
+        let completed = error
+            .effects
+            .iter()
+            .flat_map(|receipt| &receipt.occurrences)
+            .filter(|occurrence| {
+                occurrence.status == plasm_runtime::OperationInvocationStatus::Completed
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(
+            completed.len(),
+            1,
+            "typed failure must retain the completed leaf occurrence: {error:?}"
+        );
+        assert_eq!(completed[0].occurrence_path, [0]);
         es.finalize_operation_failed(&handle, error, None);
         let snapshot = crate::op_ui_telemetry::OpUiTelemetry::from_live(&es, &handle).unwrap();
         let receipts: Vec<_> = snapshot

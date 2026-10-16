@@ -245,6 +245,7 @@ mod tests {
         for phase in [OccurrencePhase::Cancelled, OccurrencePhase::Failed] {
             let mut event = OccurrenceProgress::running(vec![], "write".into(), vec![1]);
             event.mutation_dispatches.push(MutationDispatch {
+                resolved_effect: None,
                 operation: OperationIdentity {
                     entry_id: "fixture".into(),
                     capability: "create".into(),

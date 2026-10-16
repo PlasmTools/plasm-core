@@ -33,8 +33,9 @@ const failure = { cause: "program", recovery: "repair_program", code: "program_s
 for (const invalidFirst of [false, true]) {
   let requests = 0;
   let effects = 0;
-  const model = new MockLanguageModelV3({ doStream: async () => {
+  const model = new MockLanguageModelV3({ doStream: async request => {
     const index = requests++;
+    if (index === 1) assert.deepEqual(request.toolChoice, {type: "required"}, "repair must request an allowed replacement tool");
     return { stream: new ReadableStream({ start(controller) {
       const emit = (id: string, name: string, input: string) => controller.enqueue({ type: "tool-call", toolCallId: id, toolName: name, input });
       if (index === 0) emit("invalid-effect", "effect", '{"value":');
@@ -156,6 +157,30 @@ for (const repaired of [true, false]) {
       && m.content.some(p => p.type === "tool-call" && p.toolCallId === "bad-0")), "audit retains original call");
   });
 }
+// A provider can ignore required choice. Both this and the explicit provider
+// opt-out remain bounded; neither is authority to dispatch an effect.
+for (const forceToolChoice of [true, false]) {
+  let requests = 0;
+  let effects = 0;
+  const model = new MockLanguageModelV3({doStream: async request => {
+    const index = requests++;
+    if (index > 0) assert.deepEqual(request.toolChoice, {type: forceToolChoice ? "required" : "auto"});
+    return {stream: new ReadableStream({start(controller) {
+      if (index === 0) controller.enqueue({type: "tool-call", toolCallId: "bad", toolName: "effect", input: '{"value":'});
+      controller.enqueue({type: "finish", finishReason: {unified: index === 0 ? "tool-calls" : "stop", raw: undefined}, usage: {inputTokens: {total: 8, noCache: 8, cacheRead: 0, cacheWrite: 0}, outputTokens: {total: 2, text: 0, reasoning: 2}}});
+      controller.close();
+    }})};
+  }});
+  const result = await runEveToolLoop({model, system: "Abstract repair fixture", messages: [{role: "user", content: "Perform one effect"}],
+    tools: {effect: tool({inputSchema: z.object({value: z.string()}), execute: async () => {effects++; return "done";}})},
+    maxSteps: 8, forceToolChoice, agentName: "reasoning-only-repair", telemetry: {isEnabled: false}});
+  assert.equal(requests, 3);
+  assert.equal(effects, 0);
+  assert.equal(result.stopReason, "repair_exhausted");
+  assert.equal(result.usage.inputTokens, 24);
+  assert.equal(result.toolCallRecovery.at(-1)?.repairAttempts, 2);
+}
+
 // Prose and service failures cannot grant malformed-source repair authority.
 for (const output of ["needs_fix · parse", { status: "execution_failed", summary: "program_syntax", failure: { ...failure, cause: "upstream", recovery: "reconcile_effects" } }]) {
   const recovery = new ToolCallRecovery();

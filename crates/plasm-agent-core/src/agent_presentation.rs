@@ -188,6 +188,7 @@ mod tests {
         failure
             .effects
             .push(plasm_runtime::execution_failure::EffectReceipt {
+                resolved_effects: Vec::new(),
                 entry_id: "fixture".into(),
                 capability: "write".into(),
                 completed: 2,
@@ -214,6 +215,7 @@ mod tests {
         fn effect_identity_previews_are_bounded_without_altering_evidence(count in 5usize..1024, identity in ".{0,300}") {
             let mut failure = plasm_runtime::ExecutionFailure::new(plasm_runtime::FailureCause::Upstream, "rejected", "Request rejected");
             failure.effects.push(plasm_runtime::execution_failure::EffectReceipt {
+                resolved_effects: Vec::new(),
                 entry_id:"matrix".into(), capability:"write".into(), completed:count, failed:0,
                 occurrences:(0..count).map(|source_index|plasm_runtime::execution_failure::EffectOccurrence {
                     scope_path: vec!["write".into()], occurrence_path:vec![source_index],

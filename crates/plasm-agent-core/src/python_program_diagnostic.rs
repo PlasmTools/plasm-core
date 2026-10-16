@@ -331,6 +331,21 @@ mod tests {
         assert!(!message.contains("e2{"));
     }
     #[tokio::test]
+    async fn reserved_binding_has_structured_rejection_evidence() {
+        let session = session();
+        let source =
+            "class P(Program):\n    def build(self):\n        e1 = e2.query()\n        return e1\n";
+        let error = crate::compile_program(&Default::default(), None, &session, "test", source)
+            .await
+            .unwrap_err();
+        let failure: plasm_runtime::ExecutionFailure = error.into();
+        assert_eq!(
+            failure.program_rejection.as_ref().unwrap().detail,
+            Some(plasm_runtime::ProgramRejectionDetail::ReservedBinding { name: "e1".into() })
+        );
+    }
+
+    #[tokio::test]
     async fn static_admission_does_not_require_a_worker() {
         let session = session();
         let source = "class Read(Program):\n    @compute\n    def count(self, rows: list[Row]) -> int:\n        return len(rows)\n    def build(self):\n        return self.count(e1.query())\n";

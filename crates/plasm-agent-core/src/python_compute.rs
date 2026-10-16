@@ -3,6 +3,8 @@ pub(crate) use admission::render_analysis_diagnostics;
 #[cfg(test)]
 mod analysis_tests;
 pub(crate) mod arguments;
+#[cfg(test)]
+mod budget_tests;
 mod multiple;
 pub(crate) use arguments::is_row as is_row_annotation;
 pub(crate) mod inference;
@@ -165,6 +167,7 @@ pub(crate) const LANGUAGE_PROFILE: &str =
 pub(crate) const CONTRACT_VERSION: u32 = 13;
 
 pub(crate) const MAX_INPUT_ROWS: usize = 256;
+pub(crate) const MAX_INPUT_BYTES: usize = 1_048_576;
 
 #[derive(Debug, thiserror::Error)]
 pub enum ComputeInputBudgetError {
@@ -835,7 +838,7 @@ impl PreparedCompute {
                 })?
         };
         if self.independent_inputs {
-            validate_materialized_input_budget(input.iter().flat_map(|row| row.values()))?;
+            validate_materialized_input_budget(input.iter().flat_map(|row| row.iter()))?;
         }
         let types = match &self.row_fields {
             Some(fields) => fields.clone(),
@@ -1348,7 +1351,7 @@ pub(crate) fn validate_input_budget(rows: &[ValueRow]) -> Result<(), ComputeInpu
     if rows.len() > MAX_INPUT_ROWS {
         return Err(ComputeInputBudgetError::RowCountExceeded);
     }
-    let mut remaining = 1_048_576;
+    let mut remaining = MAX_INPUT_BYTES;
     for row in rows {
         plasm_core::charge_value_budget(row, &mut remaining)?;
     }
@@ -1356,15 +1359,61 @@ pub(crate) fn validate_input_budget(rows: &[ValueRow]) -> Result<(), ComputeInpu
     Ok(())
 }
 
+pub(crate) fn validate_named_input_budget(
+    rows: &[ValueRow],
+    input: &str,
+) -> Result<(), plasm_runtime::ExecutionFailure> {
+    use plasm_runtime::{ExecutionFailure, FailureCause, InputBudgetEvidence, InputBudgetUnit};
+    validate_input_budget(rows).map_err(|error| {
+        let evidence = match error {
+            ComputeInputBudgetError::RowCountExceeded => Some(InputBudgetEvidence {
+                unit: InputBudgetUnit::Rows,
+                limit: MAX_INPUT_ROWS,
+                observed_at_least: rows.len(),
+                input: input.into(),
+            }),
+            ComputeInputBudgetError::Value(plasm_core::ValueBudgetError::BytesExceeded) => {
+                Some(InputBudgetEvidence {
+                    unit: InputBudgetUnit::AccountedBytes,
+                    limit: MAX_INPUT_BYTES,
+                    observed_at_least: MAX_INPUT_BYTES + 1,
+                    input: input.into(),
+                })
+            }
+            _ => None,
+        };
+        let diagnostic = match &evidence {
+            Some(evidence) => {
+                let unit = match evidence.unit {
+                    InputBudgetUnit::Rows => "rows",
+                    InputBudgetUnit::AccountedBytes => "accounted bytes, including value overhead",
+                };
+                format!(
+                    "{error} for source `{input}`: at least {}; limit {} ({unit})",
+                    evidence.observed_at_least, evidence.limit
+                )
+            }
+            None => format!("{error} for source `{input}`"),
+        };
+        let mut failure = ExecutionFailure::new(
+            FailureCause::Program,
+            "python_compute_input_budget_invalid",
+            diagnostic,
+        );
+        failure.input_budget = evidence;
+        failure
+    })
+}
+
 fn validate_materialized_input_budget<'a>(
-    values: impl Iterator<Item = &'a Value>,
+    values: impl Iterator<Item = (&'a String, &'a Value)>,
 ) -> Result<(), plasm_runtime::ExecutionFailure> {
     let mut pending = values.collect::<Vec<_>>();
     let mut count = 0;
-    while let Some(value) = pending.pop() {
+    while let Some((input, value)) = pending.pop() {
         match value {
             Value::Array(values) => {
-                pending.extend(values);
+                pending.extend(values.iter().map(|value| (input, value)));
                 continue;
             }
             Value::Object(fields) => {
@@ -1373,7 +1422,8 @@ fn validate_materialized_input_budget<'a>(
                 pending.extend(
                     fields
                         .values()
-                        .filter(|value| matches!(value, Value::Array(_) | Value::Object(_))),
+                        .filter(|value| matches!(value, Value::Array(_) | Value::Object(_)))
+                        .map(|value| (input, value)),
                 );
             }
             _ => {}
@@ -1383,8 +1433,13 @@ fn validate_materialized_input_budget<'a>(
             return Err(plasm_runtime::ExecutionFailure::new(
                 plasm_runtime::FailureCause::Program,
                 "compute_input_row_budget_exceeded",
-                "compute input row budget exceeded",
-            ));
+                format!("compute input row budget exceeded while counting input `{input}`: at least {count} rows across inputs; limit {MAX_INPUT_ROWS}"),
+            ).with_input_budget(plasm_runtime::InputBudgetEvidence {
+                unit: plasm_runtime::InputBudgetUnit::Rows,
+                limit: MAX_INPUT_ROWS,
+                observed_at_least: count,
+                input: input.clone(),
+            }));
         }
     }
     Ok(())

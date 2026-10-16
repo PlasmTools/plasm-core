@@ -137,6 +137,17 @@ pub enum PlanStageError {
 }
 
 impl ProgramStageError {
+    pub fn rejection_evidence(&self) -> plasm_runtime::ProgramRejectionEvidence {
+        plasm_runtime::ProgramRejectionEvidence {
+            category: self.category().as_wire().into(),
+            span_offset: self.span_offset(),
+            detail: match self {
+                Self::PythonLowering { error } => error.rejection_detail(),
+                _ => None,
+            },
+        }
+    }
+
     pub fn plan(error: impl Into<PlanStageError>) -> Self {
         Self::Plan {
             error: std::sync::Arc::new(error.into()),
@@ -531,6 +542,10 @@ impl ProgramDiagnostic {
             Value::String(self.category().as_wire().into()),
         );
         plasm.insert("program_score".into(), self.score.to_json());
+        plasm.insert(
+            "program_rejection".into(),
+            json!(self.stage.rejection_evidence()),
+        );
         if let Some(off) = self.span_offset() {
             plasm.insert("span_offset".into(), json!(off));
         }
@@ -642,6 +657,10 @@ pub fn needs_fix_http_payload(
     );
     obj.insert("program_score".into(), diagnostic.score.to_json());
     obj.insert(
+        "program_rejection".into(),
+        json!(diagnostic.stage.rejection_evidence()),
+    );
+    obj.insert(
         "correction".into(),
         Value::String(diagnostic.correction().into()),
     );
@@ -695,11 +714,14 @@ impl From<ProgramStageError> for plasm_runtime::ExecutionFailure {
             ProgramStageError::Parse { .. } => "program_syntax",
             _ => "program_admission",
         };
-        Self::new(
+        let evidence = error.rejection_evidence();
+        let mut failure = Self::new(
             plasm_runtime::FailureCause::Program,
             code,
             error.into_correction(),
-        )
+        );
+        failure.program_rejection = Some(evidence);
+        failure
     }
 }
 
@@ -707,6 +729,37 @@ impl From<ProgramStageError> for plasm_runtime::ExecutionFailure {
 mod tests {
     use super::*;
     use plasm_core::PromptPipelineConfig;
+
+    #[test]
+    fn rejection_wire_preserves_union_contracts_and_source_location() {
+        let error = crate::program_rejection::PythonLoweringError::RowSuffix(std::sync::Arc::new(
+            crate::plasm_dag::RowSuffixLoweringError::UnionColumnsDiffer {
+                left: vec!["sender".into()],
+                right: vec!["recipient".into()],
+            },
+        ))
+        .with_span((23, 41));
+        let failure: plasm_runtime::ExecutionFailure =
+            ProgramStageError::PythonLowering { error }.into();
+        assert_eq!(
+            failure.recovery,
+            plasm_runtime::RecoveryDisposition::RepairProgram
+        );
+        let evidence = failure.program_rejection.as_ref().unwrap();
+        assert_eq!(evidence.span_offset, Some(23));
+        assert_eq!(
+            evidence.detail,
+            Some(plasm_runtime::ProgramRejectionDetail::UnionColumnsDiffer {
+                left: vec!["sender".into()],
+                right: vec!["recipient".into()],
+            })
+        );
+        let wire = serde_json::to_value(&failure).unwrap();
+        assert_eq!(
+            wire["program_rejection"]["detail"]["kind"],
+            "union_columns_differ"
+        );
+    }
 
     #[test]
     fn plan_stage_clone_preserves_semantic_cause() {
@@ -782,6 +835,7 @@ mod tests {
             }),
             replay: None,
         };
+        let http = needs_fix_http_payload(&d, Some("l_ref"));
         let out = d.into_plan_run_result("l_ref", 3);
         let md = out.run_markdown.as_deref().unwrap_or("");
         assert!(md.contains("dry_verdict\tneeds_fix"));
@@ -805,6 +859,8 @@ mod tests {
         );
         assert!(plasm.get("run_ref").is_none());
         assert!(plasm.get("understood").is_some());
+        assert_eq!(plasm["program_rejection"], http["program_rejection"]);
+        assert_eq!(plasm["program_rejection"]["category"], "parse");
     }
 
     #[test]

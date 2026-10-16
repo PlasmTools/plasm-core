@@ -450,7 +450,7 @@ pub enum PythonSourceError {
     #[error("Python source is invalid: only immutable local assignments are admitted")]
     MutableLocalAssignment,
     #[error(
-        "build unpacking requires a non-null tuple with the same fixed arity on every return path; unpack variable-length or nullable values inside @compute"
+        "build unpacking requires a non-null fixed tuple or typed array; fixed tuple alternatives must have matching arity; handle nullable or ambiguous containers inside @compute"
     )]
     UnpackRequiresFixedTuple,
     #[error("tuple unpacking has {targets} targets but the value has {positions} positions")]
@@ -1082,6 +1082,39 @@ impl PythonLoweringError {
             Self::InputAt { error, span } => {
                 std::borrow::Cow::Owned(format!("Python bytes {}..{}: {error}", span.0, span.1))
             }
+        }
+    }
+
+    pub fn rejection_detail(&self) -> Option<plasm_runtime::ProgramRejectionDetail> {
+        use plasm_runtime::ProgramRejectionDetail as Detail;
+        match self {
+            Self::Located { error, .. } => error.rejection_detail(),
+            Self::Program(PythonProgramError::BuildLocalShadowsReservedBinding { name }) => {
+                Some(Detail::ReservedBinding { name: name.clone() })
+            }
+            Self::RowSuffix(error) => match error.as_ref() {
+                crate::plasm_dag::RowSuffixLoweringError::UnionColumnsDiffer { left, right } => {
+                    Some(Detail::UnionColumnsDiffer {
+                        left: left.clone(),
+                        right: right.clone(),
+                    })
+                }
+                _ => None,
+            },
+            Self::Source { error, .. } => match error.as_ref() {
+                PythonSourceError::ReservedBindingName { name }
+                | PythonSourceError::ReservedStaticIterationName { name } => {
+                    Some(Detail::ReservedBinding { name: name.clone() })
+                }
+                PythonSourceError::StaticIterationRequiresLiteralIds => {
+                    Some(Detail::StaticIterationRequired)
+                }
+                PythonSourceError::MutableLocalAssignment
+                | PythonSourceError::BuildAugmentedAssignment
+                | PythonSourceError::BuildDelete => Some(Detail::BuildMutation),
+                _ => None,
+            },
+            _ => None,
         }
     }
 
