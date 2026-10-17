@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { workflowIntentSchema, intentProvenanceSchema } from "../runtime/session-contract.js";
+import { AgentExecutionFailure } from "../runtime/execution-failure.js";
 
 const capability = z.object({ catalog: z.string().min(1), capability: z.string().min(1) }).strict();
 export const prerequisiteClosureSchema = z.object({
@@ -89,7 +90,7 @@ const routingSchema = z.object({
 }).strict().superRefine((routing, ctx) => {
   const candidates = new Map(routing.retrieval.candidates.map(c => [c.id, c]));
   const matches = routing.matching.matches;
-  const selected = matches.filter(m => m.choice === "relevant").flatMap(m => {
+  const selected = matches.filter(m => m.choice !== "unrelated").flatMap(m => {
     const c = candidates.get(m.capability_id); return c ? [capabilityKey(c.reference)] : [];
   });
   if (candidates.size !== routing.retrieval.candidates.length
@@ -101,7 +102,7 @@ const routingSchema = z.object({
   matches.forEach((m,i) => validateProbabilities(m.probabilities, probabilityChoices.capability, ctx, ["matching","matches",i,"probabilities"]));
   if (!sameSet(selected, routing.closure?.business.map(capabilityKey) ?? [])
     || (routing.closure?.input_sources.length ?? 0) !== 0) {
-    ctx.addIssue({code:"custom",path:["closure"],message:"closure must retain exactly the current relevant capabilities"});
+    ctx.addIssue({code:"custom",path:["closure"],message:"closure must retain exactly the current relevant and uncertain capabilities"});
   }
   if (Boolean(routing.recovery) !== (selected.length === 0)) {
     ctx.addIssue({code:"custom",path:["recovery"],message:"empty-selection diagnostic contradicts relevance decisions"});
@@ -128,8 +129,27 @@ export const routingPacketSchema = z.object({
 export type RoutingPacket = z.infer<typeof routingPacketSchema>;
 export type PrerequisiteClosure = z.infer<typeof prerequisiteClosureSchema>;
 
+/** Decode the native discovery boundary without disguising contract errors as execution faults. */
+export function decodeRoutingPacket(raw: string): RoutingPacket {
+  let value: unknown;
+  try { value = JSON.parse(raw); } catch {
+    throw routingContractFailure("Native discovery response is not valid JSON.");
+  }
+  const decoded = routingPacketSchema.safeParse(value);
+  if (decoded.success) return decoded.data;
+  throw routingContractFailure(decoded.error.issues.map(issue => `${issue.path.join(".")}: ${issue.message}`).join("; "));
+}
+
+function routingContractFailure(diagnostic: string): AgentExecutionFailure {
+  return new AgentExecutionFailure({
+    cause: "runtime", recovery: "stop", code: "discovery_response_contract",
+    diagnostic, node: null, occurrence_path: [], catalog_digest: null,
+    effects: [], dispatches: [], effects_unresolved: false,
+  }, `Discovery response failed contract validation: ${diagnostic}`);
+}
+
 export function routingExplanationLines(matching: RoutingPacket["routing"]["matching"]): string[] {
-  return matching.matches.some(m => m.choice === "relevant") ? [] : ["No relevant capability selected from the current bounded packet."];
+  return matching.matches.some(m => m.choice !== "unrelated") ? [] : ["No relevant or uncertain capability selected from the current bounded packet."];
 }
 export function routingRecoveryMarkdown(routing: RoutingPacket["routing"]): string | null {
   const recovery=routing.recovery;

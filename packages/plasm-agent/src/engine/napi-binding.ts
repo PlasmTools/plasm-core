@@ -4,7 +4,7 @@
 
 import { createRequire } from "node:module";
 import type { LoadedCatalog } from "../catalog/loader.js";
-import { routingPacketSchema, type RoutingPacket } from "./routing.js";
+import { decodeRoutingPacket, type RoutingPacket } from "./routing.js";
 import { toNapiHostTransport } from "./host-transport-bridge.js";
 import { workflowIntentSchema, intentProvenanceSchema, type IntentProvenance } from "../runtime/session-contract.js";
 
@@ -204,7 +204,7 @@ export class NapiPlasmEngine implements PlasmEngine {
 
   async routeIntent(provenance: IntentProvenance, logicalSessionId?: string): Promise<RoutingPacket> {
     const raw = await this.native.routeIntent(JSON.stringify(intentProvenanceSchema.parse(provenance)), logicalSessionId);
-    return routingPacketSchema.parse(JSON.parse(raw));
+    return decodeRoutingPacket(raw);
   }
 
   async runPlan(planCommitRef: string, logicalSessionId?: string): Promise<{ ok: boolean; message: string; rowsJson?: string }> {
