@@ -2,6 +2,17 @@
 
 use super::super::super::*;
 
+fn serialization_failure(error: plasm_core::ValueCodecError) -> Response {
+    problem_response(
+        Problem::custom(
+            ProblemStatus::INTERNAL_SERVER_ERROR,
+            Uri::from_static(problem_types::EXECUTE_SERIALIZATION_FAILED),
+        )
+        .with_title("Result encoding failed")
+        .with_detail(error.to_string()),
+    )
+}
+
 pub(crate) fn respond_plan_run_live_result(
     kind: ExecResponseKind,
     result: &crate::plasm_plan_run::PlasmPlanRunResult,
@@ -49,7 +60,10 @@ pub(crate) fn respond_plan_run_live_result(
     }
     if steps.len() == 1 {
         let step = &steps[0];
-        let json_value = http_execute_results_value(&step.result);
+        let json_value = match http_execute_results_value(&step.result) {
+            Ok(value) => value,
+            Err(error) => return serialization_failure(error),
+        };
         let cgs = step.cgs.as_deref().or(Some(sess.cgs.as_ref()));
         let omitted = reference_only_omitted_field_names(&step.result, cgs);
         let handles: Vec<RunArtifactHandle> = step.artifact.clone().into_iter().collect();
@@ -76,7 +90,10 @@ pub(crate) fn respond_plan_run_live_result(
             step_artifacts.push(h.clone());
         }
         let cgs = step.cgs.as_deref().or(Some(sess.cgs.as_ref()));
-        step_values.push(http_execute_results_value(&step.result));
+        match http_execute_results_value(&step.result) {
+            Ok(value) => step_values.push(value),
+            Err(error) => return serialization_failure(error),
+        }
         if let Some(ref mut tabs) = step_tables {
             let (table, omitted, _) =
                 format_result_with_cgs(&step.result, OutputFormat::Table, cgs);

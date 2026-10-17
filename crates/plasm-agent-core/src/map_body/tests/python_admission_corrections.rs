@@ -22,6 +22,47 @@ fn source_cause(
 }
 
 #[test]
+fn scalar_field_rejection_preserves_expression_cardinality_and_location() {
+    on_runtime(async {
+        let (es, _, calls) = fixture(2);
+        let item = es
+            .teaching_exposure
+            .as_ref()
+            .unwrap()
+            .to_symbol_map()
+            .entity_sym_for("fixture", "Item");
+        for expression in ["rows.id", "str(rows.id)"] {
+            let source = format!("class P(Program):\n    def build(self):\n        rows = {item}.query()\n        return {expression}\n");
+            let error = compile_python_program(&es, &source).await.unwrap_err();
+            assert!(
+                matches!(source_cause(&error),
+                    crate::program_rejection::PythonSourceError::FieldInputNeedsSingleton { expression, cardinality, .. }
+                    if expression == "rows.id" && *cardinality == plasm_core::plasm_monad::RelationSourceCardinality::Many
+                ),
+                "{error:?}"
+            );
+            let crate::compilation_error::CompilationError::Program(stage) = &error else {
+                panic!("program error")
+            };
+            let crate::program_diagnostic::ProgramStageError::PythonLowering { error: lowering } =
+                stage.as_ref()
+            else {
+                panic!("lowering error")
+            };
+            assert_eq!(lowering.span_offset(), source.find("rows.id"));
+            assert!(error.to_string().contains("rows.id"));
+            let failure: plasm_runtime::ExecutionFailure = error.into();
+            assert!(failure.diagnostic().contains("rows.id"));
+            assert!(failure.diagnostic().contains("Many"));
+            assert!(failure.program_rejection.is_some());
+        }
+        let source = format!("class P(Program):\n    def build(self):\n        rows = {item}.get('i0')\n        return rows.id\n");
+        compile_python_program(&es, &source).await.unwrap();
+        assert!(calls.lock().unwrap().is_empty());
+    });
+}
+
+#[test]
 fn plain_nested_dag_values_admit_only_declared_fields() {
     on_runtime(async {
         let (es, host, _) = fixture(2);
@@ -67,7 +108,8 @@ fn private_compute_names_and_unused_declarations_preserve_results() {
                     plasm_runtime::entity_to_agent_row_json(
                         &run.return_steps[0].result.entities()[0],
                         None
-                    )["value"],
+                    )
+                    .unwrap()["value"],
                     json!(1)
                 );
                 assert!(calls.lock().unwrap().is_empty());
@@ -187,7 +229,8 @@ fn entity_binding_annotation_correction_has_an_executable_repair() {
                 plasm_runtime::entity_to_agent_row_json(
                     &run.return_steps[0].result.entities()[0],
                     None
-                )["value"],
+                )
+                .unwrap()["value"],
                 json!("Title 0")
             );
         }
@@ -272,7 +315,8 @@ fn projected_row_scalar_annotation_repairs_with_explicit_cell() {
             plasm_runtime::entity_to_agent_row_json(
                 &run.return_steps[0].result.entities()[0],
                 None
-            )["value"],
+            )
+            .unwrap()["value"],
             json!("Title 0!")
         );
     });
@@ -296,7 +340,8 @@ fn local_callback_invocation_preserves_collection_cardinality_and_annotations() 
                 plasm_runtime::entity_to_agent_row_json(
                     &run.return_steps[0].result.entities()[0],
                     None
-                )["value"],
+                )
+                .unwrap()["value"],
                 json!(expected)
             );
         }

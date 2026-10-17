@@ -238,8 +238,12 @@ pub enum PythonSourceError {
     DuplicateInvocationArgument { argument: String },
     #[error("Python source is invalid: expected a field dependency")]
     ExpectedFieldDependency,
-    #[error("Python source is invalid: field input requires a proven singleton; binding `{binding}` has no singleton proof. Use row transforms or map for plural rows; establish a singleton before scalar extraction.")]
-    FieldInputNeedsSingleton { binding: String },
+    #[error("Python source is invalid: field input requires a proven singleton; expression `{expression}` on binding `{binding}` has cardinality {cardinality:?}. Use a row projection or aggregate for plural rows; scalar extraction requires a proven singleton.")]
+    FieldInputNeedsSingleton {
+        binding: String,
+        expression: String,
+        cardinality: plasm_core::plasm_monad::RelationSourceCardinality,
+    },
     #[error("Python source is invalid: session method kind differs from pinned catalog")]
     SessionMethodKindMismatch { method: String },
     #[error("Python source is invalid: page_size requires a positive literal bound attached directly to a catalog read call")]
@@ -660,8 +664,6 @@ pub enum PythonProgramError {
     ValueExpressionWriteAuthority,
     #[error("membership requires an explicit one-column rowset")]
     MembershipNeedsOneColumn,
-    #[error("field input requires a proven singleton")]
-    FieldInputNeedsSingleton,
     #[error("callback branches cannot mix rows and acknowledgements")]
     CallbackBranchKindMismatch,
     #[error("callback branches must return the same record fields")]

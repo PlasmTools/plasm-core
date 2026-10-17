@@ -281,7 +281,7 @@ impl ExecutionEngine {
                 "dispatch",
                 serde_json::json!({
                     "entity":get.reference.entity_type.as_str(), "capability":capability.name.as_str(),
-                    "request_fingerprint":crate::replay::RequestFingerprint::from_operation(&compiled).to_hex()
+                    "request_fingerprint":crate::replay::RequestFingerprint::from_operation(&compiled)?.to_hex()
                 }),
             );
         }

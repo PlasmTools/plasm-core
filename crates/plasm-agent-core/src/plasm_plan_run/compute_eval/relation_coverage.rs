@@ -39,9 +39,14 @@ pub(crate) fn embedded_collection<'a>(
         };
         children.push(ExecutionCollection::graph(record));
     }
-    let mut collection = source.collection.flat_map(&(relation, target), &children)?;
+    let mut collection = source.collection.flat_map(
+        plasm_runtime::execution::RowMaterialization::Catalog,
+        &(relation, target),
+        &children,
+    )?;
     if let Some(count) = read_cap {
         collection = ExecutionCollection::derive(
+            plasm_runtime::execution::RowMaterialization::Catalog,
             collection
                 .membership()
                 .identity()
@@ -258,7 +263,7 @@ mod tests {
                 serde_json::from_slice(&serde_json::to_vec(&cached).unwrap()).unwrap();
             assert_eq!(stored.relations, cached.relations);
             assert!(stored.relations["wire_notes"].is_exhaustive());
-            let values = RowCodec::new(Some(&cgs)).values(&stored);
+            let values = RowCodec::new(Some(&cgs)).values(&stored).unwrap();
             let public = RowCodec::new(Some(&cgs))
                 .decode_values(
                     "Folder",

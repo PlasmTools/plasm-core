@@ -108,7 +108,10 @@ pub async fn execute(schema: &str, spec: &str, require_complete: bool) -> Result
         let identity = match identity {
             Value::String(value) => value,
             Value::Integer(value) => value.to_string(),
-            value => serde_json::to_string(&plasm_core::plasm_value_to_json(&value))?,
+            value => serde_json::to_string(
+                &plasm_core::try_plasm_value_to_json(&value)
+                    .map_err(plasm_runtime::RuntimeError::from)?,
+            )?,
         };
 
         // Exercise every collection operation, including secondary queries and searches.

@@ -89,12 +89,14 @@ pub(crate) async fn materialize_synthetic_node(
         match &compute.compute.op {
             ComputeOp::Limit { count } => {
                 let taken = ExecutionCollection::derive(
+                    source.row_materialization(),
                     identity.derived(&("take", count))?,
                     &[source],
                     Transform::Take(*count),
                     PayloadResidency::Graph,
                 )?;
                 ExecutionCollection::derive(
+                    plasm_runtime::execution::RowMaterialization::Computed,
                     identity,
                     &[&taken],
                     Transform::Map {
@@ -120,6 +122,7 @@ pub(crate) async fn materialize_synthetic_node(
                         .map(|id| &materialized[id].result.collection),
                 );
                 ExecutionCollection::derive(
+                    plasm_runtime::execution::RowMaterialization::Computed,
                     identity,
                     &inputs,
                     Transform::Map {
@@ -132,10 +135,20 @@ pub(crate) async fn materialize_synthetic_node(
                     PayloadResidency::Materialized(full_entities),
                 )?
             }
-            _ => ExecutionCollection::evaluate(identity, &dependencies, full_entities)?,
+            _ => ExecutionCollection::evaluate(
+                plasm_runtime::execution::RowMaterialization::Computed,
+                identity,
+                &dependencies,
+                full_entities,
+            )?,
         }
     } else {
-        ExecutionCollection::evaluate(identity, &dependencies, full_entities)?
+        ExecutionCollection::evaluate(
+            plasm_runtime::execution::RowMaterialization::Computed,
+            identity,
+            &dependencies,
+            full_entities,
+        )?
     };
     let full_result = ExecutionResult {
         collection,
@@ -304,10 +317,11 @@ pub(crate) async fn materialize_validated_relation_traversal(
                 relation,
                 trace,
                 read_cap,
-                source_mat
-                    .result
-                    .collection
-                    .flat_map(&"empty_relation", &[])?,
+                source_mat.result.collection.flat_map(
+                    plasm_runtime::execution::RowMaterialization::Catalog,
+                    &"empty_relation",
+                    &[],
+                )?,
             ),
         )
         .await;
@@ -721,13 +735,13 @@ fn relation_materialized_node_from_result(
     full_result: ExecutionResult,
     display: String,
     artifact: crate::run_artifacts::RunArtifactHandle,
-) -> MaterializedNode {
+) -> Result<MaterializedNode, ExecutionFailure> {
     let rows: Vec<_> = full_result
         .entities()
         .iter()
         .map(|e| cached_entity_row_values(e, scoped_es.cgs.as_ref()))
-        .collect();
-    MaterializedNode {
+        .collect::<Result<_, _>>()?;
+    Ok(MaterializedNode {
         value_shapes: Vec::new(),
         optional_fields: Default::default(),
         qualified_entity: relation.relation.target.clone(),
@@ -741,7 +755,7 @@ fn relation_materialized_node_from_result(
         ),
         result: Arc::new(full_result),
         artifact: Some(artifact),
-    }
+    })
 }
 
 /// Archive snapshot + build a relation `MaterializedNode`, optionally GET-hydrating rows.
@@ -780,8 +794,13 @@ pub(crate) async fn archive_materialize_relation(
             diagnostic.to_string(),
         )
     })?;
-    let mat =
-        relation_materialized_node_from_result(scoped_es, relation, full_result, display, artifact);
+    let mat = relation_materialized_node_from_result(
+        scoped_es,
+        relation,
+        full_result,
+        display,
+        artifact,
+    )?;
     let Some((read_cap, plan_shared)) = hydrate else {
         return Ok(mat);
     };
@@ -970,7 +989,7 @@ pub(crate) async fn archive_materialize_for_each_fanout(
         .entities()
         .iter()
         .map(|e| cached_entity_row_values(e, scoped_es.cgs.as_ref()))
-        .collect();
+        .collect::<Result<_, _>>()?;
     Ok(MaterializedNode {
         value_shapes: Vec::new(),
         optional_fields: Default::default(),
@@ -1049,6 +1068,7 @@ pub(crate) async fn archive_materialize_iterate_until(
     let mut inputs: Vec<_> = dependencies.iter().collect();
     inputs.push(&observed.result.collection);
     let collection = plasm_runtime::execution::ExecutionCollection::evaluate(
+        plasm_runtime::execution::RowMaterialization::Catalog,
         observed
             .result
             .collection

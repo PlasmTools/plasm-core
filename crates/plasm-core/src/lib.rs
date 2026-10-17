@@ -177,7 +177,12 @@ pub mod run_reference;
 mod span_graph_tests;
 mod spans;
 mod utf8_trunc;
+pub mod value_codec;
 mod wire_coercion;
+pub use value_codec::{
+    JsonValueCodec, ResolvedValueContract, StorageValueCodec, ValidatedValue, ValueCodec,
+    ValueCodecError, ValueWireCodec,
+};
 
 /// Local `o200k_base` BPE length (OpenAI `o200k_base` via riptoken).
 pub use o200k_token_count::o200k_token_count;
@@ -330,17 +335,16 @@ pub use teaching_term::{
     MethodRef, ParameterSlot, Symbol, TeachingTerm,
 };
 pub use wire_coercion::{
-    apply_identity_slots_to_row, binding_value_as_plasm_value, coerce_json_value_for_field_type,
-    coerce_value_for_field_type, coerce_value_for_field_type_with_policy,
-    collect_relation_binding_proofs, compare_unify_json_ordered_numbers,
+    binding_value_as_plasm_value, coerce_json_value_for_field_type, coerce_value_for_field_type,
+    coerce_value_for_field_type_with_policy, collect_relation_binding_proofs,
     decode_coerce_and_validate_field, decode_coerce_money_fields, dry_stub_entity_rows,
     dry_stub_json_for_named_value, dry_stub_value_for_named_value,
     field_type_assignable_for_relation_binding, identity_slot_to_json, identity_slot_to_value,
-    json_value_to_plasm_value, parent_entity_field_type, plasm_value_to_json,
-    relation_binding_assignable, restore_id_field_from_compound_ref, try_plasm_value_to_json,
-    value_compatible_with_field_type, CoercionError, DecodeFieldCause, DecodeFieldDiagnostic,
-    DigitIdCoercionError, ParentFieldTypeError, RelationBindingProof, RelationBindingProofError,
-    WireEncodingError,
+    json_value_to_plasm_value, parent_entity_field_type, relation_binding_assignable,
+    restore_id_field_from_compound_ref, try_plasm_value_to_json, try_plasm_value_to_storage_json,
+    try_storage_json_to_plasm_value, value_compatible_with_field_type, CoercionError,
+    DecodeFieldCause, DecodeFieldDiagnostic, DigitIdCoercionError, ParentFieldTypeError,
+    RelationBindingProof, RelationBindingProofError, WireEncodingError,
 };
 pub mod relation_materialize;
 pub mod view_embed_proof;

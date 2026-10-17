@@ -239,12 +239,15 @@ impl CachedEntity {
     }
 
     /// Serialize fields and relations to JSON (no `_ref` / `_version` cache metadata).
-    pub fn payload_to_json(&self) -> serde_json::Value {
+    pub fn payload_to_json(&self) -> Result<serde_json::Value, plasm_core::ValueCodecError> {
         plasm_core::row_contract::RowCodec::new(None).payload(self)
     }
 
     /// Row-shaped JSON for plan evaluation, spill pages, and snapshots (CGS-aware id slots).
-    pub fn to_row_json(&self, cgs: Option<&plasm_core::CGS>) -> serde_json::Value {
+    pub fn to_row_json(
+        &self,
+        cgs: Option<&plasm_core::CGS>,
+    ) -> Result<serde_json::Value, plasm_core::ValueCodecError> {
         entity_to_row_json(self, cgs)
     }
 
@@ -254,11 +257,14 @@ impl CachedEntity {
         row: &serde_json::Value,
         cgs: &plasm_core::CGS,
     ) -> Result<Self, RuntimeError> {
-        let value = plasm_core::json_value_to_plasm_value(row);
+        let value = plasm_core::try_storage_json_to_plasm_value(row)?;
         let row = plasm_core::ValueRow::try_from(value)?;
         Self::from_row_values(entity_type, &row, cgs)
     }
-    pub fn to_row_values(&self, cgs: Option<&plasm_core::CGS>) -> plasm_core::ValueRow {
+    pub fn to_row_values(
+        &self,
+        cgs: Option<&plasm_core::CGS>,
+    ) -> Result<plasm_core::ValueRow, plasm_core::ValueCodecError> {
         entity_to_row_values(self, cgs)
     }
     pub fn from_row_values(
@@ -484,7 +490,7 @@ impl CacheStore for GraphCache {
 pub fn entity_to_agent_row_json(
     entity: &CachedEntity,
     cgs: Option<&plasm_core::CGS>,
-) -> serde_json::Value {
+) -> Result<serde_json::Value, plasm_core::ValueCodecError> {
     plasm_core::row_contract::RowCodec::new(cgs).display(entity)
 }
 
@@ -492,17 +498,19 @@ pub fn entity_to_agent_row_json(
 pub fn entity_to_row_json(
     entity: &CachedEntity,
     cgs: Option<&plasm_core::CGS>,
-) -> serde_json::Value {
-    plasm_core::plasm_value_to_json(&entity_to_row_values(entity, cgs).into_value())
+) -> Result<serde_json::Value, plasm_core::ValueCodecError> {
+    Ok(plasm_core::try_plasm_value_to_storage_json(
+        &entity_to_row_values(entity, cgs)?.into_value(),
+    )?)
 }
 
 /// Native graph materialization; no serialization or parsing before compute.
 pub fn entity_to_row_values(
     entity: &CachedEntity,
     cgs: Option<&plasm_core::CGS>,
-) -> plasm_core::ValueRow {
+) -> Result<plasm_core::ValueRow, plasm_core::ValueCodecError> {
     use plasm_core::Value;
-    let mut row = plasm_core::row_contract::RowCodec::new(cgs).values(entity);
+    let mut row = plasm_core::row_contract::RowCodec::new(cgs).values(entity)?;
     row.insert("_version".into(), Value::Unsigned(entity.version));
     row.insert("_last_updated".into(), Value::Unsigned(entity.last_updated));
     row.insert(
@@ -515,7 +523,7 @@ pub fn entity_to_row_values(
             .into(),
         ),
     );
-    row
+    Ok(row)
 }
 
 impl GraphCache {
@@ -839,7 +847,7 @@ impl GraphCache {
             "_last_updated": entity.last_updated
         });
 
-        if let serde_json::Value::Object(payload) = entity.payload_to_json() {
+        if let serde_json::Value::Object(payload) = entity.payload_to_json()? {
             for (k, v) in payload {
                 json[k] = v;
             }
@@ -1316,10 +1324,8 @@ mod tests {
 
     #[test]
     fn agent_row_json_omits_cache_metadata() {
-        use plasm_core::CGS;
         let entity = create_test_entity("test-1", "TestEntity");
-        let cgs = CGS::new();
-        let row = entity_to_agent_row_json(&entity, Some(&cgs));
+        let row = entity_to_agent_row_json(&entity, None).unwrap();
         let obj = row.as_object().expect("object");
         assert!(!obj.contains_key("_ref"));
         assert!(!obj.contains_key("_version"));
@@ -1330,16 +1336,20 @@ mod tests {
 
     #[test]
     fn row_json_roundtrip_preserves_ref_and_fields() {
-        use plasm_core::CGS;
-        let entity = create_test_entity("test-1", "TestEntity");
-        let cgs = CGS::new();
-        let row = entity_to_row_json(&entity, Some(&cgs));
-        let restored =
-            CachedEntity::from_row_json("TestEntity", &row, &cgs).expect("from_row_json");
+        let mut entity = create_test_entity("test-1", "LangItem");
+        let name = entity.fields.shift_remove("name").unwrap();
+        entity.fields.insert("title".into(), name);
+        let cgs = plasm_core::load_schema_dir(
+            &std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+                .join("../../fixtures/schemas/plasm_language_matrix"),
+        )
+        .unwrap();
+        let row = entity_to_row_json(&entity, Some(&cgs)).unwrap();
+        let restored = CachedEntity::from_row_json("LangItem", &row, &cgs).expect("from_row_json");
         assert_eq!(restored.reference, entity.reference);
         assert_eq!(
-            restored.get_field("name").map(TypedFieldValue::to_value),
-            entity.get_field("name").map(TypedFieldValue::to_value),
+            restored.get_field("title").map(TypedFieldValue::to_value),
+            entity.get_field("title").map(TypedFieldValue::to_value),
         );
     }
 
@@ -1394,7 +1404,7 @@ mod tests {
             completeness: EntityCompleteness::Complete,
             unavailable_fields: Default::default(),
         };
-        let row = entity_to_row_json(&entity, Some(&cgs));
+        let row = entity_to_row_json(&entity, Some(&cgs)).unwrap();
         let restored =
             CachedEntity::from_row_json("CompoundBranch", &row, &cgs).expect("roundtrip");
         assert!(matches!(
@@ -1453,7 +1463,7 @@ mod relation_wire_properties {
                 use plasm_core::row_contract::{EntityRow, RowCodec, RowRecord};
                 let codec = RowCodec::new(Some(cgs));
                 let captured = RowRecord::capture(row);
-                let wire = codec.encode(row);
+                let wire = codec.encode(row).unwrap();
                 let wire = serde_json::from_slice(&serde_json::to_vec(&wire).unwrap()).unwrap();
                 let restored = codec.decode(row.identity().entity_type.as_str(), &wire).unwrap();
                 assert_eq!(restored.identity(), captured.identity());
@@ -1464,11 +1474,11 @@ mod relation_wire_properties {
                     assert_eq!(edge.references(), captured_edges[key].references());
                     assert!(!edge.is_exhaustive(), "public row encoding cannot transfer producer authority");
                 }
-                assert_eq!(codec.encode(&restored), wire);
-                assert_eq!(codec.encode(&CachedEntity::from_row(&restored, 999, EntityCompleteness::Complete)), wire);
+                assert_eq!(codec.encode(&restored).unwrap(), wire);
+                assert_eq!(codec.encode(&CachedEntity::from_row(&restored, 999, EntityCompleteness::Complete)).unwrap(), wire);
                 wire
             }
-            parent.fields.insert("_tag".into(), TypedFieldValue::from(Value::String("public".into())));
+            parent.fields.insert("title".into(), TypedFieldValue::from(Value::String("public".into())));
             let decoded = plasm_compile::DecodedEntity {
                 reference: parent.reference.clone(),
                 fields: parent.fields.iter().map(|(key,value)|(key.clone(),value.to_value())).collect(),
@@ -1479,7 +1489,7 @@ mod relation_wire_properties {
             let expected = assert_row_laws(&decoded, &cgs);
             prop_assert_eq!(&assert_row_laws(&parent, &cgs), &expected);
             prop_assert_eq!(&assert_row_laws(&canonical, &cgs), &expected);
-            let wire = entity_to_row_json(&parent, Some(&cgs));
+            let wire = entity_to_row_json(&parent, Some(&cgs)).unwrap();
             let wire = serde_json::from_slice(&serde_json::to_vec(&wire).unwrap()).unwrap();
             let restored = CachedEntity::from_row_json("LangItem", &wire, &cgs).unwrap();
             prop_assert_eq!(restored.relations.len(), parent.relations.len());
@@ -1487,7 +1497,7 @@ mod relation_wire_properties {
                 prop_assert_eq!(edge.references(), parent.relations[key].references());
                 prop_assert!(!edge.is_exhaustive());
             }
-            prop_assert_eq!(&wire, &entity_to_row_json(&restored, Some(&cgs)));
+            prop_assert_eq!(&wire, &entity_to_row_json(&restored, Some(&cgs)).unwrap());
             for (row, id) in wire["lines"].as_array().unwrap().iter().zip(ids) {
                 prop_assert_eq!(row["id"].as_str(), Some(id.as_str()));
             }

@@ -12,8 +12,16 @@ pub enum PayloadResidency {
     Graph,
 }
 
+/// How recorded row fields are materialized; independent of residency or delivery.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub enum RowMaterialization {
+    Catalog,
+    Computed,
+}
+
 #[derive(Debug, Clone)]
 pub struct ExecutionCollection {
+    row_materialization: RowMaterialization,
     delivery_start: usize,
     delivery_source: Option<std::sync::Arc<Self>>,
     membership: RecordedCollection<Ref>,
@@ -58,6 +66,7 @@ impl ExecutionCollection {
             return Err(CollectionFault::Conservation);
         }
         Ok(Self {
+            row_materialization: RowMaterialization::Catalog,
             membership,
             entities,
             delivery_start: 0,
@@ -68,6 +77,7 @@ impl ExecutionCollection {
 
     pub fn graph(membership: RecordedCollection<Ref>) -> Self {
         Self {
+            row_materialization: RowMaterialization::Catalog,
             membership,
             entities: Vec::new().into(),
             delivery_start: 0,
@@ -77,6 +87,14 @@ impl ExecutionCollection {
     }
     pub fn membership(&self) -> &RecordedCollection<Ref> {
         &self.membership
+    }
+    pub fn row_materialization(&self) -> RowMaterialization {
+        self.row_materialization
+    }
+    /// Set by the producer of new row values, never inferred from entity spelling.
+    pub fn with_row_materialization(mut self, contract: RowMaterialization) -> Self {
+        self.row_materialization = contract;
+        self
     }
     pub fn is_graph_backed(&self) -> bool {
         self.graph_backed
@@ -113,10 +131,12 @@ impl ExecutionCollection {
         &self,
         entities: SharedRows<CachedEntity>,
     ) -> Result<Self, CollectionFault> {
-        Self::materialized(self.membership.clone(), entities)
+        Ok(Self::materialized(self.membership.clone(), entities)?
+            .with_row_materialization(self.row_materialization))
     }
     /// Record a completed operator with its actual ordered dependency ports.
     pub fn evaluate(
+        row_materialization: RowMaterialization,
         identity: CollectionIdentity,
         inputs: &[&Self],
         entities: SharedRows<CachedEntity>,
@@ -124,9 +144,11 @@ impl ExecutionCollection {
         let rows = entities.iter().map(|row| row.reference.clone()).collect();
         if inputs.is_empty() {
             let membership = RecordingCodec::new().record(identity, rows, Observation::Literal)?;
-            return Self::materialized(membership, entities);
+            return Ok(Self::materialized(membership, entities)?
+                .with_row_materialization(row_materialization));
         }
         Self::derive(
+            row_materialization,
             identity,
             inputs,
             Transform::Evaluate { rows },
@@ -154,6 +176,7 @@ impl ExecutionCollection {
             PayloadResidency::Materialized(self.entities.select(retained.iter().copied())?)
         };
         Self::derive(
+            self.row_materialization,
             identity,
             &inputs,
             Transform::Filter {
@@ -178,6 +201,7 @@ impl ExecutionCollection {
             .ok_or(CollectionFault::Conservation)?;
         Ok(Self {
             delivery_start,
+            row_materialization: self.row_materialization,
             delivery_source: Some(
                 self.delivery_source
                     .clone()
@@ -204,7 +228,8 @@ impl ExecutionCollection {
             vec![reference],
             Observation::ExactOutput { decoded: 1 },
         )?;
-        Self::materialized(record, self.entities.select([index])?)
+        Ok(Self::materialized(record, self.entities.select([index])?)?
+            .with_row_materialization(self.row_materialization))
     }
 
     /// Projection changes fields, never membership or relation evidence.
@@ -215,6 +240,7 @@ impl ExecutionCollection {
         if let Some(source) = &self.delivery_source {
             let source = std::sync::Arc::new(source.map_fields(project));
             return Self {
+                row_materialization: self.row_materialization,
                 membership: self.membership.clone(),
                 entities: source
                     .entities
@@ -241,6 +267,7 @@ impl ExecutionCollection {
             .into();
         Self {
             membership: self.membership.clone(),
+            row_materialization: self.row_materialization,
             entities,
             delivery_start: self.delivery_start,
             delivery_source: None,
@@ -250,6 +277,7 @@ impl ExecutionCollection {
 
     pub fn flat_map(
         &self,
+        row_materialization: RowMaterialization,
         expression: &impl serde::Serialize,
         children: &[Self],
     ) -> Result<Self, CollectionFault> {
@@ -267,6 +295,7 @@ impl ExecutionCollection {
             ))
         };
         Self::derive(
+            row_materialization,
             self.membership.identity().derived(expression)?,
             &inputs,
             Transform::FlatMap {
@@ -284,31 +313,46 @@ impl ExecutionCollection {
         let before = self.entities.select(0..index)?;
         let changed = SharedRows::from(vec![row]);
         let after = self.entities.select(index + 1..self.entities.len())?;
-        Self::materialized(
+        Ok(Self::materialized(
             self.membership.clone(),
             SharedRows::concat([&before, &changed, &after]),
-        )
+        )?
+        .with_row_materialization(self.row_materialization))
     }
 
     pub fn derive(
+        row_materialization: RowMaterialization,
         identity: CollectionIdentity,
         inputs: &[&Self],
         operation: Transform<'_, Ref>,
         payloads: PayloadResidency,
     ) -> Result<Self, CollectionFault> {
+        let contributing = match &operation {
+            Transform::FlatMap { .. } => inputs.get(1..).ok_or(CollectionFault::Arity)?,
+            Transform::Concat => inputs,
+            _ => &[],
+        };
+        if contributing
+            .iter()
+            .any(|source| source.row_materialization != row_materialization)
+        {
+            return Err(CollectionFault::RowMaterializationMismatch);
+        }
         let records: Vec<_> = inputs.iter().map(|input| input.membership()).collect();
         let membership = RecordingCodec::new().derive(identity, &records, operation)?;
-        match payloads {
+        let result = match payloads {
             PayloadResidency::Materialized(entities) => Self::materialized(membership, entities),
             PayloadResidency::Graph => Ok(Self::graph(membership)),
-        }
+        }?;
+        Ok(result.with_row_materialization(row_materialization))
     }
 }
 
 impl serde::Serialize for ExecutionCollection {
     fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
         use serde::ser::SerializeStruct;
-        let mut state = serializer.serialize_struct("ExecutionCollection", 3)?;
+        let mut state = serializer.serialize_struct("ExecutionCollection", 4)?;
+        state.serialize_field("row_materialization", &self.row_materialization)?;
         state.serialize_field("entities", self.resident_entities())?;
         state.serialize_field("count", &self.count())?;
         state.serialize_field("coverage", &self.coverage())?;
@@ -338,6 +382,96 @@ mod tests {
             0,
             crate::EntityCompleteness::Complete,
         )
+    }
+
+    #[test]
+    fn row_materialization_survives_delivery_capture_filter_and_rehydration() {
+        for contract in [RowMaterialization::Catalog, RowMaterialization::Computed] {
+            let source = ExecutionCollection::observe(
+                identity(),
+                vec![row("a"), row("b")],
+                Observation::ExactOutput { decoded: 2 },
+            )
+            .unwrap()
+            .with_row_materialization(contract);
+            let page = source.delivery(0..1).unwrap();
+            assert_eq!(page.row_materialization(), contract);
+            assert_eq!(page.computation_source().row_materialization(), contract);
+            assert_eq!(page.map_fields(|_| {}).row_materialization(), contract);
+            assert_eq!(source.capture(1).unwrap().row_materialization(), contract);
+            assert_eq!(
+                source
+                    .filter(&"filter", &[1], &[])
+                    .unwrap()
+                    .row_materialization(),
+                contract
+            );
+            assert_eq!(
+                source
+                    .with_materialization(source.entities.clone())
+                    .unwrap()
+                    .row_materialization(),
+                contract
+            );
+            assert_eq!(
+                source.replace(0, row("a")).unwrap().row_materialization(),
+                contract
+            );
+        }
+    }
+
+    #[test]
+    fn flat_map_uses_child_contract_and_rejects_mixed_concat() {
+        assert!(matches!(
+            ExecutionCollection::derive(
+                RowMaterialization::Catalog,
+                identity(),
+                &[],
+                Transform::FlatMap { children: &[] },
+                PayloadResidency::Materialized(SharedRows::default())
+            ),
+            Err(CollectionFault::Arity)
+        ));
+        let catalog = ExecutionCollection::observe(
+            identity(),
+            vec![row("a")],
+            Observation::ExactOutput { decoded: 1 },
+        )
+        .unwrap();
+        let computed = catalog
+            .clone()
+            .with_row_materialization(RowMaterialization::Computed);
+        for (parent, child, output) in [
+            (&computed, &catalog, RowMaterialization::Catalog),
+            (&catalog, &computed, RowMaterialization::Computed),
+        ] {
+            let result = parent
+                .flat_map(output, &"children", std::slice::from_ref(child))
+                .unwrap();
+            assert_eq!(result.row_materialization(), output);
+        }
+        assert!(matches!(
+            catalog.flat_map(
+                RowMaterialization::Catalog,
+                &"wrong",
+                std::slice::from_ref(&computed)
+            ),
+            Err(CollectionFault::RowMaterializationMismatch)
+        ));
+        let result = ExecutionCollection::derive(
+            RowMaterialization::Catalog,
+            identity(),
+            &[&catalog, &computed],
+            Transform::Concat,
+            PayloadResidency::Materialized(SharedRows::concat([
+                catalog.resident_entities(),
+                computed.resident_entities(),
+            ])),
+        );
+        assert!(matches!(
+            result,
+            Err(CollectionFault::RowMaterializationMismatch)
+        ));
     }
 
     #[test]
@@ -568,7 +702,7 @@ mod occurrence_properties {
                 parent.membership().identity().derived(&i).unwrap(),
                 values.iter().map(|value| CachedEntity::new(Ref::new("Child", value.to_string()), 0)).collect(),
                 if partial_child { Observation::MoreAvailable } else { Observation::ExactOutput { decoded: values.len() } }).unwrap()).collect::<Vec<_>>();
-            let result = parent.flat_map(&"children", &outputs).unwrap();
+            let result = parent.flat_map(crate::execution::RowMaterialization::Catalog, &"children", &outputs).unwrap();
             let expected = children.iter().flatten().map(|v| Ref::new("Child", v.to_string())).collect::<Vec<_>>();
             prop_assert_eq!(result.membership().observed().iter().cloned().collect::<Vec<_>>(), expected);
             let complete = !unknown_parent && (!partial_child || children.is_empty());

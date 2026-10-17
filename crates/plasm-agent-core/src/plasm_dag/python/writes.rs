@@ -224,6 +224,8 @@ impl Lower<'_> {
                 e,
                 PythonSourceError::FieldInputNeedsSingleton {
                     binding: binding.to_owned(),
+                    expression: monty::expression_source(e),
+                    cardinality: contract.row_cardinality.to_relation_source_cardinality(),
                 },
             ));
         }

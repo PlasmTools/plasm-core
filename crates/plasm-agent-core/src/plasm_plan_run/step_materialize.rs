@@ -744,7 +744,7 @@ pub(super) async fn live_materialize_io(
             computation_source.collection = result.collection.computation_source().clone();
             let row_source = rehydrator
                 .materialize_surface_rows(entity_type, &computation_source)
-                .await;
+                .await?;
             let identity_entities = rehydrator
                 .resolve_source_parents(entity_type, &computation_source)
                 .await

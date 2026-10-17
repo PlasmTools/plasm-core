@@ -83,7 +83,12 @@ fn execution_result_from_view_row(
         EntityCompleteness::Complete,
     );
     Ok(ExecutionResult {
-        collection: ExecutionCollection::evaluate(identity, inputs, vec![cached].into())?,
+        collection: ExecutionCollection::evaluate(
+            crate::execution::RowMaterialization::Catalog,
+            identity,
+            inputs,
+            vec![cached].into(),
+        )?,
         has_more: false,
         pagination_resume: None,
         paging_handle: None,
@@ -284,6 +289,7 @@ impl ViewDagWalkState {
             node_id.clone(),
             ExecutionResult {
                 collection: ExecutionCollection::evaluate(
+                    crate::execution::RowMaterialization::Catalog,
                     plasm_core::collection_codec::CollectionIdentity::for_expression(
                         cgs,
                         &("skipped_view_node", &node_id),

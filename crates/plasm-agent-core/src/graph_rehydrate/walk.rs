@@ -11,6 +11,8 @@ use thiserror::Error;
 #[derive(Debug, Error)]
 pub enum GraphRehydrateError {
     #[error(transparent)]
+    Codec(#[from] plasm_core::ValueCodecError),
+    #[error(transparent)]
     Collection(#[from] plasm_core::collection_codec::CollectionFault),
     #[error(transparent)]
     Persistence(#[from] crate::session_graph_persistence::SessionGraphPersistenceError),

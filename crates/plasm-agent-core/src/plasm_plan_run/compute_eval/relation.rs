@@ -83,7 +83,11 @@ pub(crate) async fn materialize_relation_singleton_chain(
                 })?
                 .result
                 .collection
-                .flat_map(&"empty_relation", &[])?,
+                .flat_map(
+                    plasm_runtime::execution::RowMaterialization::Catalog,
+                    &"empty_relation",
+                    &[],
+                )?,
         )
         .await;
     }
@@ -322,7 +326,7 @@ pub(crate) async fn snapshot_embed_relation_under_graph_lock(
         &entities,
         scoped_es.cgs.as_ref(),
         mat,
-    );
+    )?;
     Ok(EmbedRelationGraphSnapshot {
         entities,
         wire_rows,
@@ -898,7 +902,7 @@ mod parent_get_row_tests {
         .unwrap();
         assert_eq!(rows.len(), 1);
         assert_eq!(rows[0].reference, plasm_core::Ref::new("LangLine", "l1"));
-        assert_eq!(rows[0].payload_to_json()["note"], "observed");
+        assert_eq!(rows[0].payload_to_json().unwrap()["note"], "observed");
 
         let unknown_rows = resolve_embed_target_entities(
             "lines",
@@ -948,7 +952,7 @@ mod parent_get_row_tests {
             "_tag".into(),
             TypedFieldValue::from(plasm_core::Value::String("public".into())),
         );
-        let row = plasm_runtime::entity_to_row_values(&entity, Some(&cgs));
+        let row = plasm_runtime::entity_to_row_values(&entity, Some(&cgs)).unwrap();
         let rows = rows_to_entities_with_refs("Owner", &[row], Some(&cgs)).unwrap();
         assert_eq!(rows[0].reference, entity.reference);
         assert!(rows[0].fields.contains_key("_tag"));

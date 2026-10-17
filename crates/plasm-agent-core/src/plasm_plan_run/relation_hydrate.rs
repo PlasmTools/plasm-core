@@ -247,7 +247,7 @@ async fn hydrate_relation_entities_if_needed(
 pub(crate) fn relation_rows_from_entities(
     entities: &plasm_core::collection_codec::SharedRows<CachedEntity>,
     cgs: &CGS,
-) -> Vec<plasm_core::ValueRow> {
+) -> Result<Vec<plasm_core::ValueRow>, plasm_core::ValueCodecError> {
     entities
         .iter()
         .map(|e| entity_to_row_values(e, Some(cgs)))
@@ -348,7 +348,7 @@ pub(crate) async fn finalize_typed_relation_materialized_node(
             super::plan_fanout_parallel::combine_execution_source(mat.result.source, source)
         })
         .unwrap_or(mat.result.source);
-    let entity_rows = relation_rows_from_entities(&hydrated, cgs);
+    let entity_rows = relation_rows_from_entities(&hydrated, cgs)?;
     let rows = match mat.row_source.inline_rows() {
         Some(prior) if !prior.is_empty() && prior.len() == hydrated.len() => {
             merge_wire_embed_superset_rows(prior, &entity_rows, cgs, entity_type)

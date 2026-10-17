@@ -321,6 +321,15 @@ pub fn normalize(
     if val.is_domain_example_placeholder() {
         return Ok(val);
     }
+    normalize_concrete(val, format, default_currency)
+}
+
+/// Normalize observed money without accepting program placeholders.
+pub(crate) fn normalize_concrete(
+    val: Value,
+    format: MoneyWireFormat,
+    default_currency: Option<&str>,
+) -> Result<Value, MoneyError> {
     match val {
         Value::Money(m) => {
             let mut m = m;
@@ -360,6 +369,8 @@ impl CrossCurrencyError {
 /// Failures while parsing, stamping, or encoding money.
 #[derive(Debug, Clone, PartialEq, Eq, Error)]
 pub enum MoneyError {
+    #[error(transparent)]
+    Currency(#[from] CrossCurrencyError),
     #[error("unknown money encoding `{tag}`")]
     UnknownEncoding { tag: String },
     #[error("money minor_units scale must be ≤ 28")]
@@ -475,7 +486,7 @@ pub fn coerce_decoded_fields(
         if matches!(raw, Value::Null) {
             continue;
         }
-        let mut coerced = normalize(raw, spec.format(), spec.default_currency())?;
+        let mut coerced = normalize_concrete(raw, spec.format(), spec.default_currency())?;
         if let Value::Money(ref mut m) = coerced {
             if let Some(cf) = spec.currency_field() {
                 match fields.get(cf) {
@@ -491,6 +502,7 @@ pub fn coerce_decoded_fields(
                     }
                 }
             }
+            currency_conflict(spec.default_currency(), m.currency())?;
         }
         fields.insert(field, coerced);
     }
@@ -508,32 +520,21 @@ pub fn json_amount_to_value(v: &serde_json::Value) -> Value {
             }
         }
         serde_json::Value::String(s) => Value::String(s.clone()),
+        serde_json::Value::Object(fields) => Value::Object(
+            fields
+                .iter()
+                .map(|(key, value)| {
+                    let value = if matches!(key.as_str(), "amount" | "__plasm_money") {
+                        json_amount_to_value(value)
+                    } else {
+                        crate::json_value_to_plasm_value(value)
+                    };
+                    (key.clone(), value)
+                })
+                .collect(),
+        ),
         other => crate::json_value_to_plasm_value(other),
     }
-}
-
-/// Lift a tagged JSON object (`__plasm_money`) into [`Value::Money`].
-pub(crate) fn try_from_json_object(
-    obj: &serde_json::Map<String, serde_json::Value>,
-) -> Option<MoneyValue> {
-    let amount_v = obj.get("__plasm_money")?;
-    let amount = match amount_v {
-        serde_json::Value::String(s) => Decimal::from_str(s).ok()?,
-        serde_json::Value::Number(n) => Decimal::from_str(&n.to_string()).ok()?,
-        _ => return None,
-    };
-    let currency = obj
-        .get("currency")
-        .and_then(|v| v.as_str())
-        .map(str::to_string);
-    let format = obj
-        .get("format")
-        .and_then(|v| serde_json::from_value::<MoneyWireFormat>(v.clone()).ok());
-    let mut m = MoneyValue::new(amount, currency);
-    if let Some(fmt) = format {
-        m = m.with_format(fmt);
-    }
-    Some(m)
 }
 
 fn parse_predicate_literal(v: &Value) -> Option<MoneyValue> {
@@ -558,8 +559,15 @@ fn parse_amount_and_optional_currency(
             let amount = parse_amount_leaf(amount_v, format)?;
             let currency = map
                 .get("currency")
-                .and_then(Value::as_str)
-                .map(str::to_string);
+                .map(|value| {
+                    value.as_str().map(str::to_string).ok_or_else(|| {
+                        MoneyError::CurrencyFieldNotString {
+                            field: "currency".into(),
+                            got: value.type_name().into(),
+                        }
+                    })
+                })
+                .transpose()?;
             Ok((amount, currency))
         }
         other => Err(MoneyError::CannotCoerce {
@@ -620,6 +628,11 @@ fn float_to_amount(f: f64, format: MoneyWireFormat) -> Result<Decimal, MoneyErro
         MoneyWireFormat::MinorUnits { .. } => {
             if f.fract() != 0.0 {
                 return Err(MoneyError::MinorUnitsNotWhole);
+            }
+            if f < i64::MIN as f64 || f >= -(i64::MIN as f64) {
+                return Err(MoneyError::MinorUnitsOverflow {
+                    amount: f.to_string(),
+                });
             }
             integer_to_amount(f as i64, format)
         }

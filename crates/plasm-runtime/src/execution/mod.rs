@@ -50,7 +50,7 @@ mod compile_preflight;
 mod coverage;
 #[cfg(test)]
 pub(crate) use collection::test_collection;
-pub use collection::{ExecutionCollection, PayloadResidency};
+pub use collection::{ExecutionCollection, PayloadResidency, RowMaterialization};
 mod embed_cache;
 mod engine;
 mod resolved_effect;

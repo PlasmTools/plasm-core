@@ -450,7 +450,21 @@ fn u64_to_json(value: u64) -> JsonValue {
 }
 
 fn plasm_value_to_json(value: &plasm_core::Value) -> Result<JsonValue, RuntimeError> {
-    serde_json::to_value(value).map_err(RuntimeError::from)
+    plasm_core::try_plasm_value_to_json(value).map_err(RuntimeError::from)
+}
+
+#[cfg(test)]
+mod value_encoding_tests {
+    #[test]
+    fn evm_value_encoding_rejects_nonfinite_before_abi_conversion() {
+        let value = plasm_core::Value::Array(vec![plasm_core::Value::Float(f64::NAN)]);
+        assert!(matches!(
+            super::plasm_value_to_json(&value),
+            Err(crate::RuntimeError::SerializationError(
+                crate::SerializationError::Value(plasm_core::WireEncodingError::NonFinite)
+            ))
+        ));
+    }
 }
 
 impl std::fmt::Display for EvmAbiPhase {

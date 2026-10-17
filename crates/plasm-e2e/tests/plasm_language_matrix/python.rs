@@ -531,7 +531,7 @@ pub(super) fn outputs(run: &PlasmPlanRunResult) -> Vec<Vec<serde_json::Value>> {
                 .entities()
                 .iter()
                 .map(|entity| {
-                    let mut row = plasm_runtime::entity_to_agent_row_json(entity, None);
+                    let mut row = plasm_runtime::entity_to_agent_row_json(entity, None).unwrap();
                     normalize_embedded_revision_metadata(&mut row);
                     row
                 })

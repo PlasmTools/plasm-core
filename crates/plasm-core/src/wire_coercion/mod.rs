@@ -1,22 +1,20 @@
 //! # Catalog-directed value coercion (RA-8)
 //!
-//! **Sole public law** for turning a raw [`Value`] / JSON cell into a catalog-typed cell.
-//! Program literals, wire decode, invoke args, compare-unify, and dry stubs all call through
-//! this module. Validate / compatible paths are coerce-then-domain — they must not maintain a
-//! second, divergent type matrix.
+//! Program literals have explicit coercion rules. Provider observations instead use
+//! [`crate::ValueCodec`] with a resolved catalog contract: invalid shapes remain errors.
+//! Structural persistence has a separate checked encoder/decoder and cannot interpret
+//! provider objects as storage tags. All boundaries retain typed failures.
 //!
 //! Modes (see `docs/plasm-language-surface-invariants.md` § RA-8):
 //! - **ProgramLiteral** / query filters — [`coerce_value_for_field_type`] (default array wrap)
 //! - **InvokeArg** — [`coerce_value_for_field_type_with_policy`] + [`ArrayFieldCoercionPolicy::InvokeArg`]
 //! - **WireDecode** — [`decode_coerce_and_validate_field`]
-//! - **CompareUnify** — [`compare_unify_json_ordered_numbers`] (residual JSON ordered compare)
 //! - **DryStub** — [`dry_stub_value_for_named_value`] / [`dry_stub_json_for_named_value`]
 //!
 //! Relation-binding assignability helpers also live here (parent field → param after coerce).
 
 use crate::array_field_policy::ArrayFieldCoercionPolicy;
-use crate::capability_input::validate_named_value_domain_value;
-use crate::{ArrayItemsSchema, FieldType, NamedValueSchema, Value, ValueWireFormat};
+use crate::{ArrayItemsSchema, FieldType, Value, ValueWireFormat};
 use indexmap::IndexMap;
 
 mod digit_id;
@@ -25,6 +23,10 @@ mod relation_binding;
 
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum CoercionError {
+    #[error("non-finite numeric value")]
+    NonFinite,
+    #[error(transparent)]
+    Reference(#[from] crate::entity_ref_value::EntityRefValueError),
     #[error("string template cannot bind a {field_type} operand")]
     StringTemplateUnsupported { field_type: String },
     #[error("array operand cannot accept scalar value of type {actual}")]
@@ -70,6 +72,10 @@ pub enum CoercionError {
 
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum WireEncodingError {
+    #[error("non-finite numeric value cannot be encoded")]
+    NonFinite,
+    #[error("unresolved {kind} cannot be encoded")]
+    Unresolved { kind: &'static str },
     #[error("unbound string template reached wire encoding")]
     UnboundStringTemplate,
     #[error(transparent)]
@@ -82,7 +88,7 @@ pub use dry_stub::{
     dry_stub_entity_rows, dry_stub_json_for_named_value, dry_stub_value_for_named_value,
 };
 pub use relation_binding::{
-    apply_identity_slots_to_row, binding_value_as_plasm_value, collect_relation_binding_proofs,
+    binding_value_as_plasm_value, collect_relation_binding_proofs,
     field_type_assignable_for_relation_binding, identity_slot_to_json, identity_slot_to_value,
     parent_entity_field_type, relation_binding_assignable, restore_id_field_from_compound_ref,
     ParentFieldTypeError, RelationBindingProof, RelationBindingProofError,
@@ -211,7 +217,8 @@ pub fn coerce_value_for_field_type_with_policy(
         FieldType::String | FieldType::Uuid | FieldType::Select => Ok(match val {
             Value::Integer(n) => Value::String(n.to_string()),
             Value::Unsigned(n) => Value::String(n.to_string()),
-            Value::Float(f) => Value::String(normalize_numeric_id_float(f)),
+            Value::Float(f) if f.is_finite() => Value::String(f.to_string()),
+            Value::Float(_) => return Err(CoercionError::NonFinite),
             Value::PhraseIdent(s) => Value::String(s),
             Value::String(s) => Value::String(s),
             other => {
@@ -264,36 +271,30 @@ pub fn coerce_value_for_field_type_with_policy(
         }
         FieldType::Number => {
             if let Some(s) = stringish(&val) {
-                return s.parse::<f64>().map(Value::Float).map_err(|source| {
-                    CoercionError::InvalidNumberLiteral {
-                        raw: s.into(),
-                        source,
-                    }
-                });
+                let number =
+                    s.parse::<f64>()
+                        .map_err(|source| CoercionError::InvalidNumberLiteral {
+                            raw: s.into(),
+                            source,
+                        })?;
+                return if number.is_finite() {
+                    Ok(Value::Float(number))
+                } else {
+                    Err(CoercionError::NonFinite)
+                };
             }
             match val {
-                Value::Integer(n) => Ok(Value::Float(n as f64)),
-                Value::Unsigned(n) => Ok(Value::Float(n as f64)),
-                Value::Float(f) => Ok(Value::Float(f)),
+                Value::Integer(_) | Value::Unsigned(_) => Ok(val),
+                Value::Float(f) if f.is_finite() => Ok(Value::Float(f)),
+                Value::Float(_) => Err(CoercionError::NonFinite),
                 other => Err(CoercionError::InvalidNumberValue {
                     actual: other.type_name(),
                 }),
             }
         }
-        FieldType::EntityRef { .. } => Ok(match val {
-            Value::Integer(n) => Value::String(n.to_string()),
-            Value::Unsigned(n) => Value::String(n.to_string()),
-            Value::Float(f) => Value::String(normalize_numeric_id_float(f)),
-            Value::PhraseIdent(s) => Value::String(s),
-            Value::String(s) => Value::String(s),
-            Value::Object(o) => Value::Object(o),
-            other => {
-                return Err(CoercionError::UnsupportedValue {
-                    field_type: "entity_ref",
-                    actual: other.type_name(),
-                });
-            }
-        }),
+        FieldType::EntityRef { .. } => {
+            Ok(crate::entity_ref_value::EntityRefPayload::try_from_value(&val)?.to_value())
+        }
         FieldType::Boolean => match stringish(&val) {
             // RA-8: reject `"1"` / `"0"` — only true/false tokens.
             Some(s) if s.eq_ignore_ascii_case("true") => Ok(Value::Bool(true)),
@@ -348,65 +349,15 @@ pub fn value_compatible_with_field_type(value: &Value, field_type: &FieldType) -
     true
 }
 
-/// CompareUnify residual: parse JSON cells as ordered numbers (wire string decimals allowed).
-///
-/// Returns `None` when either side is not numeric under RA-8 ordered-compare rules (no bool/`"1"`).
-pub fn compare_unify_json_ordered_numbers(
-    lhs: &serde_json::Value,
-    rhs: &serde_json::Value,
-) -> Option<(f64, f64)> {
-    Some((json_ordered_number(lhs)?, json_ordered_number(rhs)?))
-}
-
-fn json_ordered_number(v: &serde_json::Value) -> Option<f64> {
-    match v {
-        serde_json::Value::Number(n) => n
-            .as_f64()
-            .or_else(|| n.as_i64().map(|i| i as f64))
-            .or_else(|| n.as_u64().map(|u| u as f64)),
-        serde_json::Value::String(s) => {
-            let t = s.trim();
-            if t.is_empty() {
-                return None;
-            }
-            t.parse::<f64>().ok().filter(|f| f.is_finite())
-        }
-        _ => None,
-    }
-}
-
 pub fn coerce_json_value_for_field_type(
     ft: &FieldType,
     value_format: Option<ValueWireFormat>,
     array_items: Option<&ArrayItemsSchema>,
     value: serde_json::Value,
-) -> serde_json::Value {
-    if matches!(ft, FieldType::DigitId) {
-        return match coerce_digit_id(digit_id_json_to_plasm(&value)) {
-            Ok(v) => try_plasm_value_to_json(&v).unwrap_or(serde_json::Value::Null),
-            Err(_) => serde_json::Value::Null,
-        };
-    }
-    if let serde_json::Value::Number(number) = &value {
-        if matches!(
-            ft,
-            FieldType::String | FieldType::Select | FieldType::EntityRef { .. }
-        ) {
-            return serde_json::Value::String(number.to_string());
-        }
-        // Preserve out-of-domain integers for the response-contract validator; never round them.
-        if number.is_u64() && number.as_i64().is_none() {
-            return value;
-        }
-    }
+) -> Result<serde_json::Value, crate::ValueCodecError> {
     let plasm = json_to_plasm_for_field(ft, &value);
-    match coerce_value_for_field_type(ft, value_format, array_items, plasm) {
-        Ok(v) => match try_plasm_value_to_json(&v) {
-            Ok(j) => j,
-            Err(_) => value,
-        },
-        Err(_) => value,
-    }
+    let coerced = coerce_value_for_field_type(ft, value_format, array_items, plasm)?;
+    Ok(try_plasm_value_to_json(&coerced)?)
 }
 
 pub(crate) fn json_to_plasm_for_field(ft: &FieldType, value: &serde_json::Value) -> Value {
@@ -419,6 +370,7 @@ pub(crate) fn json_to_plasm_for_field(ft: &FieldType, value: &serde_json::Value)
     }
 }
 
+/// Lift JSON structurally; reserved storage keys are ordinary provider data.
 pub fn json_value_to_plasm_value(v: &serde_json::Value) -> Value {
     match v {
         serde_json::Value::Null => Value::Null,
@@ -428,27 +380,22 @@ pub fn json_value_to_plasm_value(v: &serde_json::Value) -> Value {
                 Value::Integer(i)
             } else if let Some(n) = n.as_u64() {
                 Value::Unsigned(n)
-            } else if let Some(f) = n.as_f64() {
-                Value::Float(f)
             } else {
-                Value::Null
+                Value::Float(
+                    n.as_f64()
+                        .expect("serde_json finite numeric representation"),
+                )
             }
         }
         serde_json::Value::String(s) => Value::String(s.clone()),
         serde_json::Value::Array(items) => {
             Value::Array(items.iter().map(json_value_to_plasm_value).collect())
         }
-        serde_json::Value::Object(map) => {
-            if let Some(m) = crate::money::try_from_json_object(map) {
-                Value::Money(m)
-            } else {
-                Value::Object(
-                    map.iter()
-                        .map(|(k, v)| (k.clone(), json_value_to_plasm_value(v)))
-                        .collect(),
-                )
-            }
-        }
+        serde_json::Value::Object(map) => Value::Object(
+            map.iter()
+                .map(|(k, v)| (k.clone(), json_value_to_plasm_value(v)))
+                .collect(),
+        ),
     }
 }
 
@@ -462,9 +409,9 @@ pub fn try_plasm_value_to_json(v: &Value) -> Result<serde_json::Value, WireEncod
         Value::Bool(b) => Ok(serde_json::Value::Bool(*b)),
         Value::Integer(i) => Ok(serde_json::json!(i)),
         Value::Unsigned(i) => Ok(serde_json::json!(i)),
-        Value::Float(f) => Ok(serde_json::Number::from_f64(*f)
+        Value::Float(f) => serde_json::Number::from_f64(*f)
             .map(serde_json::Value::Number)
-            .unwrap_or(serde_json::Value::Null)),
+            .ok_or(WireEncodingError::NonFinite),
         Value::Array(items) => Ok(serde_json::Value::Array(
             items
                 .iter()
@@ -480,20 +427,125 @@ pub fn try_plasm_value_to_json(v: &Value) -> Result<serde_json::Value, WireEncod
         | Value::GetScalarExtract(_)
         | Value::UnionCtor { .. }
         | Value::String(_)
-        | Value::PhraseIdent(_) => Ok(serde_json::Value::Null),
+        | Value::PhraseIdent(_) => Err(WireEncodingError::Unresolved {
+            kind: v.type_name(),
+        }),
         Value::Money(m) => m.encode_stored().map_err(WireEncodingError::Money),
     }
 }
 
-pub fn plasm_value_to_json(v: &Value) -> serde_json::Value {
-    try_plasm_value_to_json(v).unwrap_or(serde_json::Value::Null)
+/// Structural persistence retains semantic tags (notably money currency and format).
+/// Outbound scalar profiles use `try_plasm_value_to_json` instead.
+pub fn try_plasm_value_to_storage_json(v: &Value) -> Result<serde_json::Value, WireEncodingError> {
+    match v {
+        Value::Unsigned(value) => Ok(serde_json::json!({"__plasm_unsigned": value.to_string()})),
+        Value::Money(money) => {
+            let mut object = serde_json::Map::new();
+            object.insert(
+                "__plasm_money".into(),
+                serde_json::Value::String(money.amount().to_string()),
+            );
+            if let Some(currency) = money.currency() {
+                object.insert(
+                    "currency".into(),
+                    serde_json::Value::String(currency.into()),
+                );
+            }
+            if let Some(format) = money.stored_format() {
+                object.insert("format".into(), serde_json::json!(format));
+            }
+            Ok(serde_json::Value::Object(object))
+        }
+        Value::Array(values) => Ok(serde_json::Value::Array(
+            values
+                .iter()
+                .map(try_plasm_value_to_storage_json)
+                .collect::<Result<_, _>>()?,
+        )),
+        Value::Object(values) => {
+            let object: serde_json::Map<_, _> = values
+                .iter()
+                .map(|(key, value)| Ok((key.clone(), try_plasm_value_to_storage_json(value)?)))
+                .collect::<Result<_, WireEncodingError>>()?;
+            if object.keys().any(|key| {
+                matches!(
+                    key.as_str(),
+                    "__plasm_money" | "__plasm_unsigned" | "__plasm_object"
+                )
+            }) {
+                Ok(serde_json::json!({"__plasm_object": object}))
+            } else {
+                Ok(serde_json::Value::Object(object))
+            }
+        }
+        _ => try_plasm_value_to_json(v),
+    }
 }
 
-fn normalize_numeric_id_float(f: f64) -> String {
-    if f.fract() == 0.0 && f.is_finite() {
-        format!("{}", f as i64)
-    } else {
-        f.to_string()
+/// Decode the structural persistence format. Provider JSON never enters this adapter.
+pub fn try_storage_json_to_plasm_value(
+    v: &serde_json::Value,
+) -> Result<Value, crate::ValueCodecError> {
+    let invalid = || crate::ValueCodecError::InvalidStorageTag;
+    match v {
+        serde_json::Value::Array(values) => Ok(Value::Array(
+            values
+                .iter()
+                .map(try_storage_json_to_plasm_value)
+                .collect::<Result<_, _>>()?,
+        )),
+        serde_json::Value::Object(object) => {
+            if let Some(raw) = object.get("__plasm_money") {
+                if object
+                    .keys()
+                    .any(|key| !matches!(key.as_str(), "__plasm_money" | "currency" | "format"))
+                {
+                    return Err(invalid());
+                }
+                let amount = raw
+                    .as_str()
+                    .ok_or_else(invalid)?
+                    .parse()
+                    .map_err(|_| invalid())?;
+                let currency = object
+                    .get("currency")
+                    .map(|v| v.as_str().map(str::to_string).ok_or_else(invalid))
+                    .transpose()?;
+                let mut money = crate::MoneyValue::new(amount, currency);
+                if let Some(format) = object.get("format") {
+                    money = money.with_format(
+                        serde_json::from_value(format.clone()).map_err(|_| invalid())?,
+                    );
+                }
+                return Ok(Value::Money(money));
+            }
+            if let Some(raw) = object.get("__plasm_unsigned") {
+                if object.len() != 1 {
+                    return Err(invalid());
+                }
+                return Ok(Value::Unsigned(
+                    raw.as_str()
+                        .ok_or_else(invalid)?
+                        .parse()
+                        .map_err(|_| invalid())?,
+                ));
+            }
+            let fields = if let Some(raw) = object.get("__plasm_object") {
+                if object.len() != 1 {
+                    return Err(invalid());
+                }
+                raw.as_object().ok_or_else(invalid)?
+            } else {
+                object
+            };
+            Ok(Value::Object(
+                fields
+                    .iter()
+                    .map(|(k, v)| Ok((k.clone(), try_storage_json_to_plasm_value(v)?)))
+                    .collect::<Result<_, crate::ValueCodecError>>()?,
+            ))
+        }
+        _ => Ok(json_value_to_plasm_value(v)),
     }
 }
 
@@ -508,6 +560,8 @@ pub struct DecodeFieldDiagnostic {
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum DecodeFieldCause {
     #[error(transparent)]
+    Codec(#[from] crate::ValueCodecError),
+    #[error(transparent)]
     Money(#[from] crate::MoneyError),
     #[error(transparent)]
     Coercion(#[from] CoercionError),
@@ -520,32 +574,29 @@ pub enum DecodeFieldCause {
 /// Coerce and validate a present wire value. Invalid data is never nullable absence.
 pub fn decode_coerce_and_validate_field(
     field_name: &str,
-    nv: &NamedValueSchema,
+    cgs: &crate::CGS,
+    value_ref: &crate::ValueDomainKey,
     val: Value,
 ) -> Result<Value, DecodeFieldDiagnostic> {
-    let error = |source: DecodeFieldCause| DecodeFieldDiagnostic {
+    use crate::ValueCodec;
+    let error = |cause| DecodeFieldDiagnostic {
         field: field_name.to_owned(),
-        source,
+        source: match cause {
+            crate::ValueCodecError::Domain(source) => DecodeFieldCause::Domain(source),
+            cause => DecodeFieldCause::Codec(cause),
+        },
     };
-    let coerced = if matches!(nv.field_type, FieldType::Money) {
-        crate::money::normalize(
-            phrase_ident_to_string(val),
-            crate::money::MoneyWireFormat::DecimalString,
-            nv.currency.as_deref(),
-        )
-        .map_err(|cause| error(DecodeFieldCause::Money(cause)))?
-    } else {
-        coerce_value_for_field_type(
-            &nv.field_type,
-            nv.value_format,
-            nv.array_items.as_ref(),
-            val,
-        )
-        .map_err(|cause| error(DecodeFieldCause::Coercion(cause)))?
-    };
-    validate_named_value_domain_value(&coerced, nv)
-        .map_err(|cause| error(DecodeFieldCause::Domain(cause)))?;
-    Ok(coerced)
+    let contract = crate::ResolvedValueContract::resolve(
+        cgs,
+        cgs.entry_id.as_deref().unwrap_or(""),
+        value_ref,
+        true,
+    )
+    .map_err(error)?;
+    Ok(crate::ValueWireCodec
+        .decode(&contract, val)
+        .map_err(error)?
+        .into_value())
 }
 
 /// Decode money with sibling currency. Invalid amounts/currency fail the response contract.
@@ -638,8 +689,12 @@ mod tests {
         let encoded = serde_json::to_string(&value).unwrap();
         let decoded: Value = serde_json::from_str(&encoded).unwrap();
         assert_eq!(try_plasm_value_to_json(&decoded).unwrap(), wire);
-        let resolved = crate::operand_binding::ResolvedValue::from_wire(wire.clone()).unwrap();
-        assert_eq!(resolved.to_wire().unwrap(), wire);
+        let resolved = crate::operand_binding::ResolvedValue::new(value.clone()).unwrap();
+        assert_eq!(
+            crate::operand_binding::ResolvedValue::from_wire(resolved.to_wire().unwrap()).unwrap(),
+            resolved
+        );
+        assert_eq!(try_plasm_value_to_json(resolved.value()).unwrap(), wire);
         let row_value = crate::typed_row::TypedFieldValue::from_value(value.clone());
         assert_eq!(
             try_plasm_value_to_json(&row_value.to_value()).unwrap(),
@@ -760,7 +815,8 @@ mod tests {
             None,
             None,
             serde_json::json!("42"),
-        );
+        )
+        .unwrap();
         assert_eq!(out, serde_json::json!(42));
     }
 
@@ -939,19 +995,6 @@ mod tests {
     }
 
     #[test]
-    fn compare_unify_parses_numeric_strings() {
-        let (l, r) =
-            compare_unify_json_ordered_numbers(&serde_json::json!("5"), &serde_json::json!(0))
-                .expect("string vs number");
-        assert!(l > r);
-        assert!(compare_unify_json_ordered_numbers(
-            &serde_json::json!("nope"),
-            &serde_json::json!(0),
-        )
-        .is_none());
-    }
-
-    #[test]
     fn decode_invalid_profile_string_returns_field_error() {
         use crate::schema::NamedValueSchema;
         use crate::value_domain::{Constraints, KernelKind, ProfileId, ValueDomain};
@@ -968,9 +1011,15 @@ mod tests {
             .expect("email domain"),
             None,
         );
-        let d =
-            decode_coerce_and_validate_field("email", &nv, Value::String("not-an-email".into()))
-                .expect_err("invalid present field must fail decoding");
+        let mut cgs = crate::CGS::default();
+        cgs.values.insert("email".into(), nv);
+        let d = decode_coerce_and_validate_field(
+            "email",
+            &cgs,
+            &crate::ValueDomainKey::new("email").unwrap(),
+            Value::String("not-an-email".into()),
+        )
+        .expect_err("invalid present field must fail decoding");
         assert_eq!(d.field, "email");
         assert!(matches!(
             d.source,

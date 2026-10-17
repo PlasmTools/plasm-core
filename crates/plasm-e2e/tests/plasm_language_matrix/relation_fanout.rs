@@ -240,7 +240,7 @@ fn relation_read_fanout_matches_unary_parent_gets() {
                     }
                     for step in &out.return_steps {
                         for entity in step.result.entities() {
-                            assert_eq!(entity.payload_to_json()["note"], "observed", "relation must return hydrated content");
+                            assert_eq!(entity.payload_to_json().unwrap()["note"], "observed", "relation must return hydrated content");
                         }
                         let artifact = step.artifact.as_ref().expect("relation result has an artifact");
                         let bytes = st.run_artifacts.get(&es.prompt_hash, name, artifact.run_id).await.expect("stored relation artifact");
@@ -248,7 +248,7 @@ fn relation_read_fanout_matches_unary_parent_gets() {
                         let stored = document.recorded_collection().expect("validated collection checkpoint");
                         assert_eq!(stored.membership(), step.result.collection.membership());
                         assert_eq!(stored.resident_entities(), step.result.entities(), "stored rows must retain hydrated fields and relation evidence");
-                        let expected: Vec<_> = step.result.entities().iter().map(|entity| entity.payload_to_json()).collect();
+                        let expected: Vec<_> = step.result.entities().iter().map(|entity| entity.payload_to_json().unwrap()).collect();
                         assert_eq!(document.agent_view().expect("public projection").entities, expected, "agent projection must contain hydrated rows");
                     }
 

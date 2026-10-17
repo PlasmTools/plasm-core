@@ -144,6 +144,7 @@ async fn memory_insert_get_round_trip() {
     let store = RunArtifactStore::memory();
     let run_id = sample_run_id();
     let doc = RunArtifactDocument {
+        row_materialization: plasm_runtime::execution::RowMaterialization::Catalog,
         run_id: run_id.to_wire(),
         prompt_hash: "p".repeat(64),
         session_id: "s1".into(),
@@ -446,6 +447,7 @@ async fn fs_backend_resource_index_round_trip() {
     let ph = "p".repeat(64);
     let run_id = sample_run_id();
     let doc = RunArtifactDocument {
+        row_materialization: plasm_runtime::execution::RowMaterialization::Catalog,
         run_id: run_id.to_wire(),
         prompt_hash: ph.clone(),
         session_id: "s1".into(),
@@ -512,6 +514,7 @@ async fn init_from_env_url_precedes_dir() {
     let ph = "c".repeat(64);
     let run_id = sample_run_id();
     let doc = RunArtifactDocument {
+        row_materialization: plasm_runtime::execution::RowMaterialization::Catalog,
         run_id: run_id.to_wire(),
         prompt_hash: ph.clone(),
         session_id: "sess".into(),
@@ -556,6 +559,7 @@ async fn init_from_env_url_precedes_dir() {
 fn project_artifact_payload_for_agent_slim_by_default() {
     let run_id = sample_run_id();
     let doc = RunArtifactDocument {
+        row_materialization: plasm_runtime::execution::RowMaterialization::Catalog,
         run_id: run_id.to_wire(),
         prompt_hash: "ab".repeat(32),
         session_id: "sess".into(),
@@ -628,6 +632,7 @@ fn run_explorer_json_returns_semantic_rows() {
         0,
     );
     let doc = RunArtifactDocument {
+        row_materialization: plasm_runtime::execution::RowMaterialization::Catalog,
         run_id: run_id.to_wire(),
         prompt_hash: "ab".repeat(32),
         session_id: "sess".into(),

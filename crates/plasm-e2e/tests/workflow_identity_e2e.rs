@@ -4,7 +4,7 @@ use plasm_agent::{verify_plan_flow, FlowCatalogView, FlowPolicySnapshot, FlowVer
 use plasm_compile::CmlEnv;
 use plasm_core::load_schema_dir_unvalidated;
 use plasm_core::preflight::PLASM_EXISTENCE_SKIP_WRITE_ENV;
-use plasm_core::{plasm_value_to_json, Value, WorkflowConflictKind};
+use plasm_core::{try_plasm_value_to_json, Value, WorkflowConflictKind};
 use plasm_runtime::workflow_reconcile::{
     detect_identity_mismatch, should_skip_write_after_preflight, skipped_write_result,
 };
@@ -137,7 +137,9 @@ fn workflow_matrix_identity_mismatch_detected_on_extra_field() {
         request_fingerprints: Vec::new(),
         operations: plasm_runtime::OperationLedger::empty(),
     };
-    let conflict = detect_identity_mismatch(cap, &input, &fetched).expect("mismatch");
+    let conflict = detect_identity_mismatch(cap, &input, &fetched)
+        .unwrap()
+        .expect("mismatch");
     assert_eq!(conflict.kind, WorkflowConflictKind::IdentityMismatch);
     assert!(conflict.existing.is_some());
 }
@@ -161,6 +163,6 @@ fn workflow_matrix_skip_write_preflight_sets_env_flag() {
         .entities()
         .first()
         .and_then(|e| e.fields.get("outcome"))
-        .map(|v| plasm_value_to_json(&v.to_value()));
+        .map(|v| try_plasm_value_to_json(&v.to_value()).unwrap());
     assert_eq!(outcome, Some(serde_json::json!("skipped")));
 }

@@ -1,6 +1,28 @@
 use super::*;
 
 #[test]
+fn invalid_nested_payload_fails_storage_and_presentation() {
+    let row = RowRecord {
+        identity: Ref::new("Record", "id"),
+        fields: IndexMap::from([(
+            "payload".into(),
+            TypedFieldValue::Json(crate::Value::Array(vec![crate::Value::Float(f64::NAN)])),
+        )]),
+        relations: IndexMap::new(),
+        unavailable_fields: Default::default(),
+    };
+    let codec = RowCodec::new(None);
+    for result in [codec.encode(&row), codec.display(&row), codec.payload(&row)] {
+        assert!(matches!(
+            result,
+            Err(crate::ValueCodecError::Encoding(
+                crate::WireEncodingError::NonFinite
+            ))
+        ));
+    }
+}
+
+#[test]
 fn qualified_reference_projection_retains_owning_catalog_identity() {
     let mut cgs = crate::loader::load_schema_dir(
         &std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
@@ -45,7 +67,7 @@ fn nested_relation_projection_uses_declared_targets_without_mutating_storage() {
         .public_field_value("LangItem", "summary", &value)
         .unwrap();
     assert_eq!(
-        crate::plasm_value_to_json(&projected),
+        crate::try_plasm_value_to_json(&projected).unwrap(),
         serde_json::json!({"id":"summary","headline":"headline","detail":{"id":"detail","body":"authored"}})
     );
     assert!(value.get("_ref").is_some());
@@ -74,7 +96,7 @@ fn observations_and_projections_have_explicit_field_ownership() {
     let observed = codec
         .decode_values("LangItem", &source, RowFieldContract::Observation)
         .unwrap();
-    let display = codec.display(&observed);
+    let display = codec.display(&observed).unwrap();
     assert_eq!(display["title"], "domain");
     assert!(display.get("wire_embed").is_none());
     assert!(display.get("derived_alias").is_none());
@@ -85,7 +107,7 @@ fn observations_and_projections_have_explicit_field_ownership() {
     let projected = codec
         .decode_values("LangItem", &source, RowFieldContract::Projection)
         .unwrap();
-    assert_eq!(codec.display(&projected)["derived_alias"], 42);
+    assert_eq!(codec.display(&projected).unwrap()["derived_alias"], 42);
 }
 
 #[test]
@@ -97,7 +119,7 @@ fn presentation_does_not_serialize_execution_identity_or_scrub_authored_json() {
             (
                 "payload".into(),
                 TypedFieldValue::Json(crate::json_value_to_plasm_value(
-                    &serde_json::json!({"_ref":"authored nested", "_version":7}),
+                    &serde_json::json!({"_ref":"authored nested", "_version":7, "__plasm_money":"opaque", "__plasm_unsigned":"also opaque"}),
                 )),
             ),
             (
@@ -109,14 +131,16 @@ fn presentation_does_not_serialize_execution_identity_or_scrub_authored_json() {
         unavailable_fields: ["missing".into()].into(),
     };
     let codec = RowCodec::new(None);
-    let display = codec.display(&row);
+    let display = codec.display(&row).unwrap();
     assert_eq!(display["_ref"], "authored");
     assert_eq!(display["payload"]["_ref"], "authored nested");
+    assert_eq!(codec.payload(&row).unwrap()["payload"], display["payload"]);
+    assert_eq!(display["payload"]["__plasm_money"], "opaque");
     assert!(display.get("_unavailable_fields").is_none());
     assert!(display.get("missing").is_none());
-    assert!(codec.payload(&row).get("missing").is_none());
+    assert!(codec.payload(&row).unwrap().get("missing").is_none());
     assert!(
-        codec.encode(&row)["_ref"].is_object(),
+        codec.encode(&row).unwrap()["_ref"].is_object(),
         "machine serialization retains structural identity"
     );
 }

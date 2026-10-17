@@ -629,6 +629,7 @@ pub(crate) async fn run_executable_plan_phased(
             }
             let mut receipt = mat.result.as_ref().clone();
             receipt.collection = plasm_runtime::execution::ExecutionCollection::derive(
+                plasm_runtime::execution::RowMaterialization::Catalog,
                 receipt
                     .collection
                     .membership()

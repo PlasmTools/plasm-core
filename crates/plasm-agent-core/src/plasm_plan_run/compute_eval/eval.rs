@@ -7,6 +7,8 @@ use std::collections::BTreeMap;
 #[derive(Debug, thiserror::Error)]
 pub(crate) enum RuntimeOperandError {
     #[error(transparent)]
+    Codec(#[from] plasm_core::ValueCodecError),
+    #[error(transparent)]
     Identity(#[from] plasm_core::operand_binding::IdentityCodecError),
     #[error("materialized plan input is invalid")]
     MaterializedInput(#[source] MaterializedInputError),
@@ -262,30 +264,26 @@ pub(crate) fn coerce_node_input_value(
     ctx: Option<&WireCoercionCtx<'_>>,
     path: &[String],
     value: plasm_core::Value,
-) -> plasm_core::Value {
+) -> Result<plasm_core::Value, RuntimeOperandError> {
+    use plasm_core::ValueCodec;
     let Some(ctx) = ctx else {
-        return value;
+        return Ok(value);
     };
-    let Some(field) = path.last().map(String::as_str) else {
-        return value;
+    let Some(field) = path
+        .last()
+        .and_then(|field| ctx.source_entity.fields.get(field.as_str()))
+    else {
+        return Ok(value);
     };
-    match plasm_core::parent_entity_field_type(ctx.cgs, ctx.source_entity, field) {
-        Ok(ft) => {
-            let nv = ctx
-                .source_entity
-                .fields
-                .get(field)
-                .and_then(|f| f.named_value(ctx.cgs).ok());
-            plasm_core::coerce_value_for_field_type(
-                &ft,
-                nv.and_then(|n| n.value_format),
-                nv.and_then(|n| n.array_items.as_ref()),
-                value.clone(),
-            )
-            .unwrap_or(value)
-        }
-        Err(_) => value,
-    }
+    let contract = plasm_core::ResolvedValueContract::resolve(
+        ctx.cgs,
+        ctx.cgs.entry_id.as_deref().unwrap_or(""),
+        field.kind.registry_key(),
+        true,
+    )?;
+    Ok(plasm_core::ValueWireCodec
+        .decode(&contract, value)?
+        .into_value())
 }
 
 pub(crate) fn node_input_hole_from_identity(
@@ -294,46 +292,42 @@ pub(crate) fn node_input_hole_from_identity(
     identity: &Option<plasm_core::RowIdentity>,
     path: &[String],
     row: &plasm_core::Value,
-) -> Option<plasm_core::Value> {
-    let identity = identity.as_ref()?;
+) -> Result<Option<plasm_core::Value>, RuntimeOperandError> {
+    let Some(identity) = identity.as_ref() else {
+        return Ok(None);
+    };
+    let key = path.first().map(String::as_str).unwrap_or(id_field);
+    let decode = |slot: &str| -> Result<_, RuntimeOperandError> {
+        match ctx {
+            Some(ctx) => Ok(plasm_core::identity_slot_to_value(
+                ctx.cgs,
+                ctx.source_entity,
+                if key == "id" { id_field } else { key },
+                slot,
+            )?),
+            None => Ok(plasm_core::Value::String(slot.into())),
+        }
+    };
     if path.is_empty() {
-        let slot = identity.reference.primary_slot_str();
-        return Some(coerce_node_input_value(
-            ctx,
-            path,
-            plasm_core::Value::String(slot),
-        ));
+        return decode(&identity.reference.primary_slot_str()).map(Some);
     }
     if path.len() == 1 {
-        let key = path[0].as_str();
-        if let Some(v) = identity.ambient.get(key) {
-            return Some(coerce_node_input_value(
-                ctx,
-                path,
-                plasm_core::Value::String(v.clone()),
-            ));
+        if let Some(slot) = identity.ambient.get(key) {
+            return decode(slot).map(Some);
         }
         if let plasm_core::EntityKey::Compound(parts) = &identity.reference.key {
-            if let Some(v) = parts.get(key).and_then(|s| s.as_lit_str()) {
-                let raw = ctx
-                    .map(|c| plasm_core::identity_slot_to_value(c.cgs, c.source_entity, key, v))
-                    .unwrap_or_else(|| plasm_core::Value::String(v.to_string()));
-                return Some(coerce_node_input_value(ctx, path, raw));
+            if let Some(slot) = parts.get(key).and_then(|slot| slot.as_lit_str()) {
+                return decode(slot).map(Some);
             }
         }
-        // Primary identity: CGS `id_field` (e.g. AuthSession.access_token) or legacy `"id"`.
         if key == "id" || key == id_field {
-            let slot = identity.reference.primary_slot_str();
-            return Some(coerce_node_input_value(
-                ctx,
-                path,
-                plasm_core::Value::String(slot),
-            ));
+            return decode(&identity.reference.primary_slot_str()).map(Some);
         }
     }
     value_at_segments(row, path)
         .cloned()
-        .map(|v| coerce_node_input_value(ctx, path, v))
+        .map(|value| coerce_node_input_value(ctx, path, value))
+        .transpose()
 }
 
 pub(crate) fn resolve_input_reference(
@@ -380,19 +374,20 @@ pub(crate) fn resolve_input_reference(
             if input.rows.len() > 1 && !path.is_empty() {
                 let mut values = Vec::with_capacity(input.rows.len());
                 for (row, ident) in input.rows.iter().zip(input.row_identities.iter()) {
-                    let cell = value_at_segments(row, path)
-                        .cloned()
-                        .or_else(|| {
-                            node_input_hole_from_identity(wire_ctx, id_field, ident, path, row)
-                        })
-                        .ok_or_else(|| RuntimeOperandError::MissingInputField {
-                            alias: alias.to_string(),
-                            path: path.join("."),
-                            entry_id: input.qualified_entity.entry_id.clone(),
-                            entity: input.qualified_entity.entity.clone(),
-                        })?;
+                    let cell = match value_at_segments(row, path) {
+                        Some(value) => Some(value.clone()),
+                        None => {
+                            node_input_hole_from_identity(wire_ctx, id_field, ident, path, row)?
+                        }
+                    }
+                    .ok_or_else(|| RuntimeOperandError::MissingInputField {
+                        alias: alias.to_string(),
+                        path: path.join("."),
+                        entry_id: input.qualified_entity.entry_id.clone(),
+                        entity: input.qualified_entity.entity.clone(),
+                    })?;
                     if !cell.is_null() {
-                        values.push(coerce_node_input_value(wire_ctx, path, cell));
+                        values.push(coerce_node_input_value(wire_ctx, path, cell)?);
                     }
                 }
                 if values.is_empty() {
@@ -412,7 +407,7 @@ pub(crate) fn resolve_input_reference(
                     &input.row_identity,
                     path,
                     &input.row,
-                ) {
+                )? {
                     if value.as_str().is_none_or(|s| !s.is_empty()) {
                         return Ok(value);
                     }
@@ -426,7 +421,7 @@ pub(crate) fn resolve_input_reference(
                 .cloned();
             let from_row_usable = from_row.as_ref().is_some_and(|v| !v.is_null());
             if from_row_usable {
-                return Ok(coerce_node_input_value(wire_ctx, path, from_row.unwrap()));
+                return coerce_node_input_value(wire_ctx, path, from_row.unwrap());
             }
             if let Some(value) = node_input_hole_from_identity(
                 wire_ctx,
@@ -434,7 +429,7 @@ pub(crate) fn resolve_input_reference(
                 &input.row_identity,
                 path,
                 &input.row,
-            ) {
+            )? {
                 if value.as_str().is_none_or(|s| !s.is_empty()) {
                     return Ok(value);
                 }

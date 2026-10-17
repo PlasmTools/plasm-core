@@ -59,7 +59,7 @@ impl RequestFingerprint {
         operation: &CompiledOperation,
         origin: &str,
         auth: Option<&crate::auth::ResolvedAuth>,
-    ) -> Self {
+    ) -> Result<Self, RuntimeError> {
         let mut headers = auth.map(|a| a.headers.clone()).unwrap_or_default();
         for (name, _) in &mut headers {
             name.make_ascii_lowercase();
@@ -72,27 +72,29 @@ impl RequestFingerprint {
             _ => &None,
         };
         let scope = serde_json::json!({
-            "request": Self::from_operation(operation).to_hex(),
+            "request": Self::from_operation(operation)?.to_hex(),
             "origin": origin,
             "headers": request_headers,
             "auth_headers": headers,
             "auth_query": query,
         });
-        Self(*blake3::hash(normalize_serde_for_fingerprint(&scope).as_bytes()).as_bytes())
+        Ok(Self(
+            *blake3::hash(normalize_serde_for_fingerprint(&scope)?.as_bytes()).as_bytes(),
+        ))
     }
     /// Create a fingerprint from a compiled HTTP request.
-    pub fn from_request(request: &CompiledRequest) -> Self {
+    pub fn from_request(request: &CompiledRequest) -> Result<Self, RuntimeError> {
         Self::from_operation(&CompiledOperation::Http(request.clone()))
     }
 
     /// Create a fingerprint from a compiled operation.
-    pub fn from_operation(request: &CompiledOperation) -> Self {
+    pub fn from_operation(request: &CompiledOperation) -> Result<Self, RuntimeError> {
         let mut hasher = Hasher::new();
 
         if let CompiledOperation::Http(request) | CompiledOperation::GraphQl(request) = request {
             if let Some(headers) = &request.headers {
                 hasher.update(b"|headers|");
-                hasher.update(normalize_json_for_fingerprint(headers).as_bytes());
+                hasher.update(normalize_json_for_fingerprint(headers)?.as_bytes());
             }
             if let Some(credential) = &request.credential {
                 hasher.update(b"|credential|");
@@ -101,7 +103,7 @@ impl RequestFingerprint {
                         "slot": credential.slot,
                         "resource": credential.resource,
                         "reference": credential.reference,
-                    }))
+                    }))?
                     .as_bytes(),
                 );
             }
@@ -111,7 +113,7 @@ impl RequestFingerprint {
                 hasher.update(b"credential_bind");
                 hasher.update(request.slot.as_bytes());
                 hasher.update(request.origin.as_bytes());
-                hasher.update(normalize_serde_for_fingerprint(&request.resource).as_bytes());
+                hasher.update(normalize_serde_for_fingerprint(&request.resource)?.as_bytes());
             }
             CompiledOperation::Http(request) => {
                 hasher.update(b"http");
@@ -130,7 +132,7 @@ impl RequestFingerprint {
                 };
 
                 if let Some(body) = &request.body {
-                    let normalized_body = normalize_json_for_fingerprint(body);
+                    let normalized_body = normalize_json_for_fingerprint(body)?;
                     hasher.update(normalized_body.as_bytes());
                 }
 
@@ -147,13 +149,13 @@ impl RequestFingerprint {
                             hasher.update(b"|ct|");
                             hasher.update(ct.as_bytes());
                         }
-                        let nb = normalize_json_for_fingerprint(&part.content);
+                        let nb = normalize_json_for_fingerprint(&part.content)?;
                         hasher.update(nb.as_bytes());
                     }
                 }
 
                 if let Some(query) = &request.query {
-                    let normalized_query = normalize_json_for_fingerprint(query);
+                    let normalized_query = normalize_json_for_fingerprint(query)?;
                     hasher.update(normalized_query.as_bytes());
                 }
             }
@@ -174,7 +176,7 @@ impl RequestFingerprint {
                 };
 
                 if let Some(body) = &request.body {
-                    let normalized_body = normalize_json_for_fingerprint(body);
+                    let normalized_body = normalize_json_for_fingerprint(body)?;
                     hasher.update(normalized_body.as_bytes());
                 }
 
@@ -191,13 +193,13 @@ impl RequestFingerprint {
                             hasher.update(b"|ct|");
                             hasher.update(ct.as_bytes());
                         }
-                        let nb = normalize_json_for_fingerprint(&part.content);
+                        let nb = normalize_json_for_fingerprint(&part.content)?;
                         hasher.update(nb.as_bytes());
                     }
                 }
 
                 if let Some(query) = &request.query {
-                    let normalized_query = normalize_json_for_fingerprint(query);
+                    let normalized_query = normalize_json_for_fingerprint(query)?;
                     hasher.update(normalized_query.as_bytes());
                 }
             }
@@ -206,21 +208,24 @@ impl RequestFingerprint {
                 hasher.update(&request.chain.id().to_le_bytes());
                 hasher.update(request.contract.as_slice());
                 hasher.update(request.function.signature().as_bytes());
-                hasher.update(normalize_serde_for_fingerprint(&request.args).as_bytes());
+                hasher.update(
+                    normalize_json_for_fingerprint(&Value::Array(request.args.clone()))?.as_bytes(),
+                );
                 if let Some(block) = &request.block {
-                    hasher.update(normalize_serde_for_fingerprint(block).as_bytes());
+                    hasher.update(normalize_serde_for_fingerprint(block)?.as_bytes());
                 }
-                hasher.update(normalize_serde_for_fingerprint(&request.decode).as_bytes());
+                hasher.update(normalize_serde_for_fingerprint(&request.decode)?.as_bytes());
             }
             CompiledOperation::EvmLogs(request) => {
                 hasher.update(b"evm_logs");
                 hasher.update(&request.chain.id().to_le_bytes());
                 hasher.update(request.contract.as_slice());
                 hasher.update(request.event.signature().as_bytes());
-                hasher.update(normalize_serde_for_fingerprint(&request.indexed_filters).as_bytes());
-                hasher.update(normalize_serde_for_fingerprint(&request.from_block).as_bytes());
-                hasher.update(normalize_serde_for_fingerprint(&request.to_block).as_bytes());
-                hasher.update(normalize_serde_for_fingerprint(&request.decode).as_bytes());
+                hasher
+                    .update(normalize_serde_for_fingerprint(&request.indexed_filters)?.as_bytes());
+                hasher.update(normalize_serde_for_fingerprint(&request.from_block)?.as_bytes());
+                hasher.update(normalize_serde_for_fingerprint(&request.to_block)?.as_bytes());
+                hasher.update(normalize_serde_for_fingerprint(&request.decode)?.as_bytes());
             }
             CompiledOperation::View(view) => {
                 hasher.update(b"view");
@@ -228,7 +233,7 @@ impl RequestFingerprint {
             }
         }
 
-        RequestFingerprint(*hasher.finalize().as_bytes())
+        Ok(RequestFingerprint(*hasher.finalize().as_bytes()))
     }
 
     /// Convert to hex string for debugging
@@ -261,8 +266,8 @@ impl RequestFingerprint {
     }
 }
 
-fn normalize_serde_for_fingerprint<T: Serialize>(value: &T) -> String {
-    serde_json::to_string(value).unwrap_or_else(|_| "null".to_string())
+fn normalize_serde_for_fingerprint<T: Serialize>(value: &T) -> Result<String, RuntimeError> {
+    serde_json::to_string(value).map_err(|source| crate::SerializationError::Json(source).into())
 }
 
 impl FileReplayStore {
@@ -391,41 +396,8 @@ impl ReplayStore for MemoryReplayStore {
 }
 
 /// Normalize JSON for consistent fingerprinting
-fn normalize_json_for_fingerprint(value: &Value) -> String {
-    // Convert to serde_json::Value first for consistent serialization
-    let json_value = value_to_json_value(value);
-
-    // Serialize with consistent formatting (no pretty printing, sorted keys)
-    serde_json::to_string(&json_value).unwrap_or_else(|_| "null".to_string())
-}
-
-/// Convert plasm_core::Value to serde_json::Value
-fn value_to_json_value(value: &Value) -> serde_json::Value {
-    match value {
-        Value::PlasmInputRef(_) | Value::GetScalarExtract(_) | Value::StringTemplate(_) => {
-            serde_json::to_value(value).unwrap_or(serde_json::Value::Null)
-        }
-        Value::Null => serde_json::Value::Null,
-        Value::Bool(b) => serde_json::Value::Bool(*b),
-        Value::Integer(i) => serde_json::Value::Number((*i).into()),
-        Value::Unsigned(i) => serde_json::Value::Number((*i).into()),
-        Value::Float(n) => serde_json::Number::from_f64(*n)
-            .map(serde_json::Value::Number)
-            .unwrap_or(serde_json::Value::Null),
-        Value::String(s) | Value::PhraseIdent(s) => serde_json::Value::String(s.clone()),
-        Value::Array(arr) => {
-            serde_json::Value::Array(arr.iter().map(value_to_json_value).collect())
-        }
-        Value::Object(obj) => {
-            let mut map = serde_json::Map::new();
-            for (k, v) in obj {
-                map.insert(k.clone(), value_to_json_value(v));
-            }
-            serde_json::Value::Object(map)
-        }
-        Value::UnionCtor { .. } => serde_json::to_value(value).unwrap_or(serde_json::Value::Null),
-        Value::Money(m) => m.encode_stored().unwrap_or(serde_json::Value::Null),
-    }
+fn normalize_json_for_fingerprint(value: &Value) -> Result<String, plasm_core::WireEncodingError> {
+    Ok(plasm_core::try_plasm_value_to_storage_json(value)?.to_string())
 }
 
 #[cfg(test)]
@@ -490,19 +462,37 @@ mod tests {
     }
 
     #[test]
+    fn invalid_numbers_cannot_alias_null_fingerprints() {
+        let CompiledOperation::Http(mut request) = create_test_request() else {
+            unreachable!()
+        };
+        request.body = Some(Value::Null);
+        assert!(RequestFingerprint::from_request(&request).is_ok());
+        for number in [f64::NAN, f64::INFINITY, f64::NEG_INFINITY] {
+            request.body = Some(Value::Array(vec![Value::Float(number)]));
+            assert!(matches!(
+                RequestFingerprint::from_request(&request),
+                Err(RuntimeError::SerializationError(
+                    crate::SerializationError::Value(plasm_core::WireEncodingError::NonFinite)
+                ))
+            ));
+        }
+    }
+
+    #[test]
     fn test_fingerprint_from_request() {
         let request = create_test_request();
-        let fingerprint = RequestFingerprint::from_operation(&request);
+        let fingerprint = RequestFingerprint::from_operation(&request).unwrap();
 
         // Same request should produce same fingerprint
-        let fingerprint2 = RequestFingerprint::from_operation(&request);
+        let fingerprint2 = RequestFingerprint::from_operation(&request).unwrap();
         assert_eq!(fingerprint, fingerprint2);
     }
 
     #[test]
     fn test_fingerprint_hex_conversion() {
         let request = create_test_request();
-        let fingerprint = RequestFingerprint::from_operation(&request);
+        let fingerprint = RequestFingerprint::from_operation(&request).unwrap();
 
         let hex = fingerprint.to_hex();
         let parsed = RequestFingerprint::from_hex(&hex).unwrap();
@@ -514,7 +504,7 @@ mod tests {
     fn test_memory_store() {
         let mut store = MemoryReplayStore::default();
         let request = create_test_request();
-        let fingerprint = RequestFingerprint::from_operation(&request);
+        let fingerprint = RequestFingerprint::from_operation(&request).unwrap();
         let entry = create_test_entry();
 
         // Store entry
@@ -537,7 +527,7 @@ mod tests {
         let mut store = FileReplayStore::new(temp_dir.path().to_path_buf())?;
 
         let request = create_test_request();
-        let fingerprint = RequestFingerprint::from_operation(&request);
+        let fingerprint = RequestFingerprint::from_operation(&request).unwrap();
         let entry = create_test_entry();
 
         // Store entry
@@ -563,7 +553,7 @@ mod tests {
         obj.insert("a".to_string(), Value::Integer(1));
 
         let value = Value::Object(obj);
-        let normalized = normalize_json_for_fingerprint(&value);
+        let normalized = normalize_json_for_fingerprint(&value).unwrap();
 
         // Should be valid JSON
         let parsed: serde_json::Value = serde_json::from_str(&normalized).unwrap();
@@ -594,8 +584,8 @@ mod tests {
             headers: None,
         };
 
-        let fp1 = RequestFingerprint::from_request(&request1);
-        let fp2 = RequestFingerprint::from_request(&request2);
+        let fp1 = RequestFingerprint::from_request(&request1).unwrap();
+        let fp2 = RequestFingerprint::from_request(&request2).unwrap();
 
         assert_ne!(fp1, fp2);
         let mut scoped = request1.clone();
@@ -610,16 +600,16 @@ mod tests {
         ])));
         for wrap in [CompiledOperation::Http, CompiledOperation::GraphQl] {
             assert_ne!(
-                RequestFingerprint::from_operation(&wrap(scoped.clone())),
-                RequestFingerprint::from_operation(&wrap(changed.clone()))
+                RequestFingerprint::from_operation(&wrap(scoped.clone())).unwrap(),
+                RequestFingerprint::from_operation(&wrap(changed.clone())).unwrap()
             );
             let mut reordered = scoped.clone();
             if let Some(Value::Object(headers)) = &mut reordered.headers {
                 headers.reverse();
             }
             assert_eq!(
-                RequestFingerprint::from_operation(&wrap(scoped.clone())),
-                RequestFingerprint::from_operation(&wrap(reordered))
+                RequestFingerprint::from_operation(&wrap(scoped.clone())).unwrap(),
+                RequestFingerprint::from_operation(&wrap(reordered)).unwrap()
             );
         }
     }
@@ -662,9 +652,33 @@ mod tests {
         });
 
         assert_ne!(
-            RequestFingerprint::from_operation(&op_a),
-            RequestFingerprint::from_operation(&op_b)
+            RequestFingerprint::from_operation(&op_a).unwrap(),
+            RequestFingerprint::from_operation(&op_b).unwrap()
         );
+    }
+
+    #[test]
+    fn evm_arguments_reject_nonfinite_before_fingerprinting() {
+        let mut call = CompiledEvmCall {
+            chain: 1u64.into(),
+            contract: Address::ZERO,
+            function: "function inspect(uint256 value) view returns (uint256)"
+                .parse::<Function>()
+                .unwrap(),
+            args: vec![Value::Null],
+            block: None,
+            decode: IndexMap::new(),
+        };
+        assert!(
+            RequestFingerprint::from_operation(&CompiledOperation::EvmCall(call.clone())).is_ok()
+        );
+        call.args = vec![Value::Array(vec![Value::Float(f64::NAN)])];
+        assert!(matches!(
+            RequestFingerprint::from_operation(&CompiledOperation::EvmCall(call)),
+            Err(RuntimeError::SerializationError(
+                crate::SerializationError::Value(plasm_core::WireEncodingError::NonFinite)
+            ))
+        ));
     }
 
     #[test]
@@ -710,8 +724,8 @@ mod tests {
         }));
 
         assert_ne!(
-            RequestFingerprint::from_operation(&op_a),
-            RequestFingerprint::from_operation(&op_b)
+            RequestFingerprint::from_operation(&op_a).unwrap(),
+            RequestFingerprint::from_operation(&op_b).unwrap()
         );
     }
 
@@ -737,8 +751,8 @@ mod tests {
         };
 
         assert_eq!(
-            RequestFingerprint::from_operation(&mk(Some(raw))),
-            RequestFingerprint::from_operation(&mk(Some(roundtrip)))
+            RequestFingerprint::from_operation(&mk(Some(raw))).unwrap(),
+            RequestFingerprint::from_operation(&mk(Some(roundtrip))).unwrap()
         );
     }
 
@@ -797,8 +811,8 @@ mod tests {
         };
 
         assert_eq!(
-            RequestFingerprint::from_operation(&mk(Some(body.clone()))),
-            RequestFingerprint::from_operation(&mk(Some(lifted.to_value())))
+            RequestFingerprint::from_operation(&mk(Some(body.clone()))).unwrap(),
+            RequestFingerprint::from_operation(&mk(Some(lifted.to_value()))).unwrap()
         );
     }
 }

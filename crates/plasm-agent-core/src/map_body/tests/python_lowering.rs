@@ -1,6 +1,90 @@
 use super::*;
 
 #[test]
+fn numeric_optional_child_reference_selection_repro() {
+    on_runtime(async {
+        for relation in [false, true] {
+            let (es, host, calls) = numeric_reference_fixture();
+            let symbols = es.teaching_exposure.as_ref().unwrap().to_symbol_map();
+            let item = symbols.entity_sym_for("fixture", "Item");
+            let tag = symbols.entity_sym_for("fixture", "Tag");
+            let children = if relation {
+                "parents.flat_map(lambda p: p.r1)".to_owned()
+            } else {
+                format!("parents.flat_map(lambda p: {tag}.query(item_id=p.id))")
+            };
+            let source = format!("class P(Program):\n    def build(self):\n        parents = {item}.query()\n        children = {children}\n        excluded = parents.where(lambda p: p.id == 1).select('id')\n        matching = children.where(lambda c: c.label != 'L0').select('item_id')\n        return parents.where(lambda p: p.id not in excluded and p.id in matching).select('id')\n");
+            let bundle = compile_python_program(&es, &source).await.unwrap();
+            for _ in 0..2 {
+                let run = execute(&es, &host, &bundle)
+                    .await
+                    .unwrap_or_else(|error| panic!("numeric relation={relation}: {error:?}"));
+                let actual: Vec<_> = returned_fields(&run)
+                    .iter()
+                    .map(|row| row["id"].clone())
+                    .collect();
+                if actual != vec![json!(2), json!(3)] {
+                    for expression in [
+                        "parents.select('id')",
+                        "children.select('item_id')",
+                        "matching",
+                        "excluded",
+                    ] {
+                        let diagnostic = source.replace("parents.where(lambda p: p.id not in excluded and p.id in matching).select('id')", expression);
+                        let probe = compile_python_program(&es, &diagnostic).await.unwrap();
+                        let observed = execute(&es, &host, &probe).await.unwrap();
+                        eprintln!(
+                            "selection repro {expression}: {:?}",
+                            returned_fields(&observed)
+                        );
+                    }
+                }
+                assert_eq!(actual, vec![json!(2), json!(3)], "relation={relation}");
+            }
+            let mark = symbols.method_sym_for("fixture", "Item", "mark");
+            let source = source.replace(
+                "        return parents.where(lambda p: p.id not in excluded and p.id in matching).select('id')",
+                &format!("        first = parents.where(lambda p: p.id == 0).flat_map(lambda p: p.{mark}())\n        second = parents.where(lambda p: p.id not in excluded and p.id in matching).flat_map(lambda p: p.{mark}())\n        return [first, second]"),
+            );
+            let bundle = compile_python_program(&es, &source).await.unwrap();
+            calls.lock().unwrap().clear();
+            execute(&es, &host, &bundle).await.unwrap();
+            let mut effects: Vec<_> = calls
+                .lock()
+                .unwrap()
+                .iter()
+                .filter(|path| path.starts_with("/marks/"))
+                .cloned()
+                .collect();
+            effects.sort();
+            assert_eq!(
+                effects,
+                ["/marks/0", "/marks/2", "/marks/3"],
+                "relation={relation}"
+            );
+        }
+    });
+}
+
+#[test]
+fn child_foreign_key_projection_selects_corresponding_parents() {
+    on_runtime(async {
+        let (es, host, _) = fixture(3);
+        let symbols = es.teaching_exposure.as_ref().unwrap().to_symbol_map();
+        let item = symbols.entity_sym_for("fixture", "Item");
+        let tag = symbols.entity_sym_for("fixture", "Tag");
+        let source = format!("class P(Program):\n    def build(self):\n        parents = {item}.query()\n        children = parents.flat_map(lambda p: {tag}.query(item_id=p.id))\n        parent_ids = children.select('item_id')\n        return parents.where(lambda p: p.id in parent_ids).select('id')\n");
+        let bundle = compile_python_program(&es, &source).await.unwrap();
+        let run = execute(&es, &host, &bundle).await.unwrap();
+        let actual: Vec<_> = returned_fields(&run)
+            .iter()
+            .map(|row| row["id"].clone())
+            .collect();
+        assert_eq!(actual, vec![json!("i1"), json!("i2")]);
+    });
+}
+
+#[test]
 fn named_projection_repairs_union_without_guessing_column_correspondence() {
     on_runtime(async {
         let (es, host, calls) = fixture(2);
@@ -1069,7 +1153,7 @@ fn python_lowering_preserves_nested_record_and_array_outputs() {
             .entities()
             .iter()
             .map(|e| {
-                let row = plasm_runtime::entity_to_agent_row_json(e, None);
+                let row = plasm_runtime::entity_to_agent_row_json(e, None).unwrap();
                 json!({"nested": row["nested"], "labels": row["labels"]})
             })
             .collect();
@@ -1310,7 +1394,8 @@ fn python_map_transformed_rows_feed_compute_and_write() {
                 plasm_runtime::entity_to_agent_row_json(
                     &run.return_steps[0].result.entities()[0],
                     None
-                )["value"],
+                )
+                .unwrap()["value"],
                 json!(expected)
             );
             assert_eq!(
@@ -1450,7 +1535,8 @@ fn python_conditional_csv_runs_in_monty_and_feeds_write() {
             plasm_runtime::entity_to_agent_row_json(
                 &run.return_steps[0].result.entities()[0],
                 None
-            )["value"],
+            )
+            .unwrap()["value"],
             json!(";L0;\"L0|L1\"")
         );
         assert_eq!(
@@ -1595,7 +1681,8 @@ fn python_typed_input_assembly_preserves_row_pairing_and_dependencies() {
                 plasm_runtime::entity_to_agent_row_json(
                     &run.return_steps[0].result.entities()[0],
                     None
-                )["value"],
+                )
+                .unwrap()["value"],
                 json!(expected)
             );
             assert_eq!(
@@ -1652,7 +1739,8 @@ fn python_typed_input_assembly_preserves_recursive_captured_values() {
             plasm_runtime::entity_to_agent_row_json(
                 &run.return_steps[0].result.entities()[0],
                 None
-            )["value"],
+            )
+            .unwrap()["value"],
             json!("Title 0:Title 0:open:None;Title 1:Title 0:open:None;Title 2:Title 0:open:None")
         );
     });
@@ -2220,7 +2308,8 @@ fn python_compute_uses_upstream_call_binding() {
                 plasm_runtime::entity_to_agent_row_json(
                     &run.return_steps[0].result.entities()[0],
                     None
-                )["value"],
+                )
+                .unwrap()["value"],
                 json!(expected)
             );
         }
@@ -2254,7 +2343,8 @@ fn python_expanded_lists_are_upstream_expressions() {
             plasm_runtime::entity_to_agent_row_json(
                 &run.return_steps[0].result.entities()[0],
                 None
-            )["values"],
+            )
+            .unwrap()["values"],
             json!([0, 1, 2, 3])
         );
     });

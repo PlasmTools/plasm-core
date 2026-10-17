@@ -402,6 +402,7 @@ impl ViewNodeRunner for FixtureViewNodeRunner {
             }
         })?;
         result.collection = crate::execution::ExecutionCollection::evaluate(
+            crate::execution::RowMaterialization::Catalog,
             result
                 .collection
                 .membership()

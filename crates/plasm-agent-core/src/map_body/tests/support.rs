@@ -7,6 +7,7 @@ struct Transport {
     pause_on_child: Option<Arc<(tokio::sync::Notify, tokio::sync::Notify)>>,
     cancel_on_child: Option<crate::operation::ExecutionScope>,
     unproven_child: bool,
+    numeric_ids: bool,
 }
 #[async_trait]
 impl HttpTransport for Transport {
@@ -60,19 +61,31 @@ impl HttpTransport for Transport {
         }
         let rows = match parts.as_slice() {
             ["items", id] => {
-                let n: usize = id.strip_prefix('i').unwrap().parse().unwrap();
+                let n: usize = id.trim_start_matches('i').parse().unwrap();
                 return Ok((
-                    json!({"id":id,"title":format!("Title {n}"),"state":"open"}),
+                    json!({"id": if self.numeric_ids { json!(n) } else { json!(id) },"title":format!("Title {n}"),"state":"open", "tags": (0..n).map(|j| json!({"id": format!("{id}-t{j}")})).collect::<Vec<_>>()}),
                     None,
                 ));
             }
             ["touch"] | ["publish"] | ["marks", _] => vec![],
+            ["tags", id] => {
+                let (parent, child) = id.split_once("-t").unwrap();
+                let parent: usize = parent.parse().unwrap();
+                return Ok((json!({"id": id, "item_id": parent, "label": format!("L{child}")}), None));
+            }
             ["items"] => (0..self.parents)
-                .map(|i| json!({"id":format!("i{i}"), "title":format!("Title {i}"),"state":"open"}))
+                .map(|i| {
+                    let mut row = json!({"id":if self.numeric_ids { json!(i) } else { json!(format!("i{i}")) }, "title":format!("Title {i}"),"state":"open"});
+                    if self.numeric_ids {
+                        // The complete embedded relation is observed on this response.
+                        row["tags"] = json!((0..i).map(|j| json!({"id":format!("{i}-t{j}"),"item_id":i,"label":format!("L{j}")})).collect::<Vec<_>>());
+                    }
+                    row
+                })
                 .collect::<Vec<_>>(),
             ["items", id, "tags"] => {
-                let n: usize = id.strip_prefix('i').unwrap().parse().unwrap();
-                (0..n).map(|j| json!({"id":format!("{id}-t{j}"), "item_id":id,"label":format!("L{j}")})).collect()
+                let n: usize = id.trim_start_matches('i').parse().unwrap();
+                (0..n).map(|j| json!({"id":format!("{id}-t{j}"), "item_id":if self.numeric_ids { json!(n) } else { json!(id) },"label":format!("L{j}")})).collect()
             }
             _ => panic!("unexpected path {}", req.path),
         };
@@ -119,6 +132,29 @@ fn fixture_with_evidence(
     unproven_child: bool,
     export_rows: Option<usize>,
 ) -> (ExecuteSession, PlasmHostState, Arc<Mutex<Vec<String>>>) {
+    fixture_with_identity(
+        parents,
+        cancel_on_child,
+        pause_on_child,
+        unproven_child,
+        export_rows,
+        false,
+    )
+}
+
+pub(super) fn numeric_reference_fixture(
+) -> (ExecuteSession, PlasmHostState, Arc<Mutex<Vec<String>>>) {
+    fixture_with_identity(4, None, None, false, None, true)
+}
+
+fn fixture_with_identity(
+    parents: usize,
+    cancel_on_child: Option<crate::operation::ExecutionScope>,
+    pause_on_child: Option<Arc<(tokio::sync::Notify, tokio::sync::Notify)>>,
+    unproven_child: bool,
+    export_rows: Option<usize>,
+    numeric_ids: bool,
+) -> (ExecuteSession, PlasmHostState, Arc<Mutex<Vec<String>>>) {
     let mut cgs = plasm_core::load_schema(&std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join(
         if export_rows.is_some() {
             "../../fixtures/schemas/python_action_output"
@@ -127,6 +163,39 @@ fn fixture_with_evidence(
         },
     ))
     .unwrap();
+    if numeric_ids {
+        cgs.values.get_mut("item_id").unwrap().field_type = plasm_core::FieldType::Integer;
+        cgs.values.get_mut("item_id").unwrap().domain.kernel =
+            plasm_core::value_domain::KernelKind::Integer;
+        cgs.entities
+            .get_mut("Tag")
+            .unwrap()
+            .fields
+            .get_mut("item_id")
+            .unwrap()
+            .required = false;
+        cgs.entities
+            .get_mut("Item")
+            .unwrap()
+            .relations
+            .get_mut("tags")
+            .unwrap()
+            .materialize = Some(
+            serde_json::from_value(json!({
+                "kind": "from_parent_get", "collection_coverage": "complete",
+                "path": [{"key": "tags"}, {"wildcard": true}, {"key": "id"}]
+            }))
+            .unwrap(),
+        );
+        let mut get = cgs.capabilities["item_get"].clone();
+        get.name = "tag_get".into();
+        get.domain = "Tag".into();
+        get.provides = vec!["id".into(), "item_id".into(), "label".into()];
+        get.mapping.as_mut().unwrap().template.0["path"] = json!([
+            {"type": "literal", "value": "tags"}, {"type": "var", "name": "id"}
+        ]);
+        cgs.capabilities.insert("tag_get".into(), get);
+    }
     if unproven_child {
         cgs.capabilities
             .get_mut("tag_query")
@@ -137,6 +206,8 @@ fn fixture_with_evidence(
             .template
             .0["pagination"] = json!({"strategy":"link_header", "location":"link_header"});
     }
+    // Post-load fixture edits must rebuild cached capability indexes as well as the digest.
+    let mut cgs = cgs.fresh_catalog_digest();
     cgs.bind_registry_entry_id("fixture");
     let cgs = Arc::new(cgs);
     let contexts = indexmap::IndexMap::from([(
@@ -172,6 +243,7 @@ fn fixture_with_evidence(
             pause_on_child,
             cancel_on_child,
             unproven_child,
+            numeric_ids,
         }),
         None,
     );
@@ -450,7 +522,7 @@ pub(super) fn rows(run: &crate::plasm_plan_run::PlasmPlanRunResult) -> Vec<Value
         .entities()
         .iter()
         .map(|e| {
-            let row = plasm_runtime::entity_to_agent_row_json(e, None);
+            let row = plasm_runtime::entity_to_agent_row_json(e, None).unwrap();
             json!({"title":row["title"],"labels":row["labels"]})
         })
         .collect()

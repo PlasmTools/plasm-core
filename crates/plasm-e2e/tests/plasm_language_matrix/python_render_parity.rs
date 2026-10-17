@@ -51,7 +51,7 @@ pub(super) fn assert_replacement(
         .return_steps
         .iter()
         .flat_map(|step| step.result.entities().iter())
-        .map(|entity| plasm_runtime::entity_to_agent_row_json(entity, None))
+        .map(|entity| plasm_runtime::entity_to_agent_row_json(entity, None).unwrap())
         .collect::<Vec<_>>();
     assert_eq!(
         rows,

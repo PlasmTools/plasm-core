@@ -398,6 +398,7 @@ pub fn document_from_run(
         .materialize(plasm_core::collection_codec::Demand::Observed)?
         .clone();
     Ok(RunArtifactDocument {
+        row_materialization: d.result.collection.row_materialization(),
         run_id: d.run_id.to_wire(),
         prompt_hash: d.prompt_hash.to_string(),
         session_id: d.session_id.to_string(),

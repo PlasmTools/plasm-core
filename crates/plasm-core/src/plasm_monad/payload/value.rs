@@ -2,7 +2,7 @@ use super::atoms::FieldPath;
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum PlasmDataValueError {
     #[error(transparent)]
     ResolvedValue(#[from] crate::operand_binding::ResolvedValueError),

@@ -2440,7 +2440,7 @@ fn prefer_graph_miss_yields_scoped_not_error() {
         plasm_core::Cardinality::Many,
         "tags",
         "LangTag",
-        &parent.to_row_values(None),
+        &parent.to_row_values(None).unwrap(),
         Some(&parent.relations["tags"].iter().cloned().collect::<Vec<_>>()),
         |_| false,
     );

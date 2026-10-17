@@ -127,6 +127,9 @@ impl From<plasm_core::collection_codec::CollectionFault> for ExecutionFailure {
     fn from(fault: plasm_core::collection_codec::CollectionFault) -> Self {
         use plasm_core::collection_codec::CollectionFault;
         let code = match &fault {
+            CollectionFault::RowMaterializationMismatch => {
+                "collection_row_materialization_mismatch"
+            }
             CollectionFault::NotResident => "collection_not_resident",
             CollectionFault::Conservation => "collection_conservation",
             CollectionFault::Arity => "collection_arity",
@@ -537,6 +540,12 @@ impl From<crate::RuntimeError> for ExecutionFailure {
         } else {
             failure.at(locations.join("/"), vec![])
         }
+    }
+}
+
+impl From<plasm_core::ValueCodecError> for ExecutionFailure {
+    fn from(source: plasm_core::ValueCodecError) -> Self {
+        crate::RuntimeError::from(source).into()
     }
 }
 impl std::fmt::Display for ExecutionFailure {

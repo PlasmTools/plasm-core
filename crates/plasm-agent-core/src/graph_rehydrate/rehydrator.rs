@@ -85,11 +85,28 @@ impl<'a> GraphSurfaceRehydrator<'a> {
         &self,
         entity_type: &str,
         result: &ExecutionResult,
-    ) -> MaterializedRowSource {
+    ) -> Result<MaterializedRowSource, plasm_runtime::ExecutionFailure> {
+        if result.collection.row_materialization()
+            == plasm_runtime::execution::RowMaterialization::Computed
+        {
+            let rows = result
+                .collection
+                .materialize(plasm_core::collection_codec::Demand::Observed)?;
+            return Ok(MaterializedRowSource::Inline(
+                rows.iter()
+                    .map(|row| {
+                        row.fields
+                            .iter()
+                            .map(|(key, value)| (key.clone(), value.to_value()))
+                            .collect()
+                    })
+                    .collect(),
+            ));
+        }
         if !result.collection.is_graph_backed() {
             let guard = self.ctx.es.lock_graph_cache().await;
             let mat = guard.materialization();
-            return MaterializedRowSource::Inline(
+            return Ok(MaterializedRowSource::Inline(
                 result
                     .entities()
                     .iter()
@@ -100,21 +117,21 @@ impl<'a> GraphSurfaceRehydrator<'a> {
                             mat,
                         )
                     })
-                    .collect(),
-            );
+                    .collect::<Result<_, _>>()?,
+            ));
         }
         if result.count() == 0 {
-            return MaterializedRowSource::Inline(Vec::new());
+            return Ok(MaterializedRowSource::Inline(Vec::new()));
         }
 
         let hot_snapshot = self.snapshot_hot_locked(entity_type).await;
 
         crate::graph_cache_metrics::record_graph_surface_graph_backed(result.count());
-        MaterializedRowSource::GraphBacked {
+        Ok(MaterializedRowSource::GraphBacked {
             entity_type: entity_type.to_string(),
             membership: result.collection.membership().clone(),
             hot_snapshot,
-        }
+        })
     }
 
     /// CEP-5: parent entities for relation materialize — uses hot cache + spill when
@@ -220,7 +237,7 @@ impl<'a> GraphSurfaceRehydrator<'a> {
         Ok(rows
             .iter()
             .map(|row| plasm_runtime::entity_to_row_values(row, Some(self.ctx.cgs)))
-            .collect())
+            .collect::<Result<_, _>>()?)
     }
 
     pub(crate) async fn resolve_row_source_rows(
@@ -244,7 +261,7 @@ impl<'a> GraphSurfaceRehydrator<'a> {
             .await?
             .iter()
             .map(|row| plasm_runtime::entity_to_row_values(row, Some(self.ctx.cgs)))
-            .collect(),
+            .collect::<Result<_, _>>()?,
         };
         if let Some(n) = max_rows {
             rows.truncate(n);

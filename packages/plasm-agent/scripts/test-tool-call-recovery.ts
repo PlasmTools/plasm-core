@@ -7,6 +7,57 @@ import { createPlasmTools } from "../src/tools/plasm-tools.js";
 import { createEvalTerminalTools } from "../src/tools/harness-tools.js";
 import { runEveToolLoop } from "../src/telemetry/eve-tool-loop.js";
 import { ToolCallRecovery } from "../src/telemetry/tool-call-recovery.js";
+import { toolValidationFeedback } from "../src/telemetry/tool-validation-feedback.js";
+
+for (const input of [{}, {answer: 4}, {answer: ""}]) {
+  const schema = z.object({answer: z.string().min(1)}).strict();
+  const parsed = schema.safeParse(input);
+  assert.equal(parsed.success, false);
+  if (parsed.success) throw new Error("fixture must reject");
+  const feedback = toolValidationFeedback(new Error("unsafe rejected value", {cause: parsed.error}), "submit_answer", createEvalTerminalTools());
+  assert.equal(feedback.kind, "schema");
+  assert.deepEqual(feedback.issues[0]?.path, ["answer"]);
+  if ("answer" in input && input.answer === "") assert.equal(feedback.issues[0]?.code, "too_small");
+  else assert.equal(feedback.issues[0]?.expected, "string");
+  assert(!JSON.stringify(feedback).includes("unsafe rejected value"));
+}
+
+{
+  const parsed = z.literal("allowed").safeParse("PRIVATE_LITERAL_VALUE");
+  assert(!parsed.success);
+  const feedback = toolValidationFeedback(parsed.error, "complete_task", createEvalTerminalTools());
+  assert(!JSON.stringify(feedback).includes("PRIVATE_LITERAL_VALUE"));
+  assert.equal(feedback.issues[0]?.code, "invalid_literal");
+}
+
+// Real SDK validation must survive the repair projection without rejected values.
+for (const input of ['{"answer":"PRIVATE_REJECTED_VALUE"}', '{"logical_session_ref":"PRIVATE_REJECTED_VALUE"}', '{']) {
+  let requests = 0;
+  const model = new MockLanguageModelV3({ doStream: async request => {
+    const index = requests++;
+    if (index === 1) {
+      const prompt = JSON.stringify(request.prompt);
+      assert.match(prompt, /acceptedArguments/);
+      assert.match(prompt, /additionalProperties/);
+      assert.ok(!prompt.includes("PRIVATE_REJECTED_VALUE"));
+      if (input !== '{') assert.match(prompt, /unrecognized_keys/);
+    }
+    return { stream: new ReadableStream({ start(controller) {
+      controller.enqueue({type: "tool-call", toolCallId: `terminal-${index}`, toolName: "complete_task", input: index === 0 ? input : "{}"});
+      controller.enqueue({type: "finish", finishReason: {unified: "tool-calls", raw: undefined}, usage: {inputTokens: {total: 8, noCache: 8, cacheRead: 0, cacheWrite: 0}, outputTokens: {total: 2, text: 2, reasoning: 0}}});
+      controller.close();
+    } }) };
+  } });
+  let completions = 0;
+  const terminals = createEvalTerminalTools({discoveryCompleted: () => { completions++; return true; }});
+  const result = await runEveToolLoop({model, system: "Abstract terminal fixture", messages: [{role: "user", content: "Finish"}], tools: terminals,
+    maxSteps: 4, agentName: "terminal-validation", telemetry: {isEnabled: false}});
+  assert.equal(result.stopReason, "completed");
+  assert.equal(completions, 1);
+  assert.equal(requests, 2);
+  assert.deepEqual(result.toolCallRecovery[0]?.calls[0]?.input, input === '{' ? input : JSON.parse(input));
+  assert.equal(result.toolCallRecovery[0]?.calls[0]?.validation?.kind, input === '{' ? "json" : "schema");
+}
 
 const malformed = "class Read(Program):\n    def build(self):\n        return e1.query()\n</parameter\n<tool_call>";
 const valid = "# </parameter> is legal in a comment\nclass Read(Program):\n    def build(self):\n        return e1.query()\n";

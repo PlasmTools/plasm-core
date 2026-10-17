@@ -284,6 +284,11 @@ required/defaulted arguments before normalizing and validating scope inputs
 An unavailable `get` identifies its receiver and retains the typed lookup cause;
 the correction refers to declared methods, not transport operations.
 
+Scalar field rejection preserves the expression, source span and known row
+cardinality for both direct dependencies and captured expressions. It identifies
+the missing singleton proof without selecting a row or changing the program.
+Witness: `scalar_field_rejection_preserves_expression_cardinality_and_location`.
+
 Direct local callback calls and Program helper calls use the same single-invocation
 scheduling port. Authored arguments remain typed captures with independent
 cardinality, so an empty or plural Python collection does not become a fanout
@@ -757,7 +762,7 @@ parser or type checker:
 | `python_compute/returns.rs` | Translate catalog-owned annotation references into upstream declarations |
 | `python_compute.rs`, `multiple.rs` | Validate normalized materialization ports and checker-produced value contracts |
 | `python_program_diagnostic.rs` | Ruff parser recovery for an explicitly unexecuted, untyped prefix sketch; bounded source excerpt and Unicode-aware line/column caret on syntax rejection |
-| `program_diagnostic.rs` / TS `tool-call-recovery.ts` | Native parse failures retain `program_syntax` through the host. JSON/schema and syntax repair have at most two subsequent generations within the existing turn budget; type/planning/service failures retain their own recovery semantics. Original calls remain in audit history; model repair context contains only the latest rejected candidate, with failed call/result pairs omitted from normal assistant replay. No source rewriting or prefix execution. |
+| `program_diagnostic.rs` / TS `tool-call-recovery.ts` | Native parse failures retain `program_syntax` through the host. JSON/schema and syntax repair have at most two subsequent generations within the existing turn budget; type/planning/service failures retain their own recovery semantics. Original calls remain in audit history; failed call/result pairs are omitted from normal assistant replay. Argument repair receives structured validator facts and the registered schema, not rejected values or raw SDK error messages. No source rewriting or prefix execution. |
 | AST templates in expression/callback lowering | Construct dependency substitutions; upstream checking still admits resulting Python |
 
 HTTP execute, MCP planning, Node and the evaluator route through `compile_program`.

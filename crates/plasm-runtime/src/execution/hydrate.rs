@@ -444,7 +444,7 @@ impl ExecutionEngine {
                                 hydration_trace::emit_for(
                                     id,
                                     "final_row",
-                                    hydration_trace::shape(&row.payload_to_json()),
+                                    hydration_trace::shape(&row.payload_to_json()?),
                                 );
                             }
                         }
@@ -484,7 +484,7 @@ impl ExecutionEngine {
                     hydration_trace::emit_for(
                         id,
                         "final_row",
-                        hydration_trace::shape(&row.payload_to_json()),
+                        hydration_trace::shape(&row.payload_to_json()?),
                     );
                 }
             }
@@ -2346,7 +2346,7 @@ mod tests {
         let entity = CachedEntity::from_decoded(
             Ref::new("LangSecuredNote", "1"),
             [
-                ("note_id".into(), Value::String("1".into())),
+                ("note_id".into(), Value::Integer(1)),
                 ("title".into(), Value::String("trip".into())),
             ]
             .into_iter()
@@ -2457,7 +2457,7 @@ mod tests {
         );
         let entity = CachedEntity::from_decoded(
             Ref::new("LangSecuredNote", "1"),
-            [("note_id".into(), Value::String("1".into()))]
+            [("note_id".into(), Value::Integer(1))]
                 .into_iter()
                 .collect(),
             indexmap::IndexMap::new(),
@@ -2513,15 +2513,8 @@ mod tests {
             "expected body unavailable, got {:?}",
             out[0].unavailable_fields
         );
-        let agent_row = crate::entity_to_agent_row_json(&out[0], Some(&cgs));
-        let unavail = agent_row
-            .get("_unavailable_fields")
-            .and_then(|v| v.as_array())
-            .expect("_unavailable_fields in agent row JSON");
-        assert!(
-            unavail.iter().any(|v| v.as_str() == Some("body")),
-            "agent row must expose body as unavailable: {unavail:?}"
-        );
+        let agent_row = crate::entity_to_agent_row_json(&out[0], Some(&cgs)).unwrap();
+        // Unavailability belongs to the typed outcome, not authored row fields.
         assert!(
             agent_row.get("body").is_none(),
             "unavailable must not invent a present body key; got {:?}",
@@ -2688,7 +2681,7 @@ mod tests {
         let entity = CachedEntity::from_decoded(
             Ref::new("LangSecuredNote", "1"),
             [
-                ("note_id".into(), Value::String("1".into())),
+                ("note_id".into(), Value::Integer(1)),
                 ("title".into(), Value::String("trip".into())),
             ]
             .into_iter()
@@ -2756,10 +2749,7 @@ mod tests {
                     "expected hydrate GET, got {}",
                     request.path
                 );
-                Ok((
-                    serde_json::json!({"note_id":"2", "title":"wrong row"}),
-                    None,
-                ))
+                Ok((serde_json::json!({"note_id":2, "title":"wrong row"}), None))
             }
 
             async fn get_json_absolute(
@@ -2798,7 +2788,7 @@ mod tests {
         );
         let entity = CachedEntity::from_decoded(
             Ref::new("LangSecuredNote", "1"),
-            [("note_id".into(), Value::String("1".into()))]
+            [("note_id".into(), Value::Integer(1))]
                 .into_iter()
                 .collect(),
             indexmap::IndexMap::new(),
@@ -2937,7 +2927,7 @@ mod tests {
                 }
                 Ok((
                     serde_json::json!({
-                        "note_id": returned_id,
+                        "note_id": returned_id.parse::<i64>().expect("numeric fixture identity"),
                         "title": code,
                         "body": member,
                     }),
@@ -2997,7 +2987,7 @@ mod tests {
                 CachedEntity::from_decoded(
                     Ref::new("LangSecuredNote", id),
                     [
-                        ("note_id".into(), Value::String(id.into())),
+                        ("note_id".into(), Value::Integer(id.parse().unwrap())),
                         ("title".into(), Value::String(format!("list-{code}"))),
                     ]
                     .into_iter()

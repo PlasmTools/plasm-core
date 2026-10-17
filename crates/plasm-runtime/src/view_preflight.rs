@@ -220,6 +220,7 @@ impl ViewNodeRunner for PreflightViewNodeRunner<'_> {
         };
         let mut result = result;
         result.collection = crate::execution::ExecutionCollection::evaluate(
+            crate::execution::RowMaterialization::Catalog,
             result
                 .collection
                 .membership()

@@ -381,8 +381,10 @@ impl ExecutionEngine {
                 }
             }
         }
-        let fingerprint = super::request_identity::response_fingerprint()
-            .unwrap_or_else(|| crate::RequestFingerprint::from_operation(compiled));
+        let fingerprint = match super::request_identity::response_fingerprint() {
+            Some(fingerprint) => fingerprint,
+            None => crate::RequestFingerprint::from_operation(compiled)?,
+        };
         let mut consult = CacheTelemetry::default();
         let reuse_recorded = mat
             .as_ref()
@@ -474,7 +476,7 @@ impl ExecutionEngine {
         &self,
         operation: &CompiledOperation,
     ) -> Result<(serde_json::Value, Option<String>), RuntimeError> {
-        let fp = crate::RequestFingerprint::from_operation(operation);
+        let fp = crate::RequestFingerprint::from_operation(operation)?;
         let out = match operation {
             CompiledOperation::CredentialBind(binding) => {
                 let base = self.effective_http_base_for_request();

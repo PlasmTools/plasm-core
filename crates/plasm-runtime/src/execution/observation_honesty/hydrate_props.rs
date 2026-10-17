@@ -119,7 +119,7 @@ fn run_hydrate_wave(
             CachedEntity::from_decoded(
                 Ref::new("LangSecuredNote", &s.id),
                 [
-                    ("note_id".into(), Value::String(s.id.clone())),
+                    ("note_id".into(), Value::Integer(s.id.parse().unwrap())),
                     ("title".into(), Value::String(format!("list-{}", s.title))),
                 ]
                 .into_iter()

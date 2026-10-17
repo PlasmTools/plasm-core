@@ -70,12 +70,12 @@ pub(crate) fn build_scoped_query_from_fallback(
             let preds: Vec<Predicate> = bindings
                 .iter()
                 .map(|(cap_param, parent_field)| {
-                    let raw = chain_binding_raw_json(parent, parent_entity_def, parent_field);
+                    let raw = chain_binding_raw_json(parent, parent_entity_def, parent_field, cgs)?;
                     let value =
-                        chain_binding_plasm_value(&raw, cap_param.as_str(), &cap_params, cgs);
-                    Predicate::eq(cap_param.as_str(), value)
+                        chain_binding_plasm_value(&raw, cap_param.as_str(), &cap_params, cgs)?;
+                    Ok(Predicate::eq(cap_param.as_str(), value))
                 })
-                .collect();
+                .collect::<Result<_, RuntimeError>>()?;
             let pred = if preds.len() == 1 {
                 preds.into_iter().next().expect("non-empty preds")
             } else {
@@ -108,15 +108,15 @@ pub(crate) fn partition_prefer_from_parent_get(
     let parent_rows: Vec<(plasm_core::ValueRow, Option<Vec<Ref>>)> = parents
         .iter()
         .map(|parent| {
-            (
-                parent.to_row_values(Some(cgs)),
+            Ok((
+                parent.to_row_values(Some(cgs))?,
                 parent
                     .relations
                     .get(relation_key)
                     .map(|refs| refs.iter().cloned().collect()),
-            )
+            ))
         })
-        .collect();
+        .collect::<Result<_, plasm_core::ValueCodecError>>()?;
     let parent_row_refs: Vec<(&plasm_core::Value, Option<&[Ref]>)> = parent_rows
         .iter()
         .map(|(row, refs)| (&**row, refs.as_deref()))
@@ -226,20 +226,29 @@ pub(crate) fn chain_binding_raw_json(
     entity: &CachedEntity,
     parent_def: &plasm_core::EntityDef,
     parent_field: &EntityFieldName,
-) -> serde_json::Value {
-    let pf = parent_field.as_str();
-    if let Some(v) = entity.get_field(pf) {
-        return plasm_core::plasm_value_to_json(&v.to_value());
+    cgs: &CGS,
+) -> Result<serde_json::Value, RuntimeError> {
+    let field = parent_field.as_str();
+    if let Some(value) = entity.get_field(field) {
+        return Ok(plasm_core::try_plasm_value_to_json(&value.to_value())?);
     }
-    if pf == parent_def.id_field.as_str() {
-        return serde_json::Value::String(entity.reference.primary_slot_str());
-    }
-    if let EntityKey::Compound(parts) = &entity.reference.key {
-        if let Some(s) = parts.get(pf).and_then(|slot| slot.as_lit_str()) {
-            return serde_json::Value::String(s.to_string());
-        }
-    }
-    serde_json::Value::String(entity.reference.primary_slot_str())
+    let slot = if field == parent_def.id_field.as_str() {
+        Some(entity.reference.primary_slot_str())
+    } else if let EntityKey::Compound(parts) = &entity.reference.key {
+        parts
+            .get(field)
+            .and_then(|slot| slot.as_lit_str())
+            .map(str::to_owned)
+    } else {
+        None
+    };
+    let slot = slot.ok_or_else(|| RuntimeError::MaterializeBindingMissing {
+        entity: parent_def.name.to_string(),
+        field: field.into(),
+    })?;
+    Ok(plasm_core::identity_slot_to_json(
+        cgs, parent_def, field, &slot,
+    )?)
 }
 
 pub(crate) fn chain_binding_plasm_value(
@@ -247,29 +256,36 @@ pub(crate) fn chain_binding_plasm_value(
     cap_param: &str,
     cap_params: &[plasm_core::InputFieldSchema],
     cgs: &CGS,
-) -> Value {
-    let Some(param_schema) = cap_params.iter().find(|f| f.name == cap_param) else {
-        return plasm_core::json_value_to_plasm_value(raw);
-    };
-    let Ok(nv) = param_schema.named_value(cgs) else {
-        return plasm_core::json_value_to_plasm_value(raw);
-    };
-    plasm_core::binding_value_as_plasm_value(raw, nv)
+) -> Result<Value, RuntimeError> {
+    let schema = cap_params
+        .iter()
+        .find(|field| field.name == cap_param)
+        .ok_or_else(|| RuntimeError::RelationParametersMissing {
+            params: vec![cap_param.into()],
+        })?;
+    Ok(plasm_core::binding_value_as_plasm_value(
+        raw,
+        schema.named_value(cgs)?,
+    )?)
 }
 
-/// String slot for get_scoped_bindings path keys (compound ref parts).
+/// Structural identity text is encoded only after typed parent-field restoration.
 pub(crate) fn chain_binding_value(
     entity: &CachedEntity,
     parent_def: &plasm_core::EntityDef,
     parent_field: &EntityFieldName,
-) -> String {
-    let v = chain_binding_raw_json(entity, parent_def, parent_field);
-    match plasm_core::json_value_to_plasm_value(&v) {
-        Value::String(s) if !s.is_empty() => s,
-        Value::Integer(i) => i.to_string(),
-        Value::Float(f) => f.to_string(),
-        Value::Bool(b) => b.to_string(),
-        _ => entity.reference.primary_slot_str(),
+    cgs: &CGS,
+) -> Result<String, RuntimeError> {
+    let value = chain_binding_raw_json(entity, parent_def, parent_field, cgs)?;
+    match value {
+        serde_json::Value::String(text) if !text.is_empty() => Ok(text),
+        value @ (serde_json::Value::Number(_) | serde_json::Value::Bool(_)) => {
+            Ok(value.to_string())
+        }
+        _ => Err(RuntimeError::MaterializeBindingMissing {
+            entity: parent_def.name.to_string(),
+            field: parent_field.to_string(),
+        }),
     }
 }
 

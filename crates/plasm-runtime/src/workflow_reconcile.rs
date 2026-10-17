@@ -1,9 +1,9 @@
 //! Declared read-backed postconditions for mutating capabilities; service errors are opaque.
 
 use indexmap::IndexMap;
-use plasm_core::plasm_value_to_json;
 use plasm_core::preflight::PLASM_EXISTENCE_SKIP_WRITE_ENV;
 use plasm_core::schema::{CapabilityKind, CapabilitySchema};
+use plasm_core::try_plasm_value_to_json;
 use plasm_core::TypedFieldValue;
 use plasm_core::{
     CompOp, Predicate, QueryExpr, ReconcileBindSource, Value, WorkflowConflict,
@@ -85,7 +85,7 @@ impl ExecutionEngine {
         {
             return Err(err);
         }
-        if let Some(mismatch) = detect_identity_mismatch(capability, env_input, &res) {
+        if let Some(mismatch) = detect_identity_mismatch(capability, env_input, &res)? {
             return Err(RuntimeError::WorkflowConflict {
                 conflict: Box::new(mismatch),
                 attempts: 1,
@@ -125,25 +125,29 @@ pub fn detect_identity_mismatch(
     capability: &CapabilitySchema,
     env_input: &Value,
     fetched: &ExecutionResult,
-) -> Option<WorkflowConflict> {
-    let row = fetched.entities().first()?;
-    let input_obj = env_input.as_object()?;
+) -> Result<Option<WorkflowConflict>, plasm_core::WireEncodingError> {
+    let Some(row) = fetched.entities().first() else {
+        return Ok(None);
+    };
+    let Some(input_obj) = env_input.as_object() else {
+        return Ok(None);
+    };
     let identity = capability.identity_key.as_deref().unwrap_or(&[]);
     let mut key_map = IndexMap::new();
     for k in identity {
         if let Some(v) = input_obj.get(k.as_str()) {
-            key_map.insert(k.clone(), plasm_value_to_json(v));
+            key_map.insert(k.clone(), try_plasm_value_to_json(v)?);
             if let Some(tf) = row.fields.get(k.as_str()) {
                 if !values_equal(v, &tf.to_value()) {
-                    return Some(WorkflowConflict {
+                    return Ok(Some(WorkflowConflict {
                         kind: WorkflowConflictKind::IdentityMismatch,
                         entity: capability.domain.to_string(),
                         key: key_map,
                         hint: format!(
                             "identity_key field '{k}' differs between requested input and existing row"
                         ),
-                        existing: Some(row_fields_to_json(&row.fields)),
-                    });
+                        existing: Some(row_fields_to_json(&row.fields)?),
+                    }));
                 }
             }
         }
@@ -154,23 +158,25 @@ pub fn detect_identity_mismatch(
         }
         if let Some(tf) = row.fields.get(k.as_str()) {
             if !values_equal(v, &tf.to_value()) {
-                return Some(WorkflowConflict {
+                return Ok(Some(WorkflowConflict {
                     kind: WorkflowConflictKind::IdentityMismatch,
                     entity: capability.domain.to_string(),
                     key: key_map,
                     hint: format!("field '{k}' differs between requested input and existing row"),
-                    existing: Some(row_fields_to_json(&row.fields)),
-                });
+                    existing: Some(row_fields_to_json(&row.fields)?),
+                }));
             }
         }
     }
-    None
+    Ok(None)
 }
 
-fn row_fields_to_json(fields: &IndexMap<String, TypedFieldValue>) -> IndexMap<String, JsonValue> {
+fn row_fields_to_json(
+    fields: &IndexMap<String, TypedFieldValue>,
+) -> Result<IndexMap<String, JsonValue>, plasm_core::WireEncodingError> {
     fields
         .iter()
-        .map(|(k, v)| (k.clone(), plasm_value_to_json(&v.to_value())))
+        .map(|(k, v)| Ok((k.clone(), try_plasm_value_to_json(&v.to_value())?)))
         .collect()
 }
 
@@ -382,7 +388,9 @@ mod tests {
             request_fingerprints: Vec::new(),
             operations: OperationLedger::empty(),
         };
-        let conflict = detect_identity_mismatch(&cap, &input, &fetched).expect("mismatch");
+        let conflict = detect_identity_mismatch(&cap, &input, &fetched)
+            .unwrap()
+            .expect("mismatch");
         assert_eq!(conflict.kind, WorkflowConflictKind::IdentityMismatch);
     }
 }

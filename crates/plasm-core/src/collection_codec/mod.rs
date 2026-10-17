@@ -338,6 +338,8 @@ pub enum Demand {
 
 #[derive(Debug, Clone, thiserror::Error)]
 pub enum CollectionFault {
+    #[error("collection row materialization contracts disagree")]
+    RowMaterializationMismatch,
     #[error("collection occurrence conservation failed")]
     Conservation,
     #[error("recorded collection payload is not resident")]

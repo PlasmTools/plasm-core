@@ -53,7 +53,7 @@ fn closed_record_projection_excludes_storage_fields_but_keeps_declared_names() {
     }));
     let projected = record.observed_value(&value, &cgs(), "matrix").unwrap();
     assert_eq!(
-        crate::plasm_value_to_json(&projected),
+        crate::try_plasm_value_to_json(&projected).unwrap(),
         serde_json::json!({"title":"data","_version":7})
     );
     assert!(record.validate(&projected, &cgs(), "matrix", "row").is_ok());
@@ -89,6 +89,6 @@ proptest::proptest! {
         let expected = serde_json::json!([names.iter().map(|name| serde_json::json!({
             "title":name,"payload":{"_ref":"authored","_custom":"data"}
         })).collect::<Vec<_>>()]);
-        proptest::prop_assert_eq!(crate::plasm_value_to_json(&projected), expected);
+        proptest::prop_assert_eq!(crate::try_plasm_value_to_json(&projected).unwrap(), expected);
     }
 }

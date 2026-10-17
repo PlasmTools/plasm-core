@@ -243,12 +243,14 @@ pub(crate) async fn materialize_prefer_from_parent_get_relation(
         .into_iter()
         .collect::<Option<Vec<_>>>()
         .ok_or(plasm_core::collection_codec::CollectionFault::Arity)?;
-    let mut collection = source_mat
-        .result
-        .collection
-        .flat_map(&("prefer_relation", &relation.id), &children)?;
+    let mut collection = source_mat.result.collection.flat_map(
+        plasm_runtime::execution::RowMaterialization::Catalog,
+        &("prefer_relation", &relation.id),
+        &children,
+    )?;
     if let Some(count) = read_cap {
         collection = ExecutionCollection::derive(
+            plasm_runtime::execution::RowMaterialization::Catalog,
             collection
                 .membership()
                 .identity()

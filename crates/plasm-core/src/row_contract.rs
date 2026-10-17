@@ -14,6 +14,8 @@ mod presentation_tests;
 #[derive(Debug, Error)]
 pub enum RowDecodeError {
     #[error(transparent)]
+    Codec(#[from] crate::ValueCodecError),
+    #[error(transparent)]
     ValueRow(#[from] crate::value_row::ValueRowError),
     #[error("row requires a structural _ref")]
     MissingStructuralIdentity,
@@ -326,16 +328,22 @@ impl<'a> RowCodec<'a> {
         Self { cgs }
     }
 
-    pub fn identity_values(&self, reference: &Ref) -> ValueRow {
+    pub fn identity_values(&self, reference: &Ref) -> Result<ValueRow, crate::ValueCodecError> {
         let mut row = ValueRow::new();
-        self.apply_identity(&mut row, reference);
+        self.apply_identity(&mut row, reference)?;
         row.insert("_ref".into(), RefWire::from_ref(reference).to_value());
-        row
+        Ok(row)
     }
-    pub fn identity_row(&self, reference: &Ref) -> Json {
-        crate::plasm_value_to_json(&self.identity_values(reference).into_value())
+    pub fn identity_row(&self, reference: &Ref) -> Result<Json, crate::ValueCodecError> {
+        Ok(crate::try_plasm_value_to_json(
+            &self.identity_values(reference)?.into_value(),
+        )?)
     }
-    fn apply_identity(&self, row: &mut ValueRow, reference: &Ref) {
+    fn apply_identity(
+        &self,
+        row: &mut ValueRow,
+        reference: &Ref,
+    ) -> Result<(), crate::ValueCodecError> {
         use crate::{EntityKey, Value};
         let needed = |value: Option<&Value>| match value {
             None | Some(Value::Null) => true,
@@ -345,12 +353,26 @@ impl<'a> RowCodec<'a> {
         let entity = self
             .cgs
             .and_then(|c| c.get_entity(reference.entity_type.as_str()));
+        if self.cgs.is_some() && entity.is_none() {
+            return Err(
+                crate::value_contract::ValueContractError::ReferenceTargetMissing {
+                    target: reference.entity_type.to_string(),
+                }
+                .into(),
+            );
+        }
         match &reference.key {
             EntityKey::Simple(slot) => {
                 let key = entity.map(|e| e.id_field.as_str()).unwrap_or("id");
                 if let Some(id) = slot.as_lit_str().filter(|id| !id.is_empty()) {
                     if needed(row.get(key)) {
-                        row.insert(key.into(), Value::String(id.into()));
+                        let value = match (self.cgs, entity) {
+                            (Some(cgs), Some(entity)) => {
+                                crate::identity_slot_to_value(cgs, entity, key, id)?
+                            }
+                            _ => Value::String(id.into()),
+                        };
+                        row.insert(key.into(), value);
                     }
                 }
             }
@@ -362,38 +384,31 @@ impl<'a> RowCodec<'a> {
                     if !needed(row.get(key)) {
                         continue;
                     }
-                    let raw = Value::String(text.into());
-                    let value = entity
-                        .and_then(|e| e.fields.get(key.as_str()))
-                        .and_then(|field| self.cgs.and_then(|cgs| field.named_value(cgs).ok()))
-                        .and_then(|nv| {
-                            crate::coerce_value_for_field_type(
-                                &nv.field_type,
-                                nv.value_format,
-                                nv.array_items.as_ref(),
-                                raw.clone(),
-                            )
-                            .ok()
-                        })
-                        .unwrap_or(raw);
+                    let value = match (self.cgs, entity) {
+                        (Some(cgs), Some(entity)) => {
+                            crate::identity_slot_to_value(cgs, entity, key, text)?
+                        }
+                        _ => Value::String(text.into()),
+                    };
                     row.insert(key.clone(), value);
                 }
             }
         }
+        Ok(())
     }
     /// Materialize native values for execution. JSON belongs to `encode` only.
-    pub fn values(&self, row: &impl EntityRow) -> ValueRow {
+    pub fn values(&self, row: &impl EntityRow) -> Result<ValueRow, crate::ValueCodecError> {
         use crate::Value;
         let mut object: ValueRow = row
             .fields()
             .map(|(key, value)| (key.to_owned(), value.to_value()))
             .collect();
-        self.apply_identity(&mut object, row.identity());
+        self.apply_identity(&mut object, row.identity())?;
         for (name, references) in row.relations() {
             let values: Vec<_> = references
                 .iter()
-                .map(|r| self.identity_values(r).into_value())
-                .collect();
+                .map(|r| self.identity_values(r).map(ValueRow::into_value))
+                .collect::<Result<_, _>>()?;
             let single = self
                 .cgs
                 .and_then(|c| c.get_entity(row.identity().entity_type.as_str()))
@@ -416,25 +431,27 @@ impl<'a> RowCodec<'a> {
         if !unavailable.is_empty() {
             object.insert("_unavailable_fields".into(), Value::Array(unavailable));
         }
-        object
+        Ok(object)
     }
-    pub fn encode(&self, row: &impl EntityRow) -> Json {
-        crate::plasm_value_to_json(&self.values(row).into_value())
+    pub fn encode(&self, row: &impl EntityRow) -> Result<Json, crate::ValueCodecError> {
+        Ok(crate::try_plasm_value_to_storage_json(
+            &self.values(row)?.into_value(),
+        )?)
     }
 
     /// Presentation payload without synthetic identity or storage metadata.
-    pub fn payload(&self, row: &impl EntityRow) -> Json {
+    pub fn payload(&self, row: &impl EntityRow) -> Result<Json, crate::ValueCodecError> {
         let unavailable: BTreeSet<_> = row.unavailable_fields().collect();
         let mut object: Map<String, Json> = row
             .fields()
             .filter(|(name, _)| !unavailable.contains(name))
             .map(|(key, value)| {
-                (
+                Ok((
                     key.to_string(),
-                    serde_json::to_value(value).expect("field serializes"),
-                )
+                    crate::try_plasm_value_to_json(&value.to_value())?,
+                ))
             })
-            .collect();
+            .collect::<Result<_, crate::WireEncodingError>>()?;
         for (name, references) in row.relations() {
             object.insert(
                 name.into(),
@@ -446,19 +463,19 @@ impl<'a> RowCodec<'a> {
                 ),
             );
         }
-        Json::Object(object)
+        Ok(Json::Object(object))
     }
 
     /// Presentation is a terminal projection, never an execution or storage input.
-    pub fn display(&self, row: &impl EntityRow) -> Json {
+    pub fn display(&self, row: &impl EntityRow) -> Result<Json, crate::ValueCodecError> {
         let unavailable: BTreeSet<_> = row.unavailable_fields().collect();
         let mut values: ValueRow = row
             .fields()
             .filter(|(name, _)| !unavailable.contains(name))
             .map(|(name, value)| (name.to_owned(), value.to_value()))
             .collect();
-        self.apply_identity(&mut values, row.identity());
-        let mut result = crate::plasm_value_to_json(&values.into_value());
+        self.apply_identity(&mut values, row.identity())?;
+        let mut result = crate::try_plasm_value_to_json(&values.into_value())?;
         let object = result.as_object_mut().expect("domain row object");
         for (name, references) in row.relations() {
             object.insert(
@@ -471,13 +488,13 @@ impl<'a> RowCodec<'a> {
                 ),
             );
         }
-        result
+        Ok(result)
     }
 
     /// Decode an execution row. Storage metadata must be removed by its owning
     /// adapter before calling this method; it is never inferred from a prefix.
     pub fn decode(&self, entity: &str, wire: &Json) -> Result<RowRecord, RowDecodeError> {
-        let value = crate::json_value_to_plasm_value(wire);
+        let value = crate::try_storage_json_to_plasm_value(wire)?;
         self.decode_values(
             entity,
             &ValueRow::try_from(value)?,
@@ -597,7 +614,7 @@ impl<'a> RowCodec<'a> {
             }
         }
         if let Some(cgs) = self.cgs {
-            crate::restore_id_field_from_compound_ref(&mut fields, &identity, definition, cgs);
+            crate::restore_id_field_from_compound_ref(&mut fields, &identity, definition, cgs)?;
         }
         let unavailable_fields = object
             .get("_unavailable_fields")
@@ -806,7 +823,7 @@ mod relation_ownership_tests {
         assert_eq!(captured, original);
         assert!(!std::ptr::eq(&captured.fields["label"], field));
         assert_eq!(
-            RowCodec::new(None).payload(&original),
+            RowCodec::new(None).payload(&original).unwrap(),
             serde_json::json!({"label": "payload"})
         );
     }

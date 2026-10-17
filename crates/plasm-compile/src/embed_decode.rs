@@ -132,13 +132,7 @@ fn value_to_key_slot(v: &Value) -> Option<String> {
         Value::String(s) | Value::PhraseIdent(s) => Some(s.clone()),
         Value::Integer(i) => Some(i.to_string()),
         Value::Unsigned(i) => Some(i.to_string()),
-        Value::Float(f) => {
-            if f.is_finite() && f.fract() == 0.0 {
-                Some((*f as i64).to_string())
-            } else {
-                Some(f.to_string())
-            }
-        }
+        Value::Float(f) => f.is_finite().then(|| f.to_string()),
         Value::Bool(b) => Some(b.to_string()),
         Value::Money(m) => m.to_wire_text().ok(),
         Value::Null | Value::Array(_) | Value::Object(_) | Value::UnionCtor { .. } => None,
@@ -181,14 +175,13 @@ fn decode_entity_fields_and_ref(
                 if field_decoder.money.is_none() {
                     if let (Some(cgs), Some(ent)) = (cgs, entity_def) {
                         if let Some(fs) = ent.fields.get(field_decoder.field.as_str()) {
-                            if let Ok(nv) = fs.named_value(cgs) {
-                                decoded_value = plasm_core::decode_coerce_and_validate_field(
-                                    field_decoder.field.as_str(),
-                                    nv,
-                                    decoded_value,
-                                )
-                                .map_err(field_decode_error)?;
-                            }
+                            decoded_value = plasm_core::decode_coerce_and_validate_field(
+                                field_decoder.field.as_str(),
+                                cgs,
+                                fs.kind.registry_key(),
+                                decoded_value,
+                            )
+                            .map_err(field_decode_error)?;
                         }
                     }
                 }
@@ -198,7 +191,19 @@ fn decode_entity_fields_and_ref(
         if decoder.id_path.is_none() && decoder.request_identity_override.is_none() {
             if let Some(ref name) = decoder.id_field {
                 if !fields.contains_key(name) {
-                    fields.insert(name.clone(), value_for_id_field_from_string(&id_value));
+                    let value = if let (Some(cgs), Some(entity)) = (cgs, entity_def) {
+                        plasm_core::identity_slot_to_value(cgs, entity, name, &id_value).map_err(
+                            |source| {
+                                field_decode_error(plasm_core::DecodeFieldDiagnostic {
+                                    field: name.clone(),
+                                    source: plasm_core::DecodeFieldCause::Codec(source),
+                                })
+                            },
+                        )?
+                    } else {
+                        Value::String(id_value.clone())
+                    };
+                    fields.insert(name.clone(), value);
                 }
             }
         }
@@ -231,7 +236,7 @@ fn decode_entity_fields_and_ref(
             {
                 let raw = Value::String(id_value.clone());
                 let value = if let (Some(cgs), Some(entity)) = (cgs, entity_def) {
-                    let schema = entity
+                    let _schema = entity
                         .fields
                         .get(name.as_str())
                         .ok_or_else(|| DecodeError::IdentityFieldTypeMissing {
@@ -242,8 +247,14 @@ fn decode_entity_fields_and_ref(
                             field: name.clone(),
                             source: Box::new(source),
                         })?;
-                    plasm_core::decode_coerce_and_validate_field(name, schema, raw)
-                        .map_err(field_decode_error)?
+                    plasm_core::identity_slot_to_value(cgs, entity, name, &id_value).map_err(
+                        |source| {
+                            field_decode_error(plasm_core::DecodeFieldDiagnostic {
+                                field: name.clone(),
+                                source: plasm_core::DecodeFieldCause::Codec(source),
+                            })
+                        },
+                    )?
                 } else {
                     raw
                 };
@@ -276,7 +287,7 @@ fn decode_entity_fields_and_ref(
         };
         let raw = Value::String(slot.clone());
         let value = if let (Some(cgs), Some(entity)) = (cgs, entity_def) {
-            let schema = entity
+            let _schema = entity
                 .fields
                 .get(key.as_str())
                 .ok_or_else(|| DecodeError::IdentityFieldTypeMissing { field: key.clone() })?
@@ -285,8 +296,12 @@ fn decode_entity_fields_and_ref(
                     field: key.clone(),
                     source: Box::new(source),
                 })?;
-            plasm_core::decode_coerce_and_validate_field(key, schema, raw)
-                .map_err(field_decode_error)?
+            plasm_core::identity_slot_to_value(cgs, entity, key, slot).map_err(|source| {
+                field_decode_error(plasm_core::DecodeFieldDiagnostic {
+                    field: key.clone(),
+                    source: plasm_core::DecodeFieldCause::Codec(source),
+                })
+            })?
         } else {
             raw
         };
@@ -356,14 +371,6 @@ fn json_scalar_to_id_string(v: &serde_json::Value) -> Result<String, DecodeError
         serde_json::Value::String(s) => Ok(s.clone()),
         serde_json::Value::Number(n) => Ok(n.to_string()),
         _ => Err(DecodeError::IdentityScalarRequired),
-    }
-}
-
-fn value_for_id_field_from_string(s: &str) -> Value {
-    if let Ok(i) = s.parse::<i64>() {
-        Value::Integer(i)
-    } else {
-        Value::String(s.to_string())
     }
 }
 
@@ -561,6 +568,19 @@ mod tests {
     use serde_json::json;
 
     #[test]
+    fn identity_text_never_guesses_numeric_type_or_saturates() {
+        let mut decoder = EntityDecoder::new("Row", PathExpr::empty());
+        decoder.id_field = Some("id".into());
+        let decoded = decode_entities(&decoder, &json!({"id":"007"})).unwrap();
+        assert_eq!(decoded[0].fields["id"], Value::String("007".into()));
+        assert_eq!(
+            value_to_key_slot(&Value::Float(1e30)),
+            Some(1e30_f64.to_string())
+        );
+        assert_eq!(value_to_key_slot(&Value::Float(f64::INFINITY)), None);
+    }
+
+    #[test]
     fn identity_failures_are_semantic_and_do_not_expose_response_values() {
         let secret = "private-response-value";
         let decoder = EntityDecoder::new("Row", PathExpr::empty());
@@ -694,6 +714,7 @@ mod tests {
             let mut cgs = plasm_core::load_schema_dir(&std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
                 .join("../../fixtures/schemas/plasm_language_matrix")).unwrap();
             cgs.values.get_mut("nv_compound_branch_item_id").unwrap().field_type=plasm_core::FieldType::Integer;
+            cgs.values.get_mut("nv_compound_branch_item_id").unwrap().domain.kernel=plasm_core::value_domain::KernelKind::Integer;
             let entity=cgs.get_entity("CompoundBranch").unwrap();
             let decoder=crate::embed_target_decoder::entity_decoder_for_from_parent_get_target(
                 entity,entity,PathExpr::empty()).with_identity_ambient(IndexMap::from([

@@ -1,6 +1,8 @@
 //! Typed row field storage — algebraic [`TypedFieldValue`] for decoded entity maps (typed IR migration).
 //!
-//! Values serialize exactly like [`crate::value::Value`] JSON. Without CGS per field, [`TypedFieldValue::from`]
+//! Serde uses the checked storage codec, preserving unsigned values and money metadata
+//! and escaping objects whose keys collide with storage tags. Presentation uses the
+//! separate outbound JSON codec. Without CGS per field, [`TypedFieldValue::from`]
 //! lifts wire [`Value`] structurally (nested maps and arrays). With [`FieldType`], [`TypedFieldValue::from_value_in_field`]
 //! preserves opaque JSON blobs and normalized [`crate::entity_ref_value::EntityRefPayload`] for [`FieldType::EntityRef`].
 
@@ -39,19 +41,19 @@ impl TypedFieldValue {
 
     /// Lift using CGS [`FieldType`] so opaque JSON / entity refs are tagged distinctly when applicable.
     #[must_use]
-    pub fn from_value_in_field(field_type: &FieldType, v: Value) -> Self {
-        match field_type {
+    pub fn from_value_in_field(
+        field_type: &FieldType,
+        v: Value,
+    ) -> Result<Self, crate::entity_ref_value::EntityRefValueError> {
+        Ok(match field_type {
             FieldType::Json | FieldType::Blob => Self::Json(v),
             FieldType::Money => match v {
                 Value::Money(m) => Self::Money(m),
                 other => Self::from(other),
             },
-            FieldType::EntityRef { .. } => match EntityRefPayload::try_from_value(&v) {
-                Ok(p) => Self::EntityRef(p),
-                Err(_) => Self::from(v),
-            },
+            FieldType::EntityRef { .. } => Self::EntityRef(EntityRefPayload::try_from_value(&v)?),
             _ => Self::from(v),
-        }
+        })
     }
 
     /// Lossless projection to [`Value`] for predicates, CML, HTTP, and serde snapshots.
@@ -107,20 +109,9 @@ impl Serialize for TypedFieldValue {
     where
         S: Serializer,
     {
-        match self {
-            Self::Null => serializer.serialize_unit(),
-            Self::Bool(value) => value.serialize(serializer),
-            Self::Integer(value) => value.serialize(serializer),
-            Self::Float(value) => value.serialize(serializer),
-            Self::String(value) => value.serialize(serializer),
-            Self::StringTemplate(value) => value.serialize(serializer),
-            Self::Array(value) => value.serialize(serializer),
-            Self::Object(value) => value.serialize(serializer),
-            Self::EntityRef(value) => value.serialize(serializer),
-            Self::Money(value) => value.serialize(serializer),
-            Self::PlasmInputRef(value) => value.serialize(serializer),
-            Self::Json(value) => value.serialize(serializer),
-        }
+        crate::try_plasm_value_to_storage_json(&self.to_value())
+            .map_err(serde::ser::Error::custom)?
+            .serialize(serializer)
     }
 }
 
@@ -129,7 +120,10 @@ impl<'de> Deserialize<'de> for TypedFieldValue {
     where
         D: Deserializer<'de>,
     {
-        Ok(Self::from(Value::deserialize(deserializer)?))
+        let wire = serde_json::Value::deserialize(deserializer)?;
+        let value =
+            crate::try_storage_json_to_plasm_value(&wire).map_err(serde::de::Error::custom)?;
+        Ok(Self::from(value))
     }
 }
 
@@ -203,7 +197,7 @@ mod tests {
     use indexmap::IndexMap;
 
     #[test]
-    fn borrowed_serialization_matches_native_wire_shapes() {
+    fn persistence_preserves_exact_numeric_and_money_values() {
         let nested = Value::Object(IndexMap::from([
             ("text".into(), Value::String("quoted \" text".into())),
             (
@@ -225,10 +219,14 @@ mod tests {
             ),
         ]));
         let native = TypedFieldValue::from(nested.clone());
+        let encoded = serde_json::to_value(&native).unwrap();
         assert_eq!(
-            serde_json::to_vec(&native).unwrap(),
-            serde_json::to_vec(&nested).unwrap()
+            encoded["values"][4],
+            serde_json::json!({"__plasm_unsigned": u64::MAX.to_string()})
         );
+        assert_eq!(encoded["money"]["currency"], "USD");
+        let decoded: TypedFieldValue = serde_json::from_value(encoded).unwrap();
+        assert_eq!(decoded.to_value(), nested);
         let reference = TypedFieldValue::EntityRef(EntityRefPayload::Compound(IndexMap::from([(
             "scope".into(),
             EntityRefPayload::Atom(crate::entity_ref_value::EntityRefAtom::String("abc".into())),
@@ -261,7 +259,7 @@ mod tests {
             m.insert("k".into(), Value::Null);
             m
         });
-        let tf = TypedFieldValue::from_value_in_field(&FieldType::Json, v.clone());
+        let tf = TypedFieldValue::from_value_in_field(&FieldType::Json, v.clone()).unwrap();
         match tf {
             TypedFieldValue::Json(inner) => assert_eq!(inner, v),
             other => panic!("expected Json variant: {other:?}"),
@@ -278,8 +276,22 @@ mod tests {
             TypedFieldValue::Money(got) => assert_eq!(got, m),
             other => panic!("expected Money variant: {other:?}"),
         }
-        let tf2 = TypedFieldValue::from_value_in_field(&FieldType::Money, Value::Money(m.clone()));
+        let tf2 = TypedFieldValue::from_value_in_field(&FieldType::Money, Value::Money(m.clone()))
+            .unwrap();
         assert!(matches!(tf2, TypedFieldValue::Money(_)));
         assert_eq!(tf2.to_value(), Value::Money(m));
+    }
+
+    #[test]
+    fn persistence_rejects_nonfinite_and_preserves_opaque_reserved_keys() {
+        let invalid = TypedFieldValue::Json(Value::Array(vec![Value::Float(f64::NAN)]));
+        assert!(serde_json::to_value(&invalid).is_err());
+        let value = crate::json_value_to_plasm_value(
+            &serde_json::json!({"__plasm_money":"opaque", "extra":7}),
+        );
+        let field = TypedFieldValue::Json(value.clone());
+        let wire = serde_json::to_value(&field).unwrap();
+        let restored: TypedFieldValue = serde_json::from_value(wire).unwrap();
+        assert_eq!(restored.to_value(), value);
     }
 }

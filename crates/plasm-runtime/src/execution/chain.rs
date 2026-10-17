@@ -63,7 +63,11 @@ impl ExecutionEngine {
         source_result.collection.materialize(Demand::Observed)?;
         if source_result.count() == 0 {
             return Ok(ExecutionResult {
-                collection: source_result.collection.flat_map(&"empty_chain", &[])?,
+                collection: source_result.collection.flat_map(
+                    crate::execution::RowMaterialization::Catalog,
+                    &"empty_chain",
+                    &[],
+                )?,
                 has_more: false,
                 pagination_resume: None,
                 paging_handle: None,
@@ -311,7 +315,11 @@ impl ExecutionEngine {
                 }
             }
 
-            let collection = source_result.collection.flat_map(chain, &children)?;
+            let collection = source_result.collection.flat_map(
+                crate::execution::RowMaterialization::Catalog,
+                chain,
+                &children,
+            )?;
             let count = collection.count();
             return Ok(ExecutionResult {
                 collection,
@@ -444,6 +452,7 @@ impl ExecutionEngine {
         let count = resolved.len();
         Ok(ExecutionResult {
             collection: ExecutionCollection::evaluate(
+                crate::execution::RowMaterialization::Catalog,
                 source_result
                     .collection
                     .membership()
@@ -541,9 +550,11 @@ impl ExecutionEngine {
             .into_iter()
             .collect::<Option<Vec<_>>>()
             .ok_or(plasm_core::collection_codec::CollectionFault::Conservation)?;
-        let collection = source_result
-            .collection
-            .flat_map(&"scoped_query_fanout", &children)?;
+        let collection = source_result.collection.flat_map(
+            crate::execution::RowMaterialization::Catalog,
+            &"scoped_query_fanout",
+            &children,
+        )?;
         let count = collection.count();
         merged_stats.cache_hits = merged_stats
             .cache
@@ -609,7 +620,11 @@ impl ExecutionEngine {
         source_result.collection.materialize(Demand::Observed)?;
         if source_result.count() == 0 {
             return Ok(ExecutionResult {
-                collection: source_result.collection.flat_map(&"empty_chain", &[])?,
+                collection: source_result.collection.flat_map(
+                    crate::execution::RowMaterialization::Catalog,
+                    &"empty_chain",
+                    &[],
+                )?,
                 has_more: false,
                 pagination_resume: None,
                 paging_handle: None,
@@ -686,7 +701,11 @@ impl ExecutionEngine {
         source_result.collection.materialize(Demand::Observed)?;
         if source_result.count() == 0 {
             return Ok(ExecutionResult {
-                collection: source_result.collection.flat_map(&"empty_chain", &[])?,
+                collection: source_result.collection.flat_map(
+                    crate::execution::RowMaterialization::Catalog,
+                    &"empty_chain",
+                    &[],
+                )?,
                 has_more: false,
                 pagination_resume: None,
                 paging_handle: None,
@@ -707,12 +726,12 @@ impl ExecutionEngine {
             let preds: Vec<Predicate> = binds
                 .iter()
                 .map(|(cap_param, parent_field)| {
-                    let raw = chain_binding_raw_json(entity, parent_def, parent_field);
+                    let raw = chain_binding_raw_json(entity, parent_def, parent_field, cgs)?;
                     let value =
-                        chain_binding_plasm_value(&raw, cap_param.as_str(), &cap_params, cgs);
-                    Predicate::eq(cap_param.as_str(), value)
+                        chain_binding_plasm_value(&raw, cap_param.as_str(), &cap_params, cgs)?;
+                    Ok(Predicate::eq(cap_param.as_str(), value))
                 })
-                .collect();
+                .collect::<Result<_, RuntimeError>>()?;
             let pred = if preds.len() == 1 {
                 preds.into_iter().next().expect("non-empty preds")
             } else {
@@ -756,7 +775,11 @@ impl ExecutionEngine {
         source_result.collection.materialize(Demand::Observed)?;
         if source_result.count() == 0 {
             return Ok(ExecutionResult {
-                collection: source_result.collection.flat_map(&"empty_chain", &[])?,
+                collection: source_result.collection.flat_map(
+                    crate::execution::RowMaterialization::Catalog,
+                    &"empty_chain",
+                    &[],
+                )?,
                 has_more: false,
                 pagination_resume: None,
                 paging_handle: None,
@@ -770,25 +793,31 @@ impl ExecutionEngine {
         let relation_key = rel.name.as_str();
         let expected_target = rel.target_resource.as_str();
         let target_entity = rel.target_resource.clone();
-        let all_embed = source_result.entities().iter().all(|parent| {
-            let parent_json = parent.to_row_values(None);
-            matches!(
-                resolve_relation_row_resolution(
-                    rel.materialize.as_ref().expect("prefer"),
-                    rel.cardinality,
-                    relation_key,
-                    expected_target,
-                    &parent_json,
-                    parent
-                        .relations
-                        .get(relation_key)
-                        .map(|v| v.iter().cloned().collect::<Vec<_>>())
-                        .as_deref(),
-                    |r| mat.get(r).is_some(),
-                ),
-                RelationRowResolution::EmbeddedRefs(_)
-            )
-        });
+        let all_embed = source_result
+            .entities()
+            .iter()
+            .map(|parent| {
+                let parent_json = parent.to_row_values(None)?;
+                Ok(matches!(
+                    resolve_relation_row_resolution(
+                        rel.materialize.as_ref().expect("prefer"),
+                        rel.cardinality,
+                        relation_key,
+                        expected_target,
+                        &parent_json,
+                        parent
+                            .relations
+                            .get(relation_key)
+                            .map(|v| v.iter().cloned().collect::<Vec<_>>())
+                            .as_deref(),
+                        |r| mat.get(r).is_some(),
+                    ),
+                    RelationRowResolution::EmbeddedRefs(_)
+                ))
+            })
+            .collect::<Result<Vec<_>, plasm_core::ValueCodecError>>()?
+            .into_iter()
+            .all(|embedded| embedded);
         if all_embed {
             return self
                 .execute_chain_from_embedded_relations(
@@ -863,7 +892,7 @@ impl ExecutionEngine {
             for (cap_param, parent_field) in bindings.iter() {
                 bound.insert(
                     cap_param.to_string(),
-                    chain_binding_value(entity, parent_entity_def, parent_field),
+                    chain_binding_value(entity, parent_entity_def, parent_field, cgs)?,
                 );
             }
             let reference = ref_from_materialize_bindings_for_get_chain(target_ent, &bound)?;
@@ -881,7 +910,11 @@ impl ExecutionEngine {
 
         if gets.is_empty() {
             return Ok(ExecutionResult {
-                collection: source_result.collection.flat_map(&"empty_chain", &[])?,
+                collection: source_result.collection.flat_map(
+                    crate::execution::RowMaterialization::Catalog,
+                    &"empty_chain",
+                    &[],
+                )?,
                 has_more: false,
                 pagination_resume: None,
                 paging_handle: None,
@@ -943,6 +976,7 @@ impl ExecutionEngine {
         let count = all_entities.len();
         Ok(ExecutionResult {
             collection: ExecutionCollection::evaluate(
+                crate::execution::RowMaterialization::Catalog,
                 source_result
                     .collection
                     .membership()
@@ -1000,9 +1034,11 @@ impl ExecutionEngine {
             let record = refs.record().clone();
             embedded_children.push(ExecutionCollection::graph(record));
         }
-        let embedded = source_result
-            .collection
-            .flat_map(relation, &embedded_children)?;
+        let embedded = source_result.collection.flat_map(
+            crate::execution::RowMaterialization::Catalog,
+            relation,
+            &embedded_children,
+        )?;
         let mut ordered_refs: Vec<Ref> = Vec::new();
         for e in source_result.entities() {
             if let Some(refs) = e.relations.get(relation_key) {
@@ -1057,7 +1093,11 @@ impl ExecutionEngine {
                 }
             }
 
-            let collection = embedded.flat_map(chain_step, &children)?;
+            let collection = embedded.flat_map(
+                crate::execution::RowMaterialization::Catalog,
+                chain_step,
+                &children,
+            )?;
             let count = collection.count();
             return Ok(ExecutionResult {
                 collection,

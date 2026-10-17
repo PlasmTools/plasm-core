@@ -320,7 +320,7 @@ fn relation_projection_preserves_mixed_cached_and_new_targets() {
                         .result
                         .entities()
                         .iter()
-                        .map(|row| plasm_runtime::entity_to_agent_row_json(row, None))
+                        .map(|row| plasm_runtime::entity_to_agent_row_json(row, None).unwrap())
                         .collect();
                     assert_eq!(rows.len(), 12);
                     for (index, row) in rows.iter().enumerate() {
@@ -412,7 +412,7 @@ proptest! {
             let rows = &result.return_steps.iter().find(|step|step.name.as_deref()==Some("owners")).expect("owners return").result.entities();
             let cgs = session().cgs;
             let actual: Vec<_> = rows.iter().map(|row| {
-                let value = plasm_runtime::entity_to_agent_row_json(row, Some(&cgs));
+                let value = plasm_runtime::entity_to_agent_row_json(row, Some(&cgs)).unwrap();
                 value["owner_id"].as_i64().expect("integer identity")
             }).collect();
             assert_eq!(actual, ids, "identity, order and multiplicity survive the boundary");
@@ -440,7 +440,7 @@ fn boundary_cached_relation_row_roundtrip_retains_typed_identity() {
             .result
             .entities();
         for note in notes {
-            let wire = plasm_runtime::entity_to_row_json(note, Some(&cgs));
+            let wire = plasm_runtime::entity_to_row_json(note, Some(&cgs)).unwrap();
             let wire: serde_json::Value =
                 serde_json::from_slice(&serde_json::to_vec(&wire).unwrap()).unwrap();
             let restored = plasm_runtime::CachedEntity::from_row_json("Note", &wire, &cgs).unwrap();
@@ -488,7 +488,7 @@ proptest! {
         on_runtime(async move {
             let result = run_case("auth = Session.login()\nsaved = SavedNote{access_token=auth.access_token}\nnotes = saved => Note(_.note_id)\nowners = notes => _.owners\nprojected = owners | select owner_id, name, description, _tag\nmerged = owners | union projected\nmerged", "token".into(), ids.clone(), false, true).await.expect("public union");
             let actual: Vec<_> = result.return_steps.iter().find(|step| step.name.as_deref()==Some("merged")).unwrap().result.entities().iter().map(|row| {
-                let value = plasm_runtime::entity_to_agent_row_json(row, None);
+                let value = plasm_runtime::entity_to_agent_row_json(row, None).unwrap();
                 let id = value["owner_id"].as_i64().unwrap();
                 assert_eq!(value["_tag"], format!("tag-{id}"), "declared underscore columns are public values");
                 id
@@ -548,7 +548,7 @@ proptest::proptest! {
             let mut high=source.to_vec();high.sort_by(|a,b|b.cmp(a));high.truncate(cap);
             for (name, expected) in [("saved",source),("sample",&source[..source.len().min(cap)]),("high",high.as_slice())] {
                 let step=result.return_steps.iter().find(|s|s.name.as_deref()==Some(name)).expect("returned binding");
-                let actual:Vec<_>=step.result.entities().iter().map(|row|plasm_runtime::entity_to_agent_row_json(row,Some(&cgs))["note_id"].as_i64().unwrap()).collect();
+                let actual:Vec<_>=step.result.entities().iter().map(|row|plasm_runtime::entity_to_agent_row_json(row,Some(&cgs)).unwrap()["note_id"].as_i64().unwrap()).collect();
                 assert_eq!(actual,expected,"{name}: identity, order, multiplicity and integer type");
             }
         });
@@ -574,7 +574,7 @@ fn boundary_fanout_above_one_thousand_survives_compile_serde_and_execution() {
             .entities()
             .iter()
             .map(|row| {
-                plasm_runtime::entity_to_agent_row_json(row, Some(&cgs))["note_id"]
+                plasm_runtime::entity_to_agent_row_json(row, Some(&cgs)).unwrap()["note_id"]
                     .as_i64()
                     .unwrap()
             })

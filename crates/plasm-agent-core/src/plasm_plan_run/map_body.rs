@@ -472,7 +472,13 @@ pub(super) async fn materialize(
         }
         plasm_core::plasm_monad::ScopedOutput::Filter => source.qualified_entity.entry_id.clone(),
     };
-    let collection = plasm_runtime::execution::ExecutionCollection::evaluate(
+    let row_materialization = match &body.output {
+        plasm_core::plasm_monad::ScopedOutput::Record
+        | plasm_core::plasm_monad::ScopedOutput::Quantify { .. } => plasm_runtime::execution::RowMaterialization::Computed,
+        plasm_core::plasm_monad::ScopedOutput::Rows { .. } => plasm_runtime::execution::RowMaterialization::Catalog,
+        plasm_core::plasm_monad::ScopedOutput::Filter => source.result.collection.row_materialization(),
+    };
+    let collection = plasm_runtime::execution::ExecutionCollection::evaluate(row_materialization,
         source.result.collection.membership().identity().derived(&("map_body", &map.id, &scope_path))?,
         &dependencies.iter().collect::<Vec<_>>(), rows_to_entities(&entity, &rows)?.into())?;
     let result = ExecutionResult {

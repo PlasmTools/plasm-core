@@ -97,7 +97,7 @@ pub(crate) fn wire_row_with_from_parent_embeds(
     entity: &CachedEntity,
     cgs: &CGS,
     mat: &SessionMaterialization,
-) -> plasm_core::ValueRow {
+) -> Result<plasm_core::ValueRow, plasm_core::ValueCodecError> {
     let root = entity.reference.clone();
     let mut depths: IndexMap<Ref, usize> = IndexMap::new();
     let mut queue = vec![(root.clone(), 0usize)];
@@ -135,7 +135,7 @@ pub(crate) fn wire_row_with_from_parent_embeds(
         let Some(e) = (if r == root { Some(entity) } else { mat.get(&r) }) else {
             continue;
         };
-        let mut row = entity_to_row_values(e, Some(cgs));
+        let mut row = entity_to_row_values(e, Some(cgs))?;
         if let (Some(obj), Some(def)) = (
             Some(row.fields_mut()),
             cgs.get_entity(e.reference.entity_type.as_str()),
@@ -162,14 +162,14 @@ pub(crate) fn wire_row_with_from_parent_embeds(
                 match rel_schema.cardinality {
                     Cardinality::One => {
                         if let Some(child) = refs.first() {
-                            obj.insert(wire.to_string(), embedded_identity_row(child, &memo, cgs));
+                            obj.insert(wire.to_string(), embedded_identity_row(child, &memo, cgs)?);
                         }
                     }
                     Cardinality::Many => {
                         let arr: Vec<_> = refs
                             .iter()
                             .map(|child| embedded_identity_row(child, &memo, cgs))
-                            .collect();
+                            .collect::<Result<_, _>>()?;
                         obj.insert(wire.to_string(), plasm_core::Value::Array(arr));
                     }
                 }
@@ -178,9 +178,10 @@ pub(crate) fn wire_row_with_from_parent_embeds(
         memo.insert(r, row);
     }
 
-    memo.get(&root)
-        .cloned()
-        .unwrap_or_else(|| entity_to_row_values(entity, Some(cgs)))
+    match memo.get(&root) {
+        Some(row) => Ok(row.clone()),
+        None => entity_to_row_values(entity, Some(cgs)),
+    }
 }
 
 /// A missing cache payload is still a known identity, never a display string or a dropped row.
@@ -188,14 +189,12 @@ fn embedded_identity_row(
     reference: &Ref,
     observed: &IndexMap<Ref, plasm_core::ValueRow>,
     cgs: &CGS,
-) -> plasm_core::Value {
-    observed
-        .get(reference)
-        .cloned()
-        .unwrap_or_else(|| {
-            plasm_core::row_contract::RowCodec::new(Some(cgs)).identity_values(reference)
-        })
-        .into_value()
+) -> Result<plasm_core::Value, plasm_core::ValueCodecError> {
+    let row = match observed.get(reference) {
+        Some(row) => row.clone(),
+        None => plasm_core::row_contract::RowCodec::new(Some(cgs)).identity_values(reference)?,
+    };
+    Ok(row.into_value())
 }
 
 fn identity_only_entity(reference: &Ref) -> CachedEntity {
@@ -215,7 +214,7 @@ pub(crate) fn wire_rows_for_embed_entities(
     entities: &[CachedEntity],
     cgs: &CGS,
     mat: &SessionMaterialization,
-) -> Vec<plasm_core::ValueRow> {
+) -> Result<Vec<plasm_core::ValueRow>, plasm_core::ValueCodecError> {
     entities
         .iter()
         .map(|e| wire_row_with_from_parent_embeds(e, cgs, mat))
@@ -458,7 +457,7 @@ mod tests {
                     }]).unwrap();
                 }
             }
-            let row = wire_row_with_from_parent_embeds(&parent, cgs, &graph);
+            let row = wire_row_with_from_parent_embeds(&parent, cgs, &graph).unwrap();
             let wire: serde_json::Value = serde_json::from_slice(&serde_json::to_vec(&row).unwrap()).unwrap();
             let children = wire["lines"].as_array().unwrap();
             proptest::prop_assert_eq!(children.len(), refs.len());
@@ -533,7 +532,7 @@ mod tests {
             .merge_graph(vec![summary.clone(), detail.clone()])
             .expect("seed graph");
 
-        let row = wire_row_with_from_parent_embeds(&summary, &cgs, &graph);
+        let row = wire_row_with_from_parent_embeds(&summary, &cgs, &graph).unwrap();
         assert!(
             row.get("detail").is_some(),
             "wire row must embed the declared relation hop"
@@ -595,7 +594,7 @@ mod tests {
         let mut graph = SessionMaterialization::new();
         graph.merge_graph(vec![tag]).unwrap();
 
-        let row = wire_row_with_from_parent_embeds(&parent, &cgs, &graph);
+        let row = wire_row_with_from_parent_embeds(&parent, &cgs, &graph).unwrap();
         assert!(row.get("tags").is_none());
     }
 

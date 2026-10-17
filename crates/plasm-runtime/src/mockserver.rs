@@ -157,7 +157,9 @@ impl MockServerClient {
 }
 
 /// Convert our CompiledRequest to MockServer request matcher
-pub fn compiled_request_to_mockserver(request: &CompiledRequest) -> MockServerRequest {
+pub fn compiled_request_to_mockserver(
+    request: &CompiledRequest,
+) -> Result<MockServerRequest, RuntimeError> {
     let method = match request.method {
         HttpMethod::Get => "GET",
         HttpMethod::Post => "POST",
@@ -172,36 +174,49 @@ pub fn compiled_request_to_mockserver(request: &CompiledRequest) -> MockServerRe
         request
             .multipart
             .as_ref()
-            .map(|mp| serde_json::to_value(mp).unwrap_or(serde_json::Value::Null))
+            .map(serde_json::to_value)
+            .transpose()?
     } else {
-        request.body.as_ref().map(plasm_value_to_json)
+        request
+            .body
+            .as_ref()
+            .map(plasm_core::try_plasm_value_to_json)
+            .transpose()?
     };
-    let query_params = request.query.as_ref().map(plasm_value_to_json);
-    let headers = request.headers.as_ref().map(plasm_value_to_json);
+    let query_params = request
+        .query
+        .as_ref()
+        .map(plasm_core::try_plasm_value_to_json)
+        .transpose()?;
+    let headers = request
+        .headers
+        .as_ref()
+        .map(plasm_core::try_plasm_value_to_json)
+        .transpose()?;
 
-    MockServerRequest {
+    Ok(MockServerRequest {
         method: method.to_string(),
         path: request.path.clone(),
         body,
         headers,
         query_string_parameters: query_params,
-    }
+    })
 }
 
 /// Generate MockServer expectations from our BackendFilter system
 pub fn generate_mockserver_expectations(
     requests: Vec<CompiledRequest>,
     mock_entities: Vec<MockEntity>,
-) -> Vec<MockServerExpectation> {
+) -> Result<Vec<MockServerExpectation>, RuntimeError> {
     let mut expectations = Vec::new();
 
     for (i, request) in requests.iter().enumerate() {
-        let mock_request = compiled_request_to_mockserver(request);
+        let mock_request = compiled_request_to_mockserver(request)?;
 
         // Generate appropriate mock response based on entity data
         let response_body = if let Some(entity) = mock_entities.get(i) {
             Some(json!({
-                "results": [entity.to_json()],
+                "results": [entity.to_json()?],
                 "count": 1
             }))
         } else {
@@ -230,7 +245,7 @@ pub fn generate_mockserver_expectations(
         expectations.push(expectation);
     }
 
-    expectations
+    Ok(expectations)
 }
 
 /// A mock entity for generating test responses
@@ -266,7 +281,7 @@ impl MockEntity {
     }
 
     /// Convert to JSON for MockServer responses
-    pub fn to_json(&self) -> serde_json::Value {
+    pub fn to_json(&self) -> Result<serde_json::Value, plasm_core::WireEncodingError> {
         let mut json = json!({
             "id": self.id,
             "_type": self.entity_type
@@ -274,7 +289,7 @@ impl MockEntity {
 
         // Add fields
         for (field, value) in &self.fields {
-            json[field] = plasm_value_to_json(value);
+            json[field] = plasm_core::try_plasm_value_to_json(value)?;
         }
 
         // Add relations as reference arrays
@@ -282,36 +297,7 @@ impl MockEntity {
             json[relation] = json!(refs);
         }
 
-        json
-    }
-}
-
-/// Convert plasm_core::Value to serde_json::Value for MockServer
-fn plasm_value_to_json(value: &Value) -> serde_json::Value {
-    match value {
-        Value::PlasmInputRef(_) | Value::GetScalarExtract(_) | Value::StringTemplate(_) => {
-            serde_json::to_value(value).unwrap_or(serde_json::Value::Null)
-        }
-        Value::Null => serde_json::Value::Null,
-        Value::Bool(b) => serde_json::Value::Bool(*b),
-        Value::Integer(i) => serde_json::Value::Number((*i).into()),
-        Value::Unsigned(i) => serde_json::Value::Number((*i).into()),
-        Value::Float(n) => serde_json::Number::from_f64(*n)
-            .map(serde_json::Value::Number)
-            .unwrap_or(serde_json::Value::Null),
-        Value::String(s) | Value::PhraseIdent(s) => serde_json::Value::String(s.clone()),
-        Value::Array(arr) => {
-            serde_json::Value::Array(arr.iter().map(plasm_value_to_json).collect())
-        }
-        Value::Object(obj) => {
-            let mut map = serde_json::Map::new();
-            for (k, v) in obj {
-                map.insert(k.clone(), plasm_value_to_json(v));
-            }
-            serde_json::Value::Object(map)
-        }
-        Value::UnionCtor { .. } => serde_json::to_value(value).unwrap_or(serde_json::Value::Null),
-        Value::Money(m) => m.encode_stored().unwrap_or(serde_json::Value::Null),
+        Ok(json)
     }
 }
 
@@ -320,10 +306,10 @@ pub fn create_filter_based_expectations(
     entity_type: &str,
     filter: &BackendFilter,
     mock_data: Vec<MockEntity>,
-) -> MockServerExpectation {
+) -> Result<MockServerExpectation, RuntimeError> {
     // Create request matcher for query endpoint
     let request_body = json!({
-        "filter": backend_filter_to_json(filter)
+        "filter": serde_json::to_value(filter)?
     });
 
     let mock_request = MockServerRequest {
@@ -343,11 +329,11 @@ pub fn create_filter_based_expectations(
         .collect();
 
     let response_body = json!({
-        "results": filtered_data.iter().map(|e| e.to_json()).collect::<Vec<_>>(),
+        "results": filtered_data.iter().map(|e| e.to_json()).collect::<Result<Vec<_>, _>>()?,
         "count": filtered_data.len()
     });
 
-    MockServerExpectation {
+    Ok(MockServerExpectation {
         request: mock_request,
         response: MockServerResponse {
             status_code: 200,
@@ -361,12 +347,7 @@ pub fn create_filter_based_expectations(
             remaining_times: None,
             unlimited: Some(true),
         }),
-    }
-}
-
-/// Convert BackendFilter to JSON for MockServer request matching
-fn backend_filter_to_json(filter: &BackendFilter) -> serde_json::Value {
-    serde_json::to_value(filter).unwrap_or(json!({}))
+    })
 }
 
 /// Simple entity filtering for mock responses (simplified implementation)
@@ -416,6 +397,16 @@ fn entity_matches_filter(entity: &MockEntity, filter: &BackendFilter) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn mock_wire_rejects_nonfinite_instead_of_reporting_absence() {
+        let entity = MockEntity::new("id".into(), "Record".into())
+            .with_field("value".into(), Value::Array(vec![Value::Float(f64::NAN)]));
+        assert_eq!(
+            entity.to_json(),
+            Err(plasm_core::WireEncodingError::NonFinite)
+        );
+    }
     use plasm_compile::HttpMethod;
 
     #[test]
@@ -431,7 +422,7 @@ mod tests {
             headers: None,
         };
 
-        let mock_request = compiled_request_to_mockserver(&request);
+        let mock_request = compiled_request_to_mockserver(&request).unwrap();
 
         assert_eq!(mock_request.method, "POST");
         assert_eq!(mock_request.path, "/query/Account");
@@ -444,7 +435,7 @@ mod tests {
             .with_field("name".to_string(), Value::String("Test Corp".to_string()))
             .with_field("revenue".to_string(), Value::Float(1000.0));
 
-        let json = entity.to_json();
+        let json = entity.to_json().unwrap();
         assert_eq!(json["id"], "test-1");
         assert_eq!(json["name"], "Test Corp");
         assert_eq!(json["revenue"], 1000.0);
@@ -472,7 +463,7 @@ mod tests {
         ];
 
         let filter = BackendFilter::field("region", BackendOp::Equals, "EMEA");
-        let expectation = create_filter_based_expectations("Account", &filter, mock_data);
+        let expectation = create_filter_based_expectations("Account", &filter, mock_data).unwrap();
 
         assert_eq!(expectation.request.method, "POST");
         assert_eq!(expectation.request.path, "/query/Account");

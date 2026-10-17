@@ -136,11 +136,19 @@ impl PlanLineExecutionFold {
             child.materialize(plasm_core::collection_codec::Demand::Observed)?;
         }
         let result = match parent {
-            Some(parent) => parent.flat_map(&identity, &self.collections)?,
-            None if self.collections.is_empty() => {
-                ExecutionCollection::evaluate(identity, &[], SharedRows::default())?
-            }
+            Some(parent) => parent.flat_map(
+                plasm_runtime::execution::RowMaterialization::Catalog,
+                &identity,
+                &self.collections,
+            )?,
+            None if self.collections.is_empty() => ExecutionCollection::evaluate(
+                plasm_runtime::execution::RowMaterialization::Catalog,
+                identity,
+                &[],
+                SharedRows::default(),
+            )?,
             None => ExecutionCollection::derive(
+                plasm_runtime::execution::RowMaterialization::Catalog,
                 identity,
                 &self.collections.iter().collect::<Vec<_>>(),
                 Transform::Concat,
@@ -157,6 +165,7 @@ impl PlanLineExecutionFold {
                 .resident_entities()
                 .select(0..count.min(result.count()))?;
             ExecutionCollection::derive(
+                plasm_runtime::execution::RowMaterialization::Catalog,
                 id,
                 &[&result],
                 Transform::Take(count),
@@ -1013,7 +1022,8 @@ mod tests {
         assert_eq!(delete.completed, 2);
         assert_eq!(delete.failed, 1);
         assert_eq!(delete.logical_invocations, 3);
-        let wire = crate::output::http_execute_results_value(&fold_to_execution_result(&fold));
+        let wire =
+            crate::output::http_execute_results_value(&fold_to_execution_result(&fold)).unwrap();
         assert_eq!(wire["rows"], serde_json::json!([]));
         assert_eq!(wire["operations"][0]["completed"], 2);
         assert_eq!(wire["operations"][0]["failed"], 1);
@@ -1029,7 +1039,8 @@ mod tests {
         )];
         let fold = fold_plan_line_results(&results, None, ExecutionStatsFold::Telemetry, false);
         assert_eq!(fold.operations.entries()[0].source, ExecutionSource::Replay);
-        let wire = crate::output::http_execute_results_value(&fold_to_execution_result(&fold));
+        let wire =
+            crate::output::http_execute_results_value(&fold_to_execution_result(&fold)).unwrap();
         assert_eq!(wire["operations"][0]["source"], "replay");
     }
 

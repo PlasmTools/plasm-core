@@ -527,6 +527,7 @@ impl ValueContract {
                     value,
                     entity,
                     target.as_str(),
+                    owner,
                 )?)
             }
             (

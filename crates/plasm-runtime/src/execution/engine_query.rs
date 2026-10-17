@@ -109,7 +109,7 @@ impl ExecutionEngine {
 
                         if foreign_ids.is_empty() {
                             return Ok(ExecutionResult {
-                                collection: ExecutionCollection::evaluate(
+                                collection: ExecutionCollection::evaluate(crate::execution::RowMaterialization::Catalog,
                                     plasm_core::collection_codec::CollectionIdentity::for_expression(cgs, query, mat.graph.stats().version)?,
                                     &dependencies.iter().collect::<Vec<_>>(), vec![].into())?,
                                 has_more: false,

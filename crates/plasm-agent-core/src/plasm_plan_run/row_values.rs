@@ -2,7 +2,10 @@
 
 use super::*;
 
-pub(crate) fn cached_entity_row_values(entity: &CachedEntity, cgs: &CGS) -> plasm_core::ValueRow {
+pub(crate) fn cached_entity_row_values(
+    entity: &CachedEntity,
+    cgs: &CGS,
+) -> Result<plasm_core::ValueRow, plasm_core::ValueCodecError> {
     plasm_core::row_contract::RowCodec::new(Some(cgs)).values(entity)
 }
 
@@ -99,7 +102,7 @@ mod presentation_contract_tests {
         let mut cached =
             CachedEntity::from_row(&row, 7, plasm_runtime::EntityCompleteness::Complete);
         cached.version = 42;
-        let execution = cached_entity_row_values(&cached, &cgs);
+        let execution = cached_entity_row_values(&cached, &cgs).unwrap();
         assert_eq!(
             execution.get("_version"),
             Some(&plasm_core::Value::Integer(99))

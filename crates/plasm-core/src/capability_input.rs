@@ -896,6 +896,14 @@ pub(crate) fn validate_named_value_domain_value(
     if value.is_domain_example_placeholder() {
         return Ok(());
     }
+    validate_concrete_named_value_domain(value, nv)
+}
+
+/// Provider observations are concrete data, never program example placeholders.
+pub(crate) fn validate_concrete_named_value_domain(
+    value: &Value,
+    nv: &crate::NamedValueSchema,
+) -> Result<(), crate::ValueDomainViolation> {
     if let Some(s) = value.as_str() {
         nv.domain.validate_string_value(s).map_err(|error| {
             error

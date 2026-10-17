@@ -114,7 +114,7 @@ fn relation_record_projection_conserves_parent_occurrences() {
                 .result
                 .entities()
                 .iter()
-                .map(|row| plasm_runtime::entity_to_agent_row_json(row, None))
+                .map(|row| plasm_runtime::entity_to_agent_row_json(row, None).unwrap())
                 .collect();
             assert_eq!(actual.len(), count);
             for (index, row) in actual.iter().enumerate() {
@@ -305,7 +305,7 @@ fn nested_maps_preserve_parent_child_pairing_and_empty_children() {
                 .result
                 .entities()
                 .iter()
-                .map(|e| plasm_runtime::entity_to_agent_row_json(e, None))
+                .map(|e| plasm_runtime::entity_to_agent_row_json(e, None).unwrap())
                 .collect();
             let expected: Vec<_> = (0..count).map(|i| json!({"title":format!("Title {i}"), "children": (0..i).map(|j| json!({"parent":format!("Title {i}"), "child":format!("L{j}")})).collect::<Vec<_>>()})).collect();
             for (row, expected) in actual.iter().zip(&expected) {
@@ -414,7 +414,8 @@ fn nested_maps_compute_from_typed_parent_and_child_inputs() {
         let row = plasm_runtime::entity_to_agent_row_json(
             &run.return_steps[0].result.entities()[2],
             None,
-        );
+        )
+        .unwrap();
         assert_eq!(
             row["children"],
             json!([{"text":"Title 2:L0"},{"text":"Title 2:L1"}])
@@ -440,7 +441,8 @@ fn nested_maps_three_levels_keep_ancestor_ports_distinct() {
         let row = plasm_runtime::entity_to_agent_row_json(
             &run.return_steps[0].result.entities()[1],
             None,
-        );
+        )
+        .unwrap();
         assert_eq!(
             row["children"],
             json!([{"grandchildren":[{"root":"Title 1","child":"L0","grandchild":"Title 0"},{"root":"Title 1","child":"L0","grandchild":"Title 1"}]}])
@@ -648,7 +650,7 @@ fn nested_maps_accept_synthetic_rows_without_receiver_authority() {
             .result
             .entities()
             .iter()
-            .map(|e| plasm_runtime::entity_to_agent_row_json(e, None)["label"].clone())
+            .map(|e| plasm_runtime::entity_to_agent_row_json(e, None).unwrap()["label"].clone())
             .collect();
         assert_eq!(values, vec![json!("Title 0"), json!("Title 1")]);
     });
@@ -673,7 +675,8 @@ fn scoped_compute_uses_value_fields_without_loading_navigation_edges() {
             plasm_runtime::entity_to_agent_row_json(
                 &run.return_steps[0].result.entities()[0],
                 None
-            )["labels"],
+            )
+            .unwrap()["labels"],
             "Title 0|Title 1"
         );
     });

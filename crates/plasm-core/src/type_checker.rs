@@ -2047,15 +2047,12 @@ mod tests {
         .unwrap();
 
         let visit = cgs.get_entity("Visit").unwrap();
-        // Not an object / not narrowable to Pet identity — booleans are never EntityRef-compatible,
-        // unlike arbitrary `{ name: "x" }` maps which can accidentally satisfy EntityRefPayload shape.
+        // Boolean is a legal reference atom, but not this target's declared identity.
         let pred = Predicate::eq("pet_ref", true);
         let err = type_check_predicate(&pred, visit, &[], &cgs).unwrap_err();
         assert!(
-            matches!(err, TypeError::EntityRefCoercionFailure {
-            ref field, ref target,
-            source: crate::CoercionError::UnsupportedValue { actual: "boolean", .. }
-        } if field == "pet_ref" && target == "Pet"),
+            matches!(err, TypeError::IncompatibleValue { ref field, ref value_type, .. }
+                if field == "pet_ref" && value_type == "boolean"),
             "{err:?}"
         );
     }

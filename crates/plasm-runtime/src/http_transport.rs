@@ -883,8 +883,15 @@ pub fn trace_compiled_http_boundary(
     if !tracing::enabled!(target: "plasm_runtime::http_boundary", tracing::Level::TRACE) {
         return;
     }
+    let fingerprint = match crate::replay::RequestFingerprint::from_request(request) {
+        Ok(fingerprint) => fingerprint,
+        Err(error) => {
+            tracing::error!(%error, "invalid request cannot be fingerprinted");
+            return;
+        }
+    };
     tracing::trace!(target: "plasm_runtime::http_boundary",
-        request_fingerprint = %crate::replay::RequestFingerprint::from_request(request).to_hex(),
+        request_fingerprint = %fingerprint.to_hex(),
         method,
         path = request.url_path(),
         status,
@@ -1172,37 +1179,8 @@ fn strip_null_fields(value: serde_json::Value) -> serde_json::Value {
 }
 
 fn plasm_value_to_json(value: &Value) -> Result<serde_json::Value, RuntimeError> {
-    match value {
-        Value::PlasmInputRef(_) | Value::GetScalarExtract(_) | Value::StringTemplate(_) => {
-            Err(RuntimeError::HttpWire(crate::HttpWireError::UnboundOperand))
-        }
-        Value::Null => Ok(serde_json::Value::Null),
-        Value::Bool(b) => Ok(serde_json::Value::Bool(*b)),
-        Value::Integer(i) => Ok(serde_json::Value::Number((*i).into())),
-        Value::Unsigned(i) => Ok(serde_json::Value::Number((*i).into())),
-        Value::Float(f) => Ok(serde_json::Number::from_f64(*f)
-            .map(serde_json::Value::Number)
-            .unwrap_or(serde_json::Value::Null)),
-        Value::String(s) | Value::PhraseIdent(s) => Ok(serde_json::Value::String(s.clone())),
-        Value::Array(arr) => Ok(serde_json::Value::Array(
-            arr.iter()
-                .map(plasm_value_to_json)
-                .collect::<Result<Vec<_>, _>>()?,
-        )),
-        Value::Object(obj) => {
-            let mut map = serde_json::Map::new();
-            for (k, v) in obj {
-                map.insert(k.clone(), plasm_value_to_json(v)?);
-            }
-            Ok(serde_json::Value::Object(map))
-        }
-        Value::UnionCtor { .. } => {
-            Ok(serde_json::to_value(value).unwrap_or(serde_json::Value::Null))
-        }
-        Value::Money(m) => m
-            .encode_stored()
-            .map_err(|source| crate::SerializationError::Money(source).into()),
-    }
+    plasm_core::try_plasm_value_to_json(value)
+        .map_err(|source| RuntimeError::HttpWire(crate::HttpWireError::Value(source)))
 }
 
 #[cfg(test)]
@@ -1594,7 +1572,7 @@ mod multipart_wire_tests {
             "markdown".into(),
             Value::String(markdown.into()),
         )]));
-        let json_val = plasm_core::plasm_value_to_json(&body);
+        let json_val = plasm_core::try_plasm_value_to_json(&body).unwrap();
         let bytes = serde_json::to_vec(&json_val).expect("serialize");
         let decoded = std::str::from_utf8(&bytes).expect("utf-8 JSON body");
         assert!(decoded.contains("Pokémon"));
@@ -1610,6 +1588,35 @@ mod json_wire_tests {
     use plasm_compile::{CompiledRequest, HttpBodyFormat, HttpMethod};
     use plasm_core::Value;
     use reqwest::header::CONTENT_TYPE;
+
+    #[test]
+    fn invalid_nested_number_is_a_typed_failure_before_request_construction() {
+        let request = CompiledRequest {
+            credential: None,
+            method: HttpMethod::Post,
+            path: "/items".into(),
+            query: None,
+            body: Some(Value::Object(IndexMap::from([(
+                "amount".into(),
+                Value::Float(f64::NAN),
+            )]))),
+            body_format: HttpBodyFormat::Json,
+            multipart: None,
+            headers: None,
+        };
+        let result = build_compiled_reqwest(
+            &reqwest::Client::new(),
+            "https://fixture.invalid",
+            &request,
+            None,
+        );
+        assert!(matches!(
+            result,
+            Err(crate::RuntimeError::HttpWire(crate::HttpWireError::Value(
+                plasm_core::WireEncodingError::NonFinite
+            )))
+        ));
+    }
 
     #[test]
     fn compiled_json_request_sets_charset_and_utf8_body() {

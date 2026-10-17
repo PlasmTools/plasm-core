@@ -26,7 +26,7 @@ impl ExecutionEngine {
         let destination = crate::http_transport::compiled_http_url(base_url.as_ref(), request);
         let _permit = self.acquire_backend_http_permit(&destination).await?;
         let receipt = super::mutation_evidence::DispatchReceipt::begin(
-            crate::RequestFingerprint::from_request(request).to_hex(),
+            crate::RequestFingerprint::from_request(request)?.to_hex(),
         );
         let result = super::mutation_evidence::with_dispatch_receipt(
             receipt.clone(),

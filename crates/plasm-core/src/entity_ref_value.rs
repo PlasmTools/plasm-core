@@ -15,6 +15,7 @@ use thiserror::Error;
 pub enum EntityRefAtom {
     String(String),
     Integer(i64),
+    Unsigned(u64),
     Float(f64),
     Bool(bool),
 }
@@ -31,6 +32,10 @@ pub enum EntityRefPayload {
 /// [`Value`] is not a legal normalized `entity_ref` constructor shape.
 #[derive(Debug, Clone, PartialEq, Eq, Error)]
 pub enum EntityRefValueError {
+    #[error("identity slot: {0}")]
+    Identity(#[source] Box<crate::ValueCodecError>),
+    #[error("entity_ref numeric atom must be finite")]
+    NonFinite,
     #[error("observed entity reference has no structural _ref")]
     MissingStructuralReference,
     #[error("observed entity reference target does not match its declared entity")]
@@ -58,12 +63,14 @@ impl EntityRefPayload {
             Value::Null => Err(EntityRefValueError::Null),
             Value::Bool(b) => Ok(Self::Atom(EntityRefAtom::Bool(*b))),
             Value::Integer(i) => Ok(Self::Atom(EntityRefAtom::Integer(*i))),
-            Value::Float(f) => Ok(Self::Atom(EntityRefAtom::Float(*f))),
+            Value::Unsigned(i) => Ok(Self::Atom(EntityRefAtom::Unsigned(*i))),
+            Value::Float(f) if f.is_finite() => Ok(Self::Atom(EntityRefAtom::Float(*f))),
+            Value::Float(_) => Err(EntityRefValueError::NonFinite),
             Value::String(s) | Value::PhraseIdent(s) => {
                 Ok(Self::Atom(EntityRefAtom::String(s.clone())))
             }
             Value::Array(_) => Err(EntityRefValueError::Array),
-            Value::Money(_) | Value::Unsigned(_) => Err(EntityRefValueError::Unsupported),
+            Value::Money(_) => Err(EntityRefValueError::Unsupported),
             Value::Object(m) => {
                 if m.is_empty() {
                     return Err(EntityRefValueError::EmptyCompound);
@@ -82,6 +89,7 @@ impl EntityRefPayload {
         match self {
             Self::Atom(EntityRefAtom::String(s)) => Value::String(s.clone()),
             Self::Atom(EntityRefAtom::Integer(i)) => Value::Integer(*i),
+            Self::Atom(EntityRefAtom::Unsigned(i)) => Value::Unsigned(*i),
             Self::Atom(EntityRefAtom::Float(f)) => Value::Float(*f),
             Self::Atom(EntityRefAtom::Bool(b)) => Value::Bool(*b),
             Self::Compound(m) => {
@@ -103,6 +111,7 @@ pub(crate) fn observed_reference_payload(
     value: &Value,
     target: &EntityDef,
     target_name: &str,
+    cgs: &crate::CGS,
 ) -> Result<Value, EntityRefValueError> {
     let reference = value
         .get("_ref")
@@ -116,7 +125,13 @@ pub(crate) fn observed_reference_payload(
             if target.key_vars.len() > 1 {
                 return Err(EntityRefValueError::KeyShapeMismatch);
             }
-            Ok(Value::String(id))
+            let key = target
+                .key_vars
+                .first()
+                .map(|key| key.as_str())
+                .unwrap_or(target.id_field.as_str());
+            crate::identity_slot_to_value(cgs, target, key, &id)
+                .map_err(|source| EntityRefValueError::Identity(Box::new(source)))
         }
         crate::RefWire::Compound { entity, parts } => {
             if entity != target_name {
@@ -134,8 +149,12 @@ pub(crate) fn observed_reference_payload(
             Ok(Value::Object(
                 parts
                     .into_iter()
-                    .map(|(k, v)| (k, Value::String(v)))
-                    .collect(),
+                    .map(|(k, v)| {
+                        crate::identity_slot_to_value(cgs, target, &k, &v)
+                            .map(|value| (k, value))
+                            .map_err(|source| EntityRefValueError::Identity(Box::new(source)))
+                    })
+                    .collect::<Result<_, _>>()?,
             ))
         }
     }
@@ -157,12 +176,7 @@ pub fn try_narrow_entity_row_to_entity_ref_value(
     };
 
     fn scalar_atom(v: &Value) -> Option<Value> {
-        match v {
-            Value::String(_) | Value::Integer(_) | Value::Float(_) | Value::Bool(_) => {
-                Some(v.clone())
-            }
-            _ => None,
-        }
+        scalar_leaf_for_entity_ref(v)
     }
 
     if target.key_vars.len() >= 2 {
@@ -185,8 +199,8 @@ pub fn try_narrow_entity_row_to_entity_ref_value(
 }
 
 fn scalar_leaf_for_entity_ref(v: &Value) -> Option<Value> {
-    match v {
-        Value::String(_) | Value::Integer(_) | Value::Float(_) | Value::Bool(_) => Some(v.clone()),
+    match EntityRefPayload::try_from_value(v).ok()? {
+        EntityRefPayload::Atom(_) => Some(v.clone()),
         _ => None,
     }
 }
@@ -293,7 +307,8 @@ pub fn normalize_entity_ref_value_for_target(value: &Value, target: &EntityDef) 
             }
             None
         }
-        Value::Integer(_) | Value::Float(_) => {
+        Value::Integer(_) | Value::Unsigned(_) | Value::Float(_) | Value::Bool(_) => {
+            scalar_leaf_for_entity_ref(value)?;
             if target.key_vars.len() == 1 {
                 let mut out = IndexMap::new();
                 out.insert(target.key_vars[0].to_string(), value.clone());
@@ -475,15 +490,15 @@ mod tests {
         };
 
         assert_eq!(
-            observed_reference_payload(&Value::Null, &target, "Repo"),
+            observed_reference_payload(&Value::Null, &target, "Repo", &crate::CGS::default()),
             Err(EntityRefValueError::MissingStructuralReference)
         );
         assert_eq!(
-            observed_reference_payload(&observed("Other"), &target, "Repo"),
+            observed_reference_payload(&observed("Other"), &target, "Repo", &crate::CGS::default()),
             Err(EntityRefValueError::TargetMismatch)
         );
         assert_eq!(
-            observed_reference_payload(&observed("Repo"), &target, "Repo"),
+            observed_reference_payload(&observed("Repo"), &target, "Repo", &crate::CGS::default()),
             Err(EntityRefValueError::KeyShapeMismatch)
         );
     }

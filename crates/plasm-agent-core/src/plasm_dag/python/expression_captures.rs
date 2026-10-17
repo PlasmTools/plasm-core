@@ -10,6 +10,21 @@ pub(super) struct CapturedExpression {
     pub references: BTreeMap<super::refinements::Reference, String>,
 }
 
+/// Normalization reparses expressions at byte zero. Keep diagnostic coordinates
+/// tied to the caller AST rather than interpreting those offsets as module bytes.
+#[derive(Default)]
+struct ExpressionSites(RefCell<Vec<(String, (u32, u32))>>);
+
+impl Transformer for ExpressionSites {
+    fn visit_expr(&self, expression: &mut PyExpr) {
+        self.0.borrow_mut().push((
+            monty::expression_source(expression),
+            (expression.start().to_u32(), expression.end().to_u32()),
+        ));
+        transformer::walk_expr(self, expression);
+    }
+}
+
 impl Lower<'_> {
     /// Catalog provenance alone does not authorize continuation of synthetic rows.
     pub(super) fn binding_relation_owner(&self, binding: &str) -> Option<QualifiedEntityKey> {
@@ -139,6 +154,7 @@ impl Lower<'_> {
         inputs: &mut BTreeMap<String, PlanDataInput>,
     ) -> Result<CapturedExpression, PythonLoweringError> {
         let before = self.state.nodes.len();
+        let original_expression = expression;
         let source = format!("({})", monty::expression_source(expression));
         let external = monty_analysis::external_names(&source)?
             .into_iter()
@@ -161,7 +177,37 @@ impl Lower<'_> {
         capture.visit_expr(&mut expression);
         let state = capture.state.into_inner();
         if let Some(error) = state.error {
-            return Err(error);
+            // Build diagnostic source correspondence only on rejection. A fresh
+            // parse avoids inspecting the partially rewritten capture tree.
+            let original_sites = ExpressionSites::default();
+            original_sites.visit_expr(&mut original_expression.clone());
+            let normalized_sites = ExpressionSites::default();
+            let mut normalized = ruff_python_parser::parse_expression(&source)
+                .map_err(PythonLoweringError::parse_error)?
+                .into_syntax()
+                .body;
+            normalized_sites.visit_expr(&mut normalized);
+            let source_spans: BTreeMap<_, _> = original_sites
+                .0
+                .into_inner()
+                .into_iter()
+                .zip(normalized_sites.0.into_inner())
+                .filter_map(|((original, span), (normalized, normalized_span))| {
+                    (original == normalized).then_some((normalized_span.0, span))
+                })
+                .fold(BTreeMap::new(), |mut spans, (offset, span)| {
+                    spans.entry(offset).or_insert(span);
+                    spans
+                });
+            let original_span = (
+                original_expression.start().to_u32(),
+                original_expression.end().to_u32(),
+            );
+            let source_span = error
+                .span_offset()
+                .and_then(|offset| source_spans.get(&(offset as u32)).copied())
+                .unwrap_or(original_span);
+            return Err(error.with_span(source_span));
         }
         for node in &state.lower.state.nodes[before..] {
             let node = super::super::plan_serialize::lower_plan_node(node);
@@ -286,10 +332,14 @@ impl Capture<'_, '_> {
                 let contract = super::super::binding_contract(&lower.state, &node)
                     .ok_or(crate::program_rejection::PythonLoweringInvariantError::ExpressionReceiverContractMissing)?;
                 if !contract.row_cardinality.permits_scalar_field_extract() {
-                    return Err(
-                        crate::program_rejection::PythonProgramError::FieldInputNeedsSingleton
-                            .into(),
-                    );
+                    return Err(at(
+                        expr,
+                        PythonSourceError::FieldInputNeedsSingleton {
+                            binding: node.clone(),
+                            expression: monty::expression_source(expr),
+                            cardinality: contract.row_cardinality.to_relation_source_cardinality(),
+                        },
+                    ));
                 }
                 inputs.insert(
                     node.clone(),

@@ -2,7 +2,7 @@ use plasm_compile::{CompiledRequest, HttpBodyFormat, HttpMethod};
 use plasm_core::Value;
 use plasm_runtime::RequestFingerprint;
 
-fn main() {
+fn main() -> Result<(), plasm_runtime::RuntimeError> {
     println!("🔐 STEP 5: Demonstrate Deterministic Fingerprinting\n");
 
     // Create identical requests
@@ -46,9 +46,9 @@ fn main() {
         headers: None,
     };
 
-    let fp1 = RequestFingerprint::from_request(&request1);
-    let fp2 = RequestFingerprint::from_request(&request2);
-    let fp3 = RequestFingerprint::from_request(&request3);
+    let fp1 = RequestFingerprint::from_request(&request1)?;
+    let fp2 = RequestFingerprint::from_request(&request2)?;
+    let fp3 = RequestFingerprint::from_request(&request3)?;
 
     println!("5a. Identical requests produce identical fingerprints:");
     println!("   Request 1: {}", fp1.to_hex());
@@ -68,4 +68,5 @@ fn main() {
     println!("   Round-trip works: {}", fp1 == recovered);
 
     println!("\n✓ Deterministic fingerprinting verified!");
+    Ok(())
 }

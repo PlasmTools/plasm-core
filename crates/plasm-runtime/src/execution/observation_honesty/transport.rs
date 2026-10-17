@@ -318,7 +318,7 @@ impl HonestyHarness {
 
         Ok((
             json!({
-                "note_id": body_id,
+                "note_id": body_id.parse::<i64>().expect("numeric fixture identity"),
                 "title": title,
                 "body": body,
             }),

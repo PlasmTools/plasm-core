@@ -73,6 +73,14 @@ fn stored_computed_rows_can_be_delivered_in_full() {
             .unwrap();
         let doc: crate::run_artifacts::RunArtifactDocument =
             serde_json::from_slice(&payload.bytes).unwrap();
+        assert_eq!(
+            doc.row_materialization,
+            plasm_runtime::execution::RowMaterialization::Computed
+        );
+        assert_eq!(
+            doc.recorded_collection().unwrap().row_materialization(),
+            plasm_runtime::execution::RowMaterialization::Computed
+        );
         let session_ref = "l_AAAAAAAAQACAAAAAAAAAAQ";
         let (out, _) = crate::terminal_result_format::hydrate_plan_run_from_artifact_formatted(
             &doc,
@@ -86,7 +94,7 @@ fn stored_computed_rows_can_be_delivered_in_full() {
             .result
             .entities()
             .iter()
-            .map(plasm_runtime::CachedEntity::payload_to_json)
+            .map(|entity| entity.payload_to_json().unwrap())
             .collect();
         let mut next = out.delivered_steps[0].result.paging_handle.clone();
         let trace = crate::trace_sink_emit::PlasmTraceContext {
@@ -142,7 +150,7 @@ fn result_rows(run: &crate::plasm_plan_run::PlasmPlanRunResult, index: usize) ->
         .result
         .entities()
         .iter()
-        .map(plasm_runtime::CachedEntity::payload_to_json)
+        .map(|entity| entity.payload_to_json().unwrap())
         .collect()
 }
 
@@ -194,7 +202,7 @@ proptest! {
             let handle = run.return_steps[1].artifact.as_ref().unwrap();
             let payload = host.run_artifacts.get_payload(&es.prompt_hash, "map-body", handle.run_id).await.unwrap();
             let doc: crate::run_artifacts::RunArtifactDocument = serde_json::from_slice(&payload.bytes).unwrap();
-            let stored: Vec<_> = doc.entities.iter().map(plasm_runtime::CachedEntity::payload_to_json).collect();
+            let stored: Vec<_> = doc.entities.iter().map(|entity| entity.payload_to_json().unwrap()).collect();
             assert_eq!(stored, expected, "context reduction must preserve every computed artifact row");
             assert_eq!(result_rows(&run, 0).len(), count);
             assert_eq!(calls.lock().unwrap().len(), 1 + count.min(limit));

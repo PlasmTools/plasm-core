@@ -16,7 +16,7 @@ use uuid::Uuid;
 pub const RUN_ARTIFACT_WIRE_PREFIX: &str = "pr";
 
 /// Metadata + JSON body schema for framed execute run snapshots (`PLAR1` envelope).
-pub const RUN_ARTIFACT_PAYLOAD_SCHEMA_VERSION: u32 = 4;
+pub const RUN_ARTIFACT_PAYLOAD_SCHEMA_VERSION: u32 = 5;
 
 /// Canonical 32-byte identity for a stored execute run snapshot (content-addressed).
 #[derive(Clone, Copy, PartialEq, Eq, Hash)]
@@ -203,6 +203,8 @@ pub fn validate_artifact_payload_metadata(
 
 #[derive(Debug, thiserror::Error)]
 pub enum RunArtifactDocumentError {
+    #[error(transparent)]
+    Codec(#[from] plasm_core::ValueCodecError),
     #[error("recorded run artifact collection is invalid: {0}")]
     Collection(#[from] plasm_core::collection_codec::CollectionFault),
     #[error("run artifact run_id is missing")]
@@ -303,6 +305,7 @@ pub struct ArtifactPayload {
 /// JSON document returned by artifact GET and MCP `resources/read`.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RunArtifactDocument {
+    pub row_materialization: plasm_runtime::execution::RowMaterialization,
     pub run_id: String,
     pub prompt_hash: String,
     pub session_id: String,
@@ -354,15 +357,14 @@ impl RunArtifactDocument {
         let membership = self
             .collection
             .restore(&plasm_core::collection_codec::RecordingCodec::new())?;
-        plasm_runtime::execution::ExecutionCollection::materialized(
+        Ok(plasm_runtime::execution::ExecutionCollection::materialized(
             membership,
             self.entities.clone(),
-        )
+        )?
+        .with_row_materialization(self.row_materialization))
     }
 
-    pub fn agent_view(
-        &self,
-    ) -> Result<RunArtifactAgentView, plasm_core::collection_codec::CollectionFault> {
+    pub fn agent_view(&self) -> Result<RunArtifactAgentView, RunArtifactDocumentError> {
         Ok(RunArtifactAgentView {
             run_id: self.run_id.clone(),
             entry_id: self.entry_id.clone(),
@@ -372,7 +374,7 @@ impl RunArtifactDocument {
                 .entities
                 .iter()
                 .map(plasm_runtime::CachedEntity::payload_to_json)
-                .collect(),
+                .collect::<Result<_, _>>()?,
             coverage: self.recorded_collection()?.coverage(),
         })
     }

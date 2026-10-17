@@ -100,7 +100,7 @@ impl ExecutionEngine {
             compiled,
             self.effective_http_base_for_request().as_ref(),
             auth.as_ref(),
-        );
+        )?;
         Ok(RequestIdentity { fingerprint, auth })
     }
 }
@@ -136,6 +136,7 @@ mod tests {
                 "https://fixture.test",
                 None,
             )
+            .unwrap()
             .to_hex();
             let decoder = create_entity_decoder_for_capability(
                 "Observation",
@@ -169,6 +170,7 @@ mod tests {
                     "https://fixture.test",
                     None,
                 )
+                .unwrap()
                 .to_hex(),
             );
         }
@@ -187,7 +189,8 @@ mod tests {
             &compiled,
             "https://fixture.test",
             Some(&first),
-        );
+        )
+        .unwrap();
         assert_ne!(
             fingerprint,
             crate::RequestFingerprint::for_request_owned_identity(
@@ -195,6 +198,7 @@ mod tests {
                 "https://fixture.test",
                 Some(&auth("account-b")),
             )
+            .unwrap()
         );
         assert_ne!(
             fingerprint,
@@ -203,6 +207,7 @@ mod tests {
                 "https://other.test",
                 Some(&first),
             )
+            .unwrap()
         );
         let identity = RequestIdentity {
             fingerprint: fingerprint.clone(),

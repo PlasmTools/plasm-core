@@ -123,7 +123,11 @@ pub fn hydrate_plan_run_from_artifact_formatted(
         .entities()
         .iter()
         .map(CachedEntity::payload_to_json)
-        .collect();
+        .collect::<Result<_, _>>()
+        .map_err(|source| OperationError::OperationFailed {
+            handle: String::new(),
+            error: source.into(),
+        })?;
     Ok((out, node_results))
 }
 
@@ -159,6 +163,7 @@ mod tests {
             None,
         );
         let doc = RunArtifactDocument {
+            row_materialization: plasm_runtime::execution::RowMaterialization::Catalog,
             run_id: "pr".to_string() + &"a".repeat(64),
             prompt_hash: "ph".into(),
             session_id: "sid".into(),

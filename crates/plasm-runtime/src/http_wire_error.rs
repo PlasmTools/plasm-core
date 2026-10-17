@@ -2,6 +2,8 @@ use thiserror::Error;
 
 #[derive(Debug, Error)]
 pub enum HttpWireError {
+    #[error("HTTP value encoding failed: {0}")]
+    Value(#[from] plasm_core::WireEncodingError),
     #[error("multipart request missing compiled multipart.parts")]
     MultipartPartsMissing,
     #[error("multipart body_format requires compiled multipart.parts, not `body`")]

@@ -1,8 +1,6 @@
 //! Relation-binding assignability + identity-slot helpers.
 
-use super::{
-    coerce_json_value_for_field_type, coerce_value_for_field_type, json_to_plasm_for_field,
-};
+use super::{coerce_value_for_field_type, json_to_plasm_for_field};
 use crate::{
     EntityDef, FieldType, NamedValueSchema, RelationMaterialization, RelationSchema, Value, CGS,
 };
@@ -22,7 +20,7 @@ pub enum RelationBindingProofError {
     },
 }
 
-#[derive(Debug, Clone, thiserror::Error)]
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum ParentFieldTypeError {
     #[error("unknown parent field `{field}` on entity `{entity}`")]
     UnknownParentField { entity: String, field: String },
@@ -91,99 +89,45 @@ pub fn identity_slot_to_value(
     entity: &EntityDef,
     field_name: &str,
     slot: &str,
-) -> Value {
-    let raw = Value::String(slot.to_owned());
-    let Ok(ft) = parent_entity_field_type(cgs, entity, field_name) else {
-        return raw;
+) -> Result<Value, crate::ValueCodecError> {
+    use crate::ValueCodec;
+    parent_entity_field_type(cgs, entity, field_name)?;
+    let contract = if let Some(field) = entity.fields.get(field_name) {
+        crate::ResolvedValueContract::resolve(
+            cgs,
+            cgs.entry_id.as_deref().unwrap_or(""),
+            field.kind.registry_key(),
+            false,
+        )?
+    } else {
+        let domain = crate::value_domain::ValueDomain::new(
+            crate::value_domain::KernelKind::String,
+            None,
+            Default::default(),
+            None,
+            None,
+        )
+        .expect("unconstrained text identity domain");
+        crate::ResolvedValueContract::new(
+            &NamedValueSchema::from_domain(String::new(), domain, None),
+            false,
+        )?
     };
-    let nv = entity
-        .fields
-        .get(field_name)
-        .and_then(|f| f.named_value(cgs).ok());
-    coerce_value_for_field_type(
-        &ft,
-        nv.and_then(|n| n.value_format),
-        nv.and_then(|n| n.array_items.as_ref()),
-        raw.clone(),
-    )
-    .unwrap_or(raw)
+    Ok(crate::value_codec::IdentitySlotCodec
+        .decode(&contract, slot.into())?
+        .into_value())
 }
 
-/// Coerce a string identity slot into JSON using the parent entity field's catalog type.
+/// Decode a structural identity slot and encode its validated value.
 pub fn identity_slot_to_json(
     cgs: &CGS,
     entity: &EntityDef,
     field_name: &str,
     slot: &str,
-) -> serde_json::Value {
-    let raw = serde_json::Value::String(slot.to_string());
-    match parent_entity_field_type(cgs, entity, field_name) {
-        Ok(ft) => {
-            let nv = entity
-                .fields
-                .get(field_name)
-                .and_then(|f| f.named_value(cgs).ok());
-            coerce_json_value_for_field_type(
-                &ft,
-                nv.and_then(|n| n.value_format),
-                nv.and_then(|n| n.array_items.as_ref()),
-                raw,
-            )
-        }
-        Err(_) => raw,
-    }
-}
-
-fn identity_slot_needed(existing: Option<&serde_json::Value>) -> bool {
-    match existing {
-        None | Some(serde_json::Value::Null) => true,
-        Some(serde_json::Value::String(s)) => s.is_empty(),
-        _ => false,
-    }
-}
-
-/// Merge CGS identity slots into agent row JSON — compound keys never flatten into `id_field`.
-pub fn apply_identity_slots_to_row(
-    obj: &mut serde_json::Map<String, serde_json::Value>,
-    reference: &crate::Ref,
-    cgs: Option<&CGS>,
-) {
-    match &reference.key {
-        crate::EntityKey::Simple(slot) => {
-            let Some(id) = slot.as_lit_str() else {
-                return;
-            };
-            if id.is_empty() {
-                return;
-            }
-            let id_field = cgs
-                .and_then(|c| c.get_entity(reference.entity_type.as_str()))
-                .map(|e| e.id_field.as_str().to_string())
-                .unwrap_or_else(|| "id".to_string());
-            if identity_slot_needed(obj.get(&id_field)) {
-                obj.insert(id_field, serde_json::Value::String(id.to_string()));
-            }
-        }
-        crate::EntityKey::Compound(parts) => {
-            if parts.values().all(|v| v.is_empty_lit()) {
-                return;
-            }
-            let ent = cgs.and_then(|c| c.get_entity(reference.entity_type.as_str()));
-            for (k, val) in parts {
-                let Some(s) = val.as_lit_str() else {
-                    continue;
-                };
-                if s.is_empty() || !identity_slot_needed(obj.get(k.as_str())) {
-                    continue;
-                }
-                let json = match (cgs, ent) {
-                    (Some(cgs), Some(ent)) => identity_slot_to_json(cgs, ent, k.as_str(), s),
-                    _ => serde_json::Value::String(s.to_string()),
-                };
-                obj.insert(k.clone(), json);
-            }
-        }
-    }
+) -> Result<serde_json::Value, crate::ValueCodecError> {
+    Ok(crate::try_plasm_value_to_json(&identity_slot_to_value(
+        cgs, entity, field_name, slot,
+    )?)?)
 }
 
 /// Restore `id_field` from compound `_ref` after row JSON omitted it during reload.
@@ -192,20 +136,23 @@ pub fn restore_id_field_from_compound_ref(
     reference: &crate::Ref,
     entity_def: Option<&EntityDef>,
     cgs: &CGS,
-) {
+) -> Result<(), crate::ValueCodecError> {
     let crate::EntityKey::Compound(parts) = &reference.key else {
-        return;
+        return Ok(());
     };
     let Some(ent) = entity_def else {
-        return;
+        return Ok(());
     };
     let id_name = ent.id_field.as_str();
-    let Some(val) = parts.get(id_name).and_then(|s| s.as_lit_str()) else {
-        return;
-    };
-    fields.entry(id_name.to_string()).or_insert_with(|| {
-        crate::TypedFieldValue::from(identity_slot_to_value(cgs, ent, id_name, val))
-    });
+    if !fields.contains_key(id_name) {
+        if let Some(val) = parts.get(id_name).and_then(|s| s.as_lit_str()) {
+            fields.insert(
+                id_name.into(),
+                crate::TypedFieldValue::from(identity_slot_to_value(cgs, ent, id_name, val)?),
+            );
+        }
+    }
+    Ok(())
 }
 
 /// Whether a parent entity field can supply a scoped-query capability parameter after wire coercion.
@@ -281,15 +228,16 @@ fn parent_scalar_field_supplies_entity_ref_scope(
 pub fn binding_value_as_plasm_value(
     raw: &serde_json::Value,
     target_nv: &NamedValueSchema,
-) -> Value {
+) -> Result<Value, crate::ValueCodecError> {
     let plasm = json_to_plasm_for_field(&target_nv.field_type, raw);
-    coerce_value_for_field_type(
+    let value = coerce_value_for_field_type(
         &target_nv.field_type,
         target_nv.value_format,
         target_nv.array_items.as_ref(),
-        plasm.clone(),
-    )
-    .unwrap_or(plasm)
+        plasm,
+    )?;
+    crate::capability_input::validate_named_value_domain_value(&value, target_nv)?;
+    Ok(value)
 }
 
 pub fn parent_entity_field_type(

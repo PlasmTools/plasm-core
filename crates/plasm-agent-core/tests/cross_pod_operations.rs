@@ -93,6 +93,7 @@ fn run_artifact_doc(
     )
     .unwrap();
     RunArtifactDocument {
+        row_materialization: plasm_runtime::execution::RowMaterialization::Catalog,
         run_id: run_wire.to_string(),
         prompt_hash: ph.to_string(),
         session_id: sid.to_string(),

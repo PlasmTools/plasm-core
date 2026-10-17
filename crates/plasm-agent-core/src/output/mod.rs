@@ -131,15 +131,21 @@ pub(crate) fn format_empty_result_body(_result: &impl RowObservation) -> String 
 }
 
 /// HTTP-2 wire object: `rows` plus `operations`. Never a bare entity array.
-pub fn http_execute_results_value(result: &ExecutionResult) -> serde_json::Value {
-    let rows: Vec<serde_json::Value> = result.entities().iter().map(entity_to_json).collect();
+pub fn http_execute_results_value(
+    result: &ExecutionResult,
+) -> Result<serde_json::Value, plasm_core::ValueCodecError> {
+    let rows: Vec<serde_json::Value> = result
+        .entities()
+        .iter()
+        .map(entity_to_json)
+        .collect::<Result<_, _>>()?;
     let operations: Vec<serde_json::Value> = result
         .operations
         .entries()
         .iter()
         .map(operation_ack_to_json)
         .collect();
-    serde_json::json!({
+    Ok(serde_json::json!({
         "rows": rows,
         "operations": operations,
         "coverage": result.coverage().as_str(),
@@ -149,7 +155,7 @@ pub fn http_execute_results_value(result: &ExecutionResult) -> serde_json::Value
             "observed_rows": result.collection.count(),
             "next_run_ref": result.paging_handle.as_ref().map(|handle| handle.as_str()),
         },
-    })
+    }))
 }
 
 fn operation_ack_to_json(ack: &OperationAck) -> serde_json::Value {
@@ -551,7 +557,15 @@ pub(crate) fn summary_string_needs_full_fidelity_restore(
 }
 
 fn format_json(result: &ExecutionResult) -> String {
-    let entities: Vec<serde_json::Value> = result.entities().iter().map(entity_to_json).collect();
+    let entities: Vec<serde_json::Value> = match result
+        .entities()
+        .iter()
+        .map(entity_to_json)
+        .collect::<Result<_, _>>()
+    {
+        Ok(rows) => rows,
+        Err(error) => return format!("Result encoding failed: {error}"),
+    };
 
     serde_json::to_string_pretty(&serde_json::json!({
         "count": result.count(),
@@ -716,7 +730,7 @@ pub(crate) fn format_table_inner(
     out
 }
 
-fn entity_to_json(entity: &CachedEntity) -> serde_json::Value {
+fn entity_to_json(entity: &CachedEntity) -> Result<serde_json::Value, plasm_core::ValueCodecError> {
     entity.payload_to_json()
 }
 
@@ -1482,7 +1496,8 @@ mod tests {
         let wire = http_execute_results_value(&result_with_operations(
             plasm_runtime::OperationLedger::empty(),
             ExecutionSource::Cache,
-        ));
+        ))
+        .unwrap();
         assert!(wire.is_object(), "HTTP-2 forbids a bare row array: {wire}");
         assert_eq!(wire["rows"], serde_json::json!([]));
         assert_eq!(wire["operations"], serde_json::json!([]));
@@ -1504,7 +1519,7 @@ mod tests {
         );
         assert_eq!(body, "(no results)");
         assert!(!body.contains("operations:"));
-        let wire = http_execute_results_value(&result);
+        let wire = http_execute_results_value(&result).unwrap();
         assert_eq!(wire["rows"], serde_json::json!([]));
         assert_eq!(wire["operations"], serde_json::json!([]));
     }
@@ -1540,11 +1555,12 @@ mod tests {
         assert!(done_md.contains("1 completed."), "{done_md}");
         assert!(!done_md.contains("applied"), "{done_md}");
         assert_eq!(
-            http_execute_results_value(&empty_loop)["operations"][0]["logical_invocations"],
+            http_execute_results_value(&empty_loop).unwrap()["operations"][0]
+                ["logical_invocations"],
             0
         );
         assert_eq!(
-            http_execute_results_value(&completed)["operations"][0]["completed"],
+            http_execute_results_value(&completed).unwrap()["operations"][0]["completed"],
             1
         );
     }
@@ -1587,7 +1603,7 @@ mod tests {
         assert!(text.contains("`langmatrix/langitem_delete`: 0 actions dispatched."));
         assert!(!text.contains("No actions dispatched."));
         assert_eq!(
-            http_execute_results_value(&result)["operations"][0]["completed"],
+            http_execute_results_value(&result).unwrap()["operations"][0]["completed"],
             1
         );
     }
@@ -1603,7 +1619,7 @@ mod tests {
         ledger.merge_ack(ack("langitem_delete", 0, 1, ExecutionSource::Live));
         ledger.merge_ack(ack("langitem_ping", 1, 0, ExecutionSource::Live));
         let result = result_with_operations(ledger, ExecutionSource::Live);
-        let wire = http_execute_results_value(&result);
+        let wire = http_execute_results_value(&result).unwrap();
         assert_eq!(wire["rows"], serde_json::json!([]));
         assert_eq!(wire["operations"].as_array().map(|a| a.len()), Some(2));
         let delete = wire["operations"]
@@ -1630,7 +1646,7 @@ mod tests {
             )),
             ExecutionSource::Replay,
         );
-        let wire = http_execute_results_value(&result);
+        let wire = http_execute_results_value(&result).unwrap();
         assert_eq!(wire["operations"][0]["source"], "replay");
         assert!(format_operations_block(&result).contains("Recorded outcome: 1 completed."));
     }
@@ -1712,14 +1728,16 @@ mod tests {
             "present-empty must not be marked unavailable:\n{empty_tsv}"
         );
         let soft_row =
-            plasm_runtime::entity_to_agent_row_json(&soft_result.entities()[0], Some(&cgs));
+            plasm_runtime::entity_to_agent_row_json(&soft_result.entities()[0], Some(&cgs))
+                .unwrap();
         assert!(soft_row.get("_unavailable_fields").is_none());
         assert!(soft_result.entities()[0]
             .unavailable_fields
             .contains("body"));
         assert!(soft_row.get("body").is_none());
         let empty_row =
-            plasm_runtime::entity_to_agent_row_json(&empty_result.entities()[0], Some(&cgs));
+            plasm_runtime::entity_to_agent_row_json(&empty_result.entities()[0], Some(&cgs))
+                .unwrap();
         assert!(empty_row.get("_unavailable_fields").is_none());
         assert_eq!(empty_row.get("body"), Some(&serde_json::json!("")));
     }

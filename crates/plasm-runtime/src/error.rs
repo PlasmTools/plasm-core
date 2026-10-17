@@ -150,6 +150,10 @@ pub enum CacheError {
 
 #[derive(Error, Debug)]
 pub enum SerializationError {
+    #[error(transparent)]
+    Codec(#[from] plasm_core::ValueCodecError),
+    #[error("value encoding failed: {0}")]
+    Value(#[from] plasm_core::WireEncodingError),
     #[error("JSON serialization failed: {0}")]
     Json(#[from] serde_json::Error),
     #[error("multipart JSON encode for `{part}` failed: {source}")]
@@ -162,6 +166,12 @@ pub enum SerializationError {
     Form(#[from] serde_urlencoded::ser::Error),
     #[error("money encoding failed: {0}")]
     Money(#[from] plasm_core::MoneyError),
+}
+
+impl From<plasm_core::WireEncodingError> for RuntimeError {
+    fn from(source: plasm_core::WireEncodingError) -> Self {
+        Self::SerializationError(SerializationError::Value(source))
+    }
 }
 
 #[derive(Error, Debug)]
@@ -777,5 +787,11 @@ mod footprint_tests {
             std::mem::size_of_val(&boxed_expected) + std::mem::size_of_val(&boxed_actual),
             2 * std::mem::size_of::<usize>()
         );
+    }
+}
+
+impl From<plasm_core::ValueCodecError> for RuntimeError {
+    fn from(source: plasm_core::ValueCodecError) -> Self {
+        Self::SerializationError(SerializationError::Codec(source))
     }
 }

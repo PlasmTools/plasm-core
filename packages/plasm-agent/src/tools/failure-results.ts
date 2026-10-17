@@ -13,7 +13,10 @@ export class FailureResults {
 
   record(failure: ExecutionFailure): string {
     const ref = `failure_${randomUUID()}`;
-    const lines: string[] = [];
+    const lines: string[] = [
+      `Execution stopped (${failure.code}; cause=${failure.cause}; recovery=${failure.recovery}).`,
+      `Recorded diagnostic: ${JSON.stringify(failure.diagnostic)}`,
+    ];
     if (failure.input_occurrence) {
       const input = failure.input_occurrence;
       lines.push(`Primary failure input occurrence [${input.occurrence_path.join("/")}]${sourceScope(input.scope_path)}: ${input.source_identity ?? "identity unavailable"}`);

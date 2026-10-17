@@ -873,7 +873,7 @@ mod tests {
             out.markdown
         );
         assert!(!out.markdown.contains("applied"), "{}", out.markdown);
-        let wire = crate::output::http_execute_results_value(&step.result);
+        let wire = crate::output::http_execute_results_value(&step.result).unwrap();
         assert_eq!(wire["rows"], serde_json::json!([]));
         assert_eq!(wire["operations"].as_array().map(|a| a.len()), Some(2));
     }
@@ -1028,7 +1028,7 @@ mod tests {
         let out = publish_plasm_result_steps(None, None, std::slice::from_ref(&step));
         assert!(out.markdown.contains("(no results)"), "{}", out.markdown);
         assert!(!out.markdown.contains("operations:"), "{}", out.markdown);
-        let wire = crate::output::http_execute_results_value(&step.result);
+        let wire = crate::output::http_execute_results_value(&step.result).unwrap();
         assert_eq!(wire["operations"], serde_json::json!([]));
     }
 

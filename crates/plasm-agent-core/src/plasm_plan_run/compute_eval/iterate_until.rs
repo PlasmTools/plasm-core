@@ -426,7 +426,8 @@ async fn reobserve_seed(
         .entities()
         .iter()
         .map(|e| cached_entity_row_values(e, scoped_es.cgs.as_ref()))
-        .collect::<Vec<_>>();
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(plasm_runtime::RuntimeError::from)?;
     let mut current = materialized
         .get(&it.source)
         .ok_or(IterateUntilError::MissingSeedNode)?

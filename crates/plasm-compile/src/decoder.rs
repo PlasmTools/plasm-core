@@ -1369,7 +1369,7 @@ mod tests {
     }
 
     #[test]
-    fn decode_objectid_hit_backfills_integer_id() {
+    fn decode_objectid_without_schema_preserves_identity_text() {
         let json = json!({
             "hits": [
                 {
@@ -1386,7 +1386,10 @@ mod tests {
             .with_id_field("id");
         let entities = decode_entities(&decoder, &json).unwrap();
         assert_eq!(entities.len(), 1);
-        assert_eq!(entities[0].fields.get("id"), Some(&Value::Integer(42)));
+        assert_eq!(
+            entities[0].fields.get("id"),
+            Some(&Value::String("42".into()))
+        );
         assert_eq!(
             entities[0].fields.get("title"),
             Some(&Value::String("Hello".to_string()))

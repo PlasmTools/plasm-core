@@ -6,8 +6,12 @@ use crate::expr::{ChainStep, EntityKey, Expr, IdentitySlot};
 use crate::{EntityId, EntityName, InvokeInputPayload, PlasmInputRef, Predicate, Value};
 use thiserror::Error;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Error)]
+#[derive(Debug, Clone, PartialEq, Eq, Error)]
 pub enum ResolvedValueError {
+    #[error(transparent)]
+    Encoding(#[from] crate::WireEncodingError),
+    #[error(transparent)]
+    Storage(Box<crate::ValueCodecError>),
     #[error("resolved data contains an unresolved operand")]
     UnresolvedOperand,
     #[error("resolved data contains a non-finite number")]
@@ -208,9 +212,17 @@ impl IdentityCodec {
 /// use plasm_core::{Value, operand_binding::ResolvedValue};
 /// let unchecked = ResolvedValue(Value::Null);
 /// ```
-#[derive(Debug, Clone, PartialEq, serde::Serialize)]
-#[serde(into = "Value")]
+#[derive(Debug, Clone, PartialEq)]
 pub struct ResolvedValue(Value);
+
+impl serde::Serialize for ResolvedValue {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        serde::Serialize::serialize(
+            &self.to_wire().map_err(serde::ser::Error::custom)?,
+            serializer,
+        )
+    }
+}
 
 impl<'de> serde::Deserialize<'de> for ResolvedValue {
     fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
@@ -292,44 +304,12 @@ impl ResolvedValue {
         &self.0
     }
     pub fn to_wire(&self) -> Result<serde_json::Value, ResolvedValueError> {
-        serde_json::to_value(&self.0).map_err(|_| ResolvedValueError::Serialization)
+        crate::try_plasm_value_to_storage_json(&self.0).map_err(Into::into)
     }
     pub fn from_wire(value: serde_json::Value) -> Result<Self, ResolvedValueError> {
-        fn decode(value: serde_json::Value) -> Result<Value, ResolvedValueError> {
-            use serde_json::Value as J;
-            Ok(match value {
-                J::Null => Value::Null,
-                J::Bool(v) => Value::Bool(v),
-                J::Number(v) => {
-                    if let Some(i) = v.as_i64() {
-                        Value::Integer(i)
-                    } else if let Some(i) = v.as_u64() {
-                        Value::Unsigned(i)
-                    } else if v.is_f64() {
-                        Value::Float(v.as_f64().ok_or(ResolvedValueError::InvalidFloat)?)
-                    } else {
-                        return Err(ResolvedValueError::IntegerOutOfRange);
-                    }
-                }
-                J::String(v) => Value::String(v),
-                J::Array(items) => {
-                    Value::Array(items.into_iter().map(decode).collect::<Result<_, _>>()?)
-                }
-                J::Object(fields) => {
-                    if let Some(money) = crate::money::try_from_json_object(&fields) {
-                        Value::Money(money)
-                    } else {
-                        Value::Object(
-                            fields
-                                .into_iter()
-                                .map(|(k, v)| Ok((k, decode(v)?)))
-                                .collect::<Result<_, ResolvedValueError>>()?,
-                        )
-                    }
-                }
-            })
-        }
-        Self::new(decode(value)?)
+        let value = crate::try_storage_json_to_plasm_value(&value)
+            .map_err(|source| ResolvedValueError::Storage(Box::new(source)))?;
+        Self::new(value)
     }
     pub fn into_value(self) -> Value {
         self.0

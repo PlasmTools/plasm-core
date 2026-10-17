@@ -442,7 +442,7 @@ mod tests {
             request_fingerprints: vec![],
             operations: OperationLedger::empty(),
         };
-        let snapshot = super::super::entity_to_json(&result.entities()[0]);
+        let snapshot = super::super::entity_to_json(&result.entities()[0]).unwrap();
         let (body, report) = format_result_tsv_observation(&result, None, usize::MAX, None);
         assert!(!report.any_loss(), "{body}");
         let (summary, omitted, report) = format_result_tsv_with_cgs(&result, None, None);

@@ -151,7 +151,8 @@ mod tests {
                 None,
                 None,
                 serde_json::json!(6_419_671_322_388_907i64),
-            ),
+            )
+            .unwrap(),
             serde_json::json!("6419671322388907")
         );
         assert_eq!(
@@ -160,7 +161,8 @@ mod tests {
                 None,
                 None,
                 serde_json::json!(u64::MAX),
-            ),
+            )
+            .unwrap(),
             serde_json::json!(u64::MAX.to_string())
         );
         let ieee_json = coerce_json_value_for_field_type(
@@ -172,8 +174,13 @@ mod tests {
             ),
         );
         assert!(
-            ieee_json.is_null(),
-            "IEEE JSON number must not survive coerce_json as digit_id identity, got {ieee_json}"
+            matches!(
+                ieee_json,
+                Err(crate::ValueCodecError::Coercion(
+                    crate::CoercionError::DigitId(DigitIdCoercionError::InexactFloatIdentity)
+                ))
+            ),
+            "IEEE identity must fail explicitly, got {ieee_json:?}"
         );
     }
 

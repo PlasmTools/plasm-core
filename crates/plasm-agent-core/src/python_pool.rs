@@ -766,10 +766,7 @@ fn representation_matches(
             FieldType::MultiSelect | FieldType::Array => value.is_array(),
             FieldType::Money => matches!(value, plasm_core::Value::Money(_)),
             FieldType::EntityRef { .. } => {
-                value.as_bool().is_some()
-                    || value.is_number()
-                    || value.is_string()
-                    || value.is_object()
+                plasm_core::entity_ref_value::EntityRefPayload::value_is_legal_shape(value)
             }
             FieldType::Json | FieldType::Blob => true,
             _ => value.is_string(),
