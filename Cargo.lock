@@ -7717,6 +7717,7 @@ dependencies = [
  "plasm-otel",
  "proptest",
  "reqwest 0.12.28",
+ "rust-mcp-sdk",
  "rust_decimal",
  "serde",
  "serde_json",

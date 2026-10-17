@@ -116,6 +116,7 @@ pub mod http_trace;
 pub mod http_transport;
 mod http_wire_error;
 pub mod materialization;
+pub mod mcp_transport;
 pub mod materialization_conflict;
 pub mod mockserver;
 pub mod oauth_client;
