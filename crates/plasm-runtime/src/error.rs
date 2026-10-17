@@ -617,6 +617,12 @@ impl From<plasm_core::row_contract::RowDecodeError> for RuntimeError {
     }
 }
 
+impl From<plasm_core::ValueCodecError> for RuntimeError {
+    fn from(source: plasm_core::ValueCodecError) -> Self {
+        Self::SerializationError(SerializationError::Codec(source))
+    }
+}
+
 #[cfg(test)]
 mod footprint_tests {
     use super::*;
@@ -787,11 +793,5 @@ mod footprint_tests {
             std::mem::size_of_val(&boxed_expected) + std::mem::size_of_val(&boxed_actual),
             2 * std::mem::size_of::<usize>()
         );
-    }
-}
-
-impl From<plasm_core::ValueCodecError> for RuntimeError {
-    fn from(source: plasm_core::ValueCodecError) -> Self {
-        Self::SerializationError(SerializationError::Codec(source))
     }
 }
