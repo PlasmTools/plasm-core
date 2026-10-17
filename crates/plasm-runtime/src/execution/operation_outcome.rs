@@ -49,7 +49,7 @@ pub struct OperationInvocationOutcome {
 
 /// Scheduler-owned coordinates for one scalar invocation in a selected row.
 /// Qualification is idempotent: nested receipts keep their original addresses.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct OperationInvocationAddress {
     pub scope_path: Vec<String>,
     pub occurrence_path: Vec<usize>,

@@ -1,5 +1,5 @@
 ---
-source: plasm-oss/crates/plasm-agent-core/src/mcp_server/tests.rs
+source: crates/plasm-agent-core/src/mcp_server/tests.rs
 expression: "plasm_core::prompt_render::PLASM_MCP_TOOL_DESCRIPTION"
 ---
 **Plasm** — `logical_session_ref` + `program`. Clean read-only plans execute inline. Plans containing mutations or a review gate return a `run_ref` for `plasm_run`; do not echo the program there.
@@ -13,11 +13,12 @@ Inspect coverage and operation outcomes. A failed or cancelled run can have comp
 Failure evidence belongs to one execution. A new program may perform reads or writes in the same logical session; it does not resume or roll back an earlier execution. Service diagnostics inform the agent but do not determine effect status.
 
 
-build: immutable DAG; non-null tuples unpack recursively. Return rowsets; tuples=results; records=data. Literal-ID for/one-clause comprehensions expand (<=256). Fresh `out=[]` then literal-ID loop with only `out.append(expr)`: ordered values/effects; expr cannot capture out; aliases immutable. No dynamic loops/while/filtered comprehensions/for-else/statement if/mutation; mutation=@compute. Callbacks branch; imports: module/@compute.
+build: immutable DAG; non-null tuples/typed arrays unpack recursively with exact arity; array lengths checked before dependent effects. Return rowsets; tuples=results; records=data. Literal-ID for/one-clause comprehensions expand (<=256). Fresh `out=[]` then literal-ID loop with only `out.append(expr)`: ordered values/effects; expr cannot capture out; aliases immutable. No dynamic loops/while/filtered comprehensions/for-else/statement if/mutation; mutation=@compute. Callbacks branch; imports: module/@compute.
 
 Declarations: eN/mN/rN/vN session-local/append-only. eN.method=root; row.method=entity row/singleton; = ... optional. Relations: row.rN or rows.flat_map(lambda r: r.rN); never rN(). vN=domain identity/constraints; Literal=choices. Comments=data; groups=methods; constraints=JSON/@profile. Inputs=keywords; producer fields=dependencies.
 
 Rows:
+Ranked search returns candidates, not exact matches. take(1) chooses the first candidate; it does not prove uniqueness. Apply explicit predicates and validate required cardinality before effects. Complete membership observations support `not in` filtering; this does not make a later write atomic with its read.
 where(predicate), select("f", alias="f", derived=lambda r: expr), order_by("f", descending=False), take(n>=0), distinct("f"), union(other), aggregate(n=agg.count()), group_by("f", n=agg.sum("amount")). agg: count/sum/avg/min/max/first/last; union: same columns, joined types without coercion, first-wins dedup. Project differing schemas before union. Predicates: truth/comparison/and/or/not; any/all: complete collections; substring/list/one-column RHS membership. Lazy reads; explicit effects. Verify targets before effects. where filters acquired rows; branches keep types; arithmetic drops constraints. query/search.page_size(n).
 
 eN.get(value) or eN.get(identity=value); compound Get: named keys; nullary: no identity. Only declared keywords. Get/take(1): scalar fields, identity; empty extraction fails. Entity rows/captures keep identity/authority. Inferred compute selections retain unchanged rows from one entity owner; constructed/modified records lack authority. union retains authority iff both arms share catalog/entity; else values. Project outputs, not inputs; partial writes list fields. Projections=records (r.field/r["field"]); dicts=dict[str,T], no key guarantees; embedded rows=arrays; nested records/arrays/args.
@@ -35,3 +36,4 @@ class P(Program):
         return e1.query().where(lambda r: r.score is not None and r.score > 0).select("title")
 
 Absent: AttributeError; select needs fields; guard nulls.
+Compute budgets: projection reduces fields/bytes, not row count. Filter rows before compute when the task permits; nested inputs share the row budget. Never truncate a complete-set calculation to silence a budget failure.

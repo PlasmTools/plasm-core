@@ -45,8 +45,8 @@ pub enum ValueDomainError {
     PatternMismatch,
     #[error("enum profile has no membership declaration")]
     MissingEnumMembership,
-    #[error("value is not an allowed enum member")]
-    UnknownEnumMember,
+    #[error("value is not an allowed enum member; expected one of {allowed:?}")]
+    UnknownEnumMember { allowed: Vec<String> },
     #[error("numeric value is below minimum {0}")]
     BelowMinimum(f64),
     #[error("numeric value is above maximum {0}")]
@@ -89,7 +89,9 @@ impl ValueDomainError {
             Self::AboveMaxLength(value) => Violation::AboveMaxLength(*value),
             Self::PatternMismatch => Violation::PatternMismatch,
             Self::MissingEnumMembership => Violation::MissingEnumMembership,
-            Self::UnknownEnumMember => Violation::UnknownEnumMember,
+            Self::UnknownEnumMember { allowed } => Violation::UnknownEnumMember {
+                allowed: allowed.clone(),
+            },
             Self::BelowMinimum(_) => Violation::BelowMinimum,
             Self::AboveMaximum(_) => Violation::AboveMaximum,
             Self::AtOrBelowExclusiveMinimum(_) => Violation::ExclusiveMinimum,
@@ -107,7 +109,9 @@ impl ValueDomainError {
             Self::AboveMaxLength(value) => Violation::AboveMaxLength(*value),
             Self::PatternMismatch => Violation::PatternMismatch,
             Self::MissingEnumMembership => Violation::MissingEnumMembership,
-            Self::UnknownEnumMember => Violation::UnknownEnumMember,
+            Self::UnknownEnumMember { allowed } => Violation::UnknownEnumMember {
+                allowed: allowed.clone(),
+            },
             Self::BelowMinimum(_) => Violation::BelowMinimum,
             Self::AboveMaximum(_) => Violation::AboveMaximum,
             Self::AtOrBelowExclusiveMinimum(_) => Violation::ExclusiveMinimum,
@@ -810,7 +814,9 @@ impl ValueDomain {
                 return Err(ValueDomainError::MissingEnumMembership);
             };
             if !allowed.iter().any(|a| a == s) {
-                return Err(ValueDomainError::UnknownEnumMember);
+                return Err(ValueDomainError::UnknownEnumMember {
+                    allowed: allowed.to_vec(),
+                });
             }
         }
         Ok(())
@@ -1230,6 +1236,12 @@ mod tests {
         )
         .unwrap();
         let v = serde_json::to_value(&d).unwrap();
+        let error = d.validate_string_value("unknown").unwrap_err();
+        assert!(
+            matches!(&error, ValueDomainError::UnknownEnumMember { allowed } if allowed == &vec!["pending".to_owned(), "approved".to_owned()])
+        );
+        assert!(error.contract_violation().to_string().contains("pending"));
+        assert!(error.contract_violation().to_string().contains("approved"));
         assert_eq!(
             v.get("enum"),
             Some(&serde_json::json!(["pending", "approved"]))

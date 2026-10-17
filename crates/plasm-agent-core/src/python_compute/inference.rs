@@ -19,12 +19,14 @@ mod tests;
 #[derive(Debug, Clone)]
 pub struct InferenceDiagnostics {
     pub entries: Vec<LocatedAnalysisDiagnostic>,
+    pub type_labels: BTreeMap<String, String>,
 }
 
 #[derive(Debug, Clone)]
 pub struct LocatedAnalysisDiagnostic {
     pub diagnostic: monty_analysis::AnalysisDiagnostic,
     pub location: Option<(usize, usize)>,
+    pub excerpt: Option<String>,
 }
 
 impl From<Vec<monty_analysis::AnalysisDiagnostic>> for InferenceDiagnostics {
@@ -35,8 +37,10 @@ impl From<Vec<monty_analysis::AnalysisDiagnostic>> for InferenceDiagnostics {
                 .map(|diagnostic| LocatedAnalysisDiagnostic {
                     diagnostic,
                     location: None,
+                    excerpt: None,
                 })
                 .collect(),
+            type_labels: BTreeMap::new(),
         }
     }
 }
@@ -50,12 +54,39 @@ impl std::fmt::Display for InferenceDiagnostics {
             if let Some((line, column)) = entry.location {
                 write!(f, "plasm_compute.py:{line}:{column}: ")?;
             }
-            write!(f, "{}: {}", entry.diagnostic.code, entry.diagnostic.message)?;
+            write!(f, "{}: ", entry.diagnostic.code)?;
+            // Replace whole generated identifiers only; preserve the upstream
+            // diagnostic and its typed records unchanged for host inspection.
+            self.write_semantic_text(f, &entry.diagnostic.message)?;
+            if let Some(excerpt) = &entry.excerpt {
+                write!(f, "\n  Compute source: ")?;
+                self.write_semantic_text(f, excerpt)?;
+            }
         }
         Ok(())
     }
 }
 impl std::error::Error for InferenceDiagnostics {}
+
+impl InferenceDiagnostics {
+    fn write_semantic_text(&self, f: &mut std::fmt::Formatter<'_>, text: &str) -> std::fmt::Result {
+        for part in text.split_inclusive(|c: char| !c.is_alphanumeric() && c != '_') {
+            let end = part
+                .trim_end_matches(|c: char| !c.is_alphanumeric() && c != '_')
+                .len();
+            let (word, punctuation) = part.split_at(end);
+            write!(
+                f,
+                "{}{punctuation}",
+                self.type_labels
+                    .get(word)
+                    .map(String::as_str)
+                    .unwrap_or(word)
+            )?;
+        }
+        Ok(())
+    }
+}
 
 impl From<plasm_core::value_contract::ValueContractError> for InferenceError {
     fn from(error: plasm_core::value_contract::ValueContractError) -> Self {
@@ -267,7 +298,7 @@ pub(super) fn infer_output(
                 unreachable!()
             };
             return Err(InferenceError::Diagnostics {
-                diagnostics: body_diagnostics(errors, &source),
+                diagnostics: body_diagnostics(errors, &source, Some(&declarations)),
             });
         };
         if pass < 2 && graph.nodes.contains(&Node::Unknown) {
@@ -439,7 +470,7 @@ pub(super) fn check_annotated_body(
         let mut evidence = declarations::Declarations::default();
         evidence.source.push_str(&stubs);
         source = helpers::close_local_calls(&source, &mut evidence)?;
-        stubs = evidence.source;
+        stubs = evidence.source.clone();
         let inferred = monty_analysis::analyze_function(
             &AnalysisRequest {
                 source: source.clone(),
@@ -455,7 +486,7 @@ pub(super) fn check_annotated_body(
             }
             AnalysisOutcome::Rejected(errors) => {
                 return Err(InferenceError::Diagnostics {
-                    diagnostics: body_diagnostics(errors, &source),
+                    diagnostics: body_diagnostics(errors, &source, Some(&evidence)),
                 });
             }
             AnalysisOutcome::Inferred(_) => {}
@@ -470,7 +501,7 @@ pub(super) fn check_annotated_body(
     match result.outcome {
         AnalysisOutcome::Inferred(_) => Ok(()),
         AnalysisOutcome::Rejected(errors) => Err(InferenceError::Diagnostics {
-            diagnostics: body_diagnostics(errors, &source),
+            diagnostics: body_diagnostics(errors, &source, None),
         }),
     }
 }
@@ -478,8 +509,17 @@ pub(super) fn check_annotated_body(
 fn body_diagnostics(
     errors: Vec<monty_analysis::AnalysisDiagnostic>,
     source: &str,
+    declarations: Option<&declarations::Declarations>,
 ) -> InferenceDiagnostics {
     InferenceDiagnostics {
+        type_labels: declarations
+            .map(|d| {
+                d.contracts
+                    .iter()
+                    .map(|(name, contract)| (name.clone(), contract.to_string()))
+                    .collect()
+            })
+            .unwrap_or_default(),
         entries: errors
             .into_iter()
             .map(|diagnostic| {
@@ -499,6 +539,9 @@ fn body_diagnostics(
                         )
                     });
                 LocatedAnalysisDiagnostic {
+                    excerpt: location
+                        .and_then(|(line, _)| source.lines().nth(line - 1))
+                        .map(|line| line.trim().to_owned()),
                     diagnostic,
                     location,
                 }

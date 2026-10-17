@@ -11,6 +11,7 @@ import {
 import { loadPromptAsset } from "../prompts/index.js";
 import { toolInput } from "./tool-input.js";
 import { logicalSessionRefSchema, runReferenceSchema, workflowIntentSchema } from "../runtime/session-contract.js";
+import { failureResultsFor } from "./failure-results.js";
 
 const contextIntent = workflowIntentSchema.describe(
   "The current intent for this discovery turn. The runtime appends it to the workflow provenance chain and retains ancestor context; explicit revisions may replace earlier goals.",
@@ -46,11 +47,13 @@ export function createPlasmTools(
   runtime: Pick<AgentRuntime, "plasmContext" | "plasm" | "plasmRun" | "recordExecutionFailure">,
 ): ToolSet {
   const tools: ToolSet = {};
+  const failures = failureResultsFor(runtime);
   async function invoke(name: string, run: () => Promise<string>) {
     try { return await run(); } catch (error) {
       const observation = failureObservation(error);
       await runtime.recordExecutionFailure(name, observation.failure);
-      return observation;
+      const ref = failures.record(observation.failure);
+      return {...observation, summary: `${observation.summary}\nFull recorded outcomes: call plasm_failure with failure_ref="${ref}" (offset defaults to 0). This only reads recorded evidence.`};
     }
   }
 
@@ -85,6 +88,12 @@ export function createPlasmTools(
         logicalSessionRef: logical_session_ref,
         runRef: run_ref,
       })),
+  });
+
+  tools.plasm_failure = tool({
+    description: "Read all recorded partial outcomes of a failed Plasm call. Use the failure_ref returned by that failure; follow returned offsets for more entries. Does not retry, execute, or observe the backend. References belong to this runtime and its most recent 128 failures.",
+    inputSchema: toolInput(z.object({failure_ref: z.string().regex(/^failure_[0-9a-f-]{36}$/), offset: z.number().int().nonnegative().default(0)}).strict()),
+    execute: async ({failure_ref, offset}) => failures.read(failure_ref, offset ?? 0),
   });
 
   return tools;

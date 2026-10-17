@@ -185,17 +185,19 @@ pub(crate) fn format_coverage_preview_note(
     continue_handle: Option<&str>,
     artifact_access: ArtifactAccessMode,
 ) -> String {
-    let mut line = if shown < snapshot_rows {
-        format!(
-            "{shown}/{snapshot_rows} rows delivered · {} coverage for this expression.",
-            coverage.as_str()
-        )
-    } else {
-        format!(
-            "{snapshot_rows} rows · {} coverage for this expression.",
-            coverage.as_str()
-        )
+    let heading = match coverage {
+        plasm_runtime::ResultCoverage::Partial => "Source incomplete",
+        plasm_runtime::ResultCoverage::Unknown => "Source completeness unknown",
+        plasm_runtime::ResultCoverage::Complete => "Source complete",
     };
+    let total = match coverage {
+        plasm_runtime::ResultCoverage::Complete => snapshot_rows.to_string(),
+        _ => "unknown".to_owned(),
+    };
+    let mut line = format!(
+        "**{heading}.**\n\nRows delivered in this response: {shown}.\nObserved collection rows: {snapshot_rows}.\nTotal source rows: {total}.\nSource coverage: {}.",
+        coverage.as_str()
+    );
     if artifact_access != ArtifactAccessMode::DagCompute && has_snapshot {
         if let Some(uri) = snapshot_uri {
             line.push_str(&format!(
@@ -208,9 +210,9 @@ pub(crate) fn format_coverage_preview_note(
     }
     if let Some(handle) = continue_handle {
         // A handle may continue backend acquisition or page a stored snapshot.
-        line.push_str(&format!(" Continue: `{handle}`."));
+        line.push_str(&format!("\n\nNext read: call `plasm_run` with `run_ref: \"{handle}\"` and the same `logical_session_ref`."));
     }
-    format!("\n\n_{line}_\n")
+    format!("\n\n{line}\n")
 }
 
 /// One-line Markdown after an in-band result when the run snapshot must be fetched separately.
@@ -268,12 +270,14 @@ mod tests {
             Some("l_page1"),
         );
         assert!(
-            note.contains("10/25 rows delivered · partial coverage for this expression."),
+            note.contains(
+                "Rows delivered in this response: 10.\nObserved collection rows: 25.\nTotal source rows: unknown.\nSource coverage: partial."
+            ),
             "{note}"
         );
         assert!(note.contains("Details:"), "{note}");
         assert!(note.contains("plasm://r/1"), "{note}");
-        assert!(note.contains("Continue: `l_page1`"), "{note}");
+        assert!(note.contains(r#"run_ref: "l_page1""#), "{note}");
 
         let complete = ArtifactAccessMode::ResourcesRead.coverage_preview_note(
             10,
@@ -283,10 +287,47 @@ mod tests {
             None,
         );
         assert!(
-            complete.contains("10/80 rows delivered · complete coverage for this expression."),
+            complete.contains(
+                "Rows delivered in this response: 10.\nObserved collection rows: 80.\nTotal source rows: 80.\nSource coverage: complete."
+            ),
             "{complete}"
         );
-        assert!(!complete.contains("Continue:"), "{complete}");
+        assert!(!complete.contains("Next read:"), "{complete}");
+    }
+
+    #[test]
+    fn continuation_presentation_preserves_source_and_delivery_boundaries() {
+        use plasm_runtime::ResultCoverage::{Complete, Partial, Unknown};
+        for coverage in [Complete, Partial, Unknown] {
+            for handle in [None, Some("pg1")] {
+                for shown in [0, 15, 40] {
+                    let note = format_coverage_preview_note(
+                        shown,
+                        40,
+                        coverage,
+                        false,
+                        None,
+                        handle,
+                        ArtifactAccessMode::DagCompute,
+                    );
+                    assert_eq!(note.contains("Next read:"), handle.is_some());
+                    assert_eq!(note.contains("Source incomplete"), coverage == Partial);
+                    assert_eq!(
+                        note.contains("Total source rows: 40."),
+                        coverage == Complete
+                    );
+                    assert_eq!(
+                        note.contains("Total source rows: unknown."),
+                        coverage != Complete
+                    );
+                    assert!(note.contains(&format!("Rows delivered in this response: {shown}.")));
+                    assert!(!note.contains("Rows delivered so far"));
+                    if handle.is_some() {
+                        assert!(note.contains("same `logical_session_ref`"));
+                    }
+                }
+            }
+        }
     }
 
     #[test]
@@ -306,7 +347,7 @@ mod tests {
                 ArtifactAccessMode::ResourcesRead,
             );
             assert!(
-                full.contains(&format!("{} coverage for this expression.", cov.as_str())),
+                full.contains(&format!("Source coverage: {}.", cov.as_str())),
                 "Full/empty path missing coverage: {full}"
             );
             let capped = format_coverage_preview_note(
@@ -319,7 +360,7 @@ mod tests {
                 ArtifactAccessMode::ResourcesRead,
             );
             assert!(
-                capped.contains(&format!("{} coverage for this expression.", cov.as_str())),
+                capped.contains(&format!("Source coverage: {}.", cov.as_str())),
                 "Capped path missing coverage: {capped}"
             );
             let snap = format_coverage_preview_note(
@@ -332,7 +373,7 @@ mod tests {
                 ArtifactAccessMode::ResourcesRead,
             );
             assert!(
-                snap.contains(&format!("{} coverage for this expression.", cov.as_str())),
+                snap.contains(&format!("Source coverage: {}.", cov.as_str())),
                 "SnapshotOnly path missing coverage: {snap}"
             );
         }
@@ -433,7 +474,7 @@ mod dag_compute_delivery_tests {
             Some("plasm://test"),
             None,
         )] {
-            assert!(text.contains("coverage for this expression") || text.is_empty());
+            assert!(text.contains("Source coverage:") || text.is_empty());
             for absent in [
                 "plasm_read_run_artifact",
                 "plasm_artefact_transform",

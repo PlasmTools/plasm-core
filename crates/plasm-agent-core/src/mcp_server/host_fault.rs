@@ -25,7 +25,7 @@ impl HostFault {
         use rust_mcp_sdk::schema::schema_utils::CallToolError;
         use rust_mcp_sdk::schema::CallToolResult;
         let mut result = CallToolResult::with_error(CallToolError::from_message(
-            crate::agent_presentation::render_failure(&self.0).into_string(),
+            crate::agent_presentation::render_failure_complete(&self.0).into_string(),
         ));
         // Structured content can be forwarded into model context by a host.
         // Full machine evidence therefore belongs to the existing opaque meta
@@ -42,6 +42,46 @@ impl HostFault {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn native_failure_content_preserves_every_recorded_identity() {
+        let mut failure = plasm_runtime::ExecutionFailure::new(
+            plasm_runtime::FailureCause::Upstream,
+            "rejected",
+            "provider rejected item",
+        );
+        let identities: Vec<_> = (0..75)
+            .map(|i| format!("Item/{i}/{}", "x".repeat(100)))
+            .collect();
+        failure
+            .effects
+            .push(plasm_runtime::execution_failure::EffectReceipt {
+                resolved_effects: Vec::new(),
+                entry_id: "matrix".into(),
+                capability: "write".into(),
+                completed: 75,
+                failed: 0,
+                occurrences: identities
+                    .iter()
+                    .enumerate()
+                    .map(
+                        |(i, identity)| plasm_runtime::execution_failure::EffectOccurrence {
+                            scope_path: vec!["selected".into()],
+                            occurrence_path: vec![i],
+                            source_index: i,
+                            source_identity: Some(identity.clone()),
+                            status: plasm_runtime::OperationInvocationStatus::Completed,
+                        },
+                    )
+                    .collect(),
+            });
+        let result = HostFault(failure)
+            .into_tool_result(crate::mcp_delivery::McpDeliveryProfile::ContentOnly);
+        let content = serde_json::to_string(&result.content).unwrap();
+        for identity in identities {
+            assert!(content.contains(&identity));
+        }
+        assert!(!content.contains("omitted"));
+    }
     #[test]
     fn nested_machine_paths_are_not_agent_locations() {
         let failure = plasm_runtime::ExecutionFailure::new(
@@ -261,7 +301,7 @@ mod tests {
             text.contains("1 failed [Item/b (occurrence [1] at write)]"),
             "{text}"
         );
-        assert!(text.contains("Dispatch history may overlap"), "{text}");
+        assert!(!text.contains("Dispatch history may overlap"), "{text}");
         assert!(!text.contains("completion unproven"), "{text}");
         assert!(result.structured_content.is_none());
     }

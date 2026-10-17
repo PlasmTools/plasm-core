@@ -42,7 +42,7 @@ try {
     assert.deepEqual(JSON.parse(await readFile(path.join(root, "work", file), "utf8")), snapshot);
     assert.deepEqual((await archive.getRun(runId, session.logicalSessionRef))?.native_snapshot, snapshot);
   }
-  assert.deepEqual(Object.keys(createPlasmTools(runtime)).sort(), ["plasm", "plasm_context", "plasm_run"]);
+  assert.deepEqual(Object.keys(createPlasmTools(runtime)).sort(), ["plasm", "plasm_context", "plasm_failure", "plasm_run"]);
   for (const prompt of [buildDefaultSystemLiturgy(), buildDefaultSystemLiturgy({includeEvalTerminals: true})]) {
     assert.match(prompt, /@compute/);
     assert.doesNotMatch(prompt, /plasm_read_run_artifact|plasm_artefact_transform|resources\/read/);

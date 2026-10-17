@@ -2732,6 +2732,227 @@ fn decoder_regression_fixtures_have_compilable_contracts() {
     }
 }
 
+/// Offline transport, independent expected identity sequence, no provider/model access.
+#[tokio::test]
+async fn offline_continuation_ladder_host_boundaries_and_failure() {
+    use crate::{auth::ResolvedAuth, http_transport::HttpTransport};
+    use async_trait::async_trait;
+    use plasm_compile::CompiledRequest;
+    use std::sync::Arc;
+
+    struct Pages {
+        total: usize,
+        fail_at: Option<usize>,
+    }
+    #[async_trait]
+    impl HttpTransport for Pages {
+        async fn send_compiled_http(
+            &self,
+            _: &str,
+            request: &CompiledRequest,
+            _: Option<ResolvedAuth>,
+        ) -> Result<(serde_json::Value, Option<String>), RuntimeError> {
+            if request.url_path().contains("indexed/") {
+                let id = request.url_path().rsplit('/').next().unwrap().to_string();
+                return Ok((
+                    serde_json::json!({"id": id, "n": id.parse::<usize>().unwrap()}),
+                    None,
+                ));
+            }
+            let page = match &request.query {
+                Some(Value::Object(q)) => q
+                    .get("page_index")
+                    .and_then(Value::as_number)
+                    .unwrap_or(0.0) as usize,
+                _ => 0,
+            };
+            if self.fail_at == Some(page) {
+                return Err(RuntimeError::HostTransport {
+                    source: Box::new(std::io::Error::other("offline injected page failure")),
+                });
+            }
+            let size = match &request.query {
+                Some(Value::Object(q)) => {
+                    q.get("page_limit").and_then(Value::as_number).unwrap() as usize
+                }
+                _ => panic!("pagination parameters required"),
+            };
+            let rows: Vec<_> = (page * size..((page + 1) * size).min(self.total))
+                .map(|n| serde_json::json!({"id":n.to_string(),"n":n}))
+                .collect();
+            Ok((serde_json::json!({"results": rows}), None))
+        }
+        async fn get_json_absolute(
+            &self,
+            _: &str,
+            _: Option<ResolvedAuth>,
+        ) -> Result<(serde_json::Value, Option<String>), RuntimeError> {
+            panic!("offline ladder must not issue absolute GET")
+        }
+    }
+    let cgs = plasm_core::loader::load_schema_dir(
+        &std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../fixtures/schemas/plasm_pagination_matrix"),
+    )
+    .unwrap();
+    let opts = ExecuteOptions {
+        compiled_catalog: Some(Arc::new(
+            plasm_compile::compile_cgs_capability_templates(&cgs).unwrap(),
+        )),
+        ..Default::default()
+    };
+    for provider_size in [1, 7, 20] {
+        let fixture = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../fixtures/schemas/plasm_pagination_matrix");
+        let variant = tempfile::tempdir().unwrap();
+        std::fs::copy(
+            fixture.join("domain.yaml"),
+            variant.path().join("domain.yaml"),
+        )
+        .unwrap();
+        let mapping = std::fs::read_to_string(fixture.join("mappings.yaml"))
+            .unwrap()
+            .replace("fixed: 20", &format!("fixed: {provider_size}"));
+        std::fs::write(variant.path().join("mappings.yaml"), mapping).unwrap();
+        let cgs = plasm_core::loader::load_schema_dir(variant.path()).unwrap();
+        let opts = ExecuteOptions {
+            compiled_catalog: Some(Arc::new(
+                plasm_compile::compile_cgs_capability_templates(&cgs).unwrap(),
+            )),
+            ..Default::default()
+        };
+        for total in [0, 1, 19, 20, 21, 40, 47, 60] {
+            for limit in [1, 7, 20, 25, 64] {
+                let engine = ExecutionEngine::new_with_transport(
+                    ExecutionConfig {
+                        base_url: Some("http://fixture.invalid".into()),
+                        ..Default::default()
+                    },
+                    Arc::new(Pages {
+                        total,
+                        fail_at: None,
+                    }),
+                    None,
+                );
+                let consume = StreamConsumeOpts {
+                    max_items: Some(limit),
+                    bound_kind: ConsumeBoundKind::HostPage,
+                    ..Default::default()
+                };
+                let mut mat = SessionMaterialization::new();
+                let mut result = engine
+                    .execute(
+                        &Expr::Query(QueryExpr::all("Item")),
+                        &cgs,
+                        &mut mat,
+                        None,
+                        consume.clone(),
+                        opts.clone(),
+                    )
+                    .await
+                    .unwrap();
+                let mut ids = Vec::new();
+                let mut completed = false;
+                for _ in 0..total + 3 {
+                    ids.extend(
+                        result
+                            .entities()
+                            .iter()
+                            .map(|row| row.reference.primary_slot_str().to_string()),
+                    );
+                    match result.pagination_resume.clone() {
+                        Some(resume) => {
+                            assert_eq!(result.coverage(), ResultCoverage::Partial);
+                            result = engine
+                                .execute_pagination_resume(
+                                    resume,
+                                    &cgs,
+                                    &mut mat,
+                                    None,
+                                    consume.clone(),
+                                    opts.clone(),
+                                )
+                                .await
+                                .unwrap();
+                        }
+                        None => {
+                            assert_eq!(result.coverage(), ResultCoverage::Complete);
+                            completed = true;
+                            break;
+                        }
+                    }
+                }
+                assert!(completed, "total={total}, limit={limit}");
+                assert_eq!(
+                    ids,
+                    (0..total).map(|n| n.to_string()).collect::<Vec<_>>(),
+                    "total={total}, limit={limit}"
+                );
+            }
+        }
+    }
+    let engine = ExecutionEngine::new_with_transport(
+        ExecutionConfig {
+            base_url: Some("http://fixture.invalid".into()),
+            ..Default::default()
+        },
+        Arc::new(Pages {
+            total: 47,
+            fail_at: Some(2),
+        }),
+        None,
+    );
+    let consume = StreamConsumeOpts {
+        max_items: Some(25),
+        bound_kind: ConsumeBoundKind::HostPage,
+        ..Default::default()
+    };
+    let mut mat = SessionMaterialization::new();
+    let first = engine
+        .execute(
+            &Expr::Query(QueryExpr::all("Item")),
+            &cgs,
+            &mut mat,
+            None,
+            consume.clone(),
+            opts.clone(),
+        )
+        .await
+        .unwrap();
+    let retained: Vec<_> = first
+        .entities()
+        .iter()
+        .map(|row| row.reference.clone())
+        .collect();
+    assert_eq!(
+        retained.len(),
+        40,
+        "host budget must retain the crossing provider page"
+    );
+    assert_eq!(first.coverage(), ResultCoverage::Partial);
+    let failure = engine
+        .execute_pagination_resume(
+            first.pagination_resume.clone().unwrap(),
+            &cgs,
+            &mut mat,
+            None,
+            consume,
+            opts,
+        )
+        .await
+        .unwrap_err();
+    assert!(matches!(failure, RuntimeError::HostTransport { .. }));
+    assert_eq!(
+        first
+            .entities()
+            .iter()
+            .map(|row| row.reference.clone())
+            .collect::<Vec<_>>(),
+        retained
+    );
+    assert_eq!(first.coverage(), ResultCoverage::Partial);
+}
+
 #[tokio::test]
 async fn canonical_target_survives_ambient_metadata_on_outbound_requests() {
     use crate::auth::ResolvedAuth;

@@ -34,8 +34,8 @@ pub enum ValueDomainViolation {
     PatternConfiguration,
     #[error("enum membership is missing")]
     MissingEnumMembership,
-    #[error("value is not an allowed enum member")]
-    UnknownEnumMember,
+    #[error("value is not an allowed enum member; expected one of {allowed:?}")]
+    UnknownEnumMember { allowed: Vec<String> },
     #[error("value is below the minimum constraint")]
     BelowMinimum,
     #[error("value is above the maximum constraint")]

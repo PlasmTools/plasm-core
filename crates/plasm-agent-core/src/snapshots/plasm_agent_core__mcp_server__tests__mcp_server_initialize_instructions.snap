@@ -1,5 +1,5 @@
 ---
-source: plasm-oss/crates/plasm-agent-core/src/mcp_server/tests.rs
+source: crates/plasm-agent-core/src/mcp_server/tests.rs
 expression: "plasm_core::prompt_render::MCP_INITIALIZE_WORKFLOW"
 ---
 # Plasm workflow
@@ -10,5 +10,5 @@ Plan from the current requirement, taught symbols and observed results. Stop wit
 2. Teaching exposes declarations, not execution authority or acquired values. Routing errors are failures. Follow prerequisites: call producers and bind outputs to consumer arguments.
 3. Write a Python `Program` using the `plasm` reference and exact taught symbols, wire names and enum literals. `build` declares the DAG; typed `@compute` derives values. Submit to `plasm`; clean reads may execute inline, reviewed plans return a `run_ref` for `plasm_run`.
 
-4. Before writes, verify targets against observed identity and selection conditions, not rank/count alone. Preserve selection evidence. Previews are incomplete: inspect full values or compute from them. Resolve missing/conflicting evidence. Bind verified targets and observed inputs; calculate inside the DAG. Preserve unrequested properties; distinguish identity updates from replacement. Review all effects, including dependent writes.
-5. Compare observations with requested scope, effects and preserved properties. Calls establish only declared results. After call or terminal rejection, repair the unfinished requirement in-session; changing call shape alone does not complete it.
+4. Before writes, bind each requested selection condition and destination to observed evidence. Keep unresolved conditions explicit; do not act on those targets. Rank, count and membership in a related collection do not establish the requested predicate. Preserve source identity through joins and aggregation. Previews are incomplete: inspect full values or compute from them. Check derived values against their source and intended invariants before using them in effects. Bind verified targets and observed inputs; calculate inside the DAG. Preserve unrequested properties; distinguish identity updates from replacement. Review all effects, including dependent writes.
+5. Compare observations with requested scope, effects and preserved properties. Calls establish only declared results. After call or terminal rejection, repair the unfinished requirement in-session; changing call shape alone does not complete it. Preserve the verified target set and permitted effects during recovery. A rejected operation establishes failure of that attempt, not global infeasibility. Separate the remaining requirement from the resources tried; extend discovery when available options are unresolved. After partial or unknown effects, re-read state and reconcile receipts before further writes. Check local transformations before attributing unexpected values to the service.

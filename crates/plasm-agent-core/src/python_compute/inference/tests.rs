@@ -1,6 +1,65 @@
 use super::*;
 
 #[test]
+fn mapping_record_default_lookup_does_not_materialize_a_field() {
+    let row = Type {
+        shape: ValueShape::MappingRecord {
+            record: Box::new(fields(&[("title", Type::scalar(FieldType::String))])),
+        },
+        domain: None,
+        nullable: false,
+    };
+    // Mapping views retain ordinary Python default-lookup semantics. A get
+    // with a default is not evidence that the named field was materialized.
+    let output = infer_body(
+        "\n    return str(row.get('missing', ''))\n",
+        &[("row", &row)],
+        "",
+    )
+    .unwrap();
+    assert_eq!(output, Type::scalar(FieldType::String));
+}
+
+#[test]
+fn diagnostic_explains_generated_types_and_quotes_compute_source() {
+    let mut nominal = Type::scalar(FieldType::Integer);
+    nominal.domain = Some(DomainRef {
+        entry_id: "matrix".into(),
+        catalog_hash: "private-pin".into(),
+        value_ref: ValueDomainKey::new("item_number").unwrap(),
+    });
+    let error = infer_body(
+        "\n    return value.startswith('x')\n",
+        &[("value", &nominal)],
+        "",
+    )
+    .err()
+    .expect("integer has no startswith");
+    let text = error.to_string();
+    assert!(text.contains("startswith"), "{text}");
+    assert!(
+        text.contains("Compute source: return value.startswith"),
+        "{text}"
+    );
+    assert!(!text.contains("PlasmAnalysisType"), "{text}");
+    assert!(!text.contains("private-pin"), "{text}");
+    if let InferenceError::Diagnostics { mut diagnostics } = error {
+        diagnostics
+            .type_labels
+            .insert("PlasmAnalysisType999".into(), "integer".into());
+        diagnostics.entries[0].excerpt = Some("def compute(value: PlasmAnalysisType999):".into());
+        let rendered = diagnostics.to_string();
+        assert!(
+            rendered.contains("def compute(value: integer):"),
+            "{rendered}"
+        );
+        assert!(!rendered.contains("PlasmAnalysisType"), "{rendered}");
+    } else {
+        panic!("expected checker diagnostics");
+    }
+}
+
+#[test]
 fn selection_evidence_follows_nominal_records_not_equal_shapes() {
     let row = Type::record(
         BTreeMap::from([("id".into(), Type::scalar(FieldType::Integer))]),

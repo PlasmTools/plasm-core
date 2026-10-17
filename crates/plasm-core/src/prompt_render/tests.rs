@@ -2151,7 +2151,8 @@ fn python_reference_includes_composition_contract() {
 
 #[test]
 fn mcp_static_tool_descriptions_byte_budget() {
-    const MAX_WORKFLOW_BYTES: usize = 1600;
+    // Includes the committed execution-evidence and recovery contract.
+    const MAX_WORKFLOW_BYTES: usize = 2304;
 
     let workflow = super::MCP_INITIALIZE_WORKFLOW;
     let plasm_tool = super::PLASM_MCP_TOOL_DESCRIPTION;
@@ -2213,9 +2214,9 @@ fn plasm_tool_description_stats() {
     let full = super::PLASM_TOOL_DESCRIPTION;
     assert!(full.len() <= super::PLASM_TOOL_DESCRIPTION_MAX_BYTES);
     let reference = include_str!("assets/python-plasm-dag.txt");
-    // Temporal, money, callbacks, recovery, structural inference and authority meet.
+    // Includes typed sequence unpacking, ranked selection and compute budgets.
     assert!(
-        reference.len() < 4_500,
+        reference.len() <= 5_500,
         "teaching card exceeded semantic-delta budget"
     );
     assert!(

@@ -219,8 +219,110 @@ mod tests {
     fn row_26_has_a_presentation_continuation() {
         let step = synthetic_published_result_step(27, None);
         let out = publish_plasm_result_steps(None, None, &[step]);
-        assert!(out.markdown.contains("more pages"), "{}", out.markdown);
+        assert!(out.markdown.contains("Next read:"), "{}", out.markdown);
         assert!(out.tool_meta.unwrap()["plasm"]["paging"][0]["next_run_ref"].is_string());
+    }
+
+    #[test]
+    fn offline_continuation_ladder_delivery_boundaries() {
+        for count in [0, 1, 24, 25, 26, 40, 47, 60] {
+            for limit in [1, 7, 25, 64] {
+                for partial in [false, true] {
+                    let session = paging_session();
+                    let backend = partial.then(|| PagingHandle::mint_monotonic(900));
+                    let source = with_coverage(
+                        synthetic_published_result_step_with_paging(count, None, backend.clone()),
+                        if partial {
+                            plasm_runtime::ResultCoverage::Partial
+                        } else {
+                            plasm_runtime::ResultCoverage::Complete
+                        },
+                    );
+                    let expected: Vec<_> = source
+                        .result
+                        .entities()
+                        .iter()
+                        .map(|row| row.reference.clone())
+                        .collect();
+                    let policy = McpResultTransportPolicy {
+                        in_band_entity_rows: limit,
+                        ..Default::default()
+                    };
+                    let mut output = super::publish_plasm_result_steps_with_policy(
+                        &session,
+                        None,
+                        None,
+                        None,
+                        &[source],
+                        &policy,
+                    )
+                    .unwrap();
+                    let mut delivered = Vec::new();
+                    let mut terminated = false;
+                    for _ in 0..count + 2 {
+                        let step = &output.delivered_steps[0];
+                        delivered.extend(
+                            step.result
+                                .entities()
+                                .iter()
+                                .map(|row| row.reference.clone()),
+                        );
+                        assert_eq!(
+                            step.result.coverage(),
+                            if partial {
+                                plasm_runtime::ResultCoverage::Partial
+                            } else {
+                                plasm_runtime::ResultCoverage::Complete
+                            }
+                        );
+                        if partial {
+                            assert!(output.markdown.contains("Source coverage: partial."));
+                        }
+                        let next = step.result.paging_handle.clone();
+                        if next == backend {
+                            terminated = true;
+                            break;
+                        }
+                        let handle = next.expect("undelivered rows require a handle");
+                        assert!(output.markdown.contains("Next read:"));
+                        let cursor = session.peek_synthetic_paging_resume(&handle).unwrap();
+                        let result = super::super::run_line::synthetic_page_result(
+                            &session, &handle, cursor, None,
+                        )
+                        .unwrap();
+                        assert_eq!(result.stats.network_requests, 0);
+                        assert!(result.operations.is_empty());
+                        if session.peek_synthetic_paging_resume(&handle).is_none() {
+                            assert!(crate::mcp_server::compile_page_continuation(
+                                &session, &handle, 0
+                            )
+                            .is_err());
+                        }
+                        let next_step = PublishedResultStep {
+                            result: Arc::new(result),
+                            ..step.clone()
+                        };
+                        output = super::publish_plasm_result_steps_with_policy(
+                            &session,
+                            None,
+                            None,
+                            None,
+                            &[next_step],
+                            &policy,
+                        )
+                        .unwrap();
+                    }
+                    assert!(
+                        terminated,
+                        "count={count}, limit={limit}, partial={partial}"
+                    );
+                    assert_eq!(
+                        delivered, expected,
+                        "ordered membership must survive delivery"
+                    );
+                }
+            }
+        }
     }
 
     #[test]
@@ -574,7 +676,8 @@ mod tests {
             out.markdown
         );
         assert!(
-            out.markdown.contains("25/49 rows delivered"),
+            out.markdown
+                .contains("Rows delivered in this response: 25.\nObserved collection rows: 49."),
             "must report the actual displayed prefix: {}",
             out.markdown
         );
@@ -589,7 +692,7 @@ mod tests {
             out.markdown
         );
         assert!(
-            out.markdown.contains("more pages"),
+            out.markdown.contains("Next read:"),
             "a stored snapshot must not hide continuation: {}",
             out.markdown
         );
@@ -683,7 +786,8 @@ mod tests {
             out.markdown
         );
         assert!(
-            out.markdown.contains("25/40 rows delivered"),
+            out.markdown
+                .contains("Rows delivered in this response: 25.\nObserved collection rows: 40."),
             "expected row-limit note: {}",
             out.markdown
         );
@@ -828,11 +932,12 @@ mod tests {
         assert!(out.markdown.contains("\"m0\""), "{}", out.markdown);
         assert!(!out.markdown.contains("\"m10\""), "{}", out.markdown);
         assert!(
-            out.markdown.contains("10/600 rows delivered"),
+            out.markdown
+                .contains("Rows delivered in this response: 10.\nObserved collection rows: 600."),
             "{}",
             out.markdown
         );
-        assert!(out.markdown.contains("more pages"), "{}", out.markdown);
+        assert!(out.markdown.contains("Next read:"), "{}", out.markdown);
     }
 
     #[test]
@@ -882,7 +987,9 @@ mod tests {
                     }
                     if count > 0 {
                         assert_eq!(out.markdown.matches("\"m0\"").count(), 2);
-                        assert!(!out.markdown.contains(&format!("0/{count} rows delivered")));
+                        assert!(!out
+                            .markdown
+                            .contains(&format!("Rows delivered in this response: 0.\nObserved collection rows: {count}.")));
                         // A string that fits a cell is exact, even when the aggregate table is too large.
                         assert!(out.markdown.contains(&"é".repeat(500)));
                     } else {
@@ -970,13 +1077,13 @@ mod tests {
             &policy,
         );
         assert!(
-            out.markdown
-                .contains("partial coverage for this expression."),
+            out.markdown.contains("Source coverage: partial."),
             "CappedInline must mention coverage: {}",
             out.markdown
         );
         assert!(
-            out.markdown.contains("2/10 rows delivered"),
+            out.markdown
+                .contains("Rows delivered in this response: 2.\nObserved collection rows: 10."),
             "CappedInline should report shown/total: {}",
             out.markdown
         );
@@ -1000,8 +1107,7 @@ mod tests {
         );
         let out = publish_plasm_result_steps(None, None, std::slice::from_ref(&step));
         assert!(
-            out.markdown
-                .contains("partial coverage for this expression."),
+            out.markdown.contains("Source coverage: partial."),
             "SnapshotOnly must mention coverage: {}",
             out.markdown
         );
@@ -1039,14 +1145,14 @@ mod tests {
             out.markdown
         );
         assert!(
-            out.markdown
-                .contains("unknown coverage for this expression."),
+            out.markdown.contains("Source coverage: unknown."),
             "exactly-full host page must stamp Unknown coverage: {}",
             out.markdown
         );
         assert!(
-            out.markdown.contains("25 rows ·"),
-            "shown/total must remain even when equal: {}",
+            out.markdown
+                .contains("Rows delivered in this response: 25."),
+            "delivered count must remain when the observed window is fully shown: {}",
             out.markdown
         );
     }
@@ -1059,8 +1165,7 @@ mod tests {
         );
         let out = publish_plasm_result_steps(None, None, std::slice::from_ref(&step));
         assert!(
-            out.markdown
-                .contains("partial coverage for this expression."),
+            out.markdown.contains("Source coverage: partial."),
             "Partial host page must stamp coverage: {}",
             out.markdown
         );
@@ -1100,14 +1205,8 @@ mod tests {
             "morgan section missing: {}",
             out.markdown
         );
-        let unknown_hits = out
-            .markdown
-            .matches("unknown coverage for this expression.")
-            .count();
-        let partial_hits = out
-            .markdown
-            .matches("partial coverage for this expression.")
-            .count();
+        let unknown_hits = out.markdown.matches("Source coverage: unknown.").count();
+        let partial_hits = out.markdown.matches("Source coverage: partial.").count();
         assert_eq!(
             unknown_hits, 1,
             "expected one Unknown stamp: {}",
@@ -1139,13 +1238,12 @@ mod tests {
             &policy,
         );
         assert!(
-            out.markdown.contains("more pages"),
+            out.markdown.contains("Next read:"),
             "expected bounded resumable page: {}",
             out.markdown
         );
         assert!(
-            out.markdown
-                .contains("unknown coverage for this expression."),
+            out.markdown.contains("Source coverage: unknown."),
             "bounded preview must still stamp coverage: {}",
             out.markdown
         );

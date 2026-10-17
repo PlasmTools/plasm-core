@@ -47,6 +47,18 @@ impl std::fmt::Display for AgentNodePath {
 }
 
 pub fn render_failure(failure: &plasm_runtime::ExecutionFailure) -> AgentMessage {
+    render_failure_with_limit(failure, Some(4))
+}
+
+/// Hosts without a failure-result reader must include all recorded identities.
+pub(crate) fn render_failure_complete(failure: &plasm_runtime::ExecutionFailure) -> AgentMessage {
+    render_failure_with_limit(failure, None)
+}
+
+fn render_failure_with_limit(
+    failure: &plasm_runtime::ExecutionFailure,
+    preview_limit: Option<usize>,
+) -> AgentMessage {
     use plasm_runtime::{MutationDispatchStatus, RecoveryDisposition};
     let visible_node = failure
         .node
@@ -57,6 +69,22 @@ pub fn render_failure(failure: &plasm_runtime::ExecutionFailure) -> AgentMessage
         Some(node) => format!("Execution stopped at {node}: {}", failure.diagnostic()),
         None => format!("Execution stopped: {}", failure.diagnostic()),
     }];
+    if let Some(input) = &failure.input_occurrence {
+        let coordinate = input
+            .occurrence_path
+            .iter()
+            .map(usize::to_string)
+            .collect::<Vec<_>>()
+            .join("/");
+        lines.push(match &input.source_identity {
+            Some(identity) => {
+                format!("Primary failure input occurrence [{coordinate}]: {identity}.")
+            }
+            None => format!("Primary failure input occurrence [{coordinate}]."),
+        });
+    } else if !failure.occurrence_path.is_empty() {
+        lines.push(format!("Failed occurrence: {:?}.", failure.occurrence_path));
+    }
     let mut effects = Vec::new();
     for receipt in &failure.effects {
         let identities = |status: plasm_runtime::OperationInvocationStatus| {
@@ -66,7 +94,7 @@ pub fn render_failure(failure: &plasm_runtime::ExecutionFailure) -> AgentMessage
                 .filter(|occurrence| occurrence.status == status);
             let count = matching.clone().count();
             let mut visible = matching
-                .take(4)
+                .take(preview_limit.unwrap_or(usize::MAX))
                 .map(|occurrence| {
                     let path = occurrence
                         .occurrence_path
@@ -85,19 +113,19 @@ pub fn render_failure(failure: &plasm_runtime::ExecutionFailure) -> AgentMessage
                         }
                     );
                     match &occurrence.source_identity {
-                        Some(identity) if identity.chars().count() <= 96 => {
+                        Some(identity)
+                            if preview_limit.is_none() || identity.chars().count() <= 96 =>
+                        {
                             format!("{identity} ({coordinate})")
                         }
-                        Some(_) => format!(
-                            "{coordinate} (identity exceeds inline limit; see execution evidence)"
-                        ),
+                        Some(_) => format!("{coordinate} (identity omitted from preview)"),
                         None => coordinate,
                     }
                 })
                 .collect::<Vec<_>>();
             if count > visible.len() {
                 visible.push(format!(
-                    "{} more; full identities in execution evidence",
+                    "{} more identities omitted from preview",
                     count - visible.len()
                 ));
             }
@@ -132,12 +160,19 @@ pub fn render_failure(failure: &plasm_runtime::ExecutionFailure) -> AgentMessage
             ));
         }
     }
-    let has_dispatch_evidence = !failure.dispatches.is_empty();
+    let has_unresolved_dispatch = failure
+        .dispatches
+        .iter()
+        .any(|dispatch| dispatch.status == MutationDispatchStatus::Unresolved);
     let mut dispatches = std::collections::BTreeMap::new();
     for dispatch in &failure.dispatches {
         let status = match dispatch.status {
-            MutationDispatchStatus::Unresolved => "without transport response",
-            MutationDispatchStatus::ResponseReceived => "with transport response",
+            MutationDispatchStatus::Unresolved => {
+                "requests sent without a response; effects unknown"
+            }
+            // A received response is already explained by the diagnostic and
+            // does not establish an additional completed or failed operation.
+            MutationDispatchStatus::ResponseReceived => continue,
         };
         *dispatches
             .entry((
@@ -152,11 +187,8 @@ pub fn render_failure(failure: &plasm_runtime::ExecutionFailure) -> AgentMessage
     }
     if !effects.is_empty() {
         lines.push(format!("Effects: {}.", effects.join("; ")));
-        if has_dispatch_evidence {
-            lines.push("Dispatch history may overlap completed and failed effects above.".into());
-        }
     }
-    if failure.effects_unresolved && !has_dispatch_evidence {
+    if failure.effects_unresolved && !has_unresolved_dispatch {
         lines.push("Some effects remain unresolved.".into());
     }
     lines.push(
@@ -177,6 +209,26 @@ pub fn render_failure(failure: &plasm_runtime::ExecutionFailure) -> AgentMessage
 mod tests {
     use super::*;
     use proptest::prelude::*;
+
+    #[test]
+    fn rejected_input_is_visible_even_without_a_failed_receipt() {
+        let failure = plasm_runtime::ExecutionFailure::new(
+            plasm_runtime::FailureCause::Upstream,
+            "upstream_rejection",
+            "Provider rejected the operation (status 422): Already set",
+        )
+        .qualify_effects(&plasm_runtime::OperationInvocationAddress {
+            scope_path: vec!["__py7".into()],
+            occurrence_path: vec![3],
+            source_index: 3,
+            source_identity: Some("Item:b".into()),
+        });
+        let text = render_failure(&failure);
+        assert!(text.contains("status 422): Already set"));
+        assert!(text.contains("Primary failure input occurrence [3]: Item:b"));
+        assert!(!text.contains("__py7"));
+        assert!(!text.contains("completed"));
+    }
 
     #[test]
     fn nested_effects_keep_distinct_coordinates_when_local_indexes_repeat() {
@@ -227,7 +279,7 @@ mod tests {
             prop_assert!(text.len() < 2400);
             let count_text = format!("{} completed", count);
             prop_assert!(text.contains(&count_text));
-            prop_assert!(text.contains("full identities in execution evidence"));
+            prop_assert!(text.contains("identities omitted from preview"));
             prop_assert_eq!(serde_json::to_value(&failure).unwrap(), before);
         }
     }

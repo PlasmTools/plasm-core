@@ -94,6 +94,11 @@ pub struct ExecutionFailureDetails {
     pub node: Option<String>,
     pub occurrence_path: Vec<usize>,
     pub catalog_digest: Option<String>,
+    /// Innermost input occurrence of the primary failure. Concurrent merge keeps
+    /// the primary diagnostic and this address together. Not necessarily the
+    /// receiver of a nested operation, so presentation must label it as input.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub input_occurrence: Option<crate::OperationInvocationAddress>,
     pub effects: Vec<EffectReceipt>,
     pub dispatches: Vec<crate::MutationDispatch>,
     /// A failure after dispatch is not evidence that no effect occurred.
@@ -223,6 +228,7 @@ impl ExecutionFailure {
             node: None,
             occurrence_path: Vec::new(),
             catalog_digest: None,
+            input_occurrence: None,
             effects: Vec::new(),
             dispatches: Vec::new(),
             effects_unresolved: false,
@@ -291,6 +297,9 @@ impl ExecutionFailure {
     /// Qualify scalar receipts at the same scheduler boundary as successful acks.
     /// This changes attribution only, never counts, certainty or recovery authority.
     pub fn qualify_effects(mut self, address: &crate::OperationInvocationAddress) -> Self {
+        if self.input_occurrence.is_none() {
+            self.input_occurrence = Some(address.clone());
+        }
         for receipt in &mut self.effects {
             if !receipt.occurrences.is_empty() {
                 continue;
@@ -544,6 +553,35 @@ impl std::error::Error for ExecutionFailure {}
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn failure_without_receipt_retains_innermost_input() {
+        let inner = crate::OperationInvocationAddress {
+            scope_path: vec!["items".into(), "write".into()],
+            occurrence_path: vec![2, 7],
+            source_index: 7,
+            source_identity: Some("Item/b".into()),
+        };
+        let outer = crate::OperationInvocationAddress {
+            occurrence_path: vec![2],
+            source_identity: Some("Group/a".into()),
+            ..inner.clone()
+        };
+        let failure =
+            ExecutionFailure::new(FailureCause::Upstream, "upstream_rejection", "already set")
+                .qualify_effects(&inner)
+                .qualify_effects(&outer);
+        assert_eq!(failure.input_occurrence, Some(inner));
+        assert!(failure.effects.is_empty());
+        let restored: ExecutionFailure =
+            serde_json::from_value(serde_json::to_value(&failure).unwrap()).unwrap();
+        assert_eq!(restored.input_occurrence, failure.input_occurrence);
+        let merged = failure.clone().merge(
+            ExecutionFailure::new(FailureCause::Upstream, "other_rejection", "other rejected")
+                .qualify_effects(&outer),
+        );
+        assert_eq!(merged.diagnostic(), failure.diagnostic());
+        assert_eq!(merged.input_occurrence, failure.input_occurrence);
+    }
     #[test]
     fn occurrence_qualification_preserves_counts_and_nested_addresses() {
         let address = crate::OperationInvocationAddress {

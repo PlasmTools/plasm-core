@@ -30,7 +30,6 @@ fn step_section_header(i: usize, total_steps: usize, label: &str, count_label: &
 }
 
 fn append_paging_if_needed(
-    sections: &mut String,
     paging: &mut Vec<PlasmPagingStepMeta>,
     step: &PublishedResultStep,
     resolved: &ResolvedStepPublish,
@@ -44,10 +43,6 @@ fn append_paging_if_needed(
         returned_count: resolved.row_count,
         next_run_ref: handle.clone(),
     });
-    sections.push_str(&format!(
-        "\n\nmore pages — call `plasm_run` with `run_ref: \"{}\"`.",
-        handle.as_str()
-    ));
 }
 
 fn append_coverage_note(sections: &mut String, resolved: &ResolvedStepPublish, plan: &PublishPlan) {
@@ -72,7 +67,7 @@ fn append_coverage_note(sections: &mut String, resolved: &ResolvedStepPublish, p
             || resolved.delivery_range.end < resolved.source_rows)
     {
         sections.push_str(&format!(
-            "\nDelivery range: {}–{} of {} observed rows.\n",
+            "\nDelivery range within this observed collection: {}–{} of {}.\n",
             resolved.delivery_range.start + 1,
             resolved.delivery_range.end,
             resolved.source_rows
@@ -106,7 +101,7 @@ fn build_step_section(
     } else {
         append_coverage_note(sections, resolved, plan);
     }
-    append_paging_if_needed(sections, paging, step, resolved, i);
+    append_paging_if_needed(paging, step, resolved, i);
 }
 
 pub(crate) fn build_inline_bodies(

@@ -91,11 +91,14 @@ pub struct CapabilityMatchReceipt {
     pub matches: Vec<CapabilityIntentMatch>,
 }
 impl CapabilityMatchReceipt {
+    /// Exposure preserves unresolved relevance. A judgment of uncertainty is not
+    /// evidence for excluding a capability; it remains uncertain in this receipt.
+    /// Retrieval authorization and execution admission remain separate boundaries.
     pub fn selected(&self, retrieval: &RetrievalReceipt) -> Vec<CapabilityRef> {
         let ids: BTreeSet<_> = self
             .matches
             .iter()
-            .filter(|m| m.choice == MatchChoice::Relevant)
+            .filter(|m| matches!(m.choice, MatchChoice::Relevant | MatchChoice::Uncertain))
             .map(|m| &m.capability_id)
             .collect();
         retrieval
@@ -544,6 +547,52 @@ mod tests {
         serde_json::to_string(&json!({"model":JEV_MODEL,"provider":"TypeSafe","answers":answers}))
             .unwrap()
     }
+
+    #[test]
+    fn uncertainty_preserves_exposure_without_rewriting_judgments() {
+        let (intent, mut retrieval) = fixture();
+        let original = retrieval.candidates[0].clone();
+        retrieval.candidates = ["inspect", "modify", "excluded"]
+            .into_iter()
+            .map(|name| {
+                let mut candidate = original.clone();
+                candidate.id = name.into();
+                candidate.reference.capability = name.into();
+                candidate
+            })
+            .collect();
+        retrieval.candidates[1].document.operation.kind =
+            plasm_core::schema::CapabilityKind::Action;
+        let issued = issue_batches(JEV_MODEL, &intent, &retrieval).unwrap();
+        let mut answers = Vec::new();
+        for batch in &issued {
+            let choices: Vec<_> = batch
+                .bindings
+                .values()
+                .map(|id| {
+                    if id == "excluded" {
+                        MatchChoice::Unrelated
+                    } else {
+                        MatchChoice::Uncertain
+                    }
+                })
+                .collect();
+            answers.extend(decode_batch(batch, &response(batch, &choices)).unwrap());
+        }
+        let receipt = finish_selection(answers, &retrieval, &issued).unwrap();
+        assert_eq!(
+            receipt.selected(&retrieval),
+            retrieval.candidates[..2]
+                .iter()
+                .map(|candidate| candidate.reference.clone())
+                .collect::<Vec<_>>()
+        );
+        assert!(receipt
+            .matches
+            .iter()
+            .filter(|m| m.capability_id != "excluded")
+            .all(|m| m.choice == MatchChoice::Uncertain));
+    }
     proptest! {
         #[test]
         fn relevance_roundtrip_preserves_exact_selection(mask in prop::collection::vec(0u8..3,1..16)) {
@@ -560,7 +609,7 @@ mod tests {
             let receipt=finish_selection(answers,&wire,&batches).unwrap();
             let decoded:CapabilityMatchReceipt=serde_json::from_str(&serde_json::to_string(&receipt).unwrap()).unwrap();
             prop_assert_eq!(&receipt,&decoded);
-            prop_assert_eq!(receipt.selected(&wire).len(),mask.iter().filter(|&&m|m==2).count());
+            prop_assert_eq!(receipt.selected(&wire).len(),mask.iter().filter(|&&m|m!=0).count());
             for batch in batches {prop_assert!(batch.body.len()<=TARGET_PAGE_BYTES);}
         }
     }
@@ -604,7 +653,7 @@ mod tests {
             let result = pages.finish(&retrieval).unwrap();
             prop_assert_eq!(seen.len(), mask.len());
             let expected: Vec<_> = retrieval.candidates.iter().enumerate()
-                .filter(|(i,_)| mask[*i] == 2).map(|(_,c)| c.reference.clone()).collect();
+                .filter(|(i,_)| mask[*i] != 0).map(|(_,c)| c.reference.clone()).collect();
             let wire: CapabilityMatchReceipt = serde_json::from_str(&serde_json::to_string(&result).unwrap()).unwrap();
             prop_assert_eq!(wire.selected(&retrieval), expected);
         }

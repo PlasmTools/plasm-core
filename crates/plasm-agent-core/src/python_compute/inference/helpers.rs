@@ -101,7 +101,7 @@ fn checked_type(
         AnalysisOutcome::Inferred(graph) => graph,
         AnalysisOutcome::Rejected(errors) => {
             return Err(InferenceError::Diagnostics {
-                diagnostics: body_diagnostics(errors, source),
+                diagnostics: body_diagnostics(errors, source, Some(declarations)),
             })
         }
     };

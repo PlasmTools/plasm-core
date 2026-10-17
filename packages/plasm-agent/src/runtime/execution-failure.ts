@@ -27,6 +27,10 @@ export const executionFailureSchema = z.object({
   node: z.string().nullable(),
   occurrence_path: z.array(z.number().int().nonnegative()),
   catalog_digest: z.string().nullable(),
+  input_occurrence: z.object({
+    scope_path: z.array(z.string()), occurrence_path: z.array(z.number().int().nonnegative()),
+    source_index: z.number().int().nonnegative(), source_identity: z.string().nullable(),
+  }).strict().optional(),
   effects: z.array(z.object({ resolved_effects: z.array(resolvedEffectEvidenceSchema).optional(), entry_id: z.string(), capability: z.string(), completed: z.number().int().nonnegative(), failed: z.number().int().nonnegative(), occurrences: z.array(z.object({ scope_path: z.array(z.string()), occurrence_path: z.array(z.number().int().nonnegative()), source_index: z.number().int().nonnegative(), source_identity: z.string().nullable(), status: z.enum(["completed", "failed"]) }).strict()) }).strict()),
   dispatches: z.array(z.object({
     resolved_effect: resolvedEffectEvidenceSchema.optional(),

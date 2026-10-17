@@ -9,6 +9,37 @@ fn cgs() -> CGS {
 }
 
 #[test]
+fn ambiguous_projection_identifies_both_matching_contracts() {
+    let left = ValueContract::record(
+        BTreeMap::from([("left".into(), ValueContract::scalar(FieldType::String))]),
+        Default::default(),
+    );
+    let right = ValueContract::record(
+        BTreeMap::from([("right".into(), ValueContract::scalar(FieldType::Integer))]),
+        Default::default(),
+    );
+    let contract = ValueContract {
+        shape: ValueShape::Union {
+            variants: vec![left.clone(), right.clone()],
+        },
+        nullable: false,
+        domain: None,
+    };
+    let value = crate::json_value_to_plasm_value(&serde_json::json!({"left":"x","right":1}));
+    let error = contract
+        .observed_value(&value, &cgs(), "matrix")
+        .unwrap_err();
+    assert!(
+        matches!(&error, ValueContractError::AmbiguousUnionProjection { first, other } if **first == left && **other == right)
+    );
+    let message = error.to_string();
+    assert!(
+        message.contains("left") && message.contains("right"),
+        "{message}"
+    );
+}
+
+#[test]
 fn closed_record_projection_excludes_storage_fields_but_keeps_declared_names() {
     let record = ValueContract::record(
         BTreeMap::from([

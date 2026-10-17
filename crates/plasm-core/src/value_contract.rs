@@ -259,8 +259,11 @@ pub enum ValueContractError {
     ReferenceTargetMissing { target: String },
     #[error("observation matches no union variant")]
     NoUnionVariantMatches,
-    #[error("observed union projection is ambiguous")]
-    AmbiguousUnionProjection,
+    #[error("observed union projection is ambiguous: both {first} and {other} match but produce different values; supply an unambiguous input contract")]
+    AmbiguousUnionProjection {
+        first: Box<ValueContract>,
+        other: Box<ValueContract>,
+    },
     #[error("value nesting exceeded the supported limit")]
     ValidationDepthExceeded,
     #[error("value domain catalog `{entry_id}` is not loaded")]
@@ -579,13 +582,16 @@ impl ValueContract {
                     variant
                         .validate_in(&projected, cgs, entry, "observation", catalogs)
                         .ok()?;
-                    Some(projected)
+                    Some((variant, projected))
                 });
-                let result = candidates
+                let (first, result) = candidates
                     .next()
                     .ok_or(ValueContractError::NoUnionVariantMatches)?;
-                if candidates.any(|candidate| candidate != result) {
-                    return Err(ValueContractError::AmbiguousUnionProjection);
+                if let Some((other, _)) = candidates.find(|(_, candidate)| *candidate != result) {
+                    return Err(ValueContractError::AmbiguousUnionProjection {
+                        first: Box::new(first.clone()),
+                        other: Box::new(other.clone()),
+                    });
                 }
                 Ok(result)
             }

@@ -7,6 +7,28 @@ Catalog-native TypeScript agent framework for plasm-oss. Capability is authored 
 
 There is **no `tools/` directory**. See the architecture plan (`.cursor/plans/eve_plasm_language_layer_*.plan.md` in the parent monorepo) for full thesis.
 
+## Failure results
+
+Execution failures retain the provider diagnostic and identify the primary failed
+input when available. Partial-outcome previews include a `failure_ref` for the
+read-only `plasm_failure` tool. Read subsequent pages using the returned offset;
+this reads recorded outcomes without calling the backend or retrying execution.
+References survive tool-set recreation within the same runtime; the latest 128
+failures are retained. Completed and failed occurrences remain distinct, with
+their source scope and input position. A failed invocation does not prove that
+the provider made no change. These results describe one execution, not a
+cross-vendor transaction or an authoritative plan for unfinished work.
+
+Native MCP, which does not expose this TypeScript tool, includes every recorded
+identity directly in failure content. Machine metadata remains separate.
+
+Compiler corrections display semantic types in place of generated analysis type
+names, quote the relevant checker-source line, list allowed enum values, and
+identify conflicting union projections. Checker line numbers still refer to the
+generated compute module. Concurrent failures retain a primary diagnostic and
+input address alongside merged effect receipts and dispatch records; this is not
+a claim that every branch's diagnostic is exposed.
+
 ## Layout
 
 ```
@@ -371,3 +393,11 @@ Only explicit program results enter tool context. Select, aggregate and compute
 inside the DAG before returning a result. Complete run snapshots remain in the
 host archive for audits; the agent has no snapshot-read or transform tool.
 The engine package supplies the Monty worker; see `../plasm-engine/README.md`.
+
+Result footers distinguish rows delivered in this response, rows in the current
+observed collection, and source completeness. Partial or unknown coverage never
+turns an observed row count into a source total. A supplied continuation names the
+next `plasm_run` call in the same logical session; it can deliver buffered rows or
+continue acquisition. Counts are scoped to the current result collection, not a
+cumulative total across source batches or the entire vendor database. A partial
+result without a continuation does not invent a runnable next read.

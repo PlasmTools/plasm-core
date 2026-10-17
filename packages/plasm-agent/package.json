@@ -88,6 +88,7 @@
     "test:session-extension": "node scripts/run-plasm-cli.mjs scripts/test-session-extension.ts",
     "test:session-input-recovery": "node scripts/run-plasm-cli.mjs scripts/test-session-input-recovery.ts",
     "test:failure-context-projection": "node scripts/run-plasm-cli.mjs scripts/test-failure-context-projection.ts",
+    "test:failure-results": "node scripts/run-plasm-cli.mjs scripts/test-failure-results.ts",
     "test:tool-call-recovery": "node scripts/run-plasm-cli.mjs scripts/test-tool-call-recovery.ts",
     "test:discovery-queue": "node scripts/run-plasm-cli.mjs scripts/test-discovery-queue.ts",
     "test:session-postgres": "node scripts/run-plasm-cli.mjs scripts/test-session-postgres.ts",

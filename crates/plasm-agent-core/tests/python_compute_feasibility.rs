@@ -282,7 +282,7 @@ async fn cgs_enumeration_is_both_taught_and_enforced() {
         plasm_agent_core::program_rejection::PythonComputeError::ComputeInputValueContract(
             plasm_core::value_contract::ValueContractError::Domain {
                 ref path,
-                source: plasm_core::ValueDomainViolation::UnknownEnumMember,
+                source: plasm_core::ValueDomainViolation::UnknownEnumMember { .. },
             }
         ) if path == "state"
     ));

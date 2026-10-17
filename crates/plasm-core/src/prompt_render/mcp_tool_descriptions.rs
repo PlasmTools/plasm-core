@@ -47,8 +47,10 @@ pub const PLASM_PROGRAM_PARAM_DESCRIPTION: &str = include_str!("assets/program_p
 /// Max bytes for [`PLASM_PROGRAM_PARAM_DESCRIPTION`] (truncation-resistant field surface).
 pub const PLASM_PROGRAM_PARAM_MAX_BYTES: usize = 1600;
 
-/// Max bytes for [`PLASM_MCP_TOOL_DESCRIPTION`].
-pub const PLASM_TOOL_DESCRIPTION_MAX_BYTES: usize = 6500;
+/// Internal regression budget for the full static reference, including typed
+/// sequence unpacking, selection semantics and compute budgets. This is not a
+/// provider wire limit; the truncation-prefix guarantees below remain separate.
+pub const PLASM_TOOL_DESCRIPTION_MAX_BYTES: usize = 7 * 1024;
 
 /// Host-truncation prefixes that must still carry program-authoring mandates.
 pub const PLASM_TOOL_DESCRIPTION_PREFIX_BYTES: usize = 2048;
