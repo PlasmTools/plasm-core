@@ -171,8 +171,9 @@ async fn run_native_hydration() {
     let envelope: serde_json::Value =
         serde_json::from_str(result.rows_json.as_deref().unwrap()).unwrap();
     assert_eq!(envelope[0]["rows"][0]["n"], json!(18));
-    let compute_program = format!("class CountFolder(Program):\n    @compute\n    def size(self, rows: list[Value[{note}]]) -> str:\n        return str(len(rows))\n    def build(self):\n        auth = {session}.{login}()\n        notes = {folder}.get(\"root\", access_token=auth.access_token).notes\n        return self.size(notes.select(\"note_id\"))\n");
+    let compute_program = format!("class CountFolder(Program):\n    @compute\n    def size(self, rows: list[Value[{note}]]) -> str:\n        return str(len(rows))\n    def build(self):\n        auth = {session}.{login}()\n        notes = {folder}.get(\"root\", access_token=auth.access_token).notes\n        return self.size(notes)\n");
     let dry = engine.dry_run(&compute_program).await.unwrap();
+    assert!(dry.failure_json.is_none(), "{}", dry.summary);
     let result = engine
         .run_plan_live(&dry.plan_commit_ref, transport.clone())
         .await
@@ -183,7 +184,7 @@ async fn run_native_hydration() {
     assert_eq!(envelope[0]["rows"][0]["value"], json!("18"));
     let derived_program = compute_program
         .replace(&format!("list[Value[{note}]]"), "list[Row]")
-        .replace("return self.size(notes.select(\"note_id\"))", "ids = notes.select(\"note_id\")\n        members = notes.where(lambda row: row.note_id in ids).select(\"note_id\")\n        combined = members.union(ids).distinct(\"note_id\")\n        return self.size(combined)");
+        .replace("return self.size(notes)", "ids = notes.select(\"note_id\")\n        members = notes.where(lambda row: row.note_id in ids).select(\"note_id\")\n        combined = members.union(ids).distinct(\"note_id\")\n        return self.size(combined)");
     let dry = engine.dry_run(&derived_program).await.unwrap();
     let result = engine
         .run_plan_live(&dry.plan_commit_ref, transport.clone())
