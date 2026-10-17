@@ -82,6 +82,8 @@ pub enum AgentEngineError {
     RunArtifact(#[source] plasm_agent_core::run_artifacts::RunArtifactError),
     #[error("serialization failed")]
     Json(#[from] serde_json::Error),
+    #[error("result value encoding failed: {0}")]
+    ValueCodec(#[from] plasm_core::ValueCodecError),
     #[error("catalog interchange failed")]
     CatalogIl(#[from] Box<plasm_core::catalog_il::CatalogIlError>),
     #[error("catalog compilation failed")]
@@ -214,23 +216,23 @@ impl RunPlanResult {
 
 fn live_run_rows_json(
     live: &plasm_agent_core::plasm_plan_run::PlasmPlanRunResult,
-) -> Option<String> {
+) -> Result<Option<String>> {
     use plasm_agent_core::output::http_execute_results_value;
     let steps = &live.return_steps;
     if steps.is_empty() {
-        return None;
+        return Ok(None);
     }
     let value = if steps.len() == 1 {
-        http_execute_results_value(&steps[0].result)
+        http_execute_results_value(&steps[0].result)?
     } else {
         serde_json::Value::Array(
             steps
                 .iter()
                 .map(|s| http_execute_results_value(&s.result))
-                .collect(),
+                .collect::<std::result::Result<Vec<_>, _>>()?,
         )
     };
-    serde_json::to_string(&value).ok()
+    Ok(Some(serde_json::to_string(&value)?))
 }
 
 fn live_run_meta_json(
@@ -884,7 +886,7 @@ impl AgentEngine {
             Ok(RunPlanResult {
                 ok: true,
                 message,
-                rows_json: live_run_rows_json(&live),
+                rows_json: live_run_rows_json(&live)?,
                 meta_json: live_run_meta_json(&live),
                 failure_json: None,
                 artifacts_json: Some(serde_json::to_string(&artifacts)?),
@@ -1298,9 +1300,13 @@ mod tests {
     }
 
     fn synthetic_live_run_result() -> PlasmPlanRunResult {
+        synthetic_live_run_result_with_name(Value::String("Widget".into()))
+    }
+
+    fn synthetic_live_run_result_with_name(name: Value) -> PlasmPlanRunResult {
         let mut fields = IndexMap::new();
         fields.insert("id".into(), Value::String("p1".into()));
-        fields.insert("name".into(), Value::String("Widget".into()));
+        fields.insert("name".into(), name);
         let entity = CachedEntity::from_decoded(
             Ref {
                 entity_type: "Product".into(),
@@ -1657,13 +1663,39 @@ mod tests {
     #[test]
     fn live_run_serialization_populates_rows_and_meta() {
         let live = synthetic_live_run_result();
-        let rows = live_run_rows_json(&live).expect("rows_json");
+        let rows = live_run_rows_json(&live)
+            .expect("encode rows")
+            .expect("rows_json");
         let parsed: serde_json::Value = serde_json::from_str(&rows).expect("parse result envelope");
         assert_eq!(parsed["rows"].as_array().unwrap().len(), 1);
         assert_eq!(parsed["rows"][0]["id"], "p1");
         let meta = live_run_meta_json(&live).expect("meta_json");
         assert!(meta.contains("plasm"));
         assert!(meta.contains("abc123"));
+    }
+
+    #[test]
+    fn live_run_serialization_checks_each_return_step() {
+        let mut live = synthetic_live_run_result();
+        live.return_steps
+            .push(synthetic_live_run_result().return_steps.remove(0));
+        let rows = live_run_rows_json(&live).unwrap().unwrap();
+        let parsed: serde_json::Value = serde_json::from_str(&rows).unwrap();
+        assert_eq!(parsed.as_array().unwrap().len(), 2);
+
+        let invalid = synthetic_live_run_result_with_name(Value::Float(f64::NAN));
+        assert!(matches!(
+            live_run_rows_json(&invalid),
+            Err(AgentEngineError::ValueCodec(_))
+        ));
+        live.return_steps
+            .push(invalid.return_steps.into_iter().next().unwrap());
+        assert!(matches!(
+            live_run_rows_json(&live),
+            Err(AgentEngineError::ValueCodec(_))
+        ));
+        live.return_steps.clear();
+        assert_eq!(live_run_rows_json(&live).unwrap(), None);
     }
 
     struct MockProductListTransport;
