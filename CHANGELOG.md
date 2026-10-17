@@ -9,6 +9,19 @@ Entries before **0.4.35** live in [`CHANGELOG-ARCHIVE.md`](CHANGELOG-ARCHIVE.md)
 
 ## [Unreleased]
 
+## [0.5.5] - 2026-10-17
+
+### Fixed
+
+- Preserve typed values through catalog and computed-result materialization, including checked Node publication.
+- Retain input provenance, completed effects and original failures across bounded execution and recovery boundaries.
+- Expose actionable scalar-extraction and argument-validation diagnostics without executing rejected calls.
+- Preserve discovery uncertainty consistently across Rust and TypeScript and make incomplete result delivery explicit.
+
+### Added
+
+- Deterministic coverage for nested correspondence across cold and warm execution, typed codecs and failure-information retention.
+
 ## [0.5.4] - 2026-10-11
 
 ### Fixed
