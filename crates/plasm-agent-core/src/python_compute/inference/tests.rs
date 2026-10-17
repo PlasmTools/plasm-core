@@ -33,8 +33,7 @@ fn diagnostic_explains_generated_types_and_quotes_compute_source() {
         &[("value", &nominal)],
         "",
     )
-    .err()
-    .expect("integer has no startswith");
+    .expect_err("integer has no startswith");
     let text = error.to_string();
     assert!(text.contains("startswith"), "{text}");
     assert!(
