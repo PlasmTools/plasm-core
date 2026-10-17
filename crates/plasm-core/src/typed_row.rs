@@ -40,7 +40,6 @@ impl TypedFieldValue {
     }
 
     /// Lift using CGS [`FieldType`] so opaque JSON / entity refs are tagged distinctly when applicable.
-    #[must_use]
     pub fn from_value_in_field(
         field_type: &FieldType,
         v: Value,
