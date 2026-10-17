@@ -34,7 +34,7 @@ pub enum ValueDomainViolation {
     PatternConfiguration,
     #[error("enum membership is missing")]
     MissingEnumMembership,
-    #[error("value is not an allowed enum member; expected one of {allowed:?}")]
+    #[error("value is not an allowed enum member; expected one of {}", serde_json::Value::from(.allowed.clone()))]
     UnknownEnumMember { allowed: Vec<String> },
     #[error("value is below the minimum constraint")]
     BelowMinimum,

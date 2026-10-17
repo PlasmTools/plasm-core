@@ -53,7 +53,7 @@ fn scalar_field_rejection_preserves_expression_cardinality_and_location() {
             assert!(error.to_string().contains("rows.id"));
             let failure: plasm_runtime::ExecutionFailure = error.into();
             assert!(failure.diagnostic().contains("rows.id"));
-            assert!(failure.diagnostic().contains("Many"));
+            assert!(failure.diagnostic().contains("many rows"));
             assert!(failure.program_rejection.is_some());
         }
         let source = format!("class P(Program):\n    def build(self):\n        rows = {item}.get('i0')\n        return rows.id\n");

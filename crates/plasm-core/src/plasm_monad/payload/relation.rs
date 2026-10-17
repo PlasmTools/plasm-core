@@ -51,3 +51,13 @@ pub enum RelationSourceCardinality {
     Many,
     RuntimeCheckedSingleton,
 }
+
+impl std::fmt::Display for RelationSourceCardinality {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(match self {
+            Self::Single => "single row",
+            Self::Many => "many rows",
+            Self::RuntimeCheckedSingleton => "runtime-checked singleton",
+        })
+    }
+}

@@ -238,7 +238,7 @@ pub enum PythonSourceError {
     DuplicateInvocationArgument { argument: String },
     #[error("Python source is invalid: expected a field dependency")]
     ExpectedFieldDependency,
-    #[error("Python source is invalid: field input requires a proven singleton; expression `{expression}` on binding `{binding}` has cardinality {cardinality:?}. Use a row projection or aggregate for plural rows; scalar extraction requires a proven singleton.")]
+    #[error("Python source is invalid: field input requires a proven singleton; expression `{expression}` on binding `{binding}` has cardinality {cardinality}. Use a row projection or aggregate for plural rows; scalar extraction requires a proven singleton.")]
     FieldInputNeedsSingleton {
         binding: String,
         expression: String,

@@ -45,7 +45,7 @@ pub enum ValueDomainError {
     PatternMismatch,
     #[error("enum profile has no membership declaration")]
     MissingEnumMembership,
-    #[error("value is not an allowed enum member; expected one of {allowed:?}")]
+    #[error("value is not an allowed enum member; expected one of {}", serde_json::Value::from(.allowed.clone()))]
     UnknownEnumMember { allowed: Vec<String> },
     #[error("numeric value is below minimum {0}")]
     BelowMinimum(f64),
