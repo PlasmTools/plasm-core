@@ -18,6 +18,10 @@ pub(in crate::plasm_dag) fn resolve_surface_dag_node<'a>(
             DagNodeSource::Surface { .. } | DagNodeSource::RelationTraversal { .. } => {
                 return Some(node);
             }
+            DagNodeSource::Compute {
+                op: ComputeOp::NarrowEntity { .. },
+                ..
+            } => return None,
             DagNodeSource::Compute { source, .. } => node_id = source.clone(),
             DagNodeSource::MapBody { .. }
             | DagNodeSource::Derive { .. }
@@ -37,9 +41,16 @@ pub(in crate::plasm_dag) fn logical_row_field_paths_for_surface_node(
     let (parsed, qe) = match &node.source {
         DagNodeSource::Surface {
             parsed,
-            qualified_entity,
+            output_authority,
             ..
-        } => (parsed, qualified_entity),
+        } => (
+            parsed,
+            output_authority.single().ok_or_else(|| {
+                SchemaCatalogError::EntityUnionNeedsNarrowing {
+                    binding: node.id.clone(),
+                }
+            })?,
+        ),
         DagNodeSource::RelationTraversal {
             parsed,
             qualified_entity,
@@ -115,9 +126,9 @@ pub(in crate::plasm_dag) fn resolve_qualified_entity_for_dag_source(
             .or_else(|| state.get(node_id.as_str()))?;
         match &node.source {
             DagNodeSource::Surface {
-                qualified_entity, ..
-            }
-            | DagNodeSource::RelationTraversal {
+                output_authority, ..
+            } => return output_authority.single().cloned(),
+            DagNodeSource::RelationTraversal {
                 qualified_entity, ..
             }
             | DagNodeSource::ForEach {
@@ -127,6 +138,15 @@ pub(in crate::plasm_dag) fn resolve_qualified_entity_for_dag_source(
                 qualified_entity, ..
             } => {
                 return Some(qualified_entity.clone());
+            }
+            DagNodeSource::Compute {
+                op: plasm_core::plasm_monad::ComputeOp::NarrowEntity { target, .. },
+                ..
+            } => {
+                return Some(QualifiedEntityKey {
+                    entry_id: target.entry_id.clone(),
+                    entity: target.entity.clone(),
+                })
             }
             DagNodeSource::Compute {
                 op:

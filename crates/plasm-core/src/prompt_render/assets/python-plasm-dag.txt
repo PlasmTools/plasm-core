@@ -22,3 +22,8 @@ class P(Program):
 
 Absent: AttributeError; select needs fields; guard nulls.
 Compute budgets: projection reduces fields/bytes, not row count. Filter rows before compute when the task permits; nested inputs share the row budget. Never truncate a complete-set calculation to silence a budget failure.
+
+Nominal entity-union results must be narrowed with `rows.of_type(eN)` before
+variant-specific fields, relations or actions. The target must be a declared
+variant. This selects original rows and retains their recorded identity; ordinary
+computed dictionaries cannot be narrowed into entities.

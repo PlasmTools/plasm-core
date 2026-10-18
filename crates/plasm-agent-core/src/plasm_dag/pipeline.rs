@@ -260,8 +260,13 @@ pub(in crate::plasm_dag) fn lower_catalog_application(
     }
     let uses =
         collect_template_uses_from_expr(&parsed.expr, Some("_"), &state.program_node_id_set());
-    let (kind, qualified, effect_class, result_shape) =
+    let (kind, qualified, effect_class, result_shape, output_authority) =
         infer_surface_contract(session, &parsed.expr)?;
+    if output_authority.single().is_none() {
+        return Err(DagCompilationError::EntityUnionTemplateOutputUnsupported {
+            binding: id.to_string(),
+        });
+    }
     if !kind.is_template_allowed() {
         return Err(DagCompilationError::InvalidRowApplication { id: id.to_owned() });
     }
@@ -480,8 +485,13 @@ fn lower_iterate_until(
     )?;
     let mut uses =
         collect_template_uses_from_expr(&parsed.expr, Some("_"), &state.program_node_id_set());
-    let (kind, qualified, effect_class, result_shape) =
+    let (kind, qualified, effect_class, result_shape, output_authority) =
         infer_surface_contract(session, &parsed.expr)?;
+    if output_authority.single().is_none() {
+        return Err(DagCompilationError::EntityUnionTemplateOutputUnsupported {
+            binding: id.to_string(),
+        });
+    }
     if !matches!(
         kind,
         PlanNodeKind::Create | PlanNodeKind::Update | PlanNodeKind::Delete | PlanNodeKind::Action
@@ -789,11 +799,14 @@ pub(in crate::plasm_dag) fn relation_wire_names_for_source(
         Some(c) => c,
         None => return Vec::new(),
     };
-    let cgs = match cgs_for_qualified_entity(session, &contract.row_entity) {
+    let Some(concrete) = contract.row_entity.single() else {
+        return Vec::new();
+    };
+    let cgs = match cgs_for_qualified_entity(session, concrete) {
         Some(c) => c,
         None => return Vec::new(),
     };
-    let ent = match cgs.get_entity(contract.row_entity.entity.as_str()) {
+    let ent = match cgs.get_entity(concrete.entity.as_str()) {
         Some(e) => e,
         None => return Vec::new(),
     };
@@ -922,7 +935,7 @@ pub(super) fn compile_parsed_nodes(
         &mut parsed.expr,
     )?;
     let uses = collect_template_uses_from_expr(&parsed.expr, None, &state.program_node_id_set());
-    let (kind, qualified_entity, effect_class, result_shape) =
+    let (kind, qualified_entity, effect_class, result_shape, output_authority) =
         infer_surface_contract(session, &parsed.expr)?;
     let view_singleton = match &parsed.expr {
         Expr::Query(query) => {
@@ -954,6 +967,7 @@ pub(super) fn compile_parsed_nodes(
             parsed,
             kind,
             qualified_entity,
+            output_authority,
             effect_class,
             result_shape,
             uses_result: uses,

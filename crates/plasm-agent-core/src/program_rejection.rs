@@ -228,6 +228,10 @@ pub enum PythonInputError {
 
 #[derive(Debug, Clone, thiserror::Error)]
 pub enum PythonSourceError {
+    #[error("of_type requires an exposed entity symbol from the source's declared entity union")]
+    EntityNarrowingTarget,
+    #[error("of_type requires catalog union rows with retained identity; constructed values cannot confer entity authority")]
+    EntityNarrowingSource,
     #[error("Python source is invalid: writes require named arguments; positional payloads are not admitted")]
     WritePositionalArguments { actual: usize },
     #[error("Python source is invalid: this method requires an entity receiver")]

@@ -109,6 +109,12 @@ pub(super) async fn assert_registry_with_rejections(
             if evidence.contains_key(id) {
                 continue;
             }
+            if id == "entity_union_narrow" {
+                let (es, source) = super::entity_union::admission_witness();
+                let compiled = compile_python_program(&es, &source).await.unwrap();
+                evidence.insert(id.clone(), observe(&compiled.artifact().comp, &source));
+                continue;
+            }
             let case = python::cases()
                 .find(|case| case.id == id)
                 .expect("unknown witness");
@@ -171,7 +177,7 @@ async fn assert_invalid(
     let mut failures = Vec::new();
     for rule in rules {
         let case = python::cases()
-            .find(|case| case.id == rule.witnesses[0])
+            .find(|case| case.id == rule.witnesses[0] || rule.operation == "of_type")
             .unwrap();
         let (es, _) = python::parity_context(case, "http://127.0.0.1:1");
         let symbols = es.teaching_exposure.as_ref().unwrap().to_symbol_map();

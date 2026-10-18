@@ -78,8 +78,10 @@ impl Lower<'_> {
         let actual = super::super::binding_contract(&self.state, label)
             .ok_or(crate::program_rejection::PythonLoweringInvariantError::InputContractMissing)?;
         if actual.value_kind != BindingValueKind::EntityRow
-            || actual.row_entity.entry_id.as_str() != expected.entry_id_str()
-            || actual.row_entity.entity.as_str() != expected.entity_str()
+            || !actual.row_entity.single().is_some_and(|entity| {
+                entity.entry_id.as_str() == expected.entry_id_str()
+                    && entity.entity.as_str() == expected.entity_str()
+            })
             || !actual.anchor.is_present()
             || (shape == PythonRowShape::Singleton
                 && !actual.row_cardinality.permits_scalar_field_extract())

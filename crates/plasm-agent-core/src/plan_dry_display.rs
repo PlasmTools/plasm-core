@@ -722,6 +722,9 @@ fn compact_op_from_compute(
 ) -> PlanDryOp {
     let _ = display_map;
     match &compute.op {
+        ComputeOp::NarrowEntity { target, .. } => PlanDryOp::Filter {
+            predicates: vec![format!("entity type {}:{}", target.entry_id, target.entity)],
+        },
         ComputeOp::Python {
             entity,
             per_row,

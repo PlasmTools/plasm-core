@@ -1,5 +1,78 @@
 use super::*;
 
+#[test]
+fn prompt_matrix_entity_union_teaches_variants_and_lawful_narrowing() {
+    let mut cgs = crate::loader::load_schema_dir(
+        &std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../fixtures/schemas/plasm_prompt_matrix"),
+    )
+    .unwrap();
+    cgs.capabilities
+        .get_mut("zone_query")
+        .unwrap()
+        .output_schema = Some(crate::OutputSchema {
+        output_type: OutputType::EntityUnion {
+            variants: vec!["Zone".into(), "Ruleset".into()],
+            cardinality: crate::Cardinality::Many,
+        },
+        decoder: crate::OutputDecoderSpec::EntityUnion {
+            cases: vec![
+                crate::EntityUnionCase {
+                    entity_type: "Zone".into(),
+                    when: crate::EntityDiscriminator::Absent {
+                        path: vec!["private_wire_marker".into()],
+                    },
+                },
+                crate::EntityUnionCase {
+                    entity_type: "Ruleset".into(),
+                    when: crate::EntityDiscriminator::Present {
+                        path: vec!["private_wire_marker".into()],
+                    },
+                },
+            ],
+        },
+        idempotent: false,
+        reconcile: None,
+    });
+    cgs.validate().unwrap();
+    let delta = crate::capability_exposure::selected_capability_surface(
+        &cgs,
+        "matrix",
+        &["zone_query".into()],
+    )
+    .unwrap();
+    assert!(delta
+        .required
+        .entities
+        .iter()
+        .any(|key| key.entity.as_str() == "Ruleset"));
+    let exposure =
+        TeachingExposureSession::new_with_intent_delta(&cgs, "matrix", &["Zone", "Ruleset"], delta);
+    let wave = prepare_python_teaching_wave(&exposure, &PythonTeachingState::default()).unwrap();
+    let left = exposure.qualified_entity_symbol("matrix", "Zone").unwrap();
+    let right = exposure
+        .qualified_entity_symbol("matrix", "Ruleset")
+        .unwrap();
+    let signature = wave
+        .capabilities
+        .iter()
+        .find(|cap| cap.capability == "zone_query")
+        .unwrap()
+        .signature
+        .as_deref()
+        .unwrap();
+    assert!(
+        signature.contains(&format!("-> Rows[{left} | {right}]:")),
+        "{signature}"
+    );
+    assert!(!wave.declarations.contains("private_wire_marker"));
+    let language = wave.language.unwrap();
+    assert!(language.contains("rows.of_type(eN)"));
+    assert!(language.contains("target must be a declared"));
+    assert!(language.contains("retains their recorded identity"));
+    assert!(language.contains("computed dictionaries cannot be narrowed into entities"));
+}
+
 fn fixture() -> CGS {
     crate::loader::load_schema_dir(
         &std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
@@ -197,7 +270,7 @@ fn python_card_rejects_revision_drift_and_records_unavailable() {
         output_type: OutputType::Custom {
             schema: serde_json::json!({}),
         },
-        decoder: serde_json::json!({}),
+        decoder: Default::default(),
         idempotent: false,
         reconcile: None,
     });

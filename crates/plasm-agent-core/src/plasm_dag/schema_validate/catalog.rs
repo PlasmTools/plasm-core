@@ -5,6 +5,8 @@ use thiserror::Error;
 
 #[derive(Debug, Error)]
 pub enum SchemaCatalogError {
+    #[error("binding `{binding}` has heterogeneous entity output; narrow with .of_type(Entity) before selecting entity fields")]
+    EntityUnionNeedsNarrowing { binding: String },
     #[error("catalog `{entry_id}` is not loaded for entity `{entity}`")]
     CatalogNotLoaded { entry_id: String, entity: String },
     #[error("entity `{entity}` is not defined in catalog `{entry_id}`")]

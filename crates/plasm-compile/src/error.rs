@@ -39,6 +39,12 @@ pub enum CompileError {
 
 #[derive(Error, Debug, Clone)]
 pub enum DecodeError {
+    #[error("entity union row {row} matches no declared variant")]
+    EntityUnionUnknownVariant { row: usize },
+    #[error("entity union row {row} matches multiple variants: {entities:?}")]
+    EntityUnionAmbiguousVariant { row: usize, entities: Vec<String> },
+    #[error("entity union discriminator traversed a non-object at `{path}`")]
+    EntityUnionDiscriminatorShape { path: String },
     #[error(transparent)]
     JsonPath(#[from] crate::json_path::JsonPathError),
 

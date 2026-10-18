@@ -462,7 +462,10 @@ impl From<crate::RuntimeError> for ExecutionFailure {
                 plasm_compile::DecodeError::FieldContract { field, .. } => {
                     format!("Response field '{field}' violates its declared type")
                 }
-                plasm_compile::DecodeError::JsonPath(_)
+                plasm_compile::DecodeError::EntityUnionUnknownVariant { .. }
+                | plasm_compile::DecodeError::EntityUnionAmbiguousVariant { .. }
+                | plasm_compile::DecodeError::EntityUnionDiscriminatorShape { .. }
+                | plasm_compile::DecodeError::JsonPath(_)
                 | plasm_compile::DecodeError::PathNotFound { .. }
                 | plasm_compile::DecodeError::TypeMismatch { .. }
                 | plasm_compile::DecodeError::StringTransformInput

@@ -332,20 +332,29 @@ impl PureStep {
                         crate::python_compute::require_complete_collection(&value.result)?;
                     }
                 }
-                let contract = crate::map_body_schema::row_operation_contract(
-                    inputs.es,
-                    inputs.schema_nodes,
-                    &c.compute.source,
-                )?;
-                let contract =
-                    plasm_core::SyntheticResultSchema::for_value(contract)?.row_contract()?;
-                let computed = eval_compute_from_rows(
-                    &c.compute,
-                    inputs.source_rows,
-                    inputs.binding_rows,
-                    &contract,
-                )?;
                 let source = PlanNodeId::new(c.compute.source.clone())?;
+                let computed = if let ComputeOp::NarrowEntity { target, .. } = &c.compute.op {
+                    let source_node = materialized.get(&source).ok_or_else(|| {
+                        PureStepError::MissingComputeBranch {
+                            branch: c.compute.source.clone(),
+                        }
+                    })?;
+                    narrow_entity_rows(target, inputs.source_rows, &source_node.row_identities)?
+                } else {
+                    let contract = crate::map_body_schema::row_operation_contract(
+                        inputs.es,
+                        inputs.schema_nodes,
+                        &c.compute.source,
+                    )?;
+                    let contract =
+                        plasm_core::SyntheticResultSchema::for_value(contract)?.row_contract()?;
+                    eval_compute_from_rows(
+                        &c.compute,
+                        inputs.source_rows,
+                        inputs.binding_rows,
+                        &contract,
+                    )?
+                };
                 let row_identities = propagate_row_identities(
                     &source,
                     &c.compute.op,

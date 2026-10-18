@@ -6,38 +6,44 @@ use crate::view_plan::ViewAmbientContext;
 /// A complete response needs both declared coverage and observed field presence.
 /// Pagination changes collection coverage, never the field coverage of each row.
 struct QueryResponseCoverage {
-    fields: Vec<String>,
-    declared_complete: bool,
+    entities: std::collections::HashMap<String, (Vec<String>, bool)>,
 }
 
 impl QueryResponseCoverage {
     fn new(cgs: &CGS, capability: &CapabilitySchema) -> Self {
-        let fields: Vec<String> = cgs
-            .get_entity(capability.domain.as_str())
-            .map(|entity| {
-                entity
-                    .fields
-                    .keys()
-                    .map(|field| field.as_str().to_owned())
-                    .collect()
-            })
-            .unwrap_or_default();
         let provided: std::collections::HashSet<String> =
             cgs.effective_provides(capability).into_iter().collect();
-        let declared_complete = cgs.get_entity(capability.domain.as_str()).is_some()
-            && fields.iter().all(|field| provided.contains(field));
-        Self {
-            fields,
-            declared_complete,
-        }
+        let names: Vec<&str> = match capability
+            .output_schema
+            .as_ref()
+            .map(|output| &output.output_type)
+        {
+            Some(plasm_core::OutputType::EntityUnion { variants, .. }) => {
+                variants.iter().map(|name| name.as_str()).collect()
+            }
+            _ => vec![capability.domain.as_str()],
+        };
+        let entities = names
+            .into_iter()
+            .filter_map(|name| {
+                cgs.get_entity(name).map(|entity| {
+                    let fields: Vec<String> =
+                        entity.fields.keys().map(ToString::to_string).collect();
+                    let declared_complete = fields.iter().all(|field| provided.contains(field));
+                    (name.to_string(), (fields, declared_complete))
+                })
+            })
+            .collect();
+        Self { entities }
     }
 
     fn classify(&self, row: &plasm_compile::DecodedEntity) -> EntityCompleteness {
-        if self.declared_complete
-            && self
-                .fields
-                .iter()
-                .all(|field| row.fields.contains_key(field))
+        if self
+            .entities
+            .get(row.reference.entity_type.as_str())
+            .is_some_and(|(fields, complete)| {
+                *complete && fields.iter().all(|field| row.fields.contains_key(field))
+            })
         {
             EntityCompleteness::Complete
         } else {
@@ -208,7 +214,7 @@ impl ExecutionEngine {
             let (normalized, decoder) = match &capability_template {
                 CapabilityTemplate::Http(cml) | CapabilityTemplate::GraphQl(cml) => Ok((
                     prepare_http_query_response(response, cml, &env),
-                    create_entity_decoder_for_capability(
+                    super::entity_decoder::create_output_decoder_for_capability(
                         &query.entity,
                         cgs,
                         Some(capability.name.as_str()),
@@ -222,7 +228,7 @@ impl ExecutionEngine {
                     Err(RuntimeError::HttpQueryTemplateRequired)
                 }
             }?;
-            let decoded_entities = decode_entities_with_cgs(&decoder, &normalized, Some(cgs))?;
+            let decoded_entities = plasm_compile::decode_output_with_cgs(&decoder, &normalized, Some(cgs))?;
             if let Some(identity) = &request_identity {
                 identity.validate_rows(query.entity.as_str(), decoded_entities.len())?;
             }
@@ -241,8 +247,7 @@ impl ExecutionEngine {
             let inherit = CapabilityParamEnv::from_cml_env(&env, &capability);
             stamp_entities_and_mat(&res.entities, mat, &inherit);
             let (entities, extra_net) = self
-                .hydrate_query_summaries(
-                    &query.entity,
+                .hydrate_output_summaries(
                     &res.entities,
                     cgs,
                     mat,
@@ -314,7 +319,7 @@ impl ExecutionEngine {
         let (decoder, wrap_key) = match &capability_template {
             plasm_compile::CapabilityTemplate::Http(ref req)
             | plasm_compile::CapabilityTemplate::GraphQl(ref req) => (
-                create_entity_decoder_for_capability(
+                super::entity_decoder::create_output_decoder_for_capability(
                     &query.entity,
                     cgs,
                     Some(capability.name.as_str()),
@@ -330,7 +335,7 @@ impl ExecutionEngine {
             }
             plasm_compile::CapabilityTemplate::EvmCall(_)
             | plasm_compile::CapabilityTemplate::EvmLogs(_) => (
-                create_entity_decoder(
+                plasm_compile::OutputDecoder::Entity(create_entity_decoder(
                     &query.entity,
                     cgs,
                     Some(PathExpr::new(vec![
@@ -341,7 +346,7 @@ impl ExecutionEngine {
                     ])),
                     None,
                     Some(&cml_env_to_identity_strings(&env)),
-                ),
+                )),
                 "results".to_string(),
             ),
         };
@@ -418,7 +423,7 @@ impl ExecutionEngine {
                         prepare_http_query_response(normalized.clone(), cml, &env),
                     _ => normalized.clone(),
                 };
-                let decoded = decode_entities_with_cgs(&decoder, &decode_response, Some(cgs))?;
+                let decoded = plasm_compile::decode_output_with_cgs(&decoder, &decode_response, Some(cgs))?;
                 let full_page_len = decoded.len();
                 let last_id = decoded.last().map(|row| row.reference.primary_slot_str());
                 let timestamp = current_timestamp();
@@ -446,8 +451,7 @@ impl ExecutionEngine {
                     }
                 } else { &page_cached[..] };
                 let omitted_prefix_rows = page_cached.len() - hydration_input.len();
-                let (hydrated, extra_net) = self.hydrate_query_summaries(
-                    &query.entity, hydration_input, cgs, mat, mode, query.hydrate.unwrap_or(self.config.hydrate), &env,
+                let (hydrated, extra_net) = self.hydrate_output_summaries( hydration_input, cgs, mat, mode, query.hydrate.unwrap_or(self.config.hydrate), &env,
                 ).await?;
                 let entities = match &predicate {
                     Some(pred) => filter_entities_by_predicate(hydrated, pred)?,

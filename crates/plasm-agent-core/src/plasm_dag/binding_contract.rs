@@ -64,7 +64,8 @@ pub(in crate::plasm_dag) fn program_binding_contract_for_source(
                 contract.row_entity = QualifiedEntityKey {
                     entry_id: entity.entry_id.clone(),
                     entity: entity.entity.clone(),
-                };
+                }
+                .into();
                 if *entity_authority {
                     contract.continuation = ContinuationCapability::RelationDot {
                         segments: SegmentPolicy::MultiSegment,
@@ -79,7 +80,7 @@ pub(in crate::plasm_dag) fn program_binding_contract_for_source(
             view_singleton,
             parsed,
             kind,
-            qualified_entity,
+            output_authority,
             result_shape,
             ..
         } => {
@@ -116,7 +117,7 @@ pub(in crate::plasm_dag) fn program_binding_contract_for_source(
             };
             ProgramBindingContract {
                 label: label.to_string(),
-                row_entity: qualified_entity.clone(),
+                row_entity: output_authority.clone(),
                 result_shape: *result_shape,
                 row_cardinality,
                 value_kind,
@@ -141,7 +142,7 @@ pub(in crate::plasm_dag) fn program_binding_contract_for_source(
             };
             ProgramBindingContract {
                 label: label.to_string(),
-                row_entity: qualified_entity.clone(),
+                row_entity: qualified_entity.clone().into(),
                 result_shape: *result_shape,
                 row_cardinality,
                 value_kind,
@@ -152,6 +153,29 @@ pub(in crate::plasm_dag) fn program_binding_contract_for_source(
                 anchor: ContinuationAnchor::RelationExpand(expanded_plasm.clone()),
             }
         }
+        DagNodeSource::Compute {
+            op:
+                ComputeOp::NarrowEntity {
+                    target,
+                    source_at_most_one,
+                },
+            ..
+        } => ProgramBindingContract {
+            label: label.into(),
+            row_entity: QualifiedEntityKey {
+                entry_id: target.entry_id.clone(),
+                entity: target.entity.clone(),
+            }
+            .into(),
+            result_shape: crate::plasm_plan::ResultShape::List,
+            row_cardinality: crate::plasm_plan::narrowed_entity_cardinality(*source_at_most_one),
+            value_kind: BindingValueKind::EntityRow,
+            continuation: ContinuationCapability::RelationDot {
+                segments: SegmentPolicy::MultiSegment,
+                method_invoke: true,
+            },
+            anchor: ContinuationAnchor::BindingLabel,
+        },
         DagNodeSource::Compute {
             source,
             op: op @ ComputeOp::Project { .. },
@@ -233,11 +257,11 @@ pub(in crate::plasm_dag) fn program_binding_contract_for_source(
             let left_owner = left
                 .as_ref()
                 .filter(|c| authority(c))
-                .map(|c| &c.row_entity);
+                .and_then(|c| c.row_entity.single());
             let right_owner = right
                 .as_ref()
                 .filter(|c| authority(c))
-                .map(|c| &c.row_entity);
+                .and_then(|c| c.row_entity.single());
             if let Some(left_contract) = left
                 .as_ref()
                 .filter(|_| op.preserved_identity(left_owner, right_owner).is_some())
@@ -280,7 +304,8 @@ pub(in crate::plasm_dag) fn program_binding_contract_for_source(
                 row_entity: QualifiedEntityKey {
                     entry_id: String::new(),
                     entity: String::new(),
-                },
+                }
+                .into(),
                 result_shape: crate::plasm_plan::compute_result_shape(op, explicit_singleton),
                 row_cardinality: parent_card,
                 value_kind,
@@ -316,7 +341,8 @@ pub(in crate::plasm_dag) fn program_binding_contract_for_source(
                 contract.row_entity = QualifiedEntityKey {
                     entry_id: selection.owner.entry_id.clone(),
                     entity: selection.owner.entity.clone(),
-                };
+                }
+                .into();
                 contract.continuation = ContinuationCapability::RelationDot {
                     segments: SegmentPolicy::MultiSegment,
                     method_invoke: true,
@@ -353,7 +379,8 @@ pub(in crate::plasm_dag) fn program_binding_contract_for_source(
                 row_entity: QualifiedEntityKey {
                     entry_id: String::new(),
                     entity: String::new(),
-                },
+                }
+                .into(),
                 result_shape: shape.result_shape,
                 row_cardinality: shape.row_cardinality,
                 value_kind,
@@ -368,7 +395,7 @@ pub(in crate::plasm_dag) fn program_binding_contract_for_source(
             ..
         } => ProgramBindingContract {
             label: label.to_string(),
-            row_entity: qualified_entity.clone(),
+            row_entity: qualified_entity.clone().into(),
             result_shape: crate::plasm_plan::ResultShape::List,
             row_cardinality: RowCardinalityProof::StaticPlural,
             value_kind,
@@ -406,7 +433,8 @@ pub(in crate::plasm_dag) fn program_binding_contract_for_source(
             row_entity: QualifiedEntityKey {
                 entry_id: String::new(),
                 entity: String::new(),
-            },
+            }
+            .into(),
             result_shape: crate::plasm_plan::ResultShape::Single,
             row_cardinality: RowCardinalityProof::RuntimeChecked,
             value_kind,
@@ -418,7 +446,8 @@ pub(in crate::plasm_dag) fn program_binding_contract_for_source(
             row_entity: QualifiedEntityKey {
                 entry_id: String::new(),
                 entity: String::new(),
-            },
+            }
+            .into(),
             result_shape: crate::plasm_plan::ResultShape::Single,
             row_cardinality: RowCardinalityProof::StaticSingleton,
             value_kind,
@@ -526,7 +555,8 @@ pub(in crate::plasm_dag) fn synthetic_row_contract(
         row_entity: QualifiedEntityKey {
             entry_id: String::new(),
             entity: schema.entity.clone().unwrap_or_default(),
-        },
+        }
+        .into(),
         result_shape: crate::plasm_plan::ResultShape::List,
         row_cardinality: RowCardinalityProof::RuntimeChecked,
         value_kind: BindingValueKind::EntityRow,
@@ -544,7 +574,8 @@ pub(in crate::plasm_dag) fn synthetic_terminal_contract(
         row_entity: QualifiedEntityKey {
             entry_id: String::new(),
             entity: schema.entity.clone().unwrap_or_default(),
-        },
+        }
+        .into(),
         result_shape: crate::plasm_plan::ResultShape::Single,
         row_cardinality: RowCardinalityProof::RuntimeChecked,
         value_kind: BindingValueKind::EntityRow,
@@ -756,6 +787,7 @@ mod tests {
             parsed: create_parsed,
             kind: PlanNodeKind::Create,
             qualified_entity: qe.clone(),
+            output_authority: qe.clone().into(),
             effect_class: EffectClass::Write,
             result_shape: crate::plasm_plan::ResultShape::MutationResult,
             uses_result: Vec::new(),
@@ -781,6 +813,7 @@ mod tests {
             view_singleton: false,
             parsed: ack_parsed,
             kind: PlanNodeKind::Action,
+            output_authority: qe.clone().into(),
             qualified_entity: qe,
             effect_class: EffectClass::SideEffect,
             result_shape: crate::plasm_plan::ResultShape::SideEffectAck,

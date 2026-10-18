@@ -996,6 +996,27 @@ impl Renderer<'_> {
             }
         }
         let result = match cap.output_schema.as_ref().map(|s| &s.output_type) {
+            Some(OutputType::EntityUnion {
+                variants,
+                cardinality,
+            }) => {
+                let targets = variants
+                    .iter()
+                    .map(|entity| {
+                        self.exposure
+                            .qualified_entity_symbol(entry, entity.as_str())
+                            .ok_or_else(|| PythonTeachingError::OutputEntityNotExposed {
+                                entity: entity.to_string(),
+                            })
+                    })
+                    .collect::<Result<Vec<_>, _>>()?;
+                let shape = if *cardinality == crate::Cardinality::Many {
+                    PythonRowShape::Rows
+                } else {
+                    PythonRowShape::Singleton
+                };
+                shape.card_annotation(&targets.join(" | "))
+            }
             Some(OutputType::SideEffect { description }) => {
                 comment(&mut body, "    ", description);
                 "EffectAck".into()

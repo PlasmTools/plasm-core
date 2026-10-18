@@ -237,7 +237,7 @@ impl Lower<'_> {
         let path = super::super::schema_validate::resolve_schema_field_path(
             self.es,
             None,
-            Some(&contract.row_entity),
+            contract.row_entity.single(),
             row_schema.as_ref(),
             &FieldPath::from_dotted(a.attr.as_str())?,
         )

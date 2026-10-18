@@ -1,3 +1,9 @@
+lang_union_feed_query:
+  method: GET
+  path: [{type: literal, value: language}, {type: literal, value: v1}, {type: literal, value: union}]
+homographrowa_mark:
+  method: POST
+  path: [{type: literal, value: language}, {type: literal, value: v1}, {type: literal, value: union}, {type: literal, value: left}, {type: var, name: id}, {type: literal, value: mark}]
 langitem_query:
   method: GET
   path:

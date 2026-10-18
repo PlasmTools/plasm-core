@@ -364,6 +364,18 @@ impl From<crate::money::CrossCurrencyError> for TypeError {
 
 #[derive(Error, Debug, Clone)]
 pub enum SchemaError {
+    #[error("capability `{capability}`: entity-union outputs are supported only for query, search, and action; receiver-addressed get/create/update/delete require a concrete entity output")]
+    EntityUnionCapabilityKind { capability: String },
+    #[error("capability `{capability}`: query/search entity-union outputs must declare cardinality many")]
+    EntityUnionQueryCardinality { capability: String },
+    #[error("capability `{capability}` entity union must declare at least two distinct existing entities")]
+    EntityUnionVariants { capability: String },
+    #[error("capability `{capability}` output decoder cases must match the declared entity union exactly")]
+    EntityUnionDecoderCases { capability: String },
+    #[error(
+        "capability `{capability}` discriminator paths must be nonempty and contain nonempty keys"
+    )]
+    EntityUnionDiscriminatorPath { capability: String },
     #[error("invalid prerequisite declaration: {source}")]
     PrerequisiteInvalid {
         #[source]

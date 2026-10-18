@@ -4920,7 +4920,7 @@ mod tests {
                 output_type: OutputType::SideEffect {
                     description: "adds a suggestion".into(),
                 },
-                decoder: serde_json::json!({}),
+                decoder: Default::default(),
                 idempotent: false,
                 reconcile: None,
             }),
@@ -7072,7 +7072,7 @@ mod tests {
                 output_type: OutputType::SideEffect {
                     description: "acts on the pet".into(),
                 },
-                decoder: serde_json::json!({}),
+                decoder: Default::default(),
                 idempotent: false,
                 reconcile: None,
             }),
@@ -7136,7 +7136,7 @@ mod tests {
                 output_type: OutputType::SideEffect {
                     description: "broadcasts without path identity".into(),
                 },
-                decoder: serde_json::json!({}),
+                decoder: Default::default(),
                 idempotent: false,
                 reconcile: None,
             }),

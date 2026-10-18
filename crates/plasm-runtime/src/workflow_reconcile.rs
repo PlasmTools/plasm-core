@@ -348,7 +348,7 @@ mod tests {
                 output_type: OutputType::Entity {
                     entity_type: "WorkItem".into(),
                 },
-                decoder: serde_json::json!({}),
+                decoder: Default::default(),
                 idempotent: true,
                 reconcile: Some(ReconcileSpec {
                     via: "workitem_query".into(),

@@ -17,6 +17,149 @@ use crate::embed_target_decoder::entity_decoder_for_from_parent_get_target;
 use crate::json_path::path_expr_from_json_segments;
 use crate::DecodeError;
 
+/// Decode an output sum without erasing a row's concrete entity type or identity.
+pub fn decode_output_with_cgs(
+    decoder: &crate::OutputDecoder,
+    response: &serde_json::Value,
+    cgs: Option<&CGS>,
+) -> Result<Vec<DecodedEntity>, DecodeError> {
+    match decoder {
+        crate::OutputDecoder::Entity(decoder) => decode_entities_with_cgs(decoder, response, cgs),
+        crate::OutputDecoder::Union(decoder) => extract_path(&decoder.source, response)?
+            .iter()
+            .enumerate()
+            .map(|(row, source)| {
+                let mut matches = Vec::new();
+                for variant in &decoder.variants {
+                    if discriminator_matches(&variant.when, source)? {
+                        matches.push(&variant.decoder);
+                    }
+                }
+                match matches.as_slice() {
+                    [] => Err(DecodeError::EntityUnionUnknownVariant { row }),
+                    [selected] => decode_single_entity(selected, source, cgs),
+                    _ => Err(DecodeError::EntityUnionAmbiguousVariant {
+                        row,
+                        entities: matches
+                            .iter()
+                            .map(|decoder| decoder.entity.clone())
+                            .collect(),
+                    }),
+                }
+            })
+            .collect(),
+    }
+}
+
+fn discriminator_matches(
+    discriminator: &plasm_core::EntityDiscriminator,
+    source: &serde_json::Value,
+) -> Result<bool, DecodeError> {
+    use plasm_core::{DiscriminatorValue, EntityDiscriminator};
+    let path = match discriminator {
+        EntityDiscriminator::Present { path }
+        | EntityDiscriminator::Absent { path }
+        | EntityDiscriminator::Equals { path, .. } => path,
+    };
+    let mut observed = Some(source);
+    for (index, key) in path.iter().enumerate() {
+        let Some(value) = observed else {
+            break;
+        };
+        let object =
+            value
+                .as_object()
+                .ok_or_else(|| DecodeError::EntityUnionDiscriminatorShape {
+                    path: path[..index].join("."),
+                })?;
+        observed = object.get(key);
+    }
+    Ok(match discriminator {
+        EntityDiscriminator::Present { .. } => observed.is_some(),
+        EntityDiscriminator::Absent { .. } => observed.is_none(),
+        EntityDiscriminator::Equals { value, .. } => observed.is_some_and(|observed| match value {
+            DiscriminatorValue::String(value) => observed.as_str() == Some(value),
+            DiscriminatorValue::Bool(value) => observed.as_bool() == Some(*value),
+            DiscriminatorValue::Number(value) => observed.as_number() == Some(value),
+        }),
+    })
+}
+
+#[cfg(test)]
+mod output_union_codec_laws {
+    use super::*;
+    use crate::{EntityUnionDecoder, EntityVariantDecoder, OutputDecoder, PathExpr};
+    use plasm_core::EntityDiscriminator;
+    use serde_json::json;
+
+    fn decoder() -> OutputDecoder {
+        OutputDecoder::Union(EntityUnionDecoder {
+            source: PathExpr::empty().wildcard(),
+            variants: vec![
+                EntityVariantDecoder {
+                    when: EntityDiscriminator::Absent {
+                        path: vec!["marker".into()],
+                    },
+                    decoder: EntityDecoder::new("Left", PathExpr::empty()).with_id_field("id"),
+                },
+                EntityVariantDecoder {
+                    when: EntityDiscriminator::Present {
+                        path: vec!["marker".into()],
+                    },
+                    decoder: EntityDecoder::new("Right", PathExpr::empty()).with_id_field("id"),
+                },
+            ],
+        })
+    }
+
+    #[test]
+    fn union_decode_preserves_variant_identity_and_missing_versus_null() {
+        let decoder = decoder();
+        let packed = serde_json::to_vec(&decoder).unwrap();
+        let restored: OutputDecoder = serde_json::from_slice(&packed).unwrap();
+        let rows = decode_output_with_cgs(
+            &restored,
+            &json!([
+                {"id": "same"}, {"id": "same", "marker": null}
+            ]),
+            None,
+        )
+        .unwrap();
+        assert_eq!(rows[0].reference.entity_type.as_str(), "Left");
+        assert_eq!(rows[1].reference.entity_type.as_str(), "Right");
+        assert_ne!(rows[0].reference, rows[1].reference);
+    }
+
+    #[test]
+    fn union_decode_rejects_unknown_ambiguous_and_malformed_discriminators() {
+        let OutputDecoder::Union(mut union) = decoder() else {
+            unreachable!()
+        };
+        union.variants.remove(0);
+        assert!(matches!(
+            decode_output_with_cgs(
+                &OutputDecoder::Union(union.clone()),
+                &json!([{"id":"1"}]),
+                None
+            ),
+            Err(DecodeError::EntityUnionUnknownVariant { row: 0 })
+        ));
+        union.variants.push(union.variants[0].clone());
+        assert!(matches!(
+            decode_output_with_cgs(
+                &OutputDecoder::Union(union),
+                &json!([{"id":"1","marker":true}]),
+                None
+            ),
+            Err(DecodeError::EntityUnionAmbiguousVariant { row: 0, .. })
+        ));
+        assert!(matches!(
+            decode_output_with_cgs(&decoder(), &json!([null]), None),
+            Err(DecodeError::EntityUnionDiscriminatorShape { .. })
+        ));
+    }
+}
+
 /// Decode entities using an [`EntityDecoder`].
 pub fn decode_entities(
     decoder: &EntityDecoder,

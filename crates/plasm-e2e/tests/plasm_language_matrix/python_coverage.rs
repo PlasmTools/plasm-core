@@ -114,13 +114,22 @@ impl std::fmt::Display for CoverageError {
 impl std::error::Error for CoverageError {}
 
 fn validate(ledger: &Ledger) -> Result<(), CoverageError> {
-    let supplemental = BTreeMap::from([(
-        "python_union_matrix".to_owned(),
-        python::union_matrix::FEATURES
-            .iter()
-            .map(|tag| (*tag).to_owned())
-            .collect(),
-    )]);
+    let supplemental = BTreeMap::from([
+        (
+            "python_union_matrix".to_owned(),
+            python::union_matrix::FEATURES
+                .iter()
+                .map(|tag| (*tag).to_owned())
+                .collect(),
+        ),
+        (
+            "entity_union_matrix".to_owned(),
+            super::entity_union::FEATURES
+                .iter()
+                .map(|tag| (*tag).to_owned())
+                .collect(),
+        ),
+    ]);
     if ledger.supplemental_suites != supplemental {
         return Err(CoverageError::SupplementalInventory {
             expected: supplemental,
@@ -416,13 +425,22 @@ fn python_coverage_requires_union_suite_evidence() {
     assert_eq!(
         validate(&value),
         Err(CoverageError::SupplementalInventory {
-            expected: BTreeMap::from([(
-                "python_union_matrix".into(),
-                python::union_matrix::FEATURES
-                    .iter()
-                    .map(|tag| (*tag).into())
-                    .collect()
-            )]),
+            expected: BTreeMap::from([
+                (
+                    "python_union_matrix".into(),
+                    python::union_matrix::FEATURES
+                        .iter()
+                        .map(|tag| (*tag).into())
+                        .collect()
+                ),
+                (
+                    "entity_union_matrix".into(),
+                    super::entity_union::FEATURES
+                        .iter()
+                        .map(|tag| (*tag).into())
+                        .collect()
+                )
+            ]),
             actual: BTreeMap::new(),
         })
     );

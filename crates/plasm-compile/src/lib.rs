@@ -35,7 +35,7 @@ pub use capability_pagination::{
     paginated_list_missing_cml_pagination_warnings, pagination_contract_validation_errors,
 };
 pub use decoder::*;
-pub use embed_decode::{decode_entities, decode_entities_with_cgs};
+pub use embed_decode::{decode_entities, decode_entities_with_cgs, decode_output_with_cgs};
 pub use embed_target_decoder::entity_decoder_for_from_parent_get_target;
 pub use embed_tree::flatten_decoded_embed_descendants;
 pub use error::{CompileError, DecodeError};

@@ -483,6 +483,20 @@ async fn live_materialize_pure(
                 .map_err(|error| step_failure("compute_result_shape_invalid", error.to_string()))?;
             value_shapes = shapes;
             ComputedRows::synthetic(rows)
+        } else if let ComputeOp::NarrowEntity { target, .. } = &compute.compute.op {
+            let rows = crate::graph_rehydrate::GraphSurfaceRehydrator::new(
+                ctx.es,
+                ctx.st,
+                ctx.session_id,
+                ctx.es.cgs.as_ref(),
+            )
+            .resolve_row_source_rows(&source_mat.row_source, None)
+            .await
+            .map_err(|error| {
+                step_failure("entity_narrowing_rehydration_failed", error.to_string())
+            })?;
+            narrow_entity_rows(target, &rows, &source_mat.row_identities)
+                .map_err(|error| step_failure("entity_narrowing_failed", error.to_string()))?
         } else {
             let input_contract = crate::map_body_schema::row_operation_contract(
                 ctx.es,

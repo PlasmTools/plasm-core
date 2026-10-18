@@ -118,17 +118,25 @@ pub fn selected_capability_surface(
         // Mutators still teach that write's `provides`. Identity stays bindable either way.
         admit_teaching_entity_fields(cgs, cap, entity, &entity_key, &mut surface);
         if let Some(output) = &cap.output_schema {
-            if let crate::schema::OutputType::Entity { entity_type }
-            | crate::schema::OutputType::Collection { entity_type, .. } = &output.output_type
-            {
-                let output_entity = cgs.entities.get(entity_type.as_str()).ok_or_else(|| {
+            let output_names: Vec<&str> = match &output.output_type {
+                crate::schema::OutputType::Entity { entity_type }
+                | crate::schema::OutputType::Collection { entity_type, .. } => {
+                    vec![entity_type.as_str()]
+                }
+                crate::schema::OutputType::EntityUnion { variants, .. } => {
+                    variants.iter().map(|name| name.as_str()).collect()
+                }
+                _ => Vec::new(),
+            };
+            for entity_type in output_names {
+                let output_entity = cgs.entities.get(entity_type).ok_or_else(|| {
                     CapabilityExposureError::OutputEntityMissing {
                         entity: entity_type.to_string(),
                     }
                 })?;
                 let output_key = ExposureEntityKey {
                     entry_id: entry_id.into(),
-                    entity: entity_type.as_str().into(),
+                    entity: entity_type.into(),
                 };
                 surface.entities.insert(output_key.clone());
                 admit_output_entity_fields(cap, output_entity, &output_key, &mut surface);

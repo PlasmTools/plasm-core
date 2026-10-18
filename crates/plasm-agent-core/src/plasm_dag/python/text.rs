@@ -295,14 +295,15 @@ impl Lower<'_> {
                 ports.clear();
                 break;
             };
-            if owner
-                .as_ref()
-                .is_some_and(|owner| owner != &contract.row_entity)
-            {
+            let Some(concrete) = contract.row_entity.single() else {
+                ports.clear();
+                break;
+            };
+            if owner.as_ref().is_some_and(|owner| owner != concrete) {
                 ports.clear();
                 break;
             }
-            owner = Some(contract.row_entity);
+            owner = Some(concrete.clone());
             ports.push(plasm_core::plasm_monad::PythonSelectionPort {
                 parameter: parameter.clone(),
                 source: node.clone(),

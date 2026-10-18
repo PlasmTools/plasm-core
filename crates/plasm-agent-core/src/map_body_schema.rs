@@ -9,6 +9,12 @@ pub(crate) mod refinements;
 
 #[derive(Debug, Error)]
 pub enum MapBodySchemaError {
+    #[error("binding `{binding}` contains an entity union; narrow with .of_type(Entity) before capturing its rows into a computation or map")]
+    EntityUnionNeedsNarrowing { binding: String },
+    #[error(transparent)]
+    QueryCapability(#[from] plasm_core::QueryCapabilityResolveError),
+    #[error("record source capability `{capability}` is absent")]
+    RecordCapabilityMissing { capability: String },
     #[error("predicate map scope must return one non-null Boolean")]
     PredicateMustReturnBoolean,
     #[error("predicate parent schema is absent")]
@@ -309,6 +315,35 @@ fn classify_record_contract(
     };
     let cgs =
         crate::catalog_ownership::resolve_cgs_for_entry_entity(es, &owner.entry_id, &owner.entity)?;
+    if let N::Surface(surface) = node {
+        let expr = surface
+            .ir
+            .as_ref()
+            .map(|ir| &ir.expr)
+            .or_else(|| surface.ir_template.as_ref().map(|template| &template.expr));
+        let capability = match expr {
+            Some(plasm_core::Expr::Query(query)) => {
+                Some(plasm_core::resolve_query_capability(query, &cgs)?)
+            }
+            Some(plasm_core::Expr::Invoke(invoke)) => Some(
+                cgs.get_capability(invoke.capability.as_str())
+                    .ok_or_else(|| MapBodySchemaError::RecordCapabilityMissing {
+                        capability: invoke.capability.to_string(),
+                    })?,
+            ),
+            _ => None,
+        };
+        if matches!(
+            capability
+                .and_then(|cap| cap.output_schema.as_ref())
+                .map(|output| &output.output_type),
+            Some(plasm_core::OutputType::EntityUnion { .. })
+        ) {
+            return Err(MapBodySchemaError::EntityUnionNeedsNarrowing {
+                binding: source.to_owned(),
+            });
+        }
+    }
     let entity = cgs
         .get_entity(&owner.entity)
         .ok_or(MapBodySchemaError::RecordEntityMissing)?;

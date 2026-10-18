@@ -314,6 +314,40 @@ impl ExecutionEngine {
     /// After a query, upgrade Summary rows via concurrent GET when configured and the
     /// GET's required capability params are inherited from the parent env.
     #[allow(clippy::too_many_arguments)]
+    /// Hydrate using each row's concrete authority, preserving source occurrence order.
+    pub(crate) async fn hydrate_output_summaries(
+        &self,
+        ordered_entities: &[CachedEntity],
+        cgs: &CGS,
+        mat: &mut SessionMaterialization,
+        mode: ExecutionMode,
+        hydrate_enabled: bool,
+        parent_env: &CmlEnv,
+    ) -> Result<(Vec<CachedEntity>, usize), RuntimeError> {
+        let mut result = Vec::with_capacity(ordered_entities.len());
+        let mut network = 0;
+        // Contiguous groups preserve both duplicates and original order; identities
+        // are never rewritten to the capability receiver for detail dispatch.
+        for group in ordered_entities
+            .chunk_by(|left, right| left.reference.entity_type == right.reference.entity_type)
+        {
+            let (rows, calls) = self
+                .hydrate_query_summaries(
+                    group[0].reference.entity_type.as_str(),
+                    group,
+                    cgs,
+                    mat,
+                    mode,
+                    hydrate_enabled,
+                    parent_env,
+                )
+                .await?;
+            result.extend(rows);
+            network += calls;
+        }
+        Ok((result, network))
+    }
+
     pub(crate) async fn hydrate_query_summaries(
         &self,
         entity_type: &str,

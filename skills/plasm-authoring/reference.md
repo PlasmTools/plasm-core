@@ -1859,3 +1859,46 @@ relations and authoritative empty relations. Embedded-only targets remain Summar
 no richer Get exists; observing them does not prove a complete entity projection.
 
 Timezone-free API datetimes must declare `iso8601_naive_datetime`; use `rfc3339` for timezone-aware instants. Python receives `datetime.datetime` with matching timezone awareness. Neither profile invents nor discards timezone information. Invalid present response values fail decoding; absent fields and explicit null remain distinct.
+
+### Closed nominal entity outputs
+
+A heterogeneous result is a closed entity sum, not an entity with guessed optional
+fields. Declare its variants and use the existing `output.decoder` seam to select
+one variant from each raw row:
+
+```yaml
+entity: WorkQueue
+kind: query
+output:
+  type: entity_union
+  variants: [Note, Change]
+  cardinality: many
+  decoder:
+    type: entity_union
+    cases:
+      - entity_type: Note
+        when: {kind: absent, path: [change]}
+      - entity_type: Change
+        when: {kind: present, path: [change]}
+```
+
+The cases must name exactly the declared, existing variants. `present` includes a
+present JSON null; `absent` means no key. `equals` takes a `path` and scalar `value`
+for tagged protocols. Exactly one case must match each row; unmatched, ambiguous,
+and malformed discriminator shapes fail decoding. Each selected variant uses its
+normal field and identity decoder. Provider envelope/collection paths remain in
+CML mappings. The established output-decoder seam is now typed; no second wire
+configuration or guessed structural discriminator is introduced.
+
+Served Python declarations show `Rows[eA | eB]`. Use
+`mixed.of_type(eA)` before variant-specific fields, relations or actions. The target
+must be a declared variant. Narrowing selects original occurrences and preserves
+recorded identity and coverage; constructing a dictionary with matching keys cannot
+create a receiver.
+
+This initial implementation admits query/search `many` outputs and action `one`
+or `many` outputs. Get/create/update/delete, union outputs inside iteration
+capability templates, and union-target relations remain unsupported and fail
+closed. Do not remove existing capabilities or label mixed rows as a concrete
+entity to bypass those restrictions; redesign and validate the missing contract
+before migrating a catalog that requires it.

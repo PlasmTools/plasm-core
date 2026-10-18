@@ -324,6 +324,23 @@ fn explorer_return_for_cap(cgs: &CGS, cap: &CapabilitySchema) -> ExplorerReturn 
 
 fn explorer_return_for_output_type(cgs: &CGS, ot: &OutputType) -> ExplorerReturn {
     match ot {
+        OutputType::EntityUnion {
+            variants,
+            cardinality,
+        } => ExplorerReturn {
+            kind: "entity_union".into(),
+            label: format!(
+                "{} ({cardinality:?})",
+                variants
+                    .iter()
+                    .map(|v| v.as_str())
+                    .collect::<Vec<_>>()
+                    .join(" | ")
+            ),
+            description: "Each row retains its concrete entity identity.".into(),
+            entity: None,
+            entity_navigable: false,
+        },
         OutputType::SideEffect { description } => {
             let full = description.trim().to_string();
             let label = trim_tool_desc(description);

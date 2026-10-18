@@ -105,6 +105,9 @@ fn validate_python_surface(cgs: &CGS) -> Result<(), SchemaError> {
                 | crate::OutputType::Collection { entity_type, .. } => {
                     obtainable.insert(entity_type.to_string());
                 }
+                crate::OutputType::EntityUnion { variants, .. } => {
+                    obtainable.extend(variants.iter().map(ToString::to_string));
+                }
                 _ => {}
             }
         } else {

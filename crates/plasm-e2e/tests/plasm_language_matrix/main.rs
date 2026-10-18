@@ -25,6 +25,7 @@ mod datetime;
 mod declaration_registry;
 mod effect_boundaries;
 mod effect_model;
+mod entity_union;
 mod features;
 mod ir_helpers;
 mod literate_contract;

@@ -291,6 +291,7 @@ pub(crate) async fn admit_bundle(
                     if !matches!(
                         c.compute.op,
                         plasm_core::ComputeOp::Union { .. }
+                            | plasm_core::ComputeOp::NarrowEntity { .. }
                             | plasm_core::ComputeOp::MergeBranches { .. }
                             | plasm_core::ComputeOp::Render { .. }
                     ) =>

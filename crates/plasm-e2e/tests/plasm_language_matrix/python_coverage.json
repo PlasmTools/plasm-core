@@ -2316,6 +2316,13 @@
       "union_wire_remapping",
       "union_optional_remapped_fields",
       "union_common_input_lanes"
+    ],
+    "entity_union_matrix": [
+      "entity_union_decode",
+      "entity_union_narrow",
+      "entity_union_receiver_authority",
+      "entity_union_relation",
+      "entity_union_reject_fabrication"
     ]
   }
 }

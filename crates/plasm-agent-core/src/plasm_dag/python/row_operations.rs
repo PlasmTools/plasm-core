@@ -16,6 +16,7 @@ row_operations! {
     Map => "map", FlatMap => "flat_map", Iterate => "iterate", PageSize => "page_size",
     Aggregate => "aggregate", GroupBy => "group_by", Distinct => "distinct",
     Select => "select", OrderBy => "order_by", Union => "union", Take => "take", Where => "where",
+    OfType => "of_type",
 }
 
 impl Lower<'_> {
@@ -31,6 +32,10 @@ impl Lower<'_> {
         // Both construction and execution coverage enumerate this same closed
         // vocabulary. No wildcard arm may silently admit a new operation.
         match operation {
+            OfType => {
+                let source = self.expr(receiver, None)?;
+                self.narrow_entity(e, call, &source, id)
+            }
             Map => {
                 let body = self.map(e)?;
                 let schema = crate::map_body_schema::output_schema(self.es, &body)?;
@@ -94,7 +99,9 @@ impl Lower<'_> {
     ) -> Result<String, PythonLoweringError> {
         use RowOperation::*;
         let suffix = match operation {
-            Map | PageSize => return Err(at(e, PythonSourceError::RowConstructorInTransform)),
+            Map | PageSize | OfType => {
+                return Err(at(e, PythonSourceError::RowConstructorInTransform))
+            }
             Iterate => return self.iteration(e, call, source, id),
             FlatMap => return self.fanout(e, call, source, id),
             Aggregate | GroupBy | Distinct => {
@@ -188,7 +195,7 @@ impl Lower<'_> {
                     }
                     Where => return self.filter(e, source, id, &call.arguments.args[0]),
                     Map | PageSize | Iterate | FlatMap | Aggregate | GroupBy | Distinct
-                    | Select | OrderBy => unreachable!("matched positional operation"),
+                    | Select | OrderBy | OfType => unreachable!("matched positional operation"),
                 }
             }
         };

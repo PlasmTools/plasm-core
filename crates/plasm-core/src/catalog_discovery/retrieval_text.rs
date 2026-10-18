@@ -154,6 +154,17 @@ impl SemanticView<'_> {
             }
         }
         match cap.output_schema.as_ref().map(|s| &s.output_type) {
+            Some(OutputType::EntityUnion {
+                variants,
+                cardinality,
+            }) => prose.push(format!(
+                "Returns {cardinality:?} records of {}",
+                variants
+                    .iter()
+                    .map(|v| v.as_str())
+                    .collect::<Vec<_>>()
+                    .join(" | ")
+            )),
             Some(OutputType::Entity { entity_type }) => {
                 prose.push(format!("Returns one {entity_type} record"))
             }
@@ -545,7 +556,10 @@ mod tests {
                 _ => OutputType::SideEffect { description: "Records the declared change.".into() },
             };
             cap.output_schema = Some(crate::schema::OutputSchema {
-                output_type, decoder: serde_json::json!({"wire_secret": true}), idempotent: false, reconcile: None,
+                output_type, decoder: crate::OutputDecoderSpec::EntityUnion { cases: vec![crate::EntityUnionCase {
+                    entity_type: "Receipt".into(),
+                    when: crate::EntityDiscriminator::Present { path: vec!["wire_secret".into()] },
+                }] }, idempotent: false, reconcile: None,
             });
             let roundtrip: CapabilitySchema = serde_json::from_slice(&serde_json::to_vec(&cap).unwrap()).unwrap();
             let actual = render(&cgs, &cap, &cgs.entities["Record"]).unwrap();
@@ -672,7 +686,7 @@ mod tests {
             output_type: OutputType::SideEffect {
                 description: cap.description.clone(),
             },
-            decoder: serde_json::json!({}),
+            decoder: Default::default(),
             idempotent: false,
             reconcile: None,
         });

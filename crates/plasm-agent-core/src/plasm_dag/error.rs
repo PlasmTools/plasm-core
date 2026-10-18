@@ -11,6 +11,10 @@ use thiserror::Error;
 
 #[derive(Debug, Error)]
 pub enum DagCompilationError {
+    #[error("binding `{binding}` uses a template with an entity-union output; per-row and iterative templates require a single entity output. Invoke the capability outside the template, then narrow its result with .of_type(Entity)")]
+    EntityUnionTemplateOutputUnsupported { binding: String },
+    #[error("binding `{binding}` contains multiple entity variants; narrow with .of_type(Entity) before accessing variant identity, relations, or capabilities")]
+    EntityNarrowingRequired { binding: String },
     #[error(transparent)]
     MembershipRhs(Box<plasm_core::RowMembershipParseError>),
     #[error(transparent)]

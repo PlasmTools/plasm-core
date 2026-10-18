@@ -9,10 +9,16 @@ enum CardinalityRule {
     Preserve,
     LimitOne,
     Plural,
+    Narrow { at_most_one: bool },
 }
 
 fn cardinality_rule(op: &ComputeOp) -> CardinalityRule {
     match op {
+        ComputeOp::NarrowEntity {
+            source_at_most_one, ..
+        } => CardinalityRule::Narrow {
+            at_most_one: *source_at_most_one,
+        },
         ComputeOp::Python { output_type, .. } if output_type.is_collection_result() => {
             CardinalityRule::Plural
         }
@@ -40,6 +46,7 @@ pub(crate) fn compute_cardinality_transfer(
     source: impl FnOnce() -> RowCardinalityProof,
 ) -> RowCardinalityProof {
     match cardinality_rule(op) {
+        CardinalityRule::Narrow { at_most_one } => narrowed_entity_cardinality(at_most_one),
         CardinalityRule::Singleton => RowCardinalityProof::StaticSingleton,
         CardinalityRule::Preserve => source(),
         CardinalityRule::LimitOne => RowCardinalityProof::BoundedSingleton {
@@ -80,6 +87,7 @@ pub(crate) fn compute_result_shape(op: &ComputeOp, explicit_singleton: bool) -> 
         ComputeOp::Render { .. } if explicit_singleton => ResultShape::Single,
         ComputeOp::Render { .. }
         | ComputeOp::Python { per_row: true, .. }
+        | ComputeOp::NarrowEntity { .. }
         | ComputeOp::Project { .. }
         | ComputeOp::Filter { .. }
         | ComputeOp::Sort { .. }
@@ -160,5 +168,17 @@ mod tests {
                 if output_kind == 3 { RowCardinalityProof::StaticPlural } else { parent }
             );
         }
+    }
+}
+
+/// Narrowing can discard a singleton; it never manufactures an exact singleton.
+pub(crate) fn narrowed_entity_cardinality(at_most_one: bool) -> RowCardinalityProof {
+    if at_most_one {
+        RowCardinalityProof::BoundedSingleton {
+            kind: BoundedSingletonKind::EntityNarrowing,
+            from_plural_source: false,
+        }
+    } else {
+        RowCardinalityProof::StaticPlural
     }
 }

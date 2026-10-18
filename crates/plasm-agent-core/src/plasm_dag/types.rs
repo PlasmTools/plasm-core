@@ -52,6 +52,7 @@ pub(in crate::plasm_dag) enum DagNodeSource {
         parsed: plasm_core::expr_parser::ParsedExpr,
         kind: PlanNodeKind,
         qualified_entity: QualifiedEntityKey,
+        output_authority: crate::program_binding::RowEntityAuthority,
         effect_class: EffectClass,
         result_shape: crate::plasm_plan::ResultShape,
         uses_result: Vec<crate::plasm_plan::PlanResultUse>,

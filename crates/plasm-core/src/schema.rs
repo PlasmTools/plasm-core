@@ -1622,8 +1622,46 @@ pub enum CrossFieldRuleType {
     Forbidden,
 }
 
-fn default_empty_json_object() -> serde_json::Value {
-    serde_json::Value::Object(serde_json::Map::new())
+/// Typed wire selection for a closed entity-union output.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
+pub enum EntityDiscriminator {
+    Present {
+        path: Vec<String>,
+    },
+    Absent {
+        path: Vec<String>,
+    },
+    Equals {
+        path: Vec<String>,
+        value: DiscriminatorValue,
+    },
+}
+
+/// Discriminator tags are scalar; records and arrays cannot confer entity authority.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(untagged)]
+pub enum DiscriminatorValue {
+    String(String),
+    Bool(bool),
+    Number(serde_json::Number),
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct EntityUnionCase {
+    pub entity_type: EntityName,
+    pub when: EntityDiscriminator,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[serde(tag = "type", rename_all = "snake_case", deny_unknown_fields)]
+pub enum OutputDecoderSpec {
+    #[default]
+    Entity,
+    EntityUnion {
+        cases: Vec<EntityUnionCase>,
+    },
 }
 
 /// Output schema specification for capabilities
@@ -1632,9 +1670,9 @@ pub struct OutputSchema {
     /// Expected output structure (`type: side_effect` | `entity` | … at the same level as `decoder`).
     #[serde(flatten)]
     pub output_type: OutputType,
-    /// Decoder specification for parsing responses (JSON for now, typed later)
-    #[serde(default = "default_empty_json_object")]
-    pub decoder: serde_json::Value,
+    /// Typed wire selection, separate from the output's domain alternatives.
+    #[serde(default)]
+    pub decoder: OutputDecoderSpec,
     /// Whether the output is expected to be idempotent
     #[serde(default)]
     pub idempotent: bool,
@@ -1647,6 +1685,12 @@ pub struct OutputSchema {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "type")]
 pub enum OutputType {
+    /// Closed heterogeneous rows, each retaining its concrete entity identity.
+    #[serde(rename = "entity_union")]
+    EntityUnion {
+        variants: Vec<EntityName>,
+        cardinality: Cardinality,
+    },
     /// Effectful operation with no entity projection (empty or ignored response body).
     /// `description` must state **what** changes in the domain; required and non-empty when trimmed.
     #[serde(rename = "side_effect")]
@@ -3751,6 +3795,68 @@ impl CGS {
 
         for (cap_name, cap) in &self.capabilities {
             if let Some(ref os) = cap.output_schema {
+                match (&os.output_type, &os.decoder) {
+                    (
+                        OutputType::EntityUnion {
+                            variants,
+                            cardinality,
+                        },
+                        OutputDecoderSpec::EntityUnion { cases },
+                    ) => {
+                        if !matches!(
+                            cap.kind,
+                            CapabilityKind::Query | CapabilityKind::Search | CapabilityKind::Action
+                        ) {
+                            return Err(SchemaError::EntityUnionCapabilityKind {
+                                capability: cap_name.to_string(),
+                            });
+                        }
+                        if matches!(cap.kind, CapabilityKind::Query | CapabilityKind::Search)
+                            && *cardinality != Cardinality::Many
+                        {
+                            return Err(SchemaError::EntityUnionQueryCardinality {
+                                capability: cap_name.to_string(),
+                            });
+                        }
+                        let names: std::collections::BTreeSet<_> = variants.iter().collect();
+                        if variants.len() < 2
+                            || names.len() != variants.len()
+                            || variants
+                                .iter()
+                                .any(|name| self.get_entity(name.as_str()).is_none())
+                        {
+                            return Err(SchemaError::EntityUnionVariants {
+                                capability: cap_name.to_string(),
+                            });
+                        }
+                        let decoded: std::collections::BTreeSet<_> =
+                            cases.iter().map(|case| &case.entity_type).collect();
+                        if decoded != names || decoded.len() != cases.len() {
+                            return Err(SchemaError::EntityUnionDecoderCases {
+                                capability: cap_name.to_string(),
+                            });
+                        }
+                        for case in cases {
+                            let path = match &case.when {
+                                EntityDiscriminator::Present { path }
+                                | EntityDiscriminator::Absent { path }
+                                | EntityDiscriminator::Equals { path, .. } => path,
+                            };
+                            if path.is_empty() || path.iter().any(String::is_empty) {
+                                return Err(SchemaError::EntityUnionDiscriminatorPath {
+                                    capability: cap_name.to_string(),
+                                });
+                            }
+                        }
+                    }
+                    (OutputType::EntityUnion { .. }, _)
+                    | (_, OutputDecoderSpec::EntityUnion { .. }) => {
+                        return Err(SchemaError::EntityUnionDecoderCases {
+                            capability: cap_name.to_string(),
+                        });
+                    }
+                    _ => {}
+                }
                 if let OutputType::SideEffect { description } = &os.output_type {
                     if description.trim().is_empty() {
                         return Err(SchemaError::SideEffectMissingDescription {

@@ -109,14 +109,15 @@ impl ExecutionEngine {
                     &env,
                 )?;
                 let identity_ambient = cml_env_to_identity_strings(&env);
-                let decoder = mutating_capability_response_decoder(
+                let decoder = super::entity_decoder::mutating_capability_output_decoder(
                     create.entity.as_str(),
                     create.capability.as_str(),
                     cgs,
                     &identity_ambient,
                     None,
                 );
-                let decoded = decode_entities_with_cgs(&decoder, &response, Some(cgs))?;
+                let decoded =
+                    plasm_compile::decode_output_with_cgs(&decoder, &response, Some(cgs))?;
                 super::entity_decoder::validate_declared_output_cardinality(
                     capability,
                     decoded.len(),
@@ -424,7 +425,7 @@ impl ExecutionEngine {
                     .as_deref()
                     .or_else(|| invoke.target.simple_id().map(|s| s.as_str()));
                 let identity_ambient = cml_env_to_identity_strings(&env);
-                let decoder = mutating_capability_response_decoder(
+                let decoder = super::entity_decoder::mutating_capability_output_decoder(
                     invoke.target.entity_type.as_str(),
                     invoke.capability.as_str(),
                     cgs,
@@ -433,13 +434,20 @@ impl ExecutionEngine {
                 );
                 let decoded = if capability.provides.is_empty()
                     && capability.declared_entity_output().is_none()
-                {
+                    && !matches!(
+                        capability
+                            .output_schema
+                            .as_ref()
+                            .map(|output| &output.output_type),
+                        Some(plasm_core::OutputType::EntityUnion { .. })
+                    ) {
                     // True side-effect Actions may return empty/opaque bodies.
-                    decode_entities_with_cgs(&decoder, &response, Some(cgs)).unwrap_or_default()
+                    plasm_compile::decode_output_with_cgs(&decoder, &response, Some(cgs))
+                        .unwrap_or_default()
                 } else {
                     // Action-with-`provides` must materialize catalog-qualified rows (e.g. AuthSession
                     // access_token) for downstream hole fill / CML env — never swallow decode failure.
-                    decode_entities_with_cgs(&decoder, &response, Some(cgs))?
+                    plasm_compile::decode_output_with_cgs(&decoder, &response, Some(cgs))?
                 };
                 super::entity_decoder::validate_declared_output_cardinality(
                     capability,

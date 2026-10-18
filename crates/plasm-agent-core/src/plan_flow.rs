@@ -779,7 +779,8 @@ impl<'a, P: FlowPolicyEvaluator + ?Sized> FlowPass<'a, P> {
                     );
                 }
             }
-            ComputeOp::Filter { .. }
+            ComputeOp::NarrowEntity { .. }
+            | ComputeOp::Filter { .. }
             | ComputeOp::Sort { .. }
             | ComputeOp::Limit { .. }
             | ComputeOp::DedupeBy { .. }
