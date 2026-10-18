@@ -264,6 +264,7 @@ pub async fn execute_plasm_parsed_expr(
         rows_progress,
         Some(plasm_core::PreflightToken::VERIFIED),
         plan_shared,
+        crate::execute_pipeline::CompileSource::Authored,
     )
     .await
     .map_err(|e| run_line_failure(e, sess))

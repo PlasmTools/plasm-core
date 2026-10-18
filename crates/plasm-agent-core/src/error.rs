@@ -113,6 +113,8 @@ impl From<plasm_runtime::RuntimeError> for AgentError {
 
 #[derive(Debug, Error)]
 pub enum AgentArgumentError {
+    #[error("relation `{relation}` selects a concrete entity variant; CLI argument `{argument}` is unsupported on this relation. Use a composed program to apply filters or limits after relation selection")]
+    SelectedRelationArgumentUnsupported { relation: String, argument: String },
     #[error("No entity command specified")]
     MissingEntityCommand,
     #[error("'{command}' requires an ID. Usage: {entity} <ID> {command}")]

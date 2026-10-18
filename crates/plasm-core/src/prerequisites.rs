@@ -2465,7 +2465,7 @@ mod tests {
                 entity.relations.insert(name.clone().into(), crate::RelationSchema {
                     name: name.into(), description: "Structural relation".into(),
                     target_resource: "Derived".into(), cardinality: crate::Cardinality::Many,
-                    materialize: Some(crate::RelationMaterialization::QueryScoped { capability: "derived_read".into(), param: "credential".into() }), discovery: None,
+                    materialize: Some(crate::RelationMaterialization::QueryScoped { capability: "derived_read".into(), param: "credential".into(), select_entity: None }), discovery: None,
                 });
             }
             unrelated.entities.insert("Derived".into(), entity);

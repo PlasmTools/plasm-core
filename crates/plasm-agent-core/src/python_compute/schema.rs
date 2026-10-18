@@ -211,6 +211,12 @@ pub(crate) fn classify_source_field_kind(
                 .and_then(|f| f.value_type)
                 .ok_or(PythonSchemaError::SourceFieldMissing);
         }
+        Node::Compute(c) if matches!(c.compute.op, ComputeOp::NarrowEntity { .. }) => {
+            let ComputeOp::NarrowEntity { target, .. } = &c.compute.op else {
+                unreachable!()
+            };
+            return catalog_source_field_kind(es, &target.entry_id, &target.entity, field);
+        }
         Node::Compute(c) => {
             let mut next = |field: &str| lookup.field(&c.compute.source, field);
             return match &c.compute.op {
@@ -287,17 +293,25 @@ pub(crate) fn classify_source_field_kind(
             };
         }
     };
-    let cgs =
-        crate::catalog_ownership::resolve_cgs_for_entry_entity(es, &owner.entry_id, &owner.entity)?;
+    catalog_source_field_kind(es, &owner.entry_id, &owner.entity, field)
+}
+
+fn catalog_source_field_kind(
+    es: &crate::execute_session::ExecuteSession,
+    entry_id: &str,
+    entity_name: &str,
+    field: &str,
+) -> Result<plasm_core::value_contract::ValueContract, PythonSchemaError> {
+    let cgs = crate::catalog_ownership::resolve_cgs_for_entry_entity(es, entry_id, entity_name)?;
     let entity = cgs
-        .get_entity(&owner.entity)
+        .get_entity(entity_name)
         .ok_or(PythonSchemaError::SourceOwnerMissing)?;
     if let Some(relation) = entity
         .relations
         .get(field)
         .filter(|_| !entity.fields.contains_key(field))
     {
-        return Ok(super::observed_relation_type(relation, &owner.entry_id));
+        return Ok(super::observed_relation_type(relation, entry_id));
     }
     let f = entity
         .fields
@@ -305,7 +319,7 @@ pub(crate) fn classify_source_field_kind(
         .ok_or(PythonSchemaError::CatalogFieldMissing)?;
     let mut t = plasm_core::value_contract::ValueContract::from_domain(
         cgs,
-        &owner.entry_id,
+        entry_id,
         f.kind.registry_key(),
     )?;
     t.nullable = !f.required;
@@ -418,6 +432,29 @@ pub(super) fn validate_source_owner(
                             next: 1,
                         });
                         pending.push(Work::Visit(first));
+                        continue;
+                    }
+                    Some(Node::Compute(compute))
+                        if matches!(
+                            compute.compute.op,
+                            plasm_core::plasm_monad::ComputeOp::NarrowEntity { .. }
+                        ) =>
+                    {
+                        let plasm_core::plasm_monad::ComputeOp::NarrowEntity { target, .. } =
+                            &compute.compute.op
+                        else {
+                            unreachable!()
+                        };
+                        let result = if target.entry_id == expected.entry_id.as_str()
+                            && target.entity == expected.entity.as_str()
+                        {
+                            Ok(())
+                        } else {
+                            Err(Fault::Mismatch)
+                        };
+                        active.remove(&id);
+                        complete.insert(id, result);
+                        values.push(result);
                         continue;
                     }
                     Some(Node::Compute(compute)) => {

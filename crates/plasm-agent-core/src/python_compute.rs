@@ -1151,11 +1151,14 @@ pub(crate) fn validate_plan_compute(
             .find(|n| n.id().as_str() == compute.compute.source.as_str())
             .ok_or(PythonComputeError::SourceNodeAbsent)?;
         if let ValidatedPlanNode::Compute(source) = source {
-            // Row-preserving operators retain navigation capabilities, but those
+            // Entity selections retain navigation capabilities, but those
             // capabilities are not implicitly materialized compute values.
+            // Narrowing has a concrete nominal owner and follows the same rule:
+            // validate the captured fields and owner below, not navigation-schema equality.
             let preserves_entity = matches!(
                 source.compute.op,
-                plasm_core::plasm_monad::ComputeOp::Limit { .. }
+                plasm_core::plasm_monad::ComputeOp::NarrowEntity { .. }
+                    | plasm_core::plasm_monad::ComputeOp::Limit { .. }
                     | plasm_core::plasm_monad::ComputeOp::Filter { .. }
                     | plasm_core::plasm_monad::ComputeOp::Sort { .. }
                     | plasm_core::plasm_monad::ComputeOp::DedupeBy { .. }
@@ -1242,7 +1245,8 @@ pub(crate) fn validate_plan_compute(
                 break source
                     .qualified_entity
                     .as_ref()
-                    .ok_or(PythonComputeError::CatalogOwnershipRequired)?;
+                    .ok_or(PythonComputeError::CatalogOwnershipRequired)?
+                    .clone();
             }
             ValidatedPlanNode::RelationTraversal(source) => {
                 if let Some(fields) = &source.relation.ir.projection {
@@ -1254,11 +1258,17 @@ pub(crate) fn validate_plan_compute(
                         .into());
                     }
                 }
-                break &source.relation.target;
+                break source.relation.target.clone();
             }
             ValidatedPlanNode::Compute(source) => {
                 use plasm_core::plasm_monad::ComputeOp;
                 match &source.compute.op {
+                    ComputeOp::NarrowEntity { target, .. } => {
+                        break crate::plasm_plan::QualifiedEntityKey {
+                            entry_id: target.entry_id.clone(),
+                            entity: target.entity.clone(),
+                        };
+                    }
                     ComputeOp::Project { fields } => {
                         if contract.fields.keys().any(|name| {
                             !fields
@@ -1307,7 +1317,7 @@ pub(crate) fn validate_plan_compute(
                         .into());
                     }
                 }
-                break &source.effect_template.qualified_entity;
+                break source.effect_template.qualified_entity.clone();
             }
             _ => return Err(PythonComputeError::TypedEntityRowsRequired.into()),
         }

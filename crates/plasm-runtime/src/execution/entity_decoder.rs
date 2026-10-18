@@ -38,14 +38,38 @@ pub(crate) fn create_output_decoder_for_capability(
                 .collect(),
         });
     }
-    plasm_compile::OutputDecoder::Entity(create_entity_decoder_for_capability(
-        declared_entity,
+    asserted_output_decoder(
+        create_entity_decoder_for_capability(
+            declared_entity,
+            cgs,
+            capability_name,
+            collection_source,
+            request_identity,
+            identity_ambient,
+        ),
         cgs,
         capability_name,
-        collection_source,
-        request_identity,
-        identity_ambient,
-    ))
+    )
+}
+
+fn asserted_output_decoder(
+    decoder: EntityDecoder,
+    cgs: &CGS,
+    capability_name: Option<&str>,
+) -> plasm_compile::OutputDecoder {
+    match capability_name
+        .and_then(|name| cgs.get_capability(name))
+        .and_then(|cap| cap.output_schema.as_ref())
+        .map(|output| &output.decoder)
+    {
+        Some(plasm_core::OutputDecoderSpec::EntityAssert { when }) => {
+            plasm_compile::OutputDecoder::AssertedEntity {
+                decoder,
+                when: when.clone(),
+            }
+        }
+        _ => plasm_compile::OutputDecoder::Entity(decoder),
+    }
 }
 
 pub(crate) fn validate_declared_output_cardinality(
@@ -142,13 +166,17 @@ pub(crate) fn mutating_capability_output_decoder(
             Some(identity_ambient),
         );
     }
-    plasm_compile::OutputDecoder::Entity(mutating_capability_response_decoder(
-        entity_type,
-        capability_name,
+    asserted_output_decoder(
+        mutating_capability_response_decoder(
+            entity_type,
+            capability_name,
+            cgs,
+            identity_ambient,
+            request_identity,
+        ),
         cgs,
-        identity_ambient,
-        request_identity,
-    ))
+        Some(capability_name),
+    )
 }
 
 pub(crate) fn mutating_capability_response_decoder(

@@ -25,6 +25,21 @@ pub fn decode_output_with_cgs(
 ) -> Result<Vec<DecodedEntity>, DecodeError> {
     match decoder {
         crate::OutputDecoder::Entity(decoder) => decode_entities_with_cgs(decoder, response, cgs),
+        crate::OutputDecoder::AssertedEntity { decoder, when } => {
+            extract_path(&decoder.source, response)?
+                .iter()
+                .enumerate()
+                .map(|(row, source)| {
+                    if !discriminator_matches(when, source)? {
+                        return Err(DecodeError::EntityAssertionMismatch {
+                            entity: decoder.entity.clone(),
+                            row,
+                        });
+                    }
+                    decode_single_entity(decoder, source, cgs)
+                })
+                .collect()
+        }
         crate::OutputDecoder::Union(decoder) => extract_path(&decoder.source, response)?
             .iter()
             .enumerate()
@@ -110,6 +125,25 @@ mod output_union_codec_laws {
                 },
             ],
         })
+    }
+
+    #[test]
+    fn concrete_entity_assertion_rejects_present_null_before_decode() {
+        let decoder = OutputDecoder::AssertedEntity {
+            decoder: EntityDecoder::new("Left", PathExpr::empty()).with_id_field("id"),
+            when: EntityDiscriminator::Absent {
+                path: vec!["marker".into()],
+            },
+        };
+        let packed = serde_json::to_vec(&decoder).unwrap();
+        let restored: OutputDecoder = serde_json::from_slice(&packed).unwrap();
+        let rows = decode_output_with_cgs(&restored, &json!({"id":"7"}), None).unwrap();
+        assert_eq!(rows[0].reference.entity_type.as_str(), "Left");
+        // No id is supplied: the nominal assertion must fail before identity extraction.
+        assert!(
+            matches!(decode_output_with_cgs(&restored, &json!({"marker":null}), None),
+            Err(DecodeError::EntityAssertionMismatch { entity, row: 0 }) if entity == "Left")
+        );
     }
 
     #[test]

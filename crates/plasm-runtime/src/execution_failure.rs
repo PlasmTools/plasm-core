@@ -416,9 +416,17 @@ impl From<crate::RuntimeError> for ExecutionFailure {
         }
         let (cause, code) = match &error {
             FieldUnavailable { .. } => (FailureCause::ResponseContract, "field_unavailable"),
+            DecodeError { source: plasm_compile::DecodeError::EntityAssertionMismatch { .. } } => (
+                FailureCause::ResponseContract,
+                "entity_assertion_mismatch",
+            ),
             DecodeError { .. } | DeclaredOutputCardinality { .. } => (
                 FailureCause::ResponseContract,
                 "response_contract_violation",
+            ),
+            Chain(crate::ChainError::SelectedRelationIncomplete { .. }) => (
+                FailureCause::ResponseContract,
+                "selected_relation_incomplete",
             ),
             PaginationProgress { .. } => (
                 FailureCause::ResponseContract,
@@ -462,7 +470,8 @@ impl From<crate::RuntimeError> for ExecutionFailure {
                 plasm_compile::DecodeError::FieldContract { field, .. } => {
                     format!("Response field '{field}' violates its declared type")
                 }
-                plasm_compile::DecodeError::EntityUnionUnknownVariant { .. }
+                plasm_compile::DecodeError::EntityAssertionMismatch { .. }
+                | plasm_compile::DecodeError::EntityUnionUnknownVariant { .. }
                 | plasm_compile::DecodeError::EntityUnionAmbiguousVariant { .. }
                 | plasm_compile::DecodeError::EntityUnionDiscriminatorShape { .. }
                 | plasm_compile::DecodeError::JsonPath(_)
@@ -534,6 +543,7 @@ impl From<crate::RuntimeError> for ExecutionFailure {
             | TopKFieldEmpty
             | FieldUnknown { .. }
             | EntityUnknown { .. }
+            | NonlocalQueryAtTerminal { .. }
             | ViewNodeMissing { .. }
             | ComputedOutputPhaseRequired
             | TraversalParentTypeMismatch { .. }

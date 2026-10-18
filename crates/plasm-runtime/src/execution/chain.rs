@@ -5,7 +5,7 @@ use plasm_core::collection_codec::{CollectionIdentity, Demand, Observation, Shar
 
 /// An observed row is reusable when complete, or when the catalogue declares
 /// no richer Get projection. The latter preserves Summary; it does not promote it.
-fn observed_row_needs_no_detail_get(row: Option<&CachedEntity>, cgs: &CGS) -> bool {
+pub(crate) fn observed_row_needs_no_detail_get(row: Option<&CachedEntity>, cgs: &CGS) -> bool {
     row.is_some_and(|row| {
         row.completeness == crate::EntityCompleteness::Complete
             || cgs
@@ -119,7 +119,9 @@ impl ExecutionEngine {
                             .as_ref()
                             .unwrap_or(&RelationMaterialization::Unavailable);
                         match rel_mat {
-                            RelationMaterialization::QueryScoped { capability, param } => {
+                            RelationMaterialization::QueryScoped {
+                                capability, param, ..
+                            } => {
                                 return self
                                     .execute_chain_via_param(
                                         &source_result,
@@ -138,6 +140,7 @@ impl ExecutionEngine {
                             RelationMaterialization::QueryScopedBindings {
                                 capability,
                                 bindings,
+                                ..
                             } => {
                                 return self
                                     .execute_chain_via_bindings(
@@ -490,6 +493,7 @@ impl ExecutionEngine {
         cgs: &CGS,
         mat: &mut SessionMaterialization,
         mode: ExecutionMode,
+        select_entity: Option<&plasm_core::EntityName>,
     ) -> Result<ExecutionResult, RuntimeError> {
         use futures_util::stream::{self, StreamExt};
 
@@ -514,25 +518,49 @@ impl ExecutionEngine {
 
             let mut stream = stream::iter(network_jobs.into_iter().map(|(parent_idx, q)| {
                 let mut branch = branch_seed.clone();
-                async move {
-                    let result = self
-                        .execute_query(
-                            &q,
-                            cgs,
-                            &mut branch,
-                            mode,
-                            StreamConsumeOpts::default(),
-                            &ViewAmbientContext::default(),
-                        )
-                        .await?;
+                Box::pin(async move {
+                    let result = Box::pin(self.execute_query(
+                        &q,
+                        cgs,
+                        &mut branch,
+                        mode,
+                        StreamConsumeOpts {
+                            fetch_all: select_entity.is_some(),
+                            ..Default::default()
+                        },
+                        &ViewAmbientContext::default(),
+                    ))
+                    .await?;
                     Ok::<_, RuntimeError>((parent_idx, result, branch))
-                }
+                })
             }))
             .buffer_unordered(concurrency);
 
             while let Some(res) = stream.next().await {
                 cooperative_cancel_check()?;
-                let (parent_idx, result, branch) = res?;
+                let (parent_idx, mut result, branch) = res?;
+                if let Some(selected) = select_entity {
+                    if result.has_more || result.pagination_resume.is_some() {
+                        return Err(crate::ChainError::SelectedRelationIncomplete {
+                            entity: selected.to_string(),
+                        }
+                        .into());
+                    }
+                    result.collection.materialize(Demand::Observed)?;
+                    let retained: Vec<_> = result
+                        .entities()
+                        .iter()
+                        .enumerate()
+                        .filter_map(|(index, entity)| {
+                            (entity.reference.entity_type == *selected).then_some(index)
+                        })
+                        .collect();
+                    result.collection = result.collection.filter(
+                        &("relation_select_entity", selected),
+                        &retained,
+                        &[],
+                    )?;
+                }
                 mat.absorb_branch(branch)?;
                 if result.source == ExecutionSource::Live {
                     any_live = true;
@@ -606,7 +634,13 @@ impl ExecutionEngine {
                 entity: target_key.to_string(),
             }
         })?;
-        if cap.domain.as_str() != target_key {
+        if rel
+            .materialize
+            .as_ref()
+            .and_then(|mat| mat.selected_entity())
+            .is_none()
+            && cap.domain.as_str() != target_key
+        {
             return Err(RuntimeError::Chain(
                 crate::ChainError::CapabilityDomainMismatch {
                     capability: capability.to_string(),
@@ -652,15 +686,25 @@ impl ExecutionEngine {
                 })
                 .unwrap_or_else(|| entity.reference.primary_slot_str());
             let pred = plasm_core::Predicate::eq(via.as_str(), id);
-            let mut q = QueryExpr::filtered(target_entity.clone(), pred);
+            let mut q = QueryExpr::filtered(cap.domain.clone(), pred);
             q.capability_name = Some(capability_name.clone());
             relation_inherit_for_scoped_query(cgs, mat, entity, cap, &q)?
                 .apply_to_scoped_query(&mut q);
             network_jobs.push((i, q));
         }
         let per_parent = vec![None; source_result.count()];
-        self.fanout_scoped_query_parallel(source_result, per_parent, network_jobs, cgs, mat, mode)
-            .await
+        self.fanout_scoped_query_parallel(
+            source_result,
+            per_parent,
+            network_jobs,
+            cgs,
+            mat,
+            mode,
+            rel.materialize
+                .as_ref()
+                .and_then(|mat| mat.selected_entity()),
+        )
+        .await
     }
 
     /// Multi-parameter scoped query fanout (`RelationMaterialization::QueryScopedBindings`).
@@ -688,7 +732,13 @@ impl ExecutionEngine {
                 entity: target_key.to_string(),
             }
         })?;
-        if cap.domain.as_str() != target_key {
+        if rel
+            .materialize
+            .as_ref()
+            .and_then(|mat| mat.selected_entity())
+            .is_none()
+            && cap.domain.as_str() != target_key
+        {
             return Err(RuntimeError::Chain(
                 crate::ChainError::CapabilityDomainMismatch {
                     capability: capability.to_string(),
@@ -737,15 +787,25 @@ impl ExecutionEngine {
             } else {
                 Predicate::and(preds)
             };
-            let mut q = QueryExpr::filtered(target_entity.clone(), pred);
+            let mut q = QueryExpr::filtered(cap.domain.clone(), pred);
             q.capability_name = Some(capability_name.clone());
             relation_inherit_for_scoped_query(cgs, mat, entity, cap, &q)?
                 .apply_to_scoped_query(&mut q);
             network_jobs.push((i, q));
         }
         let per_parent = vec![None; source_result.count()];
-        self.fanout_scoped_query_parallel(source_result, per_parent, network_jobs, cgs, mat, mode)
-            .await
+        self.fanout_scoped_query_parallel(
+            source_result,
+            per_parent,
+            network_jobs,
+            cgs,
+            mat,
+            mode,
+            rel.materialize
+                .as_ref()
+                .and_then(|mat| mat.selected_entity()),
+        )
+        .await
     }
 
     /// [`RelationMaterialization::PreferFromParentGet`]: typed per-row embed vs declared scoped fallback.
@@ -844,8 +904,16 @@ impl ExecutionEngine {
             &target_entity,
             fallback,
         )?;
-        self.fanout_scoped_query_parallel(source_result, per_parent, network_jobs, cgs, mat, mode)
-            .await
+        self.fanout_scoped_query_parallel(
+            source_result,
+            per_parent,
+            network_jobs,
+            cgs,
+            mat,
+            mode,
+            None,
+        )
+        .await
     }
 
     /// Chain on `get_scoped_bindings`: synthesize a [`GetExpr`] per parent row from binding keys.

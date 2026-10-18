@@ -597,6 +597,80 @@ impl ExecutionEngine {
         })
     }
 
+    /// Traverse a host-recorded source result without issuing a synthetic source Get.
+    /// Source identity must match the bound reference; authored expressions use `execute`.
+    pub fn execute_relation_from_observed<'a>(
+        &'a self,
+        chain: &'a plasm_core::ChainExpr,
+        source: ExecutionResult,
+        cgs: &'a CGS,
+        mat: &'a mut SessionMaterialization,
+        mode: Option<ExecutionMode>,
+        consume: StreamConsumeOpts,
+        opts: ExecuteOptions,
+    ) -> std::pin::Pin<
+        Box<dyn std::future::Future<Output = Result<ExecutionResult, RuntimeError>> + Send + 'a>,
+    > {
+        Box::pin(async move {
+            crate::check_cancel(opts.cancel.as_ref())?;
+            let start_time = std::time::Instant::now();
+            let base = self.resolve_http_base_from_opts(&opts);
+            let auth_override = opts.auth_resolver_override.clone();
+            let fp_sink = opts.request_fingerprint_sink.clone();
+            let federation = opts.federation.clone();
+            let execute_session = opts.execute_session.clone();
+            let compiled_catalog = opts.required_compiled_catalog()?;
+            let cancel = opts.cancel.clone();
+            let rows_progress = opts.rows_progress.clone();
+            let mut result = Self::run_in_execute_task_scopes(
+                base,
+                auth_override,
+                fp_sink.clone(),
+                federation,
+                execute_session,
+                compiled_catalog,
+                cancel,
+                rows_progress,
+                async move {
+                    source
+                        .collection
+                        .materialize(plasm_core::collection_codec::Demand::Observed)?;
+                    let Expr::Get(bound) = chain.source.as_ref() else {
+                        return Err(
+                            plasm_core::collection_codec::CollectionFault::Conservation.into()
+                        );
+                    };
+                    if source.count() != 1
+                        || source
+                            .entities()
+                            .iter()
+                            .any(|row| row.reference != bound.reference)
+                    {
+                        return Err(
+                            plasm_core::collection_codec::CollectionFault::Conservation.into()
+                        );
+                    }
+                    self.execute_chain_materialized(
+                        chain,
+                        source,
+                        cgs,
+                        mat,
+                        mode.unwrap_or(self.config.default_mode),
+                        consume,
+                        opts,
+                    )
+                    .await
+                },
+            )
+            .await?;
+            result.stats.duration_ms = start_time.elapsed().as_millis() as u64;
+            result.request_fingerprints = fp_sink
+                .map(|m| m.lock().unwrap_or_else(|e| e.into_inner()).clone())
+                .unwrap_or_default();
+            Ok(result)
+        })
+    }
+
     /// Lazy page-by-page execution. Limits are in [`StreamConsumeOpts`], not the expression IR.
     pub fn execute_stream<'a>(
         &'a self,

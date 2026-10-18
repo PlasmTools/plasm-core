@@ -334,6 +334,10 @@ pub enum EntityExpressionError {
 
 #[derive(Debug, Clone, Error)]
 pub enum RelationMaterializeError {
+    #[error("entity-union query materialization requires explicit select_entity matching relation target `{target}`")]
+    EntitySelectionRequired { target: String },
+    #[error("select_entity `{selected}` must equal relation target `{target}` and belong to the capability entity-union output")]
+    InvalidEntitySelection { selected: String, target: String },
     #[error("no such capability name")]
     UnknownCapability,
     #[error("capability is declared on entity '{actual}' but relation targets '{expected}'")]
@@ -376,6 +380,8 @@ pub enum SchemaError {
         "capability `{capability}` discriminator paths must be nonempty and contain nonempty keys"
     )]
     EntityUnionDiscriminatorPath { capability: String },
+    #[error("capability `{capability}` entity assertion requires a concrete entity or collection output")]
+    EntityAssertionOutput { capability: String },
     #[error("invalid prerequisite declaration: {source}")]
     PrerequisiteInvalid {
         #[source]

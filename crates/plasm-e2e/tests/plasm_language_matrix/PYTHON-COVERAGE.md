@@ -788,3 +788,8 @@ set capture and ordered helper effects have abstract-fixture runtime witnesses i
 `of_type` narrowing, shared textual IDs across variants, relationship traversal,
 and action receiver authority. Copied plain data cannot acquire entity authority.
 The supplemental feature inventory is checked by `python_coverage.rs`.
+
+The same matrix also exercises explicit scoped-relation variant selection, including
+an initial page containing only another variant, later-page failures, incomplete
+empty pages and repeated nominal identities. Concrete Get assertions reject a wrong
+variant before cache publication; a later corrected response must be read again.

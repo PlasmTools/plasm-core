@@ -696,7 +696,7 @@ mod tests {
             let relation = entity.relations.get(relation_name).unwrap();
             let Some(plasm_core::RelationMaterialization::QueryScopedBindings {
                 capability,
-                bindings,
+                bindings, ..
             }) = relation.materialize.as_ref()
             else {
                 panic!("expected compound relation bindings for {catalog}/{relation_name}");

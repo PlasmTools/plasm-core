@@ -567,12 +567,22 @@ fn compute_owner(
     while visited.insert(current) {
         match &state.get(current)?.source {
             DagNodeSource::Surface {
-                qualified_entity,
                 result_shape,
+                output_authority,
                 ..
             } => {
                 return (*result_shape != ResultShape::SideEffectAck)
-                    .then(|| qualified_entity.clone());
+                    .then(|| output_authority.single().cloned())
+                    .flatten();
+            }
+            DagNodeSource::Compute {
+                op: ComputeOp::NarrowEntity { .. },
+                ..
+            } => {
+                return super::super::binding_contract(state, current)?
+                    .row_entity
+                    .single()
+                    .cloned();
             }
             DagNodeSource::RelationTraversal {
                 qualified_entity, ..

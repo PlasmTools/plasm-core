@@ -9,6 +9,10 @@ use serde::{Deserialize, Serialize};
 #[serde(tag = "type", content = "decoder", rename_all = "snake_case")]
 pub enum OutputDecoder {
     Entity(EntityDecoder),
+    AssertedEntity {
+        decoder: EntityDecoder,
+        when: plasm_core::EntityDiscriminator,
+    },
     Union(EntityUnionDecoder),
 }
 

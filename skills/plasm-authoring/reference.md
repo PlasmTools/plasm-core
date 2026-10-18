@@ -1902,3 +1902,43 @@ capability templates, and union-target relations remain unsupported and fail
 closed. Do not remove existing capabilities or label mixed rows as a concrete
 entity to bypass those restrictions; redesign and validate the missing contract
 before migrating a catalog that requires it.
+
+
+A concrete relation may select one nominal variant from a scoped union query:
+
+```yaml
+relations:
+  notes:
+    target: Note
+    cardinality: many
+    materialize:
+      kind: query_scoped_bindings
+      capability: work_queue_query
+      bindings: {queue_id: id}
+      select_entity: Note
+```
+
+`select_entity` is required for every union-query materializer, including when its
+routing owner happens to be the selected variant. It must equal the relation target
+and occur in the capability's declared output union. Runtime selection uses decoded
+nominal identities, after bounded source pagination; it does not inspect copied keys.
+A residual source continuation fails explicitly rather than being discarded. Selection
+preserves recorded coverage, so an unproven source cannot become a complete result.
+CLI relation commands with this selection currently reject additional query arguments;
+compose further selection in the Python program.
+
+A concrete Get can assert which provider record it accepts without widening its identity:
+
+```yaml
+output:
+  type: entity
+  entity_type: Note
+  decoder:
+    type: entity_assert
+    when: {kind: absent, path: [change]}
+```
+
+The assertion runs before field decoding, identity validation and cache publication.
+A mismatch is a response-contract failure; it never relabels the record, retries the
+operation or treats the response as absence. Exact Get request-key correspondence
+continues to apply after the assertion.

@@ -61,6 +61,8 @@ pub enum MapBodyValidationError {
     #[error(transparent)]
     PythonField(#[from] PythonFieldError),
     #[error(transparent)]
+    PythonSchema(#[from] crate::python_compute::schema::PythonSchemaError),
+    #[error(transparent)]
     Schema(#[from] MapSchemaError),
     #[error(transparent)]
     SessionProvision(#[from] Box<crate::plan_session_provisions::SessionProvisionError>),
@@ -92,6 +94,7 @@ impl From<MapBodyValidationError> for plasm_runtime::ExecutionFailure {
             MapBodyValidationError::Catalog(_) => "scope_catalog_entity_unavailable",
             MapBodyValidationError::CatalogChain(_) => "scope_catalog_chain_invalid",
             MapBodyValidationError::PythonField(_) => "scope_python_field_unavailable",
+            MapBodyValidationError::PythonSchema(_) => "scope_python_schema_invalid",
             MapBodyValidationError::Schema(_) => "scope_value_schema_invalid",
             MapBodyValidationError::SessionProvision(_) => "scope_capture_provision_invalid",
             MapBodyValidationError::Contract(_) => "scope_contract_invalid",
@@ -491,7 +494,7 @@ fn validate_capture_port(
 pub(crate) fn capture_owner<'a>(
     nodes: &'a [ValidatedPlanNode],
     id: &str,
-) -> Result<&'a QualifiedEntityKey, MapBodyValidationError> {
+) -> Result<QualifiedEntityKey, MapBodyValidationError> {
     #[derive(Clone, Copy)]
     enum Fault {
         Cycle,
@@ -522,9 +525,10 @@ pub(crate) fn capture_owner<'a>(
         Union(Key, &'a ComputeOp),
     }
     let mut pending = vec![Work::Visit(nodes, id.to_owned())];
-    let mut complete = std::collections::HashMap::new();
+    let mut complete: std::collections::HashMap<Key, Result<QualifiedEntityKey, Fault>> =
+        std::collections::HashMap::new();
     let mut active = std::collections::HashSet::new();
-    let mut values: Vec<Result<&'a QualifiedEntityKey, Fault>> = Vec::new();
+    let mut values: Vec<Result<QualifiedEntityKey, Fault>> = Vec::new();
     let mut indices = std::collections::HashMap::new();
     while let Some(work) = pending.pop() {
         let (key, result) = match work {
@@ -532,12 +536,17 @@ pub(crate) fn capture_owner<'a>(
             Work::Union(key, op) => {
                 let right = values.pop().expect("right authority").ok();
                 let left = values.pop().expect("left authority").ok();
-                (key, op.preserved_identity(left, right).ok_or(Fault::Union))
+                (
+                    key,
+                    op.preserved_identity(left.as_ref(), right.as_ref())
+                        .cloned()
+                        .ok_or(Fault::Union),
+                )
             }
             Work::Visit(nodes, id) => {
                 let key = (nodes.as_ptr(), nodes.len(), id.clone());
-                if let Some(&result) = complete.get(&key) {
-                    values.push(result);
+                if let Some(result) = complete.get(&key) {
+                    values.push(result.clone());
                     continue;
                 }
                 if !active.insert(key.clone()) {
@@ -557,14 +566,14 @@ pub(crate) fn capture_owner<'a>(
                 let result = match node {
                     None => Err(Fault::Missing),
                     Some(ValidatedPlanNode::Capture(c)) if c.contract.entity_authority() => {
-                        Ok(&c.entity)
+                        Ok(c.entity.clone())
                     }
                     Some(ValidatedPlanNode::Surface(s))
                         if s.result_shape != crate::plasm_plan::ResultShape::SideEffectAck =>
                     {
-                        s.qualified_entity.as_ref().ok_or(Fault::OwnerMissing)
+                        s.qualified_entity.clone().ok_or(Fault::OwnerMissing)
                     }
-                    Some(ValidatedPlanNode::RelationTraversal(r)) => Ok(&r.relation.target),
+                    Some(ValidatedPlanNode::RelationTraversal(r)) => Ok(r.relation.target.clone()),
                     Some(ValidatedPlanNode::MapBody(map)) => {
                         let dependency = if matches!(
                             map.body.output,
@@ -639,6 +648,17 @@ pub(crate) fn capture_owner<'a>(
                         continue;
                     }
                     Some(ValidatedPlanNode::Compute(c))
+                        if matches!(c.compute.op, ComputeOp::NarrowEntity { .. }) =>
+                    {
+                        let ComputeOp::NarrowEntity { target, .. } = &c.compute.op else {
+                            unreachable!()
+                        };
+                        Ok(QualifiedEntityKey {
+                            entry_id: target.entry_id.clone(),
+                            entity: target.entity.clone(),
+                        })
+                    }
+                    Some(ValidatedPlanNode::Compute(c))
                         if c.compute.op.preserves_row_identity() =>
                     {
                         pending.push(Work::Alias(key));
@@ -651,7 +671,7 @@ pub(crate) fn capture_owner<'a>(
             }
         };
         active.remove(&key);
-        complete.insert(key, result);
+        complete.insert(key, result.clone());
         values.push(result);
     }
     values
@@ -668,11 +688,7 @@ fn validate_port_schema(
 ) -> Result<(), MapBodyValidationError> {
     for field in &schema.fields {
         let actual =
-            crate::python_compute::source_field_kind(es, nodes, source, field.name.as_str())
-                .map_err(|_| PythonFieldError::Unavailable {
-                    node: source.to_owned(),
-                    field: field.name.to_string(),
-                })?;
+            crate::python_compute::source_field_kind(es, nodes, source, field.name.as_str())?;
         if field.value_type.as_ref() != Some(&actual) {
             return Err(ScopeContractError::PortSchemaMismatch.into());
         }

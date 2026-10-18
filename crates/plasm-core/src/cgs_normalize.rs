@@ -132,6 +132,7 @@ pub(crate) fn infer_query_scoped_from_via_param(
             return Some(RelationMaterialization::QueryScoped {
                 capability: cap.name.clone(),
                 param: via_param.clone(),
+                select_entity: None,
             });
         }
     }

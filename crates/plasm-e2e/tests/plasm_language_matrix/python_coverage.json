@@ -2322,6 +2322,8 @@
       "entity_union_narrow",
       "entity_union_receiver_authority",
       "entity_union_relation",
+      "entity_union_relation_selection",
+      "entity_asserted_get",
       "entity_union_reject_fabrication"
     ]
   }

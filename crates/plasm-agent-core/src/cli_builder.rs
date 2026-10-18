@@ -315,12 +315,12 @@ fn build_entity_command(name: &str, entity: &EntityDef, cgs: &CGS) -> Command {
         // those args (filled from the source entity when chaining).
         let (qcap, skip_params): (Option<&CapabilitySchema>, Vec<CapabilityParamName>) =
             match rel_schema.materialize.as_ref() {
-                Some(RelationMaterialization::QueryScoped { capability, param }) => {
+                Some(RelationMaterialization::QueryScoped { capability, param, .. }) => {
                     (cgs.get_capability(capability.as_str()), vec![param.clone()])
                 }
                 Some(RelationMaterialization::QueryScopedBindings {
                     capability,
-                    bindings,
+                    bindings, ..
                 }) => {
                     let keys: Vec<CapabilityParamName> = bindings.keys().cloned().collect();
                     let cap = cgs.get_capability(capability.as_str());

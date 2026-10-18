@@ -227,7 +227,8 @@ impl SemanticView<'_> {
         let mut uses = BTreeSet::new();
         for source in self.cgs.entities.values() {
             for relation in source.relations.values() {
-                if relation.target_resource != self.capability.domain {
+                if relation.target_resource != self.capability.domain
+                    && relation.materialize.as_ref().and_then(|materialization| materialization.selected_entity()) != Some(&relation.target_resource) {
                     continue;
                 }
                 let Some(use_) = relation
@@ -495,8 +496,8 @@ mod tests {
             let mut cgs = fixture();
             let capability = if named { "record_query" } else { "record_get" }.into();
             let materialize = match mode {
-                0 => Some(RelationMaterialization::QueryScoped { capability, param: "scope_seat".into() }),
-                1 => Some(RelationMaterialization::QueryScopedBindings { capability, bindings: Default::default() }),
+                0 => Some(RelationMaterialization::QueryScoped { capability, param: "scope_seat".into(), select_entity: None }),
+                1 => Some(RelationMaterialization::QueryScopedBindings { capability, bindings: Default::default(), select_entity: None }),
                 2 => Some(RelationMaterialization::GetScopedBindings { capability, bindings: Default::default() }),
                 3..=5 => Some(RelationMaterialization::PreferFromParentGet {
                     path: vec![], collection_coverage: Default::default(),

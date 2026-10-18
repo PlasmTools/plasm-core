@@ -315,7 +315,7 @@ impl ExecutionEngine {
             }
         });
         let identity_ambient = decode_identity_ambient_for_ref(&get.reference, env);
-        let decoder = create_entity_decoder_for_capability(
+        let decoder = super::entity_decoder::create_output_decoder_for_capability(
             &get.reference.entity_type,
             cgs,
             Some(capability.name.as_str()),
@@ -326,7 +326,8 @@ impl ExecutionEngine {
         if hydration_trace::active() {
             hydration_trace::emit("decode_input", hydration_trace::shape(&response));
         }
-        let decoded_entities = decode_entities_with_cgs(&decoder, &response, Some(cgs))?;
+        let decoded_entities =
+            plasm_compile::decode_output_with_cgs(&decoder, &response, Some(cgs))?;
         if hydration_trace::active() {
             hydration_trace::emit(
                 "decode_output",

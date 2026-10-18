@@ -83,10 +83,14 @@ enum Materialization<'a> {
     QueryIdentity {
         capability: &'a str,
         parameter: &'a str,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        select_entity: Option<&'a str>,
     },
     QueryBindings {
         capability: &'a str,
         bindings: Vec<(&'a str, &'a str)>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        select_entity: Option<&'a str>,
     },
     GetBindings {
         capability: &'a str,
@@ -103,9 +107,10 @@ enum Materialization<'a> {
 fn fallback(input: &crate::schema::RelationScopedFallback) -> Materialization<'_> {
     use crate::schema::RelationScopedFallback as R;
     match input {
-        R::QueryScoped { capability, param } => Materialization::QueryIdentity {
+        R::QueryScoped { capability, param, .. } => Materialization::QueryIdentity {
             capability: capability.as_str(),
             parameter: param.as_str(),
+            select_entity: None,
         },
         R::QueryScopedBindings {
             capability,
@@ -116,6 +121,7 @@ fn fallback(input: &crate::schema::RelationScopedFallback) -> Materialization<'_
                 .iter()
                 .map(|(k, v)| (k.as_str(), v.as_str()))
                 .collect(),
+            select_entity: None,
         },
         R::HydrateFromEmbedPath { get_capability, .. } => Materialization::HydrateEmbedded {
             capability: get_capability.as_str(),
@@ -136,19 +142,21 @@ fn materialization(input: Option<&crate::schema::RelationMaterialization>) -> Ma
         Some(R::PreferFromParentGet { fallback: f, .. }) => Materialization::PreferEmbedded {
             fallback: Box::new(fallback(f)),
         },
-        Some(R::QueryScoped { capability, param }) => Materialization::QueryIdentity {
+        Some(R::QueryScoped { capability, param, select_entity }) => Materialization::QueryIdentity {
             capability: capability.as_str(),
             parameter: param.as_str(),
+            select_entity: select_entity.as_ref().map(|entity| entity.as_str()),
         },
         Some(R::QueryScopedBindings {
             capability,
-            bindings,
+            bindings, select_entity,
         }) => Materialization::QueryBindings {
             capability: capability.as_str(),
             bindings: bindings
                 .iter()
                 .map(|(k, v)| (k.as_str(), v.as_str()))
                 .collect(),
+            select_entity: select_entity.as_ref().map(|entity| entity.as_str()),
         },
         Some(R::GetScopedBindings {
             capability,

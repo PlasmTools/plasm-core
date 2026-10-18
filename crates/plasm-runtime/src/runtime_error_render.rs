@@ -53,6 +53,7 @@ pub fn step_error_from_runtime(err: &RuntimeError, cgs: &CGS) -> StepError {
         | RuntimeError::TopKFieldEmpty
         | RuntimeError::FieldUnknown { .. }
         | RuntimeError::EntityUnknown { .. }
+        | RuntimeError::NonlocalQueryAtTerminal { .. }
         | RuntimeError::ViewNodeMissing { .. }
         | RuntimeError::ComputedOutputPhaseRequired
         | RuntimeError::TraversalParentTypeMismatch { .. }

@@ -440,6 +440,7 @@ mod tests {
         let mat = RelationMaterialization::QueryScopedBindings {
             capability: "cap".into(),
             bindings: IndexMap::new(),
+            select_entity: None,
         };
         let res = resolve_relation_row_resolution(
             &mat,

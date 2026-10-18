@@ -51,6 +51,24 @@ pub(crate) enum ParentGetWireRowsError {
     RelationMissing { entity: String, relation: String },
 }
 
+/// Retain the recorded source occurrence without counting its prior work again.
+fn capture_relation_source(
+    source: &MaterializedNode,
+    row_index: usize,
+) -> Result<ExecutionResult, ExecutionFailure> {
+    let mut observed = source.result.as_ref().clone();
+    observed.stats = Default::default();
+    observed.request_fingerprints.clear();
+    observed.operations = plasm_runtime::OperationLedger::empty();
+    observed.source = plasm_runtime::ExecutionSource::Cache;
+    observed.collection = source
+        .result
+        .collection
+        .capture(row_index)
+        .map_err(|error| ExecutionFailure::from(plasm_runtime::RuntimeError::from(error)))?;
+    Ok(observed)
+}
+
 pub(crate) async fn materialize_relation_singleton_chain(
     st: &PlasmHostState,
     es: &ExecuteSession,
@@ -111,20 +129,30 @@ pub(crate) async fn materialize_relation_singleton_chain(
         relation.relation.ir.projection.as_deref(),
         Some(es),
     );
-    let (parsed, result, artifact) = execute_plasm_parsed_expr(
-        st,
-        &scoped_es,
-        session_id,
+    let source = materialized.get(&relation.relation.source).ok_or_else(|| {
+        relation_failure(
+            "relation_parent_not_materialized",
+            "relation parent was not materialized",
+        )
+    })?;
+    let observed = capture_relation_source(source, 0)?;
+    let (parsed, result, artifact) = Box::pin(crate::http_execute::run_parsed_plasm_line(
         expr_label,
+        &scoped_es,
+        st,
+        session_id,
         parsed,
         trace,
         node_index as i64,
         None,
         None,
         None,
+        None,
         plan_shared.as_deref(),
-    )
-    .await?;
+        crate::execute_pipeline::CompileSource::BoundRelation(&observed),
+    ))
+    .await
+    .map_err(ExecutionFailure::from)?;
     if let Some(sink) = sink {
         trace_record_plasm_line(sink, node_index, expr_label, &parsed, &result, &scoped_es).await;
     }
@@ -505,6 +533,10 @@ pub(crate) async fn materialize_relation_scoped_fanout(
         super::super::plan_fanout_parallel::push_verified_row_job(
             &mut jobs, &scoped_es, node_index, row_index, expr_label, parsed,
         )?;
+        let observed = capture_relation_source(source_mat, row_index)?;
+        if let Some(job) = jobs.last_mut() {
+            job.observed_relation_source = Some(observed);
+        }
     }
     let fold = super::super::plan_fanout_parallel::execute_row_fanout(
         st,

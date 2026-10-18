@@ -778,6 +778,9 @@ pub enum RelationMaterialization {
     QueryScoped {
         capability: CapabilityName,
         param: CapabilityParamName,
+        /// Select this nominal variant from an explicitly declared union query output.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        select_entity: Option<EntityName>,
     },
     /// Multiple scope parameters; map keys are capability param names, values are parent entity field names.
     ///
@@ -786,6 +789,9 @@ pub enum RelationMaterialization {
     QueryScopedBindings {
         capability: CapabilityName,
         bindings: IndexMap<CapabilityParamName, EntityFieldName>,
+        /// Select this nominal variant from an explicitly declared union query output.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        select_entity: Option<EntityName>,
     },
     /// Map parent fields into a target **`get`** capability's scope/path env (cardinality **one**).
     ///
@@ -796,6 +802,17 @@ pub enum RelationMaterialization {
     },
     /// Resolve targets from a composed view's `relation_outputs` after the view root row exists.
     ViewEmbed { view: String },
+}
+
+impl RelationMaterialization {
+    /// Explicit nominal selection after a scoped capability has decoded its output.
+    pub fn selected_entity(&self) -> Option<&EntityName> {
+        match self {
+            Self::QueryScoped { select_entity, .. }
+            | Self::QueryScopedBindings { select_entity, .. } => select_entity.as_ref(),
+            _ => None,
+        }
+    }
 }
 
 /// Loader-only legacy domain `via_param:` captured during assemble for normalize → `query_scoped`.
@@ -1659,6 +1676,9 @@ pub struct EntityUnionCase {
 pub enum OutputDecoderSpec {
     #[default]
     Entity,
+    EntityAssert {
+        when: EntityDiscriminator,
+    },
     EntityUnion {
         cases: Vec<EntityUnionCase>,
     },
@@ -3549,18 +3569,24 @@ impl CGS {
                                     Some(path.as_slice()),
                                 )?;
                             }
-                            RelationMaterialization::QueryScoped { capability, param } => {
+                            RelationMaterialization::QueryScoped {
+                                capability,
+                                param,
+                                select_entity,
+                            } => {
                                 self.validate_chain_materialize_capability(
                                     entity_name.as_str(),
                                     relation_name.as_str(),
                                     relation.target_resource.as_str(),
                                     capability,
                                     &[param.as_str()],
+                                    select_entity.as_ref(),
                                 )?;
                             }
                             RelationMaterialization::QueryScopedBindings {
                                 capability,
                                 bindings,
+                                select_entity,
                             } => {
                                 if bindings.is_empty() {
                                     return Err(SchemaError::RelationMaterializeEmptyBindings {
@@ -3575,6 +3601,7 @@ impl CGS {
                                     relation.target_resource.as_str(),
                                     capability,
                                     &keys,
+                                    select_entity.as_ref(),
                                 )?;
                                 for parent_field in bindings.values() {
                                     let ok = parent_field.as_str() == entity.id_field.as_str()
@@ -3796,6 +3823,26 @@ impl CGS {
         for (cap_name, cap) in &self.capabilities {
             if let Some(ref os) = cap.output_schema {
                 match (&os.output_type, &os.decoder) {
+                    (output, OutputDecoderSpec::EntityAssert { when }) => {
+                        if !matches!(
+                            output,
+                            OutputType::Entity { .. } | OutputType::Collection { .. }
+                        ) {
+                            return Err(SchemaError::EntityAssertionOutput {
+                                capability: cap_name.to_string(),
+                            });
+                        }
+                        let path = match when {
+                            EntityDiscriminator::Present { path }
+                            | EntityDiscriminator::Absent { path }
+                            | EntityDiscriminator::Equals { path, .. } => path,
+                        };
+                        if path.is_empty() || path.iter().any(String::is_empty) {
+                            return Err(SchemaError::EntityUnionDiscriminatorPath {
+                                capability: cap_name.to_string(),
+                            });
+                        }
+                    }
                     (
                         OutputType::EntityUnion {
                             variants,
@@ -5775,6 +5822,7 @@ impl CGS {
                     target_entity,
                     capability,
                     &[param.as_str()],
+                    None,
                 ),
             RelationScopedFallback::QueryScopedBindings {
                 capability,
@@ -5793,6 +5841,7 @@ impl CGS {
                     target_entity,
                     capability,
                     &keys,
+                    None,
                 )?;
                 for parent_field in bindings.values() {
                     let ok = parent_field.as_str() == entity.id_field.as_str()
@@ -5885,6 +5934,7 @@ impl CGS {
         target_entity: &str,
         capability: &CapabilityName,
         required_param_names: &[&str],
+        select_entity: Option<&EntityName>,
     ) -> Result<(), SchemaError> {
         let err = |source: crate::error::RelationMaterializeError| {
             Err(SchemaError::RelationMaterializeCapabilityInvalid {
@@ -5898,7 +5948,20 @@ impl CGS {
         let Some(cap) = self.get_capability(capability.as_str()) else {
             return err(crate::error::RelationMaterializeError::UnknownCapability);
         };
-        if cap.domain.as_str() != target_entity {
+        if let Some(selected) = select_entity {
+            let valid = selected.as_str() == target_entity
+                && matches!(cap.output_schema.as_ref().map(|output| &output.output_type), Some(OutputType::EntityUnion { variants, .. }) if variants.contains(selected));
+            if !valid {
+                return err(
+                    crate::error::RelationMaterializeError::InvalidEntitySelection {
+                        selected: selected.to_string(),
+                        target: target_entity.to_owned(),
+                    },
+                );
+            }
+        } else if matches!(cap.output_schema.as_ref().map(|output| &output.output_type), Some(OutputType::EntityUnion { .. })) {
+            return err(crate::error::RelationMaterializeError::EntitySelectionRequired { target: target_entity.to_owned() });
+        } else if cap.domain.as_str() != target_entity {
             return err(crate::error::RelationMaterializeError::DomainMismatch {
                 actual: cap.domain.to_string(),
                 expected: target_entity.to_owned(),
@@ -6674,6 +6737,7 @@ mod capability_index_tests {
                 "LangTag",
                 &cap,
                 &["item_id"],
+                None,
             )
             .expect_err("langitem_query is on LangItem, not LangTag");
         assert!(
@@ -6696,6 +6760,7 @@ mod capability_index_tests {
             "LangTag",
             &cap,
             &["item_id"],
+            None,
         )
         .expect("langtag_query lists LangTag rows scoped by item_id");
     }

@@ -75,6 +75,30 @@ impl ExecutionEngine {
             }
         }
 
+        self.local_query_to_stream(query, cgs, mat, mode, consume, graph_page_spill, ambient)
+    }
+
+    /// Execute a query with local predicates after cross-entity decomposition.
+    /// Undecomposed predicates are rejected instead of re-entering that dispatcher.
+    /// Composed view execution retains its separate, validated view-plan path.
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) fn local_query_to_stream<'a>(
+        &'a self,
+        query: &'a QueryExpr,
+        cgs: &'a CGS,
+        mat: &'a mut SessionMaterialization,
+        mode: ExecutionMode,
+        consume: StreamConsumeOpts,
+        graph_page_spill: Option<crate::graph_page_spill::GraphPageSpillHandle>,
+        ambient: &ViewAmbientContext,
+    ) -> Result<QueryStream<'a>, RuntimeError> {
+        if let (Some(predicate), Some(entity)) = (&query.predicate, cgs.get_entity(&query.entity)) {
+            if !extract_cross_entity_predicates(predicate, entity, cgs).is_empty() {
+                return Err(RuntimeError::NonlocalQueryAtTerminal {
+                    entity: query.entity.to_string(),
+                });
+            }
+        }
         let filter = compile_query_dispatch(query, cgs)?;
         let capability = resolve_query_capability(query, cgs)?;
         let mut env = CmlEnv::new();
@@ -431,7 +455,7 @@ impl ExecutionEngine {
                     let completeness = response_coverage.classify(&row);
                     CachedEntity::from_decoded(row.reference, row.fields, row.relations, timestamp, completeness)
                 }).collect();
-                let page_ids: Vec<_> = page_cached.iter().map(|row| row.reference.primary_slot_str()).collect();
+                let page_ids = page_cached.iter().map(|row| serde_json::to_string(&row.reference)).collect::<Result<Vec<_>, _>>()?;
                 crate::record_live_page_audit(driver.record_page(pages as u32, &page_ids, full_page_len as u32, page_cached.len() as u32, None, None)?);
                 if !collector.skips_pre_page_merge() { mat.merge(page_cached.clone())?; }
                 let inherit = CapabilityParamEnv::from_cml_env(&env, &capability);

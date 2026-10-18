@@ -967,7 +967,7 @@ fn materialization_view(m: &RelationMaterialization) -> ExplorerRelationMaterial
             };
             view
         }
-        RelationMaterialization::QueryScoped { capability, param } => {
+        RelationMaterialization::QueryScoped { capability, param, .. } => {
             ExplorerRelationMaterialization {
                 kind: "query_scoped",
                 capability: Some(capability.to_string()),
@@ -977,7 +977,7 @@ fn materialization_view(m: &RelationMaterialization) -> ExplorerRelationMaterial
         }
         RelationMaterialization::QueryScopedBindings {
             capability,
-            bindings,
+            bindings, ..
         } => ExplorerRelationMaterialization {
             kind: "query_scoped_bindings",
             capability: Some(capability.to_string()),

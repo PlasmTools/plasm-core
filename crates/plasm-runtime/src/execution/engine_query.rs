@@ -31,6 +31,20 @@ impl ExecutionEngine {
         collect_query_stream(&mut stream, &consume).await
     }
 
+    async fn execute_local_query(
+        &self,
+        query: &QueryExpr,
+        cgs: &CGS,
+        mat: &mut SessionMaterialization,
+        mode: ExecutionMode,
+        consume: StreamConsumeOpts,
+        ambient: &ViewAmbientContext,
+    ) -> Result<ExecutionResult, RuntimeError> {
+        let mut stream =
+            self.local_query_to_stream(query, cgs, mat, mode, consume.clone(), None, ambient)?;
+        collect_query_stream(&mut stream, &consume).await
+    }
+
     /// Execute a query with cross-entity predicate decomposition.
     ///
     /// For each cross-entity predicate (e.g. `pet.status = available`):
@@ -76,7 +90,7 @@ impl ExecutionEngine {
                         let foreign_query =
                             QueryExpr::filtered(&c.foreign_entity, c.foreign_predicate.clone());
                         let foreign_result = self
-                            .execute_query(
+                            .execute_local_query(
                                 &foreign_query,
                                 cgs,
                                 mat,
@@ -166,7 +180,7 @@ impl ExecutionEngine {
             rewritten_query.predicate = rewritten_pred;
 
             let mut result = self
-                .execute_query(&rewritten_query, cgs, mat, mode, consume, &ambient)
+                .execute_local_query(&rewritten_query, cgs, mat, mode, consume, &ambient)
                 .await?;
             result.stats.network_requests += total_network;
             if any_live {

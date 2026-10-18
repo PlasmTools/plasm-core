@@ -1,6 +1,24 @@
+lang_union_feed_get:
+  method: GET
+  path: [{type: literal, value: language}, {type: literal, value: v1}, {type: literal, value: union-feeds}, {type: var, name: id}]
 lang_union_feed_query:
   method: GET
   path: [{type: literal, value: language}, {type: literal, value: v1}, {type: literal, value: union}]
+  query:
+    type: object
+    fields:
+      - [parent_id, {type: if, condition: {type: exists, var: parent_id}, then_expr: {type: var, name: parent_id}, else_expr: {type: const, value: null}}]
+  pagination:
+    strategy: page_number
+    params:
+      page: {counter: 0}
+      limit: {fixed: 2, role: page_size}
+    stop_when: {field: done, eq: true}
+  response:
+    items: rows
+homographrowa_get:
+  method: GET
+  path: [{type: literal, value: language}, {type: literal, value: v1}, {type: literal, value: union}, {type: literal, value: left}, {type: var, name: id}]
 homographrowa_mark:
   method: POST
   path: [{type: literal, value: language}, {type: literal, value: v1}, {type: literal, value: union}, {type: literal, value: left}, {type: var, name: id}, {type: literal, value: mark}]
@@ -609,3 +627,7 @@ langlanestock_query:
     type: object
     fields:
     - ["shelf", { type: var, name: shelf }]
+lang_union_parent_query:
+  method: GET
+  path: [{type: literal, value: language}, {type: literal, value: v1}, {type: literal, value: union-parents}]
+  response: {items: rows}

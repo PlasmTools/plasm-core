@@ -311,6 +311,8 @@ pub enum RuntimeError {
     FieldUnknown { entity: String, field: String },
     #[error("unknown entity `{entity}`")]
     EntityUnknown { entity: String },
+    #[error("terminal query for {entity} still contains a cross-entity predicate; decompose it before execution")]
+    NonlocalQueryAtTerminal { entity: String },
     #[error("view references missing node `{node}`")]
     ViewNodeMissing { node: String },
     #[error("computed output bindings are resolved in a separate phase")]

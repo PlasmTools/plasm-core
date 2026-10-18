@@ -7,7 +7,7 @@ use plasm_compile::CompiledRequest;
 use plasm_core::loader::load_schema_dir;
 use std::sync::{
     atomic::{AtomicUsize, Ordering},
-    Arc,
+    Arc, Mutex,
 };
 
 struct Pages {
@@ -177,4 +177,112 @@ async fn paginated_missing_field_still_hydrates() {
 #[tokio::test]
 async fn exhausted_membership_survives_unavailable_hydration_fields() {
     run_case(true, false, false, true).await;
+}
+
+#[test]
+fn terminal_query_rejects_undecomposed_cross_entity_predicate() {
+    let cgs = load_schema_dir(
+        &std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("../../fixtures/schemas/plasm_language_matrix"),
+    )
+    .unwrap();
+    let engine = ExecutionEngine::new(ExecutionConfig::default()).unwrap();
+    let mut mat = SessionMaterialization::new();
+    let query = QueryExpr::filtered("LangTag", Predicate::eq("item_id.title", "selected"));
+    let result = engine.local_query_to_stream(
+        &query,
+        &cgs,
+        &mut mat,
+        ExecutionMode::Live,
+        StreamConsumeOpts::default(),
+        None,
+        &ViewAmbientContext::default(),
+    );
+    assert!(
+        matches!(result, Err(RuntimeError::NonlocalQueryAtTerminal { entity }) if entity == "LangTag")
+    );
+}
+
+struct CrossQueryPages(Mutex<Vec<String>>);
+#[async_trait]
+impl HttpTransport for CrossQueryPages {
+    async fn send_compiled_http(
+        &self,
+        _: &str,
+        request: &CompiledRequest,
+        _: Option<ResolvedAuth>,
+    ) -> Result<(serde_json::Value, Option<String>), RuntimeError> {
+        self.0.lock().unwrap().push(request.path.clone());
+        let rows = match request.path.as_str() {
+            "/language/v1/items" => {
+                serde_json::json!([{"id":"i1","title":"selected","score":1,"owner":"chosen"}])
+            }
+            "/language/v1/tags" => serde_json::json!([{"id":"t1","item_id":"i1","label":"tag"}]),
+            other => panic!("unexpected terminal query path {other}"),
+        };
+        Ok((rows, None))
+    }
+    async fn get_json_absolute(
+        &self,
+        _: &str,
+        _: Option<ResolvedAuth>,
+    ) -> Result<(serde_json::Value, Option<String>), RuntimeError> {
+        panic!("unexpected absolute request")
+    }
+}
+
+#[tokio::test]
+async fn cross_entity_query_executes_two_terminal_queries() {
+    let mut cgs = load_schema_dir(
+        &std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("../../fixtures/schemas/plasm_language_matrix"),
+    )
+    .unwrap();
+    let cap = cgs.capabilities.get_mut("langtag_query").unwrap();
+    let mut field = cap.inputs.scope.0.remove(0);
+    field.selection_effect = Some(plasm_core::SelectionEffect::Filter);
+    cap.inputs.selection.0.push(field);
+    let transport = Arc::new(CrossQueryPages(Mutex::new(Vec::new())));
+    let engine = ExecutionEngine::new_with_transport(
+        ExecutionConfig {
+            base_url: Some("http://fixture".into()),
+            hydrate: false,
+            ..Default::default()
+        },
+        transport.clone(),
+        None,
+    );
+    let mut mat = SessionMaterialization::new();
+    // Exercise the internal cross-query decomposition seam with its normal
+    // compiled-catalog task scope; authored Python admission is matrix-owned.
+    let query = QueryExpr::filtered("LangTag", Predicate::eq("item_id.owner", "chosen"));
+    let result = ExecutionEngine::run_in_execute_task_scopes(
+        "http://fixture".into(),
+        None,
+        None,
+        None,
+        None,
+        ExecuteOptions::for_catalog(&cgs)
+            .unwrap()
+            .compiled_catalog
+            .unwrap(),
+        None,
+        None,
+        engine.execute_query(
+            &query,
+            &cgs,
+            &mut mat,
+            ExecutionMode::Live,
+            StreamConsumeOpts::default(),
+            &ViewAmbientContext::default(),
+        ),
+    )
+    .await
+    .unwrap();
+    assert_eq!(result.entities().len(), 1);
+    assert_eq!(result.entities()[0].reference.primary_slot_str(), "t1");
+    assert_eq!(
+        *transport.0.lock().unwrap(),
+        vec!["/language/v1/items", "/language/v1/tags"]
+    );
 }

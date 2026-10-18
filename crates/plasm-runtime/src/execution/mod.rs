@@ -82,6 +82,7 @@ mod scoped_fanout;
 mod session;
 mod task_scopes;
 pub use mutation_evidence::record_transport_response_received;
+pub(crate) use mutation_evidence::{with_dispatch_receipt, DispatchReceipt};
 pub use mutation_evidence::{MutationDispatch, MutationDispatchStatus, MutationJournal};
 mod template_env;
 mod types;
@@ -108,6 +109,7 @@ use self::entity_decoder::{
     mutating_capability_response_decoder,
 };
 
+pub use compile_preflight::preflight_compile_bound_relation;
 pub use compile_preflight::preflight_compile_expr;
 pub(crate) use compile_preflight::preflight_compile_view_node;
 
