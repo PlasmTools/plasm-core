@@ -110,7 +110,7 @@ fn supported_candidate<T>(
         Ok(value) => Ok(Some(value)),
         Err(InferenceError::Graph(
             InferenceGraphError::UnsupportedType
-            | InferenceGraphError::UnsupportedNode
+            | InferenceGraphError::UnsupportedNode { .. }
             | InferenceGraphError::UnsupportedNamedType { .. }
             | InferenceGraphError::UnsupportedTemporal,
         )) => Ok(None),

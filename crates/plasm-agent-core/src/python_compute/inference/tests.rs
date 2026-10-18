@@ -1,5 +1,283 @@
 use super::*;
 
+// Python builtin int includes bool after upstream subtype normalization.
+fn python_integer_contract() -> Type {
+    Type::join(
+        Type::scalar(FieldType::Integer),
+        Type::scalar(FieldType::Boolean),
+    )
+}
+
+#[test]
+fn fractional_power_has_a_closed_numeric_contract() {
+    let number = Type::scalar(FieldType::Number);
+    let numeric = Type::join(python_integer_contract(), number.clone());
+    for expression in ["value ** 0.5", "value ** 2", "value * value"] {
+        let output = infer(expression, "value", &number, "").unwrap();
+        assert_eq!(output, numeric, "{expression}");
+    }
+    let output = infer("{'root': value ** 0.5}", "value", &number, "").unwrap();
+    assert!(matches!(output.shape, ValueShape::Dictionary { .. }));
+}
+
+#[tokio::test]
+async fn numeric_operators_infer_contracts_that_accept_actual_runtime_values() {
+    let pool = crate::python_pool::PythonPool::default();
+    for (ty, literal) in [(FieldType::Integer, "4"), (FieldType::Number, "4.0")] {
+        let input = Type::scalar(ty);
+        for expression in [
+            "value + 2",
+            "2 + value",
+            "value - 2",
+            "2 - value",
+            "value * 2",
+            "2 * value",
+            "value / 2",
+            "2 / value",
+            "value // 2",
+            "2 // value",
+            "value % 3",
+            "3 % value",
+            "value ** 2",
+            "2 ** value",
+            "value ** 0.5",
+            "0.5 ** value",
+            "value ** value",
+            "pow(value, 0.5)",
+            "pow(value, 2)",
+            "pow(2, value)",
+            "divmod(value, 3)",
+            "round(value)",
+            "round(value, 2)",
+            "-value",
+            "+value",
+            "abs(value)",
+            "value < 2",
+            "value == 4",
+            "value <= 4",
+            "value > 2",
+            "value >= 4",
+            "value != 2",
+            "sum([value, value])",
+            "min(value, 2)",
+            "max(value, 2)",
+            "int(value)",
+            "float(value)",
+        ] {
+            for expression in [expression.to_owned(), format!("{{'result': {expression}}}")] {
+                let contract = infer(&expression, "value", &input, "")
+                    .unwrap_or_else(|error| panic!("{literal}: {expression}: {error}"));
+                let source = format!("def f(value):\n    return {expression}\nf({literal})");
+                let value = pool
+                    .compute_value(source, vec![], &BTreeMap::new(), Ok)
+                    .await
+                    .unwrap();
+                contract
+                    .validate(&value, &plasm_core::CGS::default(), "matrix", "result")
+                    .unwrap_or_else(|error| {
+                        panic!("{literal}: {expression}: {contract:?}, {value:?}: {error}")
+                    });
+            }
+        }
+    }
+    pool.close().await;
+}
+
+#[tokio::test]
+async fn numeric_operator_errors_are_not_successful_values() {
+    let pool = crate::python_pool::PythonPool::default();
+    for source in [
+        "1 / 0",
+        "1 // 0",
+        "1 % 0",
+        "divmod(1, 0)",
+        "1 << -1",
+        "1 >> -1",
+        "pow(2, 3, 0)",
+    ] {
+        let error = pool
+            .compute_value(source.into(), vec![], &BTreeMap::new(), Ok)
+            .await
+            .unwrap_err();
+        assert_eq!(
+            error.cause,
+            plasm_runtime::FailureCause::Program,
+            "{source}: {error:?}"
+        );
+        assert_eq!(error.code, "python_exception", "{source}: {error:?}");
+    }
+    pool.close().await;
+}
+
+#[tokio::test]
+async fn fractional_power_runtime_preserves_domain_errors_and_finite_output_boundary() {
+    let pool = crate::python_pool::PythonPool::default();
+    for (source, expected) in [
+        ("9.0 ** 0.5", 3.0),
+        ("0.0 ** 0.5", 0.0),
+        ("(-4.0) ** 2.0", 16.0),
+    ] {
+        let value = pool
+            .compute_value(source.into(), vec![], &BTreeMap::new(), Ok)
+            .await
+            .unwrap();
+        assert_eq!(value, plasm_core::Value::Float(expected));
+    }
+    for (source, code) in [
+        ("0.0 ** -0.5", "python_exception"),
+        ("1e308 ** 2.0", "python_exception"),
+        ("(-1.0) ** 0.5", "python_output_invalid"),
+        ("float('inf') ** 0.5", "python_output_invalid"),
+        ("float('nan') ** 0.5", "python_output_invalid"),
+    ] {
+        let error = pool
+            .compute_value(source.into(), vec![], &BTreeMap::new(), Ok)
+            .await
+            .unwrap_err();
+        assert_eq!(
+            error.cause,
+            plasm_runtime::FailureCause::Program,
+            "{source}: {error:?}"
+        );
+        assert_eq!(error.code, code, "{source}: {error:?}");
+    }
+    pool.close().await;
+}
+
+#[tokio::test]
+async fn integer_bitwise_and_signed_power_contracts_match_execution() {
+    let pool = crate::python_pool::PythonPool::default();
+    let integer = Type::scalar(FieldType::Integer);
+    for expression in [
+        "~value",
+        "value << 1",
+        "value >> 1",
+        "1 << value",
+        "8 >> value",
+        "value & 3",
+        "value | 3",
+        "value ^ 3",
+        "pow(value, 3, 5)",
+    ] {
+        let contract = infer(expression, "value", &integer, "").unwrap();
+        let value = pool
+            .compute_value(
+                format!("def f(value):\n    return {expression}\nf(2)"),
+                vec![],
+                &BTreeMap::new(),
+                Ok,
+            )
+            .await
+            .unwrap();
+        contract
+            .validate(&value, &plasm_core::CGS::default(), "matrix", "result")
+            .unwrap();
+    }
+    for expression in ["2 ** value", "pow(2, value)"] {
+        let contract = infer(expression, "value", &integer, "").unwrap();
+        for exponent in [-2, 0, 2] {
+            let value = pool
+                .compute_value(
+                    format!("def f(value):\n    return {expression}\nf({exponent})"),
+                    vec![],
+                    &BTreeMap::new(),
+                    Ok,
+                )
+                .await
+                .unwrap();
+            contract
+                .validate(&value, &plasm_core::CGS::default(), "matrix", "result")
+                .unwrap();
+        }
+    }
+    pool.close().await;
+}
+
+#[test]
+fn unresolved_return_reports_checker_kind_and_compute_expression() {
+    let error = infer(
+        "cast(Any, value)",
+        "value",
+        &Type::scalar(FieldType::Number),
+        "from typing import Any, cast",
+    )
+    .unwrap_err();
+    let InferenceError::Materialization {
+        source,
+        diagnostics,
+    } = &error
+    else {
+        panic!("{error:?}");
+    };
+    assert_eq!(
+        *source,
+        InferenceGraphError::UnsupportedNode {
+            kind: UnmaterializableNode::Any
+        }
+    );
+    assert!(
+        diagnostics
+            .entries
+            .iter()
+            .any(|entry| entry.location.is_some()
+                && entry
+                    .excerpt
+                    .as_ref()
+                    .is_some_and(|text| text.contains("cast(Any, value)"))),
+        "{diagnostics:?}"
+    );
+    let lowering = crate::program_rejection::PythonLoweringError::from(error);
+    let detail = lowering.rejection_detail().unwrap();
+    let wire = serde_json::to_value(detail).unwrap();
+    assert_eq!(wire["kind"], "compute_inference");
+    assert!(wire["diagnostics"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|entry| entry["compute_line"].is_number()));
+}
+
+#[test]
+fn materialization_rejects_gradual_and_concrete_unsupported_types_distinctly() {
+    for (node, kind) in [
+        (Node::Any, UnmaterializableNode::Any),
+        (Node::Unknown, UnmaterializableNode::Unknown),
+        (Node::Unsupported, UnmaterializableNode::Unsupported),
+        (Node::BytesLiteral(vec![1]), UnmaterializableNode::Bytes),
+    ] {
+        let graph = Graph {
+            roots: vec![TypeId(0)],
+            nodes: vec![node],
+        };
+        let declarations = declarations::Declarations::default();
+        let decoder = Decoder {
+            graph: &graph,
+            declarations: &declarations,
+        };
+        assert!(
+            matches!(decoder.decode(TypeId(0)), Err(InferenceError::Graph(InferenceGraphError::UnsupportedNode { kind: actual })) if actual == kind)
+        );
+    }
+}
+
+#[test]
+fn materialization_diagnostic_does_not_blame_unreturned_expressions() {
+    let error = infer_body(
+        "\n    unused = cast(Any, value)\n    return cast(Any, value + 1)\n",
+        &[("value", &Type::scalar(FieldType::Number))],
+        "from typing import Any, cast",
+    )
+    .unwrap_err();
+    let InferenceError::Materialization { diagnostics, .. } = error else {
+        panic!("{error:?}");
+    };
+    assert!(!diagnostics.entries.is_empty());
+    assert!(diagnostics.entries.iter().all(|entry| entry
+        .excerpt
+        .as_ref()
+        .is_some_and(|text| text.starts_with("return "))));
+}
+
 #[test]
 fn mapping_record_default_lookup_does_not_materialize_a_field() {
     let row = Type {
@@ -103,7 +381,7 @@ fn ordered_selection_preserves_materialized_field_contracts() {
         let body = format!("\n    if not rows:\n        raise ValueError('empty selection')\n    chosen = {operation}(rows, key=lambda row: row.rank)\n    return chosen.number\n");
         assert_eq!(
             infer_body(&body, &[("rows", &rows)], "").unwrap(),
-            number,
+            python_integer_contract(),
             "{operation}"
         );
     }
@@ -127,7 +405,7 @@ fn temporal_ordered_selection_preserves_numeric_arithmetic() {
     ]));
     let body = "\n    if not rows:\n        raise ValueError('empty selection')\n    selected = max(rows, key=lambda row: row.created_at)\n    return selected.amount * 3\n";
     let output = infer_body(body, &[("rows", &rows)], "").unwrap();
-    assert_eq!(output, Type::join(Type::scalar(FieldType::Integer), number));
+    assert_eq!(output, Type::join(python_integer_contract(), number));
 }
 
 #[test]
@@ -209,7 +487,7 @@ proptest::proptest! {
         let copied = infer_body("\n    return row.number\n", &[("row", &input)], "").unwrap();
         proptest::prop_assert_eq!(&copied, &number);
         let transformed = infer_body(&format!("\n    return row.number + ({offset})\n"), &[("row", &input)], "").unwrap();
-        proptest::prop_assert_eq!(transformed, Type::scalar(FieldType::Integer));
+        proptest::prop_assert_eq!(transformed, python_integer_contract());
     }
 
     #[test]
@@ -260,13 +538,22 @@ fn dictionary(value: Type) -> Type {
 
 #[test]
 fn dictionary_held_list_mutation_closes_its_element_contract() {
-    for body in [
-        "\n    result = {'items': []}\n    result['items'].append(1)\n    return result\n",
-        "\n    items = []\n    items.append(1)\n    return {'items': items}\n",
+    for (body, element) in [
+        // The nested mutation retains literal evidence; the standalone list
+        // is widened upstream to Python's nominal int.
+        (
+            "\n    result = {'items': []}\n    result['items'].append(1)\n    return result\n",
+            Type::scalar(FieldType::Integer),
+        ),
+        (
+            "\n    items = []\n    items.append(1)\n    return {'items': items}\n",
+            python_integer_contract(),
+        ),
     ] {
         assert_eq!(
             infer_body(body, &[], "").unwrap(),
-            dictionary(array(Type::scalar(FieldType::Integer)))
+            dictionary(array(element)),
+            "{body}"
         );
     }
 }
@@ -330,7 +617,7 @@ fn unannotated_nested_helper_infers_materialized_return() {
     let body = "\n    def doubled(items):\n        return [item.number * 2 for item in items]\n    return {'values': doubled(rows)}";
     assert_eq!(
         infer_body(body, &[("rows", &array(row))], "").unwrap(),
-        dictionary(array(Type::scalar(FieldType::Integer)))
+        dictionary(array(python_integer_contract()))
     );
     let song = fields(&[
         ("song_id", Type::scalar(FieldType::Integer)),
@@ -403,7 +690,7 @@ fn unannotated_structured_summary_keeps_loop_accumulator_contract() {
 fn local_helper_inference_covers_loops_chains_closures_and_multiple_calls() {
     let row = fields(&[("number", Type::scalar(FieldType::Integer))]);
     let rows = array(row);
-    let integers = array(Type::scalar(FieldType::Integer));
+    let integers = array(python_integer_contract());
     for body in [
         "\n    def numbers(items):\n        out = []\n        for item in items:\n            out.append(item.number)\n        return out\n    return numbers(rows)",
         "\n    def first(items):\n        return second(items)\n    def second(items):\n        return [item.number for item in items]\n    return first(rows)",
@@ -429,14 +716,14 @@ fn local_helpers_preserve_set_and_optional_return_contracts() {
         infer_body(set_body, &[("rows", &rows)], "").unwrap(),
         Type {
             shape: ValueShape::Set {
-                element: Box::new(Type::scalar(FieldType::Integer))
+                element: Box::new(python_integer_contract())
             },
             domain: None,
             nullable: false
         }
     );
     let optional_body = "\n    def first(items):\n        if items:\n            return items[0].number\n        return None\n    return first(rows)";
-    let mut optional = Type::scalar(FieldType::Integer);
+    let mut optional = python_integer_contract();
     optional.nullable = true;
     assert_eq!(
         infer_body(optional_body, &[("rows", &rows)], "").unwrap(),
@@ -451,7 +738,7 @@ fn local_helper_defaults_and_keyword_calls_share_one_input_contract() {
     let body = "\n    def shifted(items, amount=1):\n        return [item.number + amount for item in items]\n    return shifted(rows) + shifted(items=rows, amount=2)";
     assert_eq!(
         infer_body(body, &[("rows", &rows)], "").unwrap(),
-        array(Type::scalar(FieldType::Integer))
+        array(python_integer_contract())
     );
 }
 
@@ -469,21 +756,15 @@ fn upstream_expression_contracts_preserve_python_semantics() {
             "'grocery' in (row.description or '').lower()",
             Type::scalar(FieldType::Boolean),
         ),
-        ("row.number // 2", Type::scalar(FieldType::Integer)),
-        (
-            "[n * 2 for n in row.values][0]",
-            Type::scalar(FieldType::Integer),
-        ),
+        ("row.number // 2", python_integer_contract()),
+        ("[n * 2 for n in row.values][0]", python_integer_contract()),
         (
             "sum(n for n in row.values if n > 0)",
-            Type::scalar(FieldType::Integer),
+            python_integer_contract(),
         ),
         (
             "row.number or 'missing'",
-            Type::join(
-                Type::scalar(FieldType::Integer),
-                Type::scalar(FieldType::String),
-            ),
+            Type::join(python_integer_contract(), Type::scalar(FieldType::String)),
         ),
     ] {
         assert_eq!(
@@ -513,15 +794,12 @@ fn inferred_tuples_preserve_closed_positional_contracts() {
     ]);
     assert_eq!(
         infer("(row.number, row.number + 1)", "row", &input, "").unwrap(),
-        tuple(vec![
-            Type::scalar(FieldType::Integer),
-            Type::scalar(FieldType::Integer)
-        ])
+        tuple(vec![python_integer_contract(), python_integer_contract()])
     );
     assert_eq!(
         infer("(row.number, row.title)", "row", &input, "").unwrap(),
         tuple(vec![
-            Type::scalar(FieldType::Integer),
+            python_integer_contract(),
             Type::scalar(FieldType::String),
         ])
     );
@@ -594,7 +872,7 @@ fn unsupported_result_shapes_do_not_become_json() {
         )
         .unwrap(),
         array(dictionary(Type::join(
-            Type::scalar(FieldType::Integer),
+            python_integer_contract(),
             Type::scalar(FieldType::String)
         )))
     );
@@ -622,7 +900,7 @@ fn exact_money_functions_have_static_contracts() {
     ] {
         assert_eq!(
             infer(expression, "row", &input, "").unwrap(),
-            Type::scalar(FieldType::Integer)
+            python_integer_contract()
         );
     }
     for expression in [
@@ -652,9 +930,11 @@ fn branch_contracts_are_general_and_do_not_leak_facts() {
     )
     .unwrap()
     .unwrap();
-    assert_eq!(facts[0].0, Type::scalar(FieldType::Integer));
+    assert_eq!(facts[0].0, python_integer_contract());
     assert_eq!(facts[0].1.shape, ValueShape::Null);
-    assert_eq!(facts[1], (optional.clone(), optional));
+    let mut inferred_optional = python_integer_contract();
+    inferred_optional.nullable = true;
+    assert_eq!(facts[1], (inferred_optional.clone(), inferred_optional));
     let input = fields(&[(
         "value",
         Type::join(
@@ -668,10 +948,7 @@ fn branch_contracts_are_general_and_do_not_leak_facts() {
         .unwrap();
     assert_eq!(
         facts[0],
-        (
-            Type::scalar(FieldType::String),
-            Type::scalar(FieldType::Integer)
-        )
+        (Type::scalar(FieldType::String), python_integer_contract())
     );
 }
 
@@ -879,7 +1156,7 @@ fn nominal_literal_branch_constraints_preserve_nested_domains() {
 fn complete_body_inference_uses_upstream_locals_and_returns() {
     let input = fields(&[("number", Type::scalar(FieldType::Integer))]);
     let actual = infer_body("\n    n = row.number + 1\n    if n > 0:\n        return {'value': n}\n    return {'value': 0}\n", &[("row", &input)], "").unwrap();
-    assert_eq!(actual, dictionary(Type::scalar(FieldType::Integer)));
+    assert_eq!(actual, dictionary(python_integer_contract()));
 }
 
 #[test]
@@ -892,7 +1169,7 @@ fn mutated_dictionary_inference_preserves_upstream_element_types() {
     );
     assert_eq!(
         result.unwrap(),
-        array(dictionary(Type::scalar(FieldType::Integer)))
+        array(dictionary(python_integer_contract()))
     );
 }
 
@@ -911,7 +1188,7 @@ fn whole_function_returns_include_upstream_implicit_none() {
 #[test]
 fn annotation_resolution_is_upstream_owned() {
     let aliases = BTreeMap::new();
-    let integer = Type::scalar(FieldType::Integer);
+    let integer = python_integer_contract();
     assert_eq!(super::annotation("'int'", &aliases).unwrap(), integer);
     assert_eq!(
         super::annotation("list['int']", &aliases).unwrap(),

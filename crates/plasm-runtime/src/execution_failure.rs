@@ -44,6 +44,9 @@ pub struct InputBudgetEvidence {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum ProgramRejectionDetail {
+    ComputeInference {
+        diagnostics: Vec<ComputeInferenceDiagnostic>,
+    },
     UnionColumnsDiffer {
         left: Vec<String>,
         right: Vec<String>,
@@ -53,6 +56,41 @@ pub enum ProgramRejectionDetail {
     },
     StaticIterationRequired,
     BuildMutation,
+}
+
+/// Coordinates refer to the checked compute source, not the submitted Program.
+/// Do not copy these offsets into ProgramRejectionEvidence::span_offset.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ComputeInferenceDiagnostic {
+    pub code: String,
+    pub unmaterializable_type: Option<UnmaterializableNode>,
+    pub message: String,
+    pub compute_line: Option<usize>,
+    pub compute_column: Option<usize>,
+    pub source_excerpt: Option<String>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, thiserror::Error)]
+#[serde(rename_all = "snake_case")]
+pub enum UnmaterializableNode {
+    #[error("Any (an explicit concrete return type is required)")]
+    Any,
+    #[error("Unknown (the checker could not resolve a concrete type)")]
+    Unknown,
+    #[error("unsupported checker type")]
+    Unsupported,
+    #[error("bytes")]
+    Bytes,
+    #[error("enum literal")]
+    Enum,
+    #[error("unsealed protocol")]
+    Protocol,
+    #[error("unsealed newtype")]
+    NewType,
+    #[error("record")]
+    Record,
+    #[error("truth refinement without a concrete type")]
+    TruthRefinement,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

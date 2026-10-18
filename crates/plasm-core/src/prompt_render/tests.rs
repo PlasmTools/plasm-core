@@ -2308,6 +2308,9 @@ fn plasm_tool_teaches_semantic_operation_receivers() {
         "constructed/modified records lack authority",
         "both arms share catalog/entity",
         "Monty infers bodies/returns/loops/implicit None",
+        "float(value) is not a null check",
+        "filtering rows into a separate list does not narrow their declared fields",
+        "Raise on missing required data",
         "completed/unknown receipts",
         "New programs: in-session, no resume/rollback",
     ] {

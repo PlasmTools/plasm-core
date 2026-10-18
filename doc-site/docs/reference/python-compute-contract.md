@@ -219,6 +219,48 @@ CSV case alone cannot establish completion.
 
 ## Implementation ledger
 
+### Numeric inference and rejection evidence
+
+Numeric operator declarations must describe Monty's actual result carriers, including
+reflected operators and builtin equivalents. A float power has a float carrier;
+integer power with an unknown exponent sign can return integer or float. This does
+not establish that an operation succeeds: division by zero, overflow, and the
+non-finite materialization boundary remain execution errors. No arbitrary `Any`
+or unresolved type is coerced into a numeric contract.
+
+Python's builtin `int` includes Boolean inhabitants. The checker can normalize
+`int | bool` to `int` before export, including inside containers and helper
+returns. Materialization therefore translates that builtin nominal type to
+`Integer | Boolean`, preserving distinct value variants without coercion.
+Integer literals and sealed catalog Integer contracts remain exact. This is a
+conservative inferred contract, not permission to supply Boolean values to a
+catalog Integer parameter. Witnesses include
+`inferred_python_integer_subtypes_preserve_boolean_values_without_coercion`,
+`inferred_catalog_integer_remains_strict`, and
+`inferred_statistics_and_boolean_chains_execute_with_their_contract`.
+
+Nullable numeric fields require local narrowing before arithmetic. Converting
+with `float(value)` does not prove non-nullness, and filtering records into a
+separate list does not refine their declared fields. Guard the projected value;
+raise for missing required data, or omit it only when the workflow permits.
+`nullable_numeric_fields_require_local_evidence_before_arithmetic` checks both
+rejected forms and lawful local guards against the upstream checker.
+
+When an inferred return cannot be materialized, retain the checker node kind and
+query the checker for bounded expression evidence on the rejection path. The
+structured `compute_inference` rejection contains diagnostic codes, messages and
+compute-source coordinates/excerpts. These coordinates belong to the checked
+compute unit, not the submitted Program; they must not be mislabeled as Program
+byte offsets. If expression evidence is unavailable, preserve the original typed
+failure and state that limitation. Successful admission requires no diagnostic
+query and still uses the authoritative inferred return contract.
+
+Witnesses: `fractional_power_has_a_closed_numeric_contract`,
+`numeric_operators_infer_contracts_that_accept_actual_runtime_values`,
+`fractional_power_runtime_preserves_domain_errors_and_finite_output_boundary`,
+`unresolved_return_reports_checker_kind_and_compute_expression`, and
+`unmaterializable_compute_keeps_typed_evidence_in_tool_failure`.
+
 ### Inferred occurrence selection and contract version 13
 
 Inferred compute outputs may retain original entity occurrences when the output

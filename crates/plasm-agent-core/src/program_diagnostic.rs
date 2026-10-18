@@ -143,6 +143,7 @@ impl ProgramStageError {
             span_offset: self.span_offset(),
             detail: match self {
                 Self::PythonLowering { error } => error.rejection_detail(),
+                Self::PythonCompute { error } => error.rejection_detail(),
                 _ => None,
             },
         }
