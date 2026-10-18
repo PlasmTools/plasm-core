@@ -264,6 +264,7 @@ impl PreparedCompute {
         );
         let executable = format!("{}\n{}({})", definition, def.name, arguments.join(", "));
         Ok(Self {
+            admitted: tokio::sync::OnceCell::new(),
             selected_parameters,
             independent_inputs: true,
             optional_fields: schema.optional_fields.clone(),

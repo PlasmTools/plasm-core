@@ -77,6 +77,7 @@ pub(crate) struct PlanStepMaterializeCtx<'a> {
     pub st: &'a PlasmHostState,
     pub session_id: &'a str,
     pub plan_shared: &'a Arc<PlanLineExecuteShared>,
+    pub prepared_computes: &'a crate::python_compute::prepared_scope::PreparedComputeScope<'a>,
     pub(super) approval_policy: &'a PlasmPlanApprovalPolicy,
     pub flow: &'a crate::plan_flow::PlanFlowAnalysis,
     pub trace: Option<&'a PlasmTraceContext>,
@@ -354,8 +355,7 @@ async fn live_materialize_pure(
                 }
             };
             report(ExecutionStage::Materializing);
-            let checked = crate::python_compute::check_op(ctx.es, &compute.compute.op)
-                .map_err(ExecutionFailure::from)?;
+            let checked = ctx.prepared_computes.check(&compute.compute.op)?;
             let owner = plasm_core::symbol_tuning::EntityBinding {
                 entry_id: source_mat.qualified_entity.entry_id.clone().into(),
                 entity: source_mat.qualified_entity.entity.clone().into(),

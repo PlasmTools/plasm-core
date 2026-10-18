@@ -262,6 +262,7 @@ pub(super) async fn materialize(
             st: ctx.st,
             session_id: ctx.session_id,
             plan_shared: ctx.plan_shared,
+            prepared_computes: ctx.prepared_computes,
             approval_policy: ctx.approval_policy,
             flow: ctx.flow,
             trace: None,

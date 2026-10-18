@@ -28,6 +28,33 @@ syntax exclusions require a policy rationale and a negative conformance case.
 
 ## Boundary judgement
 
+### Execution-scoped static preparation
+
+A live plan execution owns a `PreparedComputeScope` borrowing its immutable
+`ExecuteSession`. Catalog contexts, Python teaching state and session symbols
+used by static checking cannot be replaced through this borrow. Nested maps,
+iterations and parallel plan layers share that execution scope.
+
+On the first reached Python compute, the host runs the ordinary `check_op`
+boundary validation and retains its `PreparedCompute`. Subsequent occurrences
+reuse it only for an exactly equal `ComputeOp`, including source, catalog owner
+and pin, input/output contracts, language version/profile, input mode and
+selection contract. A fresh execution creates a fresh scope. Preparations are
+not persisted in the reviewed plan, exported to clients or shared globally.
+Lazy first reach preserves failure timing for branches that are never executed.
+
+The immutable prepared definition also owns a private once-cell for successful
+upstream type/syntax admission. Its initialization remains after owner and
+collection validation; failure or cancellation does not populate the cell.
+Retaining inference alone would still rerun full admission on every row.
+
+This retains a static proof, not execution results or interpreter state.
+Coverage checks, current row rehydration, input value validation, occurrence
+membership, output validation, cancellation and resource budgets still run at
+their existing execution boundaries. Monty worker checkout/reset and isolation
+remain unchanged. Mutable graph observations and credentials are not inputs to
+the static preparation proof and are never reused by this mechanism.
+
 A compute node has a sealed contract `Compute<I, O, E, B>`: input contract I,
 output contract O, allowed effects E and resource budget B. Admission requires:
 
