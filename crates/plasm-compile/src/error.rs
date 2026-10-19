@@ -43,7 +43,7 @@ pub enum DecodeError {
     EntityAssertionMismatch { entity: String, row: usize },
     #[error("entity union row {row} matches no declared variant")]
     EntityUnionUnknownVariant { row: usize },
-    #[error("entity union row {row} matches multiple variants: {entities:?}")]
+    #[error("entity union row {row} matches multiple variants: {}", .entities.join(", "))]
     EntityUnionAmbiguousVariant { row: usize, entities: Vec<String> },
     #[error("entity discriminator traversed a non-object at `{path}`")]
     EntityUnionDiscriminatorShape { path: String },
