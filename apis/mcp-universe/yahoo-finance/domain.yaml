@@ -109,7 +109,7 @@ capabilities:
   price_history:
     kind: query
     entity: PriceBar
-    description: Historical prices, automatically adjusted by the provider for splits and dividends; start inclusive, end exclusive. Only returned trading observations are available; a calendar date bound does not imply a row exists on that date. No previous-day or next-day substitution is performed.
+    description: Historical prices, automatically adjusted by the provider for splits and dividends; start inclusive, end exclusive. Only returned trading observations are available; a calendar date bound does not imply an observation exists on that date. No previous-day or next-day substitution is performed.
     scope:
     - {name: ticker, value_ref: ticker, required: true}
     - {name: interval, value_ref: interval, required: true}
