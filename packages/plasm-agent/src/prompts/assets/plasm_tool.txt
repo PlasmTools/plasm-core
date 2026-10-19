@@ -1,9 +1,11 @@
-**Plasm** — `logical_session_ref` + `program`. Clean read-only plans execute inline. Plans containing mutations or a review gate return a `run_ref` for `plasm_run`; do not echo the program there.
+**Plasm** — `logical_session_ref` + `program`. Policy-clean reads without fetch-all or fanout risk execute inline; mutations/review gates return `run_ref`. Inspect requirements, then call `plasm_run` with the ref, not the program.
 
-`program` is Python source text, not JSON data. Submit exactly one class derived from Program, with build(self), immutable bindings and an explicit return. This tool description contains the static Python semantic reference; incremental domain declarations arrive through plasm_context. Do not copy declarations, instantiate the class or call build. Imports must be supported by Monty's pure Python profile.
+Compose workflows in one Program: bind producer results to dependent reads, relations, computation and effects; return requested outputs. Compute in the DAG instead of copying values between calls. Split when new evidence requires a decision or correction.
 
-Use only taught e#/m#/r# symbols and exact wire names. Pass catalog method arguments by name; Get also accepts its single identity positionally. The class declares a deferred, typed DAG; @compute methods process materialized values later in bounded Monty. Program-owned Python parse, type and plan rejections return needs_fix with a correction; preserve selection criteria and repair within the same logical session. No other source syntax is accepted and failed Python is never retried as another language.
+`program` is Python source text, not JSON data. Submit exactly one class derived from Program with build(self), immutable bindings and explicit return. The static Python reference follows; incremental declarations arrive through plasm_context. Do not copy declarations, instantiate the class or call build. Imports require Monty's pure Python profile.
 
-Inspect coverage and operation outcomes. A failed or cancelled run can have completed writes: inspect evidence before issuing further effects. Extend the existing context for missing capabilities. Never open a new session to repair syntax.
+Use taught e#/m#/r# symbols and exact wire names. Catalog arguments are named; Get also accepts its single identity positionally. The DAG is deferred and typed; @compute processes materialized values in bounded Monty. Parse/type/plan rejections return needs_fix and a correction: preserve selection criteria and repair in the same logical session. Only Python is accepted; failed Python is never retried as another language.
 
-Failure evidence belongs to one execution. A new program may perform reads or writes in the same logical session; it does not resume or roll back an earlier execution. Service diagnostics inform the agent but do not determine effect status.
+Inspect coverage and outcomes. Failed/cancelled runs may have completed writes; inspect evidence before further effects. Extend context for missing capabilities; never open a new session for syntax repair.
+
+Failure evidence belongs to one execution. New programs may read/write in-session, but do not resume or roll back earlier executions. Service diagnostics do not determine effect status.

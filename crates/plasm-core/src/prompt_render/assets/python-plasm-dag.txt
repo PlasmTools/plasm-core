@@ -3,7 +3,7 @@ build: immutable DAG; non-null tuples/typed arrays unpack recursively with exact
 Declarations: eN/mN/rN/vN session-local/append-only. eN.method=root; row.method=entity row/singleton; = ... optional. Relations: row.rN or rows.flat_map(lambda r: r.rN); never rN(). vN=domain identity/constraints; Literal=choices. Comments=data; groups=methods; constraints=JSON/@profile. Inputs=keywords; producer fields=dependencies.
 
 Rows:
-Ranked search returns candidates, not exact matches. take(1) chooses the first candidate; it does not prove uniqueness. Apply explicit predicates and validate required cardinality before effects. Complete membership observations support `not in` filtering; this does not make a later write atomic with its read.
+Ranked search returns candidates. take(1) selects first, not unique; filter and check required cardinality before effects. Complete membership permits `not in`; later writes are not atomic with that read.
 where(predicate), select("f", alias="f", derived=lambda r: expr), order_by("f", descending=False), take(n>=0), distinct("f"), union(other), aggregate(n=agg.count()), group_by("f", n=agg.sum("amount")). agg: count/sum/avg/min/max/first/last; union: same columns, joined types without coercion, first-wins dedup. Project differing schemas before union. Predicates: truth/comparison/and/or/not; any/all: complete collections; substring/list/one-column RHS membership. Lazy reads; explicit effects. Verify targets before effects. where filters acquired rows; branches keep types; arithmetic drops constraints. query/search.page_size(n).
 
 eN.get(value) or eN.get(identity=value); compound Get: named keys; nullary: no identity. Only declared keywords. Get/take(1): scalar fields, identity; empty extraction fails. Entity rows/captures keep identity/authority. Inferred compute selections retain unchanged rows from one entity owner; constructed/modified records lack authority. union retains authority iff both arms share catalog/entity; else values. Project outputs, not inputs; partial writes list fields. Projections=records (r.field/r["field"]); dicts=dict[str,T], no key guarantees; embedded rows=arrays; nested records/arrays/args.
@@ -23,7 +23,4 @@ class P(Program):
 Absent: AttributeError; select needs fields; guard nulls.
 Compute budgets: projection reduces fields/bytes, not row count. Filter rows before compute when the task permits; nested inputs share the row budget. Never truncate a complete-set calculation to silence a budget failure.
 
-Nominal entity-union results must be narrowed with `rows.of_type(eN)` before
-variant-specific fields, relations or actions. The target must be a declared
-variant. This selects original rows and retains their recorded identity; ordinary
-computed dictionaries cannot be narrowed into entities.
+Entity unions: use `rows.of_type(eN)` before variant fields/relations/actions; the target must be a declared variant. This selects original rows and retains their recorded identity; computed dictionaries cannot be narrowed into entities.
