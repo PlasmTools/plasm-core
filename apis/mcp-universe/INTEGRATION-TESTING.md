@@ -4,6 +4,23 @@ This is the acceptance plan, not a claim that catalogue tests already exist.
 The executable foundation is `crates/plasm-runtime/tests/mcp_http_protocol.rs`:
 a real TCP peer serving JSON-RPC over HTTP, independently of the client SDK.
 
+Current implementation slice: MCP CML mappings and named runtime session bindings
+are implemented. The abstract `mcp_transport_matrix` query reaches the TCP peer,
+decodes a typed row and retains unknown collection coverage. Its failed action
+records one response-received dispatch and retains the original tool envelope in
+execution failure evidence. Explicit decoder tests distinguish empty results,
+missing fields, malformed JSON text and non-text blocks. These are lower-level
+compiler/runtime tests. The additional `mcp_python_protocol` target exercises
+Python admission, intent-only discovery with cached model fixtures and real
+pgvector, both HTTP hops, execution and artifact retrieval. See
+[`mcp-python-integration.md`](../../docs/mcp-python-integration.md) for commands
+and the passing SDK-to-Plasm interoperability probes. Relationship,
+successful mutation/read-after-write gates remain open. The first live finance
+slice now exercises upstream historical-price reads and calculator calls through
+Plasm, including six distinct symbol/interval/date identities and an explicit
+calculator failure. It does not cover the option-chain relationship fixture
+below. Evidence is in the parent repository's `target/mcp-universe-slice`.
+
 ## 0. Pin independent contracts
 
 For each server record the Universe commit, resolved package version or image

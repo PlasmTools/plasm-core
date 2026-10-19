@@ -1,5 +1,34 @@
 # GitHub task capability readiness
 
+## Current admission — 2026-10-19
+
+This section supersedes the historical family-level gates below. Admission is
+task-specific in `scripts/mcp_universe/github_readiness.py`.
+
+| Tasks | Current evidence / remaining blocker |
+|---|---|
+| 0006, 0007, 0008, 0009, 0023, 0024 | Admitted. CSV/JSON composed report writes, closed/open state and label filtering have protocol proofs. Live task0023 passed both native requirements. Admission is not a score for the other tasks. |
+| 0001–0005, 0016, 0021, 0022, 0029, 0030 | Native evaluator passes `ref` to a provider accepting `branch`. A live topic-only file is correctly read through Plasm and missed by the unchanged native helper. |
+| 0010 | Native `labels=[]` omits label filtering, whereas the question requests unlabelled issues. Offline witness returns both labelled and unlabelled rows. |
+| 0011, 0012, 0014, 0015, 0025, 0026 | Fork initiation/readiness/write works. Replacement-read consistency remains unresolved: eight outbound provider reads returned old README bytes after replacement. |
+| 0017–0019, 0027, 0028 | Manual issue mutations pass, but the installed GitHub Actions proof failed with HTTP 404 writing `.github/workflows/plasm-proof.yml`. Cause not yet isolated; manual mutations do not establish future event handling. |
+
+Additional evaluator caveat: tasks0027–0030 use `comment`; the native checker
+reads `comments`, so those predicates do not check comment contents. Do not
+exploit this omission or represent a native pass as proof of automation.
+
+Current upstream `main` equals the pinned `0df6c42717f2a618d34f5b271efd05be462b9e4d`.
+No evaluator, task or dependency edits were made. Offline witnesses live in
+`scripts/mcp_universe/test_github_native_contract.py`.
+
+Fresh evidence (all disposable resources cleaned up):
+- `target/mcp-universe-agent/github-union-task0023-luna-20261019/AUDIT.json`
+- `target/mcp-universe-agent/plasm-workflow-proof-3b3fd58652fd/REPORT.json`
+- `target/mcp-universe-agent/plasm-universe-proof-63df74a6727145fc/REPORT.json`
+- `target/mcp-universe-agent/plasm-workflow-proof-27953a72872c/REPORT.json`
+
+## Historical capability inventory
+
 Inventory: all 28 repository-management tasks at MCP-Universe
 `0df6c42717f2a618d34f5b271efd05be462b9e4d`. This document is engineering
 evidence, not model input. No solutions, guessed paths or evaluator outputs
@@ -75,7 +104,7 @@ deployment permissions and triggers must be verified if a task requires them.
 
 Repository enumeration now returns Issue | PullRequest, with explicit concrete
 selection in the issues and pull_requests relations. Exact Issue reads reject
-pull-request responses before caching; dedicated PullRequest reads expose branch
+pull-request responses before nominal graph publication; dedicated PullRequest reads expose branch
 details absent from listing summaries. Compound owner/repo/number identities
-remain unchanged. The new mapping and exact-read assertion require protocol
-validation; historical results below describe the earlier mapping.
+remain unchanged. The new mapping and exact-read assertion passed all ten protocol
+tests on 2026-10-19; the earlier capability evidence above predates that migration.

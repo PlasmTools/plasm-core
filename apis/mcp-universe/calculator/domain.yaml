@@ -1,0 +1,19 @@
+version: 1
+auth: {scheme: none}
+entities:
+  ArithmeticResult:
+    id_field: expression
+    implicit_request_identity: true
+    description: The value of an arithmetic expression.
+    fields:
+      expression: {value_ref: expression, required: true}
+      result: {value_ref: result, required: true}
+capabilities:
+  arithmetic_evaluate:
+    kind: get
+    entity: ArithmeticResult
+    description: Evaluate arithmetic with addition, subtraction, multiplication, division, floor division, remainder, powers and unary negation.
+    provides: [expression, result]
+values:
+  expression: {type: string, description: Arithmetic expression.}
+  result: {type: string, description: Textual representation of the calculated value.}

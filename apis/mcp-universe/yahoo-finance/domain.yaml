@@ -1,0 +1,185 @@
+version: 1
+auth: {scheme: none}
+entities:
+  Instrument:
+    id_field: ticker
+    id_from: [symbol]
+    implicit_request_identity: true
+    description: A quoted financial instrument identified by its trading symbol.
+    fields:
+      ticker: {value_ref: ticker, required: true, path: symbol}
+      name: {value_ref: instrument_name, path: longName}
+      currency: {value_ref: currency, path: currency}
+  PriceBar:
+    id_field: date
+    id_from: [Date]
+    key_vars: [ticker, interval, date]
+    description: An interval of historical trading prices for one instrument, adjusted by the provider for splits and dividends. These are not unadjusted historical quotes.
+    fields:
+      ticker: {value_ref: ticker, required: true}
+      interval: {value_ref: interval, required: true}
+      date: {value_ref: observation_time, required: true, path: Date}
+      open: {value_ref: adjusted_price, path: Open}
+      high: {value_ref: adjusted_price, path: High}
+      low: {value_ref: adjusted_price, path: Low}
+      close: {value_ref: adjusted_price, path: Close}
+      volume: {value_ref: volume, path: Volume}
+      dividends: {value_ref: distribution, path: Dividends}
+      split_ratio: {value_ref: split_ratio, path: Stock Splits}
+  IncomeStatement:
+    id_field: date
+    id_from: [date]
+    key_vars: [ticker, frequency, date]
+    description: A fiscal period income statement; amounts are reported values, not calculated ratios.
+    fields:
+      ticker: {value_ref: ticker, required: true}
+      frequency: {value_ref: frequency, required: true}
+      date: {value_ref: date_bound, required: true, path: "date"}
+      total_revenue: {value_ref: amount, path: "Total Revenue"}
+      gross_profit: {value_ref: amount, path: "Gross Profit"}
+      net_income: {value_ref: amount, path: "Net Income"}
+      net_income_common_stockholders: {value_ref: amount, path: "Net Income Common Stockholders"}
+      research_and_development: {value_ref: amount, path: "Research And Development"}
+      operating_income: {value_ref: amount, path: "Operating Income"}
+      operating_expense: {value_ref: amount, path: "Operating Expense"}
+      cost_of_revenue: {value_ref: amount, path: "Cost Of Revenue"}
+      pretax_income: {value_ref: amount, path: "Pretax Income"}
+      tax_provision: {value_ref: amount, path: "Tax Provision"}
+      basic_eps: {value_ref: amount, path: "Basic EPS"}
+      diluted_eps: {value_ref: amount, path: "Diluted EPS"}
+  InstitutionalHolding:
+    id_field: holder
+    id_from: [Holder]
+    key_vars: [ticker, holder, report_time]
+    description: A provider-labelled institution's reported holding in one instrument; report dates can differ between holders. Names are preserved as reported; this response supplies no organization hierarchy or identity-equivalence relation.
+    fields:
+      ticker: {value_ref: ticker, required: true}
+      holder: {value_ref: holder, required: true, path: "Holder"}
+      report_time: {value_ref: epoch_milliseconds, required: true, path: "Date Reported"}
+      shares: {value_ref: volume, path: "Shares"}
+      market_value: {value_ref: amount, path: "Value"}
+      fraction_held: {value_ref: holding_fraction, path: "pctHeld"}
+      fraction_change: {value_ref: holding_change_fraction, path: "pctChange"}
+  CorporateAction:
+    id_field: date
+    id_from: [Date]
+    key_vars: [ticker, date]
+    description: Historical cash distributions and share splits for one instrument.
+    fields:
+      ticker: {value_ref: ticker, required: true}
+      date: {value_ref: observation_time, required: true, path: "Date"}
+      dividends: {value_ref: distribution, path: "Dividends"}
+      split_ratio: {value_ref: split_ratio, path: "Stock Splits"}
+  OptionExpiry:
+    id_field: date
+    key_vars: [ticker, date]
+    description: An available option expiration date for one underlying instrument.
+    fields:
+      ticker: {value_ref: ticker, required: true}
+      date: {value_ref: date_bound, required: true}
+  OptionContract:
+    id_field: contract
+    id_from: [contractSymbol]
+    key_vars: [ticker, expiration_date, option_type, contract]
+    description: A listed option contract and its current provider quote.
+    fields:
+      ticker: {value_ref: ticker, required: true}
+      expiration_date: {value_ref: date_bound, required: true}
+      option_type: {value_ref: option_type, required: true}
+      contract: {value_ref: contract, required: true, path: "contractSymbol"}
+      last_trade: {value_ref: observation_time, path: "lastTradeDate"}
+      strike: {value_ref: price, path: "strike"}
+      last_price: {value_ref: price, path: "lastPrice"}
+      bid: {value_ref: price, path: "bid"}
+      ask: {value_ref: price, path: "ask"}
+      change: {value_ref: amount, path: "change"}
+      percent_change: {value_ref: quote_change_percent, path: "percentChange"}
+      volume: {value_ref: contract_count, path: "volume"}
+      open_interest: {value_ref: contract_count, path: "openInterest"}
+      implied_volatility: {value_ref: volatility_fraction, path: "impliedVolatility"}
+      in_the_money: {value_ref: boolean, path: "inTheMoney"}
+      contract_size: {value_ref: label, path: "contractSize"}
+      currency: {value_ref: currency, path: "currency"}
+capabilities:
+  instrument_get:
+    kind: get
+    entity: Instrument
+    description: Observe instrument information by trading symbol.
+    provides: [ticker, name, currency]
+  price_history:
+    kind: query
+    entity: PriceBar
+    description: Historical prices, automatically adjusted by the provider for splits and dividends; start inclusive, end exclusive. Only returned trading observations are available; a calendar date bound does not imply a row exists on that date. No previous-day or next-day substitution is performed.
+    scope:
+    - {name: ticker, value_ref: ticker, required: true}
+    - {name: interval, value_ref: interval, required: true}
+    selection:
+    - {name: start_date, value_ref: date_bound, required: true, selection_effect: filter}
+    - {name: end_date, value_ref: date_bound, required: true, selection_effect: filter}
+    provides: [ticker, interval, date, open, high, low, close, volume, dividends, split_ratio]
+  income_statements:
+    kind: query
+    entity: IncomeStatement
+    description: A fiscal period income statement; amounts are reported values, not calculated ratios.
+    scope:
+    - {name: ticker, value_ref: ticker, required: true}
+    - {name: frequency, value_ref: frequency, required: true}
+    provides: [ticker, frequency, date, total_revenue, gross_profit, net_income, net_income_common_stockholders, research_and_development, operating_income, operating_expense, cost_of_revenue, pretax_income, tax_provision, basic_eps, diluted_eps]
+  institutional_holdings:
+    kind: query
+    entity: InstitutionalHolding
+    description: Reported institutional holdings for one instrument. Exhaustion covers the returned report rows, not every institution or organization relationship; a missing name has no inferred replacement.
+    scope:
+    - {name: ticker, value_ref: ticker, required: true}
+    provides: [ticker, holder, report_time, shares, market_value, fraction_held, fraction_change]
+  corporate_actions:
+    kind: query
+    entity: CorporateAction
+    description: Historical cash distributions and share splits for one instrument.
+    scope:
+    - {name: ticker, value_ref: ticker, required: true}
+    provides: [ticker, date, dividends, split_ratio]
+  option_expirations:
+    kind: query
+    entity: OptionExpiry
+    description: An available option expiration date for one underlying instrument.
+    scope:
+    - {name: ticker, value_ref: ticker, required: true}
+    provides: [ticker, date]
+  option_chain:
+    kind: query
+    entity: OptionContract
+    description: A listed option contract and its current provider quote.
+    scope:
+    - {name: ticker, value_ref: ticker, required: true}
+    - {name: expiration_date, value_ref: date_bound, required: true}
+    - {name: option_type, value_ref: option_type, required: true}
+    provides: [ticker, expiration_date, option_type, contract, last_trade, strike, last_price, bid, ask, change, percent_change, volume, open_interest, implied_volatility, in_the_money, contract_size, currency]
+values:
+  contract_count: {type: number, description: Provider contract count; nullable pandas columns use a numeric JSON carrier.}
+  frequency: {type: enum, enum: [income_stmt, quarterly_income_stmt], description: Annual or quarterly reporting frequency.}
+  amount: {type: number, description: Provider reported financial amount; missing remains missing.}
+  holder: {type: string, description: Provider Holder label preserved verbatim; no alias or parent-organization mapping is supplied.}
+  epoch_milliseconds: {type: integer, description: Report date as Unix epoch milliseconds in the server response.}
+  adjusted_price: {type: number, description: Historical price adjusted by the provider for splits and dividends; not an unadjusted quote. This tool does not expose an unadjusted-price option.}
+  holding_fraction: {type: number, description: Provider pctHeld; raw fraction of shares held, preserved without rescaling.}
+  holding_change_fraction: {type: number, description: Provider pctChange; raw fraction for the reported holding change, preserved without rescaling.}
+  volatility_fraction: {type: number, description: Provider impliedVolatility; raw volatility fraction, preserved without rescaling.}
+  quote_change_percent: {type: number, description: Provider percentChange; option quote change in percent units, preserved without rescaling.}
+  option_type: {type: enum, enum: [calls, puts], description: Option right.}
+  contract: {type: string, description: Provider option contract symbol.}
+  boolean: {type: boolean, description: Provider Boolean flag.}
+  label: {type: string, description: Provider descriptive label.}
+  ticker: {type: string, description: Trading symbol.}
+  instrument_name: {type: string, description: Instrument name.}
+  currency: {type: string, description: Quotation currency code.}
+  observation_time: {type: string, description: Provider observation timestamp in ISO 8601 form; preserve its timezone when interpreting the calendar date.}
+  date_bound: {type: string, description: Calendar date in YYYY-MM-DD form.}
+  interval:
+    type: enum
+    enum: [1m, 2m, 5m, 15m, 30m, 60m, 90m, 1h, 1d, 5d, 1wk, 1mo, 3mo]
+    description: Bar interval; intraday history has provider retention limits.
+  price: {type: number, description: Provider option strike or quotation price; not an adjusted historical underlying price. Missing values remain missing.}
+  volume: {type: integer, description: Traded volume.}
+  distribution: {type: number, description: Dividend distribution in the interval.}
+  split_ratio: {type: number, description: Provider stock-split ratio.}

@@ -3,10 +3,12 @@
 Task-independent semantic catalogues for MCP-Universe's server contracts. These
 are distinct from the direct vendor HTTP catalogues in sibling directories.
 
-**Status:** authoring briefs only. No child has `domain.yaml` or `mappings.yaml`
-yet. The Streamable HTTP runtime client is an initial transport component;
-CML MCP compilation and engine dispatch are still required. This is not a
-working benchmark integration or a scored submission.
+**Status:** Yahoo Finance historical prices/instrument information and calculator
+now have executable catalogues. A loopback benchmark host exercises both through
+Plasm Python and Streamable HTTP, using unchanged upstream FastMCP tools. The
+other directories remain authoring briefs. The two-task development experiment
+and native evaluator records live in the parent repository under
+`target/mcp-universe-slice`; this is not an official benchmark submission.
 
 The family root intentionally has no `domain.yaml`, so ordinary top-level API
 packing skips it. Once authored, pack explicitly with
@@ -41,7 +43,9 @@ Plasm remains network-only. Server process management, any upstream stdio and
 credentials belong to benchmark infrastructure. Before live integration, either
 provide a benchmark-owned Streamable HTTP endpoint or explicitly approve an
 older HTTP/SSE client. No auto-detection, fallback, process launcher or direct
-vendor-API bypass is part of this family. No deployed endpoint has been tested.
+vendor-API bypass is part of this family. The first slice uses the pinned
+server's FastMCP object with `transport="streamable-http"` in benchmark-owned
+Python processes. It does not use the upstream legacy SSE gateway.
 
 See [the integration ladder](INTEGRATION-TESTING.md). Catalogue authoring follows
 the canonical [authoring guidance](../../skills/plasm-authoring/SKILL.md).
