@@ -846,7 +846,8 @@ fn explorer_args_for_get(entity: &EntityDef, get_cap: &CapabilitySchema) -> Vec<
         CapabilityTemplate::Http(cml) | CapabilityTemplate::GraphQl(cml) => {
             path_var_names_from_request(cml)
         }
-        CapabilityTemplate::View(_)
+        CapabilityTemplate::Mcp(_)
+        | CapabilityTemplate::View(_)
         | CapabilityTemplate::CredentialBind(_)
         | CapabilityTemplate::EvmCall(_)
         | CapabilityTemplate::EvmLogs(_) => Vec::new(),
@@ -967,17 +968,18 @@ fn materialization_view(m: &RelationMaterialization) -> ExplorerRelationMaterial
             };
             view
         }
-        RelationMaterialization::QueryScoped { capability, param, .. } => {
-            ExplorerRelationMaterialization {
-                kind: "query_scoped",
-                capability: Some(capability.to_string()),
-                param: Some(param.to_string()),
-                binding_keys: None,
-            }
-        }
+        RelationMaterialization::QueryScoped {
+            capability, param, ..
+        } => ExplorerRelationMaterialization {
+            kind: "query_scoped",
+            capability: Some(capability.to_string()),
+            param: Some(param.to_string()),
+            binding_keys: None,
+        },
         RelationMaterialization::QueryScopedBindings {
             capability,
-            bindings, ..
+            bindings,
+            ..
         } => ExplorerRelationMaterialization {
             kind: "query_scoped_bindings",
             capability: Some(capability.to_string()),

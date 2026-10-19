@@ -304,7 +304,9 @@ pub struct DomainFile {
     /// Monotonic distribution version for this catalog entry (`0` when omitted).
     #[serde(default)]
     pub version: u64,
-    /// Default HTTP(S) origin for CML execution (required; matches [`CGS::http_backend`]).
+    /// Default HTTP(S) origin. Network MCP catalogues use host-owned bindings
+    /// and have no HTTP backend origin in their declaration.
+    #[serde(default)]
     pub http_backend: String,
     /// Optional authentication scheme for all requests in this schema.
     #[serde(default)]

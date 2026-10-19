@@ -107,7 +107,9 @@ enum Materialization<'a> {
 fn fallback(input: &crate::schema::RelationScopedFallback) -> Materialization<'_> {
     use crate::schema::RelationScopedFallback as R;
     match input {
-        R::QueryScoped { capability, param, .. } => Materialization::QueryIdentity {
+        R::QueryScoped {
+            capability, param, ..
+        } => Materialization::QueryIdentity {
             capability: capability.as_str(),
             parameter: param.as_str(),
             select_entity: None,
@@ -142,14 +144,19 @@ fn materialization(input: Option<&crate::schema::RelationMaterialization>) -> Ma
         Some(R::PreferFromParentGet { fallback: f, .. }) => Materialization::PreferEmbedded {
             fallback: Box::new(fallback(f)),
         },
-        Some(R::QueryScoped { capability, param, select_entity }) => Materialization::QueryIdentity {
+        Some(R::QueryScoped {
+            capability,
+            param,
+            select_entity,
+        }) => Materialization::QueryIdentity {
             capability: capability.as_str(),
             parameter: param.as_str(),
             select_entity: select_entity.as_ref().map(|entity| entity.as_str()),
         },
         Some(R::QueryScopedBindings {
             capability,
-            bindings, select_entity,
+            bindings,
+            select_entity,
         }) => Materialization::QueryBindings {
             capability: capability.as_str(),
             bindings: bindings

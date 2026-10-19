@@ -3,9 +3,9 @@
 use std::sync::Arc;
 use std::time::Instant;
 
-use rust_mcp_sdk::schema::schema_utils::CallToolError;
-use rust_mcp_sdk::schema::{CallToolResult, TextContent};
-use rust_mcp_sdk::McpServer;
+use crate::mcp_server::request::McpRequest;
+use crate::mcp_server::request::ToolFailure;
+use rmcp::model::CallToolResult;
 use serde_json::json;
 use uuid::Uuid;
 
@@ -32,16 +32,16 @@ pub(crate) struct ResolvedRunSnapshot {
 pub(crate) fn parse_read_run_artifact_lookup(
     tool_name: &str,
     v: &serde_json::Value,
-) -> Result<(String, RunArtifactLookupArg), CallToolError> {
+) -> Result<(String, RunArtifactLookupArg), ToolFailure> {
     let Some(obj) = v.as_object() else {
-        return Err(CallToolError::invalid_arguments(
+        return Err(ToolFailure::invalid_arguments(
             tool_name,
             Some("arguments must be a JSON object".into()),
         ));
     };
     for key in ["plan_commit_ref", "page_handle", "program", "run_ref"] {
         if obj.contains_key(key) {
-            return Err(CallToolError::invalid_arguments(
+            return Err(ToolFailure::invalid_arguments(
                 tool_name,
                 Some(format!("`{key}` is not accepted on {tool_name}")),
             ));
@@ -49,7 +49,7 @@ pub(crate) fn parse_read_run_artifact_lookup(
     }
     let session_ref = parse_logical_session_ref_arg(tool_name, v)?;
     if obj.contains_key("resource_index") {
-        return Err(CallToolError::invalid_arguments(
+        return Err(ToolFailure::invalid_arguments(
             tool_name,
             Some(
                 "`resource_index` is not accepted (ambiguous with plan `run_step`) — use `run_id` or `artifact_uri` from `_meta.plasm.steps[]`"
@@ -61,7 +61,7 @@ pub(crate) fn parse_read_run_artifact_lookup(
     let has_run_id = obj.get("run_id").is_some();
     let count = [has_uri, has_run_id].into_iter().filter(|b| *b).count();
     if count != 1 {
-        return Err(CallToolError::invalid_arguments(
+        return Err(ToolFailure::invalid_arguments(
             tool_name,
             Some(
                 "provide exactly one of `artifact_uri` or `run_id` from the same `plasm_run` step"
@@ -76,7 +76,7 @@ pub(crate) fn parse_read_run_artifact_lookup(
             .map(str::trim)
             .filter(|s| !s.is_empty())
             .ok_or_else(|| {
-                CallToolError::invalid_arguments(
+                ToolFailure::invalid_arguments(
                     tool_name,
                     Some("`artifact_uri` must be a non-empty string".into()),
                 )
@@ -89,35 +89,35 @@ pub(crate) fn parse_read_run_artifact_lookup(
             .map(str::trim)
             .filter(|s| !s.is_empty())
             .ok_or_else(|| {
-                CallToolError::invalid_arguments(
+                ToolFailure::invalid_arguments(
                     tool_name,
                     Some("`run_id` must be a non-empty string".into()),
                 )
             })?;
         let run_id = RunArtifactId::from_wire(wire).ok_or_else(|| {
-            CallToolError::invalid_arguments(tool_name, Some(format!("invalid run_id: {wire}")))
+            ToolFailure::invalid_arguments(tool_name, Some(format!("invalid run_id: {wire}")))
         })?;
         RunArtifactLookupArg::RunId(run_id)
     };
     Ok((session_ref, lookup))
 }
 
-pub(crate) fn map_resolve_err(tool_name: &str, e: RunArtifactResolveError) -> CallToolError {
+pub(crate) fn map_resolve_err(tool_name: &str, e: RunArtifactResolveError) -> ToolFailure {
     match e {
         RunArtifactResolveError::UnknownRunId | RunArtifactResolveError::UnknownPlan => {
-            CallToolError::invalid_arguments(tool_name, Some(e.to_string()))
+            ToolFailure::invalid_arguments(tool_name, Some(e.to_string()))
         }
         RunArtifactResolveError::LegacyResourceIndexUri(_)
         | RunArtifactResolveError::UnsupportedUri(_)
         | RunArtifactResolveError::SessionMismatch
         | RunArtifactResolveError::InvalidSessionRef => {
-            CallToolError::invalid_arguments(tool_name, Some(e.to_string()))
+            ToolFailure::invalid_arguments(tool_name, Some(e.to_string()))
         }
         RunArtifactResolveError::DecodeFailed(msg) => {
-            CallToolError::from_message(format!("run artifact decode failed: {msg}"))
+            ToolFailure::rejected(format!("run artifact decode failed: {msg}"))
         }
         RunArtifactResolveError::Integrity(msg) => {
-            CallToolError::from_message(format!("run artifact integrity check failed: {msg}"))
+            ToolFailure::rejected(format!("run artifact integrity check failed: {msg}"))
         }
     }
 }
@@ -126,12 +126,12 @@ impl PlasmMcpHandler {
     pub(crate) async fn resolve_run_snapshot_for_tool(
         &self,
         transport_key: &str,
-        runtime: &Arc<dyn McpServer>,
+        runtime: &Arc<McpRequest>,
         tool_name: &str,
         logical_uuid: Uuid,
         session_ref: &str,
         lookup_arg: RunArtifactLookupArg,
-    ) -> Result<ResolvedRunSnapshot, CallToolError> {
+    ) -> Result<ResolvedRunSnapshot, ToolFailure> {
         let principal_incoming = self.ensure_mcp_principal(transport_key, runtime).await?;
         let scope = tenant_scope(principal_incoming.as_ref());
         if !self
@@ -140,7 +140,7 @@ impl PlasmMcpHandler {
             .verify_tenant(LogicalSessionId(logical_uuid), &scope)
             .await
         {
-            return Err(CallToolError::from_message(
+            return Err(ToolFailure::rejected(
                 "logical_session_ref is unknown or does not belong to this tenant scope",
             ));
         }
@@ -149,7 +149,7 @@ impl PlasmMcpHandler {
             .resolve_binding_for_logical(transport_key, logical_uuid)
             .await
             .ok_or_else(|| {
-                CallToolError::invalid_arguments(
+                ToolFailure::invalid_arguments(
                     tool_name,
                     Some(
                         "no execute session for this logical session: extend plasm_context with the same logical_session_ref and current intent first"
@@ -196,15 +196,15 @@ impl PlasmMcpHandler {
     pub(crate) async fn handle_read_run_artifact(
         &self,
         transport_key: &str,
-        runtime: &Arc<dyn McpServer>,
+        runtime: &Arc<McpRequest>,
         v: &serde_json::Value,
-    ) -> Result<CallToolResult, CallToolError> {
+    ) -> Result<CallToolResult, ToolFailure> {
         const TOOL: &str = "plasm_read_run_artifact";
         let mode = self
             .resolved_artifact_access_mode(transport_key, runtime)
             .await;
         if !mode.exposes_read_tool() {
-            return Err(CallToolError::from_message(
+            return Err(ToolFailure::rejected(
                 "plasm_read_run_artifact is not available on this MCP transport (use MCP resources/read)",
             ));
         }
@@ -230,7 +230,7 @@ impl PlasmMcpHandler {
         let (char_count, binary) = mcp_artifact_payload_chars(&payload);
         let text = std::str::from_utf8(&payload.bytes)
             .map(str::to_string)
-            .map_err(|_| CallToolError::from_message("result text must be UTF-8"))?;
+            .map_err(|_| ToolFailure::rejected("result text must be UTF-8"))?;
         let mut meta = serde_json::Map::new();
         meta.insert(
             "plasm".into(),
@@ -245,8 +245,8 @@ impl PlasmMcpHandler {
             }),
         );
         Ok(
-            CallToolResult::text_content(vec![TextContent::new(text, None, None)])
-                .with_meta(Some(meta)),
+            CallToolResult::success(vec![rmcp::model::ContentBlock::text(text)])
+                .with_meta(Some(meta.into())),
         )
     }
 }

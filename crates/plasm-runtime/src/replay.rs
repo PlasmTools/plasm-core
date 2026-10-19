@@ -109,6 +109,15 @@ impl RequestFingerprint {
             }
         }
         match request {
+            CompiledOperation::Mcp(call) => {
+                hasher.update(b"mcp");
+                let value = serde_json::to_value(call).map_err(|source| {
+                    RuntimeError::from(crate::mcp_execution::McpExecutionError::Serialization(
+                        source,
+                    ))
+                })?;
+                hasher.update(normalize_serde_for_fingerprint(&value)?.as_bytes());
+            }
             CompiledOperation::CredentialBind(request) => {
                 hasher.update(b"credential_bind");
                 hasher.update(request.slot.as_bytes());

@@ -6,7 +6,8 @@ pub mod logical_symbol_ledger;
 pub mod persisted_operations;
 pub(crate) mod plasm_transport_redis;
 pub mod redis_backend;
-mod redis_session_store;
+mod rmcp_session_store;
+pub use rmcp_session_store::RedisMcpSessionStore;
 mod symbol_ledger_archive;
 pub mod types;
 
@@ -25,6 +26,5 @@ pub use persisted_operations::{
 };
 pub use plasm_transport_redis::PlasmTransportRedisStore;
 pub use redis_backend::RedisBackend;
-pub use redis_session_store::{RedisSessionStore, SessionRuntimeFactory};
 pub use symbol_ledger_archive::{SymbolLedgerArchive, SymbolLedgerArchiveError};
 pub use types::{PersistedPlasmTransportState, PlasmExecBinding};

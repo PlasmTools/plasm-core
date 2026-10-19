@@ -1,4 +1,4 @@
-//! MCP Streamable HTTP server (rust-mcp-sdk) over Plasm discovery + execute ([`crate::server_state::PlasmHostState`]).
+//! MCP Streamable HTTP server (rmcp) over Plasm discovery + execute ([`crate::server_state::PlasmHostState`]).
 //! Tool results use Markdown [`TextContent`] with canonical agent token TSV in **`content`**.
 //! **`plasm`** dry-runs and **`plasm_run`** put compact review / row TSV in `content` and continuity
 //! tokens in `_meta.plasm`. Negotiated MCP Apps receive full DAG / steps in `structuredContent.ui`
@@ -39,18 +39,16 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 
-use async_trait::async_trait;
+use crate::mcp_server::request::McpRequest;
+use crate::mcp_server::request::ToolFailure;
 use base64::Engine as _;
 use plasm_core::CgsCatalog;
-use rust_mcp_sdk::mcp_server::ServerHandler;
-use rust_mcp_sdk::schema::schema_utils::CallToolError;
-use rust_mcp_sdk::schema::{
-    BlobResourceContents, CallToolRequestParams, CallToolResult, InitializeRequestParams,
-    InitializeResult, ListResourceTemplatesResult, ListResourcesResult, ListToolsResult,
-    PaginatedRequestParams, ReadResourceContent, ReadResourceRequestParams, ReadResourceResult,
-    ResourceTemplate, RpcError, TextContent, TextResourceContents,
+use rmcp::model::{
+    CallToolRequestParams, CallToolResult, InitializeRequestParams, InitializeResult,
+    ListResourceTemplatesResult, ListResourcesResult, ListToolsResult, PaginatedRequestParams,
+    ReadResourceRequestParams, ReadResourceResult, ResourceContents, ResourceTemplate,
 };
-use rust_mcp_sdk::McpServer;
+use rmcp::{ErrorData, ServerHandler};
 use tokio::sync::{Mutex, RwLock};
 
 use crate::execute_session::ExecuteSession;
@@ -58,7 +56,6 @@ use crate::incoming_auth::{IncomingAuthMode, TenantPrincipal};
 use crate::mcp_logical_ref::{format_logical_session_wire_ref, parse_logical_session_wire_ref};
 use crate::mcp_plasm_meta::PlasmMetaIndex;
 use crate::mcp_runtime_config::McpRuntimeConfig;
-use crate::mcp_stream_identity::McpTransportIdentity;
 use crate::run_artifacts::{
     code_plan_handle, code_plan_http_path, plasm_code_plan_resource_uri, ArtifactPayload,
     CodePlanArchiveDocument,
@@ -67,11 +64,12 @@ use crate::server_state::PlasmHostState;
 use chrono::Utc;
 use uuid::Uuid;
 
-/// Best-effort bound on concurrent MCP transport sessions holding an execute binding (see module doc).
 mod artifact_access;
 mod artifact_resolve;
 mod call_tool_dispatch;
 mod committed_plasm_run;
+/// Best-effort bound on concurrent MCP transport sessions holding an execute binding (see module doc).
+pub(crate) mod request;
 pub use committed_plasm_run::compile_page_continuation;
 #[cfg(test)]
 mod future_size_probe;
@@ -89,9 +87,10 @@ mod read_run_artifact;
 mod resource_helpers;
 mod resource_read;
 mod resource_read_trace;
-mod schema;
+pub(crate) mod schema;
 #[cfg(test)]
 mod stack_budget_test;
+#[cfg(test)]
 mod stateless;
 mod teaching_prompt_reporter;
 mod tool_parse;
@@ -100,10 +99,9 @@ mod trace;
 mod transport;
 mod ui_read;
 
-pub(crate) use initialize::mcp_stateless_server_details;
 pub use initialize::{
-    build_mcp_hyper_server_for_merge, build_mcp_router_for_merge, build_mcp_router_for_transport,
-    mcp_hyper_router, plasm_mcp_stateless_enabled, run_mcp_server, McpHttpTransport,
+    build_mcp_router_for_merge, build_mcp_router_for_transport, plasm_mcp_stateless_enabled,
+    run_mcp_server, McpHttpTransport, McpServerError,
 };
 
 #[cfg(test)]
@@ -144,6 +142,7 @@ pub(crate) struct PlasmMcpHandler {
     /// MCP transport session key -> per-session mutable state.
     pub(crate) session_states: Arc<RwLock<HashMap<String, Arc<Mutex<McpTransportState>>>>>,
     transport_redis: Option<Arc<crate::mcp_transport_store::PlasmTransportRedisStore>>,
+    peers: Arc<RwLock<HashMap<String, rmcp::Peer<rmcp::RoleServer>>>>,
 }
 
 impl PlasmMcpHandler {
@@ -152,6 +151,7 @@ impl PlasmMcpHandler {
             plasm,
             session_states: Arc::new(RwLock::new(HashMap::new())),
             transport_redis: None,
+            peers: Arc::new(RwLock::new(HashMap::new())),
         }
     }
 
@@ -242,10 +242,10 @@ impl PlasmMcpHandler {
         &self,
         tool: &str,
         ref_str: &str,
-    ) -> Result<Uuid, CallToolError> {
+    ) -> Result<Uuid, ToolFailure> {
         parse_logical_session_wire_ref(ref_str)
             .map(|id| id.as_uuid())
-            .map_err(|e| CallToolError::invalid_arguments(tool, Some(e.to_string())))
+            .map_err(|e| ToolFailure::invalid_arguments(tool, Some(e.to_string())))
     }
 
     pub(crate) async fn resolve_binding_stateless(
@@ -304,30 +304,30 @@ impl PlasmMcpHandler {
     /// Latest tenant MCP policy for this transport session (from HTTP `Authorization` + control-plane store).
     pub(crate) async fn tenant_mcp_cfg(
         &self,
-        runtime: &Arc<dyn McpServer>,
-    ) -> Result<Option<Arc<McpRuntimeConfig>>, CallToolError> {
+        runtime: &Arc<McpRequest>,
+    ) -> Result<Option<Arc<McpRuntimeConfig>>, ToolFailure> {
         let has_tenant_configs = match self.plasm.mcp_config_repository() {
-            Some(r) => r.has_tenant_configs().await.unwrap_or(false),
+            Some(r) => r.has_tenant_configs().await.map_err(ToolFailure::cause)?,
             None => false,
         };
-        let auth = runtime.auth_info_cloned().await;
+        let auth = runtime.identity.clone();
         let Some(info) = auth else {
             if has_tenant_configs {
-                return Err(CallToolError::from_message(
+                return Err(ToolFailure::rejected(
                     "MCP Authorization required: send `Authorization: Bearer <api_key>` (tenant MCP API key from control plane).",
                 ));
             }
             return Ok(None);
         };
 
-        if McpTransportIdentity::from_auth_info(&info).is_some_and(|i| i.anonymous) {
+        if info.anonymous {
             return Ok(None);
         }
 
-        let identity = McpTransportIdentity::from_auth_info(&info);
+        let identity = Some(info);
         let Some(id) = identity.and_then(|i| i.mcp_config_id) else {
             if has_tenant_configs {
-                return Err(CallToolError::from_message(
+                return Err(ToolFailure::rejected(
                     "MCP Authorization missing tenant binding (expected Bearer API key).",
                 ));
             }
@@ -339,17 +339,15 @@ impl PlasmMcpHandler {
         };
 
         let Some(cfg) = repo.get_runtime_config(&id).await.map_err(|_| {
-            CallToolError::from_message(
-                "Tenant MCP configuration store failed while loading policy.",
-            )
+            ToolFailure::rejected("Tenant MCP configuration store failed while loading policy.")
         })?
         else {
-            return Err(CallToolError::from_message(
+            return Err(ToolFailure::rejected(
                 "Tenant MCP configuration is no longer available (disabled or revoked on the agent).",
             ));
         };
         if cfg.space_type == "personal" && cfg.owner_subject.is_none() {
-            return Err(CallToolError::from_message(
+            return Err(ToolFailure::rejected(
                 "Personal MCP configuration is missing owner binding metadata. Re-provision from control plane.",
             ));
         }
@@ -359,10 +357,10 @@ impl PlasmMcpHandler {
 
     async fn mcp_principal_from_transport_auth(
         &self,
-        runtime: &Arc<dyn McpServer>,
+        runtime: &Arc<McpRequest>,
     ) -> Option<TenantPrincipal> {
-        let info = runtime.auth_info_cloned().await?;
-        McpTransportIdentity::from_auth_info(&info)?.to_tenant_principal()
+        let info = runtime.identity.clone()?;
+        Some(info)?.to_tenant_principal()
     }
 
     fn incoming_mode(&self) -> IncomingAuthMode {
@@ -377,12 +375,12 @@ impl PlasmMcpHandler {
     pub(crate) async fn ensure_mcp_principal(
         &self,
         _mcp_key: &str,
-        runtime: &Arc<dyn McpServer>,
-    ) -> Result<Option<TenantPrincipal>, CallToolError> {
+        runtime: &Arc<McpRequest>,
+    ) -> Result<Option<TenantPrincipal>, ToolFailure> {
         let mode = self.incoming_mode();
         let p = self.mcp_principal_from_transport_auth(runtime).await;
         if mode == IncomingAuthMode::Required && p.is_none() {
-            return Err(CallToolError::from_message(
+            return Err(ToolFailure::rejected(
                 "incoming auth required: authenticate the MCP transport with a valid bearer credential",
             ));
         }
@@ -392,7 +390,7 @@ impl PlasmMcpHandler {
     pub(crate) async fn resolved_artifact_access_mode(
         &self,
         transport_key: &str,
-        runtime: &Arc<dyn McpServer>,
+        runtime: &Arc<McpRequest>,
     ) -> crate::mcp_run_markdown::ArtifactAccessMode {
         let transport = self.session_state(transport_key).await;
         {
@@ -408,23 +406,16 @@ impl PlasmMcpHandler {
 
     pub(crate) async fn artifact_access_mode_for_runtime(
         &self,
-        runtime: &Arc<dyn McpServer>,
+        runtime: &Arc<McpRequest>,
     ) -> crate::mcp_run_markdown::ArtifactAccessMode {
-        if let Some(key) = runtime.session_id() {
-            return self.resolved_artifact_access_mode(&key, runtime).await;
-        }
-        let client = crate::mcp_client_info::McpClientInfo::observe(runtime.as_ref());
-        host_policy::resolve_mcp_host_policy(
-            &client,
-            artifact_access::client_user_agent_hint(None).as_deref(),
-        )
-        .artifact_access
+        self.resolved_artifact_access_mode(&runtime.transport_key, runtime)
+            .await
     }
 
     pub(crate) async fn resolved_mcp_ui_apps_supported(
         &self,
         transport_key: &str,
-        runtime: &Arc<dyn McpServer>,
+        runtime: &Arc<McpRequest>,
     ) -> bool {
         let transport = self.session_state(transport_key).await;
         {
@@ -438,22 +429,16 @@ impl PlasmMcpHandler {
             .mcp_ui_apps
     }
 
-    pub(crate) async fn mcp_ui_apps_enabled_for_runtime(
-        &self,
-        runtime: &Arc<dyn McpServer>,
-    ) -> bool {
-        if let Some(key) = runtime.session_id() {
-            return self.resolved_mcp_ui_apps_supported(&key, runtime).await;
-        }
-        let client = crate::mcp_client_info::McpClientInfo::observe(runtime.as_ref());
-        host_policy::resolve_mcp_host_policy(&client, None).mcp_ui_apps
+    pub(crate) async fn mcp_ui_apps_enabled_for_runtime(&self, runtime: &Arc<McpRequest>) -> bool {
+        self.resolved_mcp_ui_apps_supported(&runtime.transport_key, runtime)
+            .await
     }
 
     /// Observe client semantics once and cache eligible host-policy fields on the transport.
     async fn detect_and_cache_host_policy(
         &self,
         transport_key: &str,
-        runtime: &Arc<dyn McpServer>,
+        runtime: &Arc<McpRequest>,
     ) -> host_policy::McpHostPolicy {
         let http_ua = self.plasm.mcp_http_user_agent(transport_key);
         let client = crate::mcp_client_info::McpClientInfo::observe(runtime.as_ref());
@@ -476,14 +461,11 @@ impl PlasmMcpHandler {
     async fn trace_session_meta(
         &self,
         _mcp_key: &str,
-        runtime: &Arc<dyn McpServer>,
+        runtime: &Arc<McpRequest>,
     ) -> crate::trace_hub::TraceSessionMeta {
         use crate::trace_hub::{McpConfigRef, TraceSessionMeta};
 
-        let identity = runtime
-            .auth_info_cloned()
-            .await
-            .and_then(|info| McpTransportIdentity::from_auth_info(&info));
+        let identity = runtime.identity.clone();
 
         let Some(identity) = identity else {
             return TraceSessionMeta {
@@ -518,8 +500,8 @@ impl PlasmMcpHandler {
     async fn handle_mcp_tool_ui_list_catalogs(
         &self,
         key: &str,
-        runtime: &Arc<dyn McpServer>,
-    ) -> Result<CallToolResult, CallToolError> {
+        runtime: &Arc<McpRequest>,
+    ) -> Result<CallToolResult, ToolFailure> {
         self.ensure_mcp_principal(key, runtime).await?;
         let reg = self.plasm.catalog.snapshot();
         let tcfg = self.tenant_mcp_cfg(runtime).await?;
@@ -541,156 +523,153 @@ impl PlasmMcpHandler {
             serde_json::json!({ "entry_ids": entry_ids }),
         );
         Ok(
-            CallToolResult::text_content(vec![TextContent::new(text, None, None)])
-                .with_meta(Some(meta)),
+            CallToolResult::success(vec![rmcp::model::ContentBlock::text(text)])
+                .with_meta(Some(meta.into())),
         )
     }
 }
 
-#[async_trait]
 impl ServerHandler for PlasmMcpHandler {
-    async fn handle_initialize_request(
+    fn get_info(&self) -> InitializeResult {
+        initialize::mcp_initialize_result()
+    }
+
+    async fn initialize(
         &self,
         params: InitializeRequestParams,
-        runtime: Arc<dyn McpServer>,
-    ) -> Result<InitializeResult, RpcError> {
+        context: rmcp::service::RequestContext<rmcp::RoleServer>,
+    ) -> Result<InitializeResult, ErrorData> {
+        context.peer.set_peer_info(params.clone());
         let client = crate::mcp_client_info::McpClientInfo::from_initialize(params.clone());
-        let ua_hint = runtime.session_id().and_then(|key| {
-            artifact_access::client_user_agent_hint(self.plasm.mcp_http_user_agent(&key).as_deref())
-        });
-        let policy = host_policy::resolve_mcp_host_policy(&client, ua_hint.as_deref());
-        if let Some(key) = runtime.session_id() {
-            let transport = self.session_state(&key).await;
-            let mut g = transport.lock().await;
-            g.mcp_ui_apps_supported = Some(policy.mcp_ui_apps);
-            g.artifact_access_mode = Some(policy.artifact_access);
-        }
-
-        let mut server_info = runtime.server_info().to_owned();
-        if let Some(updated_protocol_version) =
-            rust_mcp_sdk::mcp_server::enforce_compatible_protocol_version(
-                &params.protocol_version,
-                &server_info.protocol_version,
-            )
-            .map_err(|err| {
-                tracing::error!(
-                    "Incompatible protocol version: client: {} server: {}",
-                    &params.protocol_version,
-                    &server_info.protocol_version
-                );
-                RpcError::internal_error().with_message(err.to_string())
-            })?
-        {
-            server_info.protocol_version = updated_protocol_version;
-        }
-
-        runtime
-            .set_client_details(params.clone())
-            .await
-            .map_err(|err| RpcError::internal_error().with_message(format!("{err}")))?;
-
+        let ua = context
+            .extensions
+            .get::<http::request::Parts>()
+            .and_then(|parts| parts.headers.get(http::header::USER_AGENT))
+            .and_then(|value| value.to_str().ok());
+        let policy = host_policy::resolve_mcp_host_policy(&client, ua);
+        let mut result = self.negotiate_initialize(&params)?;
         crate::mcp_ui_capability::apply_server_ui_extensions(
-            &mut server_info.capabilities,
+            &mut result.capabilities,
             policy.mcp_ui_apps,
         );
-
-        tracing::info!(
-            client_info.name = %params.client_info.name,
-            client_info.version = %params.client_info.version,
-            mcp_ui_apps_supported = policy.mcp_ui_apps,
-            artifact_access_mode = ?policy.artifact_access,
-            "MCP initialize: host policy negotiated"
-        );
-
-        Ok(server_info)
+        Ok(result)
     }
 
-    async fn handle_list_tools_request(
+    async fn list_tools(
         &self,
         _request: Option<PaginatedRequestParams>,
-        runtime: Arc<dyn McpServer>,
-    ) -> Result<ListToolsResult, RpcError> {
+        context: rmcp::service::RequestContext<rmcp::RoleServer>,
+    ) -> Result<ListToolsResult, ErrorData> {
+        let runtime = Arc::new(McpRequest::from_context(&context));
+        self.peers
+            .write()
+            .await
+            .insert(runtime.transport_key.clone(), context.peer.clone());
         let mode = self.artifact_access_mode_for_runtime(&runtime).await;
         let ui_enabled = self.mcp_ui_apps_enabled_for_runtime(&runtime).await;
-        Ok(ListToolsResult {
-            tools: tools::plasm_tools(mode, ui_enabled),
-            meta: None,
-            next_cursor: None,
+        Ok({
+            let mut model = ListToolsResult::default();
+            model.tools = tools::plasm_tools(mode, ui_enabled);
+            model.meta = None;
+            model.next_cursor = None;
+            model
         })
     }
 
-    async fn handle_list_resources_request(
+    async fn list_resources(
         &self,
         _params: Option<PaginatedRequestParams>,
-        _runtime: Arc<dyn McpServer>,
-    ) -> Result<ListResourcesResult, RpcError> {
-        Ok(ListResourcesResult {
-            resources: vec![],
-            meta: None,
-            next_cursor: None,
+        context: rmcp::service::RequestContext<rmcp::RoleServer>,
+    ) -> Result<ListResourcesResult, ErrorData> {
+        let runtime = Arc::new(McpRequest::from_context(&context));
+        self.peers
+            .write()
+            .await
+            .insert(runtime.transport_key.clone(), context.peer.clone());
+        Ok({
+            let mut model = ListResourcesResult::default();
+            model.resources = vec![];
+            model.meta = None;
+            model.next_cursor = None;
+            model
         })
     }
 
-    async fn handle_list_resource_templates_request(
+    async fn list_resource_templates(
         &self,
         _params: Option<PaginatedRequestParams>,
-        runtime: Arc<dyn McpServer>,
-    ) -> Result<ListResourceTemplatesResult, RpcError> {
+        context: rmcp::service::RequestContext<rmcp::RoleServer>,
+    ) -> Result<ListResourceTemplatesResult, ErrorData> {
+        let runtime = Arc::new(McpRequest::from_context(&context));
+        self.peers
+            .write()
+            .await
+            .insert(runtime.transport_key.clone(), context.peer.clone());
         let ui_enabled = self.mcp_ui_apps_enabled_for_runtime(&runtime).await;
         let mut resource_templates = Vec::new();
         if ui_enabled {
             resource_templates.extend(crate::mcp_app::mcp_app_resource_templates());
         }
-        resource_templates.extend([
-                ResourceTemplate {
-                    annotations: None,
-                    description: Some(
-                        "Typed bytes for one execute run artifact. `prompt_hash` and `session_id` match `plasm_context`; `run_id` is in `plasm_run` (or prior live) result metadata."
-                            .into(),
-                    ),
-                    icons: vec![],
-                    meta: None,
-                    mime_type: Some("application/octet-stream".into()),
-                    name: "plasm_execute_run".into(),
-                    title: Some("Plasm execute run artifact (canonical)".into()),
-                    uri_template: "plasm://execute/{prompt_hash}/{session_id}/run/{run_id}".into(),
-                },
-                ResourceTemplate {
-                    annotations: None,
-                    description: Some(
-                        "Short alias for the same snapshot JSON as the canonical URI. `logical_session_ref` is the canonical `l_<token>` from `plasm_context`; `n` is monotonic within that logical session’s execute binding."
-                            .into(),
-                    ),
-                    icons: vec![],
-                    meta: None,
-                    mime_type: Some("application/octet-stream".into()),
-                    name: "plasm_execute_run_short".into(),
-                    title: Some("Plasm execute run artifact (short index)".into()),
-                    uri_template: "plasm://session/{logical_session_ref}/r/{n}".into(),
-                },
-        ]);
-        Ok(ListResourceTemplatesResult {
-            resource_templates,
-            meta: None,
-            next_cursor: None,
+        let mut canonical = ResourceTemplate::new(
+            "plasm://execute/{prompt_hash}/{session_id}/run/{run_id}",
+            "plasm_execute_run",
+        );
+        canonical.description = Some(
+            "Typed bytes for one execute run artifact. `prompt_hash` and `session_id` match `plasm_context`; `run_id` is in `plasm_run` (or prior live) result metadata.".into(),
+        );
+        canonical.mime_type = Some("application/octet-stream".into());
+        canonical.title = Some("Plasm execute run artifact (canonical)".into());
+        let mut short = ResourceTemplate::new(
+            "plasm://session/{logical_session_ref}/r/{n}",
+            "plasm_execute_run_short",
+        );
+        short.description = Some(
+            "Short alias for the same snapshot JSON as the canonical URI. `logical_session_ref` is the canonical `l_<token>` from `plasm_context`; `n` is monotonic within that logical session’s execute binding.".into(),
+        );
+        short.mime_type = Some("application/octet-stream".into());
+        short.title = Some("Plasm execute run artifact (short index)".into());
+        resource_templates.extend([canonical, short]);
+        Ok({
+            let mut model = ListResourceTemplatesResult::default();
+            model.resource_templates = resource_templates;
+            model.meta = None;
+            model.next_cursor = None;
+            model
         })
     }
 
-    async fn handle_read_resource_request(
+    async fn read_resource(
         &self,
         params: ReadResourceRequestParams,
-        runtime: Arc<dyn McpServer>,
-    ) -> Result<ReadResourceResult, RpcError> {
-        resource_read::handle_read_resource_request(self, params, runtime).await
+        context: rmcp::service::RequestContext<rmcp::RoleServer>,
+    ) -> Result<rmcp::model::ReadResourceResponse, ErrorData> {
+        let runtime = Arc::new(McpRequest::from_context(&context));
+        self.peers
+            .write()
+            .await
+            .insert(runtime.transport_key.clone(), context.peer.clone());
+        resource_read::handle_read_resource_request(self, params, runtime)
+            .await
+            .map(Into::into)
     }
 
-    async fn handle_call_tool_request(
+    async fn call_tool(
         &self,
         params: CallToolRequestParams,
-        runtime: Arc<dyn McpServer>,
-    ) -> Result<CallToolResult, CallToolError> {
-        // Delegate to a free async fn so `#[async_trait]`'s wrapper future stays tiny: merging the
-        // full `handle_plasm_mcp_tool` state machine here exceeded `dyn Future` bounds on rustc 1.87+.
-        call_tool_dispatch::dispatch_plasm_mcp_call_tool_request(self, params, runtime).await
+        context: rmcp::service::RequestContext<rmcp::RoleServer>,
+    ) -> Result<rmcp::model::CallToolResponse, ErrorData> {
+        let runtime = Arc::new(McpRequest::from_context(&context));
+        self.peers
+            .write()
+            .await
+            .insert(runtime.transport_key.clone(), context.peer.clone());
+        // Dispatch exposes a typed boxed future, keeping the compiler/executor
+        // state machine behind the service boundary rather than in the transport.
+        Ok(
+            call_tool_dispatch::dispatch_plasm_mcp_call_tool_request(self, params, runtime)
+                .await
+                .unwrap_or_else(ToolFailure::into_result)
+                .into(),
+        )
     }
 }

@@ -4,9 +4,8 @@ use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 use std::time::Duration;
 
-use rust_mcp_sdk::mcp_server::HyperServer;
-use rust_mcp_sdk::schema::schema_utils::CustomNotification;
-use rust_mcp_sdk::McpServer;
+use rmcp::model::{CustomNotification, ServerNotification};
+use rmcp::{Peer, RoleServer};
 use serde_json::json;
 use tokio::sync::{Mutex, RwLock};
 
@@ -27,11 +26,10 @@ fn mcp_trace_idle_finish_ms() -> u64 {
 /// finalize logical-session traces that are no longer live, and drop orphaned per-transport state.
 #[allow(private_interfaces)]
 pub(crate) fn spawn_mcp_teaching_prompt_session_reporter(
-    server: &HyperServer,
+    peers: Arc<RwLock<HashMap<String, Peer<RoleServer>>>>,
     plasm: Arc<PlasmHostState>,
     session_states: Arc<RwLock<HashMap<String, Arc<Mutex<McpTransportState>>>>>,
 ) {
-    let store = server.state().session_store.clone();
     tokio::spawn(async move {
         type SessionStates = Arc<RwLock<HashMap<String, Arc<Mutex<McpTransportState>>>>>;
         async fn stats_for_logical_session(
@@ -79,16 +77,23 @@ pub(crate) fn spawn_mcp_teaching_prompt_session_reporter(
                 if let Some(rows) = pending.stats.rows {
                     op_params.insert("rows".into(), json!(rows));
                 }
-                if let Some(transport) = store.get(&pending.transport_key).await {
+                let transport = peers.read().await.get(&pending.transport_key).cloned();
+                if let Some(transport) = transport {
                     let _ = transport
-                        .notify_custom(CustomNotification {
-                            method: "notifications/plasm/op".into(),
-                            params: Some(op_params),
-                        })
+                        .send_notification(ServerNotification::CustomNotification(
+                            CustomNotification::new(
+                                "notifications/plasm/op",
+                                Some(serde_json::Value::Object(op_params)),
+                            ),
+                        ))
                         .await;
                 }
             }
-            let current: HashSet<String> = store.keys().await.into_iter().collect();
+            let current: HashSet<String> = {
+                let mut peers = peers.write().await;
+                peers.retain(|_, peer| !peer.is_transport_closed());
+                peers.keys().cloned().collect()
+            };
             let mut live_trace_keys: HashSet<String> = HashSet::new();
             {
                 let g = session_states.read().await;

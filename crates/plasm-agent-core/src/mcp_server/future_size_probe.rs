@@ -79,10 +79,6 @@ fn mcp_apply_capability_seeds_future_size() {
 
 #[test]
 fn mcp_plasm_context_future_size() {
-    use rust_mcp_sdk::schema::{
-        Implementation, InitializeResult, ProtocolVersion, ServerCapabilities,
-    };
-    use rust_mcp_sdk::ToMcpServerHandler;
     use serde_json::json;
 
     let join = std::thread::Builder::new()
@@ -96,32 +92,11 @@ fn mcp_plasm_context_future_size() {
             let _guard = rt.enter();
             let st = Arc::new(matrix_host());
             let handler = crate::mcp_server::PlasmMcpHandler::new(Arc::clone(&st));
-            let mcp_handler =
-                crate::mcp_server::PlasmMcpHandler::new(Arc::clone(&st)).to_mcp_server_handler();
-            let details = Arc::new(InitializeResult {
-                protocol_version: ProtocolVersion::V2025_11_25.into(),
-                capabilities: ServerCapabilities::default(),
-                server_info: Implementation {
-                    name: "size-probe".into(),
-                    version: "0".into(),
-                    title: None,
-                    description: None,
-                    icons: vec![],
-                    website_url: None,
-                },
-                instructions: None,
-                meta: None,
+            let runtime = Arc::new(super::request::McpRequest {
+                transport_key: "size-probe-session".into(),
+                client: Default::default(),
+                identity: None,
             });
-            let runtime: Arc<dyn rust_mcp_sdk::McpServer> =
-                rust_mcp_sdk::mcp_server::server_runtime::create_server_instance(
-                    details,
-                    mcp_handler,
-                    "size-probe-session".into(),
-                    None,
-                    None,
-                    None,
-                    None,
-                );
             let args = json!({
                 "session_mode": "new",
                 "intent": "size probe",
@@ -141,11 +116,7 @@ fn mcp_plasm_context_future_size() {
 
 #[test]
 fn mcp_call_tool_dispatch_future_size() {
-    use rust_mcp_sdk::schema::{
-        CallToolRequestParams, Implementation, InitializeResult, ProtocolVersion,
-        ServerCapabilities,
-    };
-    use rust_mcp_sdk::ToMcpServerHandler;
+    use rmcp::model::CallToolRequestParams;
     use serde_json::json;
 
     let join = std::thread::Builder::new()
@@ -159,35 +130,15 @@ fn mcp_call_tool_dispatch_future_size() {
             let _guard = rt.enter();
             let st = Arc::new(matrix_host());
             let handler = crate::mcp_server::PlasmMcpHandler::new(Arc::clone(&st));
-            let mcp_handler =
-                crate::mcp_server::PlasmMcpHandler::new(Arc::clone(&st)).to_mcp_server_handler();
-            let details = Arc::new(InitializeResult {
-                protocol_version: ProtocolVersion::V2025_11_25.into(),
-                capabilities: ServerCapabilities::default(),
-                server_info: Implementation {
-                    name: "size-probe".into(),
-                    version: "0".into(),
-                    title: None,
-                    description: None,
-                    icons: vec![],
-                    website_url: None,
-                },
-                instructions: None,
-                meta: None,
+            let runtime = Arc::new(super::request::McpRequest {
+                transport_key: "size-probe-session".into(),
+                client: Default::default(),
+                identity: None,
             });
-            let runtime: Arc<dyn rust_mcp_sdk::McpServer> =
-                rust_mcp_sdk::mcp_server::server_runtime::create_server_instance(
-                    details,
-                    mcp_handler,
-                    "size-probe-session".into(),
-                    None,
-                    None,
-                    None,
-                    None,
-                );
-            let params = CallToolRequestParams {
-                name: "plasm_context".into(),
-                arguments: Some(
+            let params = {
+                let mut model = CallToolRequestParams::new("");
+                model.name = "plasm_context".into();
+                model.arguments = Some(
                     json!({
                         "session_mode": "new",
                         "intent": "size probe",
@@ -196,9 +147,9 @@ fn mcp_call_tool_dispatch_future_size() {
                     .as_object()
                     .cloned()
                     .unwrap(),
-                ),
-                meta: None,
-                task: None,
+                );
+                model.meta = None;
+                model
             };
             let fut = super::call_tool_dispatch::dispatch_plasm_mcp_call_tool_request(
                 &handler, params, runtime,

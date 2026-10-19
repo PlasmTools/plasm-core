@@ -1,5 +1,6 @@
 [workspace]
 members = [
+    "crates/plasm-catalog",
     "crates/plasm-core",
     "crates/plasm-cml",
     "crates/plasm-compile",
@@ -175,14 +176,8 @@ chrono = { version = "0.4.45", default-features = false, features = ["clock", "s
 chrono-english = "0.1.8"
 rust_decimal = { version = "1.43", default-features = false, features = ["std", "serde", "serde-with-str"] }
 # LLM / REPL
+rmcp = { version = "=3.5.1", default-features = false }
 baml = "0.220"
-rust-mcp-sdk = { version = "0.9.0", default-features = false, features = [
-    "server",
-    "streamable-http",
-    "hyper-server",
-    "macros",
-    "auth",
-] }
 rustyline = "17.0.2"
 
 # Appliance TUI (`plasm-server` binary + package)
@@ -216,9 +211,7 @@ alloy-transport-http = "1.8.2"
 # Containers
 testcontainers-modules = "0.15.0"
 
-# Vendored fork: `HyperServer::into_router`, `Router<()>` merge with Plasm Axum apps. Parent monorepo also patches this path.
+# Vendored Monty type-checker dependencies (also patched by the parent workspace).
 [patch.crates-io]
 ty_python_core = { path = "vendor/monty/vendor/ty_python_core" }
 ty_python_semantic = { path = "vendor/monty/vendor/ty_python_semantic" }
-rust-mcp-schema = { path = "third_party/rust-mcp-schema" }
-rust-mcp-sdk = { path = "third_party/rust-mcp-sdk" }

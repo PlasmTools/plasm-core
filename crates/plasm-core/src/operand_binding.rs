@@ -88,6 +88,43 @@ pub struct IdentityCodec {
 }
 
 impl IdentityCodec {
+    /// Restore a serialized identity to its declared scalar wire domain.
+    /// String identifiers, including digit IDs, never become JSON numbers.
+    pub fn decode(&self, identity: &EntityId) -> Result<Value, IdentityCodecError> {
+        use crate::FieldType;
+        let text = identity.as_str();
+        match self.field_type {
+            FieldType::Integer => text
+                .parse::<i64>()
+                .map(Value::Integer)
+                .map_err(|_| IdentityCodecError::InvalidInteger),
+            FieldType::Number => {
+                if let Ok(n) = text.parse::<i64>() {
+                    return Ok(Value::Integer(n));
+                }
+                if let Ok(n) = text.parse::<u64>() {
+                    return Ok(Value::Unsigned(n));
+                }
+                let n = text
+                    .parse::<f64>()
+                    .map_err(|_| IdentityCodecError::InvalidNumber)?;
+                if !n.is_finite() {
+                    return Err(IdentityCodecError::NonFiniteNumber);
+                }
+                Ok(Value::Float(n))
+            }
+            FieldType::Boolean => text
+                .parse::<bool>()
+                .map(Value::Bool)
+                .map_err(|_| IdentityCodecError::InvalidBoolean),
+            _ => {
+                let value = Value::String(text.to_owned());
+                self.encode(&value)?;
+                Ok(value)
+            }
+        }
+    }
+
     /// Lawful identity scalar types for `id_field` / `key_vars` (and dry-plan row identity).
     ///
     /// [`FieldType::EntityRef`] is a foreign-key shape — never a primary identity slot.
@@ -785,6 +822,28 @@ mod tests {
                 codec.encode(&crate::fixture_value!(canonical)).unwrap()
             );
         }
+    }
+
+    #[test]
+    fn identity_codec_restores_declared_wire_types() {
+        for (field_type, value) in [
+            (crate::FieldType::Integer, Value::Integer(-42)),
+            (crate::FieldType::Number, Value::Unsigned(u64::MAX)),
+            (crate::FieldType::Number, Value::Float(1.25)),
+            (crate::FieldType::Boolean, Value::Bool(false)),
+            (crate::FieldType::String, Value::String("001".into())),
+        ] {
+            let codec = IdentityCodec { field_type };
+            assert_eq!(codec.decode(&codec.encode(&value).unwrap()).unwrap(), value);
+        }
+        let integer = IdentityCodec {
+            field_type: crate::FieldType::Integer,
+        };
+        assert!(integer.decode(&EntityId::from("1.5")).is_err());
+        let number = IdentityCodec {
+            field_type: crate::FieldType::Number,
+        };
+        assert!(number.decode(&EntityId::from("NaN")).is_err());
     }
 
     #[test]

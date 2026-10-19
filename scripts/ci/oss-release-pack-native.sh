@@ -76,8 +76,8 @@ build_binaries() {
 pack_catalogs() {
   local catalogs_dir="${pack_root}/catalogs"
   mkdir -p "${catalogs_dir}"
-  cargo build --release -p plasm --bin plasm-pack-catalogs
-  cargo run --release -p plasm --bin plasm-pack-catalogs -- \
+  cargo build --release -p plasm-catalog --bin plasm-pack-catalogs
+  cargo run --release -p plasm-catalog --bin plasm-pack-catalogs -- \
     --workspace "${workspace_root}" \
     --apis-root "${apis_root}" \
     --output-dir "${catalogs_dir}" \

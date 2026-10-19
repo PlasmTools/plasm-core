@@ -1,25 +1,37 @@
-//! Outbound MCP sessions. Configuration belongs to the host, never to a catalog.
-//!
-//! Tool results retain their protocol envelope. In particular, `isError` is a
-//! received tool outcome, not a connection failure. Calls are never retried.
+//! Host-owned outbound MCP connections. Tool calls are never replayed.
 
-use async_trait::async_trait;
-use rust_mcp_sdk::{
-    error::McpSdkError,
-    mcp_client::{client_runtime, ClientHandler},
-    schema::{
-        ClientCapabilities, Implementation, InitializeRequestParams, LATEST_PROTOCOL_VERSION,
+use rmcp::{
+    model::{CallToolResponse, ClientCapabilities, ClientConfig, Implementation, ProtocolVersion},
+    service::{ClientInitializeError, RunningService, ServiceError},
+    transport::{
+        streamable_http_client::StreamableHttpClientTransportConfig, StreamableHttpClientTransport,
     },
-    McpClient, RequestOptions, StreamableTransportOptions,
+    ClientLifecycleMode, ClientServiceExt, RoleClient,
 };
 use std::{collections::HashMap, future::Future, sync::Arc, time::Duration};
 use thiserror::Error;
 
-pub use rust_mcp_sdk::schema::{
+pub use rmcp::model::{
     CallToolRequestParams, CallToolResult, ListToolsResult, PaginatedRequestParams,
 };
 
-/// Host-owned endpoint and headers; catalogs cannot provide credentials or URLs.
+#[derive(Debug, Error)]
+pub enum McpProtocolError {
+    #[error(transparent)]
+    Initialize(#[from] ClientInitializeError),
+    #[error(transparent)]
+    Service(#[from] ServiceError),
+    #[error(transparent)]
+    Shutdown(#[from] tokio::task::JoinError),
+}
+
+/// Protocol lifecycle is explicit; failure never selects another protocol.
+#[derive(Clone, Copy, Debug)]
+pub enum McpHttpProtocol {
+    Initialize2025,
+    Discover2026,
+}
+
 pub struct McpHttpConfig {
     pub url: url::Url,
     pub headers: HashMap<String, String>,
@@ -32,123 +44,147 @@ pub enum McpTransportError {
     Closed,
     #[error("MCP server does not advertise tools")]
     ToolsUnsupported,
-    #[error("task-augmented MCP calls are not supported by this transport")]
-    TaskAugmentationUnsupported,
+    #[error("MCP returned an unfinished tool outcome; no follow-up call was dispatched")]
+    UnfinishedTool { response: Box<CallToolResponse> },
     #[error("MCP deadline must be positive")]
     InvalidDeadline,
     #[error("MCP HTTP header {name} is managed by the protocol")]
     ReservedHeader { name: String },
+    #[error("invalid MCP HTTP header name: {0}")]
+    HeaderName(#[from] reqwest::header::InvalidHeaderName),
+    #[error("invalid MCP HTTP header value: {0}")]
+    HeaderValue(#[from] reqwest::header::InvalidHeaderValue),
     #[error("MCP {operation} exceeded its deadline; remote effects may be unknown")]
     Deadline { operation: &'static str },
     #[error("MCP {operation} failed: {source}")]
     Protocol {
         operation: &'static str,
         #[source]
-        source: McpSdkError,
+        source: McpProtocolError,
     },
 }
 
-struct Handler;
-#[async_trait]
-impl ClientHandler for Handler {}
-
-/// An initialized connection. Mutable access serializes calls with shutdown.
-/// A timed-out connection is retired, so it cannot silently replay uncertain work.
 pub struct McpSession {
-    client: Arc<dyn McpClient>,
+    client: RunningService<RoleClient, ClientConfig>,
     deadline: Duration,
     closed: bool,
 }
 
 impl McpSession {
-    pub async fn connect_http(mut config: McpHttpConfig) -> Result<Self, McpTransportError> {
+    pub async fn connect_http(config: McpHttpConfig) -> Result<Self, McpTransportError> {
+        Self::connect_http_with_protocol(config, McpHttpProtocol::Initialize2025).await
+    }
+
+    pub async fn connect_http_with_protocol(
+        config: McpHttpConfig,
+        protocol: McpHttpProtocol,
+    ) -> Result<Self, McpTransportError> {
         if config.deadline.is_zero() {
             return Err(McpTransportError::InvalidDeadline);
         }
-        for name in config.headers.keys() {
+        let mut headers = HashMap::new();
+        for (name, value) in config.headers {
             if [
                 "mcp-protocol-version",
                 "mcp-session-id",
                 "accept",
                 "content-type",
+                "mcp-method",
+                "last-event-id",
             ]
             .iter()
             .any(|reserved| name.eq_ignore_ascii_case(reserved))
             {
-                return Err(McpTransportError::ReservedHeader { name: name.clone() });
+                return Err(McpTransportError::ReservedHeader { name });
             }
+            headers.insert(name.parse()?, value.parse()?);
         }
-        config.headers.insert(
-            "MCP-Protocol-Version".into(),
-            LATEST_PROTOCOL_VERSION.into(),
-        );
-        let client = client_runtime::with_transport_options(
-            client_details(),
-            StreamableTransportOptions {
-                mcp_url: config.url.to_string(),
-                request_options: RequestOptions {
-                    request_timeout: config.deadline,
-                    max_retries: Some(0),
-                    custom_headers: Some(config.headers),
-                    ..RequestOptions::default()
+        let mut transport_config =
+            StreamableHttpClientTransportConfig::with_uri(config.url.as_str())
+                .custom_headers(headers)
+                .max_concurrent_requests(1)
+                .control_request_timeout(config.deadline);
+        // A 404 does not license replaying a mutation, even after initialization.
+        transport_config.reinit_on_expired_session = false;
+        transport_config.retry_config =
+            Arc::new(rmcp::transport::common::client_side_sse::NeverRetry::default());
+        let transport = StreamableHttpClientTransport::from_config(transport_config);
+        let (version, lifecycle) = match protocol {
+            McpHttpProtocol::Initialize2025 => (
+                ProtocolVersion::V_2025_11_25,
+                ClientLifecycleMode::Initialize,
+            ),
+            McpHttpProtocol::Discover2026 => (
+                ProtocolVersion::V_2026_07_28,
+                ClientLifecycleMode::Discover {
+                    preferred_versions: vec![ProtocolVersion::V_2026_07_28],
                 },
-            },
-            Handler,
-            None,
-            None,
-            None,
-        );
-        Self::initialize(client, config.deadline).await
-    }
-
-    async fn initialize(
-        client: Arc<dyn McpClient>,
-        deadline: Duration,
-    ) -> Result<Self, McpTransportError> {
+            ),
+        };
+        let operation = match protocol {
+            McpHttpProtocol::Initialize2025 => "initialize",
+            McpHttpProtocol::Discover2026 => "server/discover",
+        };
+        let client = ClientConfig::new(
+            ClientCapabilities::default(),
+            Implementation::new("plasm-runtime", env!("CARGO_PKG_VERSION")),
+        )
+        .with_protocol_version(version);
+        let client = tokio::time::timeout(
+            config.deadline,
+            Box::pin(client.serve_with_lifecycle(transport, lifecycle)),
+        )
+        .await
+        .map_err(|_| McpTransportError::Deadline { operation })?
+        .map_err(|source| McpTransportError::Protocol {
+            operation,
+            source: source.into(),
+        })?;
         let mut session = Self {
             client,
-            deadline,
+            deadline: config.deadline,
             closed: false,
         };
-        let client = session.client.clone();
-        if let Err(error) = session.bounded("initialize", client.start()).await {
-            let _ = session.shutdown().await;
-            return Err(error);
-        }
-        if session.client.server_has_tools() != Some(true) {
+        if session
+            .client
+            .peer_info()
+            .is_none_or(|info| info.capabilities.tools.is_none())
+        {
             let _ = session.shutdown().await;
             return Err(McpTransportError::ToolsUnsupported);
         }
         Ok(session)
     }
 
-    /// Returns one page, retaining `nextCursor`; discovery policy is caller-owned.
     pub async fn list_tools(
         &mut self,
         params: Option<PaginatedRequestParams>,
     ) -> Result<ListToolsResult, McpTransportError> {
-        let client = self.client.clone();
-        self.bounded("tools/list", client.request_tool_list(params))
+        let peer = self.client.peer().clone();
+        self.bounded("tools/list", Box::pin(peer.list_tools(params)))
             .await
     }
 
-    /// A successful exchange may contain `isError: true`; no content is discarded.
     pub async fn call_tool(
         &mut self,
         params: CallToolRequestParams,
     ) -> Result<CallToolResult, McpTransportError> {
-        if params.task.is_some() {
-            return Err(McpTransportError::TaskAugmentationUnsupported);
+        let peer = self.client.peer().clone();
+        match self
+            .bounded("tools/call", Box::pin(peer.call_tool_once(params)))
+            .await?
+        {
+            CallToolResponse::Complete(result) => Ok(result),
+            response => Err(McpTransportError::UnfinishedTool {
+                response: Box::new(response),
+            }),
         }
-        let client = self.client.clone();
-        self.bounded("tools/call", client.request_tool_call(params))
-            .await
     }
 
     async fn bounded<T>(
         &mut self,
         operation: &'static str,
-        future: impl Future<Output = Result<T, McpSdkError>>,
+        future: impl Future<Output = Result<T, ServiceError>>,
     ) -> Result<T, McpTransportError> {
         if self.closed {
             return Err(McpTransportError::Closed);
@@ -156,10 +192,13 @@ impl McpSession {
         match tokio::time::timeout(self.deadline, future).await {
             Ok(Ok(result)) => Ok(result),
             Ok(Err(source)) => {
-                if !matches!(source, McpSdkError::RpcError(_)) {
+                if !matches!(source, ServiceError::McpError(_)) {
                     let _ = self.shutdown().await;
                 }
-                Err(McpTransportError::Protocol { operation, source })
+                Err(McpTransportError::Protocol {
+                    operation,
+                    source: source.into(),
+                })
             }
             Err(_) => {
                 let _ = self.shutdown().await;
@@ -173,44 +212,15 @@ impl McpSession {
             return Ok(());
         }
         self.closed = true;
-        match tokio::time::timeout(self.deadline, self.client.shut_down()).await {
-            Ok(result) => result.map_err(|source| McpTransportError::Protocol {
-                operation: "shutdown",
-                source,
-            }),
-            Err(_) => Err(McpTransportError::Deadline {
+        match self.client.close_with_timeout(self.deadline).await {
+            Ok(Some(_)) => Ok(()),
+            Ok(None) => Err(McpTransportError::Deadline {
                 operation: "shutdown",
             }),
-        }
-    }
-}
-
-fn client_details() -> InitializeRequestParams {
-    InitializeRequestParams {
-        capabilities: ClientCapabilities::default(),
-        client_info: Implementation {
-            name: "plasm-runtime".into(),
-            version: env!("CARGO_PKG_VERSION").into(),
-            title: None,
-            description: None,
-            icons: vec![],
-            website_url: None,
-        },
-        protocol_version: LATEST_PROTOCOL_VERSION.into(),
-        meta: None,
-    }
-}
-
-impl Drop for McpSession {
-    fn drop(&mut self) {
-        if !self.closed {
-            let client = self.client.clone();
-            let deadline = self.deadline;
-            if let Ok(runtime) = tokio::runtime::Handle::try_current() {
-                runtime.spawn(async move {
-                    let _ = tokio::time::timeout(deadline, client.shut_down()).await;
-                });
-            }
+            Err(source) => Err(McpTransportError::Protocol {
+                operation: "shutdown",
+                source: source.into(),
+            }),
         }
     }
 }

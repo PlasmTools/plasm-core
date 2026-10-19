@@ -284,7 +284,7 @@ pub enum HostServeError {
     #[error("HTTP listener failed: {0}")]
     Listener(#[from] std::io::Error),
     #[error("MCP server bootstrap failed: {0}")]
-    McpBootstrap(#[from] rust_mcp_sdk::error::McpSdkError),
+    McpBootstrap(#[from] crate::mcp_server::McpServerError),
 }
 
 /// Serve discovery + execute on an already-bound [`tokio::net::TcpListener`] (bind-first readiness).
@@ -340,10 +340,7 @@ pub async fn serve_discovery_execute_and_mcp_unified(
     }
     let state = crate::mcp_transport_store::prepare_host_for_serve(state).await?;
     let plasm_arc = std::sync::Arc::new(state.clone());
-    let mcp =
-        crate::mcp_server::build_mcp_hyper_server_for_merge(std::sync::Arc::clone(&plasm_arc))
-            .await?;
-    let mcp_router = crate::mcp_server::mcp_hyper_router(mcp, plasm_arc);
+    let mcp_router = crate::mcp_server::build_mcp_router_for_merge(plasm_arc).await?;
     let app = Router::new()
         .merge(discovery_execute_router(state))
         .merge(mcp_router);
@@ -381,13 +378,13 @@ mod serve_error_tests {
     }
 
     #[test]
-    fn serve_error_preserves_mcp_sdk_source() {
-        let error = HostServeError::from(rust_mcp_sdk::error::McpSdkError::SdkError(
-            rust_mcp_sdk::schema::SdkError::invalid_request(),
+    fn serve_error_preserves_mcp_transport_source() {
+        let error = HostServeError::from(crate::mcp_server::McpServerError::Io(
+            std::io::Error::from(std::io::ErrorKind::AddrInUse),
         ));
         assert!(error
             .source()
             .unwrap()
-            .is::<rust_mcp_sdk::error::McpSdkError>());
+            .is::<crate::mcp_server::McpServerError>());
     }
 }

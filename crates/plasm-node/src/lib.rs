@@ -103,8 +103,15 @@ enum NodeEngineError {
 
 type NodeResult<T> = std::result::Result<T, NodeEngineError>;
 
-fn map_err(err: impl std::fmt::Display) -> Error {
-    Error::from_reason(err.to_string())
+fn map_err(err: impl std::error::Error) -> Error {
+    let mut message = err.to_string();
+    let mut source = err.source();
+    while let Some(cause) = source {
+        message.push_str(": ");
+        message.push_str(&cause.to_string());
+        source = cause.source();
+    }
+    Error::from_reason(message)
 }
 
 fn lock<T>(m: &Mutex<T>) -> std::sync::MutexGuard<'_, T> {
@@ -492,6 +499,19 @@ impl PlasmEngine {
 #[cfg(test)]
 mod mutex_law_tests {
     use super::*;
+
+    #[test]
+    fn node_error_retains_catalog_failure_cause() {
+        let error = engine::AgentEngineError::from(plasm_core::catalog_il::CatalogIlError::Io(
+            std::io::Error::new(
+                std::io::ErrorKind::PermissionDenied,
+                "catalog fixture denied",
+            ),
+        ));
+        let rendered = map_err(error).reason;
+        assert!(rendered.contains("catalog interchange failed"));
+        assert!(rendered.contains("catalog fixture denied"));
+    }
 
     #[tokio::test]
     async fn extension_keeps_generation_and_policy_after_activation_changes() {

@@ -164,9 +164,8 @@ mod tests {
             .entities(vec!["LangSecuredNote".into()])
             .build(cgs);
         session.teaching_exposure = Some(exposure);
-        let source = format!(
-            "class Read(Program):\n    def build(self):\n        return {symbol}.get('n1')\n"
-        );
+        let source =
+            format!("class Read(Program):\n    def build(self):\n        return {symbol}.get(1)\n");
         let error = compile(&session, &source).unwrap_err();
         assert!(error.span_offset().is_some());
         let text = error.correction();
@@ -174,7 +173,7 @@ mod tests {
         assert!(!text.contains("input object"), "{text}");
         compile(
             &session,
-            &source.replace(".get('n1')", ".get('n1', access_token='token')"),
+            &source.replace(".get(1)", ".get(1, access_token='token')"),
         )
         .unwrap();
     }

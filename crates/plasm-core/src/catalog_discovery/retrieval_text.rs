@@ -228,7 +228,12 @@ impl SemanticView<'_> {
         for source in self.cgs.entities.values() {
             for relation in source.relations.values() {
                 if relation.target_resource != self.capability.domain
-                    && relation.materialize.as_ref().and_then(|materialization| materialization.selected_entity()) != Some(&relation.target_resource) {
+                    && relation
+                        .materialize
+                        .as_ref()
+                        .and_then(|materialization| materialization.selected_entity())
+                        != Some(&relation.target_resource)
+                {
                     continue;
                 }
                 let Some(use_) = relation

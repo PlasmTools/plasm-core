@@ -1,6 +1,6 @@
 use super::mcp_plasm_invoke::ExecutableRunTarget;
 
-fn default_plasm_tools() -> Vec<rust_mcp_sdk::schema::Tool> {
+fn default_plasm_tools() -> Vec<rmcp::model::Tool> {
     super::tools::plasm_tools(
         crate::mcp_run_markdown::ArtifactAccessMode::ResourcesRead,
         true,
@@ -325,7 +325,10 @@ fn mcp_tool_list_wire_carries_full_untruncated_descriptions() {
 
 #[test]
 fn mcp_tool_list_hides_internal_auth_and_registry_tools() {
-    let names: Vec<String> = default_plasm_tools().into_iter().map(|t| t.name).collect();
+    let names: Vec<String> = default_plasm_tools()
+        .into_iter()
+        .map(|t| t.name.into_owned())
+        .collect();
     assert!(!names.iter().any(|n| n == "plasm_incoming_auth"));
     assert!(!names.iter().any(|n| n == "list_registry"));
     assert!(names.iter().any(|n| n == "plasm_context"));

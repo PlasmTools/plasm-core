@@ -8,61 +8,62 @@
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use rust_mcp_sdk::schema::schema_utils::CallToolError;
-use rust_mcp_sdk::schema::{CallToolRequestParams, CallToolResult};
-use rust_mcp_sdk::McpServer;
+use crate::mcp_server::request::McpRequest;
+use crate::mcp_server::request::ToolFailure;
+use rmcp::model::{CallToolRequestParams, CallToolResult};
 
 use super::resource_helpers::mcp_call_tool_error_class;
 use super::schema::args_value;
 use super::{mcp_key, PlasmMcpHandler};
 use tracing::Instrument;
 
-pub(crate) async fn dispatch_plasm_mcp_call_tool_request(
-    handler: &PlasmMcpHandler,
+pub(crate) fn dispatch_plasm_mcp_call_tool_request<'a>(
+    handler: &'a PlasmMcpHandler,
     params: CallToolRequestParams,
-    runtime: Arc<dyn McpServer>,
-) -> Result<CallToolResult, CallToolError> {
+    runtime: Arc<McpRequest>,
+) -> futures_util::future::BoxFuture<'a, Result<CallToolResult, ToolFailure>> {
     let tool_name = params.name.clone();
     Box::pin(
         dispatch_plasm_mcp_call_tool_request_inner(handler, params, runtime)
-            .instrument(crate::spans::mcp_call_tool(tool_name.as_str())),
+            .instrument(crate::spans::mcp_call_tool(tool_name.as_ref())),
     )
-    .await
 }
 
 /// Run an owned MCP tool future on the live-plan large-stack worker pool.
 ///
-/// [`CallToolError`] is not `Send` (`Box<dyn Error>`), so the tool future is created and
-/// polled only on the worker (`run_local`), and errors are folded into
-/// [`CallToolResult::with_error`] before the `Send` result crosses back.
+/// The tool future is created and polled only on the worker (`run_local`) to
+/// contain its stack requirements. Errors are folded into
+/// [`crate::mcp_server::request::tool_error_result`] before the `Send` result crosses back.
 async fn on_live_plan_stack<F, Fut>(handler: &PlasmMcpHandler, f: F) -> CallToolResult
 where
     F: FnOnce() -> Fut + Send + 'static,
-    Fut: std::future::Future<Output = Result<CallToolResult, CallToolError>> + 'static,
+    Fut: std::future::Future<Output = Result<CallToolResult, ToolFailure>> + 'static,
 {
     let pool = handler.plasm.live_plan_pool();
     match pool
         .run_local(move || async move {
             match f().await {
                 Ok(r) => r,
-                Err(e) => CallToolResult::with_error(e),
+                Err(e) => crate::mcp_server::request::tool_error_result(e),
             }
         })
         .await
     {
         Ok(result) => result,
-        Err(e) => CallToolResult::with_error(CallToolError::from_message(e.to_string())),
+        Err(e) => {
+            crate::mcp_server::request::tool_error_result(ToolFailure::rejected(e.to_string()))
+        }
     }
 }
 
 async fn dispatch_plasm_mcp_call_tool_request_inner(
     handler: &PlasmMcpHandler,
     params: CallToolRequestParams,
-    runtime: Arc<dyn McpServer>,
-) -> Result<CallToolResult, CallToolError> {
+    runtime: Arc<McpRequest>,
+) -> Result<CallToolResult, ToolFailure> {
     fn record_workflow_tool(
         tname: &'static str,
-        res: &Result<CallToolResult, CallToolError>,
+        res: &Result<CallToolResult, ToolFailure>,
         started: Instant,
     ) {
         record_named_mcp_tool(tname, res, started);
@@ -70,7 +71,7 @@ async fn dispatch_plasm_mcp_call_tool_request_inner(
 
     fn record_app_ui_tool(
         tname: &'static str,
-        res: &Result<CallToolResult, CallToolError>,
+        res: &Result<CallToolResult, ToolFailure>,
         started: Instant,
     ) {
         record_named_mcp_tool(tname, res, started);
@@ -78,7 +79,7 @@ async fn dispatch_plasm_mcp_call_tool_request_inner(
 
     fn record_named_mcp_tool(
         tname: &'static str,
-        res: &Result<CallToolResult, CallToolError>,
+        res: &Result<CallToolResult, ToolFailure>,
         started: Instant,
     ) {
         let elapsed = started.elapsed();
@@ -113,7 +114,7 @@ async fn dispatch_plasm_mcp_call_tool_request_inner(
         "call_tool dispatch"
     );
 
-    match params.name.as_str() {
+    match params.name.as_ref() {
         "plasm_context" => {
             let started = Instant::now();
             let owned = handler.clone();
@@ -182,7 +183,7 @@ async fn dispatch_plasm_mcp_call_tool_request_inner(
         }
         "plasm" | "plasm_run" => {
             let started = Instant::now();
-            let dry_run_only = matches!(params.name.as_str(), "plasm");
+            let dry_run_only = matches!(params.name.as_ref(), "plasm");
             let tool_name: &'static str = if dry_run_only { "plasm" } else { "plasm_run" };
             let owned = handler.clone();
             let key = key.clone();
@@ -246,7 +247,7 @@ async fn dispatch_plasm_mcp_call_tool_request_inner(
                 "unknown_tool",
                 Duration::from_secs(0),
             );
-            Err(CallToolError::unknown_tool(params.name.clone()))
+            Err(ToolFailure::unknown_tool(params.name.clone()))
         }
     }
 }

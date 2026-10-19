@@ -1,8 +1,9 @@
 //! MCP `plasm` / `plasm_run` argument parsing.
 
+use super::request::ToolFailure;
 pub(crate) use plasm_core::run_reference::ExecutableRunTarget;
 use plasm_core::PagingHandle;
-use rust_mcp_sdk::schema::{CallToolError, CallToolResult};
+use rmcp::model::CallToolResult;
 use thiserror::Error;
 
 #[derive(Debug, Clone, PartialEq, Eq, Error)]
@@ -65,7 +66,7 @@ pub(crate) fn parse_mcp_plasm_invocation(
     dry_run_only: bool,
 ) -> Result<McpPlasmInvocation, CallToolResult> {
     fn invalid(tool_name: &'static str, msg: impl Into<String>) -> CallToolResult {
-        CallToolResult::with_error(CallToolError::invalid_arguments(
+        crate::mcp_server::request::tool_error_result(ToolFailure::invalid_arguments(
             tool_name,
             Some(msg.into()),
         ))

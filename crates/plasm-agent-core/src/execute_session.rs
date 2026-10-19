@@ -2649,6 +2649,7 @@ mod tests {
                 from_block: None,
                 final_to_block: None,
                 last_requested_to_block: None,
+                mcp_collection: Default::default(),
             },
         }
     }

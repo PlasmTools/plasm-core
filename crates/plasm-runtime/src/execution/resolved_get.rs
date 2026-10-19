@@ -417,7 +417,7 @@ mod tests {
                     ("access_token".into(), Value::String("must-not-overwrite".into()))]));
                 let request = ResolvedGet::resolve(get,cgs,None,source,&wrong,GetPurpose::Hydration).unwrap();
                 assert_eq!(request.env.get("access_token"), Some(&Value::String(token.into())));
-                assert_eq!(request.env.get("note_id"), Some(&Value::String(id.to_string())));
+                assert_eq!(request.env.get("note_id"), Some(&Value::Integer(id)));
             }
             check(&ambient,&get,&cgs,&token,id);
             check(&inherited,&get,&cgs,&token,id);

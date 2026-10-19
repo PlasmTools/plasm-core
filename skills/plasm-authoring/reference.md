@@ -2,6 +2,28 @@
 
 This is the canonical OSS reference for authoring Plasm API catalogs. The compiler and runtime crates are the ground truth (`crates/plasm-core`, `crates/plasm-cml`, `crates/plasm-compile`, `crates/plasm-runtime`); this file exists to keep agents and humans aligned on doctrine.
 
+## MCP response selection
+
+For `transport: mcp`, declare the result source explicitly. `json_text` parses
+the selected text block as JSON; `text_block` preserves the selected MCP text
+block object, including its verbatim `text` field. Both require an explicit
+`index`. Use `text_block` for receipts that are genuinely textual, including
+providers whose successful receipt can contain either prose or JSON text. It
+does not infer status or completion. Declare a separate observation capability
+when downstream work requires readiness evidence. Invalid block kinds and
+non-string text remain typed response errors. `structured_content` and
+`embedded_resource` retain their separate response contracts.
+
+```yaml
+response:
+  source: {kind: text_block, index: 0}
+  pointer: ''
+  exhaustive: true
+```
+
+Here `exhaustive` describes receipt collection coverage, not completion of an
+asynchronous operation reported by the receipt.
+
 ## Authoring vs determinism
 
 **Writing `domain.yaml` is not a deterministic process.** OpenAPI (and friends) do not uniquely define a CGS: entity boundaries, capability grouping, relations, parameter roles, `abstract` embed-only types, and **which `values:` keys exist** (including whether unrelated fields share one `value_ref` vs split into distinct slots) are **semantic choices**. Tools may assist (e.g. an LLM reading the spec), but there is no canonical auto-generator in-repo and no guarantee that two valid domain models for the same API are equivalent.

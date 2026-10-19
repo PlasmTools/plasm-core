@@ -64,21 +64,28 @@ pub(crate) fn log_resolved_host_policy(client: &McpClientInfo, policy: &McpHostP
 #[cfg(test)]
 mod tests {
     use super::*;
-    use rust_mcp_sdk::schema::{ClientCapabilities, Implementation, InitializeRequestParams};
+    use rmcp::model::{ClientCapabilities, Implementation, InitializeRequestParams};
 
     fn initialized(name: &str) -> McpClientInfo {
-        McpClientInfo::from_initialize(InitializeRequestParams {
-            capabilities: ClientCapabilities::default(),
-            client_info: Implementation {
-                name: name.into(),
-                version: "1.0.0".into(),
-                title: None,
-                description: None,
-                icons: vec![],
-                website_url: None,
-            },
-            protocol_version: "2025-11-25".into(),
-            meta: None,
+        McpClientInfo::from_initialize({
+            let mut model = InitializeRequestParams::new(
+                Default::default(),
+                rmcp::model::Implementation::new("test", "0"),
+            );
+            model.capabilities = ClientCapabilities::default();
+            model.client_info = {
+                let mut model = Implementation::new("test", "0");
+                model.name = name.into();
+                model.version = "1.0.0".into();
+                model.title = None;
+                model.description = None;
+                model.icons = None;
+                model.website_url = None;
+                model
+            };
+            model.protocol_version = rmcp::model::ProtocolVersion::V_2025_11_25;
+            model.meta = None;
+            model
         })
     }
 

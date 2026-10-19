@@ -625,7 +625,8 @@ fn collect_template_string_bindings(
         CapabilityTemplate::Http(cml) | CapabilityTemplate::GraphQl(cml) => {
             path_var_names_from_request(cml)
         }
-        CapabilityTemplate::View(_)
+        CapabilityTemplate::Mcp(_)
+        | CapabilityTemplate::View(_)
         | CapabilityTemplate::CredentialBind(_)
         | CapabilityTemplate::EvmCall(_)
         | CapabilityTemplate::EvmLogs(_) => Vec::new(),

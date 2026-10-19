@@ -2,10 +2,10 @@
 
 use std::sync::Arc;
 
+use crate::mcp_server::request::McpRequest;
+use crate::mcp_server::request::ToolFailure;
 use plasm_core::PlanCommitRef;
-use rust_mcp_sdk::schema::schema_utils::CallToolError;
-use rust_mcp_sdk::schema::CallToolResult;
-use rust_mcp_sdk::McpServer;
+use rmcp::model::CallToolResult;
 use serde_json::Value;
 
 use crate::incoming_auth::tenant_scope;
@@ -22,9 +22,9 @@ impl PlasmMcpHandler {
     pub(crate) async fn handle_ui_read_plan(
         &self,
         transport_key: &str,
-        runtime: &Arc<dyn McpServer>,
+        runtime: &Arc<McpRequest>,
         v: &Value,
-    ) -> Result<CallToolResult, CallToolError> {
+    ) -> Result<CallToolResult, ToolFailure> {
         const TOOL: &str = "plasm_ui_read_plan";
         let principal_incoming = self.ensure_mcp_principal(transport_key, runtime).await?;
         let session_ref = parse_logical_session_ref_arg(TOOL, v)?;
@@ -34,7 +34,7 @@ impl PlasmMcpHandler {
             .map(str::trim)
             .filter(|s| !s.is_empty())
             .ok_or_else(|| {
-                CallToolError::invalid_arguments(
+                ToolFailure::invalid_arguments(
                     TOOL,
                     Some(
                         "missing or invalid `run_ref`: non-empty string (pcN from `plasm`)".into(),
@@ -42,7 +42,7 @@ impl PlasmMcpHandler {
                 )
             })?;
         let commit_ref = PlanCommitRef::parse(run_ref_str).ok_or_else(|| {
-            CallToolError::invalid_arguments(
+            ToolFailure::invalid_arguments(
                 TOOL,
                 Some("invalid `run_ref`: use the pcN token returned by `plasm`".into()),
             )
@@ -55,7 +55,7 @@ impl PlasmMcpHandler {
             .verify_tenant(LogicalSessionId(logical_uuid), &scope)
             .await
         {
-            return Err(CallToolError::from_message(
+            return Err(ToolFailure::rejected(
                 "logical_session_ref is unknown or does not belong to this tenant scope",
             ));
         }
@@ -63,7 +63,7 @@ impl PlasmMcpHandler {
             .resolve_binding_for_logical(transport_key, logical_uuid)
             .await
             .ok_or_else(|| {
-                CallToolError::invalid_arguments(
+                ToolFailure::invalid_arguments(
                     TOOL,
                     Some(
                         "no execute session for this logical session: call plasm_context first"
@@ -76,22 +76,21 @@ impl PlasmMcpHandler {
             .get_execute_session(binding.prompt_hash.as_str(), binding.session_id.as_str())
             .await
             .ok_or_else(|| {
-                CallToolError::from_message("execute session expired — reopen plasm_context")
+                ToolFailure::rejected("execute session expired — reopen plasm_context")
             })?;
         let committed = resolve_committed_plan(es.as_ref(), &commit_ref)
-            .map_err(|e| CallToolError::invalid_arguments(TOOL, Some(e.detail())))?;
+            .map_err(|e| ToolFailure::invalid_arguments(TOOL, Some(e.detail())))?;
         let bundle = PlasmCompBundle::new(committed.artifact.clone())
-            .map_err(|e| CallToolError::from_message(format!("invalid committed comp: {e}")))?;
-        let dry = dry_for_committed_plasm_run(es.as_ref(), &bundle, &committed).map_err(|e| {
-            CallToolError::from_message(format!("plan rehydrate failed: {}", e.detail()))
-        })?;
+            .map_err(|e| ToolFailure::rejected(format!("invalid committed comp: {e}")))?;
+        let dry = dry_for_committed_plasm_run(es.as_ref(), &bundle, &committed)
+            .map_err(|e| ToolFailure::rejected(format!("plan rehydrate failed: {}", e.detail())))?;
         let ux_ctx = PlanUxBuildContext {
             session: Some(es.as_ref()),
             param_bindings: &[],
         };
         let plan_ux = plan_ux_reflection_value(&dry, &ux_ctx);
         let comp = serde_json::to_value(&committed.artifact.comp)
-            .map_err(|e| CallToolError::from_message(format!("comp serialize failed: {e}")))?;
+            .map_err(|e| ToolFailure::rejected(format!("comp serialize failed: {e}")))?;
         Ok(crate::mcp_ui_payload::ui_read_plan_tool_result(
             comp, plan_ux,
         ))
@@ -100,9 +99,9 @@ impl PlasmMcpHandler {
     pub(crate) async fn handle_ui_read_run(
         &self,
         transport_key: &str,
-        runtime: &Arc<dyn McpServer>,
+        runtime: &Arc<McpRequest>,
         v: &Value,
-    ) -> Result<CallToolResult, CallToolError> {
+    ) -> Result<CallToolResult, ToolFailure> {
         const TOOL: &str = "plasm_ui_read_run";
         let session_ref = parse_logical_session_ref_arg(TOOL, v)?;
         let logical_uuid = self.resolve_logical_session_ref_to_uuid(TOOL, &session_ref)?;
@@ -119,11 +118,9 @@ impl PlasmMcpHandler {
             .await?;
         let payload =
             crate::run_artifacts::project_artifact_payload_for_agent(&resolved.payload, false)
-                .map_err(|e| {
-                    CallToolError::from_message(format!("artifact projection failed: {e}"))
-                })?;
+                .map_err(|e| ToolFailure::rejected(format!("artifact projection failed: {e}")))?;
         let doc: Value = serde_json::from_slice(&payload.bytes)
-            .map_err(|e| CallToolError::from_message(format!("run snapshot JSON invalid: {e}")))?;
+            .map_err(|e| ToolFailure::rejected(format!("run snapshot JSON invalid: {e}")))?;
         let entities = doc
             .get("entities")
             .or_else(|| doc.get("results"))

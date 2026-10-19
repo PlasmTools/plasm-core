@@ -5,7 +5,7 @@
 
 use crate::mcp_run_markdown::ArtifactAccessMode;
 
-/// Which lanes a finalized [`CallToolResult`](rust_mcp_sdk::schema::CallToolResult) exposes.
+/// Which lanes a finalized [`CallToolResult`](rmcp::model::CallToolResult) exposes.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum McpDeliveryProfile {
     /// MCP Apps disabled: agent content only; no `_meta.ui`, no `structuredContent`.

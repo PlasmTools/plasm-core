@@ -8,16 +8,11 @@ use axum::{
     Router,
 };
 use http::{Request, StatusCode};
-use rust_mcp_sdk::auth::AuthProvider;
 use std::sync::Arc;
 
 pub(crate) fn router(provider: Arc<PlasmMcpApiKeyAuthProvider>) -> Router {
     let mut router = Router::new();
-    for path in provider
-        .auth_endpoints()
-        .into_iter()
-        .flat_map(|endpoints| endpoints.keys())
-    {
+    for path in provider.auth_endpoint_paths() {
         router = router.route(path, any(handle));
     }
     router
@@ -44,7 +39,7 @@ async fn handle(
         .handle_oauth_http(Request::from_parts(parts, body))
         .await
     {
-        Ok(response) => response.map(Body::new),
+        Ok(response) => response,
         Err(error) => {
             tracing::warn!(error = %error, "OAuth HTTP adapter failed");
             (

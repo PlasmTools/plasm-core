@@ -9,13 +9,14 @@ pub(crate) fn ensure_mutating_operation(
     if matches!(
         operation,
         CompiledOperation::Http(_)
+            | CompiledOperation::Mcp(_)
             | CompiledOperation::GraphQl(_)
             | CompiledOperation::CredentialBind(_)
     ) {
         return Ok(());
     }
     Err(RuntimeError::UnsupportedExecutionMode {
-        mode: format!("{action} with non-HTTP transport (phase 1 supports EVM reads only)"),
+        mode: format!("{action} is unsupported by this transport (EVM supports reads only)"),
     })
 }
 
@@ -46,6 +47,49 @@ pub(crate) fn normalize_cml_env_inputs(
     capability: &CapabilitySchema,
 ) -> Result<(), RuntimeError> {
     let mut values = Value::Object(env.clone());
+    if let Some(receiver) = capability.receiver_entity() {
+        if let Some(entity) = cgs.get_entity(receiver.as_str()) {
+            let keys: Vec<_> = if entity.key_vars.is_empty() {
+                vec![entity.id_field.as_str()]
+            } else {
+                entity.key_vars.iter().map(|key| key.as_str()).collect()
+            };
+            for key in keys {
+                let Some(Value::String(value)) = env.get(key) else {
+                    continue;
+                };
+                let codec = plasm_core::operand_binding::IdentityCodec::compile(
+                    cgs,
+                    plasm_core::operand_binding::IdentityTarget {
+                        entity: receiver,
+                        field: if entity.key_vars.is_empty() {
+                            None
+                        } else {
+                            Some(key)
+                        },
+                    },
+                )?;
+                let decoded = codec.decode(&plasm_core::EntityId::from(value.clone()))?;
+                env.insert(key.to_owned(), decoded);
+            }
+            if entity.key_vars.len() <= 1 {
+                if let Some(Value::String(value)) = env.get("id") {
+                    let codec = plasm_core::operand_binding::IdentityCodec::compile(
+                        cgs,
+                        plasm_core::operand_binding::IdentityTarget {
+                            entity: receiver,
+                            field: None,
+                        },
+                    )?;
+                    env.insert(
+                        "id".into(),
+                        codec.decode(&plasm_core::EntityId::from(value.clone()))?,
+                    );
+                }
+            }
+            values = Value::Object(env.clone());
+        }
+    }
     plasm_core::temporal_input::encode_capability_temporals(&mut values, capability, cgs)?;
     if let Value::Object(values) = values {
         *env = values;
@@ -101,6 +145,36 @@ pub(crate) fn normalize_cml_scope_entity_ref_value(
 mod identity_binding_laws {
     use super::*;
     use proptest::prelude::*;
+
+    #[test]
+    fn receiver_identity_is_typed_for_reads_mutations_and_actions() {
+        let cgs = plasm_core::load_schema_dir(
+            &std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+                .join("../../fixtures/schemas/mcp_transport_matrix"),
+        )
+        .unwrap();
+        let mut cap = cgs.get_capability("fail_write").unwrap().clone();
+        for kind in [
+            CapabilityKind::Get,
+            CapabilityKind::Update,
+            CapabilityKind::Delete,
+            CapabilityKind::Action,
+        ] {
+            cap.kind = kind;
+            let mut env = CmlEnv::from_iter([("id".into(), Value::String("7".into()))]);
+            normalize_cml_env_inputs(&mut env, &cgs, &cap).unwrap();
+            assert_eq!(env["id"], Value::Integer(7));
+            let mut invalid = CmlEnv::from_iter([("id".into(), Value::String("7.5".into()))]);
+            assert!(matches!(
+                normalize_cml_env_inputs(&mut invalid, &cgs, &cap),
+                Err(RuntimeError::IdentityWire(_))
+            ));
+        }
+        let query = cgs.get_capability("list_items").unwrap();
+        let mut env = CmlEnv::from_iter([("id".into(), Value::String("007".into()))]);
+        normalize_cml_env_inputs(&mut env, &cgs, query).unwrap();
+        assert_eq!(env["id"], Value::String("007".into()));
+    }
 
     proptest! {
         #![proptest_config(ProptestConfig::with_cases(64))]

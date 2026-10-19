@@ -1,0 +1,30 @@
+[package]
+name = "plasm-catalog"
+version.workspace = true
+edition.workspace = true
+license = "MIT OR Apache-2.0"
+description = "Catalog publication and shared embedding acquisition, independent of the agent host"
+
+[features]
+default = ["evm"]
+evm = ["plasm-compile/evm"]
+
+[[bin]]
+name = "plasm-pack-catalogs"
+path = "src/bin/plasm_pack_catalogs.rs"
+
+[dependencies]
+plasm-core = { path = "../plasm-core" }
+plasm-compile = { path = "../plasm-compile" }
+serde = { workspace = true }
+serde_json = { workspace = true }
+thiserror = { workspace = true }
+tokio = { workspace = true }
+reqwest = { workspace = true }
+clap = { workspace = true }
+uuid = { workspace = true }
+
+[dev-dependencies]
+base64 = { workspace = true }
+tempfile = { workspace = true }
+serde_yaml = { workspace = true }

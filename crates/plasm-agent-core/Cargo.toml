@@ -21,6 +21,7 @@ name = "plasm_agent_core"
 path = "src/lib.rs"
 
 [dependencies]
+plasm-catalog = { path = "../plasm-catalog" }
 plasm-core = { path = "../plasm-core" }
 plasm-evidence = { path = "../plasm-evidence", features = ["signatures"] }
 plasm-compile = { path = "../plasm-compile" }
@@ -54,7 +55,7 @@ uuid = { workspace = true }
 chrono = { workspace = true }
 object_store = { workspace = true }
 url = { workspace = true }
-rust-mcp-sdk = { workspace = true }
+rmcp = { workspace = true, features = ["server", "transport-streamable-http-server"] }
 async-trait = { workspace = true }
 futures-util = { workspace = true }
 jsonwebtoken = { workspace = true }

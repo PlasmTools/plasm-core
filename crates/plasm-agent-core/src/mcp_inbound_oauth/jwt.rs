@@ -25,7 +25,6 @@ pub struct McpOAuthAccessClaims {
 pub struct VerifiedMcpOAuthAccess {
     pub subject: String,
     pub tenant_id: String,
-    pub scope: String,
     pub client_id: String,
     pub grant_id: String,
 }
@@ -98,7 +97,6 @@ impl McpOAuthJwt {
         Ok(VerifiedMcpOAuthAccess {
             subject: claims.sub,
             tenant_id: claims.tenant_id,
-            scope: claims.scope,
             client_id: claims.client_id,
             grant_id: claims.grant_id,
         })
@@ -170,6 +168,5 @@ mod tests {
         assert_eq!(verified.tenant_id, "tenant-a");
         assert_eq!(verified.subject, "user-a");
         assert_eq!(verified.client_id, "client_a");
-        assert_eq!(verified.scope, "mcp:tools");
     }
 }

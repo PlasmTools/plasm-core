@@ -3,29 +3,39 @@
 //! - `Authorization: Bearer <oauth_access_token>` for personal MCP inbound OAuth (dynamic registration)
 //!
 //! When no tenant MCP configurations are loaded, transport requests may omit `Authorization` (open local
-//! dev) or send `Authorization: Bearer __plasm_mcp_anonymous__` (see [`PLASM_MCP_ANONYMOUS_BEARER_TOKEN`]:
-//! `rust-mcp-sdk` cannot forward an empty bearer secret). Once tenant configs exist, every MCP request must authenticate
+//! dev) or send `Authorization: Bearer __plasm_mcp_anonymous__`. Once tenant configs exist, every MCP request must authenticate
 //! via API key or OAuth bearer token.
 //!
 //! Downstream code must interpret verified transport through [`crate::mcp_stream_identity::McpTransportIdentity`],
-//! not raw [`AuthInfo::client_id`] (OAuth RFC registration id vs Plasm incoming tenant).
+//! keeping OAuth registration identity separate from the incoming Plasm tenant.
 
 #![allow(clippy::result_large_err)]
 // Err variants are full HTTP responses; boxing every OAuth helper would be high churn for little gain.
 
 use std::collections::HashMap;
 use std::sync::Arc;
-use std::time::{Duration, SystemTime};
 
-use async_trait::async_trait;
+use axum::body::Body;
+use axum::response::IntoResponse;
 use http::header::{CONTENT_TYPE, LOCATION};
 use http::{HeaderMap, HeaderValue, Method, StatusCode};
-use rust_mcp_sdk::auth::{AuthInfo, AuthProvider, AuthenticationError, OauthEndpoint};
-use rust_mcp_sdk::mcp_http::{GenericBody, GenericBodyExt, McpAppState};
-use rust_mcp_sdk::mcp_server::error::TransportServerError;
+#[derive(Debug, thiserror::Error)]
+pub enum AuthenticationError {
+    #[error("{description}")]
+    InvalidToken { description: &'static str },
+}
+#[derive(Clone, Copy)]
+enum OauthEndpoint {
+    AuthorizationServerMetadata,
+    ProtectedResourceMetadata,
+    RegistrationEndpoint,
+    AuthorizationEndpoint,
+    TokenEndpoint,
+}
+
 use serde::Serialize;
 use serde_json::json;
-use sha2::{Digest, Sha256};
+
 use tokio::sync::OnceCell;
 use url::form_urlencoded;
 
@@ -119,13 +129,10 @@ const OAUTH_PROTECTED_RESOURCE_PATH: &str = "/.well-known/oauth-protected-resour
 const MCP_OAUTH_PREFIX: &str = "/mcp";
 /// Non-empty bearer value for **anonymous** Streamable HTTP MCP when no tenant configs exist.
 ///
-/// `rust-mcp-sdk` trims the full `Authorization` header, then splits on the first ASCII space, so a
-/// header of `Bearer ` (empty secret) becomes `Bearer` and never reaches [`AuthProvider::verify_token`]
-/// with an empty string. Scripts and `curl` should send `Authorization: Bearer <this>` instead.
+/// Clients may omit Authorization instead. This explicit identity never bypasses tenant policy.
 pub const PLASM_MCP_ANONYMOUS_BEARER_TOKEN: &str = "__plasm_mcp_anonymous__";
-const OAUTH_ACCESS_TOKEN_TTL_SECS: u64 = 3600;
 
-type OauthHttpResponse = http::Response<GenericBody>;
+type OauthHttpResponse = http::Response<Body>;
 
 #[derive(Debug, Clone, Copy)]
 enum McpInboundTransportPolicy {
@@ -146,10 +153,6 @@ impl McpInboundTransportPolicy {
             _ => Self::ApiKeyOrOAuth,
         }
     }
-}
-
-fn auth_expires_at(seconds_from_now: u64) -> SystemTime {
-    SystemTime::now() + Duration::from_secs(seconds_from_now)
 }
 
 fn protected_resource_metadata_url(base: &str) -> String {
@@ -231,12 +234,47 @@ impl PlasmMcpApiKeyAuthProvider {
         ))
     }
 
+    fn validate_allowed_methods(
+        &self,
+        endpoint: OauthEndpoint,
+        method: &Method,
+    ) -> Option<OauthHttpResponse> {
+        let allowed: &[Method] = match endpoint {
+            OauthEndpoint::AuthorizationServerMetadata
+            | OauthEndpoint::ProtectedResourceMetadata => &[Method::GET, Method::OPTIONS],
+            OauthEndpoint::AuthorizationEndpoint => &[Method::GET, Method::POST, Method::OPTIONS],
+            OauthEndpoint::RegistrationEndpoint | OauthEndpoint::TokenEndpoint => {
+                &[Method::POST, Method::OPTIONS]
+            }
+        };
+        if method == Method::OPTIONS {
+            Some(
+                (
+                    StatusCode::NO_CONTENT,
+                    [(
+                        http::header::ALLOW,
+                        allowed
+                            .iter()
+                            .map(Method::as_str)
+                            .collect::<Vec<_>>()
+                            .join(", "),
+                    )],
+                )
+                    .into_response(),
+            )
+        } else if !allowed.contains(method) {
+            Some(method_not_allowed(method, allowed))
+        } else {
+            None
+        }
+    }
+
     pub(crate) async fn handle_oauth_http(
         &self,
         request: http::Request<&str>,
-    ) -> Result<http::Response<GenericBody>, TransportServerError> {
-        let Some(endpoint) = self.endpoint_type(&request) else {
-            return Ok(GenericBody::create_404_response());
+    ) -> Result<http::Response<Body>, std::convert::Infallible> {
+        let Some(endpoint) = self.oauth_endpoints.get(request.uri().path()).copied() else {
+            return Ok((StatusCode::NOT_FOUND, "Not found").into_response());
         };
         if let Some(response) = self.validate_allowed_methods(endpoint, request.method()) {
             return Ok(response);
@@ -253,7 +291,6 @@ impl PlasmMcpApiKeyAuthProvider {
             OauthEndpoint::RegistrationEndpoint => self.oauth_register(request).await,
             OauthEndpoint::AuthorizationEndpoint => self.oauth_authorize(request).await,
             OauthEndpoint::TokenEndpoint => self.oauth_token(request).await,
-            _ => Ok(GenericBody::create_404_response()),
         }
     }
 
@@ -293,27 +330,25 @@ impl PlasmMcpApiKeyAuthProvider {
             })
     }
 
-    async fn verify_anonymous_ok_async(&self) -> Result<AuthInfo, AuthenticationError> {
-        let has_tenants = match self.plasm.mcp_config_repository() {
-            None => false,
-            Some(repo) => repo.has_tenant_configs().await.unwrap_or(false),
-        };
+    async fn verify_anonymous_ok_async(&self) -> Result<McpTransportIdentity, AuthenticationError> {
+        let has_tenants =
+            match self.plasm.mcp_config_repository() {
+                None => false,
+                Some(repo) => repo.has_tenant_configs().await.map_err(|_| {
+                    AuthenticationError::InvalidToken {
+                        description: "MCP configuration store unavailable",
+                    }
+                })?,
+            };
         if has_tenants {
             return Err(AuthenticationError::InvalidToken {
                 description: "MCP Authorization required: send `Authorization: Bearer <api_key>` or OAuth access token",
             });
         }
-        let mut extra = serde_json::Map::new();
-        extra.insert("plasm_mcp_anonymous".to_string(), json!(true));
-        Ok(McpTransportIdentity::anonymous().into_auth_info(
-            "plasm_mcp_anonymous".into(),
-            None,
-            Some(auth_expires_at(3600)),
-            extra,
-        ))
+        Ok(McpTransportIdentity::anonymous())
     }
 
-    async fn verify_api_key(&self, raw: &str) -> Result<AuthInfo, AuthenticationError> {
+    async fn verify_api_key(&self, raw: &str) -> Result<McpTransportIdentity, AuthenticationError> {
         let Some(mcp_auth) = self.plasm.mcp_transport_auth() else {
             return Err(AuthenticationError::InvalidToken {
                 description: "MCP transport API key verification unavailable",
@@ -336,31 +371,21 @@ impl PlasmMcpApiKeyAuthProvider {
             });
         };
 
-        let mut extra = serde_json::Map::new();
-        extra.insert("plasm_mcp_config_id".to_string(), json!(cfg.id.to_string()));
-        extra.insert(
-            "plasm_space_type".to_string(),
-            json!(cfg.space_type.clone()),
-        );
-        if let Some(owner_subject) = cfg.owner_subject.as_ref() {
-            extra.insert("plasm_owner_subject".to_string(), json!(owner_subject));
-        }
-
         let subject = cfg
             .owner_subject
             .clone()
             .unwrap_or_else(|| cfg.id.to_string());
-        Ok(
-            McpTransportIdentity::api_key(cfg.tenant_id.clone(), subject, cfg.id).into_auth_info(
-                format!("{:x}", Sha256::digest(raw.as_bytes())),
-                None,
-                Some(auth_expires_at(86400 * 365)),
-                extra,
-            ),
-        )
+        Ok(McpTransportIdentity::api_key(
+            cfg.tenant_id.clone(),
+            subject,
+            cfg.id,
+        ))
     }
 
-    async fn verify_oauth_bearer(&self, raw: &str) -> Result<AuthInfo, AuthenticationError> {
+    async fn verify_oauth_bearer(
+        &self,
+        raw: &str,
+    ) -> Result<McpTransportIdentity, AuthenticationError> {
         let oauth = self.oauth_service().await.map_err(|_| {
             tracing::warn!("mcp oauth bearer rejected: inbound oauth service unavailable");
             self.oauth_not_configured_error()
@@ -412,37 +437,11 @@ impl PlasmMcpApiKeyAuthProvider {
             "mcp oauth bearer accepted"
         );
 
-        let mut extra = serde_json::Map::new();
-        extra.insert("plasm_mcp_config_id".to_string(), json!(cfg.id.to_string()));
-        extra.insert("plasm_space_type".to_string(), json!("personal"));
-        extra.insert(
-            "plasm_owner_subject".to_string(),
-            json!(principal.subject.clone()),
-        );
-        extra.insert("plasm_mcp_oauth".to_string(), json!(true));
-
-        let scopes: Vec<String> = principal
-            .scope
-            .split_whitespace()
-            .map(str::to_string)
-            .collect();
-        let scopes = if scopes.is_empty() {
-            vec![OAUTH_SCOPE.to_string()]
-        } else {
-            scopes
-        };
-
         Ok(McpTransportIdentity::oauth(
             principal.tenant_id.clone(),
             principal.subject.clone(),
             principal.client_id.clone(),
             cfg.id,
-        )
-        .into_auth_info(
-            format!("{:x}", Sha256::digest(raw.as_bytes())),
-            Some(scopes),
-            Some(auth_expires_at(OAUTH_ACCESS_TOKEN_TTL_SECS)),
-            extra,
         ))
     }
 
@@ -473,16 +472,16 @@ impl PlasmMcpApiKeyAuthProvider {
         })
     }
 
-    fn json_response(status: StatusCode, v: serde_json::Value) -> http::Response<GenericBody> {
+    fn json_response(status: StatusCode, v: serde_json::Value) -> http::Response<Body> {
         let mut headers = HeaderMap::new();
         headers.insert(
             http::header::CACHE_CONTROL,
             HeaderValue::from_static("no-store"),
         );
-        GenericBody::from_value(&v).into_json_response(status, Some(headers))
+        (status, headers, axum::Json(v)).into_response()
     }
 
-    fn html_response(status: StatusCode, html: String) -> http::Response<GenericBody> {
+    fn html_response(status: StatusCode, html: String) -> http::Response<Body> {
         let mut headers = HeaderMap::new();
         headers.insert(
             CONTENT_TYPE,
@@ -494,10 +493,10 @@ impl PlasmMcpApiKeyAuthProvider {
         );
         headers.insert("referrer-policy", HeaderValue::from_static("no-referrer"));
         headers.insert("content-security-policy", HeaderValue::from_static("default-src 'none'; style-src 'unsafe-inline'; form-action 'self'; frame-ancestors 'none'; base-uri 'none'"));
-        GenericBody::from_string(html).into_response(status, Some(headers))
+        (status, headers, html).into_response()
     }
 
-    fn redirect_response(location: &str) -> http::Response<GenericBody> {
+    fn redirect_response(location: &str) -> http::Response<Body> {
         let mut headers = HeaderMap::new();
         headers.insert(
             http::header::CACHE_CONTROL,
@@ -507,7 +506,7 @@ impl PlasmMcpApiKeyAuthProvider {
         if let Ok(hv) = HeaderValue::from_str(location) {
             headers.insert(LOCATION, hv);
         }
-        GenericBody::empty().into_response(StatusCode::FOUND, Some(headers))
+        (StatusCode::FOUND, headers).into_response()
     }
 
     fn oauth_error_json(error: &str, description: &str) -> serde_json::Value {
@@ -703,7 +702,7 @@ impl PlasmMcpApiKeyAuthProvider {
             Method::POST => Self::parse_oauth_parameters(request.body()),
             Method::GET => Self::parse_oauth_parameters(request.uri().query().unwrap_or("")),
             _ => {
-                return Err(GenericBody::create_405_response(
+                return Err(method_not_allowed(
                     request.method(),
                     &[Method::GET, Method::POST, Method::OPTIONS],
                 ))
@@ -721,9 +720,9 @@ impl PlasmMcpApiKeyAuthProvider {
     async fn oauth_register(
         &self,
         request: http::Request<&str>,
-    ) -> Result<http::Response<GenericBody>, TransportServerError> {
+    ) -> Result<http::Response<Body>, std::convert::Infallible> {
         if request.method() != Method::POST {
-            return Ok(GenericBody::create_405_response(
+            return Ok(method_not_allowed(
                 request.method(),
                 &[Method::POST, Method::OPTIONS],
             ));
@@ -749,7 +748,7 @@ impl PlasmMcpApiKeyAuthProvider {
     async fn oauth_authorize(
         &self,
         request: http::Request<&str>,
-    ) -> Result<http::Response<GenericBody>, TransportServerError> {
+    ) -> Result<http::Response<Body>, std::convert::Infallible> {
         let oauth = match self.oauth_service().await {
             Ok(o) => o,
             Err(resp) => return Ok(resp),
@@ -772,9 +771,9 @@ impl PlasmMcpApiKeyAuthProvider {
     async fn oauth_token(
         &self,
         request: http::Request<&str>,
-    ) -> Result<http::Response<GenericBody>, TransportServerError> {
+    ) -> Result<http::Response<Body>, std::convert::Infallible> {
         if request.method() != Method::POST {
-            return Ok(GenericBody::create_405_response(
+            return Ok(method_not_allowed(
                 request.method(),
                 &[Method::POST, Method::OPTIONS],
             ));
@@ -809,9 +808,11 @@ impl PlasmMcpApiKeyAuthProvider {
     }
 }
 
-#[async_trait]
-impl AuthProvider for PlasmMcpApiKeyAuthProvider {
-    async fn verify_token(&self, access_token: String) -> Result<AuthInfo, AuthenticationError> {
+impl PlasmMcpApiKeyAuthProvider {
+    pub(crate) async fn verify_token(
+        &self,
+        access_token: String,
+    ) -> Result<McpTransportIdentity, AuthenticationError> {
         let trimmed = access_token.trim();
         if trimmed.is_empty() || trimmed == PLASM_MCP_ANONYMOUS_BEARER_TOKEN {
             let r = self.verify_anonymous_ok_async().await;
@@ -871,19 +872,22 @@ impl AuthProvider for PlasmMcpApiKeyAuthProvider {
         }
     }
 
-    fn auth_endpoints(&self) -> Option<&HashMap<String, OauthEndpoint>> {
-        Some(&self.oauth_endpoints)
+    pub(crate) fn auth_endpoint_paths(&self) -> impl Iterator<Item = &String> {
+        self.oauth_endpoints.keys()
     }
+}
 
-    async fn handle_request(
-        &self,
-        request: http::Request<&str>,
-        _state: Arc<McpAppState>,
-    ) -> Result<http::Response<GenericBody>, TransportServerError> {
-        self.handle_oauth_http(request).await
-    }
-
-    fn protected_resource_metadata_url(&self) -> Option<&str> {
-        Some(self.protected_resource_metadata_url.as_str())
-    }
+fn method_not_allowed(_method: &Method, allowed: &[Method]) -> OauthHttpResponse {
+    (
+        StatusCode::METHOD_NOT_ALLOWED,
+        [(
+            http::header::ALLOW,
+            allowed
+                .iter()
+                .map(Method::as_str)
+                .collect::<Vec<_>>()
+                .join(", "),
+        )],
+    )
+        .into_response()
 }

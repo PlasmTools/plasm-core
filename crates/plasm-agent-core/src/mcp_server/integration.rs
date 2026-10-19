@@ -1195,48 +1195,108 @@ async fn execute_mcp_live_run_page_handle_synthetic_continuation() {
     );
 }
 
-fn test_mcp_server_details() -> Arc<rust_mcp_sdk::schema::InitializeResult> {
-    use rust_mcp_sdk::schema::{
-        Implementation, InitializeResult, ProtocolVersion, ServerCapabilities,
-    };
-    Arc::new(InitializeResult {
-        protocol_version: ProtocolVersion::V2025_11_25.into(),
-        capabilities: ServerCapabilities::default(),
-        server_info: Implementation {
-            name: "test".into(),
-            version: "0".into(),
-            title: None,
-            description: None,
-            icons: vec![],
-            website_url: None,
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn computed_integer_owner_page_preserves_materialization() {
+    use crate::execute_session::SyntheticPageCursor;
+    use indexmap::IndexMap;
+    use plasm_core::{EntityKey, Ref, Value};
+    use plasm_runtime::{CachedEntity, EntityCompleteness};
+
+    const SESSION_REF: &str = "l_AAAAAAAAQACAAAAAAAAAAQ";
+    let st = Arc::new(matrix_federated_host());
+    let fx = MatrixPcNFixture::open(st, "page synth", "page_synth").await;
+
+    let mut rows = Vec::new();
+    for i in 0..40 {
+        let mut fields = IndexMap::new();
+        fields.insert("projected_id".into(), Value::Integer(i));
+        fields.insert("title".into(), Value::String(format!("trace-{i}")));
+        rows.push(CachedEntity::from_decoded(
+            Ref {
+                entity_type: "LangSecuredNote".into(),
+                key: EntityKey::Simple(format!("computed-{i}").into()),
+            },
+            fields,
+            IndexMap::new(),
+            0,
+            EntityCompleteness::Complete,
+        ));
+    }
+    let cursor = SyntheticPageCursor {
+        kind: crate::execute_session::SyntheticPageKind::Expression,
+        node_id: "items".into(),
+        qualified_entity: crate::plasm_plan::QualifiedEntityKey {
+            entry_id: fx.es.entry_id.clone(),
+            entity: "LangSecuredNote".into(),
         },
-        instructions: None,
-        meta: None,
+        collection: crate::test_support::execution_fixtures::collection(
+            rows,
+            plasm_runtime::ResultCoverage::Complete,
+        )
+        .with_row_materialization(plasm_runtime::execution::RowMaterialization::Computed),
+        offset: 25,
+        page_size: 25,
+        request_fingerprints: vec![],
+    };
+    let handle = fx
+        .es
+        .register_synthetic_paging_continuation(cursor, Some(SESSION_REF));
+    let cursor = fx.es.peek_synthetic_paging_resume(&handle).expect("cursor");
+    let collection = cursor
+        .collection
+        .filter(&"page", &(25..40).collect::<Vec<_>>(), &[])
+        .expect("page membership");
+    let result = plasm_runtime::ExecutionResult {
+        collection,
+        has_more: false,
+        pagination_resume: None,
+        paging_handle: None,
+        source: plasm_runtime::ExecutionSource::Cache,
+        stats: Default::default(),
+        request_fingerprints: vec![],
+        operations: plasm_runtime::OperationLedger::empty(),
+    };
+    let reader = crate::graph_rehydrate::GraphSurfaceRehydrator::new(
+        &fx.es,
+        &fx.st,
+        &fx.out.session_id,
+        &fx.es.cgs,
+    );
+    let rows = reader
+        .materialize_surface_rows("LangSecuredNote", &result)
+        .await
+        .expect("computed page fields");
+    assert_eq!(rows.inline_rows().expect("inline").len(), 15);
+    let mut mislabeled = result;
+    mislabeled.collection = mislabeled
+        .collection
+        .with_row_materialization(plasm_runtime::execution::RowMaterialization::Catalog);
+    let error = reader
+        .materialize_surface_rows("LangSecuredNote", &mislabeled)
+        .await
+        .expect_err("catalog interpretation must reject a computed identity");
+    assert!(
+        error
+            .to_string()
+            .contains("invalid identity slot for integer"),
+        "{error}"
+    );
+}
+
+fn test_mcp_runtime(session_id: &str) -> Arc<super::request::McpRequest> {
+    Arc::new(super::request::McpRequest {
+        transport_key: session_id.into(),
+        client: Default::default(),
+        identity: None,
     })
 }
 
-fn test_mcp_runtime(
-    handler: Arc<dyn rust_mcp_sdk::McpServerHandler>,
-    session_id: &str,
-) -> Arc<dyn rust_mcp_sdk::McpServer> {
-    use rust_mcp_sdk::mcp_server::server_runtime::create_server_instance;
-    create_server_instance(
-        test_mcp_server_details(),
-        handler,
-        session_id.into(),
-        None,
-        None,
-        None,
-        None,
-    )
-}
-
-fn call_tool_result_markdown(res: &rust_mcp_sdk::schema::CallToolResult) -> String {
-    use rust_mcp_sdk::schema::ContentBlock;
+fn call_tool_result_markdown(res: &rmcp::model::CallToolResult) -> String {
+    use rmcp::model::ContentBlock;
     res.content
         .iter()
         .filter_map(|block| match block {
-            ContentBlock::TextContent(t) => Some(t.text.clone()),
+            ContentBlock::Text(t) => Some(t.text.clone()),
             _ => None,
         })
         .collect::<Vec<_>>()
@@ -1247,13 +1307,11 @@ fn call_tool_result_markdown(res: &rust_mcp_sdk::schema::CallToolResult) -> Stri
 async fn plasm_run_page_handle_through_handler() {
     use super::PlasmMcpHandler;
     use crate::execute_session::SyntheticPageCursor;
-    use rust_mcp_sdk::ToMcpServerHandler;
     use serde_json::json;
 
     let st = Arc::new(matrix_federated_host());
     let handler = PlasmMcpHandler::new(Arc::clone(&st));
-    let mcp_handler = PlasmMcpHandler::new(Arc::clone(&st)).to_mcp_server_handler();
-    let runtime = test_mcp_runtime(mcp_handler, "mcp-page-handle-e2e");
+    let runtime = test_mcp_runtime("mcp-page-handle-e2e");
     let mcp_key = "mcp-page-handle-e2e";
 
     let logical_uuid = Uuid::new_v4();
@@ -1366,16 +1424,13 @@ async fn plasm_read_run_artifact_matches_resources_read() {
 
     async {
         use super::PlasmMcpHandler;
-        use rust_mcp_sdk::mcp_server::ServerHandler;
-        use rust_mcp_sdk::schema::ReadResourceRequestParams;
-        use rust_mcp_sdk::ToMcpServerHandler;
-        use serde_json::json;
+        use rmcp::model::ReadResourceRequestParams;
+            use serde_json::json;
 
         let base_url = spawn_matrix_langitem_mock_many().await;
         let st = Arc::new(matrix_federated_host_with_base(Some(base_url.as_str())));
         let handler = PlasmMcpHandler::new(Arc::clone(&st));
-        let mcp_handler = PlasmMcpHandler::new(Arc::clone(&st)).to_mcp_server_handler();
-        let runtime = test_mcp_runtime(mcp_handler, "artifact-read-parity");
+            let runtime = test_mcp_runtime("artifact-read-parity");
         let mcp_key = "artifact-read-parity";
         let logical_uuid = Uuid::new_v4();
         let opened = apply_capability_seeds(
@@ -1497,9 +1552,8 @@ async fn plasm_read_run_artifact_matches_resources_read() {
                 run_id.expect("run_id for canonical uri")
             )
         });
-        let read_resource = handler
-            .handle_read_resource_request(
-                ReadResourceRequestParams { uri, meta: None },
+        let read_resource = super::resource_read::handle_read_resource_request(&handler,
+                ReadResourceRequestParams::new(uri),
                 Arc::clone(&runtime),
             )
             .await
@@ -1510,8 +1564,8 @@ async fn plasm_read_run_artifact_matches_resources_read() {
             .contents
             .first()
             .and_then(|c| match c {
-                rust_mcp_sdk::schema::ReadResourceContent::TextResourceContents(t) => {
-                    Some(t.text.clone())
+                rmcp::model::ResourceContents::TextResourceContents { text, .. } => {
+                    Some(text.clone())
                 }
                 _ => None,
             })
@@ -1547,14 +1601,12 @@ async fn plasm_read_run_artifact_matches_resources_read() {
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn dry_workflow_rejects_ref_outside_tenant_scope() {
     use super::PlasmMcpHandler;
-    use rust_mcp_sdk::ToMcpServerHandler;
     use serde_json::json;
 
     let st = Arc::new(matrix_federated_host());
     let handler = PlasmMcpHandler::new(Arc::clone(&st));
-    let mcp_handler = PlasmMcpHandler::new(Arc::clone(&st)).to_mcp_server_handler();
     let mcp_key = "mcp-dry-workflow-tenant-gate";
-    let runtime = test_mcp_runtime(mcp_handler, mcp_key);
+    let runtime = test_mcp_runtime(mcp_key);
 
     // Valid wire format, never minted in this registry -> not in any tenant scope.
     let foreign_ref =

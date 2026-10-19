@@ -129,7 +129,7 @@ fn live_run_tool_meta_finalizes_run_explorer_ui() {
     use crate::run_artifacts::{
         artifact_http_path, plasm_run_resource_uri, plasm_short_resource_uri, RunArtifactId,
     };
-    use rust_mcp_sdk::schema::{CallToolResult, TextContent};
+    use rmcp::model::CallToolResult;
 
     let run = RunArtifactId::from_bytes([2u8; 32]);
     let ph = "cd".repeat(32);
@@ -170,7 +170,7 @@ fn live_run_tool_meta_finalizes_run_explorer_ui() {
     let mut tool_meta = serde_json::Map::new();
     tool_meta.insert("plasm".into(), serde_json::Value::Object(plasm_obj));
     let res = finalize_mcp_tool_result(
-        CallToolResult::text_content(vec![TextContent::new("ok".into(), None, None)]),
+        CallToolResult::success(vec![rmcp::model::ContentBlock::text("ok")]),
         tool_meta,
         McpDeliveryProfile::FullApps,
         None,

@@ -1,0 +1,23 @@
+fail_write:
+  transport: mcp
+  server: fixture
+  tool: tool_error
+  arguments:
+    type: object
+    fields: []
+  response:
+    source: {kind: structured_content}
+    pointer: ""
+    exhaustive: false
+list_items:
+  transport: mcp
+  server: fixture
+  tool: list_items
+  arguments:
+    type: object
+    fields: []
+  response:
+    source:
+      kind: structured_content
+    pointer: /items
+    exhaustive: false

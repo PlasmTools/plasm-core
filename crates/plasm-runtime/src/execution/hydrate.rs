@@ -969,7 +969,9 @@ mod tests {
         let login =
             parse(r#"AuthSession.login(username="u", password="p")"#, &cgs).expect("parse login");
         let get_int = parse("SecuredNote(1)", &cgs).expect("parse unary Get e2(<id>)");
-        let get_str = parse(r#"SecuredNote("note-id")"#, &cgs);
+        let get_str = parse(r#"SecuredNote("1")"#, &cgs).expect("parse numeric identity");
+        let invalid_identity = parse(r#"SecuredNote("note-id")"#, &cgs)
+            .expect("identity wire validation follows parsing");
         let tokenless_search = parse(r#"SecuredNote~"q""#, &cgs).expect("parse tokenless Search");
         let written_search =
             parse(r#"SecuredNote~"q"{access_token="tok"}"#, &cgs).expect("parse written Search");
@@ -1022,16 +1024,14 @@ mod tests {
 
         preflight_compile_expr(&get_int.expr, &cgs, &compiled, &ambient, &mat)
             .expect("unary Get e2(<id>) compiles after login without writing access_token");
-        match get_str {
-            Ok(parsed) => {
-                preflight_compile_expr(&parsed.expr, &cgs, &compiled, &ambient, &mat).expect(
-                    "unary Get e2(\"note-id\") compiles after login without writing access_token",
-                );
-            }
-            Err(err) => {
-                panic!("SecuredNote(\"note-id\") must parse for fixture compile matrix: {err}");
-            }
-        }
+        preflight_compile_expr(&get_str.expr, &cgs, &compiled, &ambient, &mat)
+            .expect("numeric identity compiles after login without writing access_token");
+        assert!(matches!(
+            preflight_compile_expr(&invalid_identity.expr, &cgs, &compiled, &ambient, &mat),
+            Err(RuntimeError::IdentityWire(
+                plasm_core::operand_binding::IdentityCodecError::InvalidInteger
+            ))
+        ));
 
         let search_after =
             preflight_compile_expr(&tokenless_search.expr, &cgs, &compiled, &ambient, &mat)

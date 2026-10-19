@@ -40,6 +40,7 @@ pub struct ViewCompiled {
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum CapabilityTemplate {
+    Mcp(crate::McpTemplate),
     CredentialBind(crate::CredentialBindTemplate),
     Http(CmlRequest),
     /// GraphQL over HTTP: same [`CmlRequest`] shape as HTTP (typically `POST` + JSON body with `query` / `variables`).
@@ -55,6 +56,7 @@ pub enum CapabilityTemplate {
 
 #[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub enum CompiledOperation {
+    Mcp(crate::CompiledMcpCall),
     CredentialBind(crate::CompiledCredentialBind),
     Http(CompiledRequest),
     /// Compiled GraphQL request (same wire payload as HTTP POST JSON today).
@@ -80,6 +82,19 @@ pub fn parse_capability_template(
         .unwrap_or("http");
 
     let parsed = match transport {
+        "mcp" => {
+            let mut declaration = template.clone();
+            declaration
+                .as_object_mut()
+                .expect("transport belongs to an object")
+                .remove("transport");
+            serde_json::from_value::<crate::McpTemplate>(declaration)
+                .map(CapabilityTemplate::Mcp)
+                .map_err(|source| CmlError::InvalidTransportTemplate {
+                    transport: crate::error::TransportKind::Mcp,
+                    source: std::sync::Arc::new(source),
+                })
+        }
         "credential_bind" => {
             let mut declaration = template.clone();
             declaration
@@ -138,6 +153,7 @@ pub fn compile_operation(
     env: &CmlEnv,
 ) -> Result<CompiledOperation, CmlError> {
     match template {
+        CapabilityTemplate::Mcp(request) => request.compile(env).map(CompiledOperation::Mcp),
         CapabilityTemplate::CredentialBind(binding) => {
             binding.compile(env).map(CompiledOperation::CredentialBind)
         }
@@ -164,6 +180,7 @@ pub fn compile_operation(
 pub fn template_pagination(template: &CapabilityTemplate) -> Option<&PaginationConfig> {
     match template {
         CapabilityTemplate::Http(req) | CapabilityTemplate::GraphQl(req) => req.pagination.as_ref(),
+        CapabilityTemplate::Mcp(req) => req.pagination.as_ref(),
         CapabilityTemplate::View(_) | CapabilityTemplate::CredentialBind(_) => None,
         #[cfg(feature = "evm")]
         CapabilityTemplate::EvmCall(_) => None,
@@ -175,6 +192,7 @@ pub fn template_pagination(template: &CapabilityTemplate) -> Option<&PaginationC
 pub fn template_var_names(template: &CapabilityTemplate) -> Vec<String> {
     let mut vars = IndexSet::new();
     match template {
+        CapabilityTemplate::Mcp(request) => collect_expr_vars(&request.arguments, &mut vars),
         CapabilityTemplate::View(_) => {}
         CapabilityTemplate::CredentialBind(binding) => {
             collect_expr_vars(&binding.resource, &mut vars);

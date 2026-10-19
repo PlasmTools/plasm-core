@@ -25,7 +25,6 @@ pub mod cli_builder;
 pub mod control_plane_http;
 mod decision_codec;
 mod decision_transport;
-pub mod discovery_embeddings;
 pub mod discovery_matcher;
 pub mod discovery_recovery;
 pub mod discovery_service;

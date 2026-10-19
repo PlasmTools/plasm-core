@@ -2,9 +2,7 @@
 
 use std::collections::BTreeMap;
 
-use rust_mcp_sdk::schema::{
-    Tool, ToolAnnotations, ToolExecution, ToolExecutionTaskSupport, ToolInputSchema,
-};
+use rmcp::model::{Tool, ToolAnnotations};
 use serde_json::Map;
 
 use crate::mcp_delivery::McpDeliveryProfile;
@@ -77,114 +75,112 @@ pub(crate) fn plasm_tools(artifact_access: ArtifactAccessMode, ui_apps_enabled: 
             ),
         );
 
-    let mut tools = vec![Tool {
-        name: "plasm_context".into(),
-        title: Some("Open or extend Plasm context".into()),
-        description: Some(PLASM_CONTEXT_TOOL_DESCRIPTION.into()),
-        input_schema: ToolInputSchema::new(
+    let mut tools = vec![{
+        let mut model = Tool::default();
+        model.name = "plasm_context".into();
+        model.title = Some("Open or extend Plasm context".into());
+        model.description = Some(PLASM_CONTEXT_TOOL_DESCRIPTION.into());
+        model.input_schema = crate::mcp_server::schema::object_schema(
             vec!["session_mode".into(), "intent".into()],
-            Some(context_props),
-            None,
-        ),
-        annotations: Some(ToolAnnotations {
-            read_only_hint: Some(false),
-            open_world_hint: Some(true),
-            ..Default::default()
-        }),
-        execution: Some(ToolExecution {
-            task_support: Some(ToolExecutionTaskSupport::Forbidden),
-        }),
-        icons: vec![],
-        meta: None,
-        output_schema: None,
+            context_props,
+        );
+        model.annotations = Some({
+            let mut model = ToolAnnotations::default();
+            model.read_only_hint = Some(false);
+            model.open_world_hint = Some(true);
+            model
+        });
+        model.icons = None;
+        model.meta = None;
+        model.output_schema = None;
+        model
     }];
 
-    tools.push(Tool {
-        name: "plasm".into(),
-        title: Some("Plan Plasm (dry-run)".into()),
-        description: Some(PLASM_MCP_TOOL_DESCRIPTION.into()),
-        input_schema: ToolInputSchema::new(
+    tools.push({
+        let mut model = Tool::default();
+        model.name = "plasm".into();
+        model.title = Some("Plan Plasm (dry-run)".into());
+        model.description = Some(PLASM_MCP_TOOL_DESCRIPTION.into());
+        model.input_schema = crate::mcp_server::schema::object_schema(
             vec!["logical_session_ref".into(), "program".into()],
-            Some(plasm_program_props.clone()),
-            None,
-        ),
-        annotations: Some(ToolAnnotations {
-            read_only_hint: Some(true),
-            open_world_hint: Some(true),
-            ..Default::default()
-        }),
-        execution: Some(ToolExecution {
-            task_support: Some(ToolExecutionTaskSupport::Forbidden),
-        }),
-        icons: vec![],
-        meta: if attach_ui_meta {
-            Some(crate::plan_ui_mcp::plan_review_ui_tool_meta())
+            plasm_program_props.clone(),
+        );
+        model.annotations = Some({
+            let mut model = ToolAnnotations::default();
+            model.read_only_hint = Some(true);
+            model.open_world_hint = Some(true);
+            model
+        });
+        model.icons = None;
+        model.meta = if attach_ui_meta {
+            Some(crate::plan_ui_mcp::plan_review_ui_tool_meta().into())
         } else {
             None
-        },
-        output_schema: if structured_ui_lane {
+        };
+        model.output_schema = if structured_ui_lane {
             Some(crate::mcp_ui_payload::plasm_tool_output_schema())
         } else {
             None
-        },
+        };
+        model
     });
-    tools.push(Tool {
-        name: "plasm_run".into(),
-        title: Some("Run Plasm (execute)".into()),
-        description: Some(plasm_run_tool_description(artifact_access)),
-        input_schema: ToolInputSchema::new(
+    tools.push({
+        let mut model = Tool::default();
+        model.name = "plasm_run".into();
+        model.title = Some("Run Plasm (execute)".into());
+        model.description = Some(plasm_run_tool_description(artifact_access).into());
+        model.input_schema = crate::mcp_server::schema::object_schema(
             vec!["logical_session_ref".into(), "run_ref".into()],
-            Some(plasm_run_props),
-            None,
-        ),
-        annotations: Some(ToolAnnotations {
-            read_only_hint: Some(false),
-            open_world_hint: Some(true),
-            ..Default::default()
-        }),
-        execution: Some(ToolExecution {
-            task_support: Some(ToolExecutionTaskSupport::Forbidden),
-        }),
-        icons: vec![],
-        meta: if attach_ui_meta {
-            Some(crate::run_explorer_ui_mcp::run_explorer_ui_tool_meta())
+            plasm_run_props,
+        );
+        model.annotations = Some({
+            let mut model = ToolAnnotations::default();
+            model.read_only_hint = Some(false);
+            model.open_world_hint = Some(true);
+            model
+        });
+        model.icons = None;
+        model.meta = if attach_ui_meta {
+            Some(crate::run_explorer_ui_mcp::run_explorer_ui_tool_meta().into())
         } else {
             None
-        },
-        output_schema: if structured_ui_lane {
+        };
+        model.output_schema = if structured_ui_lane {
             Some(crate::mcp_ui_payload::plasm_run_tool_output_schema())
         } else {
             None
-        },
+        };
+        model
     });
     if attach_ui_meta {
-        tools.push(Tool {
-            name: "plasm_ui_list_catalogs".into(),
-        title: Some("List tenant-enabled catalogs (MCP App)".into()),
-        description: Some(
+        tools.push({
+            let mut model = Tool::default();
+            model.name = "plasm_ui_list_catalogs".into();
+            model.title = Some("List tenant-enabled catalogs (MCP App)".into());
+            model.description = Some(
             "Returns registry `entry_id`s allowed by tenant MCP policy for MCP App bootstrap UIs."
                 .into(),
-        ),
-        input_schema: ToolInputSchema::new(vec![], Some(BTreeMap::new()), None),
-        annotations: Some(ToolAnnotations {
-            read_only_hint: Some(true),
-            open_world_hint: Some(false),
-            ..Default::default()
-        }),
-        execution: Some(ToolExecution {
-            task_support: Some(ToolExecutionTaskSupport::Forbidden),
-        }),
-        icons: vec![],
-        meta: Some(
-            serde_json::json!({
-                "ui": { "visibility": ["app"] }
-            })
-            .as_object()
-            .cloned()
-            .expect("plasm_ui_list_catalogs meta"),
-        ),
-        output_schema: None,
-    });
+        );
+            model.input_schema = crate::mcp_server::schema::object_schema(vec![], BTreeMap::new());
+            model.annotations = Some({
+                let mut model = ToolAnnotations::default();
+                model.read_only_hint = Some(true);
+                model.open_world_hint = Some(false);
+                model
+            });
+            model.icons = None;
+            model.meta = Some(
+                serde_json::json!({
+                    "ui": { "visibility": ["app"] }
+                })
+                .as_object()
+                .cloned()
+                .expect("plasm_ui_list_catalogs meta")
+                .into(),
+            );
+            model.output_schema = None;
+            model
+        });
         tools.push(ui_read_plan_tool());
         tools.push(ui_read_run_tool());
     }
@@ -212,26 +208,25 @@ pub(crate) fn plasm_tools(artifact_access: ArtifactAccessMode, ui_apps_enabled: 
             }))
             .expect("run_id schema"),
         );
-        tools.push(Tool {
-            name: "plasm_read_run_artifact".into(),
-            title: Some("Read Plasm run snapshot".into()),
-            description: Some(PLASM_READ_RUN_ARTIFACT_TOOL_DESCRIPTION.into()),
-            input_schema: ToolInputSchema::new(
+        tools.push({
+            let mut model = Tool::default();
+            model.name = "plasm_read_run_artifact".into();
+            model.title = Some("Read Plasm run snapshot".into());
+            model.description = Some(PLASM_READ_RUN_ARTIFACT_TOOL_DESCRIPTION.into());
+            model.input_schema = crate::mcp_server::schema::object_schema(
                 vec!["logical_session_ref".into()],
-                Some(read_props),
-                None,
-            ),
-            annotations: Some(ToolAnnotations {
-                read_only_hint: Some(true),
-                open_world_hint: Some(false),
-                ..Default::default()
-            }),
-            execution: Some(ToolExecution {
-                task_support: Some(ToolExecutionTaskSupport::Forbidden),
-            }),
-            icons: vec![],
-            meta: None,
-            output_schema: None,
+                read_props,
+            );
+            model.annotations = Some({
+                let mut model = ToolAnnotations::default();
+                model.read_only_hint = Some(true);
+                model.open_world_hint = Some(false);
+                model
+            });
+            model.icons = None;
+            model.meta = None;
+            model.output_schema = None;
+            model
         });
     }
     if workflow_mcp_tools_enabled() && attach_ui_meta {
@@ -259,28 +254,27 @@ fn ui_read_plan_tool() -> Tool {
         "run_ref".into(),
         json_schema_string_type("`pcN` plan commit ref from `plasm` dry-run."),
     );
-    Tool {
-        name: "plasm_ui_read_plan".into(),
-        title: Some("Hydrate plan DAG for MCP App view".into()),
-        description: Some(
+    {
+        let mut model = Tool::default();
+        model.name = "plasm_ui_read_plan".into();
+        model.title = Some("Hydrate plan DAG for MCP App view".into());
+        model.description = Some(
             "App-only: returns `structuredContent.ui` with `comp` + `plan_ux_reflection` for Plan Review when the host forward omits the UI lane.".into(),
-        ),
-        input_schema: ToolInputSchema::new(
+        );
+        model.input_schema = crate::mcp_server::schema::object_schema(
             vec!["logical_session_ref".into(), "run_ref".into()],
-            Some(props),
-            None,
-        ),
-        annotations: Some(ToolAnnotations {
-            read_only_hint: Some(true),
-            open_world_hint: Some(false),
-            ..Default::default()
-        }),
-        execution: Some(ToolExecution {
-            task_support: Some(ToolExecutionTaskSupport::Forbidden),
-        }),
-        icons: vec![],
-        meta: Some(app_only_tool_meta()),
-        output_schema: Some(crate::mcp_ui_payload::plasm_tool_output_schema()),
+            props,
+        );
+        model.annotations = Some({
+            let mut model = ToolAnnotations::default();
+            model.read_only_hint = Some(true);
+            model.open_world_hint = Some(false);
+            model
+        });
+        model.icons = None;
+        model.meta = Some(app_only_tool_meta().into());
+        model.output_schema = Some(crate::mcp_ui_payload::plasm_tool_output_schema());
+        model
     }
 }
 
@@ -306,27 +300,24 @@ fn ui_read_run_tool() -> Tool {
         }))
         .expect("run_id schema"),
     );
-    Tool {
-        name: "plasm_ui_read_run".into(),
-        title: Some("Hydrate run snapshot for MCP App view".into()),
-        description: Some(
+    {
+        let mut model = Tool::default();
+        model.name = "plasm_ui_read_run".into();
+        model.title = Some("Hydrate run snapshot for MCP App view".into());
+        model.description = Some(
             "App-only: returns `structuredContent.ui.steps[].preview_entities` when the host forward omits run rows.".into(),
-        ),
-        input_schema: ToolInputSchema::new(
-            vec!["logical_session_ref".into()],
-            Some(props),
-            None,
-        ),
-        annotations: Some(ToolAnnotations {
-            read_only_hint: Some(true),
-            open_world_hint: Some(false),
-            ..Default::default()
-        }),
-        execution: Some(ToolExecution {
-            task_support: Some(ToolExecutionTaskSupport::Forbidden),
-        }),
-        icons: vec![],
-        meta: Some(app_only_tool_meta()),
-        output_schema: Some(crate::mcp_ui_payload::plasm_run_tool_output_schema()),
+        );
+        model.input_schema =
+            crate::mcp_server::schema::object_schema(vec!["logical_session_ref".into()], props);
+        model.annotations = Some({
+            let mut model = ToolAnnotations::default();
+            model.read_only_hint = Some(true);
+            model.open_world_hint = Some(false);
+            model
+        });
+        model.icons = None;
+        model.meta = Some(app_only_tool_meta().into());
+        model.output_schema = Some(crate::mcp_ui_payload::plasm_run_tool_output_schema());
+        model
     }
 }

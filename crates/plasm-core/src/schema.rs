@@ -5959,8 +5959,15 @@ impl CGS {
                     },
                 );
             }
-        } else if matches!(cap.output_schema.as_ref().map(|output| &output.output_type), Some(OutputType::EntityUnion { .. })) {
-            return err(crate::error::RelationMaterializeError::EntitySelectionRequired { target: target_entity.to_owned() });
+        } else if matches!(
+            cap.output_schema.as_ref().map(|output| &output.output_type),
+            Some(OutputType::EntityUnion { .. })
+        ) {
+            return err(
+                crate::error::RelationMaterializeError::EntitySelectionRequired {
+                    target: target_entity.to_owned(),
+                },
+            );
         } else if cap.domain.as_str() != target_entity {
             return err(crate::error::RelationMaterializeError::DomainMismatch {
                 actual: cap.domain.to_string(),

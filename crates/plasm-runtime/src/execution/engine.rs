@@ -99,6 +99,7 @@ impl ExecuteOptions {
 
 /// Main execution engine
 pub struct ExecutionEngine {
+    pub(crate) mcp: crate::mcp_execution::McpBindings,
     pub(crate) transport: Arc<dyn HttpTransport>,
     pub(crate) config: ExecutionConfig,
     pub(crate) replay_store: Option<crate::MemoryReplayStore>,
@@ -107,6 +108,11 @@ pub struct ExecutionEngine {
 }
 
 impl ExecutionEngine {
+    /// Bind initialized network clients before exposing this engine to callers.
+    pub fn with_mcp_bindings(mut self, bindings: crate::mcp_execution::McpBindings) -> Self {
+        self.mcp = bindings;
+        self
+    }
     pub(crate) fn resolve_http_base_from_opts(&self, opts: &ExecuteOptions) -> Arc<str> {
         if let Some(ref o) = opts.http_base_url_override {
             let t = o.trim();
@@ -258,6 +264,7 @@ impl ExecutionEngine {
         let transport = ResilientHttpTransport::new(inner, policy);
 
         Ok(Self {
+            mcp: Default::default(),
             transport: Arc::new(transport),
             config,
             replay_store: Some(crate::MemoryReplayStore::default()),
@@ -276,6 +283,7 @@ impl ExecutionEngine {
     ) -> Self {
         let policy = HttpResiliencePolicy::from(&config);
         Self {
+            mcp: Default::default(),
             transport: Arc::new(ResilientHttpTransport::wrap(transport, policy)),
             config,
             replay_store: Some(crate::MemoryReplayStore::default()),
@@ -478,6 +486,12 @@ impl ExecutionEngine {
     ) -> Result<(serde_json::Value, Option<String>), RuntimeError> {
         let fp = crate::RequestFingerprint::from_operation(operation)?;
         let out = match operation {
+            CompiledOperation::Mcp(call) => self
+                .mcp
+                .execute_recorded(call, fp.to_hex())
+                .await
+                .map(|value| (value, None))
+                .map_err(RuntimeError::from),
             CompiledOperation::CredentialBind(binding) => {
                 let base = self.effective_http_base_for_request();
                 let (store, scope) = super::http_exec::credential_scope(

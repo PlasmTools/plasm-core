@@ -60,6 +60,8 @@ pub enum CmlEvaluationError {
 
 #[derive(Error, Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TransportKind {
+    #[error("mcp")]
+    Mcp,
     #[error("http")]
     Http,
     #[error("graphql")]
@@ -76,6 +78,8 @@ pub enum TransportKind {
 
 #[derive(Error, Debug, Clone)]
 pub enum CmlError {
+    #[error(transparent)]
+    Mcp(#[from] crate::McpTemplateError),
     #[error(transparent)]
     MissingCapabilityMapping(#[from] plasm_core::schema::MissingCapabilityMapping),
     #[error(transparent)]

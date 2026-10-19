@@ -18,12 +18,14 @@ pub mod predicate_compiler;
 pub use plasm_cml::{
     compile_operation, compile_request, eval_cml, eval_cond, parse_capability_template,
     path_var_names_from_request, template_pagination, template_var_names, AuxiliaryHttpMerge,
-    CapabilityTemplate, CmlCond, CmlEnv, CmlExpr, CmlRequest, CmlType, CompiledMultipartBody,
-    CompiledMultipartPart, CompiledOperation, CompiledRequest, ConcatArraySource, CredentialSource,
-    HttpBodyFormat, HttpMethod, HttpResponseDecode, MultipartBodySpec, MultipartPartSpec,
-    PaginationConfig, PaginationContractError, PaginationLocation, PaginationParam,
-    PaginationParamRole, PaginationStop, PaginationStrategyKind, PathSegment as CmlPathSegment,
-    ResponsePreprocess, ValidatedPagination, ViewCompiled, ViewTemplate,
+    CapabilityTemplate, CmlCond, CmlEnv, CmlExpr, CmlRequest, CmlType, CompiledMcpCall,
+    CompiledMultipartBody, CompiledMultipartPart, CompiledOperation, CompiledRequest,
+    ConcatArraySource, CredentialSource, HttpBodyFormat, HttpMethod, HttpResponseDecode,
+    McpCollectionContract, McpResponse, McpResultSource, McpTemplate, McpTemplateError,
+    MultipartBodySpec, MultipartPartSpec, PaginationConfig, PaginationContractError,
+    PaginationLocation, PaginationParam, PaginationParamRole, PaginationStop,
+    PaginationStrategyKind, PathSegment as CmlPathSegment, ResponsePreprocess, ValidatedPagination,
+    ViewCompiled, ViewTemplate,
 };
 
 #[cfg(feature = "evm")]

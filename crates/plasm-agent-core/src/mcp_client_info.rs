@@ -4,8 +4,8 @@
 //! explicit when handshake has not been observed. Callers MUST NOT await initialization
 //! forever; [`McpClientInfo::Default`] governs until `initialize` arrives.
 
-use rust_mcp_sdk::schema::InitializeRequestParams;
-use rust_mcp_sdk::McpServer;
+use crate::mcp_server::request::McpRequest;
+use rmcp::model::InitializeRequestParams;
 
 /// Observed MCP client initialize state for artifact / UI host policy.
 #[derive(Debug, Clone, Default)]
@@ -25,11 +25,8 @@ pub enum McpClientInfo {
 impl McpClientInfo {
     /// Snapshot client info from the runtime without waiting for handshake.
     #[must_use]
-    pub fn observe(runtime: &dyn McpServer) -> Self {
-        match runtime.client_info() {
-            Some(params) => Self::Initialized(Box::new(params)),
-            None => Self::Default,
-        }
+    pub(crate) fn observe(runtime: &McpRequest) -> Self {
+        runtime.client.clone()
     }
 
     /// Construct from an `initialize` handler payload (always observed).
