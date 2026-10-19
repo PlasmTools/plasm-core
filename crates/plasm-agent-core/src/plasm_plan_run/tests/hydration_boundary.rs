@@ -157,6 +157,7 @@ async fn run_case(
 enum TestSource<'a> {
     Oracle(&'a str),
     Python(&'a str),
+    PythonPaged(&'a str),
 }
 
 async fn run_source_case(
@@ -216,9 +217,11 @@ async fn run_source_case_with_federation(
             crate::compile_plasm_program(&Default::default(), None, &es, "boundary", program)
                 .expect("oracle compile")
         }
-        TestSource::Python(program) => crate::plasm_compile::compile_python_program(&es, program)
-            .await
-            .expect("Python compile"),
+        TestSource::Python(program) | TestSource::PythonPaged(program) => {
+            crate::plasm_compile::compile_python_program(&es, program)
+                .await
+                .expect("Python compile")
+        }
     };
     let comp =
         serde_json::from_slice(&serde_json::to_vec(&bundle.artifact().comp).unwrap()).unwrap();
@@ -248,6 +251,12 @@ async fn run_source_case_with_federation(
         );
     })?;
     for step in &mut cold.return_steps {
+        if matches!(source, TestSource::PythonPaged(_)) && step.result.count() > 25 {
+            assert!(
+                step.result.paging_handle.is_some(),
+                "fixture must exercise continuation"
+            );
+        }
         step.result = Arc::new(
             crate::test_support::execution_fixtures::drain_presentation_pages(
                 &es,
@@ -273,6 +282,12 @@ async fn run_source_case_with_federation(
     .await?;
     let mut result = result;
     for step in &mut result.return_steps {
+        if matches!(source, TestSource::PythonPaged(_)) && step.result.count() > 25 {
+            assert!(
+                step.result.paging_handle.is_some(),
+                "warm fixture must exercise continuation"
+            );
+        }
         let full = crate::test_support::execution_fixtures::drain_presentation_pages(
             &es,
             &host,
@@ -580,6 +595,58 @@ fn boundary_fanout_above_one_thousand_survives_compile_serde_and_execution() {
             })
             .collect();
         assert_eq!(actual, (1..=1002).collect::<Vec<_>>());
+    });
+}
+
+#[test]
+fn scoped_flat_map_preserves_child_records_through_pages_and_warm_cache() {
+    on_runtime(async {
+        let es = session();
+        let symbols = es.teaching_exposure.as_ref().unwrap().to_symbol_map();
+        for count in [0, 1, 40] {
+            let program = format!(
+                r#"class Report(Program):
+    def build(self):
+        auth = {session}.{login}()
+        folder = {folder}.get("root", access_token=auth.access_token)
+        rows = folder.{notes}.flat_map(lambda note: note.{owners}.map(lambda owner: {{"projected_id": owner.owner_id, "label": owner.name}}, max_parents=64), max_parents=64)
+        return rows.where(lambda row: row.projected_id > 0)
+"#,
+                session = symbols.entity_sym_for("matrix", "Session"),
+                login = symbols.method_sym_for("matrix", "Session", "login"),
+                folder = symbols.entity_sym_for("matrix", "Folder"),
+                notes = symbols.ident_sym_relation_for("matrix", "Folder", "wire_notes"),
+                owners = symbols.ident_sym_relation_for("matrix", "Note", "owners"),
+            );
+            let results = run_source_case_with_federation(
+                TestSource::PythonPaged(&program),
+                "record-token".into(),
+                (1..=count).collect(),
+                false,
+                false,
+                false,
+            )
+            .await
+            .expect("computed children survive composition and continuation");
+            for result in results {
+                let returned = &result.return_steps.first().unwrap().result;
+                assert_eq!(returned.count(), count as usize);
+                assert_eq!(
+                    returned.collection.row_materialization(),
+                    plasm_runtime::execution::RowMaterialization::Computed
+                );
+                let actual: Vec<_> = returned
+                    .entities()
+                    .iter()
+                    .map(|row| plasm_runtime::entity_to_agent_row_json(row, None).unwrap())
+                    .collect();
+                for (index, row) in actual.iter().enumerate() {
+                    assert_eq!(row["projected_id"], json!(index + 1));
+                    assert_eq!(row["label"], json!(format!("owner-{}", index + 1)));
+                    assert!(row.get("owner_id").is_none());
+                }
+            }
+        }
     });
 }
 

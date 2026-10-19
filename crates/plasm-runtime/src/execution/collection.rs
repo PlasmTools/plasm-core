@@ -277,10 +277,15 @@ impl ExecutionCollection {
 
     pub fn flat_map(
         &self,
-        row_materialization: RowMaterialization,
         expression: &impl serde::Serialize,
         children: &[Self],
     ) -> Result<Self, CollectionFault> {
+        // Flatten returns child rows, never rows interpreted using the parent
+        // contract. Empty output needs no catalog identity restoration.
+        let row_materialization = children
+            .iter()
+            .find(|child| child.count() != 0)
+            .map_or(RowMaterialization::Computed, Self::row_materialization);
         let mut inputs = vec![self];
         inputs.extend(children.iter());
         let identities: Vec<_> = children
@@ -334,7 +339,7 @@ impl ExecutionCollection {
         };
         if contributing
             .iter()
-            .any(|source| source.row_materialization != row_materialization)
+            .any(|source| source.count() != 0 && source.row_materialization != row_materialization)
         {
             return Err(CollectionFault::RowMaterializationMismatch);
         }
@@ -441,21 +446,38 @@ mod tests {
         let computed = catalog
             .clone()
             .with_row_materialization(RowMaterialization::Computed);
+        let empty = catalog.filter(&"empty", &[], &[]).unwrap();
+        let empty_output = empty.flat_map(&"empty_bind", &[]).unwrap();
+        assert_eq!(empty_output.count(), 0);
+        assert_eq!(
+            empty_output.row_materialization(),
+            RowMaterialization::Computed
+        );
+        let two_parents = ExecutionCollection::observe(
+            identity(),
+            vec![row("a"), row("b")],
+            Observation::ExactOutput { decoded: 2 },
+        )
+        .unwrap();
+        let with_empty = two_parents
+            .flat_map(&"empty_child", &[empty, computed.clone()])
+            .unwrap();
+        assert_eq!(
+            with_empty.row_materialization(),
+            RowMaterialization::Computed
+        );
+        assert_eq!(with_empty.count(), 1);
         for (parent, child, output) in [
             (&computed, &catalog, RowMaterialization::Catalog),
             (&catalog, &computed, RowMaterialization::Computed),
         ] {
             let result = parent
-                .flat_map(output, &"children", std::slice::from_ref(child))
+                .flat_map(&"children", std::slice::from_ref(child))
                 .unwrap();
             assert_eq!(result.row_materialization(), output);
         }
         assert!(matches!(
-            catalog.flat_map(
-                RowMaterialization::Catalog,
-                &"wrong",
-                std::slice::from_ref(&computed)
-            ),
+            two_parents.flat_map(&"wrong", &[catalog.clone(), computed.clone()]),
             Err(CollectionFault::RowMaterializationMismatch)
         ));
         let result = ExecutionCollection::derive(
@@ -702,7 +724,7 @@ mod occurrence_properties {
                 parent.membership().identity().derived(&i).unwrap(),
                 values.iter().map(|value| CachedEntity::new(Ref::new("Child", value.to_string()), 0)).collect(),
                 if partial_child { Observation::MoreAvailable } else { Observation::ExactOutput { decoded: values.len() } }).unwrap()).collect::<Vec<_>>();
-            let result = parent.flat_map(crate::execution::RowMaterialization::Catalog, &"children", &outputs).unwrap();
+            let result = parent.flat_map(&"children", &outputs).unwrap();
             let expected = children.iter().flatten().map(|v| Ref::new("Child", v.to_string())).collect::<Vec<_>>();
             prop_assert_eq!(result.membership().observed().iter().cloned().collect::<Vec<_>>(), expected);
             let complete = !unknown_parent && (!partial_child || children.is_empty());

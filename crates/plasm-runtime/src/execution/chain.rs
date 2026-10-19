@@ -63,11 +63,7 @@ impl ExecutionEngine {
         source_result.collection.materialize(Demand::Observed)?;
         if source_result.count() == 0 {
             return Ok(ExecutionResult {
-                collection: source_result.collection.flat_map(
-                    crate::execution::RowMaterialization::Catalog,
-                    &"empty_chain",
-                    &[],
-                )?,
+                collection: source_result.collection.flat_map(&"empty_chain", &[])?,
                 has_more: false,
                 pagination_resume: None,
                 paging_handle: None,
@@ -318,11 +314,7 @@ impl ExecutionEngine {
                 }
             }
 
-            let collection = source_result.collection.flat_map(
-                crate::execution::RowMaterialization::Catalog,
-                chain,
-                &children,
-            )?;
+            let collection = source_result.collection.flat_map(chain, &children)?;
             let count = collection.count();
             return Ok(ExecutionResult {
                 collection,
@@ -578,11 +570,9 @@ impl ExecutionEngine {
             .into_iter()
             .collect::<Option<Vec<_>>>()
             .ok_or(plasm_core::collection_codec::CollectionFault::Conservation)?;
-        let collection = source_result.collection.flat_map(
-            crate::execution::RowMaterialization::Catalog,
-            &"scoped_query_fanout",
-            &children,
-        )?;
+        let collection = source_result
+            .collection
+            .flat_map(&"scoped_query_fanout", &children)?;
         let count = collection.count();
         merged_stats.cache_hits = merged_stats
             .cache
@@ -654,11 +644,7 @@ impl ExecutionEngine {
         source_result.collection.materialize(Demand::Observed)?;
         if source_result.count() == 0 {
             return Ok(ExecutionResult {
-                collection: source_result.collection.flat_map(
-                    crate::execution::RowMaterialization::Catalog,
-                    &"empty_chain",
-                    &[],
-                )?,
+                collection: source_result.collection.flat_map(&"empty_chain", &[])?,
                 has_more: false,
                 pagination_resume: None,
                 paging_handle: None,
@@ -751,11 +737,7 @@ impl ExecutionEngine {
         source_result.collection.materialize(Demand::Observed)?;
         if source_result.count() == 0 {
             return Ok(ExecutionResult {
-                collection: source_result.collection.flat_map(
-                    crate::execution::RowMaterialization::Catalog,
-                    &"empty_chain",
-                    &[],
-                )?,
+                collection: source_result.collection.flat_map(&"empty_chain", &[])?,
                 has_more: false,
                 pagination_resume: None,
                 paging_handle: None,
@@ -835,11 +817,7 @@ impl ExecutionEngine {
         source_result.collection.materialize(Demand::Observed)?;
         if source_result.count() == 0 {
             return Ok(ExecutionResult {
-                collection: source_result.collection.flat_map(
-                    crate::execution::RowMaterialization::Catalog,
-                    &"empty_chain",
-                    &[],
-                )?,
+                collection: source_result.collection.flat_map(&"empty_chain", &[])?,
                 has_more: false,
                 pagination_resume: None,
                 paging_handle: None,
@@ -978,11 +956,7 @@ impl ExecutionEngine {
 
         if gets.is_empty() {
             return Ok(ExecutionResult {
-                collection: source_result.collection.flat_map(
-                    crate::execution::RowMaterialization::Catalog,
-                    &"empty_chain",
-                    &[],
-                )?,
+                collection: source_result.collection.flat_map(&"empty_chain", &[])?,
                 has_more: false,
                 pagination_resume: None,
                 paging_handle: None,
@@ -1102,11 +1076,9 @@ impl ExecutionEngine {
             let record = refs.record().clone();
             embedded_children.push(ExecutionCollection::graph(record));
         }
-        let embedded = source_result.collection.flat_map(
-            crate::execution::RowMaterialization::Catalog,
-            relation,
-            &embedded_children,
-        )?;
+        let embedded = source_result
+            .collection
+            .flat_map(relation, &embedded_children)?;
         let mut ordered_refs: Vec<Ref> = Vec::new();
         for e in source_result.entities() {
             if let Some(refs) = e.relations.get(relation_key) {
@@ -1161,11 +1133,7 @@ impl ExecutionEngine {
                 }
             }
 
-            let collection = embedded.flat_map(
-                crate::execution::RowMaterialization::Catalog,
-                chain_step,
-                &children,
-            )?;
+            let collection = embedded.flat_map(chain_step, &children)?;
             let count = collection.count();
             return Ok(ExecutionResult {
                 collection,

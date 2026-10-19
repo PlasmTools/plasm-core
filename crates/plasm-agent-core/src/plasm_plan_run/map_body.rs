@@ -154,6 +154,8 @@ pub(super) async fn materialize(
     let mut rows = Vec::with_capacity(parents.len());
     let mut value_shapes = Vec::with_capacity(parents.len());
     let mut identities = Vec::new();
+    let mut returned_children = Vec::new();
+    let mut retained_parents = Vec::new();
     let mut dependencies = vec![source.result.collection.clone()];
     dependencies.extend(captured.values().map(|m| m.result.collection.clone()));
     let mut instances = Vec::with_capacity(parents.len());
@@ -379,6 +381,7 @@ pub(super) async fn materialize(
                 ));
             }
             dependencies.push(output.result.collection.clone());
+            returned_children.push(output.result.collection.computation_source().clone());
             completed += 1;
             invocation.finish(
                 OccurrencePhase::Done,
@@ -411,6 +414,7 @@ pub(super) async fn materialize(
                 .and_then(plasm_core::Value::as_bool)
                 .ok_or_else(|| scope_failure("scope_predicate_result_invalid", "predicate scope did not return a Boolean"))?;
             if filtering && keep {
+                retained_parents.push(occurrence);
                 rows.push(parent);
                 value_shapes.push(source
                     .value_shape_at(occurrence)
@@ -473,15 +477,23 @@ pub(super) async fn materialize(
         }
         plasm_core::plasm_monad::ScopedOutput::Filter => source.qualified_entity.entry_id.clone(),
     };
-    let row_materialization = match &body.output {
+    let collection = match &body.output {
+        plasm_core::plasm_monad::ScopedOutput::Rows { .. } => source.result.collection.flat_map(
+            &("map_body", &map.id, &scope_path),
+            &returned_children,
+        )?,
+        plasm_core::plasm_monad::ScopedOutput::Filter => source.result.collection.computation_source().filter(
+            &("map_body", &map.id, &scope_path),
+            &retained_parents,
+            &dependencies.iter().skip(1).collect::<Vec<_>>(),
+        )?,
         plasm_core::plasm_monad::ScopedOutput::Record
-        | plasm_core::plasm_monad::ScopedOutput::Quantify { .. } => plasm_runtime::execution::RowMaterialization::Computed,
-        plasm_core::plasm_monad::ScopedOutput::Rows { .. } => plasm_runtime::execution::RowMaterialization::Catalog,
-        plasm_core::plasm_monad::ScopedOutput::Filter => source.result.collection.row_materialization(),
+        | plasm_core::plasm_monad::ScopedOutput::Quantify { .. } => plasm_runtime::execution::ExecutionCollection::evaluate(
+            plasm_runtime::execution::RowMaterialization::Computed,
+            source.result.collection.membership().identity().derived(&("map_body", &map.id, &scope_path))?,
+            &dependencies.iter().collect::<Vec<_>>(), rows_to_entities(&entity, &rows)?.into(),
+        )?,
     };
-    let collection = plasm_runtime::execution::ExecutionCollection::evaluate(row_materialization,
-        source.result.collection.membership().identity().derived(&("map_body", &map.id, &scope_path))?,
-        &dependencies.iter().collect::<Vec<_>>(), rows_to_entities(&entity, &rows)?.into())?;
     let result = ExecutionResult {
         collection,
         has_more: false,

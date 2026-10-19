@@ -317,11 +317,10 @@ pub(crate) async fn materialize_validated_relation_traversal(
                 relation,
                 trace,
                 read_cap,
-                source_mat.result.collection.flat_map(
-                    plasm_runtime::execution::RowMaterialization::Catalog,
-                    &"empty_relation",
-                    &[],
-                )?,
+                source_mat
+                    .result
+                    .collection
+                    .flat_map(&"empty_relation", &[])?,
             ),
         )
         .await;
@@ -1068,7 +1067,7 @@ pub(crate) async fn archive_materialize_iterate_until(
     let mut inputs: Vec<_> = dependencies.iter().collect();
     inputs.push(&observed.result.collection);
     let collection = plasm_runtime::execution::ExecutionCollection::evaluate(
-        plasm_runtime::execution::RowMaterialization::Catalog,
+        observed.result.collection.row_materialization(),
         observed
             .result
             .collection

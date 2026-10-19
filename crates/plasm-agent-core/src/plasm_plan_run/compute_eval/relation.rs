@@ -101,11 +101,7 @@ pub(crate) async fn materialize_relation_singleton_chain(
                 })?
                 .result
                 .collection
-                .flat_map(
-                    plasm_runtime::execution::RowMaterialization::Catalog,
-                    &"empty_relation",
-                    &[],
-                )?,
+                .flat_map(&"empty_relation", &[])?,
         )
         .await;
     }

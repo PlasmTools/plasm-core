@@ -39,14 +39,10 @@ pub(crate) fn embedded_collection<'a>(
         };
         children.push(ExecutionCollection::graph(record));
     }
-    let mut collection = source.collection.flat_map(
-        plasm_runtime::execution::RowMaterialization::Catalog,
-        &(relation, target),
-        &children,
-    )?;
+    let mut collection = source.collection.flat_map(&(relation, target), &children)?;
     if let Some(count) = read_cap {
         collection = ExecutionCollection::derive(
-            plasm_runtime::execution::RowMaterialization::Catalog,
+            collection.row_materialization(),
             collection
                 .membership()
                 .identity()

@@ -137,11 +137,7 @@ impl PlanLineExecutionFold {
             child.materialize(plasm_core::collection_codec::Demand::Observed)?;
         }
         let result = match parent {
-            Some(parent) => parent.flat_map(
-                plasm_runtime::execution::RowMaterialization::Catalog,
-                &identity,
-                &self.collections,
-            )?,
+            Some(parent) => parent.flat_map(&identity, &self.collections)?,
             None if self.collections.is_empty() => ExecutionCollection::evaluate(
                 plasm_runtime::execution::RowMaterialization::Catalog,
                 identity,
@@ -166,7 +162,7 @@ impl PlanLineExecutionFold {
                 .resident_entities()
                 .select(0..count.min(result.count()))?;
             ExecutionCollection::derive(
-                plasm_runtime::execution::RowMaterialization::Catalog,
+                result.row_materialization(),
                 id,
                 &[&result],
                 Transform::Take(count),
