@@ -613,6 +613,7 @@ impl ExecutionEngine {
 
     /// Traverse a host-recorded source result without issuing a synthetic source Get.
     /// Source identity must match the bound reference; authored expressions use `execute`.
+    #[allow(clippy::too_many_arguments)] // Same execution options as execute, plus the observed source.
     pub fn execute_relation_from_observed<'a>(
         &'a self,
         chain: &'a plasm_core::ChainExpr,

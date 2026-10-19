@@ -309,7 +309,7 @@ impl ExecutionEngine {
             }
 
             let collection = if partial_mcp {
-                ExecutionCollection::observe_for(cgs, &query, mat.graph.stats().version, res.entities.into(), plasm_core::collection_codec::Observation::UnprovenPage)?
+                ExecutionCollection::observe_for(cgs, &query, mat.graph.stats().version, res.entities, plasm_core::collection_codec::Observation::UnprovenPage)?
             } else {
                 let membership = ExecutionCacheConsult::index_query_result(mat, &query, cap_name, &res.entities, cgs, &env)?;
                 ExecutionCollection::materialized(membership, res.entities.into())?

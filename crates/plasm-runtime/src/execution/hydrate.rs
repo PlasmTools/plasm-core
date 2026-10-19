@@ -348,6 +348,7 @@ impl ExecutionEngine {
         Ok((result, network))
     }
 
+    #[allow(clippy::too_many_arguments)] // Mirrors the hydration dispatcher context above.
     pub(crate) async fn hydrate_query_summaries(
         &self,
         entity_type: &str,

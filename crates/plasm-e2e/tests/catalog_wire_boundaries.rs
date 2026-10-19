@@ -314,7 +314,9 @@ fn named_relations_bind_every_required_source_input() {
             RelationMaterialization::QueryScoped {
                 capability: actual,
                 param: binding,
+                select_entity,
             } => {
+                assert!(select_entity.is_none());
                 assert_eq!(actual.as_str(), capability);
                 assert_eq!(binding.as_str(), param);
             }

@@ -477,6 +477,7 @@ impl ExecutionEngine {
     }
 
     /// Parallel scoped-query fanout; `network_jobs` must already list `(parent_index, query)`.
+    #[allow(clippy::too_many_arguments)] // Mirrors the scoped-query execution context below.
     async fn fanout_scoped_query_parallel(
         &self,
         source_result: &ExecutionResult,

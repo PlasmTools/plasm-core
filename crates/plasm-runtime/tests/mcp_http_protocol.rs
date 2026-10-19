@@ -122,7 +122,7 @@ async fn assert_catalog_coverage(exhaustive: bool, paginated: bool, cursor: bool
             plasm_core::collection_codec::ResultCoverage::Unknown
         }
     );
-    let requests = peer.requests.lock().unwrap();
+    let requests = peer.requests.lock().unwrap().clone();
     let calls: Vec<_> = requests
         .iter()
         .filter(|(_, request)| request["method"] == "tools/call")

@@ -649,6 +649,9 @@ mod footprint_tests {
             std::mem::size_of::<RuntimeError>()
         );
         assert!(std::mem::size_of::<CacheError>() < 128);
+        assert!(std::mem::size_of::<crate::mcp_transport::McpProtocolError>() < 128);
+        assert!(std::mem::size_of::<crate::mcp_transport::McpTransportError>() < 128);
+        assert!(std::mem::size_of::<crate::mcp_execution::McpExecutionError>() < 128);
     }
 
     #[test]

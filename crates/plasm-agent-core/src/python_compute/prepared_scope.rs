@@ -177,8 +177,8 @@ mod tests {
                 _ => {
                     *selection = Some(Box::new(plasm_core::plasm_monad::PythonRowSelection {
                         owner: plasm_core::plasm_monad::PlanQualifiedEntityKey {
-                            entry_id: "types".try_into().unwrap(),
-                            entity: "Sample".try_into().unwrap(),
+                            entry_id: "types".into(),
+                            entity: "Sample".into(),
                         },
                         ports: vec![],
                     }))

@@ -100,6 +100,18 @@ pub(crate) fn compute_result_shape(op: &ComputeOp, explicit_singleton: bool) -> 
     }
 }
 
+/// Narrowing can discard a singleton; it never manufactures an exact singleton.
+pub(crate) fn narrowed_entity_cardinality(at_most_one: bool) -> RowCardinalityProof {
+    if at_most_one {
+        RowCardinalityProof::BoundedSingleton {
+            kind: BoundedSingletonKind::EntityNarrowing,
+            from_plural_source: false,
+        }
+    } else {
+        RowCardinalityProof::StaticPlural
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -168,17 +180,5 @@ mod tests {
                 if output_kind == 3 { RowCardinalityProof::StaticPlural } else { parent }
             );
         }
-    }
-}
-
-/// Narrowing can discard a singleton; it never manufactures an exact singleton.
-pub(crate) fn narrowed_entity_cardinality(at_most_one: bool) -> RowCardinalityProof {
-    if at_most_one {
-        RowCardinalityProof::BoundedSingleton {
-            kind: BoundedSingletonKind::EntityNarrowing,
-            from_plural_source: false,
-        }
-    } else {
-        RowCardinalityProof::StaticPlural
     }
 }

@@ -153,13 +153,13 @@ pub(in crate::plasm_dag) fn synthetic_schema_for_qualified_entity(
     session: &ExecuteSession,
     qe: &QualifiedEntityKey,
 ) -> Result<SyntheticResultSchema, PassthroughSchemaError> {
-    let cols = infer_entity_row_columns(session, &qe)?;
+    let cols = infer_entity_row_columns(session, qe)?;
     if cols.is_empty() {
         return Err(PassthroughSchemaError::EntityFieldsMissing);
     }
     let mut schema =
         schema_from_output_fields(qe.entity.as_str(), cols.iter(), SyntheticValueKind::Unknown);
-    let cgs = super::catalog::cgs_for_qualified_entity(session, &qe).ok_or_else(|| {
+    let cgs = super::catalog::cgs_for_qualified_entity(session, qe).ok_or_else(|| {
         PassthroughSchemaError::Catalog(super::catalog::SchemaCatalogError::CatalogNotLoaded {
             entry_id: qe.entry_id.to_string(),
             entity: qe.entity.to_string(),

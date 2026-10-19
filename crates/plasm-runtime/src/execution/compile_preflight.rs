@@ -186,7 +186,7 @@ pub fn preflight_compile_bound_relation(
             capability, param, ..
         } => (
             capability,
-            indexmap::IndexMap::from([(param.clone(), parent.id_field.clone().into())]),
+            indexmap::IndexMap::from([(param.clone(), parent.id_field.clone())]),
         ),
         _ => unreachable!("non-query materializers return above"),
     };

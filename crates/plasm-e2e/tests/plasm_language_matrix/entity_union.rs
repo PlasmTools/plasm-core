@@ -121,7 +121,7 @@ async fn union_fixture(
                         {"id":"shared","caption":"right","right":null}
                     ])
                 } else { serde_json::json!([]) };
-                let done = if parent == "empty" { false } else if matches!(parent, "paged" | "latefail") { page > 0 } else { page > 0 };
+                let done = parent != "empty" && page > 0;
                 let data = if parent == "empty" { serde_json::json!([]) } else if parent == "duplicate" && page == 0 {
                     serde_json::json!([{"id":"dup","headline":"first"},{"id":"dup","headline":"second"}])
                 } else { data };

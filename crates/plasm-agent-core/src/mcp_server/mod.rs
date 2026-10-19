@@ -567,12 +567,9 @@ impl ServerHandler for PlasmMcpHandler {
             .insert(runtime.transport_key.clone(), context.peer.clone());
         let mode = self.artifact_access_mode_for_runtime(&runtime).await;
         let ui_enabled = self.mcp_ui_apps_enabled_for_runtime(&runtime).await;
-        Ok({
-            let mut model = ListToolsResult::default();
-            model.tools = tools::plasm_tools(mode, ui_enabled);
-            model.meta = None;
-            model.next_cursor = None;
-            model
+        Ok(ListToolsResult {
+            tools: tools::plasm_tools(mode, ui_enabled),
+            ..Default::default()
         })
     }
 
@@ -586,13 +583,7 @@ impl ServerHandler for PlasmMcpHandler {
             .write()
             .await
             .insert(runtime.transport_key.clone(), context.peer.clone());
-        Ok({
-            let mut model = ListResourcesResult::default();
-            model.resources = vec![];
-            model.meta = None;
-            model.next_cursor = None;
-            model
-        })
+        Ok(ListResourcesResult::default())
     }
 
     async fn list_resource_templates(
@@ -629,12 +620,9 @@ impl ServerHandler for PlasmMcpHandler {
         short.mime_type = Some("application/octet-stream".into());
         short.title = Some("Plasm execute run artifact (short index)".into());
         resource_templates.extend([canonical, short]);
-        Ok({
-            let mut model = ListResourceTemplatesResult::default();
-            model.resource_templates = resource_templates;
-            model.meta = None;
-            model.next_cursor = None;
-            model
+        Ok(ListResourceTemplatesResult {
+            resource_templates,
+            ..Default::default()
         })
     }
 

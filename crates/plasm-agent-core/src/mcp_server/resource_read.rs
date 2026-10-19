@@ -405,7 +405,7 @@ mod tests {
             model.contains(&session_ref),
             "continuation belongs to the resolved logical session"
         );
-        assert!(serde_json::from_str::<serde_json::Value>(&model).is_err());
+        assert!(serde_json::from_str::<serde_json::Value>(model).is_err());
         let tool = super::super::resource_helpers::run_artifact_context_payload(
             &handler,
             &prompt_hash,

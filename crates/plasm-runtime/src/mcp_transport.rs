@@ -18,11 +18,17 @@ pub use rmcp::model::{
 #[derive(Debug, Error)]
 pub enum McpProtocolError {
     #[error(transparent)]
-    Initialize(#[from] ClientInitializeError),
+    Initialize(#[from] Box<ClientInitializeError>),
     #[error(transparent)]
     Service(#[from] ServiceError),
     #[error(transparent)]
     Shutdown(#[from] tokio::task::JoinError),
+}
+
+impl From<ClientInitializeError> for McpProtocolError {
+    fn from(source: ClientInitializeError) -> Self {
+        Self::Initialize(Box::new(source))
+    }
 }
 
 /// Protocol lifecycle is explicit; failure never selects another protocol.

@@ -491,8 +491,8 @@ fn validate_capture_port(
 }
 
 /// Catalog authority survives row-preserving operations, never object derivation.
-pub(crate) fn capture_owner<'a>(
-    nodes: &'a [ValidatedPlanNode],
+pub(crate) fn capture_owner(
+    nodes: &[ValidatedPlanNode],
     id: &str,
 ) -> Result<QualifiedEntityKey, MapBodyValidationError> {
     #[derive(Clone, Copy)]

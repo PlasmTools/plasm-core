@@ -323,7 +323,7 @@ fn classify_record_contract(
             .or_else(|| surface.ir_template.as_ref().map(|template| &template.expr));
         let capability = match expr {
             Some(plasm_core::Expr::Query(query)) => {
-                Some(plasm_core::resolve_query_capability(query, &cgs)?)
+                Some(plasm_core::resolve_query_capability(query, cgs)?)
             }
             Some(plasm_core::Expr::Invoke(invoke)) => Some(
                 cgs.get_capability(invoke.capability.as_str())
