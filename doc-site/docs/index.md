@@ -49,6 +49,13 @@ Details and edge cases live in the [Reference](reference/cli-and-env.md) section
 
 Sources under `doc-site/docs/` are curated for the public OSS repo; some pages are synced via [`doc-site/scripts/sync_allowlisted_docs.py`](https://github.com/PlasmTools/plasm-core/blob/main/doc-site/scripts/sync_allowlisted_docs.py) — see [`doc-site/README.md`](https://github.com/PlasmTools/plasm-core/blob/main/doc-site/README.md). Examples focus on **HTTP** and **GraphQL** catalogs.
 
+| Task | Where |
+|------|--------|
+| Build like CI / export releases | [Building from source](reference/building-from-source.md) → [`build/bazel/README.md`](https://github.com/PlasmTools/plasm-core/blob/main/build/bazel/README.md) |
+| Normative Python semantics | [Language definition](reference/plasm-language-definition.md) → [Python compute contract](reference/python-compute-contract.md) |
+| Matrix evidence ledger | [`PYTHON-COVERAGE.md`](https://github.com/PlasmTools/plasm-core/blob/main/crates/plasm-e2e/tests/plasm_language_matrix/PYTHON-COVERAGE.md) |
+| MCP / transport design notes (not on this site) | [`docs/README.md`](https://github.com/PlasmTools/plasm-core/blob/main/docs/README.md) |
+
 <div class="plasm-docs-cloud-strip">
   <strong>OAuth apps blocked?</strong> Self-hosted OAuth (especially Google Workspace) is often operationally heavy.
   <a href="https://platform.plasm.tools" target="_blank" rel="noopener">Plasm Cloud</a> hosts OAuth provider registration and outbound connection flows for teams that prefer not to own every client ID.

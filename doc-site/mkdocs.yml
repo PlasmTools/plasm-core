@@ -77,9 +77,15 @@ nav:
   - Glossary: glossary.md
   - Language:
       - Language definition: reference/plasm-language-definition.md
+      - Python compute contract: reference/python-compute-contract.md
+      - Monty profile ledger: reference/python-compute-profile.md
+      - Scoped composition: reference/python-scoped-composition.md
+      - Conformance design: reference/python-conformance.md
+      - Collection coverage: reference/collection-coverage-contract.md
       - Row compute: reference/plasm-row-compute.md
       - Long operations: reference/plasm-long-operations.md
       - Correction catalogue: reference/correction-catalogue.md
+  - Build from source: reference/building-from-source.md
   - Service endpoints:
       - Tool model: reference/tool-model-http.md
       - Trace & run artifacts: reference/oss-core-trace-artifacts.md

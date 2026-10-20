@@ -12,7 +12,7 @@ Most agent stacks still center on **ad hoc JSON tools**: large schemas in contex
 
 ## Quick start
 
-Prerequisites: **Rust** (`cargo`). Optional: **Just**, **Elixir** (for downstream Phoenix workflows).
+Prerequisites: **Rust** (`cargo`) for quick iteration. **Bazel** matches CI, nextest, and release exports from **0.5.5** — see [Building from source](https://plasmtools.github.io/plasm-core/reference/building-from-source/) and [`build/bazel/README.md`](build/bazel/README.md). Optional: **Just**, **Elixir** (for downstream Phoenix workflows).
 
 **OSS appliance (native binary)** — **`plasm-server`** (Cargo package `plasm-server`): in-process kernel, HTTP + MCP, optional Ratatui UI. No OSS container image is shipped from this repo; run with Cargo:
 
