@@ -15,19 +15,15 @@ py_binary(
 )
 
 exports_files([
+    "napi_sys_test.BUILD.bazel",
+    "napi_test.BUILD.bazel",
+    "nextest_runner.py",
     "ty_vendored_deterministic.patch",
     "pty.Cargo.Bazel.lock",
     "pty.Cargo.lock",
     "rules_rust_build_script_copts.patch",
     "rules_rust_nested_workspace.patch",
     "rules_rust_relocatable_lock.patch",
-])
-
-exports_files(["nextest_runner.py"])
-
-exports_files([
-    "napi_test.BUILD.bazel",
-    "napi_sys_test.BUILD.bazel",
 ])
 
 py_binary(

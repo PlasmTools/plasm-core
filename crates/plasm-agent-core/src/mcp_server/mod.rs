@@ -163,6 +163,18 @@ impl PlasmMcpHandler {
         self
     }
 
+    async fn bind_request(
+        &self,
+        context: &rmcp::service::RequestContext<rmcp::RoleServer>,
+    ) -> Arc<McpRequest> {
+        let runtime = Arc::new(McpRequest::from_context(context));
+        self.peers
+            .write()
+            .await
+            .insert(runtime.transport_key.clone(), context.peer.clone());
+        runtime
+    }
+
     pub(crate) async fn persist_transport_state(&self, transport_key: &str) {
         let Some(redis) = self.transport_redis.as_ref() else {
             return;
@@ -560,11 +572,7 @@ impl ServerHandler for PlasmMcpHandler {
         _request: Option<PaginatedRequestParams>,
         context: rmcp::service::RequestContext<rmcp::RoleServer>,
     ) -> Result<ListToolsResult, ErrorData> {
-        let runtime = Arc::new(McpRequest::from_context(&context));
-        self.peers
-            .write()
-            .await
-            .insert(runtime.transport_key.clone(), context.peer.clone());
+        let runtime = self.bind_request(&context).await;
         let mode = self.artifact_access_mode_for_runtime(&runtime).await;
         let ui_enabled = self.mcp_ui_apps_enabled_for_runtime(&runtime).await;
         Ok(ListToolsResult {
@@ -578,11 +586,7 @@ impl ServerHandler for PlasmMcpHandler {
         _params: Option<PaginatedRequestParams>,
         context: rmcp::service::RequestContext<rmcp::RoleServer>,
     ) -> Result<ListResourcesResult, ErrorData> {
-        let runtime = Arc::new(McpRequest::from_context(&context));
-        self.peers
-            .write()
-            .await
-            .insert(runtime.transport_key.clone(), context.peer.clone());
+        let _runtime = self.bind_request(&context).await;
         Ok(ListResourcesResult::default())
     }
 
@@ -591,11 +595,7 @@ impl ServerHandler for PlasmMcpHandler {
         _params: Option<PaginatedRequestParams>,
         context: rmcp::service::RequestContext<rmcp::RoleServer>,
     ) -> Result<ListResourceTemplatesResult, ErrorData> {
-        let runtime = Arc::new(McpRequest::from_context(&context));
-        self.peers
-            .write()
-            .await
-            .insert(runtime.transport_key.clone(), context.peer.clone());
+        let runtime = self.bind_request(&context).await;
         let ui_enabled = self.mcp_ui_apps_enabled_for_runtime(&runtime).await;
         let mut resource_templates = Vec::new();
         if ui_enabled {
@@ -631,11 +631,7 @@ impl ServerHandler for PlasmMcpHandler {
         params: ReadResourceRequestParams,
         context: rmcp::service::RequestContext<rmcp::RoleServer>,
     ) -> Result<rmcp::model::ReadResourceResponse, ErrorData> {
-        let runtime = Arc::new(McpRequest::from_context(&context));
-        self.peers
-            .write()
-            .await
-            .insert(runtime.transport_key.clone(), context.peer.clone());
+        let runtime = self.bind_request(&context).await;
         resource_read::handle_read_resource_request(self, params, runtime)
             .await
             .map(Into::into)
@@ -646,11 +642,7 @@ impl ServerHandler for PlasmMcpHandler {
         params: CallToolRequestParams,
         context: rmcp::service::RequestContext<rmcp::RoleServer>,
     ) -> Result<rmcp::model::CallToolResponse, ErrorData> {
-        let runtime = Arc::new(McpRequest::from_context(&context));
-        self.peers
-            .write()
-            .await
-            .insert(runtime.transport_key.clone(), context.peer.clone());
+        let runtime = self.bind_request(&context).await;
         // Dispatch exposes a typed boxed future, keeping the compiler/executor
         // state machine behind the service boundary rather than in the transport.
         Ok(
