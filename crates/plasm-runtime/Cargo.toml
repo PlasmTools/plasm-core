@@ -30,6 +30,7 @@ hex = { workspace = true }
 futures-util = { workspace = true }
 async-stream = { workspace = true }
 async-trait = { workspace = true }
+rmcp = { workspace = true, features = ["client", "transport-streamable-http-client-reqwest", "reqwest"] }
 oauth2 = { workspace = true }
 url = { workspace = true }
 opentelemetry = { workspace = true }

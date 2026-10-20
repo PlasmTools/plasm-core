@@ -334,6 +334,10 @@ pub enum EntityExpressionError {
 
 #[derive(Debug, Clone, Error)]
 pub enum RelationMaterializeError {
+    #[error("entity-union query materialization requires explicit select_entity matching relation target `{target}`")]
+    EntitySelectionRequired { target: String },
+    #[error("select_entity `{selected}` must equal relation target `{target}` and belong to the capability entity-union output")]
+    InvalidEntitySelection { selected: String, target: String },
     #[error("no such capability name")]
     UnknownCapability,
     #[error("capability is declared on entity '{actual}' but relation targets '{expected}'")]
@@ -364,6 +368,20 @@ impl From<crate::money::CrossCurrencyError> for TypeError {
 
 #[derive(Error, Debug, Clone)]
 pub enum SchemaError {
+    #[error("capability `{capability}`: entity-union outputs are supported only for query, search, and action; receiver-addressed get/create/update/delete require a concrete entity output")]
+    EntityUnionCapabilityKind { capability: String },
+    #[error("capability `{capability}`: query/search entity-union outputs must declare cardinality many")]
+    EntityUnionQueryCardinality { capability: String },
+    #[error("capability `{capability}` entity union must declare at least two distinct existing entities")]
+    EntityUnionVariants { capability: String },
+    #[error("capability `{capability}` output decoder cases must match the declared entity union exactly")]
+    EntityUnionDecoderCases { capability: String },
+    #[error(
+        "capability `{capability}` discriminator paths must be nonempty and contain nonempty keys"
+    )]
+    EntityUnionDiscriminatorPath { capability: String },
+    #[error("capability `{capability}` entity assertion requires a concrete entity or collection output")]
+    EntityAssertionOutput { capability: String },
     #[error("invalid prerequisite declaration: {source}")]
     PrerequisiteInvalid {
         #[source]

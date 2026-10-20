@@ -1,5 +1,8 @@
 //! E2E push coverage: HTTP operation SSE + MCP `notifications/plasm/op`.
 
+// Nested async host futures require deeper compile-time layout evaluation.
+#![recursion_limit = "256"]
+
 #[path = "common/hermit_lang_matrix.rs"]
 mod hermit_lang_matrix;
 
@@ -26,7 +29,6 @@ use long_operation::{
     operation_handle_from_accept, parse_sse_events, LongOpFixture, RunOpts, Surface,
 };
 const SLOW_LANG_ITEM: &str = "class ReadPagedItems(Program):\n    def build(self):\n        return e1.query().page_size(1).take(10)\n";
-const COUNT_ALL_LANG_ITEMS: &str = "class CountItems(Program):\n    def build(self):\n        return e1.query().aggregate(n=agg.count())\n";
 use reqwest::StatusCode;
 use tokio::sync::{mpsc, oneshot, Semaphore};
 
@@ -209,8 +211,9 @@ async fn operation_progress_push_http_sse_and_mcp_notifications_async() {
     )
     .await;
 
-    // Aggregate requires complete collection coverage, unlike the bounded HTTP read.
-    let plan = fixture.plan_dry(Surface::Mcp, COUNT_ALL_LANG_ITEMS).await;
+    // A mutation retains the review/run boundary; clean reads can execute inline.
+    let reviewed_update = language_matrix::reviewed_update_program();
+    let plan = fixture.plan_dry(Surface::Mcp, &reviewed_update).await;
     let receipt = plan
         .pointer("/mcp_result/content/0/text")
         .and_then(serde_json::Value::as_str)
@@ -224,11 +227,11 @@ async fn operation_progress_push_http_sse_and_mcp_notifications_async() {
         .expect("reviewed MCP run_ref");
     assert!(
         receipt.lines().any(|line| line == "dry_verdict\treview"),
-        "full-collection aggregate must require review: {receipt}"
+        "mutation must require review: {receipt}"
     );
     let run = fixture.run_program(
         Surface::Mcp,
-        COUNT_ALL_LANG_ITEMS,
+        &reviewed_update,
         RunOpts {
             run_ref: Some(run_ref),
             ..Default::default()

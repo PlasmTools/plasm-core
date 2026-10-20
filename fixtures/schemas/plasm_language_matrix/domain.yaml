@@ -3,6 +3,50 @@ auth:
   scheme: none
 http_backend: http://127.0.0.1:9
 entities:
+  LangUnionParent:
+    id_field: id
+    description: Query-only parent whose observed rows support scoped relations without a Get capability.
+    fields:
+      id: {required: true, value_ref: nv_lang_item_id}
+    relations:
+      left:
+        target: HomographRowA
+        cardinality: many
+        materialize:
+          kind: query_scoped_bindings
+          capability: lang_union_feed_query
+          bindings: {parent_id: id}
+          select_entity: HomographRowA
+      right:
+        target: HomographRowB
+        cardinality: many
+        materialize:
+          kind: query_scoped_bindings
+          capability: lang_union_feed_query
+          bindings: {parent_id: id}
+          select_entity: HomographRowB
+  LangUnionFeed:
+    id_field: id
+    description: Source of a heterogeneous observation stream with nominal variants.
+    fields:
+      id: {required: true, value_ref: nv_lang_item_id}
+    relations:
+      left:
+        target: HomographRowA
+        cardinality: many
+        materialize:
+          kind: query_scoped_bindings
+          capability: lang_union_feed_query
+          bindings: {parent_id: id}
+          select_entity: HomographRowA
+      right:
+        target: HomographRowB
+        cardinality: many
+        materialize:
+          kind: query_scoped_bindings
+          capability: lang_union_feed_query
+          bindings: {parent_id: id}
+          select_entity: HomographRowB
   LangDetail:
     id_field: id
     description: Nested detail under LangSummary (one-cardinality chain target).
@@ -81,7 +125,17 @@ entities:
       headline:
         required: true
         value_ref: nv_homograph_shared_short
-    relations: {}
+      note:
+        required: false
+        value_ref: nv_homograph_shared_short
+    relations:
+      detail:
+        description: Detail carried by the left variant only.
+        target: LangDetail
+        cardinality: one
+        materialize:
+          kind: from_parent_get
+          path: [{key: detail}]
   HomographRowB:
     id_field: id
     description: Matrix homograph right row (shared value-domain fingerprint, distinct wire).
@@ -351,6 +405,47 @@ entities:
         value_ref: nv_lang_lane_stock_shelf
     relations: {}
 capabilities:
+  lang_union_parent_query:
+    kind: query
+    entity: LangUnionParent
+    provides: [id]
+  lang_union_feed_get:
+    kind: get
+    entity: LangUnionFeed
+    provides: [id]
+  lang_union_feed_query:
+    description: Observe a mixed stream of two nominal row variants.
+    kind: query
+    entity: LangUnionFeed
+    scope:
+      - {name: parent_id, value_ref: nv_lang_item_id, required: false}
+    output:
+      type: entity_union
+      variants: [HomographRowA, HomographRowB]
+      cardinality: many
+      decoder:
+        type: entity_union
+        cases:
+          - entity_type: HomographRowA
+            when: {kind: absent, path: [right]}
+          - entity_type: HomographRowB
+            when: {kind: present, path: [right]}
+  homographrowa_get:
+    kind: get
+    entity: HomographRowA
+    provides: [id, headline]
+    output:
+      type: entity
+      entity_type: HomographRowA
+      decoder:
+        type: entity_assert
+        when: {kind: absent, path: [right]}
+  homographrowa_mark:
+    receiver: {kind: entity, entity: HomographRowA}
+    description: Mark exactly the selected left-variant identity.
+    kind: action
+    entity: HomographRowA
+    output: {type: side_effect, description: The selected left-variant row is marked.}
   langitem_query:
     description: List LangItem rows (optional tags filter; optional owner filter uses owner-scoped path)
     kind: query

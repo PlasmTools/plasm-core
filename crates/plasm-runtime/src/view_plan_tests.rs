@@ -478,7 +478,7 @@ proptest::proptest! {
         coverage in 0u8..3,
         reverse in proptest::bool::ANY,
     ) {
-        let dir = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        let dir = std::path::PathBuf::from(crate::test_manifest_dir())
             .join("../../fixtures/schemas/view_rowsets");
         let cgs = plasm_core::loader::load_schema_dir(&dir).unwrap();
         let source_coverage = match coverage {

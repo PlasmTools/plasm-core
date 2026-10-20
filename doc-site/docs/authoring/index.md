@@ -1,11 +1,12 @@
 ---
 name: plasm-authoring
-description: Author and validate Plasm domain models (CGS, `domain.yaml`), capability mappings (CML, `mappings.yaml`: HTTP REST, GraphQL via `transport: graphql`, composed reads via `transport: view`), and `views:` DAGs. Test interactively with `plasm-repl` against Hermit mocks or live/sandbox backends. Use when extracting schemas from OpenAPI specs, writing or editing `domain.yaml` / `mappings.yaml`, validating mappings, iteratively developing typed agent tooling, or driving Cursor / Claude / Codex / other coding agents — point them at this skill as the full playbook; do not duplicate per-API runbooks into agent prompts.
+description: >-
+  Author and validate Plasm domain models (CGS, `domain.yaml`), capability mappings (CML, `mappings.yaml`: HTTP REST, GraphQL via `transport: graphql`, composed reads via `transport: view`), and `views:` DAGs. Test interactively with `plasm-repl` against Hermit mocks or live/sandbox backends. Use when extracting schemas from OpenAPI specs, writing or editing `domain.yaml` / `mappings.yaml`, validating mappings, iteratively developing typed agent tooling, or driving Cursor / Claude / Codex / other coding agents — point them at this skill as the full playbook; do not duplicate per-API runbooks into agent prompts.
 ---
 
 # Plasm Authoring
 
-Iteratively author, validate, and test a **typed agent surface** (Python Program classes + typed teaching) from an API specification. This skill is the **single source of truth** for CGS / CML authoring inside `plasm-core`. The monorepo root delegates to this file; do not re-author CGS doctrine elsewhere.
+Iteratively author, validate, and test a **typed agent surface** (Python Program declarations + typed teaching) from an API specification. This skill is the **single source of truth** for CGS / CML authoring inside `plasm-core`. The monorepo root delegates to this file; do not re-author CGS doctrine elsewhere.
 
 The two authored files are:
 
@@ -20,6 +21,7 @@ For complete schema reference (types, operators, CML grammar, variable resolutio
 This skill is the authoring core. Use these companion skills for follow-on work:
 
 - [plasm-catalog-e2e-test](https://github.com/PlasmTools/plasm-core/tree/main/skills/plasm-catalog-e2e-test/SKILL.md) — Hermit-first then live / sandbox transport testing.
+- [plasm-catalog-adversarial-verify](https://github.com/PlasmTools/plasm-core/tree/main/skills/plasm-catalog-adversarial-verify/SKILL.md) — programming-agent adversarial prove loop (AppWorld-first): teaching audit, twin-query compression, dry/live Plasm crawl, evidence under `apis/.../e2e/`.
 - [plasm-catalog-polish](https://github.com/PlasmTools/plasm-core/tree/main/skills/plasm-catalog-polish/SKILL.md) — autonomous diagnostic / fix loop for an existing catalog.
 - [plasm-catalog-score](https://github.com/PlasmTools/plasm-core/tree/main/skills/plasm-catalog-score/SKILL.md) — rubric scoring of catalog quality.
 - [plasm-catalog-reprint](https://github.com/PlasmTools/plasm-core/tree/main/skills/plasm-catalog-reprint/SKILL.md) — full-cutover regeneration of a weak catalog.
@@ -85,7 +87,7 @@ Read the spec file directly. For large specs, read section by section — paths 
 - Some rely entirely on `description` prose and examples
 - Some leave parameters undocumented and rely on external docs
 
-You must read **all of the above** — not just the canonical `parameters:` array — to correctly classify each param into `role: filter | search | sort | sort_direction | response_control | scope` and decide where it goes (CML `pagination` block, `parameters:`, or CML `query:` / `path:`). A spec where params live in extension fields or request bodies is a harder but equally valid authoring exercise.
+You must read **all of the above** — not just the canonical OpenAPI `parameters` array — to classify each vendor input into a **capability input lane** (`scope` / `selection` / `controls` / `arguments` / `payload`) and decide how CML transmits it (`path:` / `query:` / `body` / `pagination:`). Flat CGS `parameters:` / `role:` is a **hard load error**. A spec where params live in extension fields or request bodies is a harder but equally valid authoring exercise.
 
 **From the spec, identify:**
 
@@ -117,7 +119,7 @@ See [reference.md — Task-oriented catalogs](reference.md#task-oriented-catalog
 
 Write the domain model. No HTTP details here — only what exists and what you can do.
 
-**Value registry:** under **`values:`**, each stable key defines a **named semantic slot** (wire `type` plus optional `target`, `allowed_values`, `string_semantics`, `description`, …). Entity **fields** and capability **parameters** only **`value_ref:`** that slot — slot-level keys (`required`, `path`, `role`, …) say how *this* use site differs. Treat **one key ↔ one intended meaning** in the domain; sharing a key across sites is a **deliberate** merge (same gloss / semantics), never a mechanical "all strings dedupe" shortcut. See [reference.md — Value domains](reference.md#value-domains-values-and-value_ref).
+**Value registry:** under **`values:`**, each stable key defines a **named semantic slot** (kernel or profile `type:` plus optional `target`, `enum:`, `constraints:`, `description`, …). Entity **fields** and capability **lane slots** only **`value_ref:`** that slot — slot-level keys (`required`, `path`, …) say how *this* use site differs. Treat **one key ↔ one intended meaning** in the domain; sharing a key across sites is a **deliberate** merge (same gloss / semantics), never a mechanical "all strings dedupe" shortcut. See [reference.md — Value domains](reference.md#value-domains-values-and-value_ref). **Obsolete** `string_semantics` / `value_format` / `allowed_values` / `type: select|date|multi_select` — rejected by the loader; see [reference.md — Obsolete](reference.md#obsolete-or-unsupported-do-not-teach).
 
 ### CRITICAL: Versioning is mandatory
 
@@ -129,6 +131,8 @@ Write the domain model. No HTTP details here — only what exists and what you c
 
 **`description` strings:** On entities, capabilities, and `output` for side-effect actions, write **concise language for an agentic surface**: what the **entity** or operation is **for** in the task (goal, anchor, decision), not an inventory of typed fields and relations — the schema and teaching table already show those. Avoid tabular jargon (**"row"**) in Teaching-table-facing prose. Avoid embedding REST paths, methods, status codes, bare **`http://`** / **`https://`** links, or "see GET /…" notes — those belong in **`mappings.yaml`** comments or vendor docs, not in the CGS. **`auth.token_url`** in `domain.yaml` is the intentional exception (machine OAuth endpoint string). **Do not** repeat shapes already taught by **`value_ref`**, projection **`provides:`**, **`input_schema`** unions, or parameter names — omit field / parameter descriptions when types carry the story (see [reference.md — Gloss: do not restate typed structure](reference.md#gloss-do-not-restate-typed-structure)).
 
+**No cross-catalog prose (compositional CGS):** Each `apis/<name>/domain.yaml` is a **closed** semantic surface. Teaching text (`description`, value glosses, discovery `names` / terms that read as instructions) must **never** name another registry catalog, its `entry_id`, or its entity/capability ids (e.g. do not tell Venmo login to “use Supervisor.email / AccountPassword”). Sessions compose catalogs at runtime; authors annotate **role semantics inside this catalog only** (“account holder’s email”, “this service’s password”, “payment recipient ≠ login identity”). Cross-catalog orchestration belongs in product docs / eval harnesses — not CGS strings. Same-catalog entity names are fine when they teach composition **within** this file.
+
 **Agentic teaching table copy (execute / MCP teaching):** The prompt renderer attaches **entity `description`** to the symbolic teaching table (projection witness / banner). Treat it as **imperative surface**, not a manual or vendor doc: **one or two short sentences** on **purpose** (why an agent would focus this **entity**) — **never** name **relations** or **fields** that already show up as **wire-name** columns, bracket projections, or typed columns (that duplicates the graph and confuses "banner" with "nav map"). **Do not** summarize projection contents ("includes refs to …", "typed booleans plus …") — wire names, relations, and types already do that. **Do not** name other capability ids, spell out call sequences ("use X then Y"), cite **`transport:`**, document HTTP error semantics, or tell agents how to seed MCP — **`discovery:`** blocks (**`operation_terms`**, **`target_terms`**, **`qualifier_terms`** on entities/capabilities), **`apis/<api>/README.md`**, and eval cases carry that operational guidance. Capability **`description:`** should state **effect** or **when to use** in domain terms; move cross-capability playbooks into **`discovery`** on the relevant capability. See [reference.md — Teaching-table-facing descriptions](reference.md#teaching-table-facing-descriptions-entities-and-capabilities).
 
 ```yaml
@@ -137,18 +141,18 @@ values:
     type: integer
   nv_pet_name:
     type: string
-    string_semantics: short
   nv_pet_status:
-    type: select
-    allowed_values: [available, pending, sold]
+    type: enum
+    enum: [available, pending, sold]
   nv_category_id:
     type: integer
   nv_category_name:
     type: string
-    string_semantics: short
   nv_pet_find_by_status_status:
-    type: select
-    allowed_values: [available, pending, sold]
+    type: enum
+    enum: [available, pending, sold]
+  nv_created_at:
+    type: rfc3339
 
 entities:
   Pet:
@@ -162,6 +166,8 @@ entities:
         required: true
       status:
         value_ref: nv_pet_status
+      created_at:
+        value_ref: nv_created_at
     relations:
       category:
         target: Category
@@ -185,7 +191,7 @@ capabilities:
   pet_findByStatus:
     kind: query
     entity: Pet
-    parameters:
+    selection:
       - name: status
         value_ref: nv_pet_find_by_status_status
         required: true
@@ -202,24 +208,24 @@ capabilities:
 
 **Teaching projection:** Python entity declarations expose typed catalog fields; use `.select(...)` for an explicit row projection. Primary read capabilities and `provides:` still describe materialization. Historical `domain_projection_examples` only affects the internal native teaching oracle.
 
-**String fields:** on the corresponding **`values:`** row with **`type: string`**, set **`string_semantics:`** for every non-trivial string (`short`, `markdown`, `document`, `html`, `json_text`, …); plain `short` is the default when omitted.
+**String / text profiles:** use kernel `type: string` or profile types (`markdown`, `document`, `html`, `json_text`, `email`, `url`, …) on the **`values:`** row — not `string_semantics:`.
 
-**Field / parameter wire types:** the vocabulary (`string`, `integer`, `number`, `boolean`, `select`, `multi_select`, `date`, `array`, `entity_ref`, **`blob`**, `uuid`) is expressed as **`type:`** on a **`values:`** row, not as inline `field_type` on the slot. For **`entity_ref`**, set **`target: EntityName`** on the value row. For **`blob`**, see [reference.md — Blob / binary](reference.md). For **`array`**, the value row has **`type: array`** and **`items: { value_ref: <element_key> }`**; the element shape is another `values:` row. **`multi_select`** requires non-empty `allowed_values` on its value row.
+**Field / lane wire types:** the vocabulary is kernel names (`string`, `integer`, `number`, `boolean`, `array`, `json`, `entity_ref`, `blob`, `money`) or core profiles (`enum`, `multi_enum`, `rfc3339`, `iso8601_date`, `unix_ms`, `unix_sec`, `uuid`, …) on a **`values:`** row, not inline `field_type` on the slot. For **`entity_ref`**, set **`target: EntityName`** on the value row. For **`blob`**, see [reference.md — Blob / binary](reference.md). For **`array`**, the value row has **`type: array`** and **`items: { value_ref: <element_key> }`**. **`enum` / `multi_enum`** require non-empty **`enum:`** on the value row.
 
-**Wire narrowing (`value_format`):** for every **`values:`** row with **`type: date`**, set **`value_format`** on that row (`rfc3339`, `iso8601_date`, `unix_ms`, `unix_sec`, or map form). Same for date-typed capability parameters and `input_schema` fields.
+**Temporal profiles:** use `type: rfc3339` / `iso8601_date` / `unix_ms` / `unix_sec` directly — no separate `value_format` key. Do **not** put evaluation `now` or harness calendar dates in `values:` descriptions — the language card states `evaluation_now` (PLP-9) when temporal slots are taught.
 
 ### CGS field typing checklist (strict)
 
-Use this on every new or edited entity (and on capability `parameters:` / `input_schema` fields) so the model does not collapse to "stringly typing."
+Use this on every new or edited entity (and on capability lane / `input_schema` fields) so the model does not collapse to "stringly typing."
 
-1. **Instants and calendar dates** — If the wire is a timestamp or date, use a **`values:`** row with **`type: date`** and the correct **`value_format`**. **Do not** use `string` for fields named like `date_created`, `date_updated`, `last_modified`, `*expires*`, `*_on`, or `last_*` when the API returns a normal machine date/time.
-2. **Enumerations** — If the set of values is closed and known, use **`select`** / **`multi_select`** with **`allowed_values`** on the value row. If the vendor reuses a field across resources with inconsistent or extensible lifecycles, keep **`string`** and do not force a narrow `select` that rejects valid future wire values.
+1. **Instants and calendar dates** — If the wire is a timestamp or date, use a **`values:`** row with the matching temporal profile (`rfc3339`, `iso8601_date`, `unix_ms`, `unix_sec`). **Do not** use bare `string` for fields named like `date_created`, `date_updated`, `last_modified`, `*expires*`, `*_on`, or `last_*` when the API returns a normal machine date/time.
+2. **Enumerations** — If the set of values is closed and known, use **`enum`** / **`multi_enum`** with **`enum:`** on the value row. If the vendor reuses a field across resources with inconsistent or extensible lifecycles, keep **`string`** and do not force a narrow enum that rejects valid future wire values.
 3. **Foreign keys** — If the value is another resource's id and that resource is in the CGS, use **`type: entity_ref`** and **`target:`**.
 4. **Reverse list edges (many)** — When a child has `entity_ref` to a parent and the child's primary list query accepts a parameter that filters by that parent's id, declare a **`cardinality: many` relation on the parent** with **`materialize: { kind: query_scoped, capability: <child_query>, param: <parent_id_param> }`**. Do **not** add a `relations` key with the same name as an `entity_ref` field on the same entity.
 5. **Opaque bytes and file bodies** — Use **`type: blob`**.
-6. **Human text and opaque tokens** — Use **`type: string`** with explicit **`string_semantics:`**.
+6. **Human text and opaque tokens** — Use **`type: string`** or a text profile (`markdown`, `document`, …).
 
-Apply the same rules to **`parameters:`** `value_ref` targets.
+Apply the same rules to lane **`value_ref`** targets.
 
 **Capability kinds:** `query` (collection filter), `search` (free-text relevance), `get` (by ID), `create`, `update`, `delete`, `action` (anything else).
 
@@ -228,7 +234,7 @@ Apply the same rules to **`parameters:`** `value_ref` targets.
 When the agent-facing concept is a **single read row** that **no single vendor endpoint returns**, but it **decomposes** into several **`query` / `get`** capabilities you already modeled, you **must** express it in CGS:
 
 1. Add an **`entities:`** row for that concept (often **`abstract: true`** so discovery does not attach it to parent graphs until explicitly seeded).
-2. Declare a **`kind: query`** capability on that entity; **`parameters:`** are the scope inputs the composition needs.
+2. Declare a **`kind: query`** capability on that entity; **lanes** (`scope` / `selection` / …) are the scope inputs the composition needs.
 3. Add **`views:<key>`** with ordered **`nodes`** (each runs an existing capability), **`bind`** maps for node inputs, and **`output`** maps that shape entity fields.
 4. In **`mappings.yaml`**, wire that capability with **`transport: view`** and **`view: <key>`** only.
 
@@ -298,33 +304,35 @@ auth:
   scheme: none
 ```
 
-### Query capability parameters
+### Query capability input lanes
 
-**Critical rule: only declare parameters the API endpoint actually accepts as HTTP inputs.** Read the OpenAPI operation's `parameters` list and `description` fields. Never generate `parameters:` from entity fields — entity fields describe the domain object, not what the query endpoint accepts.
+**Critical rule: only declare lane slots the API endpoint actually accepts as HTTP inputs.** Read the OpenAPI operation's `parameters` list and `description` fields. Never invent **`selection:`** / **`scope:`** keys from entity fields — entity fields describe the domain object, not what the query endpoint accepts.
 
-**No parameters?** If the endpoint is a plain paginated resource index (e.g. PokéAPI `/pokemon/` — no server-side filters, just offset/limit), declare **no `parameters:`**. Pagination belongs in **`mappings.yaml`**.
+**No selection?** If the endpoint is a plain paginated resource index (e.g. PokéAPI `/pokemon/` — no server-side filters, just offset/limit), declare **no `selection:`**. Pagination belongs in **`mappings.yaml`** (`pagination:` / page controls).
 
 #### `kind: query` vs `kind: search`
 
-Use **`kind: search`** when the endpoint's primary interface is a **free-text relevance query** (`q`, `query`, `search`) that returns ranked results rather than field-filtered rows. If the endpoint filters by concrete field values (`status`, `archived`, `team_id`), use `kind: query`.
+Use **`kind: search`** when the endpoint's primary interface is a **required** free-text relevance query (`q`, `query`, `search`) that returns ranked results rather than field-filtered rows. The free-text **selection** param **must** be `required: true` — optional free-text list filters use **`kind: query`**. Required non-text selection (e.g. AppWorld `access_token`) is taught on the primary `e~"<query>"{…}` row; an optional-filter twin is emitted only when other optional selection slots exist. If the endpoint filters by concrete field values (`status`, `archived`, `team_id`), use `kind: query`.
 
-#### Classification: where each query param goes
+#### Classification: OpenAPI params → lanes
 
-| Param examples | Role | `role:` annotation | Where it goes |
-|----------------|------|--------------------|---------------|
-| `offset`, `limit`, `page`, `cursor`, `after`, `before` | **Pagination** | — | CML `pagination` block only — **not** in `parameters:` |
-| `status`, `tags[]`, `assignees[]`, `archived`, `type` | **Filter** | `filter` *(default, omit)* | `parameters:` + CML `query:` var |
-| `q`, `search`, `query` | **Full-text search** | `search` | `parameters:` (`value_ref` → `values:` string row) + CML `query:` var; use `kind: search` |
-| `order_by`, `sort_by` | **Sort field** | `sort` | `parameters:` + CML `query:` var |
-| `sort`, `direction`, `asc`/`desc` | **Sort direction** | `sort_direction` | `parameters:` + CML `query:` var |
-| `market`, `locale`, `country`, `embed`, `fields`, `inc` | **Response control** | `response_control` | `parameters:` + CML `query:` var |
-| `team_id` in `GET /team/{team_id}/space` | **Parent-scoped sub-resource** | `scope` | `parameters:` (`value_ref` → `values:` `entity_ref`, required) + CML `path:` var |
+| OpenAPI / vendor examples | Lane | CML transmission |
+|---------------------------|------|------------------|
+| `offset`, `limit`, `page`, `cursor`, `after`, `before` | *(omit from CGS)* or `controls` when taught | CML `pagination` block; not brace WHERE |
+| `status`, `tags[]`, `assignees[]`, `archived`, `type`, shelf discriminants | **`selection`** | CML `query:` / path branch vars |
+| `q`, `query`, `search` (required free-text) | **`selection`** on `kind: search` | CML `query:` var |
+| `order_by`, `sort_by`, `direction`, `embed`, `fields`, `locale` | **`controls`** | CML `query:` var; not brace WHERE |
+| `team_id` in `GET /team/{team_id}/space` | **`scope`** | CML `path:` var; pair with relation `materialize` |
+| Create/update/action body fields | **`payload`** | CML `body` |
+| Non-body method args (token on a get/action) | **`arguments`** | CML `query:` / header / path as mapped |
 
-**Scoped sub-resource queries:** When an API has endpoints like `GET /classes/{class_index}/spells` alongside `GET /spells`, declare both as separate `kind: query` capabilities on the same entity. The one with a required `role: scope` parameter is the **scoped list** (pair with relation **`materialize`** so parents supply scope); the unscoped one is the generic index.
+**Same-type list compression:** Competing `kind: query` caps that return the **same entity** (identical or sibling brace shapes, different HTTP path only — including scoped+unscoped twins) are **RPC residue** and a **hard CGS validate error**. Collapse to **one** query with a **selection discriminant** (enum/profile) and CML path branching (`type: if`), fold scoped lists into optional `scope` on that query + relation **`materialize`**, **or** a real entity split when polarity is a different domain object. Do **not** teach twin brace forms or raise teaching-line caps to "escape" brace-dedupe. Full law: [reference.md — Same-type list compression](reference.md#same-type-list-compression).
 
-**Range filters** like ClickUp's `due_date_gt` / `due_date_lt` or Spotify's `min_energy` / `max_energy` are **separate named parameters** — declare each one individually in `parameters:`, not as one field with operator suffixes.
+**Scoped sub-resource lists:** When an API has endpoints like `GET /classes/{class_index}/spells` alongside `GET /spells`, declare **one** `kind: query` with optional class scope (CML path branch). Pair the parent relation with **`materialize`** against that single query — never a second competing query on the child entity.
 
-**Array / multi-value params** (e.g. `genres`, `assignees[]`, `embed[]`): use a **`values:`** row with **`type: multi_select`** or **`type: array`** with **`items: { value_ref: <element_key> }`**. In mappings.yaml:
+**Range filters** like ClickUp's `due_date_gt` / `due_date_lt` are **separate named selection slots** — declare each one individually, not as one field with operator suffixes.
+
+**Array / multi-value params** (e.g. `genres`, `assignees[]`, `embed[]`): use a **`values:`** row with **`type: multi_enum`** or **`type: array`** with **`items: { value_ref: <element_key> }`**. In mappings.yaml:
 
 - **Repeated key** (`?embed=a&embed=b`) — plain `{ type: var, name: embed }`; HTTP layer expands arrays.
 - **CSV** (`?genres=1,2,3`) — `{ type: join, sep: ",", expr: { type: var, name: genres } }`.
@@ -337,8 +345,9 @@ See [reference.md](reference.md) for the full pattern catalogue (index-only, fil
 **Checklist before proceeding:**
 
 - [ ] Every relation target is a defined entity
-- [ ] Every `values:` row with `type: select` (or `multi_select`) has non-empty `allowed_values`
-- [ ] Every required query parameter has `required: true`
+- [ ] Every `values:` row with `type: enum` (or `multi_enum`) has non-empty `enum:`
+- [ ] Every required selection / scope / argument slot has `required: true`
+- [ ] No twin same-arity queries on the same entity (compress or split — see Same-type list compression)
 - [ ] Capability names are unique and follow `entity_operation` convention
 - [ ] Every entity has either a declared `fields` entry for `id_field` or a non-empty `id_from` path
 - [ ] If an entity should **not** teach projection brackets in teaching table, set `domain_projection_examples: false`
@@ -348,6 +357,9 @@ See [reference.md](reference.md) for the full pattern catalogue (index-only, fil
 - [ ] Human-visible keys are `id_field` where the vendor accepts them on get/create
 - [ ] Write surface uses domain verbs, not per-input-field mutation explosion
 - [ ] Mutating APIs: `data_classes:` registry + field `data_class:` on sensitive reads + `sink_class:` on outbound/destructive inputs (see [Information-flow annotations](reference.md#information-flow-annotations-guardians--plan-flow-typing))
+- [ ] Semantic annotation review: inspect inherited field/lane glosses for type-only filler; verify scope, polarity and units from the API. Check authored meaning in retrieval documents, selector evidence and full/incremental teaching, including Get operation descriptions. Follow [Semantic annotation review](reference.md#semantic-annotation-review).
+- [ ] Teachability proof: dump the teaching card under realistic seeds; every task-critical list polarity and mutator is expressible from the card (discriminant or other entity) — not a phantom second query line
+- [ ] Token / auth args on actions/gets do not look like list filters on sibling entities (document in entity/cap descriptions)
 
 ### Scoped relation traversal (`materialize`)
 
@@ -424,6 +436,19 @@ cargo run -p plasm-cli --bin plasm-cgs -- validate --spec path/to/openapi.json a
 cargo run -p plasm-repl -- --schema apis/<api> --backend http://localhost:1080 --help
 ```
 
+### Contract completeness is distinct from schema validity
+
+Before claiming a catalogue complete, audit the pinned backend contract in both directions:
+
+- Every supported operation and selector has an explicit mapping or a documented exclusion.
+- Every domain-relevant response field, nested person, collection and relationship is preserved in typed CGS or explicitly excluded with a reason. A scalar-only projection of a rich response is not complete.
+- List/detail variants preserve truthful identity and cardinality. Parent-scoped children use compound identities; embedded-only rows must be executable without an invented Get endpoint.
+- Advertised fields actually occur in the response or have a declared derivation. Never fabricate a thread-level field merely because its messages contain it.
+- Typed temporal and numeric inputs are encoded at the CML boundary according to the backend's documented wire format.
+- Validation exercises every Query and Search, secondary capabilities, and nested traversal. Record skips and separate structural validity, operation coverage, mock conformance and pinned-backend execution evidence.
+
+Do not attribute agent failures to reasoning limits while necessary catalogue evidence is absent or unverified. Preserve an auditable list of remaining gaps; passing YAML/schema validation alone cannot close it.
+
 ## Step 5: End-to-End Testing
 
 Hand off to [plasm-catalog-e2e-test](https://github.com/PlasmTools/plasm-core/tree/main/skills/plasm-catalog-e2e-test/SKILL.md), which is the operational source of truth for the testing ladder:
@@ -458,3 +483,11 @@ Then fix `domain.yaml` or `mappings.yaml` and re-run from Step 4.
 If the desired API shape **cannot** be modeled with today's CGS + CML + runtime (missing expressiveness, not just tediousness), **stop**. Document the gap as a short blocker note (what shape is needed, which capability/entity breaks, which validator or runtime behavior is insufficient). **Do not** patch `plasm-core`, `plasm-cml`, `plasm-runtime`, or validators yourself to "unstick" the mapping unless explicitly directed in a separate task.
 
 After a difficult or interesting catalog, run [plasm-catalog-retro](https://github.com/PlasmTools/plasm-core/tree/main/skills/plasm-catalog-retro/SKILL.md) to capture systemic improvements.
+
+
+**Embedded execution gate:** follow [Embedded identity proof and observation ownership](reference.md#embedded-identity-proof-and-observation-ownership).
+Require pack/codec identity checks and an abstract direct/scoped/hydrated relation witness.
+Report backend-schema evidence, mock evidence and real-backend evidence separately;
+operation coverage alone never establishes complete response or mutation semantics.
+
+When a catalogue declares prerequisites, verify the deployment manifest covers every requirement and exercise federated discovery bootstrap. Direct engine/catalogue tests do not establish deployment closure.

@@ -202,7 +202,7 @@ mod tests {
     use std::path::PathBuf;
 
     fn matrix_views_cgs() -> CGS {
-        let dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        let dir = PathBuf::from(crate::test_manifest_dir())
             .join("../../fixtures/schemas/plasm_language_matrix_views");
         load_schema_dir(&dir).expect("load matrix views")
     }

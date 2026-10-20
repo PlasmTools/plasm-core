@@ -28,7 +28,7 @@ use plasm_runtime::{ExecutionConfig, ExecutionEngine, ExecutionMode};
 static ALLOCATOR: dhat::Alloc = dhat::Alloc;
 
 fn matrix_fixture_dir() -> PathBuf {
-    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../fixtures/schemas/plasm_language_matrix")
+    PathBuf::from(crate::test_manifest_dir()).join("../../fixtures/schemas/plasm_language_matrix")
 }
 
 fn matrix_host() -> PlasmHostState {

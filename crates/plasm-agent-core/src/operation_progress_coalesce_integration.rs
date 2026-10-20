@@ -19,7 +19,7 @@ use crate::server_state::CatalogBootstrap;
 
 fn host_state() -> Arc<crate::server_state::PlasmHostState> {
     let dir =
-        Path::new(env!("CARGO_MANIFEST_DIR")).join("../../fixtures/schemas/plasm_language_matrix");
+        Path::new(crate::test_manifest_dir()).join("../../fixtures/schemas/plasm_language_matrix");
     let cgs = Arc::new(load_schema_dir(&dir).expect("plasm_language_matrix"));
     let reg = CgsRegistry::from_pairs(vec![(
         "langmatrix".into(),
@@ -45,7 +45,7 @@ fn host_state() -> Arc<crate::server_state::PlasmHostState> {
 
 fn execute_session() -> Arc<ExecuteSession> {
     let dir =
-        Path::new(env!("CARGO_MANIFEST_DIR")).join("../../fixtures/schemas/plasm_language_matrix");
+        Path::new(crate::test_manifest_dir()).join("../../fixtures/schemas/plasm_language_matrix");
     let cgs = Arc::new(load_schema_dir(&dir).expect("plasm_language_matrix"));
     let mut ctxs = IndexMap::new();
     ctxs.insert(

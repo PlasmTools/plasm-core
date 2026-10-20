@@ -83,6 +83,9 @@ fn prefer_row_hole_relation_continuation(
     segment: &str,
     session: &ExecuteSession,
 ) -> bool {
+    let Some(owner) = contract.row_entity.single() else {
+        return false;
+    };
     if matches!(contract.anchor, ContinuationAnchor::BindingLabel) {
         return true;
     }
@@ -95,7 +98,7 @@ fn prefer_row_hole_relation_continuation(
     if contract.anchor.allows_text_parse() {
         return false;
     }
-    relation_uses_from_parent_get(session, &contract.row_entity, segment)
+    relation_uses_from_parent_get(session, owner, segment)
 }
 
 fn parse_relation_continuation_expr(
@@ -108,7 +111,7 @@ fn parse_relation_continuation_expr(
     let relation_wire = resolve_relation_segment_for_continuation(
         session,
         state.cross_cache,
-        &contract.row_entity,
+        contract.concrete_entity()?,
         segment,
         Some(plasm_core::ProgramBindingLabel(contract.label.as_str())),
     )?;
@@ -116,7 +119,7 @@ fn parse_relation_continuation_expr(
         return Ok(plasm_core::expr_parser::ParsedExpr::from_expr(
             relation_continuation_expr_from_source_row_hole(
                 session,
-                &contract.row_entity,
+                contract.concrete_entity()?,
                 &relation_wire,
             )?,
         ));
@@ -138,7 +141,7 @@ fn parse_relation_continuation_expr(
     let try_label_row_chain = |expanded: &str| -> Option<plasm_core::expr_parser::ParsedExpr> {
         let parsed = try_expanded_chain(expanded)?;
         if let Expr::Chain(ref chain) = parsed.expr {
-            if chain.source.primary_entity() == contract.row_entity.entity.as_str() {
+            if chain.source.primary_entity() == contract.concrete_entity().ok()?.entity.as_str() {
                 return Some(parsed);
             }
         }
@@ -172,7 +175,7 @@ fn parse_relation_continuation_expr(
     Ok(plasm_core::expr_parser::ParsedExpr::from_expr(
         relation_continuation_expr_from_source_row_hole(
             session,
-            &contract.row_entity,
+            contract.concrete_entity()?,
             &relation_wire,
         )?,
     ))
@@ -184,6 +187,9 @@ fn looks_like_method_invoke_continuation_tail(
     contract: &ProgramBindingContract,
     tail: &str,
 ) -> bool {
+    let Some(owner) = contract.row_entity.single() else {
+        return false;
+    };
     if !tail.contains('(') {
         return false;
     }
@@ -194,7 +200,7 @@ fn looks_like_method_invoke_continuation_tail(
     resolve_relation_wire_on_entity(
         session,
         state.cross_cache,
-        &contract.row_entity,
+        owner,
         head,
         Some(plasm_core::ProgramBindingLabel(contract.label.as_str())),
     )
@@ -219,15 +225,16 @@ pub(in crate::plasm_dag) fn row_receiver_surface(
     }
     let map = crate::plasm_plan_run::symbol_map_for_plasm_surface_parse(session, state.cross_cache);
     let entity = map.entity_sym_for(
-        contract.row_entity.entry_id.as_str(),
-        contract.row_entity.entity.as_str(),
+        contract.concrete_entity()?.entry_id.as_str(),
+        contract.concrete_entity()?.entity.as_str(),
     );
-    let cgs = super::relation::resolve_cgs_for_qualified_entity(session, &contract.row_entity)
-        .ok_or_else(|| DagCompilationError::ReceiverCatalogMissing {
-            binding: source.to_owned(),
-        })?;
+    let cgs =
+        super::relation::resolve_cgs_for_qualified_entity(session, contract.concrete_entity()?)
+            .ok_or_else(|| DagCompilationError::ReceiverCatalogMissing {
+                binding: source.to_owned(),
+            })?;
     let definition = cgs
-        .get_entity(contract.row_entity.entity.as_str())
+        .get_entity(contract.concrete_entity()?.entity.as_str())
         .ok_or_else(|| DagCompilationError::ReceiverEntityMissing {
             binding: source.to_owned(),
         })?;
@@ -352,7 +359,7 @@ fn lower_relation_continuation_inner(
     let Some(wire) = resolve_relation_wire_on_entity(
         session,
         state.cross_cache,
-        &contract.row_entity,
+        contract.concrete_entity()?,
         segment,
         Some(plasm_core::ProgramBindingLabel(source_label)),
     ) else {
@@ -373,7 +380,7 @@ fn lower_relation_continuation_inner(
         session,
         state.cross_cache,
         chain,
-        Some(&contract.row_entity),
+        Some(contract.concrete_entity()?),
     )?;
     let expanded = contract
         .continuation_text_expansion(segment)
@@ -386,8 +393,9 @@ fn lower_relation_continuation_inner(
         display_expr: Some(expr.to_string()),
     };
     let binding_proofs =
-        relation_binding_proofs_for_lower(session, &contract.row_entity, wire.as_str())?;
-    let materialize = relation_materialize_for_lower(session, &contract.row_entity, wire.as_str())?;
+        relation_binding_proofs_for_lower(session, contract.concrete_entity()?, wire.as_str())?;
+    let materialize =
+        relation_materialize_for_lower(session, contract.concrete_entity()?, wire.as_str())?;
     let view_embed_proof = view_embed_proof_for_materialize(
         session,
         state,
@@ -532,8 +540,8 @@ fn field_project_wire_for_continuation(
     segment: &str,
 ) -> Option<String> {
     use super::relation::resolve_cgs_for_qualified_entity;
-    let cgs = resolve_cgs_for_qualified_entity(session, &contract.row_entity)?;
-    let ent = cgs.get_entity(contract.row_entity.entity.as_str())?;
+    let cgs = resolve_cgs_for_qualified_entity(session, contract.row_entity.single()?)?;
+    let ent = cgs.get_entity(contract.row_entity.single()?.entity.as_str())?;
     if ent.relations.contains_key(segment) {
         return None;
     }
@@ -572,7 +580,7 @@ fn classify_binding_continuation_route(
             if resolve_relation_wire_on_entity(
                 session,
                 state.cross_cache,
-                &contract.row_entity,
+                contract.concrete_entity()?,
                 tail_trim,
                 Some(plasm_core::ProgramBindingLabel(contract.label.as_str())),
             )
@@ -623,7 +631,7 @@ fn lower_multi_segment_relation_continuation(
             session,
             state.cross_cache,
             chain,
-            Some(&contract.row_entity),
+            Some(contract.concrete_entity()?),
         )?;
         let source_card = contract.relation_source_cardinality();
         let result_shape = relation_result_shape(rel_cardinality, source_card);
@@ -634,11 +642,14 @@ fn lower_multi_segment_relation_continuation(
         };
         let binding_proofs = relation_binding_proofs_for_lower(
             session,
-            &contract.row_entity,
+            contract.concrete_entity()?,
             chain.selector.as_str(),
         )?;
-        let materialize =
-            relation_materialize_for_lower(session, &contract.row_entity, chain.selector.as_str())?;
+        let materialize = relation_materialize_for_lower(
+            session,
+            contract.concrete_entity()?,
+            chain.selector.as_str(),
+        )?;
         let view_embed_proof = view_embed_proof_for_materialize(
             session,
             state,

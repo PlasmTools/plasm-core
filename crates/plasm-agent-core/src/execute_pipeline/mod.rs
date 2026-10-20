@@ -5,8 +5,8 @@ mod preflight;
 mod run_line_error;
 mod scope;
 
-pub(crate) use dispatch::preflight_line_compile_dispatch;
 pub use dispatch::DispatchError;
+pub(crate) use dispatch::{preflight_line_compile_dispatch_from, CompileSource};
 
 pub use plasm_core::PreflightToken;
 pub use preflight::{PlasmPreflight, PreflightNormalized, PreflightReport};
@@ -101,6 +101,7 @@ impl ExecutePipeline {
             None,
             Some(plasm_core::PreflightToken::VERIFIED),
             None,
+            CompileSource::Authored,
         )
         .await
     }

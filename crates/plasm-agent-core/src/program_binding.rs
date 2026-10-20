@@ -30,9 +30,37 @@ impl ContinuationAnchor {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum RowEntityAuthority {
+    Single(QualifiedEntityKey),
+    Union(Vec<QualifiedEntityKey>),
+}
+
+impl RowEntityAuthority {
+    pub(crate) fn single(&self) -> Option<&QualifiedEntityKey> {
+        match self {
+            Self::Single(entity) => Some(entity),
+            Self::Union(_) => None,
+        }
+    }
+
+    pub(crate) fn contains(&self, entity: &QualifiedEntityKey) -> bool {
+        match self {
+            Self::Single(actual) => actual == entity,
+            Self::Union(variants) => variants.contains(entity),
+        }
+    }
+}
+
+impl From<QualifiedEntityKey> for RowEntityAuthority {
+    fn from(entity: QualifiedEntityKey) -> Self {
+        Self::Single(entity)
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct ProgramBindingContract {
     pub label: String,
-    pub row_entity: QualifiedEntityKey,
+    pub row_entity: RowEntityAuthority,
     pub result_shape: ResultShape,
     pub row_cardinality: RowCardinalityProof,
     /// Orthogonal to [`RowCardinalityProof`]: row count ≠ cell payload (PLP-1).
@@ -71,6 +99,7 @@ pub(crate) enum RowCardinalityProof {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum BoundedSingletonKind {
+    EntityNarrowing,
     LimitOne,
     ExplicitSingletonPostfix,
 }
@@ -178,6 +207,15 @@ impl RowCardinalityProof {
 }
 
 impl ProgramBindingContract {
+    pub(crate) fn concrete_entity(
+        &self,
+    ) -> Result<&QualifiedEntityKey, crate::plasm_dag::error::DagCompilationError> {
+        self.row_entity.single().ok_or_else(|| {
+            crate::plasm_dag::error::DagCompilationError::EntityNarrowingRequired {
+                binding: self.label.clone(),
+            }
+        })
+    }
     pub(crate) fn is_scalar_cell(&self) -> bool {
         matches!(self.value_kind, BindingValueKind::ScalarCell)
     }

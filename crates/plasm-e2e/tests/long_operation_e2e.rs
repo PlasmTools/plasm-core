@@ -1,5 +1,8 @@
 //! Dual-surface (HTTP + MCP) E2E tests for async plan operations, review gate, and plan_commit_ref.
 
+// Nested async host futures require deeper compile-time layout evaluation.
+#![recursion_limit = "256"]
+
 #[path = "common/hermit_lang_matrix.rs"]
 mod hermit_lang_matrix;
 
@@ -91,9 +94,14 @@ fn long_operation_dual_surface_e2e() {
 
 async fn long_operation_dual_surface_e2e_async() {
     let fixture = LongOpFixture::setup().await;
+    let reviewed_update = language_matrix::reviewed_update_program();
 
     for surface in DUAL_SURFACES {
-        let body = fixture.plan_dry(surface, UNBOUNDED_LANG_ITEM).await;
+        let program = match surface {
+            Surface::Http => UNBOUNDED_LANG_ITEM,
+            Surface::Mcp => &reviewed_update,
+        };
+        let body = fixture.plan_dry(surface, program).await;
         let (pc, verdict) = plan_receipt(&body, surface);
         assert!(pc.starts_with("pc"), "expected pcN ref, got {pc}");
         assert_eq!(verdict, "review");

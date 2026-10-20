@@ -4,10 +4,12 @@ use indexmap::IndexMap;
 use plasm_core::loader::load_schema_dir;
 use plasm_core::{Predicate, QueryExpr, Value, CGS};
 
-pub const FIXTURE_DIR: &str = concat!(
-    env!("CARGO_MANIFEST_DIR"),
-    "/../../fixtures/schemas/plasm_language_matrix_views"
-);
+pub fn fixture_dir() -> std::path::PathBuf {
+    std::path::PathBuf::from(
+        std::env::var("CARGO_MANIFEST_DIR").expect("test runner must set CARGO_MANIFEST_DIR"),
+    )
+    .join("../../fixtures/schemas/plasm_language_matrix_views")
+}
 
 /// Every composed view in the matrix views extension fixture.
 pub const MATRIX_VIEW_PREFLIGHT_CASES: &[(&str, &str)] = &[
@@ -21,7 +23,7 @@ pub const MATRIX_VIEW_PREFLIGHT_CASES: &[(&str, &str)] = &[
 ];
 
 pub fn matrix_views_cgs() -> CGS {
-    load_schema_dir(std::path::Path::new(FIXTURE_DIR)).expect("matrix views cgs")
+    load_schema_dir(&fixture_dir()).expect("matrix views cgs")
 }
 
 pub fn matrix_view_query(entity: &str) -> QueryExpr {

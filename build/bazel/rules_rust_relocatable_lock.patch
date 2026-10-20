@@ -1,0 +1,79 @@
+diff --git a/crate_universe/src/context.rs b/crate_universe/src/context.rs
+--- a/crate_universe/src/context.rs
++++ b/crate_universe/src/context.rs
+@@ -68,1 +68,48 @@
+-impl Context {
++impl Context {
++    /// Store local dependency paths relative to the owning Cargo lockfile.
++    /// Expand them only for rendering and source tracking in the current checkout.
++    pub(crate) fn relocate_local_paths(self, root: &Path, relative: bool) -> Result<Self> {
++        fn relocate(value: &mut serde_json::Value, root: &Path, relative: bool) -> Result<()> {
++            let Some(text) = value.as_str() else { return Ok(()) };
++            let path = Path::new(text);
++            let relocated = if relative {
++                path.strip_prefix(root).map_err(|error| anyhow::anyhow!("dependency path {text} outside lock owner {}: {error}", root.display()))?.to_path_buf()
++            } else {
++                if path.is_absolute() || path.components().any(|part| {
++                    matches!(part, std::path::Component::ParentDir)
++                }) {
++                    anyhow::bail!("locked local dependency must be relative to its owner: {text}");
++                }
++                root.join(path)
++            };
++            *value = serde_json::Value::String(
++                relocated.to_str().ok_or_else(|| anyhow::anyhow!("non-UTF-8 dependency path"))?.to_owned()
++            );
++            Ok(())
++        }
++        fn visit(value: &mut serde_json::Value, root: &Path, relative: bool) -> Result<()> {
++            match value {
++                serde_json::Value::Object(fields) => {
++                    for (key, child) in fields {
++                        if key == "local_path" {
++                            relocate(child, root, relative)?;
++                        } else if key == "Path" {
++                            if let Some(path) = child.get_mut("path") {
++                                relocate(path, root, relative)?;
++                            }
++                        } else {
++                            visit(child, root, relative)?;
++                        }
++                    }
++                }
++                serde_json::Value::Array(items) => {
++                    for child in items { visit(child, root, relative)?; }
++                }
++                _ => {}
++            }
++            Ok(())
++        }
++        let mut value = serde_json::to_value(self)?;
++        visit(&mut value, root, relative)?;
++        Ok(serde_json::from_value(value)?)
++    }
+diff --git a/crate_universe/src/cli/generate.rs b/crate_universe/src/cli/generate.rs
+--- a/crate_universe/src/cli/generate.rs
++++ b/crate_universe/src/cli/generate.rs
+@@ -137,2 +137,4 @@
+-            let context = Context::try_from_path(lockfile)?
+-                .apply_label_injection_mapping(&config.label_injection_mapping)?;
++            let owner = opt.cargo_lockfile.parent().context("Cargo lockfile needs a parent")?;
++            let context = Context::try_from_path(lockfile)?
++                .relocate_local_paths(owner, false)?
++                .apply_label_injection_mapping(&config.label_injection_mapping)?;
+diff --git a/crate_universe/src/cli/generate.rs b/crate_universe/src/cli/generate.rs
+--- a/crate_universe/src/cli/generate.rs
++++ b/crate_universe/src/cli/generate.rs
+@@ -251,2 +251,4 @@
+-    if let Some(lockfile) = opt.lockfile {
+-        let lock_content =
++    if let Some(lockfile) = opt.lockfile {
++        let owner = opt.cargo_lockfile.parent().context("Cargo lockfile needs a parent")?;
++        let context = context.relocate_local_paths(owner, true)?;
++        let lock_content =
+diff --git a/crate_universe/extensions.bzl b/crate_universe/extensions.bzl
+--- a/crate_universe/extensions.bzl
++++ b/crate_universe/extensions.bzl
+@@ -801,1 +801,1 @@
+-                path = repo["Path"]["path"],
++                path = str(module_ctx.path(cfg.cargo_lockfile).dirname.get_child(repo["Path"]["path"])),

@@ -20,7 +20,7 @@ use std::sync::Arc;
 
 fn load_lang_cgs() -> plasm_core::CGS {
     load_schema_dir(
-        &std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        &std::path::PathBuf::from(crate::test_manifest_dir())
             .join("../../fixtures/schemas/plasm_language_matrix"),
     )
     .expect("language matrix CGS")

@@ -48,6 +48,198 @@ fn structured_analysis_preserves_python_types_without_execution() {
 }
 
 #[test]
+fn inferred_mixed_numeric_boolean_dictionary_preserves_runtime_values() {
+    use super::*;
+    use plasm_core::symbol_tuning::SymbolRender;
+    let cgs = plasm_core::loader::load_schema_dir(
+        &std::path::Path::new(crate::test_manifest_dir())
+            .join("../../fixtures/schemas/python_value_contract"),
+    )
+    .unwrap();
+    let symbols =
+        plasm_core::TeachingExposureSession::new(&cgs, "types", &["Sample"]).to_symbol_map();
+    let token = symbols.entity_sym_for("types", "Sample");
+    let source = format!("@compute\ndef summarize(row: Value[{token}]):\n    return {{'count': row.count + 1, 'selected': row.ratio > 0}}\n");
+    let prepared = PreparedCompute::prepare(
+        &source,
+        &cgs,
+        "types",
+        symbols.as_ref(),
+        ComputeInputMode::Singleton,
+    )
+    .unwrap();
+    let value = crate::fixture_value!({"count": 2, "selected": true});
+    let encoded = prepared
+        .encode_domain_output(value.clone(), &prepared.output)
+        .unwrap_or_else(|error| panic!("{error}: {:?}", prepared.output));
+    assert_eq!(encoded, value);
+    prepared
+        .output
+        .validate(&encoded, &cgs, "types", "return")
+        .unwrap();
+}
+
+#[test]
+fn nullable_numeric_fields_require_local_evidence_before_arithmetic() {
+    let stubs = "class Row:\n    value: float | None\n";
+    for (body, accepted) in [
+        ("return sum(row.value for row in rows)", false),
+        ("valid = [row for row in rows if row.value is not None]\n    return sum(row.value for row in valid)", false),
+        ("return sum(float(row.value) for row in rows)", false),
+        ("values = []\n    for row in rows:\n        value = row.value\n        if value is None:\n            raise ValueError('missing required value')\n        values.append(value)\n    return sum(values)", true),
+        ("return sum(row.value for row in rows if row.value is not None)", true),
+    ] {
+        let source = format!("def summarize(rows: list[Row]) -> float:\n    {body}\n");
+        let result = super::admission::check_definition(&source, stubs);
+        assert_eq!(result.is_ok(), accepted, "{source}: {result:?}");
+    }
+}
+
+#[tokio::test]
+async fn inferred_statistics_and_boolean_chains_execute_with_their_contract() {
+    use super::*;
+    use plasm_core::symbol_tuning::SymbolRender;
+    let cgs = plasm_core::loader::load_schema_dir(
+        &std::path::Path::new(crate::test_manifest_dir())
+            .join("../../fixtures/schemas/python_value_contract"),
+    )
+    .unwrap();
+    let symbols =
+        plasm_core::TeachingExposureSession::new(&cgs, "types", &["Sample"]).to_symbol_map();
+    let token = symbols.entity_sym_for("types", "Sample");
+    let body = r#"    values = [row.ratio for row in rows]
+    count = len(values)
+    mean = sum(values) / count
+    variance = sum((value - mean) * (value - mean) for value in values) / count
+    current = values[-1]
+    below = current < mean and variance > 0
+    above = current > mean and variance > 0
+    selected = (below or above) and not (below and above)
+    return {"date": rows[-1].date, "count": count, "mean": mean, "variance": variance, "below": below, "above": above, "selected": selected}
+"#;
+    let source = format!("@compute\ndef summarize(rows: list[Value[{token}]]):\n{body}");
+    let prepared = PreparedCompute::prepare(
+        &source,
+        &cgs,
+        "types",
+        symbols.as_ref(),
+        ComputeInputMode::Collection,
+    )
+    .unwrap();
+    prepared.admit().unwrap();
+    let types = prepared
+        .contract
+        .as_ref()
+        .unwrap()
+        .fields
+        .iter()
+        .map(|(name, field)| (name.clone(), field.value_type.clone()))
+        .collect();
+    let pool = crate::python_pool::PythonPool::default();
+    for last in [1.0, 2.0, 3.0] {
+        let rows = (0..3)
+            .map(|index| {
+                BTreeMap::from([
+                    ("date".into(), crate::fixture_value!("2024-01-01")),
+                    (
+                        "ratio".into(),
+                        Value::Float(if index == 2 { last } else { 2.0 }),
+                    ),
+                ])
+            })
+            .collect();
+        let result = pool
+            .compute_value(prepared.executable.clone(), rows, &types, |value| {
+                let encoded = prepared.encode_domain_output(value, &prepared.output)?;
+                prepared
+                    .output
+                    .validate(&encoded, &cgs, "types", "return")?;
+                Ok(encoded)
+            })
+            .await
+            .unwrap_or_else(|error| {
+                panic!("last={last}: {error:?}; contract={:?}", prepared.output)
+            });
+        for field in ["below", "above", "selected"] {
+            assert!(result[field].as_bool().is_some(), "{field}: {result:?}");
+        }
+    }
+    pool.close().await;
+}
+
+#[tokio::test]
+async fn inferred_python_integer_subtypes_preserve_boolean_values_without_coercion() {
+    use super::*;
+    use plasm_core::value_contract::ValueContract as Type;
+    let integer = Type::scalar(FieldType::Integer);
+    let boolean = Type::scalar(FieldType::Boolean);
+    let pool = crate::python_pool::PythonPool::default();
+    for body in [
+        "\n    return value if flag else False\n",
+        "\n    return [value, flag]\n",
+        "\n    return {'value': value, 'flag': flag}\n",
+        "\n    def choose(n: int, b: bool) -> int:\n        return n if b else False\n    return choose(value, flag)\n",
+        "\n    return flag and value\n",
+        "\n    return flag or value\n",
+        "\n    return value and flag\n",
+        "\n    return value or flag\n",
+    ] {
+        let contract = super::inference::infer_body(body, &[("value", &integer), ("flag", &boolean)], "").unwrap();
+        for (value, flag) in [(0, false), (0, true), (2, false), (2, true)] {
+            let source = format!("def choose(value, flag):{body}\nchoose({value}, {})", if flag { "True" } else { "False" });
+            let result = pool.compute_value(source, vec![], &BTreeMap::new(), Ok).await.unwrap();
+            contract.validate(&result, &CGS::default(), "types", "result")
+                .unwrap_or_else(|error| panic!("{body}: {result:?}: {contract:?}: {error}"));
+        }
+        assert!(contract.validate(&Value::String("invalid".into()), &CGS::default(), "types", "result").is_err());
+    }
+    let literal = super::inference::infer("1", "value", &integer, "").unwrap();
+    assert_eq!(literal, integer);
+    assert!(literal
+        .validate(&Value::Bool(true), &CGS::default(), "types", "result")
+        .is_err());
+    pool.close().await;
+}
+
+#[test]
+fn inferred_catalog_integer_remains_strict() {
+    use super::*;
+    use plasm_core::symbol_tuning::SymbolRender;
+    let cgs = plasm_core::loader::load_schema_dir(
+        &std::path::Path::new(crate::test_manifest_dir())
+            .join("../../fixtures/schemas/python_value_contract"),
+    )
+    .unwrap();
+    let symbols =
+        plasm_core::TeachingExposureSession::new(&cgs, "types", &["Sample"]).to_symbol_map();
+    let token = symbols.entity_sym_for("types", "Sample");
+    let source = format!("@compute\ndef keep(row: Value[{token}]):\n    return row.count\n");
+    let prepared = PreparedCompute::prepare(
+        &source,
+        &cgs,
+        "types",
+        symbols.as_ref(),
+        ComputeInputMode::Singleton,
+    )
+    .unwrap();
+    assert!(prepared.output.domain.is_some());
+    assert!(prepared
+        .output
+        .validate(&Value::Integer(2), &cgs, "types", "result")
+        .is_ok());
+    for value in [
+        Value::Bool(true),
+        Value::Float(2.0),
+        Value::String("2".into()),
+    ] {
+        assert!(prepared
+            .output
+            .validate(&value, &cgs, "types", "result")
+            .is_err());
+    }
+}
+
+#[test]
 fn structured_analysis_retains_nominals_presence_and_null_independently() {
     use monty_types::analysis::{AnalysisLimits, AnalysisOutcome, AnalysisRequest, Node, Span};
     let stubs = "from typing import NewType, TypedDict, NotRequired\nToken = NewType('Token', str)\nclass Record(TypedDict):\n    key: Token\n    note: NotRequired[str | None]\nvalue: Record\n";
@@ -125,7 +317,7 @@ fn row_entity_annotation_matches_value_contract_recursively() {
     use super::*;
     use plasm_core::symbol_tuning::SymbolRender;
     let cgs = plasm_core::loader::load_schema_dir(
-        &std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        &std::path::Path::new(crate::test_manifest_dir())
             .join("../../fixtures/schemas/python_value_contract"),
     )
     .unwrap();

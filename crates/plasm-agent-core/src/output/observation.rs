@@ -61,7 +61,7 @@ mod tests {
     fn source_observation_contract_precedes_every_tsv_cell() {
         use plasm_core::row_contract::{RowCodec, RowFieldContract};
         let cgs = plasm_core::loader::load_schema_dir(
-            &std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            &std::path::Path::new(crate::test_manifest_dir())
                 .join("../../fixtures/schemas/plasm_language_matrix"),
         )
         .unwrap();
@@ -99,7 +99,7 @@ mod tests {
     #[test]
     fn tsv_nested_relation_cells_use_public_projection() {
         let cgs = plasm_core::loader::load_schema_dir(
-            &std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            &std::path::Path::new(crate::test_manifest_dir())
                 .join("../../fixtures/schemas/plasm_language_matrix"),
         )
         .unwrap();
@@ -122,7 +122,7 @@ mod tests {
         use plasm_core::value_contract::ValueContractError;
 
         let mut cgs = plasm_core::loader::load_schema_dir(
-            &std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            &std::path::Path::new(crate::test_manifest_dir())
                 .join("../../fixtures/schemas/plasm_language_matrix"),
         )
         .unwrap();

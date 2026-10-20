@@ -6,38 +6,44 @@ use crate::view_plan::ViewAmbientContext;
 /// A complete response needs both declared coverage and observed field presence.
 /// Pagination changes collection coverage, never the field coverage of each row.
 struct QueryResponseCoverage {
-    fields: Vec<String>,
-    declared_complete: bool,
+    entities: std::collections::HashMap<String, (Vec<String>, bool)>,
 }
 
 impl QueryResponseCoverage {
     fn new(cgs: &CGS, capability: &CapabilitySchema) -> Self {
-        let fields: Vec<String> = cgs
-            .get_entity(capability.domain.as_str())
-            .map(|entity| {
-                entity
-                    .fields
-                    .keys()
-                    .map(|field| field.as_str().to_owned())
-                    .collect()
-            })
-            .unwrap_or_default();
         let provided: std::collections::HashSet<String> =
             cgs.effective_provides(capability).into_iter().collect();
-        let declared_complete = cgs.get_entity(capability.domain.as_str()).is_some()
-            && fields.iter().all(|field| provided.contains(field));
-        Self {
-            fields,
-            declared_complete,
-        }
+        let names: Vec<&str> = match capability
+            .output_schema
+            .as_ref()
+            .map(|output| &output.output_type)
+        {
+            Some(plasm_core::OutputType::EntityUnion { variants, .. }) => {
+                variants.iter().map(|name| name.as_str()).collect()
+            }
+            _ => vec![capability.domain.as_str()],
+        };
+        let entities = names
+            .into_iter()
+            .filter_map(|name| {
+                cgs.get_entity(name).map(|entity| {
+                    let fields: Vec<String> =
+                        entity.fields.keys().map(ToString::to_string).collect();
+                    let declared_complete = fields.iter().all(|field| provided.contains(field));
+                    (name.to_string(), (fields, declared_complete))
+                })
+            })
+            .collect();
+        Self { entities }
     }
 
     fn classify(&self, row: &plasm_compile::DecodedEntity) -> EntityCompleteness {
-        if self.declared_complete
-            && self
-                .fields
-                .iter()
-                .all(|field| row.fields.contains_key(field))
+        if self
+            .entities
+            .get(row.reference.entity_type.as_str())
+            .is_some_and(|(fields, complete)| {
+                *complete && fields.iter().all(|field| row.fields.contains_key(field))
+            })
         {
             EntityCompleteness::Complete
         } else {
@@ -69,6 +75,30 @@ impl ExecutionEngine {
             }
         }
 
+        self.local_query_to_stream(query, cgs, mat, mode, consume, graph_page_spill, ambient)
+    }
+
+    /// Execute a query with local predicates after cross-entity decomposition.
+    /// Undecomposed predicates are rejected instead of re-entering that dispatcher.
+    /// Composed view execution retains its separate, validated view-plan path.
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) fn local_query_to_stream<'a>(
+        &'a self,
+        query: &'a QueryExpr,
+        cgs: &'a CGS,
+        mat: &'a mut SessionMaterialization,
+        mode: ExecutionMode,
+        consume: StreamConsumeOpts,
+        graph_page_spill: Option<crate::graph_page_spill::GraphPageSpillHandle>,
+        ambient: &ViewAmbientContext,
+    ) -> Result<QueryStream<'a>, RuntimeError> {
+        if let (Some(predicate), Some(entity)) = (&query.predicate, cgs.get_entity(&query.entity)) {
+            if !extract_cross_entity_predicates(predicate, entity, cgs).is_empty() {
+                return Err(RuntimeError::NonlocalQueryAtTerminal {
+                    entity: query.entity.to_string(),
+                });
+            }
+        }
         let filter = compile_query_dispatch(query, cgs)?;
         let capability = resolve_query_capability(query, cgs)?;
         let mut env = CmlEnv::new();
@@ -170,7 +200,8 @@ impl ExecutionEngine {
             let cap_name = capability.name.as_str();
             let snapshot = mat.snapshot();
             let mut consult = CacheTelemetry::default();
-            let cached_query = if request_identity.is_none() {
+            let partial_mcp = matches!(&capability_template, CapabilityTemplate::Mcp(mapping) if !mapping.response.exhaustive);
+            let cached_query = if request_identity.is_none() && !partial_mcp {
                 ExecutionCacheConsult::decide_query(
                 &query,
                 cap_name,
@@ -206,9 +237,21 @@ impl ExecutionEngine {
                 None => dispatch.await?,
             };
             let (normalized, decoder) = match &capability_template {
+                CapabilityTemplate::Mcp(mapping) => {
+                    let projected = crate::mcp_execution::project_response(response, &mapping.response)?;
+                    if !projected.is_array() {
+                        Err(RuntimeError::from(crate::mcp_execution::McpExecutionError::QueryArrayRequired))
+                    } else {
+                        Ok((projected, super::entity_decoder::create_output_decoder_for_capability(
+                            &query.entity, cgs, Some(capability.name.as_str()),
+                            Some(PathExpr::new(vec![PathSegment::Wildcard])),
+                            request_key.as_deref(), Some(&cml_env_to_identity_strings(&env)),
+                        )))
+                    }
+                }
                 CapabilityTemplate::Http(cml) | CapabilityTemplate::GraphQl(cml) => Ok((
                     prepare_http_query_response(response, cml, &env),
-                    create_entity_decoder_for_capability(
+                    super::entity_decoder::create_output_decoder_for_capability(
                         &query.entity,
                         cgs,
                         Some(capability.name.as_str()),
@@ -222,7 +265,7 @@ impl ExecutionEngine {
                     Err(RuntimeError::HttpQueryTemplateRequired)
                 }
             }?;
-            let decoded_entities = decode_entities_with_cgs(&decoder, &normalized, Some(cgs))?;
+            let decoded_entities = plasm_compile::decode_output_with_cgs(&decoder, &normalized, Some(cgs))?;
             if let Some(identity) = &request_identity {
                 identity.validate_rows(query.entity.as_str(), decoded_entities.len())?;
             }
@@ -241,8 +284,7 @@ impl ExecutionEngine {
             let inherit = CapabilityParamEnv::from_cml_env(&env, &capability);
             stamp_entities_and_mat(&res.entities, mat, &inherit);
             let (entities, extra_net) = self
-                .hydrate_query_summaries(
-                    &query.entity,
+                .hydrate_output_summaries(
                     &res.entities,
                     cgs,
                     mat,
@@ -266,9 +308,14 @@ impl ExecutionEngine {
                 }
             }
 
-            let membership = ExecutionCacheConsult::index_query_result(mat, &query, cap_name, &res.entities, cgs, &env)?;
+            let collection = if partial_mcp {
+                ExecutionCollection::observe_for(cgs, &query, mat.graph.stats().version, res.entities, plasm_core::collection_codec::Observation::UnprovenPage)?
+            } else {
+                let membership = ExecutionCacheConsult::index_query_result(mat, &query, cap_name, &res.entities, cgs, &env)?;
+                ExecutionCollection::materialized(membership, res.entities.into())?
+            };
             yield ExecutionEvent::Complete(Box::new(ExecutionResult {
-                collection: ExecutionCollection::materialized(membership, res.entities.into())?,
+                collection,
                 has_more: false, pagination_resume: None, paging_handle: None,
                 source, stats: res.stats, request_fingerprints: vec![], operations: OperationLedger::empty(),
             }));
@@ -295,6 +342,10 @@ impl ExecutionEngine {
         const MAX_PAGES: usize = 10_000;
 
         let user = query.pagination.clone().unwrap_or_default();
+        let initial_mcp_collection = resume_state
+            .as_ref()
+            .map(|s| s.mcp_collection.clone())
+            .unwrap_or_default();
         let mut driver = match resume_state {
             Some(s) => {
                 let contract = pconf.validate().map_err(RuntimeError::PaginationContract)?;
@@ -312,9 +363,25 @@ impl ExecutionEngine {
             )
             && (consume.max_items.is_none() || consume.one_page);
         let (decoder, wrap_key) = match &capability_template {
+            CapabilityTemplate::Mcp(_) => (
+                super::entity_decoder::create_output_decoder_for_capability(
+                    &query.entity,
+                    cgs,
+                    Some(capability.name.as_str()),
+                    Some(PathExpr::new(vec![
+                        PathSegment::Key {
+                            name: "results".into(),
+                        },
+                        PathSegment::Wildcard,
+                    ])),
+                    None,
+                    Some(&cml_env_to_identity_strings(&env)),
+                ),
+                "results".to_owned(),
+            ),
             plasm_compile::CapabilityTemplate::Http(ref req)
             | plasm_compile::CapabilityTemplate::GraphQl(ref req) => (
-                create_entity_decoder_for_capability(
+                super::entity_decoder::create_output_decoder_for_capability(
                     &query.entity,
                     cgs,
                     Some(capability.name.as_str()),
@@ -330,7 +397,7 @@ impl ExecutionEngine {
             }
             plasm_compile::CapabilityTemplate::EvmCall(_)
             | plasm_compile::CapabilityTemplate::EvmLogs(_) => (
-                create_entity_decoder(
+                plasm_compile::OutputDecoder::Entity(create_entity_decoder(
                     &query.entity,
                     cgs,
                     Some(PathExpr::new(vec![
@@ -341,7 +408,7 @@ impl ExecutionEngine {
                     ])),
                     None,
                     Some(&cml_env_to_identity_strings(&env)),
-                ),
+                )),
                 "results".to_string(),
             ),
         };
@@ -370,6 +437,7 @@ impl ExecutionEngine {
             let codec = RecordingCodec::new();
             let mut acquisition = codec.acquire(identity.clone());
             let mut pages = 0usize;
+            let mut mcp_collection = initial_mcp_collection;
             let mut retained_total = 0usize;
             let mut total_network = 0usize;
             let mut any_live = false;
@@ -410,15 +478,25 @@ impl ExecutionEngine {
                     };
 
 
-                let normalized = normalize_collection_response(response, wrap_key.as_str());
+                let response = match &capability_template {
+                    CapabilityTemplate::Mcp(mapping) => crate::mcp_execution::select_response(response, &mapping.response)?,
+                    _ => response,
+                };
+                let normalized = normalize_collection_response(response.clone(), wrap_key.as_str());
                 // Decode the catalog's semantic projection, but retain the native
                 // page envelope for the pagination driver's cursor observations.
                 let decode_response = match &capability_template {
+                    CapabilityTemplate::Mcp(mapping) => {
+                        let selected = response.pointer(&mapping.response.pointer).ok_or_else(||
+                            crate::mcp_execution::McpExecutionError::MissingPointer { pointer: mapping.response.pointer.clone() })?;
+                        if !selected.is_array() { Err(crate::mcp_execution::McpExecutionError::QueryArrayRequired)?; }
+                        normalize_collection_response(selected.clone(), wrap_key.as_str())
+                    }
                     CapabilityTemplate::Http(cml) | CapabilityTemplate::GraphQl(cml) =>
                         prepare_http_query_response(normalized.clone(), cml, &env),
                     _ => normalized.clone(),
                 };
-                let decoded = decode_entities_with_cgs(&decoder, &decode_response, Some(cgs))?;
+                let decoded = plasm_compile::decode_output_with_cgs(&decoder, &decode_response, Some(cgs))?;
                 let full_page_len = decoded.len();
                 let last_id = decoded.last().map(|row| row.reference.primary_slot_str());
                 let timestamp = current_timestamp();
@@ -426,7 +504,7 @@ impl ExecutionEngine {
                     let completeness = response_coverage.classify(&row);
                     CachedEntity::from_decoded(row.reference, row.fields, row.relations, timestamp, completeness)
                 }).collect();
-                let page_ids: Vec<_> = page_cached.iter().map(|row| row.reference.primary_slot_str()).collect();
+                let page_ids = page_cached.iter().map(|row| serde_json::to_string(&row.reference)).collect::<Result<Vec<_>, _>>()?;
                 crate::record_live_page_audit(driver.record_page(pages as u32, &page_ids, full_page_len as u32, page_cached.len() as u32, None, None)?);
                 if !collector.skips_pre_page_merge() { mat.merge(page_cached.clone())?; }
                 let inherit = CapabilityParamEnv::from_cml_env(&env, &capability);
@@ -446,8 +524,8 @@ impl ExecutionEngine {
                     }
                 } else { &page_cached[..] };
                 let omitted_prefix_rows = page_cached.len() - hydration_input.len();
-                let (hydrated, extra_net) = self.hydrate_query_summaries(
-                    &query.entity, hydration_input, cgs, mat, mode, query.hydrate.unwrap_or(self.config.hydrate), &env,
+                let (hydrated, extra_net) = self.hydrate_output_summaries(
+                    hydration_input, cgs, mat, mode, query.hydrate.unwrap_or(self.config.hydrate), &env,
                 ).await?;
                 let entities = match &predicate {
                     Some(pred) => filter_entities_by_predicate(hydrated, pred)?,
@@ -466,11 +544,20 @@ impl ExecutionEngine {
                 let references = if top_k { top_k_input } else { ingest.yield_entities.iter().map(|row| row.reference.clone()).collect() };
                 retained_total += references.len();
                 let more = driver.advance_after_page(&normalized, full_page_len, link_next.as_deref(), last_id.as_deref())?;
+                let more = match &capability_template {
+                    CapabilityTemplate::Mcp(mapping) => match &mapping.collection {
+                        Some(contract) => mcp_collection.observe(contract, &response, full_page_len, more)?,
+                        None => more,
+                    },
+                    _ => more,
+                };
                 let hit_bound = prefix.or(consume.max_items).is_some_and(|cap| retained_total >= cap);
                 let empty_unproven = more && full_page_len == 0 && !matches!(pconf.location, plasm_compile::PaginationLocation::BlockRange);
                 let done = !more || single_http_roundtrip || hit_bound || ingest.row_match_budget_satisfied || empty_unproven;
                 // A continuation after a local filter does not prove another match exists.
-                let termination = if !more { PageTermination::Exhausted }
+                let source_incomplete = matches!(&capability_template, CapabilityTemplate::Mcp(mapping) if !mapping.response.exhaustive);
+                let termination = if !more && source_incomplete { PageTermination::Unproven }
+                    else if !more { PageTermination::Exhausted }
                     else if done && (predicate.is_some() || consume.row_match_budget.is_some() || empty_unproven) { PageTermination::Unproven }
                     else { PageTermination::More };
                 acquisition.push(&identity, pages, references.into(), decoded_members, termination)?;
@@ -491,8 +578,10 @@ impl ExecutionEngine {
                 if done {
                     let expression_done = prefix.is_some_and(|bound| retained_total >= bound);
                     let resume = if more && !expression_done {
-                        Some(QueryPaginationResumeData { query: query.clone(), capability_name: capability.name.to_string(), env: env.clone(),
-                            template: capability_template.clone(), config: pconf.clone(), state: driver.snapshot() })
+                        let mut state = driver.snapshot();
+                        state.mcp_collection = mcp_collection.clone();
+                        Some(Box::new(QueryPaginationResumeData { query: query.clone(), capability_name: capability.name.to_string(), env: env.clone(),
+                            template: capability_template.clone(), config: pconf.clone(), state }))
                     } else { None };
                     break (more && !expression_done, resume);
                 }

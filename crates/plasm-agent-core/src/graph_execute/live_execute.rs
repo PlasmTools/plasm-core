@@ -32,6 +32,7 @@ pub struct LiveBranchExecuteInput<'a> {
     pub host_page_size: Option<usize>,
     pub surface_read_budget: Option<crate::plan_read_bounds::PushedReadBudget>,
     pub expr_span: tracing::Span,
+    pub observed_relation_source: Option<&'a ExecutionResult>,
 }
 
 async fn execute_on_branch(
@@ -53,6 +54,7 @@ async fn execute_on_branch(
         host_page_size,
         surface_read_budget,
         expr_span,
+        observed_relation_source,
     } = input;
 
     let mut page_resume_owned = page_resume_backup.clone();
@@ -89,17 +91,32 @@ async fn execute_on_branch(
                 surface_read_budget.as_ref(),
                 *graph_spill_active,
             );
-            st.engine
-                .execute(
-                    &parsed.expr,
-                    exec_cgs,
-                    mat,
-                    Some(st.mode),
-                    consume,
-                    exec_opts.clone(),
-                )
-                .instrument(expr_span.clone())
-                .await
+            if let (Expr::Chain(chain), Some(source)) = (&parsed.expr, observed_relation_source) {
+                st.engine
+                    .execute_relation_from_observed(
+                        chain,
+                        (*source).clone(),
+                        exec_cgs,
+                        mat,
+                        Some(st.mode),
+                        consume,
+                        exec_opts.clone(),
+                    )
+                    .instrument(expr_span.clone())
+                    .await
+            } else {
+                st.engine
+                    .execute(
+                        &parsed.expr,
+                        exec_cgs,
+                        mat,
+                        Some(st.mode),
+                        consume,
+                        exec_opts.clone(),
+                    )
+                    .instrument(expr_span.clone())
+                    .await
+            }
         }
     }
     .map_err(|e| {

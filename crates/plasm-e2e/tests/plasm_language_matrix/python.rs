@@ -2055,7 +2055,7 @@ async fn python_teaching_card_signatures_compile_against_fixture() {
     use std::sync::Arc;
     let cgs = Arc::new(
         plasm_core::loader::load_schema_dir(
-            &std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            &std::path::Path::new(plasm_e2e::test_manifest_dir())
                 .join("../../fixtures/schemas/python_dag_slice"),
         )
         .unwrap(),
@@ -2484,10 +2484,10 @@ async fn python_value_closure_rejects_ambiguous_and_forged_inputs() {
     for (argument, diagnostic) in [
         (
             "E.get('i1').select('title', 'score')",
-            "exactly one value column",
+            "compute input annotation mismatches the row shape",
         ),
         ("'wrong'", "input differs from its annotation"),
-        ("{'a': 1, 'b': 2}", "exactly one value column"),
+        ("{'a': 1, 'b': 2}", "compute input annotation mismatches the row shape"),
     ] {
         let source = format!("class Invalid(Program):\n    @compute\n    def calc(self, value: int) -> int:\n        return value + 1\n    def build(self):\n        return self.calc({argument})\n");
         let error = compile_fixture(&es, &source).await.unwrap_err();
@@ -2766,19 +2766,20 @@ async fn python_compute_dictionary_and_multiple_inputs_live() {
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let base = format!("http://{}", listener.local_addr().unwrap());
     let server = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+    enum ReturnShape { Rows, Scalar }
     let cases = [
-        ("class P(Program):\n    def build(self):\n        return self.extract(E.query())\n    @compute\n    def extract(self, rows: list[Row]) -> list[dict]:\n        out = []\n        for row in rows:\n            out.append({'name': row.title})\n        return out\n", serde_json::json!([{"name":"one"},{"name":"two"}])),
-        ("class P(Program):\n    def build(self):\n        return self.count(E.query(), E.get('i1'))\n    @compute\n    def count(self, left: list[Row], right: Row) -> dict:\n        out = {}\n        out['left'] = len(left)\n        out['right'] = len([right])\n        return out\n", serde_json::json!({"left":2,"right":1})),
-        ("class P(Program):\n    def build(self):\n        one = E.get('i1')\n        return self.count(one, one)\n    @compute\n    def count(self, row: Row, other: Row):\n        n = len([other])\n        return {'name': row.title, 'count': n}\n", serde_json::json!({"name":"one","count":1})),
-        ("class P(Program):\n    def build(self):\n        value = self.make(E.query())\n        return self.read(value)\n    @compute\n    def make(self, rows: list[Row]):\n        result = {}\n        for row in rows:\n            result[str(row.id)] = str(row.title)\n        return result\n    @compute\n    def read(self, value: dict[str, str]) -> str:\n        return value['i1']\n", serde_json::json!("one")),
-        ("class P(Program):\n    def build(self):\n        return self.add(True)\n    @compute\n    def add(self, value: int) -> str:\n        return str(value)\n", serde_json::json!("True")),
-        ("class P(Program):\n    def build(self):\n        return self.pair(E.get('i1'))\n    @compute\n    def pair(self, row: Row):\n        return row.id, row.title\n", serde_json::json!(["i1", "one"])),
-        ("class P(Program):\n    def build(self):\n        item = E.get(\"i1\")\n        first = item.title\n        item = E.get(\"i2\")\n        return f\"{first}/{item.title}\"\n", serde_json::json!("one/two")),
-        ("class P(Program):\n    def build(self):\n        return \"done\"\n        missing()\n", serde_json::json!("done")),
-        ("class P(Program):\n    def build(self):\n        def title(row: Row, /):\n            return {\"name\": row.title}\n        return self.names(E.query().map(title, max_parents=2))\n    @compute\n    def names(self, rows: list[Row]) -> str:\n        return \",\".join(str(row.name) for row in rows)\n", serde_json::json!("one,two")),
-        ("class P(Program):\n    def build(self):\n        return E.query().take(1).select(n=lambda row: sum(row for row in [1, 2])).n\n", serde_json::json!(3)),
+        ("class P(Program):\n    def build(self):\n        return self.extract(E.query())\n    @compute\n    def extract(self, rows: list[Row]) -> list[dict]:\n        out = []\n        for row in rows:\n            out.append({'name': row.title})\n        return out\n", serde_json::json!([{"name":"one"},{"name":"two"}]), ReturnShape::Rows),
+        ("class P(Program):\n    def build(self):\n        return self.count(E.query(), E.get('i1'))\n    @compute\n    def count(self, left: list[Row], right: Row) -> dict:\n        out = {}\n        out['left'] = len(left)\n        out['right'] = len([right])\n        return out\n", serde_json::json!({"left":2,"right":1}), ReturnShape::Scalar),
+        ("class P(Program):\n    def build(self):\n        one = E.get('i1')\n        return self.count(one, one)\n    @compute\n    def count(self, row: Row, other: Row):\n        n = len([other])\n        return {'name': row.title, 'count': n}\n", serde_json::json!({"name":"one","count":1}), ReturnShape::Scalar),
+        ("class P(Program):\n    def build(self):\n        value = self.make(E.query())\n        return self.read(value)\n    @compute\n    def make(self, rows: list[Row]):\n        result = {}\n        for row in rows:\n            result[str(row.id)] = str(row.title)\n        return result\n    @compute\n    def read(self, value: dict[str, str]) -> str:\n        return value['i1']\n", serde_json::json!("one"), ReturnShape::Scalar),
+        ("class P(Program):\n    def build(self):\n        return self.add(True)\n    @compute\n    def add(self, value: int) -> str:\n        return str(value)\n", serde_json::json!("True"), ReturnShape::Scalar),
+        ("class P(Program):\n    def build(self):\n        return self.pair(E.get('i1'))\n    @compute\n    def pair(self, row: Row):\n        return row.id, row.title\n", serde_json::json!(["i1", "one"]), ReturnShape::Scalar),
+        ("class P(Program):\n    def build(self):\n        item = E.get(\"i1\")\n        first = item.title\n        item = E.get(\"i2\")\n        return f\"{first}/{item.title}\"\n", serde_json::json!("one/two"), ReturnShape::Scalar),
+        ("class P(Program):\n    def build(self):\n        return \"done\"\n        missing()\n", serde_json::json!("done"), ReturnShape::Scalar),
+        ("class P(Program):\n    def build(self):\n        def title(row: Row, /):\n            return {\"name\": row.title}\n        return self.names(E.query().map(title, max_parents=2))\n    @compute\n    def names(self, rows: list[Row]) -> str:\n        return \",\".join(str(row.name) for row in rows)\n", serde_json::json!("one,two"), ReturnShape::Scalar),
+        ("class P(Program):\n    def build(self):\n        return E.query().take(1).select(n=lambda row: sum(row for row in [1, 2])).n\n", serde_json::json!(3), ReturnShape::Scalar),
     ];
-    for (index, (source, expected)) in cases.iter().enumerate() {
+    for (index, (source, expected, shape)) in cases.iter().enumerate() {
         let case = Case {
             id: "compute_dictionary_inputs",
             python: "",
@@ -2809,7 +2810,18 @@ async fn python_compute_dictionary_and_multiple_inputs_live() {
         ))
         .await
         .unwrap_or_else(|e| panic!("case {index}: {e:?}"));
-        assert_eq!(outputs(&run)[0][0]["value"], *expected, "case {index}");
+        let returned = outputs(&run);
+        assert_eq!(returned.len(), 1, "case {index}: return sets");
+        let actual = match shape {
+            ReturnShape::Rows => serde_json::Value::Array(
+                returned[0].iter().map(|row| row["value"].clone()).collect(),
+            ),
+            ReturnShape::Scalar => {
+                assert_eq!(returned[0].len(), 1, "case {index}: scalar rows");
+                returned[0][0]["value"].clone()
+            }
+        };
+        assert_eq!(actual, *expected, "case {index}");
     }
     server.abort();
 }

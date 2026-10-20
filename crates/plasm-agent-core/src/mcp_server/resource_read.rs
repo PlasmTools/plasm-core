@@ -3,10 +3,8 @@
 use std::sync::Arc;
 use std::time::Instant;
 
-use rust_mcp_sdk::schema::{
-    ReadResourceContent, ReadResourceRequestParams, ReadResourceResult, RpcError,
-};
-use rust_mcp_sdk::McpServer;
+use crate::mcp_server::request::McpRequest;
+use rmcp::model::{ErrorData, ReadResourceRequestParams, ReadResourceResult};
 
 use crate::run_artifacts::{
     parse_plasm_execute_plan_uri, parse_plasm_session_short_plan_uri,
@@ -21,15 +19,15 @@ use super::PlasmMcpHandler;
 
 async fn resolve_session_binding(
     handler: &PlasmMcpHandler,
-    runtime: &Arc<dyn McpServer>,
+    runtime: &Arc<McpRequest>,
     uri: &str,
     read_source: Option<&str>,
     started: Instant,
-) -> Result<(PlasmExecBinding, String), RpcError> {
+) -> Result<(PlasmExecBinding, String), ErrorData> {
     let logical_uuid =
         artifact_resolve::logical_uuid_from_session_scoped_uri(uri).map_err(map_resolve_rpc_err)?;
     let ls_key = logical_uuid.to_string();
-    let transport_key = runtime.session_id();
+    let transport_key = Some(runtime.transport_key.clone());
     let binding = if let Some(ref tk) = transport_key {
         handler.resolve_binding_for_logical(tk, logical_uuid).await
     } else {
@@ -46,20 +44,18 @@ async fn resolve_session_binding(
         )
         .emit(&handler.plasm)
         .await;
-        return Err(RpcError::invalid_params().with_message(
-            "execute session unavailable: extend plasm_context with the same logical_session_ref and current intent",
-        ));
+        return Err(ErrorData::invalid_params("execute session unavailable: extend plasm_context with the same logical_session_ref and current intent", None));
     };
     Ok((b, ls_key))
 }
 
 async fn resolve_session_scoped_run(
     handler: &PlasmMcpHandler,
-    runtime: &Arc<dyn McpServer>,
+    runtime: &Arc<McpRequest>,
     uri: &str,
     read_source: Option<&str>,
     started: Instant,
-) -> Result<artifact_resolve::ResolvedRunArtifact, RpcError> {
+) -> Result<artifact_resolve::ResolvedRunArtifact, ErrorData> {
     let (b, ls_key) = resolve_session_binding(handler, runtime, uri, read_source, started).await?;
     let lookup = artifact_resolve::lookup_from_artifact_uri(uri, &b, ls_key.as_str())
         .map_err(map_resolve_rpc_err)?;
@@ -78,13 +74,13 @@ async fn resolve_session_scoped_run(
 
 async fn resolve_session_scoped_plan(
     handler: &PlasmMcpHandler,
-    runtime: &Arc<dyn McpServer>,
+    runtime: &Arc<McpRequest>,
     uri: &str,
     read_source: Option<&str>,
     started: Instant,
-) -> Result<artifact_resolve::ResolvedCodePlanArtifact, RpcError> {
+) -> Result<artifact_resolve::ResolvedCodePlanArtifact, ErrorData> {
     let (_, plan_index) = parse_plasm_session_short_plan_uri(uri).ok_or_else(|| {
-        RpcError::invalid_params().with_message(format!("unsupported resource URI: {uri}"))
+        ErrorData::invalid_params(format!("unsupported resource URI: {uri}"), None)
     })?;
     let (b, ls_key) = resolve_session_binding(handler, runtime, uri, read_source, started).await?;
     artifact_resolve::resolve_code_plan_for_binding(
@@ -100,14 +96,15 @@ async fn resolve_session_scoped_plan(
     .map_err(map_resolve_rpc_err)
 }
 
-fn map_resolve_rpc_err(e: artifact_resolve::RunArtifactResolveError) -> RpcError {
+fn map_resolve_rpc_err(e: artifact_resolve::RunArtifactResolveError) -> ErrorData {
     match e {
         artifact_resolve::RunArtifactResolveError::DecodeFailed(msg) => {
-            RpcError::internal_error().with_message(format!("run artifact decode failed: {msg}"))
+            ErrorData::internal_error(format!("run artifact decode failed: {msg}"), None)
         }
-        artifact_resolve::RunArtifactResolveError::Integrity(msg) => RpcError::internal_error()
-            .with_message(format!("run artifact integrity check failed: {msg}")),
-        other => RpcError::invalid_params().with_message(other.to_string()),
+        artifact_resolve::RunArtifactResolveError::Integrity(msg) => {
+            ErrorData::internal_error(format!("run artifact integrity check failed: {msg}"), None)
+        }
+        other => ErrorData::invalid_params(other.to_string(), None),
     }
 }
 
@@ -116,12 +113,11 @@ async fn read_run_result(
     uri: &str,
     resolved: artifact_resolve::ResolvedRunArtifact,
     read_source: Option<&str>,
-) -> Result<ReadResourceResult, RpcError> {
+) -> Result<ReadResourceResult, ErrorData> {
     let payload = if read_source == Some(plasm_trace::MCP_RESOURCE_READ_SOURCE_RUN_EXPLORER_UI) {
         crate::run_artifacts::project_artifact_payload_for_agent(&resolved.payload, false).map_err(
             |error| {
-                RpcError::internal_error()
-                    .with_message(format!("run artifact projection failed: {error}"))
+                ErrorData::internal_error(format!("run artifact projection failed: {error}"), None)
             },
         )?
     } else {
@@ -132,7 +128,7 @@ async fn read_run_result(
             &resolved.payload,
         )
         .await
-        .map_err(|error| RpcError::internal_error().with_message(error.to_string()))?
+        .map_err(|error| ErrorData::internal_error(error.to_string(), None))?
     };
     read_resource_result_for_payload(uri, payload)
 }
@@ -140,8 +136,8 @@ async fn read_run_result(
 pub(crate) async fn handle_read_resource_request(
     handler: &PlasmMcpHandler,
     params: ReadResourceRequestParams,
-    runtime: Arc<dyn McpServer>,
-) -> Result<ReadResourceResult, RpcError> {
+    runtime: Arc<McpRequest>,
+) -> Result<ReadResourceResult, ErrorData> {
     let started = Instant::now();
     let raw_uri = params.uri.trim();
     let (uri_owned, read_source) = strip_plasm_resource_read_source(raw_uri);
@@ -149,9 +145,10 @@ pub(crate) async fn handle_read_resource_request(
     let read_source = read_source.as_deref();
     if let Some(bundle) = crate::mcp_app::bundle_for_uri(uri) {
         let Some((content, result_meta)) = crate::mcp_app::read_resource_text(uri) else {
-            return Err(
-                RpcError::invalid_params().with_message(format!("unknown ui resource: {uri}"))
-            );
+            return Err(ErrorData::invalid_params(
+                format!("unknown ui resource: {uri}"),
+                None,
+            ));
         };
         crate::metrics::record_mcp_resource_read(
             bundle.resource_metric,
@@ -159,9 +156,11 @@ pub(crate) async fn handle_read_resource_request(
             "none",
             started.elapsed(),
         );
-        return Ok(ReadResourceResult {
-            contents: vec![ReadResourceContent::TextResourceContents(content)],
-            meta: Some(result_meta),
+        return Ok({
+            let mut model = ReadResourceResult::new(vec![]);
+            model.contents = vec![content];
+            model.meta = Some(result_meta.into());
+            model
         });
     }
 
@@ -245,9 +244,10 @@ pub(crate) async fn handle_read_resource_request(
             "unsupported_uri",
             started.elapsed(),
         );
-        return Err(
-            RpcError::invalid_params().with_message(format!("unsupported resource URI: {uri}"))
-        );
+        return Err(ErrorData::invalid_params(
+            format!("unsupported resource URI: {uri}"),
+            None,
+        ));
     };
     let ls_key_opt = handler
         .plasm
@@ -296,7 +296,7 @@ mod tests {
     #[tokio::test]
     async fn computed_artifact_context_is_tsv_with_session_paging_while_ui_is_json() {
         let mut cgs = plasm_core::load_schema(
-            &std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            &std::path::Path::new(crate::test_manifest_dir())
                 .join("../../fixtures/schemas/python_dag_slice"),
         )
         .unwrap();
@@ -391,16 +391,21 @@ mod tests {
         let model = read_run_result(&handler, &uri, resolved.clone(), None)
             .await
             .unwrap();
-        let ReadResourceContent::TextResourceContents(model) = &model.contents[0] else {
+        let rmcp::model::ResourceContents::TextResourceContents {
+            text: model,
+            mime_type: model_mime,
+            ..
+        } = &model.contents[0]
+        else {
             panic!("model result must be text");
         };
-        assert_eq!(model.mime_type.as_deref(), Some("text/markdown"));
-        assert!(model.text.contains("```tsv"));
+        assert_eq!(model_mime.as_deref(), Some("text/markdown"));
+        assert!(model.contains("```tsv"));
         assert!(
-            model.text.contains(&session_ref),
+            model.contains(&session_ref),
             "continuation belongs to the resolved logical session"
         );
-        assert!(serde_json::from_str::<serde_json::Value>(&model.text).is_err());
+        assert!(serde_json::from_str::<serde_json::Value>(model).is_err());
         let tool = super::super::resource_helpers::run_artifact_context_payload(
             &handler,
             &prompt_hash,
@@ -419,11 +424,16 @@ mod tests {
         )
         .await
         .unwrap();
-        let ReadResourceContent::TextResourceContents(ui) = &ui.contents[0] else {
+        let rmcp::model::ResourceContents::TextResourceContents {
+            text: ui,
+            mime_type: ui_mime,
+            ..
+        } = &ui.contents[0]
+        else {
             panic!("UI artifact must be JSON text");
         };
-        assert_eq!(ui.mime_type.as_deref(), Some("application/json"));
-        let rows: serde_json::Value = serde_json::from_str(&ui.text).unwrap();
+        assert_eq!(ui_mime.as_deref(), Some("application/json"));
+        let rows: serde_json::Value = serde_json::from_str(ui).unwrap();
         assert_eq!(rows["entities"].as_array().unwrap().len(), 32);
         handler
             .plasm

@@ -35,7 +35,7 @@ mod ra17_prerequisite_seats;
 mod get_invocation_inputs;
 
 fn test_session() -> ExecuteSession {
-    let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let root = PathBuf::from(crate::test_manifest_dir());
     let cgs = Arc::new(
         plasm_core::loader::load_schema_dir(
             &root.join("../../fixtures/schemas/plasm_language_matrix"),
@@ -71,13 +71,34 @@ async fn search_group_by_checks_fields_and_preserves_observed_relation_types() {
     let symbols = session.teaching_exposure.as_ref().unwrap().to_symbol_map();
     let item = symbols.entity_sym_for("langmatrix", "LangItem");
     let source = format!("class Grouped(Program):\n    def build(self):\n        rows = {item}.search(q=\"probe\")\n        return rows.group_by(\"summary\", n=agg.count())");
-    let bundle = crate::plasm_compile::compile_python_program(&session, &source).await.unwrap();
-    let schema = bundle.artifact().comp.steps.values().find_map(|step| match step {
-        plasm_core::PlasmStepPayload::Map(map) if matches!(map.compute.op, plasm_core::ComputeOp::GroupBy { .. }) => Some(&map.compute.schema),
-        _ => None,
-    }).unwrap();
-    assert!(schema.fields.iter().any(|field| field.name.as_str() == "summary" && field.value_kind == plasm_core::SyntheticValueKind::EntityRef));
-    let error = crate::plasm_compile::compile_python_program(&session, &source.replace("group_by(\"summary\"", "group_by(\"missing_field\"")).await.unwrap_err();
+    let bundle = crate::plasm_compile::compile_python_program(&session, &source)
+        .await
+        .unwrap();
+    let schema = bundle
+        .artifact()
+        .comp
+        .steps
+        .values()
+        .find_map(|step| match step {
+            plasm_core::PlasmStepPayload::Map(map)
+                if matches!(map.compute.op, plasm_core::ComputeOp::GroupBy { .. }) =>
+            {
+                Some(&map.compute.schema)
+            }
+            _ => None,
+        })
+        .unwrap();
+    assert!(schema
+        .fields
+        .iter()
+        .any(|field| field.name.as_str() == "summary"
+            && field.value_kind == plasm_core::SyntheticValueKind::EntityRef));
+    let error = crate::plasm_compile::compile_python_program(
+        &session,
+        &source.replace("group_by(\"summary\"", "group_by(\"missing_field\""),
+    )
+    .await
+    .unwrap_err();
     assert!(error.to_string().contains("missing_field"), "{error}");
 }
 
@@ -96,7 +117,9 @@ comments | select note"#,
     )
     .expect_err("intermediate postfix must be bound");
     assert!(
-        err.to_string().contains("binding") || err.to_string().contains("Intermediate") || err.to_string().contains("bind each step"),
+        err.to_string().contains("binding")
+            || err.to_string().contains("Intermediate")
+            || err.to_string().contains("bind each step"),
         "{err}"
     );
     assert!(!err.to_string().contains("return_1"), "{err}");
@@ -220,7 +243,10 @@ fn take_two_field_extract_remains_plural() {
         )
         .expect_err("take 2 does not prove scalar extraction");
         assert!(error.to_string().contains("singleton"), "{error}");
-        assert!(!error.to_string().contains("take 1"), "diagnostics must not replace identity selection: {error}");
+        assert!(
+            !error.to_string().contains("take 1"),
+            "diagnostics must not replace identity selection: {error}"
+        );
         assert!(error.to_string().contains("identity"), "{error}");
     }
 }
@@ -278,7 +304,10 @@ fn plural_field_dot_rejects_with_select_steer() {
         "rows = LangItem\ntitle = rows.title\ntitle",
     )
     .expect_err("plural .title must not silently project");
-    assert!(err.to_string().contains("PLP-4") || err.to_string().contains("select"), "{err}");
+    assert!(
+        err.to_string().contains("PLP-4") || err.to_string().contains("select"),
+        "{err}"
+    );
 }
 
 #[test]
@@ -341,10 +370,19 @@ by_team"#,
 #[test]
 fn apply_named_identity_is_a_get_not_a_derive_literal() {
     let plan = compile_plasm_dag_to_plan(
-        &PromptPipelineConfig::default(), None, &test_session(), "named-get-apply",
+        &PromptPipelineConfig::default(),
+        None,
+        &test_session(),
+        "named-get-apply",
         "hits = LangItem\nout = hits => LangItem(id=_.id)\nout",
-    ).expect("named identity repair form lowers to Get");
-    let node = plan["nodes"].as_array().unwrap().iter().find(|n| n["id"] == "out").unwrap();
+    )
+    .expect("named identity repair form lowers to Get");
+    let node = plan["nodes"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|n| n["id"] == "out")
+        .unwrap();
     assert_eq!(node["kind"], "for_each");
     assert_eq!(node["effect_template"]["ir_template"]["expr"]["op"], "get");
 }
@@ -379,7 +417,8 @@ fn derive_map_rejects_relation_hop_symbol() {
     )
     .expect_err("entity relation hop on => must not compile as derive literal");
     assert!(
-        err.to_string().contains("relation reads use") || err.to_string().contains("derive map does not accept"),
+        err.to_string().contains("relation reads use")
+            || err.to_string().contains("derive map does not accept"),
         "{err}"
     );
 }
@@ -415,7 +454,8 @@ bad"#,
     )
     .expect_err("wire relation hop on => must not compile as derive");
     assert!(
-        err.to_string().contains("relation reads use") || err.to_string().contains("unsupported `=>` applicator"),
+        err.to_string().contains("relation reads use")
+            || err.to_string().contains("unsupported `=>` applicator"),
         "{err}"
     );
 }
@@ -514,7 +554,10 @@ fn apply_rejects_bare_non_applicator_rhs() {
         "rows = LangItem\nbad = rows => tags\nbad",
     )
     .expect_err("bare applicator must fail");
-    assert!(err.to_string().contains("unsupported `=>` applicator"), "{err}");
+    assert!(
+        err.to_string().contains("unsupported `=>` applicator"),
+        "{err}"
+    );
     assert!(err.to_string().contains("_.r#"), "{err}");
 }
 
@@ -648,7 +691,10 @@ fn missing_content_field_has_no_reserved_word_hint() {
 issue.content"#,
     )
     .expect_err("GET row .content must not look like relation");
-    assert!(!err.to_string().contains("row-to-text template bindings"), "{err}");
+    assert!(
+        !err.to_string().contains("row-to-text template bindings"),
+        "{err}"
+    );
 }
 
 #[test]
@@ -665,7 +711,8 @@ bad"#,
     )
     .expect_err("a non-identity slot must not be accepted as Get identity");
     assert!(
-        err.to_string().contains("only accepted when") && err.to_string().contains("identity field"),
+        err.to_string().contains("only accepted when")
+            && err.to_string().contains("identity field"),
         "{err}"
     );
 }
@@ -782,7 +829,7 @@ bad"#,
 /// — plan `qualified_entity` must use the owning catalog, not the lexicographic primary.
 #[test]
 fn federated_surface_qualified_entity_matches_exposure_catalog() {
-    let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let root = PathBuf::from(crate::test_manifest_dir());
     let cgs = Arc::new(
         plasm_core::loader::load_schema_dir(
             &root.join("../../fixtures/schemas/plasm_language_matrix"),
@@ -838,7 +885,7 @@ fn federated_surface_qualified_entity_matches_exposure_catalog() {
 /// Federated primary is `langmatrix_b` but relation target `LangDetail` resolves via owning CGS pointer, not primary `entry_id`.
 #[test]
 fn federated_relation_target_qe_from_owning_catalog() {
-    let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let root = PathBuf::from(crate::test_manifest_dir());
     let cgs_primary = Arc::new(
         load_schema(&root.join("../../fixtures/schemas/plasm_language_matrix")).expect("cgs"),
     );
@@ -921,7 +968,7 @@ summary"#
 /// Federated phrase_ident: secondary-catalog bare query + create invoke (issue #23).
 #[test]
 fn federated_secondary_catalog_query_and_create_phrase_ident() {
-    let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let root = PathBuf::from(crate::test_manifest_dir());
     let cgs = Arc::new(
         plasm_core::loader::load_schema_dir(
             &root.join("../../fixtures/schemas/plasm_language_matrix"),
@@ -996,7 +1043,8 @@ bad"#
     )
     .expect_err("unbound phrase on create param");
     assert!(
-        err.to_string().contains("unknown program binding") || err.to_string().contains("program binding"),
+        err.to_string().contains("unknown program binding")
+            || err.to_string().contains("program binding"),
         "{err}"
     );
     assert!(
@@ -1056,7 +1104,7 @@ lines | select {p_id}, {p_note}"#
 
 #[test]
 fn lookup_relation_chain_meta_requires_qe_federated() {
-    let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let root = PathBuf::from(crate::test_manifest_dir());
     let cgs = Arc::new(
         plasm_core::loader::load_schema_dir(
             &root.join("../../fixtures/schemas/plasm_language_matrix"),
@@ -1093,7 +1141,8 @@ fn lookup_relation_chain_meta_requires_qe_federated() {
     );
     let err = super::lookup_relation_chain_meta(&session, None, &chain, None).unwrap_err();
     assert!(
-        err.to_string().contains("federated relation continuation requires catalog ownership"),
+        err.to_string()
+            .contains("federated relation continuation requires catalog ownership"),
         "{err}"
     );
 }
@@ -1175,7 +1224,10 @@ fn rejects_return_prefixed_surface_line() {
         "return LangItem, LangLine",
     )
     .expect_err("return prefix");
-    assert!(err.to_string().contains("Remove `return`"), "unexpected: {err}");
+    assert!(
+        err.to_string().contains("Remove `return`"),
+        "unexpected: {err}"
+    );
 }
 
 #[test]
@@ -1190,7 +1242,10 @@ fn rejects_return_prefixed_final_roots_in_dag() {
         source,
     )
     .expect_err("return");
-    assert!(err.to_string().contains("Remove `return`"), "unexpected: {err}");
+    assert!(
+        err.to_string().contains("Remove `return`"),
+        "unexpected: {err}"
+    );
 }
 
 /// Tilde search must plan as `search` (not primary query).
@@ -1366,7 +1421,8 @@ fn flattened_dag_with_multiline_quoted_arg_errors_before_flatten() {
     )
     .expect_err("physical newline in quoted arg should fail before flatten");
     assert!(
-        err.to_string().contains("physical newline inside a quoted Plasm string parameter")
+        err.to_string()
+            .contains("physical newline inside a quoted Plasm string parameter")
             && err.to_string().contains("tagged heredoc"),
         "unexpected: {err}"
     );
@@ -1377,7 +1433,8 @@ fn multiline_quoted_arg_gets_heredoc_diagnostic() {
     let err = collect_program_statement_lines("body = LangLine(message=\"long\nbody\")")
         .expect_err("physical newline in quote");
     assert!(
-        err.to_string().contains("physical newline inside a quoted Plasm string parameter")
+        err.to_string()
+            .contains("physical newline inside a quoted Plasm string parameter")
             && err.to_string().contains("tagged heredoc"),
         "unexpected: {err}"
     );
@@ -1396,7 +1453,8 @@ fn flattened_dag_diagnostic_does_not_mask_heredoc_newline_errors() {
     )
     .expect_err("bad heredoc should fail");
     assert!(
-        !err.to_string().contains("Do not separate bindings or final roots with spaces"),
+        !err.to_string()
+            .contains("Do not separate bindings or final roots with spaces"),
         "unexpected: {err}"
     );
 }
@@ -1418,7 +1476,7 @@ fn multiline_heredoc_binding_then_parallel_roots_compiles() {
 }
 
 fn repository_commit_session() -> ExecuteSession {
-    let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let root = PathBuf::from(crate::test_manifest_dir());
     let cgs = Arc::new(
         load_schema(&root.join("../../fixtures/schemas/repository_commit_matrix"))
             .expect("load repository/commit matrix"),
@@ -1539,15 +1597,25 @@ out"#;
     )
     .expect("bound compile");
     let explicit = &plan_explicit["nodes"][0]["ir"]["expr"];
-    let bound = plan_bound["nodes"].as_array().unwrap().iter()
-        .find(|n| n["id"] == "out").expect("out node");
+    let bound = plan_bound["nodes"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|n| n["id"] == "out")
+        .expect("out node");
     let template = &bound["ir_template"]["expr"];
     assert_eq!(explicit["capability"], template["capability"]);
     assert_eq!(explicit["input"], template["input"]);
-    assert_eq!(explicit["target"]["entity_type"], template["target"]["entity_type"]);
-    assert!(bound["uses_result"].as_array().unwrap().iter().any(|r| r["node"] == "item"));
+    assert_eq!(
+        explicit["target"]["entity_type"],
+        template["target"]["entity_type"]
+    );
+    assert!(bound["uses_result"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|r| r["node"] == "item"));
     evaluate_plasm_plan_dry(&session, &plan_bound).expect("typed receiver template");
-
 }
 
 #[test]
@@ -1591,7 +1659,10 @@ out"#;
         .clone();
     assert_eq!(ir_explicit["capability"], ir_bound["capability"]);
     assert_eq!(ir_explicit["input"], ir_bound["input"]);
-    assert!(ir_bound["input"].is_object(), "compare actual templates, not missing IR");
+    assert!(
+        ir_bound["input"].is_object(),
+        "compare actual templates, not missing IR"
+    );
     evaluate_plasm_plan_dry(&session, &plan_bound).expect("receiver and argument dependencies");
 }
 
@@ -2033,7 +2104,7 @@ tags"#
 }
 
 fn language_matrix_tags_session() -> ExecuteSession {
-    let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let root = PathBuf::from(crate::test_manifest_dir());
     let cgs = Arc::new(
         plasm_core::loader::load_schema_dir(
             &root.join("../../fixtures/schemas/plasm_language_matrix"),
@@ -2259,7 +2330,10 @@ fn bracket_render_accepts_bare_label_singleton_on_source() {
     let nodes = plan["nodes"].as_array().expect("nodes");
     let render = nodes.iter().find(|n| n["id"] == "mail").expect("mail");
     let source = render["compute"]["source"].as_str().expect("render source");
-    let prefix = nodes.iter().find(|n| n["id"] == source).expect("render source node");
+    let prefix = nodes
+        .iter()
+        .find(|n| n["id"] == source)
+        .expect("render source node");
     assert_eq!(prefix["compute"]["op"]["kind"], "limit");
     assert_eq!(prefix["compute"]["op"]["count"], 1);
     assert_eq!(render["compute"]["op"]["kind"], "render");
@@ -2268,7 +2342,6 @@ fn bracket_render_accepts_bare_label_singleton_on_source() {
         "expected render compute.page_size omitted when prefix lowered tail flags"
     );
 }
-
 
 #[test]
 fn derive_accepts_render_content_as_binding_rhs() {
@@ -2460,7 +2533,9 @@ fn sort_field_error_recommends_p_symbols_not_projected_columns() {
         err.to_string().contains("wire")
             || err.to_string().contains("teaching")
             || err.to_string().contains("rows:")
-            || err.to_string().contains("Intermediate step must be a binding"),
+            || err
+                .to_string()
+                .contains("Intermediate step must be a binding"),
         "expected sort guidance, got: {err}"
     );
 }
@@ -2696,7 +2771,8 @@ bad = totals.commits"#;
     )
     .expect_err("aggregate is not a Plasm anchor");
     assert!(
-        err.to_string().contains("row-preserving projection bindings")
+        err.to_string()
+            .contains("row-preserving projection bindings")
             || err.to_string().contains("PLP-4")
             || err.to_string().contains("not a Plasm expression anchor"),
         "unexpected: {err}"
@@ -2929,7 +3005,8 @@ commits"#,
     )
     .expect_err("cross-entity symbols must not compile");
     assert!(
-        (err.to_string().contains("open_issues_count") || err.to_string().contains("not a row symbol"))
+        (err.to_string().contains("open_issues_count")
+            || err.to_string().contains("not a row symbol"))
             && (err.to_string().contains("not a row field")
                 || err.to_string().contains("null columns")
                 || err.to_string().contains("not a row symbol")
@@ -3166,8 +3243,12 @@ report"#;
     );
     let op = &report["compute"]["op"];
     assert_eq!(op["columns"], json!(["id"]));
-    assert!(op["render_bindings"].as_array().is_none_or(|bindings| bindings.is_empty()),
-        "row-local id must not become a cross-binding collection");
+    assert!(
+        op["render_bindings"]
+            .as_array()
+            .is_none_or(|bindings| bindings.is_empty()),
+        "row-local id must not become a cross-binding collection"
+    );
     let plan_value = crate::plasm_plan::parse_plan_value(&plan).expect("parse plan");
     crate::plasm_plan::validate_plan_artifact(&plan_value).expect("validate plan");
 }
@@ -3241,7 +3322,10 @@ fn legacy_binding_field_call_is_not_projection_alias() {
     }
     let err = compile_node_expr(&session, &state, "bad", "pick(id, title)")
         .expect_err("binding field call must not alias projection");
-    assert!(err.to_string().contains("pick") || err.to_string().contains("projection"), "{err}");
+    assert!(
+        err.to_string().contains("pick") || err.to_string().contains("projection"),
+        "{err}"
+    );
 }
 
 #[test]
@@ -3258,7 +3342,9 @@ bad"#,
     )
     .expect_err("bare query-all `.title` must not fill string param");
     assert!(
-        err.to_string().contains("StaticSingleton") || err.to_string().contains("scalar") || err.to_string().contains("plural"),
+        err.to_string().contains("StaticSingleton")
+            || err.to_string().contains("scalar")
+            || err.to_string().contains("plural"),
         "expected plural→scalar gate, got: {err}"
     );
 }
@@ -3412,7 +3498,8 @@ bad"#,
     .expect_err("unbound `body` must not plan as literal string");
     assert!(err.to_string().contains("body"), "{err}");
     assert!(
-        err.to_string().contains("unknown program binding") || err.to_string().contains("program binding"),
+        err.to_string().contains("unknown program binding")
+            || err.to_string().contains("program binding"),
         "{err}"
     );
 }
@@ -3446,24 +3533,46 @@ updated"#,
     );
 }
 
-
 #[test]
 fn data_expression_boundary_rejects_nested_executable_syntax() {
-    for rhs in ["{ a: LangItem(_.id).lines }", "{ a: [LangItem(_.id).lines] }", "{ a: _.title | split_part(\"/\", 0) }", "{ a: _.title, a: 3 }"] {
+    for rhs in [
+        "{ a: LangItem(_.id).lines }",
+        "{ a: [LangItem(_.id).lines] }",
+        "{ a: _.title | split_part(\"/\", 0) }",
+        "{ a: _.title, a: 3 }",
+    ] {
         let program = format!("rows = LangItem\nout = rows => {rhs}\nout");
-        assert!(compile_plasm_dag_to_plan(&PromptPipelineConfig::default(), None, &test_session(), "closed-data", &program).is_err(), "accepted {rhs}");
+        assert!(
+            compile_plasm_dag_to_plan(
+                &PromptPipelineConfig::default(),
+                None,
+                &test_session(),
+                "closed-data",
+                &program
+            )
+            .is_err(),
+            "accepted {rhs}"
+        );
     }
 }
 
 #[test]
 fn data_expression_boundary_preserves_quoted_operational_text() {
-    let program = "rows = LangItem\nout = rows => { a: \"LangItem(_.id).lines\", b: [\"_.lines\"] }\nout";
-    compile_plasm_dag_to_plan(&PromptPipelineConfig::default(), None, &test_session(), "quoted-data", program).expect("quoted text stays data");
+    let program =
+        "rows = LangItem\nout = rows => { a: \"LangItem(_.id).lines\", b: [\"_.lines\"] }\nout";
+    compile_plasm_dag_to_plan(
+        &PromptPipelineConfig::default(),
+        None,
+        &test_session(),
+        "quoted-data",
+        program,
+    )
+    .expect("quoted text stays data");
 }
 
 #[test]
 fn cross_catalog_union_cannot_regain_relation_continuation() {
-    let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let root = PathBuf::from(crate::test_manifest_dir());
     let dir = root.join("../../fixtures/schemas/plasm_language_matrix");
     let cgs_a = Arc::new(plasm_core::loader::load_schema_dir(&dir).expect("langmatrix_a"));
     let cgs_b = Arc::new(plasm_core::loader::load_schema_dir(&dir).expect("langmatrix_b"));
@@ -3503,8 +3612,13 @@ fn cross_catalog_union_cannot_regain_relation_continuation() {
     let e2 = map.entity_sym_for("langmatrix_b", "LangItem");
     let r_sym = map.ident_sym_relation_for("langmatrix_b", "LangItem", "children");
     for suffix in [
-        "", " | take 40", " | take 1", " | where score > 0",
-        " | order by score", " | select id", " | distinct",
+        "",
+        " | take 40",
+        " | take 1",
+        " | where score > 0",
+        " | order by score",
+        " | select id",
+        " | distinct",
         " | where score > 0 | take 1 | select id",
     ] {
         let (stage, receiver) = if suffix.is_empty() {
@@ -3513,9 +3627,19 @@ fn cross_catalog_union_cannot_regain_relation_continuation() {
             (format!("\ncut = both{suffix}"), "cut")
         };
         let source = format!("left = {e1}{{owner=\"alice\"}} | select id, score\nright = {e2}{{owner=\"bob\"}} | select id, score\nboth = left | union right{stage}\nkids = {receiver} => _.{r_sym}\nkids");
-        let result = compile_plasm_dag_to_plan(&PromptPipelineConfig::default(), None, &session, "union-continuation", &source);
+        let result = compile_plasm_dag_to_plan(
+            &PromptPipelineConfig::default(),
+            None,
+            &session,
+            "union-continuation",
+            &source,
+        );
         let error = result.expect_err("terminal union must remain non-continuable");
-        assert!(error.to_string().contains("PLP-4:") && error.to_string().contains("entity continuation evidence"), "{suffix}: {error}");
+        assert!(
+            error.to_string().contains("PLP-4:")
+                && error.to_string().contains("entity continuation evidence"),
+            "{suffix}: {error}"
+        );
     }
 }
 
@@ -3526,7 +3650,9 @@ async fn nested_scope_captures_entity_returning_mutation_singletons() {
     let item = symbols.entity_sym_for("langmatrix", "LangItem");
     let create = symbols.method_sym_for("langmatrix", "LangItem", "create");
     let source = format!("class Captured(Program):\n    def build(self):\n        created = {item}.{create}(title='Created', score=1, owner='alice')\n        return {item}.query().map(lambda row: {{'created': created.title, 'title': row.title}}, max_parents=8)");
-    crate::plasm_compile::compile_python_program(&session, &source).await.unwrap();
+    crate::plasm_compile::compile_python_program(&session, &source)
+        .await
+        .unwrap();
 }
 
 #[tokio::test]
@@ -3536,7 +3662,9 @@ async fn python_map_record_can_include_taught_relation_from_parent_row() {
     let item = symbols.entity_sym_for("langmatrix", "LangItem");
     let lines = symbols.ident_sym_relation_for("langmatrix", "LangItem", "complete_lines");
     for body in [
-        format!("parents.map(lambda row: {{'title': row.title, 'lines': row.{lines}}}, max_parents=2)"),
+        format!(
+            "parents.map(lambda row: {{'title': row.title, 'lines': row.{lines}}}, max_parents=2)"
+        ),
         format!("parents.select('title', lines=lambda row: row.{lines})"),
     ] {
         let source = format!("class WithLines(Program):\n    def build(self):\n        parents = {item}.query().take(2)\n        return {body}\n");
@@ -3551,7 +3679,9 @@ async fn python_map_record_can_include_taught_relation_from_parent_row() {
 async fn python_expressions_preserve_arbitrary_catalog_labels_to_sinks() {
     use crate::flow_catalog::FlowCatalogView;
     use crate::plan_flow::{verify_plan_flow, FlowVerdict, QualifiedCapabilityKey, SinkParamRef};
-    use crate::plan_flow_policy::{FlowPolicy, FlowPolicySnapshot, ForbiddenFlowRule, PolicyRevision};
+    use crate::plan_flow_policy::{
+        FlowPolicy, FlowPolicySnapshot, ForbiddenFlowRule, PolicyRevision,
+    };
     use plasm_core::{CapabilityParamName, DataClassName, SinkClassName};
     use std::collections::BTreeSet;
 
@@ -3570,7 +3700,10 @@ async fn python_expressions_preserve_arbitrary_catalog_labels_to_sinks() {
     }
     catalog.capability_sink_params.insert(
         QualifiedCapabilityKey::from_parts("langmatrix", "LangItem", "langitem_update"),
-        vec![SinkParamRef { param: CapabilityParamName::from("title"), sink_class: Some(sink.clone()) }],
+        vec![SinkParamRef {
+            param: CapabilityParamName::from("title"),
+            sink_class: Some(sink.clone()),
+        }],
     );
     let bodies = [
         format!("row = {item}.get('i1')\n        return row.{update}(title=row.title, score=1, owner='a')"),
@@ -3580,19 +3713,50 @@ async fn python_expressions_preserve_arbitrary_catalog_labels_to_sinks() {
     ];
     for body in bodies {
         let source = format!("class Labeled(Program):\n    def build(self):\n        {body}\n");
-        let bundle = crate::plasm_compile::compile_python_program(&session, &source).await.unwrap_or_else(|error| panic!("{body}: {error}"));
-        let plan = crate::plasm_step_convert::build_validated_plan_from_executable(&bundle.artifact().comp, bundle.executable()).unwrap();
-        let topo = bundle.executable().bind.topo.iter().map(|id| id.as_str().to_owned()).collect::<Vec<_>>();
+        let bundle = crate::plasm_compile::compile_python_program(&session, &source)
+            .await
+            .unwrap_or_else(|error| panic!("{body}: {error}"));
+        let plan = crate::plasm_step_convert::build_validated_plan_from_executable(
+            &bundle.artifact().comp,
+            bundle.executable(),
+        )
+        .unwrap();
+        let topo = bundle
+            .executable()
+            .bind
+            .topo
+            .iter()
+            .map(|id| id.as_str().to_owned())
+            .collect::<Vec<_>>();
         for label in &labels {
-            let snapshot = FlowPolicySnapshot::Active { revision: PolicyRevision(1), policy: FlowPolicy {
-                forbidden: vec![ForbiddenFlowRule { from_label: label.clone(), to_sink: Some(sink.clone()), reason: None }],
-                ..FlowPolicy::default()
-            }};
+            let snapshot = FlowPolicySnapshot::Active {
+                revision: PolicyRevision(1),
+                policy: FlowPolicy {
+                    forbidden: vec![ForbiddenFlowRule {
+                        from_label: label.clone(),
+                        to_sink: Some(sink.clone()),
+                        reason: None,
+                    }],
+                    ..FlowPolicy::default()
+                },
+            };
             let checked = verify_plan_flow(plan.artifact(), &topo, &catalog, &snapshot);
-            assert!(matches!(checked.analysis.verdict, FlowVerdict::Denied), "lost {label:?}: {body}: {:?}", checked.analysis);
+            assert!(
+                matches!(checked.analysis.verdict, FlowVerdict::Denied),
+                "lost {label:?}: {body}: {:?}",
+                checked.analysis
+            );
             assert!(checked.admit().is_err());
         }
-        let checked = verify_plan_flow(plan.artifact(), &topo, &catalog, &FlowPolicySnapshot::Inactive);
-        assert!(checked.admit().is_ok(), "label enforcement is owned by the active policy");
+        let checked = verify_plan_flow(
+            plan.artifact(),
+            &topo,
+            &catalog,
+            &FlowPolicySnapshot::Inactive,
+        );
+        assert!(
+            checked.admit().is_ok(),
+            "label enforcement is owned by the active policy"
+        );
     }
 }

@@ -75,7 +75,7 @@ impl CursorRow {
 }
 
 fn language_matrix_spec_path() -> std::path::PathBuf {
-    let crate_root = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let crate_root = std::path::PathBuf::from(plasm_e2e::test_manifest_dir());
     let candidates = [
         crate_root.join("../../fixtures/real_openapi_specs/plasm_language_matrix.yaml"),
         crate_root.join("fixtures/real_openapi_specs/plasm_language_matrix.yaml"),

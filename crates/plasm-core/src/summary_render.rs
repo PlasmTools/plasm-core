@@ -447,7 +447,8 @@ mod tests {
 
     #[test]
     fn intent_query_all() {
-        let dir = std::path::Path::new("../../fixtures/schemas/petstore");
+        let dir = &std::path::Path::new(crate::test_manifest_dir())
+            .join("../../fixtures/schemas/petstore");
         if !dir.exists() {
             return;
         }

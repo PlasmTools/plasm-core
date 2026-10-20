@@ -74,7 +74,7 @@ impl HttpTransport for Transport {
 async fn ordered_fanout_case(count: usize, fail_at: usize) {
     let cgs = Arc::new(
         load_schema_dir(
-            &std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            &std::path::PathBuf::from(crate::test_manifest_dir())
                 .join("../../fixtures/schemas/partial_write_relation_matrix"),
         )
         .unwrap(),
@@ -248,7 +248,7 @@ async fn ordered_fanout_case(count: usize, fail_at: usize) {
 async fn case(count: usize, fail_at: usize) {
     let cgs = Arc::new(
         load_schema_dir(
-            &std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            &std::path::PathBuf::from(crate::test_manifest_dir())
                 .join("../../fixtures/schemas/partial_write_relation_matrix"),
         )
         .unwrap(),

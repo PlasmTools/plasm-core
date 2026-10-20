@@ -3,9 +3,9 @@
 use std::sync::Arc;
 use std::time::Instant;
 
-use rust_mcp_sdk::schema::schema_utils::CallToolError;
-use rust_mcp_sdk::schema::{CallToolResult, ContentBlock, TextContent};
-use rust_mcp_sdk::McpServer;
+use crate::mcp_server::request::McpRequest;
+use crate::mcp_server::request::ToolFailure;
+use rmcp::model::CallToolResult;
 use tracing::Instrument;
 
 use crate::http_execute::try_dispatch_operation_program;
@@ -27,12 +27,12 @@ impl PlasmMcpHandler {
     pub(crate) async fn handle_plasm_mcp_tool(
         &self,
         key: &str,
-        runtime: &Arc<dyn McpServer>,
+        runtime: &Arc<McpRequest>,
         v: &serde_json::Value,
         tool_name: &'static str,
         dry_run_only: bool,
         started: Instant,
-    ) -> Result<CallToolResult, CallToolError> {
+    ) -> Result<CallToolResult, ToolFailure> {
         let principal_incoming = self.ensure_mcp_principal(key, runtime).await?;
         let session_ref = parse_logical_session_ref_arg(tool_name, v)?;
         let logical_uuid = self.resolve_logical_session_ref_to_uuid(tool_name, &session_ref)?;
@@ -43,9 +43,11 @@ impl PlasmMcpHandler {
             .verify_tenant(LogicalSessionId(logical_uuid), &scope)
             .await
         {
-            return Ok(CallToolResult::with_error(CallToolError::from_message(
-                "logical_session_ref is unknown or does not belong to this tenant scope",
-            )));
+            return Ok(crate::mcp_server::request::tool_error_result(
+                ToolFailure::rejected(
+                    "logical_session_ref is unknown or does not belong to this tenant scope",
+                ),
+            ));
         }
         let ls_key = logical_uuid.to_string();
         let state = self.logical_mutex(key, &ls_key).await;
@@ -104,9 +106,11 @@ impl PlasmMcpHandler {
                 "no_session",
                 started.elapsed(),
             );
-            return Ok(CallToolResult::with_error(CallToolError::from_message(
-                "No session: call `plasm_context` with capability picks (`seeds`) first.",
-            )));
+            return Ok(crate::mcp_server::request::tool_error_result(
+                ToolFailure::rejected(
+                    "No session: call `plasm_context` with capability picks (`seeds`) first.",
+                ),
+            ));
         };
 
         if self
@@ -132,9 +136,9 @@ impl PlasmMcpHandler {
                 "session_expired",
                 started.elapsed(),
             );
-            return Ok(CallToolResult::with_error(CallToolError::from_message(
-                MCP_EXECUTE_SESSION_UNAVAILABLE,
-            )));
+            return Ok(crate::mcp_server::request::tool_error_result(
+                ToolFailure::rejected(MCP_EXECUTE_SESSION_UNAVAILABLE),
+            ));
         }
         let trace_meta = self.trace_session_meta(key, runtime).await;
         let trace_id = self
@@ -336,9 +340,7 @@ impl PlasmMcpHandler {
                     )
                     .into_call_tool_result()
                 } else {
-                    CallToolResult::from_content(vec![ContentBlock::TextContent(TextContent::new(
-                        markdown, None, None,
-                    ))])
+                    CallToolResult::success(vec![rmcp::model::ContentBlock::text(markdown)])
                 };
                 self.schedule_persist_transport_state(key);
                 Ok(res)

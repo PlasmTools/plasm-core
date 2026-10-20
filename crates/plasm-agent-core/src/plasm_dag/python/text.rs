@@ -295,14 +295,15 @@ impl Lower<'_> {
                 ports.clear();
                 break;
             };
-            if owner
-                .as_ref()
-                .is_some_and(|owner| owner != &contract.row_entity)
-            {
+            let Some(concrete) = contract.row_entity.single() else {
+                ports.clear();
+                break;
+            };
+            if owner.as_ref().is_some_and(|owner| owner != concrete) {
                 ports.clear();
                 break;
             }
-            owner = Some(contract.row_entity);
+            owner = Some(concrete.clone());
             ports.push(plasm_core::plasm_monad::PythonSelectionPort {
                 parameter: parameter.clone(),
                 source: node.clone(),
@@ -566,12 +567,22 @@ fn compute_owner(
     while visited.insert(current) {
         match &state.get(current)?.source {
             DagNodeSource::Surface {
-                qualified_entity,
                 result_shape,
+                output_authority,
                 ..
             } => {
                 return (*result_shape != ResultShape::SideEffectAck)
-                    .then(|| qualified_entity.clone());
+                    .then(|| output_authority.single().cloned())
+                    .flatten();
+            }
+            DagNodeSource::Compute {
+                op: ComputeOp::NarrowEntity { .. },
+                ..
+            } => {
+                return super::super::binding_contract(state, current)?
+                    .row_entity
+                    .single()
+                    .cloned();
             }
             DagNodeSource::RelationTraversal {
                 qualified_entity, ..

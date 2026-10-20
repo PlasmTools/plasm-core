@@ -47,7 +47,7 @@ async fn derived_get_preserves_bound_query_credentials() {
         }
     }
     let cgs = plasm_core::loader::load_schema_dir(
-        &std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        &std::path::Path::new(crate::test_manifest_dir())
             .join("../../fixtures/schemas/derived_get_params"),
     )
     .unwrap();
@@ -505,7 +505,7 @@ fn test_execution_config_default() {
 /// `prepare_http_query_response` and must still decode rows with scalar `id`.
 #[test]
 fn matrix_fixture_ruleset_query_decodes_v4_envelope_list() {
-    let dir = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+    let dir = std::path::PathBuf::from(crate::test_manifest_dir())
         .join("../../fixtures/schemas/plasm_prompt_matrix");
     let cgs = plasm_core::load_schema(&dir).expect("load plasm_prompt_matrix fixture");
     let cap = cgs
@@ -565,7 +565,7 @@ fn matrix_fixture_ruleset_query_decodes_v4_envelope_list() {
 
 #[test]
 fn matrix_fixture_ruleset_get_narrowing_decodes_inner_result_object() {
-    let dir = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+    let dir = std::path::PathBuf::from(crate::test_manifest_dir())
         .join("../../fixtures/schemas/plasm_prompt_matrix");
     let cgs = plasm_core::load_schema(&dir).expect("load plasm_prompt_matrix fixture");
     let cap = cgs
@@ -1474,7 +1474,7 @@ fn prepare_http_query_response_concat_arrays_bad_sources_unchanged() {
 /// Default `results` collection key on a nested collection envelope yields zero rows.
 #[test]
 fn nested_collection_envelope_without_preprocess_decodes_zero() {
-    let dir = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+    let dir = std::path::PathBuf::from(crate::test_manifest_dir())
         .join("../../fixtures/schemas/nested_collection_decode");
     let cgs = plasm_core::load_schema(&dir).expect("load nested_collection_decode fixture");
     let body: serde_json::Value = serde_json::from_str(include_str!(concat!(
@@ -1508,7 +1508,7 @@ fn nested_collection_envelope_without_preprocess_decodes_zero() {
 
 #[test]
 fn nested_collection_fixture_concat_arrays_decodes_all_tasks() {
-    let dir = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+    let dir = std::path::PathBuf::from(crate::test_manifest_dir())
         .join("../../fixtures/schemas/nested_collection_decode");
     let cgs = plasm_core::load_schema(&dir).expect("load nested_collection_decode fixture");
     let cap = cgs
@@ -1545,7 +1545,7 @@ fn nested_collection_fixture_concat_arrays_decodes_all_tasks() {
 /// Default `results` collection key on a `{ breakdown: [...] }` envelope yields zero rows.
 #[test]
 fn object_envelope_without_items_path_decodes_zero() {
-    let dir = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+    let dir = std::path::PathBuf::from(crate::test_manifest_dir())
         .join("../../fixtures/schemas/object_envelope_items_path");
     let cgs = plasm_core::load_schema(&dir).expect("load object_envelope_items_path fixture");
     let body: serde_json::Value = serde_json::from_str(include_str!(concat!(
@@ -1578,7 +1578,7 @@ fn object_envelope_without_items_path_decodes_zero() {
 
 #[test]
 fn object_envelope_items_path_decodes_breakdown_rows() {
-    let dir = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+    let dir = std::path::PathBuf::from(crate::test_manifest_dir())
         .join("../../fixtures/schemas/object_envelope_items_path");
     let cgs = plasm_core::load_schema(&dir).expect("load object_envelope_items_path fixture");
     let cap = cgs
@@ -1625,7 +1625,7 @@ fn object_envelope_items_path_decodes_breakdown_rows() {
 
 #[test]
 fn object_envelope_items_path_wraps_root_array_shelf() {
-    let dir = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+    let dir = std::path::PathBuf::from(crate::test_manifest_dir())
         .join("../../fixtures/schemas/object_envelope_items_path");
     let cgs = plasm_core::load_schema(&dir).expect("load object_envelope_items_path fixture");
     let cap = cgs
@@ -1661,7 +1661,7 @@ fn schema_overlay_decode_routes_to_typed_entity() {
     use plasm_core::loader::load_schema_dir;
     use plasm_core::schema_overlay::build_schema_overlay;
 
-    let base_dir = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+    let base_dir = std::path::PathBuf::from(crate::test_manifest_dir())
         .join("../../fixtures/schemas/fibery_schema_overlay/bootstrap");
     let base = load_schema_dir(&base_dir).expect("bootstrap fixture");
     let json: serde_json::Value = serde_json::from_str(include_str!(concat!(
@@ -1690,7 +1690,7 @@ fn schema_overlay_decode_composite_scope_key() {
     use plasm_core::loader::load_schema_dir;
     use plasm_core::schema_overlay::{build_decode_scope_key, build_schema_overlay};
 
-    let base_dir = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+    let base_dir = std::path::PathBuf::from(crate::test_manifest_dir())
         .join("../../fixtures/schemas/fibery_schema_overlay/bootstrap");
     let base = load_schema_dir(&base_dir).expect("bootstrap fixture");
     let json: serde_json::Value = serde_json::from_str(include_str!(concat!(
@@ -1726,7 +1726,7 @@ fn schema_overlay_augment_base_global_decode_without_ambient() {
     use plasm_core::loader::load_schema_dir;
     use plasm_core::schema_overlay::build_schema_overlay;
 
-    let base_dir = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+    let base_dir = std::path::PathBuf::from(crate::test_manifest_dir())
         .join("../../fixtures/schemas/clickup_schema_overlay/bootstrap");
     let base = load_schema_dir(&base_dir).expect("bootstrap fixture");
     let json: serde_json::Value = serde_json::from_str(include_str!(concat!(
@@ -1753,7 +1753,7 @@ fn fibery_schema_query_decodes_database_rows_from_fibery_name_id_path() {
     use plasm_compile::decode_entities;
     use plasm_core::loader::load_schema_dir;
 
-    let dir = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+    let dir = std::path::PathBuf::from(crate::test_manifest_dir())
         .join("../../fixtures/schemas/fibery_schema_overlay");
     let cgs = load_schema_dir(&dir).expect("load fibery catalog");
     let cap = cgs.get_capability("schema_query").expect("schema_query");
@@ -1791,7 +1791,7 @@ fn fibery_user_get_me_narrowing_decodes_first_result_row() {
     use plasm_compile::decode_entities;
     use plasm_core::loader::load_schema_dir;
 
-    let dir = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+    let dir = std::path::PathBuf::from(crate::test_manifest_dir())
         .join("../../fixtures/schemas/fibery_schema_overlay");
     let cgs = load_schema_dir(&dir).expect("load fibery catalog");
     let cap = cgs.get_capability("user_get_me").expect("user_get_me");
@@ -1831,7 +1831,7 @@ fn fibery_entity_create_narrowing_decodes_result_object() {
     use plasm_compile::decode_entities;
     use plasm_core::loader::load_schema_dir;
 
-    let dir = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+    let dir = std::path::PathBuf::from(crate::test_manifest_dir())
         .join("../../fixtures/schemas/fibery_schema_overlay");
     let cgs = load_schema_dir(&dir).expect("load fibery catalog");
     let cap = cgs.get_capability("entity_create").expect("entity_create");
@@ -1878,7 +1878,7 @@ fn fibery_entity_update_merge_injects_fibery_id_into_input() {
     use plasm_compile::CompiledOperation;
     use plasm_core::loader::load_schema_dir;
 
-    let dir = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+    let dir = std::path::PathBuf::from(crate::test_manifest_dir())
         .join("../../fixtures/schemas/fibery_schema_overlay");
     let cgs = load_schema_dir(&dir).expect("load fibery catalog");
     let cap = cgs.get_capability("entity_update").expect("entity_update");
@@ -1923,7 +1923,7 @@ fn fibery_entity_delete_compiles_fibery_id_and_database() {
     use plasm_compile::CompiledOperation;
     use plasm_core::loader::load_schema_dir;
 
-    let dir = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+    let dir = std::path::PathBuf::from(crate::test_manifest_dir())
         .join("../../fixtures/schemas/fibery_schema_overlay");
     let cgs = load_schema_dir(&dir).expect("load fibery catalog");
     let cap = cgs.get_capability("entity_delete").expect("entity_delete");
@@ -1979,7 +1979,7 @@ fn fibery_view_query_decodes_result_array() {
     use plasm_compile::decode_entities;
     use plasm_core::loader::load_schema_dir;
 
-    let dir = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+    let dir = std::path::PathBuf::from(crate::test_manifest_dir())
         .join("../../fixtures/schemas/fibery_schema_overlay");
     let cgs = load_schema_dir(&dir).expect("load fibery catalog");
     let cap = cgs.get_capability("view_query").expect("view_query");
@@ -2023,7 +2023,7 @@ fn fibery_user_get_me_compile_preserves_my_id_filter() {
     use plasm_compile::CompiledOperation;
     use plasm_core::loader::load_schema_dir;
 
-    let dir = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+    let dir = std::path::PathBuf::from(crate::test_manifest_dir())
         .join("../../fixtures/schemas/fibery_schema_overlay");
     let cgs = load_schema_dir(&dir).expect("load fibery catalog");
     let cap = cgs.get_capability("user_get_me").expect("user_get_me");
@@ -2060,7 +2060,7 @@ fn fibery_user_get_me_compile_preserves_my_id_filter() {
 fn fibery_command_envelope_preflight_surfaces_success_false() {
     use plasm_core::loader::load_schema_dir;
 
-    let dir = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+    let dir = std::path::PathBuf::from(crate::test_manifest_dir())
         .join("../../fixtures/schemas/fibery_schema_overlay");
     let cgs = load_schema_dir(&dir).expect("load fibery catalog");
     let cap = cgs.get_capability("user_get_me").expect("user_get_me");
@@ -2086,7 +2086,7 @@ fn fibery_command_envelope_preflight_surfaces_success_false() {
 fn fibery_command_envelope_preflight_surfaces_empty_result_array() {
     use plasm_core::loader::load_schema_dir;
 
-    let dir = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+    let dir = std::path::PathBuf::from(crate::test_manifest_dir())
         .join("../../fixtures/schemas/fibery_schema_overlay");
     let cgs = load_schema_dir(&dir).expect("load fibery catalog");
     let cap = cgs.get_capability("user_get_me").expect("user_get_me");
@@ -2193,7 +2193,7 @@ fn collection_decoder_includes_preferred_embedded_relation() {
     use plasm_compile::DecodedRelation;
     use plasm_core::loader::load_schema_dir;
 
-    let dir = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+    let dir = std::path::PathBuf::from(crate::test_manifest_dir())
         .join("../../fixtures/schemas/plasm_language_matrix");
     let cgs = load_schema_dir(&dir).expect("load language matrix");
     let cap = cgs
@@ -2249,7 +2249,7 @@ fn langitem_get_decoder_embed_decoders_are_leaf() {
     use plasm_compile::DecodedRelation;
     use plasm_core::loader::load_schema_dir;
 
-    let dir = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+    let dir = std::path::PathBuf::from(crate::test_manifest_dir())
         .join("../../fixtures/schemas/plasm_language_matrix");
     let cgs = load_schema_dir(&dir).expect("langmatrix");
     let decoder = create_entity_decoder_for_capability(
@@ -2307,7 +2307,7 @@ fn langitem_get_decoder_embed_decoders_are_leaf() {
 fn pokemon_get_decoder_embed_decoders_are_leaf() {
     use plasm_core::loader::load_schema_dir;
 
-    let dir = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+    let dir = std::path::PathBuf::from(crate::test_manifest_dir())
         .join("../../fixtures/schemas/embed_decoder_matrix");
     let cgs = load_schema_dir(&dir).expect("pokeapi");
     let decoder = create_entity_decoder_for_capability(
@@ -2340,7 +2340,7 @@ fn pokemon_get_decode_on_release_stack_budget() {
         return;
     }
 
-    let dir = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+    let dir = std::path::PathBuf::from(crate::test_manifest_dir())
         .join("../../fixtures/schemas/embed_decoder_matrix");
     let cgs = load_schema_dir(&dir).expect("pokeapi");
     let decoder = create_entity_decoder_for_capability(
@@ -2595,7 +2595,7 @@ async fn host_page_resume_preserves_crossing_backend_page() {
         }
     }
     let cgs = plasm_core::loader::load_schema_dir(
-        &std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        &std::path::Path::new(crate::test_manifest_dir())
             .join("../../fixtures/schemas/plasm_pagination_matrix"),
     )
     .unwrap();
@@ -2635,7 +2635,7 @@ async fn host_page_resume_preserves_crossing_backend_page() {
         .clone()
         .expect("bounded host read must offer continuation");
     let second = engine
-        .execute_pagination_resume(resume, &cgs, &mut mat, None, consume, opts)
+        .execute_pagination_resume(*resume, &cgs, &mut mat, None, consume, opts)
         .await
         .unwrap();
     let ids: std::collections::BTreeSet<_> = first
@@ -2710,7 +2710,7 @@ fn decoder_regression_fixtures_have_compilable_contracts() {
         ("credential_matrix", &["Receipt"][..], &["acquire"][..]),
         ("plasm_prompt_matrix", &["Ruleset"][..], &[][..]),
     ] {
-        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        let path = std::path::Path::new(crate::test_manifest_dir())
             .join("../../fixtures/schemas")
             .join(fixture);
         let cgs = plasm_core::loader::load_schema_dir(&path)
@@ -2791,7 +2791,7 @@ async fn offline_continuation_ladder_host_boundaries_and_failure() {
         }
     }
     let cgs = plasm_core::loader::load_schema_dir(
-        &std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        &std::path::Path::new(crate::test_manifest_dir())
             .join("../../fixtures/schemas/plasm_pagination_matrix"),
     )
     .unwrap();
@@ -2802,7 +2802,7 @@ async fn offline_continuation_ladder_host_boundaries_and_failure() {
         ..Default::default()
     };
     for provider_size in [1, 7, 20] {
-        let fixture = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        let fixture = std::path::Path::new(crate::test_manifest_dir())
             .join("../../fixtures/schemas/plasm_pagination_matrix");
         let variant = tempfile::tempdir().unwrap();
         std::fs::copy(
@@ -2865,7 +2865,7 @@ async fn offline_continuation_ladder_host_boundaries_and_failure() {
                             assert_eq!(result.coverage(), ResultCoverage::Partial);
                             result = engine
                                 .execute_pagination_resume(
-                                    resume,
+                                    *resume,
                                     &cgs,
                                     &mut mat,
                                     None,
@@ -2932,7 +2932,7 @@ async fn offline_continuation_ladder_host_boundaries_and_failure() {
     assert_eq!(first.coverage(), ResultCoverage::Partial);
     let failure = engine
         .execute_pagination_resume(
-            first.pagination_resume.clone().unwrap(),
+            *first.pagination_resume.clone().unwrap(),
             &cgs,
             &mut mat,
             None,
@@ -2984,7 +2984,7 @@ async fn canonical_target_survives_ambient_metadata_on_outbound_requests() {
         }
     }
     let cgs = plasm_core::load_schema_dir(
-        &std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        &std::path::Path::new(crate::test_manifest_dir())
             .join("../../fixtures/schemas/target_identity_matrix"),
     )
     .unwrap();

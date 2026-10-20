@@ -337,6 +337,9 @@ async fn stateless_oauth_exchange_lists_tools_and_replay_revokes_access() {
         .client
         .post(format!("{}/mcp", flow.base))
         .bearer_auth(access)
+        .header("Accept", "application/json, text/event-stream")
+        .header("MCP-Protocol-Version", "2026-07-28")
+        .header("MCP-Method", "tools/list")
         .json(&request)
         .send()
         .await
@@ -357,6 +360,9 @@ async fn stateless_oauth_exchange_lists_tools_and_replay_revokes_access() {
         .client
         .post(format!("{}/mcp", flow.base))
         .bearer_auth(access)
+        .header("Accept", "application/json, text/event-stream")
+        .header("MCP-Protocol-Version", "2026-07-28")
+        .header("MCP-Method", "tools/list")
         .json(&request)
         .send()
         .await

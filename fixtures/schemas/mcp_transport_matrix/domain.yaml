@@ -1,0 +1,30 @@
+version: 1
+auth:
+  scheme: none
+entities:
+  Item:
+    id_field: id
+    description: Abstract item returned through MCP
+    primary_query: list_items
+    fields:
+      id:
+        required: true
+        value_ref: item_id
+capabilities:
+  fail_write:
+    receiver: {kind: entity, entity: Item}
+    kind: action
+    entity: Item
+    description: Attempt a write that returns a tool failure
+    output:
+      type: side_effect
+      description: Changes the item
+  list_items:
+    kind: query
+    entity: Item
+    description: Observe a bounded set of items
+    provides: [id]
+values:
+  item_id:
+    type: integer
+    description: Item identity

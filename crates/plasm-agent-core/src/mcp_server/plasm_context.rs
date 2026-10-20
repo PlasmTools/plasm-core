@@ -2,9 +2,9 @@
 
 use std::sync::Arc;
 
-use rust_mcp_sdk::schema::schema_utils::CallToolError;
-use rust_mcp_sdk::schema::{CallToolResult, TextContent};
-use rust_mcp_sdk::McpServer;
+use crate::mcp_server::request::McpRequest;
+use crate::mcp_server::request::ToolFailure;
+use rmcp::model::CallToolResult;
 use serde_json::json;
 use tracing::Instrument;
 
@@ -29,20 +29,20 @@ impl PlasmMcpHandler {
     pub(crate) async fn handle_mcp_tool_plasm_context(
         &self,
         key: &str,
-        runtime: &Arc<dyn McpServer>,
+        runtime: &Arc<McpRequest>,
         v: &serde_json::Value,
-    ) -> Result<CallToolResult, CallToolError> {
+    ) -> Result<CallToolResult, ToolFailure> {
         let tname = "plasm_context";
         let principal_incoming = self.ensure_mcp_principal(key, runtime).await?;
         let intent = v.get("intent").and_then(|x| x.as_str()).ok_or_else(|| {
-            CallToolError::invalid_arguments(tname, Some("missing `intent`".into()))
+            ToolFailure::invalid_arguments(tname, Some("missing `intent`".into()))
         })?;
         let (session_mode, extend_ref) = parse_plasm_context_session_mode(tname, v)?;
         if v.get("seeds").is_some()
             || v.get("ranked_capabilities").is_some()
             || v.get("effect_slots").is_some()
         {
-            return Err(CallToolError::invalid_arguments(tname, Some("plasm_context accepts current intent and continuation fields; explicit seed selection has been removed".into())));
+            return Err(ToolFailure::invalid_arguments(tname, Some("plasm_context accepts current intent and continuation fields; explicit seed selection has been removed".into())));
         }
         let principal = parse_optional_principal(v);
         let tcfg = self.tenant_mcp_cfg(runtime).await?;
@@ -51,7 +51,7 @@ impl PlasmMcpHandler {
             let wire = extend_ref.as_deref().expect("validated extend ref");
             let id = LogicalSessionId(self.resolve_logical_session_ref_to_uuid(tname, wire)?);
             if !self.plasm.logical_sessions.verify_tenant(id, &scope).await {
-                return Err(CallToolError::from_message(
+                return Err(ToolFailure::rejected(
                     "logical_session_ref is unknown or belongs to another tenant",
                 ));
             }
@@ -60,7 +60,7 @@ impl PlasmMcpHandler {
                     .logical_sessions
                     .get(id)
                     .await
-                    .ok_or_else(|| CallToolError::from_message("logical session expired"))?,
+                    .ok_or_else(|| ToolFailure::rejected("logical session expired"))?,
             )
         } else {
             None
@@ -72,7 +72,7 @@ impl PlasmMcpHandler {
         let mut session_pin = None;
         if let Some(rec) = &existing {
             session_pin = Some(rec.discovery_pin.clone().ok_or_else(|| {
-                CallToolError::from_message("intent extension requires a pinned discovery session")
+                ToolFailure::rejected("intent extension requires a pinned discovery session")
             })?);
             let id = rec.logical_session_id.as_uuid();
             let binding = self.resolve_binding_for_logical(key, id).await;
@@ -86,18 +86,17 @@ impl PlasmMcpHandler {
                     .get_execute_session(&pair.0, &pair.1)
                     .await
                     .ok_or_else(|| {
-                        CallToolError::from_message(
+                        ToolFailure::rejected(
                             "execute session expired or its pinned generation is unavailable",
                         )
                     })?;
-                let execute_pin = session.discovery_pin.as_ref().ok_or_else(|| {
-                    CallToolError::from_message("execute session has no discovery pin")
-                })?;
+                let execute_pin = session
+                    .discovery_pin
+                    .as_ref()
+                    .ok_or_else(|| ToolFailure::rejected("execute session has no discovery pin"))?;
                 let pin = session_pin.as_mut().expect("validated discovery pin");
                 if execute_pin.pin_id != pin.pin_id || execute_pin.generation != pin.generation {
-                    return Err(CallToolError::from_message(
-                        "execute and discovery pins disagree",
-                    ));
+                    return Err(ToolFailure::rejected("execute and discovery pins disagree"));
                 }
                 pin.authorization = pin.authorization.intersection(&execute_pin.authorization);
                 if let Some(exposure) = &session.teaching_exposure {
@@ -116,14 +115,14 @@ impl PlasmMcpHandler {
                 .plasm
                 .catalog
                 .discovery_generation()
-                .map_err(|e| CallToolError::from_message(e.to_string()))?,
+                .map_err(|e| ToolFailure::rejected(e.to_string()))?,
         };
         let current = self
             .plasm
             .catalog
             .pinned_view(&generation)
             .await
-            .map_err(|e| CallToolError::from_message(e.to_string()))?;
+            .map_err(|e| ToolFailure::rejected(e.to_string()))?;
         let allowed = tcfg
             .as_ref()
             .map(|cfg| cfg.allowed_entry_ids.iter().cloned().collect())
@@ -153,7 +152,7 @@ impl PlasmMcpHandler {
             .iter()
             .any(|key| v.get(*key).is_some())
         {
-            return Err(CallToolError::invalid_arguments(
+            return Err(ToolFailure::invalid_arguments(
                 tname,
                 Some(
                     "Discovery accepts current intent; conversational choices belong to the agent"
@@ -166,21 +165,21 @@ impl PlasmMcpHandler {
             .catalog
             .discovery_store()
             .await
-            .map_err(|e| CallToolError::from_message(e.to_string()))?;
+            .map_err(|e| ToolFailure::rejected(e.to_string()))?;
         let provenance = if let Some(id) = logical_id.as_deref() {
             let chain = store
                 .intent_provenance(id)
                 .await
-                .map_err(|error| CallToolError::from_message(error.to_string()))?;
+                .map_err(|error| ToolFailure::rejected(error.to_string()))?;
             chain
                 .derived(intent.to_owned())
-                .map_err(|error| CallToolError::from_message(error.to_string()))?
+                .map_err(|error| ToolFailure::rejected(error.to_string()))?
         } else {
             crate::intent_provenance::IntentProvenance::from_turns([intent.to_owned()])
-                .map_err(|error| CallToolError::from_message(error.to_string()))?
+                .map_err(|error| ToolFailure::rejected(error.to_string()))?
         };
         let service = DiscoveryService::from_env(store.clone())
-            .map_err(|e| CallToolError::from_message(e.to_string()))?;
+            .map_err(|e| ToolFailure::rejected(e.to_string()))?;
         let receipt = service
             .route_turn(RouteTurn {
                 new_generation: &generation,
@@ -192,9 +191,9 @@ impl PlasmMcpHandler {
                     + std::time::Duration::from_secs(24 * 3600),
             })
             .await
-            .map_err(|e| CallToolError::from_message(format!("routing error: {e}")))?;
+            .map_err(|e| ToolFailure::rejected(format!("routing error: {e}")))?;
         let logical_uuid = uuid::Uuid::parse_str(&receipt.pin_id)
-            .map_err(|e| CallToolError::from_message(e.to_string()))?;
+            .map_err(|e| ToolFailure::rejected(e.to_string()))?;
         let rec = self
             .plasm
             .logical_sessions
@@ -209,7 +208,7 @@ impl PlasmMcpHandler {
                 }),
             )
             .await
-            .map_err(|error| CallToolError::from_message(error.to_string()))?;
+            .map_err(|error| ToolFailure::rejected(error.to_string()))?;
         if receipt.closure.is_none() {
             let content = if let Some(recovery) = &receipt.recovery {
                 recovery.render_unmatched_markdown()
@@ -222,8 +221,7 @@ impl PlasmMcpHandler {
             meta.insert("logical_session_ref".into(), json!(wire_ref));
             meta.insert(
                 "routing".into(),
-                serde_json::to_value(&receipt)
-                    .map_err(|e| CallToolError::from_message(e.to_string()))?,
+                serde_json::to_value(&receipt).map_err(|e| ToolFailure::rejected(e.to_string()))?,
             );
             return Ok(crate::mcp_ui_payload::DualLaneToolResult {
                 content,
@@ -237,7 +235,7 @@ impl PlasmMcpHandler {
             .plasm
             .with_discovery_route(receipt)
             .await
-            .map_err(|e| CallToolError::from_message(e.to_string()))?;
+            .map_err(|e| ToolFailure::rejected(e.to_string()))?;
         let route = routed_host
             .discovery_route
             .as_ref()
@@ -256,13 +254,13 @@ impl PlasmMcpHandler {
         {
             let ctx = registry
                 .load_context(&reference.catalog)
-                .map_err(|e| CallToolError::from_message(e.to_string()))?;
+                .map_err(|e| ToolFailure::rejected(e.to_string()))?;
             let cap = ctx
                 .cgs
                 .capabilities
                 .get(reference.capability.as_str())
                 .ok_or_else(|| {
-                    CallToolError::from_message("selected capability absent from pinned catalog")
+                    ToolFailure::rejected("selected capability absent from pinned catalog")
                 })?;
             seeds.push(crate::http_execute::CapabilitySeed {
                 entry_id: reference.catalog.clone(),
@@ -285,7 +283,7 @@ impl PlasmMcpHandler {
         if let Some(ref cfg) = tcfg {
             for eid in &distinct_entries {
                 if !cfg.entry_allowed(eid) {
-                    return Err(CallToolError::from_message(format!(
+                    return Err(ToolFailure::rejected(format!(
                         "entry_id not allowed by tenant MCP configuration: {eid}"
                     )));
                 }
@@ -329,7 +327,7 @@ impl PlasmMcpHandler {
         )
         .instrument(context_span)
         .await
-        .map_err(|err| CallToolError::new(std::io::Error::other(err.to_string())))?;
+        .map_err(|err| ToolFailure::cause(std::io::Error::other(err.to_string())))?;
 
         if out.stale_execute_binding_recovered {
             self.plasm.trace_hub.finalize_mcp_session(&ls_key).await;
@@ -425,7 +423,7 @@ impl PlasmMcpHandler {
                     &catalogs,
                     symbols.as_ref(),
                 )
-                .map_err(|error| CallToolError::from_message(error.to_string()))?;
+                .map_err(|error| ToolFailure::rejected(error.to_string()))?;
                 if !guidance.is_empty() {
                     text.push_str("\n\n");
                     text.push_str(&guidance);
@@ -522,7 +520,7 @@ impl PlasmMcpHandler {
         plasm.insert(
             "routing".into(),
             serde_json::to_value(route.as_ref())
-                .map_err(|e| CallToolError::from_message(e.to_string()))?,
+                .map_err(|e| ToolFailure::rejected(e.to_string()))?,
         );
         let text = crate::mcp_agent_present::AgentContent::context(
             &crate::mcp_agent_present::ContextTokenRefs {
@@ -532,7 +530,7 @@ impl PlasmMcpHandler {
         )
         .render();
         let res = if plasm.is_empty() {
-            CallToolResult::text_content(vec![TextContent::new(text, None, None)])
+            CallToolResult::success(vec![rmcp::model::ContentBlock::text(text)])
         } else {
             crate::mcp_ui_payload::DualLaneToolResult {
                 content: text,

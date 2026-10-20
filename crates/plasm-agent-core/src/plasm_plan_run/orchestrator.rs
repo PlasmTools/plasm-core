@@ -398,11 +398,13 @@ pub(crate) async fn run_executable_plan_phased(
     );
     let rows_progress = execution_scope.and_then(|s| s.rows_progress_fn());
     let scope_budget = Arc::new(super::map_body::ScopeBudget::default());
+    let prepared_computes = crate::python_compute::prepared_scope::PreparedComputeScope::new(es);
     let mat_ctx = PlanStepMaterializeCtx {
         es,
         st,
         session_id,
         plan_shared: &plan_shared,
+        prepared_computes: &prepared_computes,
         approval_policy: &approval_policy,
         flow: &flow,
         trace: trace.as_ref(),
@@ -464,6 +466,7 @@ pub(crate) async fn run_executable_plan_phased(
                     let execution_scope_step = execution_scope_parallel.clone();
                     let scope_budget = scope_budget.clone();
                     let parent_span = tracing::Span::current();
+                    let prepared_computes = &prepared_computes;
                     joins.push(async move {
                         let step_span =
                             crate::spans::plan_step_materialize(&parent_span, step_id.as_str());
@@ -472,6 +475,7 @@ pub(crate) async fn run_executable_plan_phased(
                             st: &st,
                             session_id: session_id.as_str(),
                             plan_shared: &plan_shared,
+                            prepared_computes,
                             approval_policy: &approval_policy,
                             flow: &flow,
                             trace: trace_ctx.as_ref(),
@@ -629,7 +633,7 @@ pub(crate) async fn run_executable_plan_phased(
             }
             let mut receipt = mat.result.as_ref().clone();
             receipt.collection = plasm_runtime::execution::ExecutionCollection::derive(
-                plasm_runtime::execution::RowMaterialization::Catalog,
+                receipt.collection.row_materialization(),
                 receipt
                     .collection
                     .membership()

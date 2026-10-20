@@ -2,15 +2,15 @@
 
 use super::*;
 
-pub(crate) fn mcp_key(runtime: &Arc<dyn McpServer>) -> Result<String, CallToolError> {
-    runtime.session_id().ok_or_else(|| {
-        CallToolError::from_message(
+pub(crate) fn mcp_key(runtime: &Arc<McpRequest>) -> Result<String, ToolFailure> {
+    Some(runtime.transport_key.clone()).ok_or_else(|| {
+        ToolFailure::rejected(
             "MCP session not ready: complete the MCP initialize handshake before calling tools.",
         )
     })
 }
 
-pub(crate) fn mcp_call_tool_error_class(err: &CallToolError) -> &'static str {
+pub(crate) fn mcp_call_tool_error_class(err: &ToolFailure) -> &'static str {
     let msg = err.to_string();
     if msg.contains("entry_id not allowed by tenant MCP configuration") {
         return "entry_not_allowed";
@@ -58,17 +58,15 @@ pub(crate) async fn run_artifact_context_payload(
     prompt_hash: &str,
     session_id: &str,
     payload: &ArtifactPayload,
-) -> Result<ArtifactPayload, CallToolError> {
+) -> Result<ArtifactPayload, ToolFailure> {
     let doc: crate::run_artifacts::RunArtifactDocument = serde_json::from_slice(&payload.bytes)
-        .map_err(|error| {
-            CallToolError::from_message(format!("run artifact decode failed: {error}"))
-        })?;
+        .map_err(|error| ToolFailure::rejected(format!("run artifact decode failed: {error}")))?;
     let session = handler
         .plasm
         .get_execute_session(prompt_hash, session_id)
         .await
         .ok_or_else(|| {
-            CallToolError::from_message(
+            ToolFailure::rejected(
                 "execute session unavailable: extend plasm_context with the same logical_session_ref and current intent",
             )
         })?;
@@ -77,14 +75,14 @@ pub(crate) async fn run_artifact_context_payload(
         .logical_session_id_for_execute_binding(prompt_hash, session_id)
         .await
         .map(crate::mcp_logical_ref::format_logical_session_wire_ref_from_uuid)
-        .ok_or_else(|| CallToolError::from_message("run artifact has no MCP logical session binding: use the run URI returned by plasm_run for the current logical_session_ref"))?;
+        .ok_or_else(|| ToolFailure::rejected("run artifact has no MCP logical session binding: use the run URI returned by plasm_run for the current logical_session_ref"))?;
     let (out, _) = crate::terminal_result_format::hydrate_plan_run_from_artifact_formatted(
         &doc,
         session.as_ref(),
         &doc.run_id,
         Some(&logical_session_ref),
     )
-    .map_err(|error| CallToolError::from_message(error.to_string()))?;
+    .map_err(|error| ToolFailure::rejected(error.to_string()))?;
     Ok(ArtifactPayload {
         metadata: crate::run_artifacts::ArtifactPayloadMetadata {
             content_type: "text/markdown".into(),
@@ -97,25 +95,14 @@ pub(crate) async fn run_artifact_context_payload(
 pub(crate) fn read_resource_result_for_payload(
     uri: &str,
     payload: ArtifactPayload,
-) -> Result<ReadResourceResult, RpcError> {
-    let maybe_utf8 = std::str::from_utf8(&payload.bytes)
-        .ok()
-        .map(|s| s.to_string());
-    Ok(ReadResourceResult {
-        contents: vec![if let Some(text) = maybe_utf8 {
-            ReadResourceContent::TextResourceContents(TextResourceContents {
-                meta: None,
-                mime_type: Some(payload.metadata.content_type),
-                text,
-                uri: uri.to_string(),
-            })
-        } else {
-            let b64 = base64::engine::general_purpose::STANDARD.encode(&payload.bytes);
-            ReadResourceContent::BlobResourceContents(
-                BlobResourceContents::new(b64, uri.to_string())
-                    .with_mime_type(payload.metadata.content_type),
-            )
-        }],
-        meta: None,
-    })
+) -> Result<ReadResourceResult, ErrorData> {
+    let content = match std::str::from_utf8(&payload.bytes) {
+        Ok(text) => ResourceContents::text(text, uri),
+        Err(_) => ResourceContents::blob(
+            base64::engine::general_purpose::STANDARD.encode(&payload.bytes),
+            uri,
+        ),
+    }
+    .with_mime_type(payload.metadata.content_type);
+    Ok(ReadResourceResult::new(vec![content]))
 }

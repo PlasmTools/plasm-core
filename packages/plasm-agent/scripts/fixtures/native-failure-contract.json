@@ -1,0 +1,476 @@
+[
+  {
+    "cause": "program",
+    "recovery": "repair_program",
+    "code": "fixture",
+    "node": null,
+    "occurrence_path": [],
+    "catalog_digest": null,
+    "effects": [],
+    "dispatches": [],
+    "effects_unresolved": false,
+    "program_rejection": {
+      "category": "type",
+      "span_offset": null,
+      "detail": {
+        "kind": "union_columns_differ",
+        "left": [
+          "a"
+        ],
+        "right": [
+          "b"
+        ]
+      }
+    },
+    "diagnostic": "Repair the program"
+  },
+  {
+    "cause": "program",
+    "recovery": "repair_program",
+    "code": "fixture",
+    "node": null,
+    "occurrence_path": [],
+    "catalog_digest": null,
+    "effects": [],
+    "dispatches": [],
+    "effects_unresolved": false,
+    "program_rejection": {
+      "category": "type",
+      "span_offset": null,
+      "detail": {
+        "kind": "reserved_binding",
+        "name": "reserved"
+      }
+    },
+    "diagnostic": "Repair the program"
+  },
+  {
+    "cause": "program",
+    "recovery": "repair_program",
+    "code": "fixture",
+    "node": null,
+    "occurrence_path": [],
+    "catalog_digest": null,
+    "effects": [],
+    "dispatches": [],
+    "effects_unresolved": false,
+    "program_rejection": {
+      "category": "type",
+      "span_offset": null,
+      "detail": {
+        "kind": "static_iteration_required"
+      }
+    },
+    "diagnostic": "Repair the program"
+  },
+  {
+    "cause": "program",
+    "recovery": "repair_program",
+    "code": "fixture",
+    "node": null,
+    "occurrence_path": [],
+    "catalog_digest": null,
+    "effects": [],
+    "dispatches": [],
+    "effects_unresolved": false,
+    "program_rejection": {
+      "category": "type",
+      "span_offset": null,
+      "detail": {
+        "kind": "build_mutation"
+      }
+    },
+    "diagnostic": "Repair the program"
+  },
+  {
+    "cause": "program",
+    "recovery": "repair_program",
+    "code": "fixture",
+    "node": null,
+    "occurrence_path": [],
+    "catalog_digest": null,
+    "effects": [],
+    "dispatches": [],
+    "effects_unresolved": false,
+    "program_rejection": {
+      "category": "type",
+      "span_offset": null,
+      "detail": {
+        "kind": "compute_inference",
+        "diagnostics": [
+          {
+            "code": "abstract_type_error",
+            "unmaterializable_type": null,
+            "message": "Return type cannot be materialized",
+            "compute_line": 3,
+            "compute_column": 4,
+            "source_excerpt": "return value"
+          },
+          {
+            "code": "abstract_unknown_location",
+            "unmaterializable_type": null,
+            "message": "Missing type",
+            "compute_line": null,
+            "compute_column": null,
+            "source_excerpt": null
+          }
+        ]
+      }
+    },
+    "diagnostic": "Repair the program"
+  },
+  {
+    "cause": "program",
+    "recovery": "repair_program",
+    "code": "fixture",
+    "node": null,
+    "occurrence_path": [],
+    "catalog_digest": null,
+    "effects": [],
+    "dispatches": [],
+    "effects_unresolved": false,
+    "program_rejection": {
+      "category": "type",
+      "span_offset": null,
+      "detail": {
+        "kind": "compute_inference",
+        "diagnostics": [
+          {
+            "code": "abstract_type_error",
+            "unmaterializable_type": "any",
+            "message": "Return type cannot be materialized",
+            "compute_line": 3,
+            "compute_column": 4,
+            "source_excerpt": "return value"
+          },
+          {
+            "code": "abstract_unknown_location",
+            "unmaterializable_type": null,
+            "message": "Missing type",
+            "compute_line": null,
+            "compute_column": null,
+            "source_excerpt": null
+          }
+        ]
+      }
+    },
+    "diagnostic": "Repair the program"
+  },
+  {
+    "cause": "program",
+    "recovery": "repair_program",
+    "code": "fixture",
+    "node": null,
+    "occurrence_path": [],
+    "catalog_digest": null,
+    "effects": [],
+    "dispatches": [],
+    "effects_unresolved": false,
+    "program_rejection": {
+      "category": "type",
+      "span_offset": null,
+      "detail": {
+        "kind": "compute_inference",
+        "diagnostics": [
+          {
+            "code": "abstract_type_error",
+            "unmaterializable_type": "unknown",
+            "message": "Return type cannot be materialized",
+            "compute_line": 3,
+            "compute_column": 4,
+            "source_excerpt": "return value"
+          },
+          {
+            "code": "abstract_unknown_location",
+            "unmaterializable_type": null,
+            "message": "Missing type",
+            "compute_line": null,
+            "compute_column": null,
+            "source_excerpt": null
+          }
+        ]
+      }
+    },
+    "diagnostic": "Repair the program"
+  },
+  {
+    "cause": "program",
+    "recovery": "repair_program",
+    "code": "fixture",
+    "node": null,
+    "occurrence_path": [],
+    "catalog_digest": null,
+    "effects": [],
+    "dispatches": [],
+    "effects_unresolved": false,
+    "program_rejection": {
+      "category": "type",
+      "span_offset": null,
+      "detail": {
+        "kind": "compute_inference",
+        "diagnostics": [
+          {
+            "code": "abstract_type_error",
+            "unmaterializable_type": "unsupported",
+            "message": "Return type cannot be materialized",
+            "compute_line": 3,
+            "compute_column": 4,
+            "source_excerpt": "return value"
+          },
+          {
+            "code": "abstract_unknown_location",
+            "unmaterializable_type": null,
+            "message": "Missing type",
+            "compute_line": null,
+            "compute_column": null,
+            "source_excerpt": null
+          }
+        ]
+      }
+    },
+    "diagnostic": "Repair the program"
+  },
+  {
+    "cause": "program",
+    "recovery": "repair_program",
+    "code": "fixture",
+    "node": null,
+    "occurrence_path": [],
+    "catalog_digest": null,
+    "effects": [],
+    "dispatches": [],
+    "effects_unresolved": false,
+    "program_rejection": {
+      "category": "type",
+      "span_offset": null,
+      "detail": {
+        "kind": "compute_inference",
+        "diagnostics": [
+          {
+            "code": "abstract_type_error",
+            "unmaterializable_type": "bytes",
+            "message": "Return type cannot be materialized",
+            "compute_line": 3,
+            "compute_column": 4,
+            "source_excerpt": "return value"
+          },
+          {
+            "code": "abstract_unknown_location",
+            "unmaterializable_type": null,
+            "message": "Missing type",
+            "compute_line": null,
+            "compute_column": null,
+            "source_excerpt": null
+          }
+        ]
+      }
+    },
+    "diagnostic": "Repair the program"
+  },
+  {
+    "cause": "program",
+    "recovery": "repair_program",
+    "code": "fixture",
+    "node": null,
+    "occurrence_path": [],
+    "catalog_digest": null,
+    "effects": [],
+    "dispatches": [],
+    "effects_unresolved": false,
+    "program_rejection": {
+      "category": "type",
+      "span_offset": null,
+      "detail": {
+        "kind": "compute_inference",
+        "diagnostics": [
+          {
+            "code": "abstract_type_error",
+            "unmaterializable_type": "enum",
+            "message": "Return type cannot be materialized",
+            "compute_line": 3,
+            "compute_column": 4,
+            "source_excerpt": "return value"
+          },
+          {
+            "code": "abstract_unknown_location",
+            "unmaterializable_type": null,
+            "message": "Missing type",
+            "compute_line": null,
+            "compute_column": null,
+            "source_excerpt": null
+          }
+        ]
+      }
+    },
+    "diagnostic": "Repair the program"
+  },
+  {
+    "cause": "program",
+    "recovery": "repair_program",
+    "code": "fixture",
+    "node": null,
+    "occurrence_path": [],
+    "catalog_digest": null,
+    "effects": [],
+    "dispatches": [],
+    "effects_unresolved": false,
+    "program_rejection": {
+      "category": "type",
+      "span_offset": null,
+      "detail": {
+        "kind": "compute_inference",
+        "diagnostics": [
+          {
+            "code": "abstract_type_error",
+            "unmaterializable_type": "protocol",
+            "message": "Return type cannot be materialized",
+            "compute_line": 3,
+            "compute_column": 4,
+            "source_excerpt": "return value"
+          },
+          {
+            "code": "abstract_unknown_location",
+            "unmaterializable_type": null,
+            "message": "Missing type",
+            "compute_line": null,
+            "compute_column": null,
+            "source_excerpt": null
+          }
+        ]
+      }
+    },
+    "diagnostic": "Repair the program"
+  },
+  {
+    "cause": "program",
+    "recovery": "repair_program",
+    "code": "fixture",
+    "node": null,
+    "occurrence_path": [],
+    "catalog_digest": null,
+    "effects": [],
+    "dispatches": [],
+    "effects_unresolved": false,
+    "program_rejection": {
+      "category": "type",
+      "span_offset": null,
+      "detail": {
+        "kind": "compute_inference",
+        "diagnostics": [
+          {
+            "code": "abstract_type_error",
+            "unmaterializable_type": "new_type",
+            "message": "Return type cannot be materialized",
+            "compute_line": 3,
+            "compute_column": 4,
+            "source_excerpt": "return value"
+          },
+          {
+            "code": "abstract_unknown_location",
+            "unmaterializable_type": null,
+            "message": "Missing type",
+            "compute_line": null,
+            "compute_column": null,
+            "source_excerpt": null
+          }
+        ]
+      }
+    },
+    "diagnostic": "Repair the program"
+  },
+  {
+    "cause": "program",
+    "recovery": "repair_program",
+    "code": "fixture",
+    "node": null,
+    "occurrence_path": [],
+    "catalog_digest": null,
+    "effects": [],
+    "dispatches": [],
+    "effects_unresolved": false,
+    "program_rejection": {
+      "category": "type",
+      "span_offset": null,
+      "detail": {
+        "kind": "compute_inference",
+        "diagnostics": [
+          {
+            "code": "abstract_type_error",
+            "unmaterializable_type": "record",
+            "message": "Return type cannot be materialized",
+            "compute_line": 3,
+            "compute_column": 4,
+            "source_excerpt": "return value"
+          },
+          {
+            "code": "abstract_unknown_location",
+            "unmaterializable_type": null,
+            "message": "Missing type",
+            "compute_line": null,
+            "compute_column": null,
+            "source_excerpt": null
+          }
+        ]
+      }
+    },
+    "diagnostic": "Repair the program"
+  },
+  {
+    "cause": "program",
+    "recovery": "repair_program",
+    "code": "fixture",
+    "node": null,
+    "occurrence_path": [],
+    "catalog_digest": null,
+    "effects": [],
+    "dispatches": [],
+    "effects_unresolved": false,
+    "program_rejection": {
+      "category": "type",
+      "span_offset": null,
+      "detail": {
+        "kind": "compute_inference",
+        "diagnostics": [
+          {
+            "code": "abstract_type_error",
+            "unmaterializable_type": "truth_refinement",
+            "message": "Return type cannot be materialized",
+            "compute_line": 3,
+            "compute_column": 4,
+            "source_excerpt": "return value"
+          },
+          {
+            "code": "abstract_unknown_location",
+            "unmaterializable_type": null,
+            "message": "Missing type",
+            "compute_line": null,
+            "compute_column": null,
+            "source_excerpt": null
+          }
+        ]
+      }
+    },
+    "diagnostic": "Repair the program"
+  },
+  {
+    "cause": "upstream",
+    "recovery": "stop",
+    "code": "fixture",
+    "node": null,
+    "occurrence_path": [],
+    "catalog_digest": null,
+    "effects": [],
+    "dispatches": [],
+    "effects_unresolved": false,
+    "mcp_tool_result": {
+      "content": [
+        {
+          "text": "original error",
+          "type": "text"
+        }
+      ],
+      "isError": true
+    },
+    "diagnostic": "Tool failed"
+  }
+]

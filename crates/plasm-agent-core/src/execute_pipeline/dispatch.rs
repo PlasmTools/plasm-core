@@ -7,6 +7,12 @@ use plasm_core::{
 };
 use plasm_runtime::preflight_compile_expr;
 
+#[derive(Clone, Copy)]
+pub(crate) enum CompileSource<'a> {
+    Authored,
+    BoundRelation(&'a plasm_runtime::ExecutionResult),
+}
+
 use crate::execute_session::ExecuteSession;
 use crate::plasm_plan::{PlanNodeKind, ValidatedSurfaceNode};
 
@@ -166,8 +172,44 @@ pub fn preflight_line_compile_dispatch(
     _label: &str,
     cgs: &plasm_core::CGS,
 ) -> Result<ParsedExpr, DispatchError> {
+    preflight_line_compile_dispatch_from(
+        federation_es,
+        scoped_es,
+        parsed,
+        cgs,
+        CompileSource::Authored,
+    )
+}
+
+pub(crate) fn preflight_line_compile_dispatch_from(
+    federation_es: &ExecuteSession,
+    scoped_es: &ExecuteSession,
+    parsed: &ParsedExpr,
+    cgs: &plasm_core::CGS,
+    source: CompileSource<'_>,
+) -> Result<ParsedExpr, DispatchError> {
     let normalized = prepare_parsed_expr_for_dispatch(federation_es, scoped_es, parsed)?;
-    compile_expr_with_session_mat(federation_es, &normalized.expr, cgs)?;
+    match source {
+        CompileSource::Authored => {
+            compile_expr_with_session_mat(federation_es, &normalized.expr, cgs)?
+        }
+        CompileSource::BoundRelation(observed) => {
+            let ambient = federation_es.view_ambient();
+            let guard = federation_es
+                .graph_cache
+                .try_lock()
+                .map_err(|_| DispatchError::SessionGraphLocked)?;
+            let compiled = federation_es.compiled_catalog_for_cgs(cgs)?;
+            plasm_runtime::preflight_compile_bound_relation(
+                &normalized.expr,
+                observed,
+                cgs,
+                &compiled,
+                &ambient,
+                &guard,
+            )?;
+        }
+    }
     Ok(normalized)
 }
 

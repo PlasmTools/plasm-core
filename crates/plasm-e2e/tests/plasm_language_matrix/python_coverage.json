@@ -2178,6 +2178,8 @@
     "render_parity_lang_with_when_len",
     "repair_runtime_compute",
     "repair_runtime_projection",
+    "callback_collection_argument",
+    "compute_private_unused",
     "callback_branch_predicate",
     "callback_branch_record",
     "callback_lexical_capture",
@@ -2316,6 +2318,15 @@
       "union_wire_remapping",
       "union_optional_remapped_fields",
       "union_common_input_lanes"
+    ],
+    "entity_union_matrix": [
+      "entity_union_decode",
+      "entity_union_narrow",
+      "entity_union_receiver_authority",
+      "entity_union_relation",
+      "entity_union_relation_selection",
+      "entity_asserted_get",
+      "entity_union_reject_fabrication"
     ]
   }
 }

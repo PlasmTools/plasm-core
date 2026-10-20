@@ -441,7 +441,7 @@ mod tests {
 
     #[test]
     fn persisted_symbol_ledger_round_trip_preserves_entity_symbols() {
-        let dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        let dir = PathBuf::from(crate::test_manifest_dir())
             .join("../../fixtures/schemas/plasm_language_matrix");
         let cgs = load_schema_dir(&dir).expect("matrix");
         let exp =
@@ -459,7 +459,7 @@ mod tests {
 
     #[test]
     fn persisted_symbol_ledger_version_mismatch_rejected() {
-        let dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        let dir = PathBuf::from(crate::test_manifest_dir())
             .join("../../fixtures/schemas/plasm_language_matrix");
         let cgs = load_schema_dir(&dir).expect("matrix");
         let exp = TeachingExposureSession::new(&cgs, "langmatrix", &["HomographRowA"]);
@@ -488,7 +488,7 @@ mod tests {
 
     #[test]
     fn entity_catalog_length_mismatch_is_not_reported_as_postcard_failure() {
-        let dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        let dir = PathBuf::from(crate::test_manifest_dir())
             .join("../../fixtures/schemas/plasm_language_matrix");
         let cgs = load_schema_dir(&dir).expect("matrix");
         let exp = TeachingExposureSession::new(&cgs, "langmatrix", &["HomographRowA"]);
@@ -503,7 +503,7 @@ mod tests {
 
     #[test]
     fn persisted_symbol_ledger_langmatrix_round_trip() {
-        let dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        let dir = PathBuf::from(crate::test_manifest_dir())
             .join("../../fixtures/schemas/plasm_language_matrix");
         let cgs = load_schema_dir(&dir).expect("plasm_language_matrix");
         let exp = TeachingExposureSession::new(&cgs, "langmatrix", &["LangItem", "LangTag"]);
@@ -516,7 +516,7 @@ mod tests {
 
     #[test]
     fn catalog_pins_match_uses_effective_hash() {
-        let dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        let dir = PathBuf::from(crate::test_manifest_dir())
             .join("../../fixtures/schemas/plasm_language_matrix");
         let cgs = load_schema_dir(&dir).expect("matrix");
         let exp = TeachingExposureSession::new(&cgs, "langmatrix", &["HomographRowA"]);
@@ -531,7 +531,7 @@ mod tests {
 
     #[test]
     fn persisted_symbol_ledger_postcard_size_benchmark() {
-        let dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        let dir = PathBuf::from(crate::test_manifest_dir())
             .join("../../fixtures/schemas/plasm_language_matrix");
         let cgs = load_schema_dir(&dir).expect("matrix");
         let exp =

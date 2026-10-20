@@ -143,6 +143,7 @@ impl ProgramStageError {
             span_offset: self.span_offset(),
             detail: match self {
                 Self::PythonLowering { error } => error.rejection_detail(),
+                Self::PythonCompute { error } => error.rejection_detail(),
                 _ => None,
             },
         }
@@ -946,7 +947,7 @@ mod tests {
 
         use plasm_core::TeachingExposureSession;
 
-        let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+        let root = PathBuf::from(crate::test_manifest_dir());
         let cgs = Arc::new(
             plasm_core::loader::load_schema_dir(
                 &root.join("../../fixtures/schemas/plasm_language_matrix"),

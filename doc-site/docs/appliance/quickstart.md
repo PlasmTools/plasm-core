@@ -24,7 +24,7 @@ From source (plasm-core checkout):
 
 ```bash
 cargo build -p plasm-server --release
-cargo run -p plasm --bin plasm-pack-catalogs -- \
+cargo run -p plasm-catalog --bin plasm-pack-catalogs -- \
   --workspace . --apis-root apis --output-dir target/plasm-catalogs
 cargo run -p plasm-server --release -- --catalog-dir target/plasm-catalogs
 ```

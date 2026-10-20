@@ -170,12 +170,25 @@ async fn typed_return_structures_and_effect_gate() {
     ] {
         let (es, host, token) = super::recursive_values::fixture_context(base.clone());
         let source = format!("class Typed(Program):\n    @compute\n    def produce(self, row: Row) -> {annotation}:\n        return {expression}\n    @compute\n    def consume(self, row: Row) -> Row.value:\n        return row.value\n    def build(self):\n        root = {token}.get('000123')\n        source = {setup}\n        result = self.produce(source)\n        return self.consume(result)\n");
-        let source = if expected.is_object() {
+        let source = if annotation == "list[Row]" {
+            source
+                .replace("row: Row) -> Row.value", "row: list[Row]) -> list[Row]")
+                .replace("return row.value", "return row")
+        } else if expected.is_object() {
             source
                 .replace("-> Row.value:", "-> Row:")
                 .replace("return row.value", "return row")
         } else {
             source
+        };
+        // Embed collections as one cell at the program return boundary.
+        let source = if expected.is_object() {
+            source
+        } else {
+            source.replace(
+                "return self.consume(result)",
+                "return {'value': self.consume(result)}",
+            )
         };
         let source = source.replace("ENTITY", &token);
         let bundle = compile_python_program(&es, &source)
@@ -196,7 +209,7 @@ async fn typed_return_structures_and_effect_gate() {
         .await
         .unwrap_or_else(|e| panic!("{source}\n{e}"));
         assert_eq!(
-            serde_json::to_value(&run.return_steps[0].result.entities()[0].fields).unwrap(),
+            super::value_fields(&run.return_steps[0].result.entities()[0]),
             if expected.is_object() {
                 expected
             } else {
@@ -208,7 +221,7 @@ async fn typed_return_structures_and_effect_gate() {
         (
             "list[Row]",
             "rows",
-            "result = self.produce(root.union(ENTITY.get('000124')).select('id'))\n        return result",
+            "result = self.produce(root.union(ENTITY.get('000124')).select('id'))\n        return {'value': result}",
             json!({"value":[{"id":"000123"},{"id":"000124"}]}),
         ),
         (
@@ -244,13 +257,13 @@ async fn typed_return_structures_and_effect_gate() {
         .await
         .unwrap();
         assert_eq!(
-            serde_json::to_value(&run.return_steps[0].result.entities()[0].fields).unwrap(),
+            super::value_fields(&run.return_steps[0].result.entities()[0]),
             expected
         );
     }
     for id in ["000123", "000124"] {
         let (es, host, token) = super::recursive_values::fixture_context(base.clone());
-        let source = format!("class Observe(Program):\n    @compute\n    def produce(self, row: Row) -> Row.boxed:\n        return row.boxed\n    @compute\n    def consume(self, row: Row) -> bool:\n        try:\n            return row.value[0].optional_count is None\n        except AttributeError:\n            return False\n    def build(self):\n        root = {token}.get('{id}')\n        boxed = root.map(lambda r: {{'boxed': root}}, max_parents=1)\n        result = self.produce(boxed)\n        return result, self.consume(result)\n");
+        let source = format!("class Observe(Program):\n    @compute\n    def produce(self, row: Row) -> Row.boxed:\n        return row.boxed\n    @compute\n    def consume(self, rows: list[Row]) -> bool:\n        try:\n            return rows[0].optional_count is None\n        except AttributeError:\n            return False\n    def build(self):\n        root = {token}.get('{id}')\n        boxed = root.map(lambda r: {{'boxed': root}}, max_parents=1)\n        result = self.produce(boxed)\n        return {{'value': result}}, self.consume(result)\n");
         let bundle = compile_python_program(&es, &source)
             .await
             .unwrap_or_else(|e| panic!("{source}\n{e}"));
@@ -268,8 +281,7 @@ async fn typed_return_structures_and_effect_gate() {
         )
         .await
         .unwrap();
-        let returned =
-            serde_json::to_value(&run.return_steps[0].result.entities()[0].fields).unwrap();
+        let returned = super::value_fields(&run.return_steps[0].result.entities()[0]);
         assert_eq!(
             returned["value"][0].get("optional_count"),
             if id == "000123" {
@@ -279,7 +291,7 @@ async fn typed_return_structures_and_effect_gate() {
             }
         );
         assert_eq!(
-            serde_json::to_value(&run.return_steps[1].result.entities()[0].fields).unwrap(),
+            super::value_fields(&run.return_steps[1].result.entities()[0]),
             json!({"value": id == "000123"})
         );
     }
@@ -320,7 +332,7 @@ async fn typed_return_structures_and_effect_gate() {
             })
             .unwrap()
             .0;
-        let source = format!("class Federated(Program):\n    @compute\n    def produce(self, row: Row) -> list[{symbol}]:\n        value: {symbol} = {number}\n        return [value]\n    @compute\n    def consume(self, row: Row) -> Row.value:\n        return row.value\n    def build(self):\n        root = {token}.get('000123').select('count')\n        result = self.produce(root)\n        return self.consume(result)\n");
+        let source = format!("class Federated(Program):\n    @compute\n    def produce(self, row: Row) -> list[{symbol}]:\n        value: {symbol} = {number}\n        return [value]\n    @compute\n    def consume(self, values: list[{symbol}]) -> list[{symbol}]:\n        return values\n    def build(self):\n        root = {token}.get('000123').select('count')\n        result = self.produce(root)\n        return {{'value': self.consume(result)}}\n");
         let bundle = compile_python_program(&es, &source)
             .await
             .unwrap_or_else(|e| panic!("{source}\n{e}"));
@@ -339,8 +351,7 @@ async fn typed_return_structures_and_effect_gate() {
         .await;
         if accepted {
             assert_eq!(
-                serde_json::to_value(&result.unwrap().return_steps[0].result.entities()[0].fields)
-                    .unwrap(),
+                super::value_fields(&result.unwrap().return_steps[0].result.entities()[0]),
                 json!({"value":[7]})
             );
         } else {
@@ -486,6 +497,11 @@ async fn scalar_blob_roundtrip_preserves_value_boundary() {
     scalar_compute_fixture_domains(&["attachment"]).await;
 }
 
+#[tokio::test]
+async fn scalar_nested_array_preserves_value_boundary() {
+    scalar_compute_fixture_domains(&["matrix"]).await;
+}
+
 async fn scalar_compute_fixture_domains(fields: &[&str]) {
     let app = axum::Router::new().route(
         "/samples/{id}",
@@ -533,10 +549,10 @@ async fn scalar_compute_fixture_domains(fields: &[&str]) {
             } else {
                 format!("item.{field}")
             };
-            let source = format!("class Scalar(Program):\n    @compute\n    def consume(self, value: {annotation}) -> {annotation}:\n        return value\n    def build(self):\n        item = {token}.get('000123')\n        return self.consume({argument})\n");
+            let source = format!("class Scalar(Program):\n    @compute\n    def consume(self, value: {annotation}) -> {annotation}:\n        return value\n    def build(self):\n        item = {token}.get('000123')\n        return {{'value': self.consume({argument})}}\n");
             let bundle = compile_python_program(&es, &source)
                 .await
-                .unwrap_or_else(|e| panic!("{field}, projected={projected}: {e}"));
+                .unwrap_or_else(|e| panic!("{field}, projected={projected}: {e:?}"));
             // A serialized/reloaded plan must retain scalar-cell intent, even
             // when the cell has object-shaped storage (Blob/Json).
             let mut artifact = bundle.into_artifact();
@@ -562,8 +578,10 @@ async fn scalar_compute_fixture_domains(fields: &[&str]) {
             )
             .await
             .unwrap_or_else(|e| panic!("{field}, projected={projected}: {}", e.diagnostic()));
+            assert_eq!(run.return_steps.len(), 1);
+            assert_eq!(run.return_steps[0].result.entities().len(), 1);
             assert_eq!(
-                serde_json::to_value(&run.return_steps[0].result.entities()[0].fields).unwrap(),
+                super::value_fields(&run.return_steps[0].result.entities()[0]),
                 json!({"value": value}),
                 "{field}, projected={projected}"
             );
@@ -633,7 +651,7 @@ async fn compute_values_have_no_reserved_content_accessor() {
         .await
         .unwrap();
         assert_eq!(
-            serde_json::to_value(&run.return_steps[0].result.entities()[0].fields).unwrap(),
+            super::value_fields(&run.return_steps[0].result.entities()[0]),
             expected
         );
         if annotation == "str" {

@@ -1,0 +1,12 @@
+arithmetic_evaluate:
+  transport: mcp
+  server: calculator
+  tool: calculate
+  arguments:
+    type: object
+    fields:
+    - [expression, {type: var, name: expression}]
+  response:
+    source: {kind: structured_content}
+    pointer: ""
+    exhaustive: true

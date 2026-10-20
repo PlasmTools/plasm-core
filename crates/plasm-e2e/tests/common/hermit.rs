@@ -16,7 +16,7 @@ static POKEAPI_HERMIT: OnceCell<String> = OnceCell::const_new();
 static POKEAPI_HERMIT_GRAPH_SPILL: OnceCell<String> = OnceCell::const_new();
 
 fn fixture_dir_candidates(rel_under_fixtures: &str) -> Vec<PathBuf> {
-    let crate_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let crate_root = PathBuf::from(plasm_e2e::test_manifest_dir());
     vec![
         crate_root.join("../../fixtures").join(rel_under_fixtures),
         crate_root.join("fixtures").join(rel_under_fixtures),

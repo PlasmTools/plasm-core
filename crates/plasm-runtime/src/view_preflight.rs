@@ -16,6 +16,29 @@ use crate::view_plan::{
 use crate::view_stub_rows::{stub_embedded_result, stub_get_result, stub_query_result};
 use crate::RuntimeError;
 
+fn stub_relation_query_result(
+    capability: &plasm_core::CapabilitySchema,
+    relation: &plasm_core::RelationSchema,
+    cgs: &CGS,
+    values: &IndexMap<String, Value>,
+) -> Result<ExecutionResult, RuntimeError> {
+    if let Some(selected) = relation
+        .materialize
+        .as_ref()
+        .and_then(|mat| mat.selected_entity())
+    {
+        let bound = values
+            .iter()
+            .map(|(key, value)| {
+                crate::view_plan::scalar_string_from_value(value).map(|value| (key.clone(), value))
+            })
+            .collect::<Result<BTreeMap<_, _>, _>>()?;
+        stub_embedded_result(selected.as_str(), cgs, &bound)
+    } else {
+        stub_query_result(capability, cgs, values)
+    }
+}
+
 /// Preflight one view-backed query (derive scope from predicate, walk DAG with stubs).
 pub fn preflight_view_query(
     view_name: &str,
@@ -152,7 +175,9 @@ impl ViewNodeRunner for PreflightViewNodeRunner<'_> {
                 let bound = BTreeMap::from([(target_def.id_field.to_string(), "1".into())]);
                 stub_embedded_result(target.as_str(), self.cgs, &bound)?
             }
-            Some(RelationMaterialization::QueryScoped { capability, param }) => {
+            Some(RelationMaterialization::QueryScoped {
+                capability, param, ..
+            }) => {
                 let cap = self
                     .cgs
                     .get_capability(capability.as_str())
@@ -165,14 +190,15 @@ impl ViewNodeRunner for PreflightViewNodeRunner<'_> {
                         .map(|(k, v)| Predicate::eq(k.as_str(), v.clone()))
                         .collect(),
                 );
-                let mut query = QueryExpr::filtered(target.as_str(), predicate);
+                let mut query = QueryExpr::filtered(cap.domain.clone(), predicate);
                 query.capability_name = Some(cap.name.clone());
                 self.compile_node(ctx, node, &plasm_core::Expr::Query(query), &mat)?;
-                stub_query_result(cap, self.cgs, &values)?
+                stub_relation_query_result(cap, relation, self.cgs, &values)?
             }
             Some(RelationMaterialization::QueryScopedBindings {
                 capability,
                 bindings,
+                ..
             }) => {
                 let cap = self
                     .cgs
@@ -188,10 +214,10 @@ impl ViewNodeRunner for PreflightViewNodeRunner<'_> {
                         .map(|(k, v)| Predicate::eq(k.as_str(), v.clone()))
                         .collect(),
                 );
-                let mut query = QueryExpr::filtered(target.as_str(), predicate);
+                let mut query = QueryExpr::filtered(cap.domain.clone(), predicate);
                 query.capability_name = Some(cap.name.clone());
                 self.compile_node(ctx, node, &plasm_core::Expr::Query(query), &mat)?;
-                stub_query_result(cap, self.cgs, &values)?
+                stub_relation_query_result(cap, relation, self.cgs, &values)?
             }
             _ => {
                 let cap = self

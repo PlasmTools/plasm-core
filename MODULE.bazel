@@ -1,0 +1,90 @@
+module(
+    name = "plasm_core",
+    version = "0.5.5",
+)
+
+bazel_dep(name = "rules_rust", version = "0.74.0")
+bazel_dep(name = "platforms", version = "1.1.0")
+bazel_dep(name = "rules_python", version = "0.40.0")
+bazel_dep(name = "hermetic_cc_toolchain", version = "4.2.0")
+
+cross_cc = use_extension("@hermetic_cc_toolchain//toolchain:ext.bzl", "toolchains")
+use_repo(cross_cc, "zig_sdk")
+
+python = use_extension("@rules_python//python/extensions:python.bzl", "python")
+python.toolchain(python_version = "3.12.7")
+use_repo(python, "python_versions")
+
+bazel_dep(name = "plasm_monty", version = "1.0.0")
+local_path_override(
+    module_name = "plasm_monty",
+    path = "build/monty",
+)
+
+# Overrides are root-only in Bzlmod; SaaS applies this same core-owned patch.
+single_version_override(
+    module_name = "rules_rust",
+    patch_strip = 1,
+    patches = [
+        "//build/bazel:rules_rust_build_script_copts.patch",
+        "//build/bazel:rules_rust_nested_workspace.patch",
+        "//build/bazel:rules_rust_relocatable_lock.patch",
+    ],
+    version = "0.74.0",
+)
+
+rust = use_extension("@rules_rust//rust:extensions.bzl", "rust")
+rust.toolchain(
+    edition = "2021",
+    versions = ["1.99.0"],
+)
+use_repo(rust, "rust_toolchains")
+
+register_toolchains("@rust_toolchains//:all")
+
+crate = use_extension("@rules_rust//crate_universe:extensions.bzl", "crate")
+crate.from_cargo(
+    name = "crates",
+    cargo_lockfile = "//:Cargo.lock",
+    lockfile = "//:Cargo.Bazel.lock",
+    manifests = ["//:Cargo.toml"],
+    skip_cargo_lockfile_overwrite = True,
+)
+use_repo(crate, "crates")
+
+crate.annotation(
+    crate = "ty_vendored",
+    patch_args = ["-p1"],
+    patches = ["//build/bazel:ty_vendored_deterministic.patch"],
+    repositories = ["crates"],
+    version = "0.0.14",
+)
+
+# Preserve the existing isolated PTY harness dependency graph.
+crate.from_cargo(
+    name = "pty_crates",
+    cargo_lockfile = "//build/bazel:pty.Cargo.lock",
+    lockfile = "//build/bazel:pty.Cargo.Bazel.lock",
+    manifests = ["//crates/plasm-server-pty-tests:Cargo.toml"],
+    skip_cargo_lockfile_overwrite = True,
+)
+use_repo(crate, "pty_crates")
+
+# Existing native Node tests use napi/dyn-symbols without a Node host.
+# Keep these feature variants test-only; the packaged binding stays unchanged.
+crate.annotation(
+    additive_build_file = "//build/bazel:napi_test.BUILD.bazel",
+    crate = "napi",
+    repositories = ["crates"],
+    version = "3.12.2",
+)
+crate.annotation(
+    additive_build_file = "//build/bazel:napi_sys_test.BUILD.bazel",
+    crate = "napi-sys",
+    repositories = ["crates"],
+    version = "3.3.0",
+)
+use_repo(crate, napi_test_sources = "crates__napi-3.12.2")
+
+nextest_tools = use_extension("//build/bazel:nextest_repositories.bzl", "nextest_tools")
+use_repo(nextest_tools, "nextest_runner")

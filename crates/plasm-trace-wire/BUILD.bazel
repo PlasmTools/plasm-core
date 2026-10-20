@@ -1,0 +1,30 @@
+load("@crates//:defs.bzl", "aliases", "all_crate_deps")
+load("@rules_rust//rust:defs.bzl", "rust_library", "rust_test")
+
+rust_library(
+    name = "plasm_trace_wire",
+    srcs = glob(["src/**/*.rs"]),
+    aliases = aliases(),
+    crate_root = "src/lib.rs",
+    edition = "2021",
+    proc_macro_deps = all_crate_deps(proc_macro = True),
+    visibility = ["//visibility:public"],
+    deps = all_crate_deps(normal = True),
+)
+
+rust_test(
+    name = "unit_tests",
+    size = "small",
+    crate = ":plasm_trace_wire",
+    visibility = ["//visibility:public"],
+)
+
+# Exercise generated serde code through the public library, not an empty harness.
+rust_test(
+    name = "wire_roundtrip_tests",
+    size = "small",
+    srcs = ["tests/wire_roundtrip.rs"],
+    edition = "2021",
+    visibility = ["//visibility:public"],
+    deps = [":plasm_trace_wire"] + all_crate_deps(normal = True),
+)

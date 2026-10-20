@@ -184,20 +184,10 @@ pub fn make_appliance_data_root(prefix: &str) -> (tempfile::TempDir, PathBuf) {
 }
 
 pub fn repo_root() -> PathBuf {
-    let manifest = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    for rel in ["../../..", "../../../..", "../../../../.."] {
-        let candidate = manifest.join(rel);
-        let Ok(root) = candidate.canonicalize() else {
-            continue;
-        };
-        if root.join("fixtures/schemas/overshow_tools").is_dir() {
-            return root;
-        }
-    }
-    panic!(
-        "monorepo root not found from {}; expected fixtures/schemas/overshow_tools",
-        manifest.display()
-    );
+    let manifest = PathBuf::from(std::env::var("CARGO_MANIFEST_DIR").expect("test runner must set CARGO_MANIFEST_DIR"));
+    let root = manifest.join("../..").canonicalize().expect("core root");
+    assert!(root.join("fixtures/schemas/overshow_tools").is_dir(), "core fixture directory must exist");
+    root
 }
 
 pub fn schema_path() -> PathBuf {

@@ -164,6 +164,10 @@ fn authentication(auth: &RequestAuthentication) -> Result<(), CmlError> {
 
 pub(crate) fn validate_template(template: &CapabilityTemplate) -> Result<(), CmlError> {
     match template {
+        CapabilityTemplate::Mcp(request) => {
+            request.validate()?;
+            expression(&request.arguments)
+        }
         CapabilityTemplate::CredentialBind(binding) => {
             binding.validate()?;
             expression(&binding.resource)

@@ -44,6 +44,7 @@
     "README.md"
   ],
   "scripts": {
+    "test:native-failure-contract": "node scripts/run-plasm-cli.mjs scripts/test-native-failure-contract.ts",
     "test:lifecycle": "node scripts/run-plasm-cli.mjs scripts/test-lifecycle.ts",
     "typecheck": "tsc --noEmit",
     "plasm-agent": "node scripts/run-plasm-cli.mjs",

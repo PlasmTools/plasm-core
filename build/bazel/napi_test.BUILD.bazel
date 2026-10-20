@@ -1,0 +1,92 @@
+# Test-only variant of the pinned crate. Production features remain unchanged.
+rust_library(
+    name = "napi_dyn_symbols",
+    crate_name = "napi",
+    testonly = True,
+    deps = [
+        ":build_script_build",
+        "@crates__bitflags-2.13.1//:bitflags",
+        "@crates__ctor-1.0.13//:ctor",
+        "@crates__futures-0.3.34//:futures",
+        "@crates__napi-sys-3.3.0//:napi_sys_dyn_symbols",
+        "@crates__nohash-hasher-0.2.0//:nohash_hasher",
+        "@crates__rustc-hash-2.1.3//:rustc_hash",
+        "@crates__serde-1.0.229//:serde",
+        "@crates__serde_json-1.0.151//:serde_json",
+        "@crates__tokio-1.53.2//:tokio",
+    ] + select({
+        "@rules_rust//rust/platform:aarch64-apple-darwin": [
+            "@crates__libc-0.2.189//:libc",  # cfg(unix)
+        ],
+        "@rules_rust//rust/platform:aarch64-unknown-linux-gnu": [
+            "@crates__libc-0.2.189//:libc",  # cfg(unix)
+        ],
+        "@rules_rust//rust/platform:x86_64-unknown-linux-gnu": [
+            "@crates__libc-0.2.189//:libc",  # cfg(unix)
+        ],
+        "@rules_rust//rust/platform:x86_64-unknown-nixos-gnu": [
+            "@crates__libc-0.2.189//:libc",  # cfg(unix)
+        ],
+        "//conditions:default": [],
+    }),
+    compile_data = glob(
+        allow_empty = True,
+        include = ["**"],
+        exclude = [
+            "**/* *",
+            ".tmp_git_root/**/*",
+            "BUILD",
+            "BUILD.bazel",
+            "WORKSPACE",
+            "WORKSPACE.bazel",
+        ],
+    ),
+    crate_features = [
+        "dyn-symbols",
+        "async",
+        "napi1",
+        "napi2",
+        "napi3",
+        "napi4",
+        "napi5",
+        "napi6",
+        "napi7",
+        "napi8",
+        "napi9",
+        "serde",
+        "serde-json",
+        "serde_json",
+        "tokio",
+        "tokio_rt",
+    ],
+    crate_root = "src/lib.rs",
+    edition = "2021",
+    rustc_env_files = [
+        ":cargo_toml_env_vars",
+    ],
+    rustc_flags = [
+        "--cap-lints=allow",
+    ],
+    srcs = glob(
+        allow_empty = True,
+        include = ["**/*.rs"],
+    ),
+    tags = [
+        "cargo-bazel",
+        "crate-name=napi",
+        "manual",
+        "noclippy",
+        "norustfmt",
+    ],
+    target_compatible_with = select({
+        "@rules_rust//rust/platform:aarch64-apple-darwin": [],
+        "@rules_rust//rust/platform:aarch64-unknown-linux-gnu": [],
+        "@rules_rust//rust/platform:wasm32-unknown-unknown": [],
+        "@rules_rust//rust/platform:wasm32-wasip1": [],
+        "@rules_rust//rust/platform:x86_64-pc-windows-msvc": [],
+        "@rules_rust//rust/platform:x86_64-unknown-linux-gnu": [],
+        "@rules_rust//rust/platform:x86_64-unknown-nixos-gnu": [],
+        "//conditions:default": ["@platforms//:incompatible"],
+    }),
+    version = "3.12.2",
+)

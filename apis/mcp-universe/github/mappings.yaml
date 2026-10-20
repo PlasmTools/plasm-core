@@ -1,0 +1,246 @@
+fork_initiate:
+  transport: mcp
+  server: github
+  tool: fork_repository
+  arguments:
+    type: object
+    fields:
+    - [owner, {type: var, name: owner}]
+    - [repo, {type: var, name: repo}]
+  response: {source: {kind: text_block, index: 0}, pointer: '', exhaustive: true}
+branch_heads:
+  transport: mcp
+  server: github
+  tool: list_branches
+  arguments:
+    type: object
+    fields:
+    - [owner, {type: var, name: owner}]
+    - [repo, {type: var, name: repo}]
+    - [page, {type: const, value: 1}]
+    - [perPage, {type: const, value: 100}]
+  pagination:
+    strategy: page_number
+    params:
+      page: {counter: 1}
+      perPage: {fixed: 100, role: page_size}
+  response: {source: {kind: json_text, index: 0}, pointer: '', exhaustive: true}
+directory_entries:
+  transport: mcp
+  server: github
+  tool: get_file_contents
+  arguments:
+    type: object
+    fields:
+    - [owner, {type: var, name: owner}]
+    - [repo, {type: var, name: repo}]
+    - [branch, {type: var, name: branch}]
+    - [path, {type: format, template: '{directory}/', vars: {directory: {type: var, name: directory}}}]
+  response: {source: {kind: json_text, index: 0}, pointer: '', exhaustive: false}
+code_search:
+  transport: mcp
+  server: github
+  tool: search_code
+  pagination:
+    strategy: page_number
+    params:
+      page: {counter: 1}
+      perPage: {fixed: 100, role: page_size}
+  collection:
+    total_pointer: /total_count
+    complete_pointer: /incomplete_results
+    complete_value: false
+    max_items: 1000
+  arguments:
+    type: object
+    fields:
+    - [q, {type: var, name: query}]
+    - [page, {type: const, value: 1}]
+    - [perPage, {type: const, value: 100}]
+  response: {source: {kind: json_text, index: 0}, pointer: /items, exhaustive: true}
+file_read:
+  transport: mcp
+  server: github
+  tool: get_file_contents
+  arguments:
+    type: object
+    fields:
+    - [owner, {type: var, name: owner}]
+    - [repo, {type: var, name: repo}]
+    - [branch, {type: var, name: branch}]
+    - [path, {type: var, name: path}]
+  response: {source: {kind: embedded_resource, index: 1}, pointer: '', exhaustive: true}
+repo_search:
+  transport: mcp
+  server: github
+  tool: search_repositories
+  pagination:
+    strategy: page_number
+    params:
+      page: {counter: 1}
+      perPage: {fixed: 100, role: page_size}
+  collection:
+    total_pointer: /total_count
+    complete_pointer: /incomplete_results
+    complete_value: false
+    max_items: 1000
+  arguments:
+    type: object
+    fields:
+    - [query, {type: var, name: query}]
+    - [page, {type: const, value: 1}]
+    - [perPage, {type: const, value: 100}]
+  response: {source: {kind: json_text, index: 0}, pointer: /items, exhaustive: true}
+repo_create:
+  transport: mcp
+  server: github
+  tool: create_repository
+  arguments:
+    type: object
+    fields:
+    - [name, {type: var, name: name}]
+    - [description, {type: if, condition: {type: exists, var: description}, then_expr: {type: var, name: description}, else_expr: {type: const, value: null}}]
+    - [private, {type: if, condition: {type: exists, var: private}, then_expr: {type: var, name: private}, else_expr: {type: const, value: null}}]
+    - [autoInit, {type: if, condition: {type: exists, var: auto_init}, then_expr: {type: var, name: auto_init}, else_expr: {type: const, value: null}}]
+  response: &single {source: {kind: json_text, index: 0}, pointer: '', exhaustive: true}
+issue_query:
+  transport: mcp
+  server: github
+  tool: list_issues
+  arguments:
+    type: object
+    fields:
+    - [owner, {type: var, name: owner}]
+    - [repo, {type: var, name: repo}]
+    - [state, {type: if, condition: {type: exists, var: state}, then_expr: {type: var, name: state}, else_expr: {type: const, value: null}}]
+    - [labels, {type: if, condition: {type: exists, var: labels}, then_expr: {type: var, name: labels}, else_expr: {type: const, value: null}}]
+    - [page, {type: const, value: 1}]
+    - [perPage, {type: const, value: 100}]
+  pagination:
+    strategy: page_number
+    params:
+      page: {counter: 1}
+      perPage: {fixed: 100, role: page_size}
+  response: &page {source: {kind: json_text, index: 0}, pointer: '', exhaustive: true}
+issue_get:
+  transport: mcp
+  server: github
+  tool: get_issue
+  arguments:
+    type: object
+    fields:
+    - [owner, {type: var, name: owner}]
+    - [repo, {type: var, name: repo}]
+    - [issue_number, {type: var, name: number}]
+  response: *single
+issue_create:
+  transport: mcp
+  server: github
+  tool: create_issue
+  arguments:
+    type: object
+    fields:
+    - [owner, {type: var, name: owner}]
+    - [repo, {type: var, name: repo}]
+    - [title, {type: var, name: title}]
+    - [body, {type: if, condition: {type: exists, var: body}, then_expr: {type: var, name: body}, else_expr: {type: const, value: null}}]
+    - [labels, {type: if, condition: {type: exists, var: labels}, then_expr: {type: var, name: labels}, else_expr: {type: const, value: null}}]
+  response: *single
+issue_update:
+  transport: mcp
+  server: github
+  tool: update_issue
+  arguments:
+    type: object
+    fields:
+    - [owner, {type: var, name: owner}]
+    - [repo, {type: var, name: repo}]
+    - [issue_number, {type: var, name: number}]
+    - [title, {type: if, condition: {type: exists, var: title}, then_expr: {type: var, name: title}, else_expr: {type: const, value: null}}]
+    - [body, {type: if, condition: {type: exists, var: body}, then_expr: {type: var, name: body}, else_expr: {type: const, value: null}}]
+    - [state, {type: if, condition: {type: exists, var: state}, then_expr: {type: var, name: state}, else_expr: {type: const, value: null}}]
+    - [labels, {type: if, condition: {type: exists, var: labels}, then_expr: {type: var, name: labels}, else_expr: {type: const, value: null}}]
+  response: *single
+comment_query:
+  transport: mcp
+  server: github
+  tool: get_issue_comments
+  pagination:
+    strategy: page_number
+    params:
+      page: {counter: 1}
+      per_page: {fixed: 100, role: page_size}
+  arguments:
+    type: object
+    fields:
+    - [owner, {type: var, name: owner}]
+    - [repo, {type: var, name: repo}]
+    - [issue_number, {type: var, name: number}]
+    - [page, {type: const, value: 1}]
+    - [per_page, {type: const, value: 100}]
+  response: *page
+comment_create:
+  transport: mcp
+  server: github
+  tool: add_issue_comment
+  arguments:
+    type: object
+    fields:
+    - [owner, {type: var, name: owner}]
+    - [repo, {type: var, name: repo}]
+    - [issue_number, {type: var, name: number}]
+    - [body, {type: var, name: body}]
+  response: *single
+branch_create:
+  transport: mcp
+  server: github
+  tool: create_branch
+  arguments:
+    type: object
+    fields:
+    - [owner, {type: var, name: owner}]
+    - [repo, {type: var, name: repo}]
+    - [branch, {type: var, name: branch}]
+    - [from_branch, {type: if, condition: {type: exists, var: from_branch}, then_expr: {type: var, name: from_branch}, else_expr: {type: const, value: null}}]
+  response: *single
+pr_get:
+  transport: mcp
+  server: github
+  tool: get_pull_request
+  arguments:
+    type: object
+    fields:
+    - [owner, {type: var, name: owner}]
+    - [repo, {type: var, name: repo}]
+    - [pullNumber, {type: var, name: number}]
+  response: *single
+pr_create:
+  transport: mcp
+  server: github
+  tool: create_pull_request
+  arguments:
+    type: object
+    fields:
+    - [owner, {type: var, name: owner}]
+    - [repo, {type: var, name: repo}]
+    - [title, {type: var, name: title}]
+    - [body, {type: if, condition: {type: exists, var: body}, then_expr: {type: var, name: body}, else_expr: {type: const, value: null}}]
+    - [head, {type: var, name: head}]
+    - [base, {type: var, name: base}]
+    - [draft, {type: if, condition: {type: exists, var: draft}, then_expr: {type: var, name: draft}, else_expr: {type: const, value: null}}]
+  response: *single
+file_write:
+  transport: mcp
+  server: github
+  tool: create_or_update_file
+  arguments:
+    type: object
+    fields:
+    - [owner, {type: var, name: owner}]
+    - [repo, {type: var, name: repo}]
+    - [path, {type: var, name: path}]
+    - [branch, {type: var, name: branch}]
+    - [message, {type: var, name: message}]
+    - [content, {type: var, name: content}]
+    - [sha, {type: if, condition: {type: exists, var: sha}, then_expr: {type: var, name: sha}, else_expr: {type: const, value: null}}]
+  response: {source: {kind: json_text, index: 0}, pointer: /content, exhaustive: true}

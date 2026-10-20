@@ -128,7 +128,7 @@ mod tests {
 
     fn fixture() -> CGS {
         crate::loader::load_schema_dir(
-            &std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            &std::path::Path::new(crate::test_manifest_dir())
                 .join("../../fixtures/schemas/entity_projection_matrix"),
         )
         .unwrap()

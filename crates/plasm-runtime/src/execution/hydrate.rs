@@ -314,6 +314,41 @@ impl ExecutionEngine {
     /// After a query, upgrade Summary rows via concurrent GET when configured and the
     /// GET's required capability params are inherited from the parent env.
     #[allow(clippy::too_many_arguments)]
+    /// Hydrate using each row's concrete authority, preserving source occurrence order.
+    pub(crate) async fn hydrate_output_summaries(
+        &self,
+        ordered_entities: &[CachedEntity],
+        cgs: &CGS,
+        mat: &mut SessionMaterialization,
+        mode: ExecutionMode,
+        hydrate_enabled: bool,
+        parent_env: &CmlEnv,
+    ) -> Result<(Vec<CachedEntity>, usize), RuntimeError> {
+        let mut result = Vec::with_capacity(ordered_entities.len());
+        let mut network = 0;
+        // Contiguous groups preserve both duplicates and original order; identities
+        // are never rewritten to the capability receiver for detail dispatch.
+        for group in ordered_entities
+            .chunk_by(|left, right| left.reference.entity_type == right.reference.entity_type)
+        {
+            let (rows, calls) = self
+                .hydrate_query_summaries(
+                    group[0].reference.entity_type.as_str(),
+                    group,
+                    cgs,
+                    mat,
+                    mode,
+                    hydrate_enabled,
+                    parent_env,
+                )
+                .await?;
+            result.extend(rows);
+            network += calls;
+        }
+        Ok((result, network))
+    }
+
+    #[allow(clippy::too_many_arguments)] // Mirrors the hydration dispatcher context above.
     pub(crate) async fn hydrate_query_summaries(
         &self,
         entity_type: &str,
@@ -565,7 +600,7 @@ mod tests {
     fn session_params_overlay_explicit_wins() {
         use plasm_core::loader::load_schema_dir;
         let cgs = load_schema_dir(
-            &std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            &std::path::PathBuf::from(crate::test_manifest_dir())
                 .join("../../fixtures/schemas/plasm_language_matrix"),
         )
         .expect("language matrix CGS");
@@ -609,7 +644,7 @@ mod tests {
         use plasm_core::loader::load_schema_dir;
         use plasm_core::{Expr, GetExpr, Ref};
         let cgs = load_schema_dir(
-            &std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            &std::path::PathBuf::from(crate::test_manifest_dir())
                 .join("../../fixtures/schemas/plasm_language_matrix_views"),
         )
         .expect("matrix views CGS");
@@ -680,7 +715,7 @@ mod tests {
         }
 
         let cgs = load_schema_dir(
-            &std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            &std::path::PathBuf::from(crate::test_manifest_dir())
                 .join("../../fixtures/schemas/plasm_language_matrix_views"),
         )
         .expect("matrix views CGS");
@@ -727,7 +762,7 @@ mod tests {
     fn preflight_identity_get_compiles_from_session_stamps() {
         use plasm_core::loader::load_schema_dir;
         let cgs = load_schema_dir(
-            &std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            &std::path::PathBuf::from(crate::test_manifest_dir())
                 .join("../../fixtures/schemas/plasm_language_matrix"),
         )
         .expect("language matrix CGS");
@@ -766,7 +801,7 @@ mod tests {
     fn auth_bearer_search_tokenless_search_does_not_inherit_get_session_inject() {
         use plasm_core::expr_parser::parse;
         use plasm_core::loader::load_schema_dir;
-        let dir = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        let dir = std::path::PathBuf::from(crate::test_manifest_dir())
             .join("../../fixtures/schemas/auth_bearer_search");
         if !dir.is_dir() {
             return;
@@ -824,7 +859,7 @@ mod tests {
         use plasm_core::expr_parser::parse;
         use plasm_core::loader::load_schema_dir;
         use std::sync::Arc;
-        let dir = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        let dir = std::path::PathBuf::from(crate::test_manifest_dir())
             .join("../../fixtures/schemas/auth_bearer_search");
         if !dir.is_dir() {
             return;
@@ -924,7 +959,7 @@ mod tests {
             }
         }
 
-        let dir = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        let dir = std::path::PathBuf::from(crate::test_manifest_dir())
             .join("../../fixtures/schemas/auth_bearer_search");
         if !dir.is_dir() {
             return;
@@ -935,7 +970,9 @@ mod tests {
         let login =
             parse(r#"AuthSession.login(username="u", password="p")"#, &cgs).expect("parse login");
         let get_int = parse("SecuredNote(1)", &cgs).expect("parse unary Get e2(<id>)");
-        let get_str = parse(r#"SecuredNote("note-id")"#, &cgs);
+        let get_str = parse(r#"SecuredNote("1")"#, &cgs).expect("parse numeric identity");
+        let invalid_identity = parse(r#"SecuredNote("note-id")"#, &cgs)
+            .expect("identity wire validation follows parsing");
         let tokenless_search = parse(r#"SecuredNote~"q""#, &cgs).expect("parse tokenless Search");
         let written_search =
             parse(r#"SecuredNote~"q"{access_token="tok"}"#, &cgs).expect("parse written Search");
@@ -988,16 +1025,14 @@ mod tests {
 
         preflight_compile_expr(&get_int.expr, &cgs, &compiled, &ambient, &mat)
             .expect("unary Get e2(<id>) compiles after login without writing access_token");
-        match get_str {
-            Ok(parsed) => {
-                preflight_compile_expr(&parsed.expr, &cgs, &compiled, &ambient, &mat).expect(
-                    "unary Get e2(\"note-id\") compiles after login without writing access_token",
-                );
-            }
-            Err(err) => {
-                panic!("SecuredNote(\"note-id\") must parse for fixture compile matrix: {err}");
-            }
-        }
+        preflight_compile_expr(&get_str.expr, &cgs, &compiled, &ambient, &mat)
+            .expect("numeric identity compiles after login without writing access_token");
+        assert!(matches!(
+            preflight_compile_expr(&invalid_identity.expr, &cgs, &compiled, &ambient, &mat),
+            Err(RuntimeError::IdentityWire(
+                plasm_core::operand_binding::IdentityCodecError::InvalidInteger
+            ))
+        ));
 
         let search_after =
             preflight_compile_expr(&tokenless_search.expr, &cgs, &compiled, &ambient, &mat)
@@ -1091,7 +1126,7 @@ mod tests {
             }
         }
 
-        let dir = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        let dir = std::path::PathBuf::from(crate::test_manifest_dir())
             .join("../../fixtures/schemas/auth_bearer_search");
         if !dir.is_dir() {
             return;
@@ -1296,7 +1331,7 @@ mod tests {
             None,
         );
         let cgs = load_schema_dir(
-            &std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            &std::path::PathBuf::from(crate::test_manifest_dir())
                 .join("../../fixtures/schemas/plasm_language_matrix"),
         )
         .expect("language matrix CGS");
@@ -1419,7 +1454,7 @@ mod tests {
             None,
         );
         let cgs = load_schema_dir(
-            &std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            &std::path::PathBuf::from(crate::test_manifest_dir())
                 .join("../../fixtures/schemas/plasm_language_matrix"),
         )
         .expect("language matrix CGS");
@@ -1489,7 +1524,7 @@ mod tests {
     fn ra6_query_only_parent_for_entity_get_keeps_scoped_param() {
         use plasm_core::loader::load_schema_dir;
         let matrix = load_schema_dir(
-            &std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            &std::path::PathBuf::from(crate::test_manifest_dir())
                 .join("../../fixtures/schemas/plasm_language_matrix"),
         )
         .expect("language matrix CGS");
@@ -1508,7 +1543,7 @@ mod tests {
         );
 
         let scoped = load_schema_dir(
-            &std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            &std::path::PathBuf::from(crate::test_manifest_dir())
                 .join("../../fixtures/schemas/relation_scoped_token"),
         )
         .expect("relation_scoped_token CGS");
@@ -1532,7 +1567,7 @@ mod tests {
     fn ra6_query_only_parent_stamp_reaches_child_cap() {
         use plasm_core::loader::load_schema_dir;
         let cgs = load_schema_dir(
-            &std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            &std::path::PathBuf::from(crate::test_manifest_dir())
                 .join("../../fixtures/schemas/relation_scoped_token"),
         )
         .expect("relation_scoped_token CGS");
@@ -1675,7 +1710,7 @@ mod tests {
             None,
         );
         let cgs = load_schema_dir(
-            &std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            &std::path::PathBuf::from(crate::test_manifest_dir())
                 .join("../../fixtures/schemas/relation_scoped_token"),
         )
         .expect("relation_scoped_token CGS");
@@ -1715,7 +1750,7 @@ mod tests {
     fn ra6_unary_get_session_overlay_reaches_child_without_per_ref_stamp() {
         use plasm_core::loader::load_schema_dir;
         let cgs = load_schema_dir(
-            &std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            &std::path::PathBuf::from(crate::test_manifest_dir())
                 .join("../../fixtures/schemas/relation_get_scoped_token"),
         )
         .expect("relation_get_scoped_token CGS");
@@ -1752,7 +1787,7 @@ mod tests {
     fn ra6_unary_get_empty_token_names_missing_env() {
         use plasm_core::loader::load_schema_dir;
         let cgs = load_schema_dir(
-            &std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            &std::path::PathBuf::from(crate::test_manifest_dir())
                 .join("../../fixtures/schemas/relation_get_scoped_token"),
         )
         .expect("relation_get_scoped_token CGS");
@@ -1860,7 +1895,7 @@ mod tests {
             None,
         );
         let cgs = load_schema_dir(
-            &std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            &std::path::PathBuf::from(crate::test_manifest_dir())
                 .join("../../fixtures/schemas/relation_get_scoped_token"),
         )
         .expect("relation_get_scoped_token CGS");
@@ -1948,7 +1983,7 @@ mod tests {
             None,
         );
         let cgs = load_schema_dir(
-            &std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            &std::path::PathBuf::from(crate::test_manifest_dir())
                 .join("../../fixtures/schemas/relation_get_scoped_token"),
         )
         .expect("relation_get_scoped_token CGS");
@@ -1988,7 +2023,7 @@ mod tests {
 
     fn dual_session_consumer() -> CGS {
         let mut cgs = plasm_core::loader::load_schema_dir(
-            &std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            &std::path::PathBuf::from(crate::test_manifest_dir())
                 .join("../../fixtures/schemas/prerequisite_dual_session/consumer"),
         )
         .expect("prerequisite_dual_session consumer");
@@ -2135,7 +2170,7 @@ mod tests {
         }
 
         let cgs = load_schema_dir(
-            &std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            &std::path::PathBuf::from(crate::test_manifest_dir())
                 .join("../../fixtures/schemas/plasm_language_matrix"),
         )
         .expect("language matrix CGS");
@@ -2235,7 +2270,7 @@ mod tests {
         }
 
         let cgs = load_schema_dir(
-            &std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            &std::path::PathBuf::from(crate::test_manifest_dir())
                 .join("../../fixtures/schemas/plasm_direction_matrix"),
         )
         .expect("direction matrix CGS");
@@ -2331,7 +2366,7 @@ mod tests {
         }
 
         let cgs = load_schema_dir(
-            &std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            &std::path::PathBuf::from(crate::test_manifest_dir())
                 .join("../../fixtures/schemas/plasm_language_matrix"),
         )
         .expect("language matrix CGS");
@@ -2438,7 +2473,7 @@ mod tests {
         }
 
         let cgs = load_schema_dir(
-            &std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            &std::path::PathBuf::from(crate::test_manifest_dir())
                 .join("../../fixtures/schemas/plasm_language_matrix"),
         )
         .expect("language matrix CGS");
@@ -2578,7 +2613,7 @@ mod tests {
         }
 
         let cgs = load_schema_dir(
-            &std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            &std::path::PathBuf::from(crate::test_manifest_dir())
                 .join("../../fixtures/schemas/plasm_pagination_matrix"),
         )
         .expect("pagination matrix CGS");
@@ -2666,7 +2701,7 @@ mod tests {
         }
 
         let cgs = load_schema_dir(
-            &std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            &std::path::PathBuf::from(crate::test_manifest_dir())
                 .join("../../fixtures/schemas/plasm_language_matrix"),
         )
         .expect("language matrix CGS");
@@ -2762,7 +2797,7 @@ mod tests {
         }
 
         let cgs = load_schema_dir(
-            &std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            &std::path::PathBuf::from(crate::test_manifest_dir())
                 .join("../../fixtures/schemas/plasm_language_matrix"),
         )
         .expect("language matrix CGS");
@@ -2951,7 +2986,7 @@ mod tests {
             None
         };
         let cgs = load_schema_dir(
-            &std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            &std::path::PathBuf::from(crate::test_manifest_dir())
                 .join("../../fixtures/schemas/plasm_language_matrix"),
         )
         .expect("language matrix CGS");
@@ -3208,7 +3243,7 @@ mod tests {
         }
 
         let cgs = load_schema_dir(
-            &std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            &std::path::PathBuf::from(crate::test_manifest_dir())
                 .join("../../fixtures/schemas/plasm_pagination_matrix"),
         )
         .expect("pagination matrix CGS");

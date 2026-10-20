@@ -3,7 +3,7 @@ use super::*;
 
 fn schema() -> CGS {
     plasm_core::load_schema_dir(
-        &PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        &PathBuf::from(crate::test_manifest_dir())
             .join("../../fixtures/schemas/hydration_boundary_matrix"),
     )
     .unwrap()
@@ -196,7 +196,7 @@ fn get_invocation_inputs_reject_reserved_identity_collision_in_cgs() {
     ));
     for discriminator_collision in [true, false] {
         let mut cgs = plasm_core::load_schema_dir(
-            &PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            &PathBuf::from(crate::test_manifest_dir())
                 .join("../../fixtures/schemas/python_union_matrix"),
         )
         .unwrap();

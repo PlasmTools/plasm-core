@@ -24,6 +24,7 @@ fn row_operations(comp: &plasm_core::plasm_monad::PlasmComp) -> BTreeSet<String>
     for step in comp.steps.values() {
         let operation = match step {
             PlasmStepPayload::Map(p) => match &p.compute.op {
+                ComputeOp::NarrowEntity { .. } => Some("of_type"),
                 ComputeOp::Project { .. } => Some("select"),
                 ComputeOp::Filter { .. } => Some("where"),
                 ComputeOp::GroupBy { .. } => Some("group_by"),

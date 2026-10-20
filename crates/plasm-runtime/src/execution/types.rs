@@ -78,8 +78,10 @@ pub struct ExecutionResult {
     /// Presentation/acquisition continuation metadata; never a completeness proof.
     pub has_more: bool,
     /// Host-only continuation payload for opaque LLM paging (`page(pg#)`); never serialized on wire.
+    /// Keep the large query/template snapshot out of every result, including non-paged
+    /// mutator results carried through nested async execution frames.
     #[serde(skip)]
-    pub pagination_resume: Option<QueryPaginationResumeData>,
+    pub pagination_resume: Option<Box<QueryPaginationResumeData>>,
     /// When set, MCP/HTTP layers may surface a one-line `page(handle)` hint after truncated lists.
     #[serde(skip)]
     pub paging_handle: Option<plasm_core::PagingHandle>,
@@ -199,6 +201,7 @@ pub type RowsProgressFn = std::sync::Arc<dyn Fn(usize) + Send + Sync>;
 /// Snapshot of [`PaginationLoopState`] for opaque LLM paging continuations (host-only; not for wire serde).
 #[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct QueryPaginationState {
+    pub mcp_collection: crate::mcp_execution::McpCollectionProgress,
     pub param_values: Vec<(String, Option<serde_json::Value>)>,
     /// Number of successfully decoded pages, including pages before a resume.
     pub pages_observed: u32,

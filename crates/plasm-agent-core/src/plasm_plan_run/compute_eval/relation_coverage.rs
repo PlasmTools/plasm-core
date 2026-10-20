@@ -39,14 +39,10 @@ pub(crate) fn embedded_collection<'a>(
         };
         children.push(ExecutionCollection::graph(record));
     }
-    let mut collection = source.collection.flat_map(
-        plasm_runtime::execution::RowMaterialization::Catalog,
-        &(relation, target),
-        &children,
-    )?;
+    let mut collection = source.collection.flat_map(&(relation, target), &children)?;
     if let Some(count) = read_cap {
         collection = ExecutionCollection::derive(
-            plasm_runtime::execution::RowMaterialization::Catalog,
+            collection.row_materialization(),
             collection
                 .membership()
                 .identity()
@@ -229,7 +225,7 @@ mod tests {
         use plasm_compile::{EntityDecoder, PathExpr, RelationDecoder};
         use plasm_core::row_contract::{RowCodec, RowRecord};
         let cgs = plasm_core::load_schema_dir(
-            &std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            &std::path::Path::new(crate::test_manifest_dir())
                 .join("../../fixtures/schemas/hydration_boundary_matrix"),
         )
         .unwrap();

@@ -15,7 +15,7 @@ impl Fixture {
             .tempdir()
             .unwrap();
         let script =
-            std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/support/cimd_https.py");
+            std::path::Path::new(crate::test_manifest_dir()).join("tests/support/cimd_https.py");
         let mut process = std::process::Command::new("python3")
             .arg(script)
             .arg(directory.path())

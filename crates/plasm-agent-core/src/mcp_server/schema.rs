@@ -1,6 +1,17 @@
 //! JSON Schema fragments for MCP tool parameter definitions.
 
-use rust_mcp_sdk::schema::CallToolRequestParams;
+use rmcp::model::CallToolRequestParams;
+
+pub(crate) fn object_schema(
+    required: Vec<String>,
+    properties: std::collections::BTreeMap<String, serde_json::Map<String, serde_json::Value>>,
+) -> std::sync::Arc<serde_json::Map<String, serde_json::Value>> {
+    std::sync::Arc::new(serde_json::Map::from_iter([
+        ("type".into(), serde_json::json!("object")),
+        ("required".into(), serde_json::json!(required)),
+        ("properties".into(), serde_json::json!(properties)),
+    ]))
+}
 
 pub(crate) fn json_schema_string_type(
     description: &str,

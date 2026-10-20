@@ -30,7 +30,7 @@ struct RecordedRequest {
 }
 
 fn load_matrix_cgs() -> CGS {
-    let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let root = PathBuf::from(plasm_e2e::test_manifest_dir());
     let candidates = [
         root.join("../../fixtures/schemas/plasm_pagination_matrix"),
         root.join("../../../fixtures/schemas/plasm_pagination_matrix"),

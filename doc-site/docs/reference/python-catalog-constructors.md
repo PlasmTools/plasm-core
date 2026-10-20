@@ -31,7 +31,7 @@ are not catalog call kinds.
     "invalid": [
       {
         "body": "return E.get(\"i1\", identity=\"i2\")",
-        "error": "multiple values for identity"
+        "error": "multiple values for entity identity"
       }
     ]
   },

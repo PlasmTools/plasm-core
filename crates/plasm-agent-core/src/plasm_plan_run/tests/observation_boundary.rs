@@ -71,7 +71,7 @@ impl HttpTransport for Transport {
 }
 fn session() -> ExecuteSession {
     let mut schema = plasm_core::load_schema(
-        &std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        &std::path::Path::new(crate::test_manifest_dir())
             .join("../../fixtures/schemas/observation_boundary_matrix"),
     )
     .unwrap();

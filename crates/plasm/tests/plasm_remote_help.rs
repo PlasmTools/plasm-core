@@ -1,20 +1,12 @@
 //! Smoke test: `plasm` remote-terminal CLI is wired (no HTTP server required).
 
 use serde_json::Value;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 
 fn plasm_exe() -> PathBuf {
-    if let Some(p) = option_env!("CARGO_BIN_EXE_plasm") {
-        return PathBuf::from(p);
-    }
-    if let Some(p) = std::env::var_os("CARGO_BIN_EXE_plasm") {
-        return PathBuf::from(p);
-    }
-    let profile = std::env::var("PROFILE").unwrap_or_else(|_| "debug".into());
-    Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("../../../target")
-        .join(&profile)
-        .join("plasm")
+    std::env::var_os("CARGO_BIN_EXE_plasm")
+        .expect("test runner must supply the built plasm binary")
+        .into()
 }
 
 #[test]

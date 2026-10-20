@@ -459,7 +459,7 @@ mod binding_shape_tests {
         let scalar = Value::String("same".into());
         let record = Value::Object(indexmap::IndexMap::from([("value".into(), scalar.clone())]));
         let cgs = plasm_core::load_schema_dir(
-            &std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            &std::path::Path::new(crate::test_manifest_dir())
                 .join("../../fixtures/schemas/plasm_language_matrix"),
         )
         .unwrap();

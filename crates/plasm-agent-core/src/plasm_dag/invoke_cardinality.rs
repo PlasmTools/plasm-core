@@ -244,7 +244,7 @@ fn validate_query_value_fields(
             let path = super::schema_validate::resolve_schema_field_path(
                 session,
                 None,
-                Some(&contract.row_entity),
+                contract.row_entity.single(),
                 schema.as_ref(),
                 &path,
             )?;

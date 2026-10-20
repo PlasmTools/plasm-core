@@ -739,6 +739,18 @@ fn snapshot_roundtrip_preserves_typed_membership_and_rejects_row_substitution() 
         assert!(validate_run_artifact_document(&bad).is_err());
         assert!(bad.agent_view().is_err());
     }
+    for contract in [
+        plasm_runtime::execution::RowMaterialization::Catalog,
+        plasm_runtime::execution::RowMaterialization::Computed,
+    ] {
+        let mut document = restored.clone();
+        document.row_materialization = contract;
+        let roundtrip =
+            parse_run_artifact_document_bytes(&serde_json::to_vec(&document).unwrap()).unwrap();
+        let collection = roundtrip.recorded_collection().unwrap();
+        assert_eq!(collection.row_materialization(), contract);
+        assert_eq!(collection.membership(), result.collection.membership());
+    }
     let graph = ExecutionCollection::graph(result.collection.membership().clone());
     let partial = plasm_runtime::ExecutionResult {
         collection: graph,

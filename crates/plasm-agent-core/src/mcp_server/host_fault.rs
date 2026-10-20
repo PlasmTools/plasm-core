@@ -21,10 +21,9 @@ impl HostFault {
     pub fn into_tool_result(
         self,
         _delivery: crate::mcp_delivery::McpDeliveryProfile,
-    ) -> rust_mcp_sdk::schema::CallToolResult {
-        use rust_mcp_sdk::schema::schema_utils::CallToolError;
-        use rust_mcp_sdk::schema::CallToolResult;
-        let mut result = CallToolResult::with_error(CallToolError::from_message(
+    ) -> rmcp::model::CallToolResult {
+        use crate::mcp_server::request::ToolFailure;
+        let mut result = crate::mcp_server::request::tool_error_result(ToolFailure::rejected(
             crate::agent_presentation::render_failure_complete(&self.0).into_string(),
         ));
         // Structured content can be forwarded into model context by a host.
@@ -34,7 +33,8 @@ impl HostFault {
             "status": "execution_failed", "failure": self.0
         }})
         .as_object()
-        .cloned();
+        .cloned()
+        .map(Into::into);
         result
     }
 }

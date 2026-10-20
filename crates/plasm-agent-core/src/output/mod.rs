@@ -972,7 +972,7 @@ mod tests {
 
     #[test]
     fn result_tsv_and_column_schema_preserve_materialized_projection_fields() {
-        let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        let dir = std::path::Path::new(crate::test_manifest_dir())
             .join("../../fixtures/schemas/return_projection_teaching");
         let cgs = plasm_core::loader::load_schema_dir(&dir).expect("return_projection_teaching");
         let taught =
@@ -1654,7 +1654,7 @@ mod tests {
     /// Soft-fail retained summary: unavailable detail must not render as a blank / empty cell.
     #[test]
     fn soft_fail_unavailable_detail_not_blank_or_empty_in_tsv() {
-        let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        let dir = std::path::Path::new(crate::test_manifest_dir())
             .join("../../fixtures/schemas/plasm_language_matrix");
         let cgs = plasm_core::loader::load_schema_dir(&dir).expect("language matrix");
         let r = Ref {

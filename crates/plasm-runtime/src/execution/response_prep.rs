@@ -92,6 +92,10 @@ pub(crate) fn narrow_http_graphql_response_for_entity_decode(
     env: &CmlEnv,
 ) -> Result<serde_json::Value, RuntimeError> {
     match template {
+        CapabilityTemplate::Mcp(call) => {
+            crate::mcp_execution::project_response(response, &call.response)
+                .map_err(RuntimeError::from)
+        }
         CapabilityTemplate::CredentialBind(_) => Ok(response),
         CapabilityTemplate::Http(cml) | CapabilityTemplate::GraphQl(cml) => {
             preflight_command_envelope_for_single_entity_narrow(&response, cml)?;

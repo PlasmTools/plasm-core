@@ -2,6 +2,28 @@
 
 This is the canonical OSS reference for authoring Plasm API catalogs. The compiler and runtime crates are the ground truth (`crates/plasm-core`, `crates/plasm-cml`, `crates/plasm-compile`, `crates/plasm-runtime`); this file exists to keep agents and humans aligned on doctrine.
 
+## MCP response selection
+
+For `transport: mcp`, declare the result source explicitly. `json_text` parses
+the selected text block as JSON; `text_block` preserves the selected MCP text
+block object, including its verbatim `text` field. Both require an explicit
+`index`. Use `text_block` for receipts that are genuinely textual, including
+providers whose successful receipt can contain either prose or JSON text. It
+does not infer status or completion. Declare a separate observation capability
+when downstream work requires readiness evidence. Invalid block kinds and
+non-string text remain typed response errors. `structured_content` and
+`embedded_resource` retain their separate response contracts.
+
+```yaml
+response:
+  source: {kind: text_block, index: 0}
+  pointer: ''
+  exhaustive: true
+```
+
+Here `exhaustive` describes receipt collection coverage, not completion of an
+asynchronous operation reported by the receipt.
+
 ## Authoring vs determinism
 
 **Writing `domain.yaml` is not a deterministic process.** OpenAPI (and friends) do not uniquely define a CGS: entity boundaries, capability grouping, relations, parameter roles, `abstract` embed-only types, and **which `values:` keys exist** (including whether unrelated fields share one `value_ref` vs split into distinct slots) are **semantic choices**. Tools may assist (e.g. an LLM reading the spec), but there is no canonical auto-generator in-repo and no guarantee that two valid domain models for the same API are equivalent.
@@ -1859,3 +1881,86 @@ relations and authoritative empty relations. Embedded-only targets remain Summar
 no richer Get exists; observing them does not prove a complete entity projection.
 
 Timezone-free API datetimes must declare `iso8601_naive_datetime`; use `rfc3339` for timezone-aware instants. Python receives `datetime.datetime` with matching timezone awareness. Neither profile invents nor discards timezone information. Invalid present response values fail decoding; absent fields and explicit null remain distinct.
+
+### Closed nominal entity outputs
+
+A heterogeneous result is a closed entity sum, not an entity with guessed optional
+fields. Declare its variants and use the existing `output.decoder` seam to select
+one variant from each raw row:
+
+```yaml
+entity: WorkQueue
+kind: query
+output:
+  type: entity_union
+  variants: [Note, Change]
+  cardinality: many
+  decoder:
+    type: entity_union
+    cases:
+      - entity_type: Note
+        when: {kind: absent, path: [change]}
+      - entity_type: Change
+        when: {kind: present, path: [change]}
+```
+
+The cases must name exactly the declared, existing variants. `present` includes a
+present JSON null; `absent` means no key. `equals` takes a `path` and scalar `value`
+for tagged protocols. Exactly one case must match each row; unmatched, ambiguous,
+and malformed discriminator shapes fail decoding. Each selected variant uses its
+normal field and identity decoder. Provider envelope/collection paths remain in
+CML mappings. The established output-decoder seam is now typed; no second wire
+configuration or guessed structural discriminator is introduced.
+
+Served Python declarations show `Rows[eA | eB]`. Use
+`mixed.of_type(eA)` before variant-specific fields, relations or actions. The target
+must be a declared variant. Narrowing selects original occurrences and preserves
+recorded identity and coverage; constructing a dictionary with matching keys cannot
+create a receiver.
+
+This initial implementation admits query/search `many` outputs and action `one`
+or `many` outputs. Get/create/update/delete, union outputs inside iteration
+capability templates, and union-target relations remain unsupported and fail
+closed. Do not remove existing capabilities or label mixed rows as a concrete
+entity to bypass those restrictions; redesign and validate the missing contract
+before migrating a catalog that requires it.
+
+
+A concrete relation may select one nominal variant from a scoped union query:
+
+```yaml
+relations:
+  notes:
+    target: Note
+    cardinality: many
+    materialize:
+      kind: query_scoped_bindings
+      capability: work_queue_query
+      bindings: {queue_id: id}
+      select_entity: Note
+```
+
+`select_entity` is required for every union-query materializer, including when its
+routing owner happens to be the selected variant. It must equal the relation target
+and occur in the capability's declared output union. Runtime selection uses decoded
+nominal identities, after bounded source pagination; it does not inspect copied keys.
+A residual source continuation fails explicitly rather than being discarded. Selection
+preserves recorded coverage, so an unproven source cannot become a complete result.
+CLI relation commands with this selection currently reject additional query arguments;
+compose further selection in the Python program.
+
+A concrete Get can assert which provider record it accepts without widening its identity:
+
+```yaml
+output:
+  type: entity
+  entity_type: Note
+  decoder:
+    type: entity_assert
+    when: {kind: absent, path: [change]}
+```
+
+The assertion runs before field decoding, identity validation and cache publication.
+A mismatch is a response-contract failure; it never relabels the record, retries the
+operation or treats the response as absence. Exact Get request-key correspondence
+continues to apply after the assertion.

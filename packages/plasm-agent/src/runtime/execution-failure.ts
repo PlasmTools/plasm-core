@@ -1,5 +1,20 @@
 import { z } from "zod";
 
+type JsonValue = null | boolean | number | string | JsonValue[] | { [key: string]: JsonValue };
+const jsonValueSchema: z.ZodType<JsonValue> = z.lazy(() => z.union([
+  z.null(), z.boolean(), z.number().finite(), z.string(),
+  z.array(jsonValueSchema), z.record(jsonValueSchema),
+]));
+
+const computeInferenceDiagnosticSchema = z.object({
+  code: z.string(),
+  unmaterializable_type: z.enum(["any", "unknown", "unsupported", "bytes", "enum", "protocol", "new_type", "record", "truth_refinement"]).nullable(),
+  message: z.string(),
+  compute_line: z.number().int().nonnegative().nullable(),
+  compute_column: z.number().int().nonnegative().nullable(),
+  source_excerpt: z.string().nullable(),
+}).strict();
+
 const collectionReferenceSchema = z.object({
   catalog: z.array(z.number().int().min(0).max(255)).length(32),
   expression: z.array(z.number().int().min(0).max(255)).length(32),
@@ -38,6 +53,8 @@ export const executionFailureSchema = z.object({
     request_fingerprint: z.string(), status: z.enum(["unresolved", "response_received"]),
   }).strict()),
   effects_unresolved: z.boolean(),
+  // Original provider envelope is evidence, never recovery authority.
+  mcp_tool_result: jsonValueSchema.optional(),
   input_budget: z.object({
     unit: z.enum(["rows", "accounted_bytes"]),
     limit: z.number().int().nonnegative(),
@@ -49,6 +66,7 @@ export const executionFailureSchema = z.object({
     category: z.enum(["parse", "type", "plan", "flow"]),
     span_offset: z.number().int().nonnegative().nullable(),
     detail: z.discriminatedUnion("kind", [
+      z.object({kind: z.literal("compute_inference"), diagnostics: z.array(computeInferenceDiagnosticSchema)}).strict(),
       z.object({kind: z.literal("union_columns_differ"), left: z.array(z.string()), right: z.array(z.string())}).strict(),
       z.object({kind: z.literal("reserved_binding"), name: z.string()}).strict(),
       z.object({kind: z.literal("static_iteration_required")}).strict(),

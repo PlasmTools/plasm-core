@@ -82,25 +82,30 @@ fn is_known_tool_only_mcp_host(name: &str, version: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use rust_mcp_sdk::schema::{
-        ClientCapabilities, Implementation, InitializeRequestParams, LATEST_PROTOCOL_VERSION,
-    };
+    use rmcp::model::{ClientCapabilities, Implementation, InitializeRequestParams};
 
     const RESOURCES_READ_WIRE_NAMES: &[&str] = &["cursor-vscode", "cline"];
 
     fn client(name: &str, version: &str) -> McpClientInfo {
-        McpClientInfo::from_initialize(InitializeRequestParams {
-            capabilities: ClientCapabilities::default(),
-            client_info: Implementation {
-                name: name.into(),
-                version: version.into(),
-                title: None,
-                description: None,
-                icons: vec![],
-                website_url: None,
-            },
-            protocol_version: LATEST_PROTOCOL_VERSION.into(),
-            meta: None,
+        McpClientInfo::from_initialize({
+            let mut model = InitializeRequestParams::new(
+                Default::default(),
+                rmcp::model::Implementation::new("test", "0"),
+            );
+            model.capabilities = ClientCapabilities::default();
+            model.client_info = {
+                let mut model = Implementation::new("test", "0");
+                model.name = name.into();
+                model.version = version.into();
+                model.title = None;
+                model.description = None;
+                model.icons = None;
+                model.website_url = None;
+                model
+            };
+            model.protocol_version = rmcp::model::ProtocolVersion::V_2025_11_25;
+            model.meta = None;
+            model
         })
     }
 

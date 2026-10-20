@@ -152,7 +152,7 @@ mod tests {
     use std::sync::Arc;
 
     fn fixtures_schemas_dir(name: &str) -> PathBuf {
-        PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        PathBuf::from(crate::test_manifest_dir())
             .join("../../fixtures/schemas")
             .join(name)
     }

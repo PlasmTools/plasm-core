@@ -6,7 +6,7 @@ use serde_json::{json, Value};
 
 pub(in super::super) fn fixture() -> CGS {
     plasm_core::loader::load_schema_dir(
-        &std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        &std::path::Path::new(plasm_e2e::test_manifest_dir())
             .join("../../fixtures/schemas/python_value_contract"),
     )
     .unwrap()

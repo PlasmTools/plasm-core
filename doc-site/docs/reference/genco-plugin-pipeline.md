@@ -44,7 +44,7 @@ Compile and projection hydration always use in-tree [`plasm_compile::compile_ope
 
 ```bash
 # Pack all apis/ (or subset via --package-list)
-cargo run -p plasm --bin plasm-pack-catalogs -- \
+cargo run -p plasm-catalog --bin plasm-pack-catalogs -- \
   --workspace . --apis-root apis --output-dir target/plasm-catalogs
 
 # Local dev shortcut (plasm monorepo justfile)
@@ -65,7 +65,7 @@ For OSS data-plane-only HTTP, use `-p plasm` instead of `-p plasm-mcp-app`.
 **Appliance:**
 
 ```bash
-cargo run -p plasm --bin plasm-pack-catalogs -- \
+cargo run -p plasm-catalog --bin plasm-pack-catalogs -- \
   --workspace . --apis-root apis --output-dir target/plasm-catalogs
 cargo run -p plasm-server --release -- --catalog-dir target/plasm-catalogs
 ```

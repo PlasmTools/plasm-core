@@ -7,10 +7,95 @@ use plasm_compile::{
 };
 use plasm_core::{Cardinality, FieldType, RelationMaterialization, CGS};
 
+/// Build a result decoder from the catalog-validated output authority and wire cases.
+pub(crate) fn create_output_decoder_for_capability(
+    declared_entity: &str,
+    cgs: &CGS,
+    capability_name: Option<&str>,
+    collection_source: Option<PathExpr>,
+    request_identity: Option<&str>,
+    identity_ambient: Option<&IndexMap<String, String>>,
+) -> plasm_compile::OutputDecoder {
+    if let Some(plasm_core::OutputDecoderSpec::EntityUnion { cases }) = capability_name
+        .and_then(|name| cgs.get_capability(name))
+        .and_then(|cap| cap.output_schema.as_ref())
+        .map(|output| &output.decoder)
+    {
+        return plasm_compile::OutputDecoder::Union(plasm_compile::EntityUnionDecoder {
+            source: collection_source.unwrap_or_else(PathExpr::empty),
+            variants: cases
+                .iter()
+                .map(|case| plasm_compile::EntityVariantDecoder {
+                    when: case.when.clone(),
+                    decoder: create_entity_decoder_inner(
+                        case.entity_type.as_str(),
+                        cgs,
+                        None,
+                        None,
+                        identity_ambient,
+                    ),
+                })
+                .collect(),
+        });
+    }
+    asserted_output_decoder(
+        create_entity_decoder_for_capability(
+            declared_entity,
+            cgs,
+            capability_name,
+            collection_source,
+            request_identity,
+            identity_ambient,
+        ),
+        cgs,
+        capability_name,
+    )
+}
+
+fn asserted_output_decoder(
+    decoder: EntityDecoder,
+    cgs: &CGS,
+    capability_name: Option<&str>,
+) -> plasm_compile::OutputDecoder {
+    match capability_name
+        .and_then(|name| cgs.get_capability(name))
+        .and_then(|cap| cap.output_schema.as_ref())
+        .map(|output| &output.decoder)
+    {
+        Some(plasm_core::OutputDecoderSpec::EntityAssert { when }) => {
+            plasm_compile::OutputDecoder::AssertedEntity {
+                decoder,
+                when: when.clone(),
+            }
+        }
+        _ => plasm_compile::OutputDecoder::Entity(decoder),
+    }
+}
+
 pub(crate) fn validate_declared_output_cardinality(
     capability: &plasm_core::CapabilitySchema,
     rows: usize,
 ) -> Result<(), crate::RuntimeError> {
+    if let Some(plasm_core::OutputType::EntityUnion {
+        variants,
+        cardinality: Cardinality::One,
+    }) = capability
+        .output_schema
+        .as_ref()
+        .map(|output| &output.output_type)
+    {
+        if rows != 1 {
+            return Err(crate::RuntimeError::DeclaredOutputCardinality {
+                capability: capability.name.to_string(),
+                entity: variants
+                    .iter()
+                    .map(|name| name.as_str())
+                    .collect::<Vec<_>>()
+                    .join(" | "),
+                rows,
+            });
+        }
+    }
     if let Some((entity, Cardinality::One)) = capability.declared_entity_output() {
         if rows != 1 {
             return Err(crate::RuntimeError::DeclaredOutputCardinality {
@@ -57,6 +142,40 @@ pub(crate) fn create_entity_decoder(
         collection_source,
         request_identity,
         identity_ambient,
+    )
+}
+
+pub(crate) fn mutating_capability_output_decoder(
+    entity_type: &str,
+    capability_name: &str,
+    cgs: &CGS,
+    identity_ambient: &IndexMap<String, String>,
+    request_identity: Option<&str>,
+) -> plasm_compile::OutputDecoder {
+    if let Some(plasm_core::OutputType::EntityUnion { cardinality, .. }) = cgs
+        .get_capability(capability_name)
+        .and_then(|cap| cap.output_schema.as_ref())
+        .map(|output| &output.output_type)
+    {
+        return create_output_decoder_for_capability(
+            entity_type,
+            cgs,
+            Some(capability_name),
+            (*cardinality == Cardinality::Many).then(|| PathExpr::empty().wildcard()),
+            None,
+            Some(identity_ambient),
+        );
+    }
+    asserted_output_decoder(
+        mutating_capability_response_decoder(
+            entity_type,
+            capability_name,
+            cgs,
+            identity_ambient,
+            request_identity,
+        ),
+        cgs,
+        Some(capability_name),
     )
 }
 
@@ -265,7 +384,7 @@ mod tests {
     #[test]
     fn declared_output_cardinality_distinguishes_entity_and_collection() {
         let cgs = load_schema_dir(
-            &std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            &std::path::Path::new(crate::test_manifest_dir())
                 .join("../../fixtures/schemas/python_action_output"),
         )
         .unwrap();
@@ -282,7 +401,7 @@ mod tests {
     #[test]
     fn action_decoder_uses_declared_output_entity_without_receiver_identity() {
         let cgs = load_schema_dir(
-            &std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            &std::path::Path::new(crate::test_manifest_dir())
                 .join("../../fixtures/schemas/python_action_output"),
         )
         .unwrap();
@@ -325,7 +444,7 @@ mod tests {
 
     #[test]
     fn runtime_from_parent_get_embed_decoders_are_leaf() {
-        let dir = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        let dir = std::path::PathBuf::from(crate::test_manifest_dir())
             .join("../../fixtures/schemas/plasm_language_matrix");
         let cgs = load_schema_dir(&dir).expect("langmatrix");
         let decoder = create_entity_decoder_for_capability(
@@ -341,7 +460,7 @@ mod tests {
 
     #[test]
     fn pokeapi_get_embed_decoders_are_leaf() {
-        let dir = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        let dir = std::path::PathBuf::from(crate::test_manifest_dir())
             .join("../../fixtures/schemas/embed_decoder_matrix");
         let cgs = load_schema_dir(&dir).expect("pokeapi");
         let decoder = create_entity_decoder_for_capability(
@@ -363,7 +482,7 @@ mod tests {
 
     #[test]
     fn pokeapi_type_and_ability_get_embed_decoders_are_leaf() {
-        let dir = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        let dir = std::path::PathBuf::from(crate::test_manifest_dir())
             .join("../../fixtures/schemas/embed_reverse_matrix");
         let cgs = load_schema_dir(&dir).expect("pokeapi");
         for (entity, cap) in [("Type", "type_get"), ("Ability", "ability_get")] {
@@ -389,7 +508,7 @@ mod tests {
         use plasm_compile::DecodedRelation;
         use plasm_core::Value;
 
-        let dir = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        let dir = std::path::PathBuf::from(crate::test_manifest_dir())
             .join("../../fixtures/schemas/embed_reverse_matrix");
         let cgs = load_schema_dir(&dir).expect("pokeapi");
         let decoder = create_entity_decoder_for_capability(

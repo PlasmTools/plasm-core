@@ -195,7 +195,7 @@ pub(crate) fn compute_op_is_full_collection(op: &ComputeOp) -> bool {
 /// List/page read on the return path without `[field,…]` projection.
 ///
 /// This is **advisory structural review** (full-row materialization). The default host page does
-/// not clear it — MCP must return a `run_ref` plan rather than fusing auto-execute.
+/// not clear it. This is presentation advice, separate from execution admission.
 /// An explicit project compute between the read and the return clears the advisory.
 #[must_use]
 pub(crate) fn return_path_node_is_unprojected_multi_row_read(n: &ValidatedPlanNode) -> bool {
@@ -449,7 +449,7 @@ mod tests {
     use std::sync::Arc;
 
     fn test_session(entities: Vec<&str>) -> crate::execute_session::ExecuteSession {
-        let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+        let root = PathBuf::from(crate::test_manifest_dir());
         let cgs = Arc::new(
             load_schema(&root.join("tests/fixtures/execute_tiny")).expect("load execute_tiny"),
         );
@@ -657,7 +657,7 @@ mod tests {
         };
         assert!(
             review.needs_review(true),
-            "advisory unprojected/unnarrowed must need review (MCP returns plan, no fuse)"
+            "advisory unprojected/unnarrowed remains visible in dry review"
         );
         assert_eq!(
             crate::plan_gate::merged_gate_verdict(
@@ -677,7 +677,7 @@ mod tests {
     }
 
     #[test]
-    fn limited_projected_list_still_requires_review_for_collection_compute() {
+    fn limited_projected_read_fuses_despite_collection_shape_advice() {
         let s = test_session(vec!["Product"]);
         let mut nodes = vec![serde_json::json!({
             "id": "r1",
@@ -710,7 +710,24 @@ mod tests {
         );
         assert!(dry.review.has_full_collection_compute);
         assert!(dry.review.needs_review(false));
-        assert!(!dry.fuse_clean_read());
+        assert!(dry.fuse_clean_read());
+        for verdict in [
+            crate::plan_flow::FlowVerdict::NeedsReview,
+            crate::plan_flow::FlowVerdict::Denied,
+        ] {
+            let mut guarded = evaluate_plasm_plan_dry(&s, &plan).expect("dry");
+            guarded.flow.verdict = verdict;
+            assert!(!guarded.fuse_clean_read(), "flow policy cannot be bypassed");
+        }
+        let mut expensive = evaluate_plasm_plan_dry(&s, &plan).expect("dry");
+        expensive.review.has_paginated_list_fetch_all_default = true;
+        assert!(!expensive.fuse_clean_read());
+        let mut fanout = evaluate_plasm_plan_dry(&s, &plan).expect("dry");
+        fanout.review.has_relation_many_source_fanout = true;
+        assert!(!fanout.fuse_clean_read());
+        let mut hydration = evaluate_plasm_plan_dry(&s, &plan).expect("dry");
+        hydration.review.has_unbounded_relation_embed_hydrate = true;
+        assert!(!hydration.fuse_clean_read());
     }
 
     #[test]
@@ -928,9 +945,10 @@ mod tests {
         );
         assert!(
             dry_unbounded.review.needs_review(true),
-            "MCP fuse must not auto-execute advisory lists: {:?}",
+            "dry review retains advisory lists: {:?}",
             dry_unbounded.review
         );
+        assert!(dry_unbounded.fuse_clean_read());
     }
 
     fn project_compute_json(source: &str, id: &str) -> serde_json::Value {

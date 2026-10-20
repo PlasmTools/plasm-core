@@ -2,6 +2,8 @@ use thiserror::Error;
 
 #[derive(Debug, Error)]
 pub enum ChainError {
+    #[error("relation selection for `{entity}` could not exhaust its source query; no complete selected relation was published")]
+    SelectedRelationIncomplete { entity: String },
     #[error("field `{entity}.{field}` is {actual}, not EntityRef")]
     FieldNotEntityRef {
         entity: String,

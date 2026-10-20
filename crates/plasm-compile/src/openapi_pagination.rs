@@ -288,7 +288,7 @@ mod tests {
 
     #[test]
     fn operation_coverage_reports_missing_methods_and_enum_routes() {
-        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        let root = std::path::Path::new(crate::test_manifest_dir())
             .join("../../fixtures/schemas/plasm_pagination_matrix");
         let mut cgs = plasm_core::load_schema_dir(&root).unwrap();
         let mut cap = cgs
@@ -323,7 +323,7 @@ mod tests {
     }
     #[test]
     fn external_pagination_omitted_from_domain_and_mapping_is_rejected() {
-        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        let root = std::path::Path::new(crate::test_manifest_dir())
             .join("../../fixtures/schemas/plasm_pagination_matrix");
         let mut cgs = plasm_core::load_schema_dir(&root).unwrap();
         let cap = cgs

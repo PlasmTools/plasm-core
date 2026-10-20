@@ -1,0 +1,420 @@
+version: 1
+auth: {scheme: none}
+entities:
+  Repository:
+    id_field: id
+    key_vars: [owner, repo]
+    description: A GitHub repository addressed by owner and repository name.
+    fields:
+      id: {value_ref: object_id, required: true}
+      owner: {value_ref: account, path: owner.login, required: true}
+      repo: {value_ref: repository_name, path: name, required: true}
+      full_name: {value_ref: repository_full_name, required: true}
+      default_branch: {value_ref: branch_name}
+      description: {value_ref: prose}
+      created_at: {value_ref: timestamp}
+      open_issues_count: {value_ref: count}
+      html_url: {value_ref: url}
+      fork: {value_ref: flag}
+    relations:
+      issues:
+        target: Issue
+        cardinality: many
+        materialize:
+          kind: query_scoped_bindings
+          capability: issue_query
+          select_entity: Issue
+          bindings: {owner: owner, repo: repo}
+      pull_requests:
+        target: PullRequest
+        cardinality: many
+        materialize:
+          kind: query_scoped_bindings
+          capability: issue_query
+          select_entity: PullRequest
+          bindings: {owner: owner, repo: repo}
+  Issue:
+    id_field: id
+    key_vars: [owner, repo, number]
+    description: An ordinary repository issue, distinct from a pull request. Exact reads reject provider records classified as pull requests.
+    fields:
+      id: {value_ref: object_id, required: true}
+      owner: {value_ref: account, required: true}
+      repo: {value_ref: repository_name, required: true}
+      number: {value_ref: issue_number, required: true}
+      title: {value_ref: prose, required: true}
+      body: {value_ref: prose}
+      state: {value_ref: issue_state, required: true}
+    relations:
+      labels:
+        target: IssueLabel
+        cardinality: many
+        description: Complete label set observed on this issue. Empty means no labels; lookup failures remain errors.
+        materialize:
+          kind: from_parent_get
+          collection_coverage: complete
+          path:
+          - key: labels
+          - wildcard: true
+      comments:
+        target: IssueComment
+        cardinality: many
+        materialize:
+          kind: query_scoped_bindings
+          capability: comment_query
+          bindings: {owner: owner, repo: repo, number: number}
+  IssueLabel:
+    abstract: true
+    id_field: name
+    key_vars: [owner, repo, name]
+    description: A repository label observed on an issue.
+    fields:
+      owner: {value_ref: account, required: true}
+      repo: {value_ref: repository_name, required: true}
+      name: {value_ref: label_name, required: true}
+  IssueComment:
+    id_field: id
+    key_vars: [owner, repo, number, id]
+    description: A comment on a repository issue or pull-request conversation.
+    fields:
+      id: {value_ref: object_id, required: true}
+      owner: {value_ref: account, required: true}
+      repo: {value_ref: repository_name, required: true}
+      number: {value_ref: issue_number, required: true}
+      body: {value_ref: prose, required: true}
+  Branch:
+    id_field: ref
+    key_vars: [owner, repo, ref]
+    description: A repository git reference returned after creating a branch.
+    fields:
+      owner: {value_ref: account, required: true}
+      repo: {value_ref: repository_name, required: true}
+      ref: {value_ref: git_ref, required: true}
+      sha: {value_ref: git_sha, path: object.sha, required: true}
+  BranchHead:
+    id_field: name
+    key_vars: [owner, repo, name]
+    description: An observed branch head. Listing a destination branch establishes its availability after fork initiation; an empty list does not prove permanent absence.
+    fields:
+      owner: {value_ref: account, required: true}
+      repo: {value_ref: repository_name, required: true}
+      name: {value_ref: branch_name, required: true}
+      sha: {value_ref: git_sha, path: commit.sha, required: true}
+  ForkReceipt:
+    id_field: text
+    key_vars: [owner, repo]
+    description: Provider receipt from initiating a fork into the authenticated account. Receipt text can be JSON or an in-progress message; neither proves destination branch readiness. Observe the destination repository and branch before dependent writes. Never repeat the fork merely because readiness is delayed.
+    fields:
+      owner: {value_ref: account, required: true}
+      repo: {value_ref: repository_name, required: true}
+      text: {value_ref: prose, required: true}
+  PullRequest:
+    id_field: number
+    key_vars: [owner, repo, number]
+    description: A proposed merge between repository branches, identified by repository and number. Issue-list summaries omit head and base; exact reads observe them. Opaque provider IDs are not exposed because issue and pull-request endpoints use distinct record representations.
+    fields:
+      owner: {value_ref: account, required: true}
+      repo: {value_ref: repository_name, required: true}
+      number: {value_ref: issue_number, required: true}
+      title: {value_ref: prose, required: true}
+      body: {value_ref: prose}
+      head: {value_ref: branch_name, path: head.ref}
+      base: {value_ref: branch_name, path: base.ref}
+      state: {value_ref: issue_state, required: true}
+    relations:
+      labels:
+        target: IssueLabel
+        cardinality: many
+        description: Complete conversation labels observed on the pull-request record.
+        materialize:
+          kind: from_parent_get
+          collection_coverage: complete
+          path:
+          - key: labels
+          - wildcard: true
+      comments:
+        target: IssueComment
+        cardinality: many
+        materialize:
+          kind: query_scoped_bindings
+          capability: comment_query
+          bindings: {owner: owner, repo: repo, number: number}
+  FileRevision:
+    id_field: sha
+    key_vars: [owner, repo, path, sha]
+    description: A file revision returned by a successful content write; it is not a file-content read.
+    fields:
+      owner: {value_ref: account, required: true}
+      repo: {value_ref: repository_name, required: true}
+      path: {value_ref: file_path, required: true}
+      sha: {value_ref: git_sha, required: true}
+  FileContent:
+    id_field: uri
+    key_vars: [owner, repo, branch, path]
+    description: Contents of a single file at an explicit branch. Text and base64 blob are alternative representations; directory listings are not file contents.
+    fields:
+      uri: {value_ref: url, required: true}
+      owner: {value_ref: account, required: true}
+      repo: {value_ref: repository_name, required: true}
+      branch: {value_ref: branch_name, required: true}
+      path: {value_ref: file_path, required: true}
+      text: {value_ref: prose}
+      blob: {value_ref: prose}
+      mime_type: {value_ref: prose, path: mimeType}
+  DirectoryEntry:
+    id_field: path
+    key_vars: [owner, repo, branch, path]
+    description: A repository entry observed in its parent directory at a branch. Preserve path, kind and Git object SHA; file metadata is distinct from file bytes.
+    fields:
+      owner: {value_ref: account, required: true}
+      repo: {value_ref: repository_name, required: true}
+      branch: {value_ref: branch_name, required: true}
+      path: {value_ref: file_path, required: true}
+      name: {value_ref: prose, required: true}
+      kind: {value_ref: entry_kind, path: type, required: true}
+      sha: {value_ref: git_sha, required: true}
+      size: {value_ref: byte_count}
+    relations:
+      content:
+        target: FileContent
+        cardinality: one
+        description: Read this entry as a file. Select kind=file first; directories have entries, not file contents.
+        materialize:
+          kind: get_scoped_bindings
+          capability: file_read
+          bindings: {owner: owner, repo: repo, branch: branch, path: path}
+  CodeMatch:
+    id_field: html_url
+    key_vars: [html_url]
+    description: A file matching GitHub code search on indexed default branches. Search is not a branch-specific tree listing; use its owner, repo and path with an explicit branch for file reads.
+    fields:
+      html_url: {value_ref: url, required: true}
+      owner: {value_ref: account, path: repository.owner.login, required: true}
+      repo: {value_ref: repository_name, path: repository.name, required: true}
+      path: {value_ref: file_path, required: true}
+      name: {value_ref: prose, required: true}
+      sha: {value_ref: git_sha, required: true}
+capabilities:
+  fork_initiate:
+    kind: action
+    entity: ForkReceipt
+    description: Initiate one fork of the source owner/repository into the authenticated account, preserving its name. Returns the exact provider receipt, not a completed repository.
+    scope:
+    - {name: owner, value_ref: account, required: true}
+    - {name: repo, value_ref: repository_name, required: true}
+    provides: [owner, repo, text]
+    invalidates_entities: [Repository, BranchHead]
+  branch_heads:
+    kind: query
+    entity: BranchHead
+    description: Enumerate available branch heads in a repository, including a newly forked destination. Read failures remain errors.
+    scope:
+    - {name: owner, value_ref: account, required: true}
+    - {name: repo, value_ref: repository_name, required: true}
+    provides: [owner, repo, name, sha]
+  directory_entries:
+    kind: query
+    entity: DirectoryEntry
+    description: List immediate directory entries with their Git SHAs. Use directory="" for the root, otherwise a repository-relative directory path without a trailing slash. The provider is bounded to 1000 entries; this is not a recursive or proven exhaustive tree walk.
+    scope:
+    - {name: owner, value_ref: account, required: true}
+    - {name: repo, value_ref: repository_name, required: true}
+    - {name: branch, value_ref: branch_name, required: true}
+    - {name: directory, value_ref: directory_path, required: true}
+    provides: [owner, repo, branch, path, name, kind, sha, size]
+  code_search:
+    kind: query
+    entity: CodeMatch
+    description: Search indexed file paths and code using GitHub code-search syntax. Results are checked against provider total and completeness; narrow searches exceeding 1000 matches. New files may not be indexed immediately.
+    selection:
+    - {name: query, value_ref: code_query, required: true, selection_effect: filter}
+    provides: [html_url, owner, repo, path, name, sha]
+  file_read:
+    kind: get
+    entity: FileContent
+    scope:
+    - {name: owner, value_ref: account, required: true}
+    - {name: repo, value_ref: repository_name, required: true}
+    - {name: branch, value_ref: branch_name, required: true}
+    - {name: path, value_ref: file_path, required: true}
+    description: Read a single file at an explicit branch. Text is returned verbatim; binary contents remain base64 in blob. A directory response is rejected.
+    provides: [uri, owner, repo, branch, path, text, blob, mime_type]
+  repo_search:
+    kind: query
+    entity: Repository
+    description: Enumerate repository search results across pages. Incomplete provider responses or searches exceeding GitHub's 1000-result enumeration limit fail explicitly; narrow the query in that case.
+    selection:
+    - {name: query, value_ref: search_query, required: true, selection_effect: filter}
+    provides: [id, owner, repo, full_name, default_branch, description, created_at, open_issues_count, html_url, fork]
+  repo_create:
+    kind: create
+    entity: Repository
+    description: Create a repository in the authenticated account.
+    payload:
+      input_type:
+        type: object
+        fields:
+        - {name: name, value_ref: repository_name, required: true}
+        - {name: description, value_ref: prose, required: false}
+        - {name: private, value_ref: boolean, required: false}
+        - {name: auto_init, value_ref: boolean, required: false}
+    provides: [id, owner, repo, full_name, default_branch, description]
+  issue_query:
+    kind: query
+    entity: Issue
+    description: Enumerate repository conversations as Issue or PullRequest rows. Narrow the result to the required entity type. Labels are exact names; state defaults to open at the provider. Pull-request head and base are not observed by this listing.
+    output:
+      type: entity_union
+      variants: [Issue, PullRequest]
+      cardinality: many
+      decoder:
+        type: entity_union
+        cases:
+        - entity_type: Issue
+          when: {kind: absent, path: [pull_request]}
+        - entity_type: PullRequest
+          when: {kind: present, path: [pull_request]}
+    scope: &repo_scope
+    - {name: owner, value_ref: account, required: true}
+    - {name: repo, value_ref: repository_name, required: true}
+    selection:
+    - {name: state, value_ref: issue_filter, required: false, selection_effect: filter}
+    - {name: labels, value_ref: labels, required: false, selection_effect: filter}
+    provides: [owner, repo, number, title, body, state]
+  issue_get:
+    kind: get
+    entity: Issue
+    scope: *repo_scope
+    description: Read one issue by its repository-scoped number.
+    output:
+      type: entity
+      entity_type: Issue
+      decoder:
+        type: entity_assert
+        when: {kind: absent, path: [pull_request]}
+    provides: [id, owner, repo, number, title, body, state]
+  issue_create:
+    kind: create
+    entity: Issue
+    scope: *repo_scope
+    description: Create an issue in a repository.
+    payload:
+      input_type:
+        type: object
+        fields:
+        - {name: title, value_ref: prose, required: true}
+        - {name: body, value_ref: prose, required: false}
+        - {name: labels, value_ref: labels, required: false}
+    provides: [id, owner, repo, number, title, body, state]
+  issue_update:
+    kind: update
+    entity: Issue
+    scope: *repo_scope
+    description: Update an issue. A nonempty label list replaces the label set; omitted fields are unchanged. This pinned server ignores an empty label list, so this capability cannot clear all labels.
+    payload:
+      input_type:
+        type: object
+        fields:
+        - {name: title, value_ref: prose, required: false}
+        - {name: body, value_ref: prose, required: false}
+        - {name: state, value_ref: issue_state, required: false}
+        - {name: labels, value_ref: labels, required: false}
+    provides: [id, owner, repo, number, title, body, state]
+  comment_query:
+    kind: query
+    entity: IssueComment
+    description: Paginated comments for an issue or pull-request conversation.
+    scope: &issue_scope
+    - {name: owner, value_ref: account, required: true}
+    - {name: repo, value_ref: repository_name, required: true}
+    - {name: number, value_ref: issue_number, required: true}
+    provides: [id, owner, repo, number, body]
+  comment_create:
+    kind: create
+    entity: IssueComment
+    scope: *issue_scope
+    description: Add one comment to an issue or pull-request conversation.
+    payload:
+      input_type:
+        type: object
+        fields:
+        - {name: body, value_ref: prose, required: true}
+    provides: [id, owner, repo, number, body]
+  branch_create:
+    kind: create
+    entity: Branch
+    scope: *repo_scope
+    description: Create a branch from an existing branch, defaulting to the repository default branch when omitted.
+    payload:
+      input_type:
+        type: object
+        fields:
+        - {name: branch, value_ref: branch_name, required: true}
+        - {name: from_branch, value_ref: branch_name, required: false}
+    provides: [owner, repo, ref, sha]
+  pr_get:
+    kind: get
+    entity: PullRequest
+    scope: *repo_scope
+    description: Read one pull request by repository-scoped number, including branch details and conversation labels.
+    provides: [owner, repo, number, title, body, head, base, state]
+  pr_create:
+    kind: create
+    entity: PullRequest
+    scope: *repo_scope
+    description: Open a pull request between branches.
+    payload:
+      input_type:
+        type: object
+        fields:
+        - {name: title, value_ref: prose, required: true}
+        - {name: body, value_ref: prose, required: false}
+        - {name: head, value_ref: branch_name, required: true}
+        - {name: base, value_ref: branch_name, required: true}
+        - {name: draft, value_ref: boolean, required: false}
+    provides: [owner, repo, number, title, body, head, base, state]
+  file_write:
+    kind: action
+    entity: FileRevision
+    invalidates_entities: [FileContent, DirectoryEntry, CodeMatch]
+    description: Commit plain UTF-8 text at a path on a branch. For replacement provide the current file SHA. The server performs wire base64 encoding; do not pre-encode content. Returns revision metadata, not file contents.
+    scope: *repo_scope
+    payload:
+      input_type:
+        type: object
+        fields:
+        - {name: path, value_ref: file_path, required: true}
+        - {name: branch, value_ref: branch_name, required: true}
+        - {name: message, value_ref: prose, required: true}
+        - {name: content, value_ref: file_text, required: true}
+        - {name: sha, value_ref: git_sha, required: false}
+    provides: [owner, repo, path, sha]
+values:
+  timestamp: {type: rfc3339, description: Provider repository creation timestamp.}
+  count: {type: int, description: Provider count; open repository issues may include pull requests.}
+  flag: {type: bool, description: Provider boolean.}
+  directory_path: {type: string, description: Repository-relative directory path without a trailing slash; empty string denotes the root.}
+  entry_kind: {type: enum, enum: [file, dir, symlink, submodule], description: Provider entry kind; only file entries are file-content reads.}
+  byte_count: {type: int, description: Size in bytes.}
+  code_query: {type: string, description: GitHub code-search expression; repository and filename qualifiers narrow file discovery.}
+  object_id: {type: int, description: GitHub object identity; not the issue number.}
+  account: {type: string, description: GitHub account login.}
+  repository_name: {type: string, description: Repository name within an account.}
+  repository_full_name: {type: string, description: Repository owner/name.}
+  issue_number: {type: int, description: Issue or pull-request number within one repository.}
+  branch_name: {type: string, description: Branch name without refs/heads prefix.}
+  git_ref: {type: string, description: Full git reference such as refs/heads/topic.}
+  git_sha: {type: string, description: Git object SHA.}
+  file_path: {type: string, description: Repository-relative file path.}
+  file_text: {type: string, description: Plain UTF-8 file contents; not base64.}
+  prose: {type: string, description: User-authored text preserved verbatim.}
+  url: {type: string, description: Provider URL.}
+  boolean: {type: bool, description: Boolean setting.}
+  search_query: {type: string, description: GitHub repository search query.}
+  issue_filter: {type: enum, enum: [open, closed, all], description: Issue listing state filter.}
+  issue_state: {type: enum, enum: [open, closed], description: Issue or pull-request state.}
+  label_name: {type: string, description: Exact repository label name.}
+  labels:
+    type: array
+    items: {value_ref: label_name}
+    description: Exact repository label names.

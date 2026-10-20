@@ -77,6 +77,7 @@ pub(crate) struct PlanStepMaterializeCtx<'a> {
     pub st: &'a PlasmHostState,
     pub session_id: &'a str,
     pub plan_shared: &'a Arc<PlanLineExecuteShared>,
+    pub prepared_computes: &'a crate::python_compute::prepared_scope::PreparedComputeScope<'a>,
     pub(super) approval_policy: &'a PlasmPlanApprovalPolicy,
     pub flow: &'a crate::plan_flow::PlanFlowAnalysis,
     pub trace: Option<&'a PlasmTraceContext>,
@@ -354,8 +355,7 @@ async fn live_materialize_pure(
                 }
             };
             report(ExecutionStage::Materializing);
-            let checked = crate::python_compute::check_op(ctx.es, &compute.compute.op)
-                .map_err(ExecutionFailure::from)?;
+            let checked = ctx.prepared_computes.check(&compute.compute.op)?;
             let owner = plasm_core::symbol_tuning::EntityBinding {
                 entry_id: source_mat.qualified_entity.entry_id.clone().into(),
                 entity: source_mat.qualified_entity.entity.clone().into(),
@@ -483,6 +483,20 @@ async fn live_materialize_pure(
                 .map_err(|error| step_failure("compute_result_shape_invalid", error.to_string()))?;
             value_shapes = shapes;
             ComputedRows::synthetic(rows)
+        } else if let ComputeOp::NarrowEntity { target, .. } = &compute.compute.op {
+            let rows = crate::graph_rehydrate::GraphSurfaceRehydrator::new(
+                ctx.es,
+                ctx.st,
+                ctx.session_id,
+                ctx.es.cgs.as_ref(),
+            )
+            .resolve_row_source_rows(&source_mat.row_source, None)
+            .await
+            .map_err(|error| {
+                step_failure("entity_narrowing_rehydration_failed", error.to_string())
+            })?;
+            narrow_entity_rows(target, &rows, &source_mat.row_identities)
+                .map_err(|error| step_failure("entity_narrowing_failed", error.to_string()))?
         } else {
             let input_contract = crate::map_body_schema::row_operation_contract(
                 ctx.es,

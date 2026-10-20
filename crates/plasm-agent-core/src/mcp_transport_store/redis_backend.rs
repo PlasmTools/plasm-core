@@ -73,6 +73,26 @@ impl RedisBackend {
         conn.get(key).await
     }
 
+    /// Session persistence must report failed writes and deletes to the protocol owner.
+    pub(crate) async fn set_string_strict(
+        &self,
+        key: &str,
+        payload: &str,
+    ) -> redis::RedisResult<()> {
+        let mut conn = self.conn.clone();
+        conn.set_ex(key, payload, self.ttl.as_secs().max(60)).await
+    }
+
+    pub(crate) async fn delete_strict(&self, key: &str) -> redis::RedisResult<()> {
+        let mut conn = self.conn.clone();
+        conn.del(key).await
+    }
+
+    pub(crate) async fn touch_strict(&self, key: &str) -> redis::RedisResult<()> {
+        let mut conn = self.conn.clone();
+        conn.expire(key, self.ttl.as_secs().max(60) as i64).await
+    }
+
     pub async fn get_json<T: serde::de::DeserializeOwned>(&self, key: &str) -> Option<T> {
         let mut conn = self.conn.clone();
         let raw: Option<String> = conn.get(key).await.unwrap_or_else(|err| {

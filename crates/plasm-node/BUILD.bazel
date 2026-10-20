@@ -1,0 +1,117 @@
+load("@crates//:defs.bzl", "aliases", "all_crate_deps", "crate_deps")
+load("@rules_rust//cargo:defs.bzl", "cargo_build_script")
+load("@rules_rust//rust:defs.bzl", "rust_library", "rust_shared_library")
+load("//build/bazel:integration_tests.bzl", "rust_integration_tests")
+load("//build/bazel:native_test.bzl", "rust_test_with_monty")
+
+rust_test_with_monty(
+    name = "unit_tests",
+    crate = ":plasm_node_rust",
+    data = [
+        "Cargo.toml",
+        "//:catalog_sources",
+        "//:test_fixtures",
+        "//crates/plasm-agent-core:test_fixtures",
+    ],
+    proc_macro_deps = all_crate_deps(proc_macro_dev = True),
+    visibility = ["//visibility:public"],
+    deps = all_crate_deps(normal_dev = True),
+)
+
+cargo_build_script(
+    name = "build_script",
+    srcs = ["build.rs"],
+    edition = "2021",
+    proc_macro_deps = all_crate_deps(build_proc_macro = True),
+    version = "0.5.5",
+    deps = all_crate_deps(build = True),
+)
+
+rust_shared_library(
+    name = "plasm_node",
+    srcs = glob(["src/**/*.rs"]),
+    aliases = aliases(),
+    crate_root = "src/lib.rs",
+    edition = "2021",
+    proc_macro_deps = all_crate_deps(proc_macro = True),
+    # napi-build emits rustc-cdylib-link-arg, which cargo_build_script does not
+    # forward. Node supplies the N-API symbols when loading this library.
+    rustc_flags = select({
+        "@platforms//os:macos": ["-Clink-arg=-Wl,-undefined,dynamic_lookup"],
+        "//conditions:default": [],
+    }),
+    version = "0.5.5",
+    visibility = ["//visibility:public"],
+    deps = [
+        ":build_script",
+        "//crates/plasm-agent-core:plasm_agent_core",
+        "//crates/plasm-compile:plasm_compile",
+        "//crates/plasm-core:plasm_core",
+        "//crates/plasm-runtime:plasm_runtime",
+    ] + all_crate_deps(normal = True),
+)
+
+genrule(
+    name = "node_binding",
+    srcs = [":plasm_node"],
+    outs = ["index.node"],
+    cmd = "cp $(location :plasm_node) $@",
+    visibility = ["//visibility:public"],
+)
+
+rust_library(
+    name = "plasm_node_rust",
+    testonly = True,
+    srcs = glob(["src/**/*.rs"]),
+    aliases = aliases(),
+    crate_name = "plasm_node",
+    crate_root = "src/lib.rs",
+    edition = "2021",
+    proc_macro_deps = all_crate_deps(proc_macro = True),
+    version = "0.5.5",
+    deps = [
+        ":build_script",
+        "//crates/plasm-agent-core:plasm_agent_core",
+        "//crates/plasm-compile:plasm_compile",
+        "//crates/plasm-core:plasm_core",
+        "//crates/plasm-runtime:plasm_runtime",
+        "@napi_test_sources//:napi_dyn_symbols",
+    ] + crate_deps([
+        "thiserror",
+        "indexmap",
+        "serde",
+        "serde_json",
+        "tracing",
+        "tracing-subscriber",
+        "tokio",
+    ]),
+)
+
+rust_integration_tests(
+    cargo_deps = crate_deps([
+        "thiserror",
+        "indexmap",
+        "serde",
+        "serde_json",
+        "tracing",
+        "tracing-subscriber",
+        "tokio",
+        "tempfile",
+    ]) + ["@napi_test_sources//:napi_dyn_symbols"],
+    compile_data = ["src/tracing_setup.rs"],
+    data = [
+        "//:catalog_sources",
+        "//:test_fixtures",
+    ],
+    tests = {
+        "spotify_membership": "tests/spotify_membership.rs",
+        "tracing_setup": "tests/tracing_setup.rs",
+    },
+    deps = [
+        ":plasm_node_rust",
+        "//crates/plasm-agent-core:plasm_agent_core",
+        "//crates/plasm-compile:plasm_compile",
+        "//crates/plasm-core:plasm_core",
+        "//crates/plasm-runtime:plasm_runtime",
+    ],
+)

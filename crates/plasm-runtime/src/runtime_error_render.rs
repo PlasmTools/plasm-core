@@ -9,6 +9,7 @@ use crate::RuntimeError;
 /// Convert a runtime failure into a structured [`StepError`].
 pub fn step_error_from_runtime(err: &RuntimeError, cgs: &CGS) -> StepError {
     match err {
+        RuntimeError::Mcp(_) => StepError::new(StepErrorCategory::Runtime, err.to_string(), None),
         RuntimeError::RequestIdentityAuthOpaque => {
             StepError::new(StepErrorCategory::Config, err.to_string(), None)
         }
@@ -53,12 +54,14 @@ pub fn step_error_from_runtime(err: &RuntimeError, cgs: &CGS) -> StepError {
         | RuntimeError::TopKFieldEmpty
         | RuntimeError::FieldUnknown { .. }
         | RuntimeError::EntityUnknown { .. }
+        | RuntimeError::NonlocalQueryAtTerminal { .. }
         | RuntimeError::ViewNodeMissing { .. }
         | RuntimeError::ComputedOutputPhaseRequired
         | RuntimeError::TraversalParentTypeMismatch { .. }
         | RuntimeError::Credential(_)
         | RuntimeError::PaginationContract(_)
         | RuntimeError::IdentityProjection(_)
+        | RuntimeError::IdentityWire(_)
         | RuntimeError::EntityRefScope(_)
         | RuntimeError::QueryResolution(_)
         | RuntimeError::SchemaContract(_)

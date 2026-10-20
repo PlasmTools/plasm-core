@@ -18,7 +18,7 @@ use plasm_runtime::{ExecutionConfig, ExecutionEngine, ExecutionMode};
 const ENTRY: &str = "direction";
 
 fn load_direction_cgs() -> Arc<plasm_core::CGS> {
-    let dir = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+    let dir = std::path::PathBuf::from(plasm_e2e::test_manifest_dir())
         .join("../../fixtures/schemas/plasm_direction_matrix");
     Arc::new(
         plasm_core::loader::load_schema_dir(&dir)

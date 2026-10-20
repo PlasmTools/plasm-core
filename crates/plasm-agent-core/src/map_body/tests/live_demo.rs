@@ -80,7 +80,7 @@ async fn cancel(State(state): State<Demo>) -> Json<Value> {
 fn python_host_live_demo() {
     on_runtime(async {
         let html = std::fs::read_to_string(
-            std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            std::path::Path::new(crate::test_manifest_dir())
                 .join("../../../docs/research/python-dag-slice/live-runtime-preview.html"),
         )
         .unwrap();

@@ -73,7 +73,7 @@ fn capability_exposure_plan_is_invariant_to_seed_order() {
 fn plasm_plan_publication_renders_named_output_owner() {
     let cgs = Arc::new(
         plasm_core::load_schema_dir(
-            &std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            &std::path::Path::new(crate::test_manifest_dir())
                 .join("../../fixtures/schemas/plasm_language_matrix"),
         )
         .unwrap(),
@@ -129,7 +129,7 @@ fn live_run_tool_meta_finalizes_run_explorer_ui() {
     use crate::run_artifacts::{
         artifact_http_path, plasm_run_resource_uri, plasm_short_resource_uri, RunArtifactId,
     };
-    use rust_mcp_sdk::schema::{CallToolResult, TextContent};
+    use rmcp::model::CallToolResult;
 
     let run = RunArtifactId::from_bytes([2u8; 32]);
     let ph = "cd".repeat(32);
@@ -170,7 +170,7 @@ fn live_run_tool_meta_finalizes_run_explorer_ui() {
     let mut tool_meta = serde_json::Map::new();
     tool_meta.insert("plasm".into(), serde_json::Value::Object(plasm_obj));
     let res = finalize_mcp_tool_result(
-        CallToolResult::text_content(vec![TextContent::new("ok".into(), None, None)]),
+        CallToolResult::success(vec![rmcp::model::ContentBlock::text("ok")]),
         tool_meta,
         McpDeliveryProfile::FullApps,
         None,
@@ -214,7 +214,7 @@ fn test_host_state_from_registry(reg: CgsRegistry) -> PlasmHostState {
 }
 
 fn test_state_with_registry() -> PlasmHostState {
-    let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../fixtures/schemas/overshow_tools");
+    let dir = Path::new(crate::test_manifest_dir()).join("../../fixtures/schemas/overshow_tools");
     let cgs = Arc::new(load_schema_dir(&dir).expect("overshow_tools"));
     test_host_state_from_registry(CgsRegistry::from_pairs(vec![(
         "overshow".into(),
@@ -226,7 +226,7 @@ fn test_state_with_registry() -> PlasmHostState {
 
 fn test_state_with_langmatrix_registry() -> Option<PlasmHostState> {
     let dir =
-        Path::new(env!("CARGO_MANIFEST_DIR")).join("../../fixtures/schemas/plasm_language_matrix");
+        Path::new(crate::test_manifest_dir()).join("../../fixtures/schemas/plasm_language_matrix");
     if !dir.exists() {
         return None;
     }
@@ -243,8 +243,8 @@ fn test_state_with_langmatrix_registry() -> Option<PlasmHostState> {
 
 fn test_state_with_matrix_federated_registry() -> Option<PlasmHostState> {
     let dir_a =
-        Path::new(env!("CARGO_MANIFEST_DIR")).join("../../fixtures/schemas/plasm_language_matrix");
-    let dir_b = Path::new(env!("CARGO_MANIFEST_DIR"))
+        Path::new(crate::test_manifest_dir()).join("../../fixtures/schemas/plasm_language_matrix");
+    let dir_b = Path::new(crate::test_manifest_dir())
         .join("../../fixtures/schemas/plasm_language_matrix_views");
     if !dir_a.exists() || !dir_b.exists() {
         return None;
@@ -882,7 +882,7 @@ fn format_session_unchanged_reuse_markdown_shape() {
     assert!(!s.contains("rows:` fields only"));
     assert!(!s.contains("e#~$"));
 
-    let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../fixtures/schemas/overshow_tools");
+    let dir = Path::new(crate::test_manifest_dir()).join("../../fixtures/schemas/overshow_tools");
     let cgs = load_schema_dir(&dir).expect("overshow_tools");
     let exp = plasm_core::TeachingExposureSession::new(&cgs, "overshow", &["Profile", "Meeting"]);
     let body = format_session_unchanged_reuse_markdown(Some(&exp));

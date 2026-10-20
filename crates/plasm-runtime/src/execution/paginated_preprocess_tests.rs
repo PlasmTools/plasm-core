@@ -54,7 +54,7 @@ impl HttpTransport for MembershipPages {
 #[tokio::test]
 async fn paginated_preprocess_preserves_membership_foreign_keys_and_native_cursor() {
     let cgs = plasm_core::loader::load_schema_dir(
-        &std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        &std::path::Path::new(crate::test_manifest_dir())
             .join("../../fixtures/schemas/paginated_preprocess"),
     )
     .unwrap();

@@ -181,7 +181,7 @@ mod tests {
     #[test]
     fn captured_input_names_include_root_union_fields() {
         let cgs = plasm_core::load_schema_dir(
-            &std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            &std::path::Path::new(crate::test_manifest_dir())
                 .join("../../fixtures/schemas/python_union_matrix"),
         )
         .unwrap();
@@ -202,7 +202,7 @@ mod tests {
     #[test]
     fn nullary_get_captures_inputs_on_the_decoded_identity() {
         let mut cgs = plasm_core::load_schema_dir(
-            &std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            &std::path::Path::new(crate::test_manifest_dir())
                 .join("../../fixtures/schemas/hydration_boundary_matrix"),
         )
         .unwrap();
@@ -248,7 +248,7 @@ mod tests {
     #[test]
     fn explicit_get_inputs_defaults_cache_scope_and_hydration_share_one_boundary() {
         let mut cgs = plasm_core::load_schema_dir(
-            &std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            &std::path::Path::new(crate::test_manifest_dir())
                 .join("../../fixtures/schemas/hydration_boundary_matrix"),
         )
         .unwrap();
@@ -398,7 +398,7 @@ mod tests {
         fn binding_adapters_preserve_parameters_and_typed_identity(
             id in 1i64..100000, token in "[a-zA-Z0-9:_/-]{1,40}",
         ) {
-            let cgs = plasm_core::load_schema_dir(&std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            let cgs = plasm_core::load_schema_dir(&std::path::Path::new(crate::test_manifest_dir())
                 .join("../../fixtures/schemas/hydration_boundary_matrix")).unwrap();
             let get = GetExpr::from_ref(Ref::new("Note", id.to_string()));
             let bindings: IndexMap<String, Value> = IndexMap::from([
@@ -417,7 +417,7 @@ mod tests {
                     ("access_token".into(), Value::String("must-not-overwrite".into()))]));
                 let request = ResolvedGet::resolve(get,cgs,None,source,&wrong,GetPurpose::Hydration).unwrap();
                 assert_eq!(request.env.get("access_token"), Some(&Value::String(token.into())));
-                assert_eq!(request.env.get("note_id"), Some(&Value::String(id.to_string())));
+                assert_eq!(request.env.get("note_id"), Some(&Value::Integer(id)));
             }
             check(&ambient,&get,&cgs,&token,id);
             check(&inherited,&get,&cgs,&token,id);

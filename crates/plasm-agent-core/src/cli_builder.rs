@@ -152,7 +152,8 @@ fn append_get_template_var_args(mut cmd: Command, template: &CapabilityTemplate)
         CapabilityTemplate::Http(cml) | CapabilityTemplate::GraphQl(cml) => {
             path_var_names_from_request(cml)
         }
-        CapabilityTemplate::View(_)
+        CapabilityTemplate::Mcp(_)
+        | CapabilityTemplate::View(_)
         | CapabilityTemplate::CredentialBind(_)
         | CapabilityTemplate::EvmCall(_)
         | CapabilityTemplate::EvmLogs(_) => Vec::new(),
@@ -180,7 +181,8 @@ fn append_get_template_var_args(mut cmd: Command, template: &CapabilityTemplate)
 fn http_template_request(template: &serde_json::Value) -> Option<CmlRequest> {
     match parse_capability_template(template).ok()? {
         CapabilityTemplate::Http(cml) | CapabilityTemplate::GraphQl(cml) => Some(cml),
-        CapabilityTemplate::View(_)
+        CapabilityTemplate::Mcp(_)
+        | CapabilityTemplate::View(_)
         | CapabilityTemplate::CredentialBind(_)
         | CapabilityTemplate::EvmCall(_)
         | CapabilityTemplate::EvmLogs(_) => None,
@@ -315,12 +317,13 @@ fn build_entity_command(name: &str, entity: &EntityDef, cgs: &CGS) -> Command {
         // those args (filled from the source entity when chaining).
         let (qcap, skip_params): (Option<&CapabilitySchema>, Vec<CapabilityParamName>) =
             match rel_schema.materialize.as_ref() {
-                Some(RelationMaterialization::QueryScoped { capability, param }) => {
-                    (cgs.get_capability(capability.as_str()), vec![param.clone()])
-                }
+                Some(RelationMaterialization::QueryScoped {
+                    capability, param, ..
+                }) => (cgs.get_capability(capability.as_str()), vec![param.clone()]),
                 Some(RelationMaterialization::QueryScopedBindings {
                     capability,
                     bindings,
+                    ..
                 }) => {
                     let keys: Vec<CapabilityParamName> = bindings.keys().cloned().collect();
                     let cap = cgs.get_capability(capability.as_str());

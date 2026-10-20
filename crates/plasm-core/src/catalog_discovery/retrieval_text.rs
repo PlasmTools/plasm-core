@@ -154,6 +154,17 @@ impl SemanticView<'_> {
             }
         }
         match cap.output_schema.as_ref().map(|s| &s.output_type) {
+            Some(OutputType::EntityUnion {
+                variants,
+                cardinality,
+            }) => prose.push(format!(
+                "Returns {cardinality:?} records of {}",
+                variants
+                    .iter()
+                    .map(|v| v.as_str())
+                    .collect::<Vec<_>>()
+                    .join(" | ")
+            )),
             Some(OutputType::Entity { entity_type }) => {
                 prose.push(format!("Returns one {entity_type} record"))
             }
@@ -216,7 +227,13 @@ impl SemanticView<'_> {
         let mut uses = BTreeSet::new();
         for source in self.cgs.entities.values() {
             for relation in source.relations.values() {
-                if relation.target_resource != self.capability.domain {
+                if relation.target_resource != self.capability.domain
+                    && relation
+                        .materialize
+                        .as_ref()
+                        .and_then(|materialization| materialization.selected_entity())
+                        != Some(&relation.target_resource)
+                {
                     continue;
                 }
                 let Some(use_) = relation
@@ -468,7 +485,7 @@ mod tests {
 
     fn fixture() -> crate::CGS {
         crate::load_schema(
-            &std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            &std::path::Path::new(crate::test_manifest_dir())
                 .join("../../fixtures/schemas/discovery_value_roles"),
         )
         .unwrap()
@@ -484,8 +501,8 @@ mod tests {
             let mut cgs = fixture();
             let capability = if named { "record_query" } else { "record_get" }.into();
             let materialize = match mode {
-                0 => Some(RelationMaterialization::QueryScoped { capability, param: "scope_seat".into() }),
-                1 => Some(RelationMaterialization::QueryScopedBindings { capability, bindings: Default::default() }),
+                0 => Some(RelationMaterialization::QueryScoped { capability, param: "scope_seat".into(), select_entity: None }),
+                1 => Some(RelationMaterialization::QueryScopedBindings { capability, bindings: Default::default(), select_entity: None }),
                 2 => Some(RelationMaterialization::GetScopedBindings { capability, bindings: Default::default() }),
                 3..=5 => Some(RelationMaterialization::PreferFromParentGet {
                     path: vec![], collection_coverage: Default::default(),
@@ -545,7 +562,10 @@ mod tests {
                 _ => OutputType::SideEffect { description: "Records the declared change.".into() },
             };
             cap.output_schema = Some(crate::schema::OutputSchema {
-                output_type, decoder: serde_json::json!({"wire_secret": true}), idempotent: false, reconcile: None,
+                output_type, decoder: crate::OutputDecoderSpec::EntityUnion { cases: vec![crate::EntityUnionCase {
+                    entity_type: "Receipt".into(),
+                    when: crate::EntityDiscriminator::Present { path: vec!["wire_secret".into()] },
+                }] }, idempotent: false, reconcile: None,
             });
             let roundtrip: CapabilitySchema = serde_json::from_slice(&serde_json::to_vec(&cap).unwrap()).unwrap();
             let actual = render(&cgs, &cap, &cgs.entities["Record"]).unwrap();
@@ -672,7 +692,7 @@ mod tests {
             output_type: OutputType::SideEffect {
                 description: cap.description.clone(),
             },
-            decoder: serde_json::json!({}),
+            decoder: Default::default(),
             idempotent: false,
             reconcile: None,
         });

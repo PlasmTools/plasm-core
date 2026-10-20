@@ -4,7 +4,7 @@ use super::*;
 #[test]
 fn mapping_input_preserves_nested_record_provenance() {
     let cgs = plasm_core::loader::load_schema_dir(
-        &std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        &std::path::Path::new(crate::test_manifest_dir())
             .join("../../fixtures/schemas/python_value_contract"),
     )
     .unwrap();
@@ -145,7 +145,7 @@ async fn compute_capabilities_are_enforced_by_host_interactions() {
 async fn generated_control_flow_crosses_recursive_boundary_types() {
     use crate::fixture_value as json;
     let cgs = plasm_core::loader::load_schema_dir(
-        &std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        &std::path::Path::new(crate::test_manifest_dir())
             .join("../../fixtures/schemas/python_value_contract"),
     )
     .unwrap();

@@ -215,6 +215,8 @@ impl std::fmt::Display for ReplayStoreOperation {
 
 #[derive(Error, Debug)]
 pub enum RuntimeError {
+    #[error(transparent)]
+    Mcp(#[from] Box<crate::mcp_execution::McpExecutionError>),
     #[error("request-owned identity requires observable resolved authentication")]
     RequestIdentityAuthOpaque,
     #[error("request-owned identity for {entity} requires one response row, got {rows}")]
@@ -311,6 +313,8 @@ pub enum RuntimeError {
     FieldUnknown { entity: String, field: String },
     #[error("unknown entity `{entity}`")]
     EntityUnknown { entity: String },
+    #[error("terminal query for {entity} still contains a cross-entity predicate; decompose it before execution")]
+    NonlocalQueryAtTerminal { entity: String },
     #[error("view references missing node `{node}`")]
     ViewNodeMissing { node: String },
     #[error("computed output bindings are resolved in a separate phase")]
@@ -332,6 +336,8 @@ pub enum RuntimeError {
     },
     #[error("identity projection failed: {0}")]
     IdentityProjection(#[from] plasm_core::PathEnvProjectionError),
+    #[error("identity wire encoding failed: {0}")]
+    IdentityWire(#[from] plasm_core::operand_binding::IdentityCodecError),
     #[error("entity reference scope normalization failed: {0}")]
     EntityRefScope(#[from] plasm_core::ScopeEntityRefNormalizeError),
     #[error("query resolution failed: {0}")]
@@ -623,6 +629,12 @@ impl From<plasm_core::ValueCodecError> for RuntimeError {
     }
 }
 
+impl From<crate::mcp_execution::McpExecutionError> for RuntimeError {
+    fn from(source: crate::mcp_execution::McpExecutionError) -> Self {
+        Self::Mcp(Box::new(source))
+    }
+}
+
 #[cfg(test)]
 mod footprint_tests {
     use super::*;
@@ -637,6 +649,34 @@ mod footprint_tests {
             std::mem::size_of::<RuntimeError>()
         );
         assert!(std::mem::size_of::<CacheError>() < 128);
+        assert!(std::mem::size_of::<crate::mcp_transport::McpProtocolError>() < 128);
+        assert!(std::mem::size_of::<crate::mcp_transport::McpTransportError>() < 128);
+        assert!(std::mem::size_of::<crate::mcp_execution::McpExecutionError>() < 128);
+    }
+
+    #[test]
+    fn boxed_mcp_import_preserves_source_chain_and_classification() {
+        use std::error::Error;
+        let source = crate::mcp_execution::McpExecutionError::Transport(
+            crate::mcp_transport::McpTransportError::Deadline {
+                operation: "tools/call",
+            },
+        );
+        let expected_display = source.to_string();
+        let error = RuntimeError::from(source);
+        assert_eq!(error.to_string(), expected_display);
+        assert!(matches!(
+            error
+                .source()
+                .unwrap()
+                .downcast_ref::<crate::mcp_transport::McpTransportError>(),
+            Some(crate::mcp_transport::McpTransportError::Deadline {
+                operation: "tools/call",
+            })
+        ));
+        let failure = crate::ExecutionFailure::from(error);
+        assert_eq!(failure.cause, crate::FailureCause::Transport);
+        assert_eq!(failure.code, "mcp_transport_failure");
     }
 
     #[test]

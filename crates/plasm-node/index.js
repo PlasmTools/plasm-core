@@ -174,38 +174,7 @@ function requireNative() {
       loadErrors.push(new Error(`Unsupported architecture on Windows: ${process.arch}`))
     }
   } else if (process.platform === 'darwin') {
-    try {
-      return require('./index.darwin-universal.node')
-    } catch (e) {
-      loadErrors.push(e)
-    }
-    try {
-      const binding = require('@plasm_lang/engine-darwin-universal')
-      const bindingPackageVersion = require('@plasm_lang/engine-darwin-universal/package.json').version
-      if (bindingPackageVersion !== '0.0.1' && process.env.NAPI_RS_ENFORCE_VERSION_CHECK && process.env.NAPI_RS_ENFORCE_VERSION_CHECK !== '0') {
-        throw new Error(`Native binding package version mismatch, expected 0.0.1 but got ${bindingPackageVersion}. You can reinstall dependencies to fix this issue.`)
-      }
-      return binding
-    } catch (e) {
-      loadErrors.push(e)
-    }
-    if (process.arch === 'x64') {
-      try {
-        return require('./index.darwin-x64.node')
-      } catch (e) {
-        loadErrors.push(e)
-      }
-      try {
-        const binding = require('@plasm_lang/engine-darwin-x64')
-        const bindingPackageVersion = require('@plasm_lang/engine-darwin-x64/package.json').version
-        if (bindingPackageVersion !== '0.0.1' && process.env.NAPI_RS_ENFORCE_VERSION_CHECK && process.env.NAPI_RS_ENFORCE_VERSION_CHECK !== '0') {
-          throw new Error(`Native binding package version mismatch, expected 0.0.1 but got ${bindingPackageVersion}. You can reinstall dependencies to fix this issue.`)
-        }
-        return binding
-      } catch (e) {
-        loadErrors.push(e)
-      }
-    } else if (process.arch === 'arm64') {
+    if (process.arch === 'arm64') {
       try {
         return require('./index.darwin-arm64.node')
       } catch (e) {

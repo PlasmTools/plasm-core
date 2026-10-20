@@ -3,7 +3,7 @@ use plasm_eval::ProgramSession;
 
 #[tokio::test]
 async fn published_catalog_references_compile_as_python() {
-    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+    let root = std::path::Path::new(&std::env::var("CARGO_MANIFEST_DIR").expect("test runner must set CARGO_MANIFEST_DIR")).join("../..");
     let mut failures = Vec::new();
     let mut count = 0;
     for catalog in ["github", "linear", "proof"] {

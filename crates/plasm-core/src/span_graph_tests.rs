@@ -7,8 +7,8 @@ use std::path::PathBuf;
 use plasm_otel::span_capture::{find_span, is_descendant, with_captured_spans};
 
 fn fixtures_root() -> PathBuf {
-    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("../../..")
+    PathBuf::from(crate::test_manifest_dir())
+        .join("../..")
         .join("fixtures/schemas")
 }
 

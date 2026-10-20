@@ -149,7 +149,7 @@ mod tests {
     use std::path::PathBuf;
 
     fn load_schema(rel: &str) -> CGS {
-        let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+        let root = PathBuf::from(crate::test_manifest_dir());
         plasm_core::load_schema_dir(&root.join(rel)).expect("load schema")
     }
 

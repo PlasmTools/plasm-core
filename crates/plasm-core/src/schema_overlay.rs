@@ -1301,7 +1301,7 @@ mod tests {
             "/../../fixtures/schemas/fibery_schema_overlay/sample_schema_query.json"
         )))
         .expect("fixture JSON");
-        let base_dir = Path::new(env!("CARGO_MANIFEST_DIR"))
+        let base_dir = Path::new(crate::test_manifest_dir())
             .join("../../fixtures/schemas/fibery_schema_overlay/bootstrap");
         let base = load_schema_dir(&base_dir).expect("load bootstrap fixture");
         let spec = base.schema_overlay.as_ref().expect("schema_overlay spec");
@@ -1360,7 +1360,7 @@ mod tests {
             "/../../fixtures/schemas/notion_schema_overlay/sample_database_search.json"
         )))
         .expect("fixture JSON");
-        let base_dir = Path::new(env!("CARGO_MANIFEST_DIR"))
+        let base_dir = Path::new(crate::test_manifest_dir())
             .join("../../fixtures/schemas/notion_schema_overlay/bootstrap");
         let base = load_schema_dir(&base_dir).expect("load bootstrap fixture");
         let spec = base.schema_overlay.as_ref().expect("schema_overlay spec");
@@ -1383,7 +1383,7 @@ mod tests {
                 { "name": "Estimate", "type": "number" }
             ]
         });
-        let base_dir = Path::new(env!("CARGO_MANIFEST_DIR"))
+        let base_dir = Path::new(crate::test_manifest_dir())
             .join("../../fixtures/schemas/augment_base_overlay/bootstrap");
         let base = load_schema_dir(&base_dir).expect("load bootstrap fixture");
         let spec = base.schema_overlay.as_ref().expect("schema_overlay spec");
@@ -1402,7 +1402,7 @@ mod tests {
                 { "name": "Estimate", "type": "number" }
             ]
         });
-        let base_dir = Path::new(env!("CARGO_MANIFEST_DIR"))
+        let base_dir = Path::new(crate::test_manifest_dir())
             .join("../../fixtures/schemas/augment_base_overlay/bootstrap");
         let base = load_schema_dir(&base_dir).expect("load bootstrap fixture");
         let spec = base.schema_overlay.as_ref().expect("schema_overlay spec");
@@ -1431,7 +1431,7 @@ mod tests {
             "/../../fixtures/schemas/clickup_schema_overlay/sample_custom_field_query.json"
         )))
         .expect("fields JSON");
-        let base_dir = Path::new(env!("CARGO_MANIFEST_DIR"))
+        let base_dir = Path::new(crate::test_manifest_dir())
             .join("../../fixtures/schemas/clickup_schema_overlay/bootstrap");
         let base = load_schema_dir(&base_dir).expect("load bootstrap fixture");
         base.validate().expect("clickup overlay fixture validates");
@@ -1466,7 +1466,7 @@ mod tests {
             "/../../fixtures/schemas/clickup_schema_overlay/sample_custom_field_query.json"
         )))
         .expect("fixture JSON");
-        let base_dir = Path::new(env!("CARGO_MANIFEST_DIR"))
+        let base_dir = Path::new(crate::test_manifest_dir())
             .join("../../fixtures/schemas/clickup_schema_overlay/bootstrap");
         let base = load_schema_dir(&base_dir).expect("load bootstrap fixture");
         let spec = base.schema_overlay.as_ref().expect("schema_overlay spec");
@@ -1483,7 +1483,7 @@ mod tests {
 
     #[test]
     fn cgs_with_overlay_merges_and_validates() {
-        let base_dir = Path::new(env!("CARGO_MANIFEST_DIR"))
+        let base_dir = Path::new(crate::test_manifest_dir())
             .join("../../fixtures/schemas/fibery_schema_overlay/bootstrap");
         let base = load_schema_dir(&base_dir).expect("load bootstrap fixture");
         let json: JsonValue = serde_json::from_str(include_str!(concat!(
@@ -1554,7 +1554,7 @@ mod tests {
             "/../../fixtures/schemas/jira_schema_overlay/sample_createmeta.json"
         )))
         .expect("fixture JSON");
-        let base_dir = Path::new(env!("CARGO_MANIFEST_DIR"))
+        let base_dir = Path::new(crate::test_manifest_dir())
             .join("../../fixtures/schemas/jira_schema_overlay/bootstrap");
         let base = load_schema_dir(&base_dir).expect("load bootstrap fixture");
         let spec = base.schema_overlay.as_ref().expect("schema_overlay spec");
@@ -1577,7 +1577,8 @@ mod tests {
 
     #[test]
     fn jira_overlay_fixture_loads_with_schema_overlay() {
-        let jira = Path::new("../../fixtures/schemas/jira_schema_overlay/bootstrap");
+        let jira = &std::path::Path::new(crate::test_manifest_dir())
+            .join("../../fixtures/schemas/jira_schema_overlay/bootstrap");
         let cgs = load_schema_dir(jira).expect("jira overlay fixture loads");
         assert!(cgs.schema_overlay.is_some());
         cgs.validate().expect("jira overlay fixture validates");
@@ -1585,7 +1586,8 @@ mod tests {
 
     #[test]
     fn fibery_overlay_fixture_loads_with_schema_overlay() {
-        let fibery = Path::new("../../fixtures/schemas/fibery_schema_overlay");
+        let fibery = &std::path::Path::new(crate::test_manifest_dir())
+            .join("../../fixtures/schemas/fibery_schema_overlay");
         let cgs = load_schema_dir(fibery).expect("fibery overlay fixture loads");
         assert!(
             cgs.schema_overlay.is_some(),
@@ -1596,7 +1598,8 @@ mod tests {
 
     #[test]
     fn notion_overlay_fixture_loads_with_schema_overlay() {
-        let notion = Path::new("../../fixtures/schemas/notion_schema_overlay/bootstrap");
+        let notion = &std::path::Path::new(crate::test_manifest_dir())
+            .join("../../fixtures/schemas/notion_schema_overlay/bootstrap");
         let cgs = load_schema_dir(notion).expect("notion overlay fixture loads");
         assert!(
             cgs.schema_overlay.is_some(),

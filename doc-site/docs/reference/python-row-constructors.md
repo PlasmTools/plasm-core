@@ -19,6 +19,14 @@ this registry does not claim automatic coverage of those paths or all compositio
 ```plasm-constructors
 [
   {
+    "operation": "of_type",
+    "premise": "A declared nominal entity union with recorded row identities",
+    "transfer": "Select original occurrences of the requested variant; retain coverage and provenance, narrow receiver authority",
+    "law": "BC-03",
+    "witnesses": ["entity_union_narrow"],
+    "invalid": [{"body": "return E.query().of_type(E)", "error": "exposed entity symbol"}]
+  },
+  {
     "operation": "map",
     "premise": "Scoped row, typed record body and hard bound",
     "transfer": "S becomes recursive output shape; retain parent O, bound K and body E",

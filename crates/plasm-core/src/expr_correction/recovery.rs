@@ -88,7 +88,8 @@ mod tests {
 
     #[test]
     fn recover_parse_unifies_eval_and_repl_pipeline() {
-        let dir = std::path::Path::new("../../fixtures/schemas/petstore");
+        let dir = &std::path::Path::new(crate::test_manifest_dir())
+            .join("../../fixtures/schemas/petstore");
         if !dir.exists() {
             return;
         }
@@ -101,7 +102,8 @@ mod tests {
 
     #[test]
     fn recover_parse_with_rewrite_records_resolved_string() {
-        let dir = std::path::Path::new("../../fixtures/schemas/petstore");
+        let dir = &std::path::Path::new(crate::test_manifest_dir())
+            .join("../../fixtures/schemas/petstore");
         if !dir.exists() {
             return;
         }

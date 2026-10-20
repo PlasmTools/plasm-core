@@ -32,6 +32,13 @@ pub struct ComputeTemplate {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum ComputeOp {
+    /// Select original catalog row occurrences belonging to one declared output
+    /// variant. This uses identity evidence, never a field-value discriminator.
+    NarrowEntity {
+        /// Cardinality evidence captured from the admitted source, never inferred from row keys.
+        source_at_most_one: bool,
+        target: super::atoms::PlanQualifiedEntityKey,
+    },
     /// Pure bounded computation with recursive input and declared output contracts.
     Python {
         source: String,
@@ -129,7 +136,8 @@ impl ComputeOp {
             | Self::Sort { .. }
             | Self::MergeBranches { .. }
             | Self::Render { .. } => Demand::Whole,
-            Self::Project { .. }
+            Self::NarrowEntity { .. }
+            | Self::Project { .. }
             | Self::Filter { .. }
             | Self::Limit { .. }
             | Self::DedupeBy { .. }

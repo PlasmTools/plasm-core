@@ -46,7 +46,7 @@ cargo run -p plasm-cli --bin plasm-cgs -- schema validate apis/pokeapi
 ### Step 4 — Pack catalogs and run the appliance
 
 ```bash
-cargo run -p plasm --bin plasm-pack-catalogs -- \
+cargo run -p plasm-catalog --bin plasm-pack-catalogs -- \
   --workspace . --apis-root apis --output-dir target/plasm-catalogs
 
 cargo run -p plasm-server --release -- --catalog-dir target/plasm-catalogs

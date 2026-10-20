@@ -2,6 +2,28 @@
 
 This is the canonical OSS reference for authoring Plasm API catalogs. The compiler and runtime crates are the ground truth (`crates/plasm-core`, `crates/plasm-cml`, `crates/plasm-compile`, `crates/plasm-runtime`); this file exists to keep agents and humans aligned on doctrine.
 
+## MCP response selection
+
+For `transport: mcp`, declare the result source explicitly. `json_text` parses
+the selected text block as JSON; `text_block` preserves the selected MCP text
+block object, including its verbatim `text` field. Both require an explicit
+`index`. Use `text_block` for receipts that are genuinely textual, including
+providers whose successful receipt can contain either prose or JSON text. It
+does not infer status or completion. Declare a separate observation capability
+when downstream work requires readiness evidence. Invalid block kinds and
+non-string text remain typed response errors. `structured_content` and
+`embedded_resource` retain their separate response contracts.
+
+```yaml
+response:
+  source: {kind: text_block, index: 0}
+  pointer: ''
+  exhaustive: true
+```
+
+Here `exhaustive` describes receipt collection coverage, not completion of an
+asynchronous operation reported by the receipt.
+
 ## Authoring vs determinism
 
 **Writing `domain.yaml` is not a deterministic process.** OpenAPI (and friends) do not uniquely define a CGS: entity boundaries, capability grouping, relations, parameter roles, `abstract` embed-only types, and **which `values:` keys exist** (including whether unrelated fields share one `value_ref` vs split into distinct slots) are **semantic choices**. Tools may assist (e.g. an LLM reading the spec), but there is no canonical auto-generator in-repo and no guarantee that two valid domain models for the same API are equivalent.
@@ -90,7 +112,7 @@ The CGS is the semantic domain model. It declares what entities exist, how they 
 
 Split **`domain.yaml`** declares a catalog-local registry of **named semantic slots** under top-level **`values:`** (stable keys, usually `snake_case`). Each row carries the **wire** `type:` and gloss-related keys — the same vocabulary as the former inline `field_type` / param `type` — but the **key** is a semantic identity for this catalog, not "dedupe by primitive wire shape alone":
 
-- **`type:`** — a **kernel** name (`string`, `integer`, `number`, `boolean`, `array`, `json`, `entity_ref`, `blob`, `money`) or a **core profile** name (`markdown`, `document`, `html`, `json_text`, `uuid`, `digit_id`, `email`, `url`, `http_url`, `hostname`, `e164`, `ipv4`, `ipv6`, `hex`, `base64`, `base64url`, `rfc3339`, `iso8601_date`, `unix_ms`, `unix_sec`, `enum`, `multi_enum`). See [Field Types](#field-types).
+- **`type:`** — a **kernel** name (`string`, `integer`, `number`, `boolean`, `array`, `json`, `entity_ref`, `blob`, `money`) or a **core profile** name (`markdown`, `document`, `html`, `json_text`, `uuid`, `digit_id`, `email`, `url`, `http_url`, `hostname`, `e164`, `ipv4`, `ipv6`, `hex`, `base64`, `base64url`, `rfc3339`, `iso8601_naive_datetime`, `iso8601_date`, `unix_ms`, `unix_sec`, `enum`, `multi_enum`). See [Field Types](#field-types).
 - Type-specific keys on the **value row**: `target` (`entity_ref`), **`enum:`** (`enum` / `multi_enum`; multi_enum must be non-empty), **`constraints:`** (length, pattern, min/max — see Field Types), `currency` (`money`), **`items: { value_ref: <key> }`** (`array` — element shape is another `values` row).
 
 **Entity `fields:`** and capability **lane** field lists (`selection` / `scope` / `controls` / …) declare **only** how that slot uses a shape:
@@ -115,7 +137,7 @@ Split **`domain.yaml`** declares a catalog-local registry of **named semantic sl
 
 Combined **`.cgs.yaml`** interchange may still show denormalized **`field_type`** on entity fields for serde round-trips; **authoring** new split domains should use **`values:` + `value_ref`**.
 
-**`description` on `values:` rows:** Optional prose for tooling and teaching gloss. The loader maps `DomainNamedValue.description` into [`NamedValueSchema.description`](../../../crates/plasm-core/src/schema.rs). For **entity fields**, if the field slot's `description` is empty, [`field_schema_from_domain_field`](../../../crates/plasm-core/src/loader.rs) uses the named value's description as [`FieldSchema.description`](../../../crates/plasm-core/src/schema.rs); a **non-empty** slot `description` overrides. For **parameters**, the same precedence applies via [`input_field_schema_from_domain_parameter`](../../../crates/plasm-core/src/loader.rs). Prefer one canonical gloss on the **`values:`** row when a value domain is dedicated to a single slot; use the slot only when you need a one-off override. **Do not** dedupe unrelated primitives into one `values` key just because the wire type matches — conflicting glosses are a sign you split keys incorrectly.
+**`description` on `values:` rows:** Optional prose for tooling and teaching gloss. The loader maps `DomainNamedValue.description` into [`NamedValueSchema.description`](https://github.com/PlasmTools/plasm-core/blob/main/crates/plasm-core/src/schema.rs). For **entity fields**, if the field slot's `description` is empty, [`field_schema_from_domain_field`](https://github.com/PlasmTools/plasm-core/blob/main/crates/plasm-core/src/loader.rs) uses the named value's description as [`FieldSchema.description`](https://github.com/PlasmTools/plasm-core/blob/main/crates/plasm-core/src/schema.rs); a **non-empty** slot `description` overrides. For **parameters**, the same precedence applies via [`input_field_schema_from_domain_parameter`](https://github.com/PlasmTools/plasm-core/blob/main/crates/plasm-core/src/loader.rs). Prefer one canonical gloss on the **`values:`** row when a value domain is dedicated to a single slot; use the slot only when you need a one-off override. **Do not** dedupe unrelated primitives into one `values` key just because the wire type matches — conflicting glosses are a sign you split keys incorrectly.
 
 ### Entities
 
@@ -225,15 +247,28 @@ prevents old evidence reuse.
 | `entities.*.discovery.seed_class` | `primary` \| `dependent` \| `ambient` | Fallback when edges unset: list/mutate roots = `primary`; attach leaves = `dependent`; weak containers = `ambient` |
 | `entities.*.discovery.co_seed_with` | `catalog_primary` \| `federated_primary` \| `session_primary` | Force-teach this entity when peer primaries are workflow-seeded: same catalog (`catalog_primary`), another catalog (`federated_primary`), or either (`session_primary`). Seats are **teaching extras** (outside the ≤3 FO-minimal seed budget) — never hardcode entity names in core |
 
-History-browse phrases belong on the **Source** entity `names`. Materialize Query may still use the Target as `entity:`. Do **not** coach seed choice in descriptions. Product spine: [`docs/intent-discovery.md`](../../../docs/intent-discovery.md). Craft rules: [`docs/research-discovery-annotation-rubric.md`](../../../docs/research-discovery-annotation-rubric.md) §5.3 / §5.5.
+History-browse phrases belong on the **Source** entity `names`. Materialize Query may still use the Target as `entity:`. Do **not** coach seed choice in descriptions. Product spine: ``docs/intent-discovery.md``. Craft rules: ``docs/research-discovery-annotation-rubric.md`` §5.3 / §5.5.
 
 **`views:` `description`** on a view definition should state **what composed projection** the agent gets — not list inner capability ids.
 
-**Teaching projection (default on):** For each entity with a primary Get and non-empty ordered **`F`** from `CGS::domain_projection_heading_fields` in [`crates/plasm-core/src/schema.rs`](../../../crates/plasm-core/src/schema.rs), the prompt renderer teaches **`F`** on the **projection witness row** — a validated get/query exemplar with trailing `[field,…]` in `plasm_expr` and `· projection` in Meaning (not a separate entity heading line). Expressions still use `Entity(…)[subset]` for actual reads. **`F`** comes from that Get's explicit **`provides:`** list (order preserved); if `provides` is empty, **`F`** defaults to `id_field` first, then remaining fields lexicographically. Set **`domain_projection_examples: false`** to suppress projection brackets. Declare **`primary_read` / `primary_query` / `primary_search`** when the entity has competing read capabilities (see Entities above).
+**Teaching projection (default on):** For each entity with a primary Get and non-empty ordered **`F`** from `CGS::domain_projection_heading_fields` in [`crates/plasm-core/src/schema.rs`](https://github.com/PlasmTools/plasm-core/blob/main/crates/plasm-core/src/schema.rs), the prompt renderer teaches **`F`** on the **projection witness row** — a validated get/query exemplar with trailing `[field,…]` in `plasm_expr` and `· projection` in Meaning (not a separate entity heading line). Expressions still use `Entity(…)[subset]` for actual reads. **`F`** comes from that Get's explicit **`provides:`** list (order preserved); if `provides` is empty, **`F`** defaults to `id_field` first, then remaining fields lexicographically. Set **`domain_projection_examples: false`** to suppress projection brackets. Declare **`primary_read` / `primary_query` / `primary_search`** when the entity has competing read capabilities (see Entities above).
 
 **Python declaration coverage:** every exposed capability must have its exact typed signature or a visible unavailable reason. Entity receivers require a declared read, producer or relation; the renderer does not fabricate Get operations.
 
 **`from_parent_get` pitfall:** The JSON path must match the **parent GET response** for that relation. Array-of-ref shapes differ by API (e.g. PokéAPI Pokémon `moves[].move` vs Type `moves[]` as bare `{name,url}`). Copying one entity's `materialize.path` to another without checking the wire JSON yields empty relations at decode time.
+
+**Exhaustive embedded collections:** `from_parent_get` may declare
+`collection_coverage: complete` only when the backend contract guarantees every
+observed collection at its path is exhaustive. An executable many-relation must
+establish this contract at CGS compilation; omission or `unknown` is a typed
+catalog error. For independently paginated arrays, use a scoped query that proves
+exhaustion. Previews and limited samples cannot implement an exhaustive relation.
+The runtime combines this assertion with parent coverage and
+observed path evidence. Missing arrays are not empty arrays, and child hydration
+does not establish complete membership. Verify the path against both wire data
+and decoded observations; prefer the child object path when it preserves fields
+and identity. Record source-contract evidence and a real traversal-to-collection
+compute witness before claiming the assertion works end to end.
 
 **Mutual embed pairs (CEP-10):** When both directions expose nested refs on parent GET bodies (e.g. Pokémon `types[].type` and Type `pokemon[].pokemon`), declare **one forward** edge as plain `from_parent_get` and the **inverse** as `prefer_from_parent_get`. Runtime decode is **single-hop** (no nested embed decoders), so mutual pairs do not recurse on the stack. When the inverse API has no scoped list filter (PokéAPI has no “Pokémon by type” query), use a `hydrate_from_embed_path` fallback that GET-hydrates identities extracted from the parent wire JSON:
 
@@ -268,9 +303,9 @@ Do **not** add a second plain `from_parent_get` on the inverse edge — entity-l
 
 ### `path` and `derive` (wire response shaping)
 
-By default, each field is read from a top-level JSON key matching the field name on the decoded row. Override the location with **`path`** on the field slot (next to `value_ref`) in `domain.yaml` (loads as [`FieldSchema.wire_path`](../../../crates/plasm-core/src/schema.rs)): either a dotted string (`owner.login`) or a YAML list of object keys (`[payload, headers]`).
+By default, each field is read from a top-level JSON key matching the field name on the decoded row. Override the location with **`path`** on the field slot (next to `value_ref`) in `domain.yaml` (loads as [`FieldSchema.wire_path`](https://github.com/PlasmTools/plasm-core/blob/main/crates/plasm-core/src/schema.rs)): either a dotted string (`owner.login`) or a YAML list of object keys (`[payload, headers]`).
 
-**`derive`** runs on the extracted JSON value **before** optional scalar [`Transform`](../../../crates/plasm-compile/src/decoder.rs) steps. Rules ([`FieldDeriveRule`](../../../crates/plasm-core/src/schema.rs), `type` tag, `snake_case`):
+**`derive`** runs on the extracted JSON value **before** optional scalar [`Transform`](https://github.com/PlasmTools/plasm-core/blob/main/crates/plasm-compile/src/decoder.rs) steps. Rules ([`FieldDeriveRule`](https://github.com/PlasmTools/plasm-core/blob/main/crates/plasm-core/src/schema.rs), `type` tag, `snake_case`):
 
 | `type` | Input shape | Behavior |
 |--------|-------------|----------|
@@ -278,7 +313,7 @@ By default, each field is read from a top-level JSON key matching the field name
 | `name_value_array_lookup` | JSON **array** of objects | Find the first element where `match_key_field` equals `equals` (defaults: `match_key_field` = `name`, `value_field` = `value`). Optional `case_insensitive` ASCII fold (RFC 5322 header names). Return `value_field` from that object; if no match, field decodes as null. Fits Gmail `payload.headers`, AWS-style `[{ "Key": "…", "Value": "…" }]` tags, etc. |
 | `object_key_lookup` | JSON **object** | Return `obj[key]`; optional `case_insensitive` resolution of the key string against object keys. |
 
-**`provides` vs full row decode:** HTTP GET responses are decoded using **all** entity fields that have `path` / `derive` wiring. Capability **`provides`** controls summary-vs-complete detection for list/search ([`CGS::effective_provides`](../../../crates/plasm-core/src/schema.rs)) and teaching projection; it does not strip extra decoded fields from the cached entity row.
+**`provides` vs full row decode:** HTTP GET responses are decoded using **all** entity fields that have `path` / `derive` wiring. Capability **`provides`** controls summary-vs-complete detection for list/search ([`CGS::effective_provides`](https://github.com/PlasmTools/plasm-core/blob/main/crates/plasm-core/src/schema.rs)) and teaching projection; it does not strip extra decoded fields from the cached entity row.
 
 **Search filters vs row fields (agents):** Teaching-row `inputs:` / `opt:` keys are fetch filters only. If agents should aggregate on a dimension (`group_by`, `.sort`, row `.filter`, `[fields]`) that also appears as a search filter parameter, that field must be listed in capability **`provides:`** with wire backing (entity field + decode path) — filter-only params are not row columns at plan time.
 
@@ -329,7 +364,7 @@ In split `domain.yaml`, the **`type:`** on a **`values:`** row is either a **ker
 |----------|--------------|---------------|-------|
 | Presentation | `markdown`, `document`, `html`, `json_text` | Python string | Multiline or structured text — not `blob` |
 | Canned string | `uuid`, `digit_id`, `email`, `url`, `http_url`, `hostname`, `e164`, `ipv4`, `ipv6`, `hex`, `base64`, `base64url` | string | Validated string shapes. **`digit_id`** (RA-18): digit-string identity (PANs, similar wire keys) — exact ASCII digits, not a magnitude, not `integer` / IEEE float / JSON number. Taught literal is quoted digits (`"6419671322388907"`). Unquoted non-negative `i64` residual coerce is RA-8, not taught. |
-| Temporal | `rfc3339`, `iso8601_date`, `unix_ms`, `unix_sec` | string or integer per profile | Predicate inputs normalize to wire shape (UTC) |
+| Temporal | `rfc3339`, `iso8601_naive_datetime`, `iso8601_date`, `unix_ms`, `unix_sec` | string or integer per profile | Preserves calendar values, naive datetimes, or instants according to the declared profile |
 | Enum | `enum`, `multi_enum` | enum token(s) | Requires non-empty **`enum:`** list **or** token→gloss map |
 
 **`enum:` teaching glosses (optional map form):**
@@ -430,7 +465,7 @@ entities:
         required: true
 ```
 
-**Loader constraints:** the element `values:` row must not be `type: array` or `multi_enum`. For element `type: enum`, `enum:` on that row is required and non-empty. Temporal profiles (`rfc3339`, `iso8601_date`, `unix_ms`, `unix_sec`) are self-contained — no separate format key.
+**Loader constraints:** the element `values:` row must not be `type: array` or `multi_enum`. For element `type: enum`, `enum:` on that row is required and non-empty. Temporal profiles (`rfc3339`, `iso8601_naive_datetime`, `iso8601_date`, `unix_ms`, `unix_sec`) are self-contained — no separate format key.
 
 **`multi_enum`:** on the `values:` row itself, `enum:` is required and must be non-empty (distinct from `array` of `enum`).
 
@@ -453,10 +488,11 @@ capabilities:
       - name: <param>
         value_ref: <value_key>
         required: <bool>
-    selection:                # backend WHERE / search slots (brace predicates)
+    selection:                # backend selectors (brace inputs; row effect is explicit)
       - name: <param>
         value_ref: <value_key>
         required: <bool>
+        selection_effect: <filter|rank|source|access|order|other>
     controls:                 # sort, pagination, response shape — not WHERE
       - name: <param>
         value_ref: <value_key>
@@ -478,12 +514,14 @@ Lanes are **structurally disjoint** (RA-1). Legacy flat `parameters:` / `role:` 
 | Lane | Semantics | Agent surface |
 |------|-----------|---------------|
 | `scope` | Parent-entity pivots (often `entity_ref`) | Query `{wire=}` brace (required and optional). `required: false` is still a taught hole; `optional:` marks it omissible. Host `inject:` keys stay untaught |
-| `selection` | Backend pushdown WHERE / search predicates (and other required source scalars) | `e#{wire=…}` braces |
+| `selection` | Backend selectors with an explicit row effect | `e#{wire=…}` braces; typed effect appears in teaching and dry plan |
 | `controls` | Sort, page size, embed/shape — not predicates | Host/controls; not brace WHERE |
 | `arguments` | Named non-body args | Method / action args |
 | `payload` | Create/update/action body | Method payload fields |
 
 Transmission over HTTP is still controlled by CML `query:` / `path:` / body in `mappings.yaml`. **`validate_cgs_capability_templates` rejects slots that never appear as CML vars** (or pagination keys) — do not invent selection wires the vendor does not expose.
+
+Every `selection` field must declare `selection_effect`. `filter` guarantees that nonmatching rows are excluded; `rank` only changes relevance order and may retain nonmatches; `source` chooses a corpus/list; `access` supplies credentials or access context; `order` sorts without filtering. Use `other` when the backend's row effect is unverified; its shared gloss communicates that uncertainty without asserting a filter guarantee. Describe known conditional behavior in the field or capability description. Neither teaching nor plan review may infer `filter` from a parameter name such as `query` or from its HTTP query-string position. The same typed value drives both surfaces. Scope and controls remain distinct lanes and must not carry `selection_effect`.
 
 ### Same-type list compression
 
@@ -500,7 +538,7 @@ Transmission over HTTP is still controlled by CML `query:` / `path:` / body in `
 
 **Token / auth placement:** Action/get token lanes (`arguments` / `payload`) must not look like list filters on sibling entities. Document in entity/capability descriptions when a key is an auth/action arg (e.g. Player play `song_id`) versus brace selection on a list entity (e.g. LikedSong `{access_token}`).
 
-**Host pointers (not catalog YAML):** Semantic auto-seed / intent-only `plasm_context` — [docs/intent-discovery.md](../../../docs/intent-discovery.md). Federated sessions and incremental symbols — [docs/incremental-teaching-prompts.md](../../../docs/incremental-teaching-prompts.md). Catalog-directed value coerce (RA-8) — [docs/plasm-language-surface-invariants.md](../../../docs/plasm-language-surface-invariants.md).
+**Host pointers (not catalog YAML):** Semantic auto-seed / intent-only `plasm_context` — `docs/intent-discovery.md`. Federated sessions and incremental symbols — [docs/incremental-teaching-prompts.md](../reference/incremental-teaching-prompts.md). Catalog-directed value coerce (RA-8) — `docs/plasm-language-surface-invariants.md`.
 
 **Do not** lead with raising teaching-line caps or special-casing brace-dedupe. Fix catalogs first; revisit the renderer only if lawful distinct-shape secondaries still cannot teach.
 
@@ -586,6 +624,20 @@ Plasm does **not** synthesize an implicit get-by-id from `id_field` alone — ob
 `values:` constraints (`min`, `max`, `min_length`, `pattern`, … on the `value_ref` row) and `input_schema.validation` cross-field rules (`at_least_one`, `exactly_one`) are enforced against **concrete** values at execute time only. During teaching-surface synthesis the fields carry the `$` prompt placeholder, and constraints on **absent** (unlisted optional) fields are vacuously satisfied — so a capability with heavy input validation is still witnessed. Note that an `at_least_one` / `exactly_one` rule makes the capability **non-zero-arity** even when every individual field is optional: its teaching line is `method(field=…)`, never a bare `method()`.
 
 #### API shape rules (vendor XOR / exclusivity)
+
+Query/search capabilities declare `input_validation.cross_field_rules` over their
+source inputs. A rule may have `when: {field: mode, equals: bounded}` to condition
+it on a required discriminator. CGS validates the discriminator value against its
+declared type/domain and rejects undeclared rule fields. `required_all` requires
+every listed field; `forbidden` rejects any supplied listed field. Existing
+presence rules may also use `when`. Conditions require concrete string, boolean,
+or integer values. Teaching placeholders defer validation; concrete source
+combinations are checked during admission and again before execution.
+
+For example, a source with `mode: ranked | bounded` can forbid `[lower, upper]`
+when ranked, require `[owner]` when bounded, and forbid `[terms]` when bounded.
+These are CGS type contracts, not transport instructions to silently discard
+unsupported inputs. The served Python teaching includes each source contract.
 
 When an upstream API rejects a **static** parameter combination (GitHub `pr_create` refuses `title` together with `issue`), stamp that in the catalog — do **not** special-case it in the host.
 
@@ -682,10 +734,10 @@ Built-in filters (view templates only):
 | `urlencode` | `{{ s \| urlencode }}` | Form-style percent-encoding |
 | `json_encode` | `{{ v \| json_encode }}` | JSON text for a Plasm/JSON value |
 | `strip_trailing_slash` | `{{ base \| strip_trailing_slash }}` | Trim trailing `/` |
-| `wire_time` | `{{ from \| wire_time('unix_ms') }}` | Pass through `now`, `now-1h`, and all-digit strings unchanged; otherwise normalize via core temporal rules for the named wire format (`unix_ms`, `rfc3339`, …) |
+| `wire_time` | `{{ from \| wire_time('unix_ms') }}` | Encode an explicit date/instant using the named wire format (`unix_ms`, `rfc3339`, …); relative phrases and magnitude-based unit inference are rejected |
 | `wire_query_suffix` | `{{ query_params_json \| wire_query_suffix }}` | Parse a JSON object string; append `&k=v` pairs (empty string when absent/invalid) |
 
-**Temporal:** Predicate slots and `value_ref: temporal` still use `normalize_temporal_value` at plan/compile time. View scope params typed as plain strings (e.g. `nv_grafana_time_range`) should use **`wire_time`** in templates when the wire may be relative (`now-1h`) or already epoch milliseconds. Relative phrases resolve against the same evaluation clock the language card names as `evaluation_now` when temporal profiles are taught (PLP-9). Do not put that clock or harness dates into `values:` descriptions.
+**Temporal:** Python `date`/`datetime` values supply temporal inputs. Catalog profiles declare date-only, RFC3339, Unix seconds or milliseconds; transport codecs preserve that distinction and reject lossy conversions. `wire_time` formats explicit instants and does not interpret relative phrases. APIs with an independently declared relative-string protocol can receive literal strings directly; that protocol is not Plasm temporal syntax. Clock configuration belongs to the runtime host, not `values:` descriptions or teaching rows.
 
 **Authoring pitfalls:** Do not use `\| default('')` on JSON scope fields you pass to `wire_query_suffix` — use `{% if query_params_json %}…{% endif %}` instead. User-authored rendering uses typed Python compute methods; catalog view templates remain CML-owned.
 
@@ -810,7 +862,7 @@ Conformance fixture rows: `fixtures/schemas/plasm_language_matrix_views` (`lang_
 - [ ] Matrix fixture under `fixtures/schemas/<name>_schema_overlay/` (JSON sample + bootstrap `domain.yaml`) — **not** `apis/*` in `plasm-core` tests
 - [ ] Bump `version:` when changing overlay spec (affects session pin hash / teaching table)
 
-**Reference catalogs:** `apis/fibery/`, `apis/notion/`, `apis/jira/`, `apis/clickup/` (see each README). **Runtime / MCP wiring** (session resolver, TTL cache): monorepo [docs/schema-overlay.md](../../../docs/schema-overlay.md) when working from the private `plasm` repo.
+**Reference catalogs:** `apis/fibery/`, `apis/notion/`, `apis/jira/`, `apis/clickup/` (see each README). **Runtime / MCP wiring** (session resolver, TTL cache): monorepo [docs/schema-overlay.md](../reference/schema-overlay.md) when working from the private `plasm` repo.
 
 **Tests:**
 
@@ -863,7 +915,7 @@ capabilities:
 
 ### Information-flow annotations (Guardians / plan flow typing)
 
-Plasm catalogs carry **static information-flow facts** that the host uses at **plan dry-run** (`plasm` → `verify_plan_flow`) before minting a `pcN` commit. This is the catalog side of [Guardians-style](https://cacm.acm.org/research/guardians-of-the-agents-formal-verification-of-ai-workflows/) **generate → verify → execute** — see monorepo [guardians-alignment.md](../../../docs/guardians-alignment.md) and [plan-flow-typing.md](../../../docs/plan-flow-typing.md).
+Plasm catalogs carry **static information-flow facts** that the host uses at **plan dry-run** (`plasm` → `verify_plan_flow`) before minting a `pcN` commit. This is the catalog side of [Guardians-style](https://cacm.acm.org/research/guardians-of-the-agents-formal-verification-of-ai-workflows/) **generate → verify → execute** — see monorepo `guardians-alignment.md` and `plan-flow-typing.md`.
 
 **Catalog vs policy:** `domain.yaml` declares **what data exists** and **which inputs are sinks**; tenant **`FlowPolicy`** (pinned on `ExecuteSession` at session open) declares **which label→sink flows are forbidden** and default dispositions for remote mutations. Do **not** embed tenant policy in catalogs.
 
@@ -1027,6 +1079,7 @@ capabilities:
       - name: status
         value_ref: pet_status
         required: true
+        selection_effect: filter
 ```
 
 ### Relations and Navigation
@@ -1278,11 +1331,12 @@ Default without an explicit continuation: first page only.
 
 #### Pagination block schema
 
-Rust ground truth: [`PaginationConfig`](../../../crates/plasm-cml/src/cml.rs) in `mappings.yaml` under `pagination:`.
+Rust ground truth: [`PaginationConfig`](https://github.com/PlasmTools/plasm-core/blob/main/crates/plasm-cml/src/cml.rs) in `mappings.yaml` under `pagination:`.
 
 ```yaml
 pagination:
   location: query            # query | body | link_header | response_next_url | block_range
+  initial_only_query_params: [include_self] # optional; CML query field only on the first request
   response_next_url_field: "@odata.nextLink"   # optional; when location: response_next_url
   body_merge_path: [variables, o, paginate]   # optional; when location: body
   response_prefix: [data, issues, pageInfo]   # optional; scope for stop_when / from_response
@@ -1300,6 +1354,12 @@ pagination:
 ```
 
 Decode shape for list bodies remains on the mapping's `response:` / decoder.
+
+Use `initial_only_query_params` when an upstream query flag applies to the first
+page only, such as a pinned record that the API appends outside its paginated
+slice. Declare each name in the CML query object, but not in `pagination.params`.
+The runtime omits it on every continuation, including an opaque resumed page;
+ordinary duplicate-identity overlap across pages remains an error.
 
 #### `location` (summary)
 
@@ -1347,7 +1407,7 @@ payment_request_received_query:
 
 The runtime stops when a page returns fewer rows than `page_limit` (short-page heuristic). **`validate_cgs_capability_templates`** emits a **warning** when a query/search capability declares pagination wire params in domain or CML but omits `pagination:`.
 
-Catalog audit (2026-09): all AppWorld child catalogs had **zero** `pagination:` blocks; Venmo list queries were fixed first (CUGA `166f4ff_1`). Gmail, Spotify, Splitwise, etc. still wire manual `page_index`/`page_limit` query vars and will warn until composable pagination is added. See [`apis/appworld/README.md`](../../../apis/appworld/README.md).
+Catalog audit (2026-09): all AppWorld child catalogs had **zero** `pagination:` blocks; Venmo list queries were fixed first (CUGA `166f4ff_1`). Gmail, Spotify, Splitwise, etc. still wire manual `page_index`/`page_limit` query vars and will warn until composable pagination is added. See [`apis/appworld/README.md`](https://github.com/PlasmTools/plasm-core/tree/main/apis/appworld/README.md).
 
 #### GraphQL (`transport: graphql`)
 
@@ -1357,9 +1417,9 @@ GraphQL list capabilities use the same composable `pagination:` shape as HTTP (s
 - **`params`**: maps keys merged at that path — e.g. Relay `first` / `after` with `{ from_response: endCursor }`.
 - **`response_prefix`**: optional path from the root JSON response (e.g. `[data, issues, pageInfo]`).
 
-**CML `object` fields: `Value::Null` keys are omitted at eval time.** In [`eval_cml`](../../../crates/plasm-cml/src/cml.rs), when building a `type: object`, any key whose sub-expression evaluates to `Value::Null` is not inserted into the parent object. So the common optional pattern `type: if` / `condition: exists` / `else_expr: { type: const, value: null }` produces no key for missing inputs — well-typed omit semantics, not only on the wire.
+**CML `object` fields: `Value::Null` keys are omitted at eval time.** In [`eval_cml`](https://github.com/PlasmTools/plasm-core/blob/main/crates/plasm-cml/src/cml.rs), when building a `type: object`, any key whose sub-expression evaluates to `Value::Null` is not inserted into the parent object. So the common optional pattern `type: if` / `condition: exists` / `else_expr: { type: const, value: null }` produces no key for missing inputs — well-typed omit semantics, not only on the wire.
 
-**HTTP JSON body: null keys are still stripped before POST** (`strip_null_fields` in [`crates/plasm-runtime/src/http_transport.rs`](../../../crates/plasm-runtime/src/http_transport.rs)) as a safety net for any remaining `null`.
+**HTTP JSON body: null keys are still stripped before POST** (`strip_null_fields` in [`crates/plasm-runtime/src/http_transport.rs`](https://github.com/PlasmTools/plasm-core/blob/main/crates/plasm-runtime/src/http_transport.rs)) as a safety net for any remaining `null`.
 
 **Explicit JSON `null` to clear a field:** A key whose value must be a literal `null` in JSON is not representable if the only way to express it is `Value::Null` inside a CML object (it will be omitted). A future extension could add a dedicated CML/`Value` form for explicit null.
 
@@ -1620,7 +1680,7 @@ research_create:
                   else_expr: { type: const, value: null } }]
 ```
 
-Reserve `body: { type: var, name: input }` for capabilities whose **`input` parameter is the entire JSON body** (`values:` row with `type: json`, or inline `input_type: object` with nested payload) and whose param names do not collide with aggregate keys after splat. `schema validate` rejects scalar `input` params on this mapping shape ([`BodyVarInputParamCollision`](../../../crates/plasm-core/src/error.rs)).
+Reserve `body: { type: var, name: input }` for capabilities whose **`input` parameter is the entire JSON body** (`values:` row with `type: json`, or inline `input_type: object` with nested payload) and whose param names do not collide with aggregate keys after splat. `schema validate` rejects scalar `input` params on this mapping shape ([`BodyVarInputParamCollision`](https://github.com/PlasmTools/plasm-core/blob/main/crates/plasm-core/src/error.rs)).
 
 ### Request body formats (`body_format`)
 
@@ -1656,7 +1716,7 @@ multipart:
         name: file
 ```
 
-Rust ground truth: [`HttpBodyFormat`](../../../crates/plasm-cml/src/cml.rs), [`MultipartBodySpec`](../../../crates/plasm-cml/src/cml.rs), wire build in [`http_transport.rs`](../../../crates/plasm-runtime/src/http_transport.rs).
+Rust ground truth: [`HttpBodyFormat`](https://github.com/PlasmTools/plasm-core/blob/main/crates/plasm-cml/src/cml.rs), [`MultipartBodySpec`](https://github.com/PlasmTools/plasm-core/blob/main/crates/plasm-cml/src/cml.rs), wire build in [`http_transport.rs`](https://github.com/PlasmTools/plasm-core/blob/main/crates/plasm-runtime/src/http_transport.rs).
 
 ---
 
@@ -1778,17 +1838,19 @@ this closure does not expose mutations of the target entities.
 ### Explicit datetime wire layouts
 
 Keep semantic date inputs typed as dates. When an API requires a non-RFC3339 transport
-layout, map the resolved instant with CML `datetime_format`:
+layout, map the resolved temporal value with CML `datetime_format`:
 
 ```yaml
 type: datetime_format
+wire: iso8601_naive_datetime
 value: {type: var, name: scheduled_at}
 format: "%Y-%m-%d|%H:%M:%S"
 ```
 
-The format is validated at catalog decode. Encoding is UTC, consumes a resolved
-RFC3339 instant, preserves null, and never consults a clock or interprets natural
-language. Declare the backend's actual precision and timezone semantics; this is
+The format and required `wire` input encoding are validated at catalog decode.
+Naive datetimes retain calendar time; aware/Unix instants format in UTC; calendar
+dates remain dates. Encoding preserves null and never guesses an input encoding,
+consults a clock, or interprets natural language. Declare the backend's actual precision and timezone semantics; this is
 wire encoding, not a reason to weaken a date slot to an opaque string. Verify the
 compiled request body against the pinned backend, including offset equivalence
 and null omission. Operation coverage alone does not prove response-field,
@@ -1817,3 +1879,88 @@ exercise direct Get, scoped Get and summary hydration through catalogue/decoder 
 preserving identities, types, order, multiplicity, and the distinction between omitted
 relations and authoritative empty relations. Embedded-only targets remain Summary when
 no richer Get exists; observing them does not prove a complete entity projection.
+
+Timezone-free API datetimes must declare `iso8601_naive_datetime`; use `rfc3339` for timezone-aware instants. Python receives `datetime.datetime` with matching timezone awareness. Neither profile invents nor discards timezone information. Invalid present response values fail decoding; absent fields and explicit null remain distinct.
+
+### Closed nominal entity outputs
+
+A heterogeneous result is a closed entity sum, not an entity with guessed optional
+fields. Declare its variants and use the existing `output.decoder` seam to select
+one variant from each raw row:
+
+```yaml
+entity: WorkQueue
+kind: query
+output:
+  type: entity_union
+  variants: [Note, Change]
+  cardinality: many
+  decoder:
+    type: entity_union
+    cases:
+      - entity_type: Note
+        when: {kind: absent, path: [change]}
+      - entity_type: Change
+        when: {kind: present, path: [change]}
+```
+
+The cases must name exactly the declared, existing variants. `present` includes a
+present JSON null; `absent` means no key. `equals` takes a `path` and scalar `value`
+for tagged protocols. Exactly one case must match each row; unmatched, ambiguous,
+and malformed discriminator shapes fail decoding. Each selected variant uses its
+normal field and identity decoder. Provider envelope/collection paths remain in
+CML mappings. The established output-decoder seam is now typed; no second wire
+configuration or guessed structural discriminator is introduced.
+
+Served Python declarations show `Rows[eA | eB]`. Use
+`mixed.of_type(eA)` before variant-specific fields, relations or actions. The target
+must be a declared variant. Narrowing selects original occurrences and preserves
+recorded identity and coverage; constructing a dictionary with matching keys cannot
+create a receiver.
+
+This initial implementation admits query/search `many` outputs and action `one`
+or `many` outputs. Get/create/update/delete, union outputs inside iteration
+capability templates, and union-target relations remain unsupported and fail
+closed. Do not remove existing capabilities or label mixed rows as a concrete
+entity to bypass those restrictions; redesign and validate the missing contract
+before migrating a catalog that requires it.
+
+
+A concrete relation may select one nominal variant from a scoped union query:
+
+```yaml
+relations:
+  notes:
+    target: Note
+    cardinality: many
+    materialize:
+      kind: query_scoped_bindings
+      capability: work_queue_query
+      bindings: {queue_id: id}
+      select_entity: Note
+```
+
+`select_entity` is required for every union-query materializer, including when its
+routing owner happens to be the selected variant. It must equal the relation target
+and occur in the capability's declared output union. Runtime selection uses decoded
+nominal identities, after bounded source pagination; it does not inspect copied keys.
+A residual source continuation fails explicitly rather than being discarded. Selection
+preserves recorded coverage, so an unproven source cannot become a complete result.
+CLI relation commands with this selection currently reject additional query arguments;
+compose further selection in the Python program.
+
+A concrete Get can assert which provider record it accepts without widening its identity:
+
+```yaml
+output:
+  type: entity
+  entity_type: Note
+  decoder:
+    type: entity_assert
+    when: {kind: absent, path: [change]}
+```
+
+The assertion runs before field decoding, identity validation and cache publication.
+A mismatch is a response-contract failure; it never relabels the record, retries the
+operation or treats the response as absence. Exact Get request-key correspondence
+continues to apply after the assertion.

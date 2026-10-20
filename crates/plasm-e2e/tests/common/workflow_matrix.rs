@@ -17,22 +17,7 @@ pub const CATALOG_A: &str = "catalog_a";
 pub const CATALOG_B: &str = "catalog_b";
 
 pub fn workflow_matrix_schema_dir() -> PathBuf {
-    let crate_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    let candidates = [
-        crate_root.join("../../../fixtures/schemas/workflow_matrix"),
-        crate_root.join("../../../../fixtures/schemas/workflow_matrix"),
-        crate_root.join("../../fixtures/schemas/workflow_matrix"),
-        crate_root.join("fixtures/schemas/workflow_matrix"),
-    ];
-    for p in &candidates {
-        if p.exists() {
-            return p.clone();
-        }
-    }
-    panic!(
-        "fixtures/schemas/workflow_matrix not found (tried {:?})",
-        candidates
-    );
+    PathBuf::from(plasm_e2e::test_manifest_dir()).join("../../fixtures/schemas/workflow_matrix")
 }
 
 pub fn load_workflow_matrix_cgs() -> Arc<plasm_core::CGS> {

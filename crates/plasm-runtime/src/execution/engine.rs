@@ -99,6 +99,7 @@ impl ExecuteOptions {
 
 /// Main execution engine
 pub struct ExecutionEngine {
+    pub(crate) mcp: crate::mcp_execution::McpBindings,
     pub(crate) transport: Arc<dyn HttpTransport>,
     pub(crate) config: ExecutionConfig,
     pub(crate) replay_store: Option<crate::MemoryReplayStore>,
@@ -107,6 +108,11 @@ pub struct ExecutionEngine {
 }
 
 impl ExecutionEngine {
+    /// Bind initialized network clients before exposing this engine to callers.
+    pub fn with_mcp_bindings(mut self, bindings: crate::mcp_execution::McpBindings) -> Self {
+        self.mcp = bindings;
+        self
+    }
     pub(crate) fn resolve_http_base_from_opts(&self, opts: &ExecuteOptions) -> Arc<str> {
         if let Some(ref o) = opts.http_base_url_override {
             let t = o.trim();
@@ -258,6 +264,7 @@ impl ExecutionEngine {
         let transport = ResilientHttpTransport::new(inner, policy);
 
         Ok(Self {
+            mcp: Default::default(),
             transport: Arc::new(transport),
             config,
             replay_store: Some(crate::MemoryReplayStore::default()),
@@ -276,6 +283,7 @@ impl ExecutionEngine {
     ) -> Self {
         let policy = HttpResiliencePolicy::from(&config);
         Self {
+            mcp: Default::default(),
             transport: Arc::new(ResilientHttpTransport::wrap(transport, policy)),
             config,
             replay_store: Some(crate::MemoryReplayStore::default()),
@@ -478,6 +486,12 @@ impl ExecutionEngine {
     ) -> Result<(serde_json::Value, Option<String>), RuntimeError> {
         let fp = crate::RequestFingerprint::from_operation(operation)?;
         let out = match operation {
+            CompiledOperation::Mcp(call) => self
+                .mcp
+                .execute_recorded(call, fp.to_hex())
+                .await
+                .map(|value| (value, None))
+                .map_err(RuntimeError::from),
             CompiledOperation::CredentialBind(binding) => {
                 let base = self.effective_http_base_for_request();
                 let (store, scope) = super::http_exec::credential_scope(
@@ -586,6 +600,81 @@ impl ExecutionEngine {
                     let mut stream =
                         self.execute_stream(expr, cgs, mat, mode, consume.clone(), opts)?;
                     collect_query_stream(&mut stream, &consume).await
+                },
+            )
+            .await?;
+            result.stats.duration_ms = start_time.elapsed().as_millis() as u64;
+            result.request_fingerprints = fp_sink
+                .map(|m| m.lock().unwrap_or_else(|e| e.into_inner()).clone())
+                .unwrap_or_default();
+            Ok(result)
+        })
+    }
+
+    /// Traverse a host-recorded source result without issuing a synthetic source Get.
+    /// Source identity must match the bound reference; authored expressions use `execute`.
+    #[allow(clippy::too_many_arguments)] // Same execution options as execute, plus the observed source.
+    pub fn execute_relation_from_observed<'a>(
+        &'a self,
+        chain: &'a plasm_core::ChainExpr,
+        source: ExecutionResult,
+        cgs: &'a CGS,
+        mat: &'a mut SessionMaterialization,
+        mode: Option<ExecutionMode>,
+        consume: StreamConsumeOpts,
+        opts: ExecuteOptions,
+    ) -> std::pin::Pin<
+        Box<dyn std::future::Future<Output = Result<ExecutionResult, RuntimeError>> + Send + 'a>,
+    > {
+        Box::pin(async move {
+            crate::check_cancel(opts.cancel.as_ref())?;
+            let start_time = std::time::Instant::now();
+            let base = self.resolve_http_base_from_opts(&opts);
+            let auth_override = opts.auth_resolver_override.clone();
+            let fp_sink = opts.request_fingerprint_sink.clone();
+            let federation = opts.federation.clone();
+            let execute_session = opts.execute_session.clone();
+            let compiled_catalog = opts.required_compiled_catalog()?;
+            let cancel = opts.cancel.clone();
+            let rows_progress = opts.rows_progress.clone();
+            let mut result = Self::run_in_execute_task_scopes(
+                base,
+                auth_override,
+                fp_sink.clone(),
+                federation,
+                execute_session,
+                compiled_catalog,
+                cancel,
+                rows_progress,
+                async move {
+                    source
+                        .collection
+                        .materialize(plasm_core::collection_codec::Demand::Observed)?;
+                    let Expr::Get(bound) = chain.source.as_ref() else {
+                        return Err(
+                            plasm_core::collection_codec::CollectionFault::Conservation.into()
+                        );
+                    };
+                    if source.count() != 1
+                        || source
+                            .entities()
+                            .iter()
+                            .any(|row| row.reference != bound.reference)
+                    {
+                        return Err(
+                            plasm_core::collection_codec::CollectionFault::Conservation.into()
+                        );
+                    }
+                    self.execute_chain_materialized(
+                        chain,
+                        source,
+                        cgs,
+                        mat,
+                        mode.unwrap_or(self.config.default_mode),
+                        consume,
+                        opts,
+                    )
+                    .await
                 },
             )
             .await?;

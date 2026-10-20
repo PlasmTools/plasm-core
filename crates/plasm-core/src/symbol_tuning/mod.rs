@@ -3664,7 +3664,8 @@ mod tests {
 
     #[test]
     fn opaque_dotted_call_on_get_parses_without_string_expansion() {
-        let dir = std::path::Path::new("../../fixtures/schemas/plasm_language_matrix");
+        let dir = &std::path::Path::new(crate::test_manifest_dir())
+            .join("../../fixtures/schemas/plasm_language_matrix");
         let mut cgs = load_schema_dir(dir).expect("plasm_language_matrix");
         cgs.bind_registry_entry_id("langmatrix");
         let session = TeachingExposureSession::new(&cgs, "langmatrix", &["LangItem"]);
@@ -3894,7 +3895,8 @@ mod tests {
 
     #[test]
     fn overshow_entity_scoped_slot_maps_merge_compatible_id_slots() {
-        let dir = std::path::Path::new("../../fixtures/schemas/overshow_tools");
+        let dir = &std::path::Path::new(crate::test_manifest_dir())
+            .join("../../fixtures/schemas/overshow_tools");
         if !dir.exists() {
             return;
         }
@@ -3915,7 +3917,8 @@ mod tests {
 
     #[test]
     fn overshow_unambiguous_ident_lookup_rejects_ambiguous_id_name() {
-        let dir = std::path::Path::new("../../fixtures/schemas/overshow_tools");
+        let dir = &std::path::Path::new(crate::test_manifest_dir())
+            .join("../../fixtures/schemas/overshow_tools");
         if !dir.exists() {
             return;
         }
@@ -3929,7 +3932,8 @@ mod tests {
 
     #[test]
     fn teaching_exposure_session_keeps_entity_symbols_stable_across_waves() {
-        let dir = std::path::Path::new("../../fixtures/schemas/petstore");
+        let dir = &std::path::Path::new(crate::test_manifest_dir())
+            .join("../../fixtures/schemas/petstore");
         if !dir.exists() {
             return;
         }
@@ -3945,7 +3949,8 @@ mod tests {
     /// or field slot symbols for the first entity.
     #[test]
     fn teaching_exposure_session_keeps_method_and_field_symbols_stable_across_waves() {
-        let dir = std::path::Path::new("../../fixtures/schemas/overshow_tools");
+        let dir = &std::path::Path::new(crate::test_manifest_dir())
+            .join("../../fixtures/schemas/overshow_tools");
         if !dir.exists() {
             return;
         }
@@ -3968,7 +3973,8 @@ mod tests {
     fn teaching_exposure_extend_federated_wire_name_resolves_by_receiver() {
         use super::keys::CatalogScope;
 
-        let dir = std::path::Path::new("../../fixtures/schemas/extend_wave_homograph");
+        let dir = &std::path::Path::new(crate::test_manifest_dir())
+            .join("../../fixtures/schemas/extend_wave_homograph");
         if !dir.exists() {
             return;
         }
@@ -4012,7 +4018,8 @@ mod tests {
     fn teaching_exposure_session_keeps_wire_projection_resolution_stable_across_waves() {
         use super::keys::CatalogScope;
 
-        let dir = std::path::Path::new("../../fixtures/schemas/overshow_tools");
+        let dir = &std::path::Path::new(crate::test_manifest_dir())
+            .join("../../fixtures/schemas/overshow_tools");
         if !dir.exists() {
             return;
         }
@@ -4042,7 +4049,8 @@ mod tests {
 
     #[test]
     fn ident_metadata_from_exposure_matches_build_ident_metadata() {
-        let dir = std::path::Path::new("../../fixtures/schemas/petstore");
+        let dir = &std::path::Path::new(crate::test_manifest_dir())
+            .join("../../fixtures/schemas/petstore");
         if !dir.exists() {
             return;
         }
@@ -4060,7 +4068,8 @@ mod tests {
     #[test]
     fn symbol_map_cross_request_cache_reuses_snapshot() {
         let cache = SymbolMapCrossRequestCache::new(8);
-        let dir = std::path::Path::new("../../fixtures/schemas/petstore");
+        let dir = &std::path::Path::new(crate::test_manifest_dir())
+            .join("../../fixtures/schemas/petstore");
         if !dir.exists() {
             return;
         }
@@ -4078,7 +4087,8 @@ mod tests {
     #[test]
     fn symbol_map_cross_request_cache_clear_drops_lru_entries() {
         let cache = SymbolMapCrossRequestCache::new(8);
-        let dir = std::path::Path::new("../../fixtures/schemas/petstore");
+        let dir = &std::path::Path::new(crate::test_manifest_dir())
+            .join("../../fixtures/schemas/petstore");
         if !dir.exists() {
             return;
         }
@@ -4095,7 +4105,8 @@ mod tests {
 
     #[test]
     fn symbol_map_session_local_cache_rejects_stale_snapshot_after_federated_extend() {
-        let dir = std::path::Path::new("../../fixtures/schemas/plasm_language_matrix");
+        let dir = &std::path::Path::new(crate::test_manifest_dir())
+            .join("../../fixtures/schemas/plasm_language_matrix");
         if !dir.exists() {
             return;
         }
@@ -4145,7 +4156,8 @@ mod tests {
     /// was shown (the `p21=title` rendered / `p21=height` resolved contamination).
     #[test]
     fn cache_key_distinguishes_wave_structure_numbering() {
-        let dir = std::path::Path::new("../../fixtures/schemas/plasm_language_matrix");
+        let dir = &std::path::Path::new(crate::test_manifest_dir())
+            .join("../../fixtures/schemas/plasm_language_matrix");
         if !dir.exists() {
             return;
         }
@@ -4202,7 +4214,8 @@ mod tests {
 
     #[test]
     fn wire_surface_opaque_get_petstore() {
-        let dir = std::path::Path::new("../../fixtures/schemas/petstore");
+        let dir = &std::path::Path::new(crate::test_manifest_dir())
+            .join("../../fixtures/schemas/petstore");
         if !dir.exists() {
             return;
         }
@@ -4221,7 +4234,8 @@ mod tests {
 
     #[test]
     fn wire_surface_opaque_method_petstore() {
-        let dir = std::path::Path::new("../../fixtures/schemas/petstore");
+        let dir = &std::path::Path::new(crate::test_manifest_dir())
+            .join("../../fixtures/schemas/petstore");
         if !dir.exists() {
             return;
         }
@@ -4248,7 +4262,7 @@ mod tests {
 
     #[test]
     fn wire_surface_relation_owned_on_receiver() {
-        let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        let dir = std::path::Path::new(crate::test_manifest_dir())
             .join("../../fixtures/schemas/plasm_language_matrix");
         let mut cgs = load_schema_dir(&dir).expect("plasm_language_matrix");
         cgs.bind_registry_entry_id("langmatrix");
@@ -4706,7 +4720,8 @@ mod tests {
 
     #[test]
     fn build_ident_metadata_includes_scalar_kinds() {
-        let dir = std::path::Path::new("../../fixtures/schemas/plasm_language_matrix");
+        let dir = &std::path::Path::new(crate::test_manifest_dir())
+            .join("../../fixtures/schemas/plasm_language_matrix");
         if !dir.exists() {
             return;
         }
@@ -4741,7 +4756,8 @@ mod tests {
 
     #[test]
     fn teaching_term_entity_roundtrips_display_with_symbol_map() {
-        let dir = std::path::Path::new("../../fixtures/schemas/petstore");
+        let dir = &std::path::Path::new(crate::test_manifest_dir())
+            .join("../../fixtures/schemas/petstore");
         if !dir.exists() {
             return;
         }
@@ -4755,7 +4771,8 @@ mod tests {
 
     #[test]
     fn teaching_term_method_matches_symbol_map_when_cgs_resolves() {
-        let dir = std::path::Path::new("../../fixtures/schemas/petstore");
+        let dir = &std::path::Path::new(crate::test_manifest_dir())
+            .join("../../fixtures/schemas/petstore");
         if !dir.exists() {
             return;
         }
@@ -4779,7 +4796,8 @@ mod tests {
 
     #[test]
     fn federation_duplicate_entity_name_allocates_distinct_e_symbols() {
-        let dir = std::path::Path::new("../../fixtures/schemas/petstore");
+        let dir = &std::path::Path::new(crate::test_manifest_dir())
+            .join("../../fixtures/schemas/petstore");
         if !dir.exists() {
             return;
         }
@@ -4809,7 +4827,8 @@ mod tests {
 
     #[test]
     fn intent_filtered_domain_session_has_narrower_capability_surface_than_legacy() {
-        let dir = std::path::Path::new("../../fixtures/schemas/overshow_tools");
+        let dir = &std::path::Path::new(crate::test_manifest_dir())
+            .join("../../fixtures/schemas/overshow_tools");
         if !dir.exists() {
             return;
         }
@@ -4831,7 +4850,7 @@ mod tests {
 
     #[test]
     fn langitem_create_tags_slot_meta_is_registry_backed() {
-        let mut p = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+        let mut p = std::path::PathBuf::from(crate::test_manifest_dir());
         p.push("../../fixtures/schemas/plasm_language_matrix");
         let mut cgs = crate::loader::load_schema_dir(&p).expect("plasm_language_matrix");
         cgs.bind_registry_entry_id("langmatrix");
@@ -4855,7 +4874,7 @@ mod tests {
 
     #[test]
     fn federated_entity_name_collision_assigns_distinct_entity_symbols() {
-        let root = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        let root = std::path::PathBuf::from(crate::test_manifest_dir())
             .join("../../fixtures/schemas/plasm_language_matrix");
         let cgs = load_schema_dir(&root).expect("plasm_language_matrix");
         let layers = [&cgs, &cgs];
@@ -4898,7 +4917,7 @@ mod tests {
         // later wave. `relation_slots_for_expand_wave` must then surface the hop as pending and the
         // symbol map must assign it an `r#`. Driven by the abstract `plasm_language_matrix` fixture
         // (strict rule: plasm-core language tests must not couple to `apis/<name>/` catalogs).
-        let root = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        let root = std::path::PathBuf::from(crate::test_manifest_dir())
             .join("../../fixtures/schemas/plasm_language_matrix");
         let cgs = load_schema_dir(&root).expect("plasm_language_matrix");
         let cgs_arc = std::sync::Arc::new(cgs.clone());
@@ -4962,7 +4981,8 @@ mod tests {
 
     #[test]
     fn entity_p_sym_resolves_via_forward_table() {
-        let dir = std::path::Path::new("../../fixtures/schemas/plasm_language_matrix");
+        let dir = &std::path::Path::new(crate::test_manifest_dir())
+            .join("../../fixtures/schemas/plasm_language_matrix");
         let Ok(cgs) = load_schema_dir(dir) else {
             return;
         };
@@ -5000,7 +5020,7 @@ mod tests {
 
     #[test]
     fn langitem_create_capabilities_optional_legend_uses_compact_marker_and_pairs() {
-        let root = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+        let root = std::path::PathBuf::from(crate::test_manifest_dir());
         let dir = root.join("../../fixtures/schemas/plasm_language_matrix");
         let mut cgs = crate::loader::load_schema(&dir).expect("plasm_language_matrix");
         cgs.bind_registry_entry_id("langmatrix");

@@ -1340,7 +1340,7 @@ mod tests {
         let name = entity.fields.shift_remove("name").unwrap();
         entity.fields.insert("title".into(), name);
         let cgs = plasm_core::load_schema_dir(
-            &std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            &std::path::Path::new(crate::test_manifest_dir())
                 .join("../../fixtures/schemas/plasm_language_matrix"),
         )
         .unwrap();
@@ -1374,7 +1374,7 @@ mod tests {
         use std::collections::BTreeMap;
         use std::path::PathBuf;
 
-        let dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        let dir = PathBuf::from(crate::test_manifest_dir())
             .join("../../fixtures/schemas/plasm_language_matrix");
         let cgs = load_schema_dir(&dir).expect("matrix");
         let mut parts = BTreeMap::new();
@@ -1432,7 +1432,7 @@ mod relation_wire_properties {
     #[test]
     fn malformed_relation_identity_is_rejected_instead_of_dropped() {
         let cgs = plasm_core::load_schema_dir(
-            &std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            &std::path::Path::new(crate::test_manifest_dir())
                 .join("../../fixtures/schemas/plasm_language_matrix"),
         )
         .unwrap();
@@ -1453,7 +1453,7 @@ mod relation_wire_properties {
             ids in prop::collection::vec("[a-zA-Z0-9:_/-]{1,20}", 0..16),
             singleton in proptest::option::of("[a-zA-Z0-9:_/-]{1,20}"),
         ) {
-            let cgs = plasm_core::load_schema_dir(&std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../fixtures/schemas/plasm_language_matrix")).unwrap();
+            let cgs = plasm_core::load_schema_dir(&std::path::Path::new(crate::test_manifest_dir()).join("../../fixtures/schemas/plasm_language_matrix")).unwrap();
             let mut parent = CachedEntity::new(Ref::new("LangItem", "parent"), 1);
             parent.relations.insert("lines".into(), plasm_core::row_contract::RelationMembership::observe(None, &"relation_fixture", ids.iter().map(|id| Ref::new("LangLine",id.as_str())).collect::<Vec<_>>(), None).unwrap());
             parent.relations.insert("summary".into(), plasm_core::row_contract::RelationMembership::observe(None, &"relation_fixture", singleton.iter().map(|id| Ref::new("LangSummary",id.as_str())).collect::<Vec<_>>(), None).unwrap());

@@ -113,7 +113,7 @@ fn credential_create_returns_receipt_and_cached_reads_revalidate_scope() {
 
 async fn exercise_scoped_injection() {
     let cgs = plasm_core::loader::load_schema_dir(
-        &std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        &std::path::Path::new(crate::test_manifest_dir())
             .join("../../fixtures/schemas/credential_matrix"),
     )
     .unwrap();
@@ -230,7 +230,7 @@ async fn typed_delete_payload_reaches_preflight_and_transport() {
             panic!("unexpected GET")
         }
     }
-    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+    let path = std::path::Path::new(crate::test_manifest_dir())
         .join("../../fixtures/schemas/plasm_language_matrix");
     let mut cgs = plasm_core::loader::load_schema_dir(&path).unwrap();
     let touch = cgs.capabilities["langitem_secured_touch"].clone();

@@ -2,10 +2,7 @@
 
 use std::sync::Arc;
 
-use rust_mcp_sdk::schema::{
-    CallToolRequestParams, Implementation, InitializeResult, ProtocolVersion, ServerCapabilities,
-};
-use rust_mcp_sdk::ToMcpServerHandler;
+use rmcp::model::CallToolRequestParams;
 use serde_json::json;
 
 use crate::http::{build_plasm_host_state, PlasmHostBootstrap};
@@ -63,34 +60,15 @@ async fn dispatch_plasm_context(
     intent: &str,
 ) {
     let handler = PlasmMcpHandler::new(Arc::clone(&st));
-    let mcp_handler = PlasmMcpHandler::new(Arc::clone(&st)).to_mcp_server_handler();
-    let details = Arc::new(InitializeResult {
-        protocol_version: ProtocolVersion::V2025_11_25.into(),
-        capabilities: ServerCapabilities::default(),
-        server_info: Implementation {
-            name: "stack-budget".into(),
-            version: "0".into(),
-            title: None,
-            description: None,
-            icons: vec![],
-            website_url: None,
-        },
-        instructions: None,
-        meta: None,
+    let runtime = Arc::new(super::request::McpRequest {
+        transport_key: session.into(),
+        client: Default::default(),
+        identity: None,
     });
-    let runtime: Arc<dyn rust_mcp_sdk::McpServer> =
-        rust_mcp_sdk::mcp_server::server_runtime::create_server_instance(
-            details,
-            mcp_handler,
-            session.into(),
-            None,
-            None,
-            None,
-            None,
-        );
-    let params = CallToolRequestParams {
-        name: "plasm_context".into(),
-        arguments: Some(
+    let params = {
+        let mut model = CallToolRequestParams::new("");
+        model.name = "plasm_context".into();
+        model.arguments = Some(
             json!({
                 "session_mode": "new",
                 "intent": intent,
@@ -99,9 +77,9 @@ async fn dispatch_plasm_context(
             .as_object()
             .cloned()
             .unwrap(),
-        ),
-        meta: None,
-        task: None,
+        );
+        model.meta = None;
+        model
     };
     let res = call_tool_dispatch::dispatch_plasm_mcp_call_tool_request(&handler, params, runtime)
         .await
@@ -132,7 +110,7 @@ fn mcp_plasm_context_survives_two_mib_worker_stack() {
             .build()
             .expect("rt");
         rt.block_on(async {
-            let dir = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            let dir = std::path::PathBuf::from(crate::test_manifest_dir())
                 .join("../../fixtures/schemas/plasm_language_matrix");
             let st = host_from_schema_dir("langmatrix", "LangItem", &dir);
             dispatch_plasm_context(
@@ -155,7 +133,7 @@ fn mcp_plasm_context_matrix_survives_two_mib_worker_stack() {
             .build()
             .expect("rt");
         rt.block_on(async {
-            let dir = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            let dir = std::path::PathBuf::from(crate::test_manifest_dir())
                 .join("../../fixtures/schemas/plasm_language_matrix");
             let st = host_from_schema_dir("langmatrix", "Langmatrix", &dir);
             dispatch_plasm_context(

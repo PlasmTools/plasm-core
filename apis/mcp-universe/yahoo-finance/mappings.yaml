@@ -1,0 +1,91 @@
+income_statements:
+  transport: mcp
+  server: yfinance
+  tool: get_financial_statement
+  arguments:
+    type: object
+    fields:
+    - [ticker, {type: var, name: ticker}]
+    - [financial_type, {type: var, name: frequency}]
+  response:
+    source: {kind: json_text, index: 0}
+    pointer: ""
+    exhaustive: true
+institutional_holdings:
+  transport: mcp
+  server: yfinance
+  tool: get_holder_info
+  arguments:
+    type: object
+    fields:
+    - [ticker, {type: var, name: ticker}]
+    - [holder_type, {type: const, value: institutional_holders}]
+  response:
+    source: {kind: json_text, index: 0}
+    pointer: ""
+    exhaustive: true
+corporate_actions:
+  transport: mcp
+  server: yfinance
+  tool: get_stock_actions
+  arguments:
+    type: object
+    fields:
+    - [ticker, {type: var, name: ticker}]
+  response:
+    source: {kind: json_text, index: 0}
+    pointer: ""
+    exhaustive: true
+option_expirations:
+  transport: mcp
+  server: yfinance
+  tool: get_option_expiration_dates
+  arguments:
+    type: object
+    fields:
+    - [ticker, {type: var, name: ticker}]
+  response:
+    source: {kind: json_text, index: 0}
+    pointer: ""
+    exhaustive: true
+option_chain:
+  transport: mcp
+  server: yfinance
+  tool: get_option_chain
+  arguments:
+    type: object
+    fields:
+    - [ticker, {type: var, name: ticker}]
+    - [expiration_date, {type: var, name: expiration_date}]
+    - [option_type, {type: var, name: option_type}]
+  response:
+    source: {kind: json_text, index: 0}
+    pointer: ""
+    exhaustive: true
+instrument_get:
+  transport: mcp
+  server: yfinance
+  tool: get_stock_info
+  arguments:
+    type: object
+    fields:
+    - [ticker, {type: var, name: ticker}]
+  response:
+    source: {kind: json_text, index: 0}
+    pointer: ""
+    exhaustive: true
+price_history:
+  transport: mcp
+  server: yfinance
+  tool: get_historical_stock_prices
+  arguments:
+    type: object
+    fields:
+    - [ticker, {type: var, name: ticker}]
+    - [start_date, {type: var, name: start_date}]
+    - [end_date, {type: var, name: end_date}]
+    - [interval, {type: var, name: interval}]
+  response:
+    source: {kind: json_text, index: 0}
+    pointer: ""
+    exhaustive: true

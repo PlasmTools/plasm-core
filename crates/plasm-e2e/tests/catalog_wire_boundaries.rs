@@ -14,7 +14,7 @@ use serde_json::json;
 use std::{collections::HashSet, path::PathBuf};
 
 fn root(api: &str) -> PathBuf {
-    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+    PathBuf::from(plasm_e2e::test_manifest_dir())
         .join("../../apis")
         .join(api)
 }
@@ -314,7 +314,9 @@ fn named_relations_bind_every_required_source_input() {
             RelationMaterialization::QueryScoped {
                 capability: actual,
                 param: binding,
+                select_entity,
             } => {
+                assert!(select_entity.is_none());
                 assert_eq!(actual.as_str(), capability);
                 assert_eq!(binding.as_str(), param);
             }

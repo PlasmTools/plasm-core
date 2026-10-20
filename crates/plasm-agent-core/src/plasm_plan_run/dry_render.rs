@@ -161,6 +161,10 @@ pub(crate) fn render_compute_template(compute: &ComputeTemplate) -> String {
                 .join(", ");
             format!("project {} -> {{{fields}}}", compute.source)
         }
+        ComputeOp::NarrowEntity { target, .. } => format!(
+            "of_type {} -> {}:{}",
+            compute.source, target.entry_id, target.entity
+        ),
         ComputeOp::Filter { predicates } => {
             let predicates = predicates.render(&render_predicate);
             format!("filter {} where {predicates}", compute.source)

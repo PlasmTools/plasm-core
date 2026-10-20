@@ -3,7 +3,7 @@ name = "plasm"
 version.workspace = true
 edition.workspace = true
 license = "MIT OR Apache-2.0"
-description = "Open-source `plasm-mcp` / `plasm` (HTTP terminal) / `plasm-pack-catalogs` and `plasm_agent` re-exports of plasm-agent-core"
+description = "Open-source `plasm-mcp` / `plasm` (HTTP terminal) and `plasm_agent` re-exports of plasm-agent-core"
 readme = "README.md"
 
 [features]
@@ -27,10 +27,6 @@ path = "src/bin/plasm_mcp.rs"
 [[bin]]
 name = "plasm"
 path = "src/bin/plasm.rs"
-
-[[bin]]
-name = "plasm-pack-catalogs"
-path = "src/bin/plasm_pack_catalogs.rs"
 
 [[bin]]
 name = "plasm-import-catalogs"
@@ -67,7 +63,6 @@ uuid = { workspace = true }
 chrono = { workspace = true }
 object_store = { workspace = true }
 url = { workspace = true }
-rust-mcp-sdk = { workspace = true }
 async-trait = { workspace = true }
 futures-util = { workspace = true }
 pg-embed = { workspace = true, optional = true }

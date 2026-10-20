@@ -18,12 +18,14 @@ pub mod predicate_compiler;
 pub use plasm_cml::{
     compile_operation, compile_request, eval_cml, eval_cond, parse_capability_template,
     path_var_names_from_request, template_pagination, template_var_names, AuxiliaryHttpMerge,
-    CapabilityTemplate, CmlCond, CmlEnv, CmlExpr, CmlRequest, CmlType, CompiledMultipartBody,
-    CompiledMultipartPart, CompiledOperation, CompiledRequest, ConcatArraySource, CredentialSource,
-    HttpBodyFormat, HttpMethod, HttpResponseDecode, MultipartBodySpec, MultipartPartSpec,
-    PaginationConfig, PaginationContractError, PaginationLocation, PaginationParam,
-    PaginationParamRole, PaginationStop, PaginationStrategyKind, PathSegment as CmlPathSegment,
-    ResponsePreprocess, ValidatedPagination, ViewCompiled, ViewTemplate,
+    CapabilityTemplate, CmlCond, CmlEnv, CmlExpr, CmlRequest, CmlType, CompiledMcpCall,
+    CompiledMultipartBody, CompiledMultipartPart, CompiledOperation, CompiledRequest,
+    ConcatArraySource, CredentialSource, HttpBodyFormat, HttpMethod, HttpResponseDecode,
+    McpCollectionContract, McpResponse, McpResultSource, McpTemplate, McpTemplateError,
+    MultipartBodySpec, MultipartPartSpec, PaginationConfig, PaginationContractError,
+    PaginationLocation, PaginationParam, PaginationParamRole, PaginationStop,
+    PaginationStrategyKind, PathSegment as CmlPathSegment, ResponsePreprocess, ValidatedPagination,
+    ViewCompiled, ViewTemplate,
 };
 
 #[cfg(feature = "evm")]
@@ -35,7 +37,7 @@ pub use capability_pagination::{
     paginated_list_missing_cml_pagination_warnings, pagination_contract_validation_errors,
 };
 pub use decoder::*;
-pub use embed_decode::{decode_entities, decode_entities_with_cgs};
+pub use embed_decode::{decode_entities, decode_entities_with_cgs, decode_output_with_cgs};
 pub use embed_target_decoder::entity_decoder_for_from_parent_get_target;
 pub use embed_tree::flatten_decoded_embed_descendants;
 pub use error::{CompileError, DecodeError};
@@ -71,3 +73,18 @@ pub use openapi_pagination::{
     uncovered_openapi_operations, validate_catalog_openapi_pagination,
     validate_cgs_openapi_pagination,
 };
+
+#[cfg(test)]
+pub(crate) fn test_manifest_dir() -> &'static str {
+    static DIRECTORY: std::sync::OnceLock<String> = std::sync::OnceLock::new();
+    DIRECTORY.get_or_init(|| {
+        let path =
+            std::env::var("CARGO_MANIFEST_DIR").expect("test runner must set CARGO_MANIFEST_DIR");
+        std::path::Path::new(&path)
+            .canonicalize()
+            .expect("test manifest directory must exist")
+            .to_str()
+            .expect("test manifest directory must be UTF-8")
+            .to_owned()
+    })
+}

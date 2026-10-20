@@ -118,17 +118,25 @@ pub fn selected_capability_surface(
         // Mutators still teach that write's `provides`. Identity stays bindable either way.
         admit_teaching_entity_fields(cgs, cap, entity, &entity_key, &mut surface);
         if let Some(output) = &cap.output_schema {
-            if let crate::schema::OutputType::Entity { entity_type }
-            | crate::schema::OutputType::Collection { entity_type, .. } = &output.output_type
-            {
-                let output_entity = cgs.entities.get(entity_type.as_str()).ok_or_else(|| {
+            let output_names: Vec<&str> = match &output.output_type {
+                crate::schema::OutputType::Entity { entity_type }
+                | crate::schema::OutputType::Collection { entity_type, .. } => {
+                    vec![entity_type.as_str()]
+                }
+                crate::schema::OutputType::EntityUnion { variants, .. } => {
+                    variants.iter().map(|name| name.as_str()).collect()
+                }
+                _ => Vec::new(),
+            };
+            for entity_type in output_names {
+                let output_entity = cgs.entities.get(entity_type).ok_or_else(|| {
                     CapabilityExposureError::OutputEntityMissing {
                         entity: entity_type.to_string(),
                     }
                 })?;
                 let output_key = ExposureEntityKey {
                     entry_id: entry_id.into(),
-                    entity: entity_type.as_str().into(),
+                    entity: entity_type.into(),
                 };
                 surface.entities.insert(output_key.clone());
                 admit_output_entity_fields(cap, output_entity, &output_key, &mut surface);
@@ -184,13 +192,13 @@ mod tests {
     use crate::symbol_tuning::{ExposureSlotKey, ExposureSurfaceDelta};
 
     fn auth_bearer_search_dir() -> std::path::PathBuf {
-        std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        std::path::Path::new(crate::test_manifest_dir())
             .join("../../fixtures/schemas/auth_bearer_search")
     }
 
     #[test]
     fn selected_parent_read_does_not_admit_relation_target_capabilities() {
-        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        let root = std::path::Path::new(crate::test_manifest_dir())
             .join("../../fixtures/schemas/plasm_language_matrix");
         let cgs = plasm_core_fixture_load(&root);
         let read = cgs
@@ -266,7 +274,7 @@ mod tests {
     }
 
     fn scoped_query_matrix_dir() -> std::path::PathBuf {
-        std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        std::path::Path::new(crate::test_manifest_dir())
             .join("../../fixtures/schemas/scoped_query_matrix")
     }
 
@@ -370,7 +378,7 @@ mod tests {
 
     #[test]
     fn read_surface_admits_full_authored_fields_not_provides_subset() {
-        let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        let dir = std::path::Path::new(crate::test_manifest_dir())
             .join("../../fixtures/schemas/return_projection_teaching");
         let cgs = load_schema_dir(&dir).expect("return_projection_teaching");
         let want =

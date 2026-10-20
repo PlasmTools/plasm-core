@@ -3,12 +3,9 @@
 use std::collections::BTreeMap;
 use std::sync::Arc;
 
-use rust_mcp_sdk::schema::schema_utils::CallToolError;
-use rust_mcp_sdk::schema::{
-    CallToolResult, TextContent, Tool, ToolAnnotations, ToolExecution, ToolExecutionTaskSupport,
-    ToolInputSchema,
-};
-use rust_mcp_sdk::McpServer;
+use crate::mcp_server::request::McpRequest;
+use crate::mcp_server::request::ToolFailure;
+use rmcp::model::{CallToolResult, Tool, ToolAnnotations};
 use serde_json::json;
 use tracing::Instrument;
 
@@ -102,74 +99,71 @@ pub fn workflow_mcp_tools() -> Vec<Tool> {
     .expect("ui meta object");
 
     vec![
-        Tool {
-            name: "open_workflow".into(),
-            title: Some("Open federated workflow session".into()),
-            description: Some(
+        {
+            let mut model = Tool::default();
+            model.name = "open_workflow".into();
+            model.title = Some("Open federated workflow session".into());
+            model.description = Some(
                 "MCP App: validate registry pins, open federated execute session from workflow seeds, return view-model + entity symbols.".into(),
-            ),
-            input_schema: ToolInputSchema::new(
+            );
+            model.input_schema = crate::mcp_server::schema::object_schema(
                 vec!["id".into(), "intent".into()],
-                Some(open_props),
-                None,
-            ),
-            annotations: Some(ToolAnnotations {
-                read_only_hint: Some(false),
-                open_world_hint: Some(true),
-                ..Default::default()
-            }),
-            execution: Some(ToolExecution {
-                task_support: Some(ToolExecutionTaskSupport::Forbidden),
-            }),
-            icons: vec![],
-            meta: Some(ui_meta.clone()),
-            output_schema: None,
+                open_props,
+            );
+            model.annotations = Some({
+                let mut model = ToolAnnotations::default();
+                model.read_only_hint = Some(false);
+                model.open_world_hint = Some(true);
+                model
+            });
+            model.icons = None;
+            model.meta = Some(ui_meta.clone().into());
+            model.output_schema = None;
+            model
         },
-        Tool {
-            name: "dry_workflow".into(),
-            title: Some("Instantiate + plan dry-run workflow".into()),
-            description: Some(
+        {
+            let mut model = Tool::default();
+            model.name = "dry_workflow".into();
+            model.title = Some("Instantiate + plan dry-run workflow".into());
+            model.description = Some(
                 "MCP App: instantiate program with session symbol map, run plan-only dry-run; requires `plan_ux_reflection` in `_meta.plasm`.".into(),
-            ),
-            input_schema: ToolInputSchema::new(
+            );
+            model.input_schema = crate::mcp_server::schema::object_schema(
                 vec!["id".into(), "logical_session_ref".into()],
-                Some(dry_props),
-                None,
-            ),
-            annotations: Some(ToolAnnotations {
-                read_only_hint: Some(true),
-                open_world_hint: Some(true),
-                ..Default::default()
-            }),
-            execution: Some(ToolExecution {
-                task_support: Some(ToolExecutionTaskSupport::Forbidden),
-            }),
-            icons: vec![],
-            meta: Some(ui_meta.clone()),
-            output_schema: None,
+                dry_props,
+            );
+            model.annotations = Some({
+                let mut model = ToolAnnotations::default();
+                model.read_only_hint = Some(true);
+                model.open_world_hint = Some(true);
+                model
+            });
+            model.icons = None;
+            model.meta = Some(ui_meta.clone().into());
+            model.output_schema = None;
+            model
         },
-        Tool {
-            name: "run_workflow".into(),
-            title: Some("Execute approved workflow plan".into()),
-            description: Some(
+        {
+            let mut model = Tool::default();
+            model.name = "run_workflow".into();
+            model.title = Some("Execute approved workflow plan".into());
+            model.description = Some(
                 "MCP App: live execute after `dry_workflow` review (`run_ref` required when verdict is review).".into(),
-            ),
-            input_schema: ToolInputSchema::new(
+            );
+            model.input_schema = crate::mcp_server::schema::object_schema(
                 vec!["logical_session_ref".into(), "run_ref".into()],
-                Some(run_props),
-                None,
-            ),
-            annotations: Some(ToolAnnotations {
-                read_only_hint: Some(false),
-                open_world_hint: Some(true),
-                ..Default::default()
-            }),
-            execution: Some(ToolExecution {
-                task_support: Some(ToolExecutionTaskSupport::Forbidden),
-            }),
-            icons: vec![],
-            meta: Some(ui_meta),
-            output_schema: None,
+                run_props,
+            );
+            model.annotations = Some({
+                let mut model = ToolAnnotations::default();
+                model.read_only_hint = Some(false);
+                model.open_world_hint = Some(true);
+                model
+            });
+            model.icons = None;
+            model.meta = Some(ui_meta.into());
+            model.output_schema = None;
+            model
         },
     ]
 }
@@ -178,9 +172,9 @@ impl PlasmMcpHandler {
     pub(crate) async fn handle_mcp_tool_open_workflow(
         &self,
         key: &str,
-        runtime: &Arc<dyn McpServer>,
+        runtime: &Arc<McpRequest>,
         v: &serde_json::Value,
-    ) -> Result<CallToolResult, CallToolError> {
+    ) -> Result<CallToolResult, ToolFailure> {
         let tname = "open_workflow";
         let principal_incoming = self.ensure_mcp_principal(key, runtime).await?;
         let id = v
@@ -189,7 +183,7 @@ impl PlasmMcpHandler {
             .map(str::trim)
             .filter(|s| !s.is_empty())
             .ok_or_else(|| {
-                CallToolError::invalid_arguments(tname, Some("missing or empty `id`".into()))
+                ToolFailure::invalid_arguments(tname, Some("missing or empty `id`".into()))
             })?;
         let intent = v
             .get("intent")
@@ -197,18 +191,16 @@ impl PlasmMcpHandler {
             .map(str::trim)
             .filter(|s| !s.is_empty())
             .ok_or_else(|| {
-                CallToolError::invalid_arguments(tname, Some("missing or empty `intent`".into()))
+                ToolFailure::invalid_arguments(tname, Some("missing or empty `intent`".into()))
             })?;
         let Some(manifest) = self.plasm.workflows().get(id) else {
-            return Err(CallToolError::from_message(format!(
-                "unknown workflow `{id}`"
-            )));
+            return Err(ToolFailure::rejected(format!("unknown workflow `{id}`")));
         };
         let tcfg = self.tenant_mcp_cfg(runtime).await?;
         let catalog = self.plasm.catalog.snapshot();
         let readiness = assess_workflow_readiness(&manifest, catalog.as_ref(), tcfg.as_deref());
         if !readiness.ready {
-            return Err(CallToolError::from_message(format!(
+            return Err(ToolFailure::rejected(format!(
                 "workflow not ready: {}",
                 readiness.blocking_errors.join("; ")
             )));
@@ -218,14 +210,14 @@ impl PlasmMcpHandler {
             Some((catalog.as_ref(), tcfg.as_deref())),
         );
         validate_workflow_view_model(&vm)
-            .map_err(|error| CallToolError::from_message(error.to_string()))?;
+            .map_err(|error| ToolFailure::rejected(error.to_string()))?;
         let scope = tenant_scope(principal_incoming.as_ref());
         let rec = self
             .plasm
             .logical_sessions
             .mint_session(&scope, intent)
             .await
-            .map_err(|error| CallToolError::from_message(error.to_string()))?;
+            .map_err(|error| ToolFailure::rejected(error.to_string()))?;
         let logical_session_ref = format_logical_session_wire_ref(rec.logical_session_id);
         let logical_uuid = rec.logical_session_id.as_uuid();
         let seeds = manifest_seeds_to_capability_seeds(&manifest);
@@ -239,7 +231,7 @@ impl PlasmMcpHandler {
             catalog.as_ref(),
             allowed_ids.as_deref(),
         )
-        .map_err(|error| CallToolError::from_message(error.to_string()))?;
+        .map_err(|error| ToolFailure::rejected(error.to_string()))?;
         let binding = self.resolve_binding_for_logical(key, logical_uuid).await;
         let principal = parse_optional_principal(v);
         let context_span = crate::spans::mcp_tool_plasm_context(logical_session_ref.as_str());
@@ -257,7 +249,7 @@ impl PlasmMcpHandler {
         )
         .instrument(context_span)
         .await
-        .map_err(|msg| CallToolError::new(std::io::Error::other(msg)))?;
+        .map_err(|msg| ToolFailure::cause(std::io::Error::other(msg)))?;
 
         if out.binding_updated {
             let ls_key = logical_uuid.to_string();
@@ -298,21 +290,19 @@ impl PlasmMcpHandler {
         });
         let mut meta = serde_json::Map::new();
         meta.insert("plasm".into(), body);
-        let mut res = CallToolResult::text_content(vec![TextContent::new(
-            format!("Workflow `{id}` opened as `{logical_session_ref}`."),
-            None,
-            None,
-        )]);
-        res.meta = Some(meta);
+        let mut res = CallToolResult::success(vec![rmcp::model::ContentBlock::text(format!(
+            "Workflow `{id}` opened as `{logical_session_ref}`."
+        ))]);
+        res.meta = Some(meta.into());
         Ok(res)
     }
 
     pub(crate) async fn handle_mcp_tool_dry_workflow(
         &self,
         key: &str,
-        runtime: &Arc<dyn McpServer>,
+        runtime: &Arc<McpRequest>,
         v: &serde_json::Value,
-    ) -> Result<CallToolResult, CallToolError> {
+    ) -> Result<CallToolResult, ToolFailure> {
         let tname = "dry_workflow";
         let principal_incoming = self.ensure_mcp_principal(key, runtime).await?;
         let id = v
@@ -321,7 +311,7 @@ impl PlasmMcpHandler {
             .map(str::trim)
             .filter(|s| !s.is_empty())
             .ok_or_else(|| {
-                CallToolError::invalid_arguments(tname, Some("missing or empty `id`".into()))
+                ToolFailure::invalid_arguments(tname, Some("missing or empty `id`".into()))
             })?;
         let session_ref = parse_logical_session_ref_arg(tname, v)?;
         let logical_uuid = self.resolve_logical_session_ref_to_uuid(tname, &session_ref)?;
@@ -332,24 +322,24 @@ impl PlasmMcpHandler {
             .verify_tenant(LogicalSessionId(logical_uuid), &scope)
             .await
         {
-            return Ok(CallToolResult::with_error(CallToolError::from_message(
-                "logical_session_ref is unknown or does not belong to this tenant scope",
-            )));
+            return Ok(crate::mcp_server::request::tool_error_result(
+                ToolFailure::rejected(
+                    "logical_session_ref is unknown or does not belong to this tenant scope",
+                ),
+            ));
         }
         let Some(manifest) = self.plasm.workflows().get(id) else {
-            return Err(CallToolError::from_message(format!(
-                "unknown workflow `{id}`"
-            )));
+            return Err(ToolFailure::rejected(format!("unknown workflow `{id}`")));
         };
         let template = manifest
             .parsed_template()
-            .map_err(|e| CallToolError::from_message(e.to_string()))?;
+            .map_err(|e| ToolFailure::rejected(e.to_string()))?;
         let params_json: BTreeMap<String, serde_json::Value> = v
             .get("parameters")
             .and_then(|p| serde_json::from_value(p.clone()).ok())
             .unwrap_or_default();
         let Some(b) = self.resolve_binding_for_logical(key, logical_uuid).await else {
-            return Err(CallToolError::from_message(
+            return Err(ToolFailure::rejected(
                 "No execute session: call `open_workflow` first.",
             ));
         };
@@ -359,7 +349,7 @@ impl PlasmMcpHandler {
             .get_by_strs(&b.prompt_hash, &b.session_id)
             .await
         else {
-            return Err(CallToolError::from_message(
+            return Err(ToolFailure::rejected(
                 "Execute session expired: call `open_workflow` again.",
             ));
         };
@@ -371,7 +361,7 @@ impl PlasmMcpHandler {
         let exposure_map = sym_exposure_from_entity_symbols(&entity_symbols);
         let refs = sym_exposure_refs(&exposure_map);
         let program = instantiate_workflow_program(&manifest, &template, &params_json, &refs)
-            .map_err(|e| CallToolError::from_message(e.to_string()))?;
+            .map_err(|e| ToolFailure::rejected(e.to_string()))?;
         let dry_v = json!({
             "logical_session_ref": session_ref,
             "program": program.clone(),
@@ -397,9 +387,9 @@ impl PlasmMcpHandler {
     pub(crate) async fn handle_mcp_tool_run_workflow(
         &self,
         key: &str,
-        runtime: &Arc<dyn McpServer>,
+        runtime: &Arc<McpRequest>,
         v: &serde_json::Value,
-    ) -> Result<CallToolResult, CallToolError> {
+    ) -> Result<CallToolResult, ToolFailure> {
         self.handle_plasm_mcp_tool(
             key,
             runtime,

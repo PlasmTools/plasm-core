@@ -146,7 +146,7 @@ mod tests {
     use std::sync::Arc;
 
     fn matrix_layers() -> (Arc<CGS>, Vec<std::sync::Arc<CGS>>) {
-        let dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        let dir = PathBuf::from(crate::test_manifest_dir())
             .join("../../fixtures/schemas/plasm_language_matrix");
         let cgs = Arc::new(load_schema_dir(&dir).expect("matrix"));
         (cgs.clone(), vec![cgs])
@@ -173,7 +173,7 @@ mod tests {
     }
 
     fn digit_id_layers() -> (Arc<CGS>, Vec<std::sync::Arc<CGS>>) {
-        let dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        let dir = PathBuf::from(crate::test_manifest_dir())
             .join("../../fixtures/schemas/digit_id_identity");
         let cgs = Arc::new(load_schema_dir(&dir).expect("digit_id_identity"));
         (cgs.clone(), vec![cgs])

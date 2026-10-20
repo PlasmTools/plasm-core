@@ -1130,7 +1130,7 @@ mod tests {
 
     #[test]
     fn squashed_migration_and_allowlisted_incrementals() {
-        let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("migrations");
+        let dir = std::path::Path::new(crate::test_manifest_dir()).join("migrations");
         let mut names: Vec<String> = std::fs::read_dir(&dir)
             .expect("migrations dir")
             .filter_map(|e| e.ok())

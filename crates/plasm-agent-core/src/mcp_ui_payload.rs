@@ -28,7 +28,7 @@
 //! App-only hydration when hosts strip lanes: `plasm_ui_read_plan`, `plasm_ui_read_run`
 //! (`_meta.ui.visibility: ["app"]` — host-enforced; server still registers on `tools/list`).
 
-use rust_mcp_sdk::schema::{CallToolResult, ToolOutputSchema};
+use rmcp::model::CallToolResult;
 use serde_json::{Map, Value};
 
 use crate::mcp_delivery::McpDeliveryProfile;
@@ -93,7 +93,7 @@ pub fn finalize_mcp_tool_result(
     if profile.attaches_ui_meta() {
         crate::mcp_app::attach_mcp_app_ui_on_tool_meta(&mut tool_meta);
     }
-    let res = res.with_meta(Some(tool_meta));
+    let res = res.with_meta(Some(tool_meta.into()));
     if profile.emits_structured_ui() {
         attach_structured_ui_lane(res, inline_plan_ui.as_ref())
     } else {
@@ -113,8 +113,7 @@ pub struct DualLaneToolResult {
 
 impl DualLaneToolResult {
     pub fn into_call_tool_result(self) -> CallToolResult {
-        use rust_mcp_sdk::schema::TextContent;
-        let res = CallToolResult::text_content(vec![TextContent::new(self.content, None, None)]);
+        let res = CallToolResult::success(vec![rmcp::model::ContentBlock::text(self.content)]);
         let mut meta = Map::new();
         meta.insert("plasm".into(), Value::Object(self.plasm_meta));
         finalize_mcp_tool_result(res, meta, self.profile, self.inline_plan_ui)
@@ -164,7 +163,11 @@ pub(crate) fn attach_structured_ui_lane(
     };
     let mut structured = Map::new();
     structured.insert("ui".to_string(), ui);
-    res.with_structured_content(structured)
+    {
+        let mut res = res;
+        res.structured_content = Some(serde_json::Value::Object(structured));
+        res
+    }
 }
 
 const UI_STEP_REF_KEYS: &[&str] = &[
@@ -281,16 +284,19 @@ pub(crate) fn take_plasm_map(meta: &Map<String, Value>) -> Option<&Map<String, V
 }
 
 /// Build MCP `outputSchema` documenting dual-lane tool results for `plasm`.
-pub fn plasm_tool_output_schema() -> ToolOutputSchema {
+pub fn plasm_tool_output_schema() -> std::sync::Arc<serde_json::Map<String, serde_json::Value>> {
     tool_ui_output_schema(UiPayloadKind::PlanReview)
 }
 
 /// Build MCP `outputSchema` documenting dual-lane tool results for `plasm_run`.
-pub fn plasm_run_tool_output_schema() -> ToolOutputSchema {
+pub fn plasm_run_tool_output_schema() -> std::sync::Arc<serde_json::Map<String, serde_json::Value>>
+{
     tool_ui_output_schema(UiPayloadKind::RunExplorer)
 }
 
-fn tool_ui_output_schema(kind: UiPayloadKind) -> ToolOutputSchema {
+fn tool_ui_output_schema(
+    kind: UiPayloadKind,
+) -> std::sync::Arc<serde_json::Map<String, serde_json::Value>> {
     use std::collections::BTreeMap;
 
     let mut ui_props = BTreeMap::new();
@@ -332,11 +338,7 @@ fn tool_ui_output_schema(kind: UiPayloadKind) -> ToolOutputSchema {
         json_schema_object("View render lane (SEP-1865 structuredContent.ui)", ui_props),
     );
 
-    ToolOutputSchema::new(
-        vec![],
-        Some(structured_props),
-        Some("https://json-schema.org/draft/2020-12/schema".into()),
-    )
+    crate::mcp_server::schema::object_schema(vec![], structured_props)
 }
 
 fn json_schema_string(description: &str) -> Map<String, Value> {
@@ -374,7 +376,9 @@ fn json_schema_object(
 fn call_tool_result_with_ui(ui: Map<String, Value>) -> CallToolResult {
     let mut structured = Map::new();
     structured.insert("ui".into(), Value::Object(ui));
-    CallToolResult::text_content(vec![]).with_structured_content(structured)
+    let mut result = CallToolResult::success(vec![]);
+    result.structured_content = Some(Value::Object(structured));
+    result
 }
 
 /// Build app-only hydration tool result with plan DAG in `structuredContent.ui`.
@@ -416,8 +420,24 @@ pub fn ui_read_run_tool_result(
 mod tests {
     use super::*;
     use crate::mcp_agent_present::{AgentContent, PlanTokenRefs, RunTokens};
-    use rust_mcp_sdk::schema::{CallToolResult, ContentBlock, TextContent};
+    use rmcp::model::{CallToolResult, ContentBlock};
     use serde_json::json;
+
+    #[test]
+    fn app_hydration_keeps_payload_out_of_agent_text() {
+        for result in [
+            ui_read_plan_tool_result(json!({"steps": {}}), json!({})),
+            ui_read_run_tool_result("run", "items", 1, json!([{"id": "one"}])),
+        ] {
+            assert!(result.content.is_empty());
+            assert!(result
+                .structured_content
+                .as_ref()
+                .unwrap()
+                .get("ui")
+                .is_some());
+        }
+    }
 
     fn sample_dry_tool_meta() -> Map<String, Value> {
         let mut agent = Map::new();
@@ -460,7 +480,7 @@ mod tests {
 
     fn first_text(out: &CallToolResult) -> String {
         for block in &out.content {
-            if let ContentBlock::TextContent(t) = block {
+            if let ContentBlock::Text(t) = block {
                 return t.text.clone();
             }
         }
@@ -469,10 +489,8 @@ mod tests {
 
     #[test]
     fn finalize_full_apps_emits_ui_lane_without_agent_plasm() {
-        let res = CallToolResult::text_content(vec![TextContent::new(
+        let res = CallToolResult::success(vec![rmcp::model::ContentBlock::text(
             sample_plan_agent_content(),
-            None,
-            None,
         )]);
         let out = finalize_mcp_tool_result(
             res,
@@ -490,7 +508,9 @@ mod tests {
         assert_eq!(
             wire.pointer("/structuredContent/ui/plan_uri")
                 .and_then(|v| v.as_str()),
-            Some("plasm://execute/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/s1/plan/00000000-0000-4000-8000-000000000001")
+            Some(
+                "plasm://execute/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/s1/plan/00000000-0000-4000-8000-000000000001"
+            )
         );
         let text = first_text(&out);
         assert!(text.contains("kind\tplan"));
@@ -503,7 +523,7 @@ mod tests {
         let meta = sample_dry_tool_meta();
         let comp = json!({ "version": 1, "steps": { "n1": { "kind": "invoke" } }, "bind": { "topo": ["n1"] }, "return": { "kind": "step", "step": "n1" } });
         let ux = json!({ "schema_version": 3, "steps": [{ "operation": "query" }] });
-        let res = CallToolResult::text_content(vec![TextContent::new("ok".into(), None, None)]);
+        let res = CallToolResult::success(vec![rmcp::model::ContentBlock::text("ok")]);
         let out = finalize_mcp_tool_result(
             res,
             meta,
@@ -547,7 +567,7 @@ mod tests {
         .render();
         let comp = json!({ "version": 1, "steps": { "n1": { "kind": "invoke" } }, "bind": { "topo": ["n1"] }, "return": { "kind": "step", "step": "n1" } });
         let ux = json!({ "schema_version": 3, "flow": { "verdict": "clean" }, "steps": [{ "operation": "query" }] });
-        let res = CallToolResult::text_content(vec![TextContent::new(markdown, None, None)]);
+        let res = CallToolResult::success(vec![rmcp::model::ContentBlock::text(markdown)]);
         // Even if a caller wrongly passes inline plan on a fused read, UI lane stays Run Explorer.
         let out = finalize_mcp_tool_result(
             res,
@@ -583,7 +603,7 @@ mod tests {
 
     #[test]
     fn finalize_attaches_plan_review_for_dry_run() {
-        let res = CallToolResult::text_content(vec![TextContent::new("ok".into(), None, None)]);
+        let res = CallToolResult::success(vec![rmcp::model::ContentBlock::text("ok")]);
         let out = finalize_mcp_tool_result(
             res,
             sample_dry_tool_meta(),
@@ -622,7 +642,7 @@ mod tests {
             body,
         )
         .render();
-        let res = CallToolResult::text_content(vec![TextContent::new(markdown, None, None)]);
+        let res = CallToolResult::success(vec![rmcp::model::ContentBlock::text(markdown)]);
         let out = finalize_mcp_tool_result(res, tool_meta, McpDeliveryProfile::FullApps, None);
         assert_eq!(
             out.meta
@@ -657,10 +677,8 @@ mod tests {
         let meta = sample_dry_tool_meta();
         let comp = json!({ "version": 1, "steps": { "n1": { "kind": "invoke" } } });
         let ux = json!({ "schema_version": 3, "steps": [{ "operation": "query" }] });
-        let res = CallToolResult::text_content(vec![TextContent::new(
+        let res = CallToolResult::success(vec![rmcp::model::ContentBlock::text(
             sample_plan_agent_content(),
-            None,
-            None,
         )]);
         let out = finalize_mcp_tool_result(
             res,
@@ -689,7 +707,7 @@ mod tests {
 
     #[test]
     fn finalize_skips_ui_lane_when_apps_disabled() {
-        let res = CallToolResult::text_content(vec![TextContent::new("ok".into(), None, None)]);
+        let res = CallToolResult::success(vec![rmcp::model::ContentBlock::text("ok")]);
         let out = finalize_mcp_tool_result(
             res,
             sample_dry_tool_meta(),

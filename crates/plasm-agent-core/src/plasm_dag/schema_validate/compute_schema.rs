@@ -79,7 +79,10 @@ pub(in crate::plasm_dag) fn infer_render_columns_for_node(
                     })?;
                 infer_render_columns_for_node(session, state, staged, parent)
             }
-            ComputeOp::With { .. } | ComputeOp::Union { .. } | ComputeOp::MergeBranches { .. } => {
+            ComputeOp::NarrowEntity { .. }
+            | ComputeOp::With { .. }
+            | ComputeOp::Union { .. }
+            | ComputeOp::MergeBranches { .. } => {
                 Ok(schema.fields.iter().map(|f| f.name.clone()).collect())
             }
             ComputeOp::Render { .. } | ComputeOp::Python { .. } => {
@@ -87,9 +90,16 @@ pub(in crate::plasm_dag) fn infer_render_columns_for_node(
             }
         },
         DagNodeSource::Surface {
-            qualified_entity, ..
+            output_authority, ..
+        } => {
+            let entity = output_authority.single().ok_or_else(|| {
+                super::catalog::SchemaCatalogError::EntityUnionNeedsNarrowing {
+                    binding: node.id.clone(),
+                }
+            })?;
+            Ok(infer_entity_row_columns(session, entity)?)
         }
-        | DagNodeSource::RelationTraversal {
+        DagNodeSource::RelationTraversal {
             qualified_entity, ..
         } => Ok(infer_entity_row_columns(session, qualified_entity)?),
         DagNodeSource::MapBody { schema, .. } => {
@@ -136,13 +146,20 @@ pub(in crate::plasm_dag) fn synthetic_schema_passthrough_rows(
 ) -> Result<SyntheticResultSchema, PassthroughSchemaError> {
     let qe = resolve_qualified_entity_for_dag_source(state, staged, source_id.to_string())
         .ok_or(PassthroughSchemaError::SourceEntityMissing)?;
-    let cols = infer_entity_row_columns(session, &qe)?;
+    synthetic_schema_for_qualified_entity(session, &qe)
+}
+
+pub(in crate::plasm_dag) fn synthetic_schema_for_qualified_entity(
+    session: &ExecuteSession,
+    qe: &QualifiedEntityKey,
+) -> Result<SyntheticResultSchema, PassthroughSchemaError> {
+    let cols = infer_entity_row_columns(session, qe)?;
     if cols.is_empty() {
         return Err(PassthroughSchemaError::EntityFieldsMissing);
     }
     let mut schema =
         schema_from_output_fields(qe.entity.as_str(), cols.iter(), SyntheticValueKind::Unknown);
-    let cgs = super::catalog::cgs_for_qualified_entity(session, &qe).ok_or_else(|| {
+    let cgs = super::catalog::cgs_for_qualified_entity(session, qe).ok_or_else(|| {
         PassthroughSchemaError::Catalog(super::catalog::SchemaCatalogError::CatalogNotLoaded {
             entry_id: qe.entry_id.to_string(),
             entity: qe.entity.to_string(),

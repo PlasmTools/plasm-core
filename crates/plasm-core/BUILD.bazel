@@ -1,0 +1,57 @@
+load("//build/bazel:integration_tests.bzl", "rust_integration_tests")
+load("@crates//:defs.bzl", "aliases", "all_crate_deps")
+
+load("@rules_rust//rust:defs.bzl", "rust_library", "rust_test")
+
+exports_files(["src/prompt_render/assets/python-plasm-dag.txt"])
+
+rust_library(
+    name = "plasm_core",
+    srcs = glob(["src/**/*.rs"]),
+    aliases = aliases(),
+    compile_data = glob([
+        "assets/**",
+        "src/**/*.txt",
+    ]),
+    crate_features = ["ranked_capability_gate"],
+    crate_root = "src/lib.rs",
+    edition = "2021",
+    proc_macro_deps = all_crate_deps(proc_macro = True),
+    version = "0.5.5",
+    visibility = ["//visibility:public"],
+    deps = [] + all_crate_deps(normal = True),
+)
+
+rust_test(
+    name = "unit_tests",
+    compile_data = [
+        "//:test_fixtures",
+        "//:agent_prompt_assets",
+    ],
+    crate = ":plasm_core",
+    data = [
+        "Cargo.toml",
+        "//:agent_prompt_assets",
+        "//:test_fixtures",
+    ] + glob(
+        [
+            "src/**/*.snap",
+            "src/**/*.rs",
+        ],
+        allow_empty = True,
+    ),
+    env = {"INSTA_WORKSPACE_ROOT": "."},
+    proc_macro_deps = all_crate_deps(proc_macro_dev = True),
+    visibility = ["//visibility:public"],
+    deps = ["//crates/plasm-otel:plasm_otel_testing"] + all_crate_deps(normal_dev = True),
+)
+
+rust_integration_tests(
+    tests = {
+        "measure_linear_seeds": "tests/measure_linear_seeds.rs",
+        "validate_cutover_catalogs": "tests/validate_cutover_catalogs.rs"
+},
+    deps = ["//crates/plasm-core:plasm_core", "//crates/plasm-otel:plasm_otel_testing"],
+    compile_data = ["//:test_fixtures", "//:language_reference", "//:agent_prompt_assets"] + glob(["src/**", "migrations/**"], allow_empty = True),
+    data = ["//:test_fixtures", "//:catalog_sources", "//:language_reference", "//:agent_prompt_assets"] + glob(["migrations/**"], allow_empty = True),
+)

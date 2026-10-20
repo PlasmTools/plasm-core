@@ -7,8 +7,13 @@ mod expression_validation;
 pub use expression_validation::ExpressionValidationError;
 mod format_template;
 mod mail;
+mod mcp;
 pub use format_template::{FormatTemplate, FormatTemplateError};
 pub use mail::MailError;
+pub use mcp::{
+    CompiledMcpCall, McpCollectionContract, McpResponse, McpResultSource, McpTemplate,
+    McpTemplateError,
+};
 mod projection;
 pub use credential::{
     CompiledCredentialBind, CompiledCredentialUse, CredentialBindError, CredentialBindTemplate,

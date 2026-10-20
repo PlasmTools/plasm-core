@@ -9,7 +9,14 @@ Entries before **0.4.35** live in [`CHANGELOG-ARCHIVE.md`](CHANGELOG-ARCHIVE.md)
 
 ## [Unreleased]
 
-## [0.5.5] - 2026-10-17
+## [0.5.5] - 2026-10-20
+
+### Changed
+
+- Build standalone core, tests, release archives and npm artifacts with the pinned Bazel graph; execute Rust test suites with nextest.
+- Share compiled artifacts between local development and CI through Bazel's content-addressed disk cache.
+- Publish binaries for macOS Apple Silicon and Linux x86-64 GNU; discontinue Intel macOS artifacts.
+- Pin the published Monty fork, including deterministic typeshed archive generation.
 
 ### Fixed
 

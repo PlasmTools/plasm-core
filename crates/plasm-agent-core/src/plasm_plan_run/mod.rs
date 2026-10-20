@@ -233,16 +233,16 @@ impl DryPlasmPlanEvaluation {
         )
     }
 
-    /// MCP/NAPI fused execute: Proceed + Clean + no remote mutation.
-    /// Advisory unbounded lists stay on `run_ref` (`needs_review` is not Proceed).
+    /// Fuse policy-clean reads whose execution has no fetch-all or fanout risk.
+    /// Projection/collection-shape advice remains diagnostic, not an approval rite.
+    /// The default host page bounds an otherwise unnarrowed list; coverage checks
+    /// and continuation handling still apply during execution.
     #[must_use]
     pub fn fuse_clean_read(&self) -> bool {
-        let decision = crate::plan_gate::plan_gate(
-            &self.evaluate_gate(),
-            crate::plan_gate::PlanGateContext::without_commit(false),
-        );
-        matches!(decision, crate::PlanGateDecision::Proceed(_))
-            && matches!(self.flow.verdict, crate::plan_flow::FlowVerdict::Clean)
+        matches!(self.flow.verdict, crate::plan_flow::FlowVerdict::Clean)
+            && self.admit_for_commit().is_ok()
+            && !self.review.execution_is_expensive()
+            && !self.review.has_unbounded_relation_embed_hydrate
             && !crate::plan_flow::validated_plan_has_remote_mutation(self.validated_plan())
     }
 

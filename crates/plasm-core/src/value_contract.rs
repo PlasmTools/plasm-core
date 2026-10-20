@@ -1404,7 +1404,7 @@ mod presence_tests {
     #[test]
     fn domain_fault_retains_path_and_semantic_cause_without_observed_value() {
         let cgs = crate::loader::load_schema_dir(
-            &std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            &std::path::Path::new(crate::test_manifest_dir())
                 .join("../../fixtures/schemas/plasm_language_matrix"),
         )
         .unwrap();
@@ -1473,7 +1473,7 @@ mod presence_tests {
     #[test]
     fn observed_references_use_pinned_structural_identity_not_embedded_fields() {
         let cgs = crate::loader::load_schema_dir(
-            &std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            &std::path::Path::new(crate::test_manifest_dir())
                 .join("../../fixtures/schemas/plasm_language_matrix"),
         )
         .unwrap();
@@ -1516,7 +1516,7 @@ mod presence_tests {
     #[test]
     fn observed_presence_is_independent_of_nullability_and_survives_serde() {
         let cgs = crate::loader::load_schema_dir(
-            &std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            &std::path::Path::new(crate::test_manifest_dir())
                 .join("../../fixtures/schemas/python_value_contract"),
         )
         .unwrap();

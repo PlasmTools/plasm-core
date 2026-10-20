@@ -246,7 +246,7 @@ mod tests {
     };
 
     fn prompt_matrix_cgs() -> crate::CGS {
-        let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        let dir = std::path::Path::new(crate::test_manifest_dir())
             .join("../../fixtures/schemas/plasm_prompt_matrix");
         load_schema_dir(&dir).expect("plasm_prompt_matrix")
     }

@@ -228,6 +228,10 @@ pub enum PythonInputError {
 
 #[derive(Debug, Clone, thiserror::Error)]
 pub enum PythonSourceError {
+    #[error("of_type requires an exposed entity symbol from the source's declared entity union")]
+    EntityNarrowingTarget,
+    #[error("of_type requires catalog union rows with retained identity; constructed values cannot confer entity authority")]
+    EntityNarrowingSource,
     #[error("Python source is invalid: writes require named arguments; positional payloads are not admitted")]
     WritePositionalArguments { actual: usize },
     #[error("Python source is invalid: this method requires an entity receiver")]
@@ -675,6 +679,15 @@ pub enum PythonProgramError {
 }
 
 impl PythonComputeRejection {
+    pub(crate) fn rejection_detail(&self) -> Option<plasm_runtime::ProgramRejectionDetail> {
+        match self {
+            Self::Typed(PythonComputeError::Inference(error)) | Self::Inference(error) => {
+                error.rejection_detail()
+            }
+            Self::Lowering(error) => error.rejection_detail(),
+            _ => None,
+        }
+    }
     pub fn correction(&self) -> std::borrow::Cow<'_, str> {
         match self {
             Self::Typed(error) => std::borrow::Cow::Owned(error.to_string()),
@@ -1091,6 +1104,8 @@ impl PythonLoweringError {
         use plasm_runtime::ProgramRejectionDetail as Detail;
         match self {
             Self::Located { error, .. } => error.rejection_detail(),
+            Self::ComputeTyped(PythonComputeError::Inference(error)) => error.rejection_detail(),
+            Self::Compute(error) => error.rejection_detail(),
             Self::Program(PythonProgramError::BuildLocalShadowsReservedBinding { name }) => {
                 Some(Detail::ReservedBinding { name: name.clone() })
             }

@@ -399,7 +399,7 @@ mod tests {
 
     fn overshow_registry() -> CgsRegistry {
         let dir =
-            Path::new(env!("CARGO_MANIFEST_DIR")).join("../../fixtures/schemas/overshow_tools");
+            Path::new(crate::test_manifest_dir()).join("../../fixtures/schemas/overshow_tools");
         let cgs = Arc::new(load_schema_dir(&dir).expect("overshow_tools"));
         CgsRegistry::from_pairs(vec![(
             "overshow".into(),
@@ -479,7 +479,7 @@ mod tests {
 
     #[tokio::test]
     async fn rehydrate_rejects_mismatched_entity_catalog_pairing() {
-        let matrix_dir = Path::new(env!("CARGO_MANIFEST_DIR"))
+        let matrix_dir = Path::new(crate::test_manifest_dir())
             .join("../../fixtures/schemas/plasm_language_matrix");
         let cgs = Arc::new(load_schema_dir(&matrix_dir).expect("matrix"));
         let reg = Arc::new(CgsRegistry::from_pairs(vec![
@@ -643,7 +643,7 @@ mod tests {
     fn explicit_replay_preserves_only_requested_entities() {
         use crate::http_execute::replay_teaching_exposure_waves;
 
-        let matrix_dir = Path::new(env!("CARGO_MANIFEST_DIR"))
+        let matrix_dir = Path::new(crate::test_manifest_dir())
             .join("../../fixtures/schemas/plasm_language_matrix");
         let cgs = Arc::new(load_schema_dir(&matrix_dir).expect("matrix"));
         let mut contexts = IndexMap::new();

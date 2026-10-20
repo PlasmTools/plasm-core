@@ -1,0 +1,69 @@
+load("//build/bazel:integration_tests.bzl", "rust_integration_tests")
+load("//build/bazel:native_test.bzl", "rust_test_with_monty")
+load("@crates//:defs.bzl", "aliases", "all_crate_deps")
+load("@rules_rust//rust:defs.bzl", "rust_binary", "rust_library")
+
+rust_test_with_monty(
+    name = "unit_tests",
+    crate = ":plasm_trace_sink",
+    deps = all_crate_deps(normal_dev = True),
+    proc_macro_deps = all_crate_deps(proc_macro_dev = True),
+    data = ["Cargo.toml"],
+    visibility = ["//visibility:public"],
+)
+
+rust_library(
+    name = "plasm_trace_sink",
+    srcs = glob(["src/**/*.rs"]),
+    aliases = aliases(),
+    compile_data = glob(
+        ["src/**"],
+        allow_empty = True,
+        exclude = ["src/**/*.rs"],
+    ),
+    crate_features = [],
+    crate_root = "src/lib.rs",
+    edition = "2021",
+    proc_macro_deps = all_crate_deps(proc_macro = True),
+    version = "0.5.5",
+    visibility = ["//visibility:public"],
+    deps = [
+        "//crates/plasm-otel:plasm_otel",
+        "//crates/plasm-trace:plasm_trace",
+        "//crates/plasm-trace-wire:plasm_trace_wire",
+    ] + all_crate_deps(normal = True),
+)
+
+rust_integration_tests(
+    tests = {
+        "http_iceberg_integration": "tests/http_iceberg_integration.rs",
+        "http_integration": "tests/http_integration.rs",
+        "trace_read_timing": "tests/trace_read_timing.rs"
+},
+    deps = ["//crates/plasm-otel:plasm_otel_testing", "//crates/plasm-trace-sink:plasm_trace_sink", "//crates/plasm-trace-wire:plasm_trace_wire", "//crates/plasm-trace:plasm_trace"],
+    compile_data = ["//:test_fixtures", "//:language_reference", "//:agent_prompt_assets", "//crates/plasm-agent-core:integration_support"] + glob(["src/**", "migrations/**"], allow_empty = True),
+    data = ["//:test_fixtures", "//:catalog_sources", "//:language_reference", "//:agent_prompt_assets"] + glob(["migrations/**"], allow_empty = True),
+)
+
+rust_binary(
+    name = "plasm-trace-sink",
+    srcs = glob(["src/**/*.rs"]),
+    aliases = aliases(),
+    compile_data = glob(
+        ["src/**"],
+        allow_empty = True,
+        exclude = ["src/**/*.rs"],
+    ),
+    crate_features = [],
+    crate_root = "src/main.rs",
+    edition = "2021",
+    proc_macro_deps = all_crate_deps(proc_macro = True),
+    version = "0.5.5",
+    visibility = ["//visibility:public"],
+    deps = [
+        ":plasm_trace_sink",
+        "//crates/plasm-otel:plasm_otel",
+        "//crates/plasm-trace:plasm_trace",
+        "//crates/plasm-trace-wire:plasm_trace_wire",
+    ] + all_crate_deps(normal = True),
+)

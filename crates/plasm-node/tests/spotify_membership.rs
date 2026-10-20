@@ -48,7 +48,7 @@ async fn spotify_library_view_observes_direct_membership_without_containment_req
     let path = std::env::var_os("PLASM_SPOTIFY_WITNESS_CATALOG")
         .map(std::path::PathBuf::from)
         .unwrap_or_else(|| {
-            std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../apis/appworld/spotify")
+            std::path::Path::new(&std::env::var("CARGO_MANIFEST_DIR").expect("test runner must set CARGO_MANIFEST_DIR")).join("../../apis/appworld/spotify")
         });
     let mut cgs = plasm_core::load_schema_dir(&path).unwrap();
     cgs.bind_registry_entry_id("spotify");

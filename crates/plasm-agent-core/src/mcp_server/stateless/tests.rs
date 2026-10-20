@@ -31,11 +31,12 @@ async fn post_mcp(app: Router, method: &str, params: Value, id: i64) -> (StatusC
     let req = Request::builder()
         .method("POST")
         .uri("/mcp")
+        .header("host", "localhost")
         .header("content-type", "application/json")
         .header("authorization", auth)
         .header("mcp-protocol-version", "2026-07-28")
         .header("mcp-method", method)
-        .header("accept", "application/json")
+        .header("accept", "application/json, text/event-stream")
         .body(Body::from(body.to_string()))
         .unwrap();
     let resp = app.oneshot(req).await.unwrap();
@@ -47,20 +48,33 @@ async fn post_mcp(app: Router, method: &str, params: Value, id: i64) -> (StatusC
 
 #[tokio::test]
 async fn stateless_discover_returns_capabilities() {
-    let app = super::router(minimal_host()).await;
+    let app = super::super::build_mcp_router_for_transport(
+        minimal_host(),
+        super::super::McpHttpTransport::Stateless,
+    )
+    .await
+    .unwrap();
     let (status, data) =
         post_mcp(app, "server/discover", json!({ "_meta": valid_meta() }), 1).await;
     assert_eq!(status, StatusCode::OK);
     assert!(data["result"]["supportedVersions"]
         .as_array()
         .is_some_and(|a| !a.is_empty()));
-    assert_eq!(data["result"]["serverInfo"]["name"], "plasm");
+    assert_eq!(
+        data["result"]["_meta"]["io.modelcontextprotocol/serverInfo"]["name"],
+        "plasm"
+    );
     assert!(data["result"]["capabilities"]["tools"].is_object());
 }
 
 #[tokio::test]
 async fn stateless_rejects_missing_meta_with_400() {
-    let app = super::router(minimal_host()).await;
+    let app = super::super::build_mcp_router_for_transport(
+        minimal_host(),
+        super::super::McpHttpTransport::Stateless,
+    )
+    .await
+    .unwrap();
     let (status, data) = post_mcp(app, "server/discover", json!({}), 101).await;
     assert_eq!(status, StatusCode::BAD_REQUEST);
     assert_eq!(data["error"]["code"], -32602);
@@ -68,7 +82,12 @@ async fn stateless_rejects_missing_meta_with_400() {
 
 #[tokio::test]
 async fn stateless_initialize_returns_404() {
-    let app = super::router(minimal_host()).await;
+    let app = super::super::build_mcp_router_for_transport(
+        minimal_host(),
+        super::super::McpHttpTransport::Stateless,
+    )
+    .await
+    .unwrap();
     let (status, data) = post_mcp(app, "initialize", json!({ "_meta": valid_meta() }), 500).await;
     assert_eq!(status, StatusCode::NOT_FOUND);
     assert_eq!(data["error"]["code"], -32601);
@@ -76,7 +95,12 @@ async fn stateless_initialize_returns_404() {
 
 #[tokio::test]
 async fn stateless_tools_list_with_valid_meta() {
-    let app = super::router(minimal_host()).await;
+    let app = super::super::build_mcp_router_for_transport(
+        minimal_host(),
+        super::super::McpHttpTransport::Stateless,
+    )
+    .await
+    .unwrap();
     let (status, data) = post_mcp(app, "tools/list", json!({ "_meta": valid_meta() }), 202).await;
     assert_eq!(status, StatusCode::OK);
     assert!(data["result"]["tools"].as_array().is_some());
@@ -84,7 +108,12 @@ async fn stateless_tools_list_with_valid_meta() {
 
 #[tokio::test]
 async fn stateless_header_mismatch_returns_32020() {
-    let app = super::router(minimal_host()).await;
+    let app = super::super::build_mcp_router_for_transport(
+        minimal_host(),
+        super::super::McpHttpTransport::Stateless,
+    )
+    .await
+    .unwrap();
     let body = json!({
         "jsonrpc": "2.0",
         "id": 302,
@@ -104,10 +133,12 @@ async fn stateless_header_mismatch_returns_32020() {
     let req = Request::builder()
         .method("POST")
         .uri("/mcp")
+        .header("host", "localhost")
         .header("content-type", "application/json")
         .header("authorization", auth)
         .header("mcp-protocol-version", "2026-07-28")
         .header("mcp-method", "server/discover")
+        .header("accept", "application/json, text/event-stream")
         .body(Body::from(body.to_string()))
         .unwrap();
     let resp = app.oneshot(req).await.unwrap();

@@ -1295,7 +1295,7 @@ mod tests {
     }
 
     fn execute_tiny_dir() -> PathBuf {
-        PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        PathBuf::from(std::env::var("CARGO_MANIFEST_DIR").expect("test manifest directory"))
             .join("../plasm-agent-core/tests/fixtures/execute_tiny")
     }
 
@@ -1385,8 +1385,9 @@ mod tests {
     }
 
     fn return_projection_engine() -> (AgentEngine, CatalogInfo) {
-        let dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-            .join("../../fixtures/schemas/return_projection_teaching");
+        let dir =
+            PathBuf::from(std::env::var("CARGO_MANIFEST_DIR").expect("test manifest directory"))
+                .join("../../fixtures/schemas/return_projection_teaching");
         let mut cgs = plasm_core::load_schema_dir(&dir).unwrap();
         cgs.bind_registry_entry_id("return_projection");
         let info = CatalogInfo {
@@ -1485,8 +1486,8 @@ mod tests {
         assert!(dry.plan_commit_ref.starts_with("pc"));
         assert!(!dry.summary.is_empty());
         assert!(
-            !dry.fused_clean_read,
-            "unbounded Product list must stay on run_ref: {}",
+            dry.fused_clean_read,
+            "read-only Product query must follow the shared clean-read verdict: {}",
             dry.summary
         );
     }
@@ -1830,7 +1831,7 @@ mod tests {
         std::thread::Builder::new().stack_size(2 * 1024 * 1024).spawn(|| {
             tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap()
                 .block_on(async {
-                    let dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+                    let dir = PathBuf::from(std::env::var("CARGO_MANIFEST_DIR").expect("test manifest directory"))
                         .join("../../fixtures/schemas/plasm_language_matrix");
                     let mut cgs = plasm_core::load_schema_dir(&dir).unwrap();
                     cgs.bind_registry_entry_id("matrix");
@@ -2060,7 +2061,7 @@ mod tests {
             }
         }
         let mut cgs = plasm_core::load_schema_dir(
-            &PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            &PathBuf::from(std::env::var("CARGO_MANIFEST_DIR").expect("test manifest directory"))
                 .join("../../fixtures/schemas/plasm_pagination_matrix"),
         )
         .unwrap();

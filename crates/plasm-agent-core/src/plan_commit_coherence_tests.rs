@@ -29,7 +29,7 @@ async fn open_overshow_profile_host() -> (
     use crate::run_artifacts::RunArtifactStore;
     use crate::server_state::CatalogBootstrap;
 
-    let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../fixtures/schemas/overshow_tools");
+    let dir = Path::new(crate::test_manifest_dir()).join("../../fixtures/schemas/overshow_tools");
     let cgs = Arc::new(load_schema_dir(&dir).expect("overshow_tools"));
     let registry = Arc::new(CgsRegistry::from_pairs(vec![(
         "overshow".into(),

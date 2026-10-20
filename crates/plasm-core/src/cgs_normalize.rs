@@ -132,6 +132,7 @@ pub(crate) fn infer_query_scoped_from_via_param(
             return Some(RelationMaterialization::QueryScoped {
                 capability: cap.name.clone(),
                 param: via_param.clone(),
+                select_entity: None,
             });
         }
     }
@@ -146,7 +147,7 @@ mod tests {
 
     #[test]
     fn normalize_synthesizes_view_embed_from_relation_outputs() {
-        let dir = Path::new(env!("CARGO_MANIFEST_DIR"))
+        let dir = Path::new(crate::test_manifest_dir())
             .join("../../fixtures/schemas/plasm_language_matrix_views");
         if !dir.is_dir() {
             return;
@@ -186,7 +187,7 @@ mod tests {
 
     #[test]
     fn validate_rejects_unexecutable_many_relation() {
-        let dir = Path::new(env!("CARGO_MANIFEST_DIR"))
+        let dir = Path::new(crate::test_manifest_dir())
             .join("../../fixtures/schemas/plasm_language_matrix_views");
         if !dir.is_dir() {
             return;

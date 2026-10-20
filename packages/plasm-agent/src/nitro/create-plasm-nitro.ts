@@ -26,7 +26,6 @@ const SERVER_TRACE_DEPS = [
   "@plasm_lang/engine-linux-x64-gnu",
   "@plasm_lang/engine-linux-x64-musl",
   "@plasm_lang/engine-darwin-arm64",
-  "@plasm_lang/engine-darwin-x64",
   "@plasm_lang/vercel-agent",
   "@vercel/functions",
   "@vercel/blob",

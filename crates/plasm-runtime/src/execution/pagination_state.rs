@@ -54,6 +54,11 @@ fn compiled_query_insert(
     val: Value,
 ) -> Result<(), RuntimeError> {
     match compiled {
+        CompiledOperation::Mcp(call) => {
+            call.arguments
+                .insert(key.to_owned(), serde_json::to_value(val)?);
+            Ok(())
+        }
         CompiledOperation::Http(request) | CompiledOperation::GraphQl(request) => {
             compiled_query_insert_http(request, key, val);
             Ok(())
@@ -80,6 +85,10 @@ fn compiled_query_insert(
 
 fn compiled_query_remove(compiled: &mut CompiledOperation, key: &str) -> Result<(), RuntimeError> {
     match compiled {
+        CompiledOperation::Mcp(call) => {
+            call.arguments.remove(key);
+            Ok(())
+        }
         CompiledOperation::Http(request) | CompiledOperation::GraphQl(request) => {
             if let Some(query) = request.query.as_mut() {
                 let Value::Object(fields) = query else {
@@ -103,6 +112,9 @@ fn compiled_block_range_set(
     to_block: u64,
 ) -> Result<(), RuntimeError> {
     match compiled {
+        CompiledOperation::Mcp(_) => {
+            Err(crate::mcp_execution::McpExecutionError::PaginationUnsupported.into())
+        }
         CompiledOperation::EvmLogs(request) => {
             request.from_block = Some(from_block);
             request.to_block = Some(to_block);
@@ -209,6 +221,7 @@ pub(crate) fn pagination_context_map<'a>(
 /// Unified pagination state machine driven by the composable `PaginationConfig`.
 /// No style-enum branching — param types and stop conditions carry all information.
 pub(crate) struct PaginationLoopState {
+    pub mcp_collection: crate::mcp_execution::McpCollectionProgress,
     /// Current value for each param. `None` = `FromResponse` not yet received.
     param_values: indexmap::IndexMap<String, Option<serde_json::Value>>,
     pages_observed: u32,
@@ -244,6 +257,7 @@ impl PaginationLoopState {
             return Ok(Self {
                 param_values: indexmap::IndexMap::new(),
                 pages_observed: 0,
+                mcp_collection: Default::default(),
                 next_absolute_url: None,
                 last_requested_limit: 0,
                 from_block: user.from_block,
@@ -277,6 +291,7 @@ impl PaginationLoopState {
         Ok(Self {
             param_values,
             pages_observed: 0,
+            mcp_collection: Default::default(),
             next_absolute_url: None,
             last_requested_limit: 0,
             from_block: user.from_block,
@@ -309,6 +324,11 @@ impl PaginationLoopState {
                 to_block = to_block.min(final_to);
             }
             match compiled {
+                CompiledOperation::Mcp(_) => {
+                    return Err(
+                        crate::mcp_execution::McpExecutionError::PaginationUnsupported.into(),
+                    )
+                }
                 CompiledOperation::Http(_) | CompiledOperation::GraphQl(_) => {
                     compiled_query_insert(
                         compiled,
@@ -548,6 +568,7 @@ impl From<&PaginationLoopState> for QueryPaginationState {
                 .map(|(k, v)| (k.clone(), v.clone()))
                 .collect(),
             pages_observed: s.pages_observed,
+            mcp_collection: s.mcp_collection.clone(),
             next_absolute_url: s.next_absolute_url.clone(),
             last_requested_limit: s.last_requested_limit,
             from_block: s.from_block,
@@ -564,6 +585,7 @@ impl TryFrom<QueryPaginationState> for PaginationLoopState {
         Ok(Self {
             param_values: s.param_values.into_iter().collect(),
             pages_observed: s.pages_observed,
+            mcp_collection: s.mcp_collection,
             next_absolute_url: s.next_absolute_url,
             last_requested_limit: s.last_requested_limit,
             from_block: s.from_block,

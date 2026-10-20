@@ -4270,7 +4270,8 @@ mod tests {
     }
 
     fn petstore_cgs() -> CGS {
-        let dir = std::path::Path::new("../../fixtures/schemas/petstore");
+        let dir = &std::path::Path::new(crate::test_manifest_dir())
+            .join("../../fixtures/schemas/petstore");
         if dir.exists() {
             load_schema_dir(dir).unwrap()
         } else {
@@ -4279,7 +4280,9 @@ mod tests {
     }
 
     fn has_petstore() -> bool {
-        std::path::Path::new("../../fixtures/schemas/petstore").exists()
+        std::path::Path::new(crate::test_manifest_dir())
+            .join("../../fixtures/schemas/petstore")
+            .exists()
     }
 
     #[test]
@@ -4305,7 +4308,8 @@ mod tests {
     /// Path-var Get must keep a UUID identity slot (must not default id to "0").
     #[test]
     fn langitem_get_preserves_uuid() {
-        let dir = std::path::Path::new("../../fixtures/schemas/plasm_language_matrix");
+        let dir = &std::path::Path::new(crate::test_manifest_dir())
+            .join("../../fixtures/schemas/plasm_language_matrix");
         let cgs = load_schema_dir(dir).expect("plasm_language_matrix");
         let u = "d6f28392-a2a8-46ce-a1c5-b5ec81ed2396";
         let r = parse(&format!(r#"LangItem("{u}")"#), &cgs).unwrap();
@@ -4334,7 +4338,8 @@ mod tests {
     /// Shadow/repair sugar (deliberately untaught): `Entity(id_field=value)` ≡ canonical `Entity(value)`.
     #[test]
     fn parse_get_simple_id_field_named_sugar() {
-        let dir = std::path::Path::new("../../fixtures/schemas/plasm_language_matrix");
+        let dir = &std::path::Path::new(crate::test_manifest_dir())
+            .join("../../fixtures/schemas/plasm_language_matrix");
         if !dir.exists() {
             return;
         }
@@ -4355,7 +4360,8 @@ mod tests {
 
     #[test]
     fn parse_get_simple_id_field_named_sugar_rejects_non_identity_key() {
-        let dir = std::path::Path::new("../../fixtures/schemas/plasm_language_matrix");
+        let dir = &std::path::Path::new(crate::test_manifest_dir())
+            .join("../../fixtures/schemas/plasm_language_matrix");
         if !dir.exists() {
             return;
         }
@@ -4370,7 +4376,8 @@ mod tests {
 
     #[test]
     fn parse_get_rejects_positional_id_plus_extra_arguments() {
-        let dir = std::path::Path::new("../../fixtures/schemas/plasm_language_matrix");
+        let dir = &std::path::Path::new(crate::test_manifest_dir())
+            .join("../../fixtures/schemas/plasm_language_matrix");
         if !dir.exists() {
             return;
         }
@@ -4400,7 +4407,7 @@ mod tests {
     /// Official T102901 copied `e4(<id>).m5(...)` — that shape must parse-reject.
     #[test]
     fn parse_rejects_unfilled_teaching_holes() {
-        let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        let dir = std::path::Path::new(crate::test_manifest_dir())
             .join("../../fixtures/schemas/plasm_language_matrix");
         let cgs = load_schema_dir(&dir).unwrap();
         let assert_hole = |input: &str, hole: &str| {
@@ -4920,7 +4927,7 @@ mod tests {
                 output_type: OutputType::SideEffect {
                     description: "adds a suggestion".into(),
                 },
-                decoder: serde_json::json!({}),
+                decoder: Default::default(),
                 idempotent: false,
                 reconcile: None,
             }),
@@ -5103,7 +5110,8 @@ mod tests {
         }
         let cgs = petstore_cgs();
         // Order has petId: EntityRef(Pet) in petstore
-        let dir = std::path::Path::new("../../fixtures/schemas/petstore");
+        let dir = &std::path::Path::new(crate::test_manifest_dir())
+            .join("../../fixtures/schemas/petstore");
         if !dir.exists() {
             return;
         }
@@ -5142,7 +5150,7 @@ mod tests {
 
     #[test]
     fn parse_field_dot_extract_is_not_bracket_projection() {
-        let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        let dir = std::path::Path::new(crate::test_manifest_dir())
             .join("../../fixtures/schemas/plasm_language_matrix");
         if !dir.exists() {
             return;
@@ -5166,7 +5174,7 @@ mod tests {
 
     #[test]
     fn parse_field_dot_extract_rejects_further_nav() {
-        let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        let dir = std::path::Path::new(crate::test_manifest_dir())
             .join("../../fixtures/schemas/plasm_language_matrix");
         if !dir.exists() {
             return;
@@ -5249,7 +5257,8 @@ mod tests {
 
     #[test]
     fn parse_nested_one_cardinality_relation_chain() {
-        let dir = std::path::Path::new("../../fixtures/schemas/plasm_language_matrix");
+        let dir = &std::path::Path::new(crate::test_manifest_dir())
+            .join("../../fixtures/schemas/plasm_language_matrix");
         if !dir.exists() {
             return;
         }
@@ -5279,7 +5288,8 @@ mod tests {
 
     #[test]
     fn parse_zero_arity_invoke_pathless_profile() {
-        let dir = std::path::Path::new("../../fixtures/schemas/sole_nullary_get");
+        let dir = &std::path::Path::new(crate::test_manifest_dir())
+            .join("../../fixtures/schemas/sole_nullary_get");
         let cgs = load_schema_dir(dir).expect("sole_nullary_get");
         let mut r = parse("Profile", &cgs).unwrap();
         crate::normalize_expr_query_capabilities(&mut r.expr, &cgs).unwrap();
@@ -5290,7 +5300,8 @@ mod tests {
     /// Bare `true`/`false` coerce to [`Value::Bool`] on boolean payload fields.
     #[test]
     fn parse_langitem_create_active_false_typechecks() {
-        let dir = std::path::Path::new("../../fixtures/schemas/plasm_language_matrix");
+        let dir = &std::path::Path::new(crate::test_manifest_dir())
+            .join("../../fixtures/schemas/plasm_language_matrix");
         let cgs = load_schema_dir(dir).expect("plasm_language_matrix");
         let r = parse(r#"LangItem.create(title="t", active=false)"#, &cgs).unwrap();
         assert!(matches!(r.expr, Expr::Create(_)));
@@ -5299,7 +5310,8 @@ mod tests {
 
     #[test]
     fn parse_zero_arity_invoke_pathless_profile_no_parens() {
-        let dir = std::path::Path::new("../../fixtures/schemas/sole_nullary_get");
+        let dir = &std::path::Path::new(crate::test_manifest_dir())
+            .join("../../fixtures/schemas/sole_nullary_get");
         let cgs = load_schema_dir(dir).expect("sole_nullary_get");
         let mut r = parse("Profile", &cgs).unwrap();
         crate::normalize_expr_query_capabilities(&mut r.expr, &cgs).unwrap();
@@ -5309,7 +5321,8 @@ mod tests {
 
     #[test]
     fn parse_zero_arity_invoke_path_langitem_tags() {
-        let dir = std::path::Path::new("../../fixtures/schemas/plasm_language_matrix");
+        let dir = &std::path::Path::new(crate::test_manifest_dir())
+            .join("../../fixtures/schemas/plasm_language_matrix");
         let cgs = load_schema_dir(dir).expect("plasm_language_matrix");
         let r = parse("LangItem(i1).tags", &cgs).unwrap();
         assert!(matches!(r.expr, Expr::Chain(_)));
@@ -5319,7 +5332,8 @@ mod tests {
     /// Opaque session `m#` resolves to catalog capability for a query.
     #[test]
     fn parse_langitem_query_via_method_symbol() {
-        let dir = std::path::Path::new("../../fixtures/schemas/plasm_language_matrix");
+        let dir = &std::path::Path::new(crate::test_manifest_dir())
+            .join("../../fixtures/schemas/plasm_language_matrix");
         let cgs = load_schema_dir(dir).expect("plasm_language_matrix");
         cgs.get_capability("langitem_query")
             .expect("langitem_query");
@@ -5339,7 +5353,8 @@ mod tests {
     /// Dotted-call alias grammar: non-empty `(key=value,…)` after kebab label → Create.
     #[test]
     fn parse_dotted_call_langitem_create_typechecks() {
-        let dir = std::path::Path::new("../../fixtures/schemas/plasm_language_matrix");
+        let dir = &std::path::Path::new(crate::test_manifest_dir())
+            .join("../../fixtures/schemas/plasm_language_matrix");
         let cgs = load_schema_dir(dir).expect("plasm_language_matrix");
         let r = parse(r#"LangItem.create(title="Sprint Sandbox")"#, &cgs).unwrap();
         assert!(matches!(r.expr, Expr::Create(_)));
@@ -5353,7 +5368,8 @@ mod tests {
     /// Dotted-call args: `(..)` when all parameters are optional (teaching table ellipsis).
     #[test]
     fn parse_dotted_call_optional_only_double_dot_typechecks() {
-        let dir = std::path::Path::new("../../fixtures/schemas/plasm_language_matrix");
+        let dir = &std::path::Path::new(crate::test_manifest_dir())
+            .join("../../fixtures/schemas/plasm_language_matrix");
         let cgs = load_schema_dir(dir).expect("plasm_language_matrix");
         let r = parse("LangItem(i1).update(..)", &cgs).unwrap();
         assert!(matches!(r.expr, Expr::Invoke(_)));
@@ -5363,7 +5379,8 @@ mod tests {
     /// Dotted-call args: required bindings plus `,..` for optional tail.
     #[test]
     fn parse_dotted_call_required_plus_optional_ellipsis_typechecks() {
-        let dir = std::path::Path::new("../../fixtures/schemas/plasm_language_matrix");
+        let dir = &std::path::Path::new(crate::test_manifest_dir())
+            .join("../../fixtures/schemas/plasm_language_matrix");
         let cgs = load_schema_dir(dir).expect("plasm_language_matrix");
         let r = parse(r#"LangItem.create(title="example",..)"#, &cgs).unwrap();
         assert!(matches!(r.expr, Expr::Create(_)));
@@ -5378,7 +5395,8 @@ mod tests {
 
     #[test]
     fn parse_langitem_ping_invoke_typechecks() {
-        let dir = std::path::Path::new("../../fixtures/schemas/plasm_language_matrix");
+        let dir = &std::path::Path::new(crate::test_manifest_dir())
+            .join("../../fixtures/schemas/plasm_language_matrix");
         let cgs = load_schema_dir(dir).expect("plasm_language_matrix");
         let cap = cgs.get_capability("langitem_ping").expect("langitem_ping");
         let label = capability_method_label_kebab(cap);
@@ -5393,7 +5411,8 @@ mod tests {
 
     #[test]
     fn langitem_get_capability_is_get_kind() {
-        let dir = std::path::Path::new("../../fixtures/schemas/plasm_language_matrix");
+        let dir = &std::path::Path::new(crate::test_manifest_dir())
+            .join("../../fixtures/schemas/plasm_language_matrix");
         let cgs = load_schema_dir(dir).expect("plasm_language_matrix");
         let cap = cgs.get_capability("langitem_get").expect("langitem_get");
         assert_eq!(cap.kind, CapabilityKind::Get);
@@ -5402,7 +5421,8 @@ mod tests {
     /// Sole `vN{{…}}` is rejected when the capability root input is an object, not a union.
     #[test]
     fn parse_rejects_root_union_ctor_on_object_input_capability() {
-        let dir = std::path::Path::new("../../fixtures/schemas/plasm_language_matrix");
+        let dir = &std::path::Path::new(crate::test_manifest_dir())
+            .join("../../fixtures/schemas/plasm_language_matrix");
         let cgs = load_schema_dir(dir).expect("plasm_language_matrix");
         let cap = cgs
             .get_capability("langitem_create")
@@ -5419,7 +5439,8 @@ mod tests {
 
     #[test]
     fn parse_hex_item_id_delete() {
-        let dir = std::path::Path::new("../../fixtures/schemas/plasm_language_matrix");
+        let dir = &std::path::Path::new(crate::test_manifest_dir())
+            .join("../../fixtures/schemas/plasm_language_matrix");
         let cgs = load_schema_dir(dir).expect("plasm_language_matrix");
         // Without hex continuation, `8` parses as an integer and `)` is expected at `b`.
         for line in [
@@ -5445,7 +5466,8 @@ mod tests {
 
     #[test]
     fn typecheck_langtag_item_id_entity_ctor_query() {
-        let dir = std::path::Path::new("../../fixtures/schemas/plasm_language_matrix");
+        let dir = &std::path::Path::new(crate::test_manifest_dir())
+            .join("../../fixtures/schemas/plasm_language_matrix");
         let cgs = load_schema_dir(dir).expect("plasm_language_matrix");
         let r = parse(r#"LangTag{item_id=LangItem(i1)}"#, &cgs).unwrap();
         assert!(crate::type_checker::type_check_expr(&r.expr, &cgs).is_ok());
@@ -5453,7 +5475,8 @@ mod tests {
 
     #[test]
     fn parse_zero_arity_invoke_path_langitem_tags_no_parens() {
-        let dir = std::path::Path::new("../../fixtures/schemas/plasm_language_matrix");
+        let dir = &std::path::Path::new(crate::test_manifest_dir())
+            .join("../../fixtures/schemas/plasm_language_matrix");
         let cgs = load_schema_dir(dir).expect("plasm_language_matrix");
         let r = parse("LangItem(i1).tags", &cgs).unwrap();
         assert!(matches!(r.expr, Expr::Chain(_)));
@@ -5462,7 +5485,8 @@ mod tests {
 
     #[test]
     fn parse_zero_arity_invoke_rejects_action_without_id_when_path_needs_it() {
-        let dir = std::path::Path::new("../../fixtures/schemas/plasm_language_matrix");
+        let dir = &std::path::Path::new(crate::test_manifest_dir())
+            .join("../../fixtures/schemas/plasm_language_matrix");
         let cgs = load_schema_dir(dir).expect("plasm_language_matrix");
         let e = parse("LangItem.ping()", &cgs).unwrap_err();
         let msg = e.message();
@@ -5479,7 +5503,8 @@ mod tests {
     /// Compound-key Get must keep all identity parts (not flatten to a single slot).
     #[test]
     fn parse_compound_branch_get_preserves_compound_ref() {
-        let dir = std::path::Path::new("../../fixtures/schemas/plasm_language_matrix");
+        let dir = &std::path::Path::new(crate::test_manifest_dir())
+            .join("../../fixtures/schemas/plasm_language_matrix");
         let cgs = load_schema_dir(dir).expect("plasm_language_matrix");
         let line = "CompoundBranch(owner=alice,item_id=i1,name=main)";
         let r = parse(line, &cgs).unwrap();
@@ -5499,7 +5524,8 @@ mod tests {
     /// Simple-id Get must stay a single slot (not `primary_slot_str()` flattening).
     #[test]
     fn parse_langitem_ping_preserves_simple_ref() {
-        let dir = std::path::Path::new("../../fixtures/schemas/plasm_language_matrix");
+        let dir = &std::path::Path::new(crate::test_manifest_dir())
+            .join("../../fixtures/schemas/plasm_language_matrix");
         let cgs = load_schema_dir(dir).expect("plasm_language_matrix");
         let r = parse("LangItem(sheet-id-9).ping()", &cgs).unwrap();
         let Expr::Invoke(inv) = &r.expr else {
@@ -5525,7 +5551,8 @@ mod tests {
 
     #[test]
     fn parse_langitem_string_id_preserves_integer_literal() {
-        let dir = std::path::Path::new("../../fixtures/schemas/plasm_language_matrix");
+        let dir = &std::path::Path::new(crate::test_manifest_dir())
+            .join("../../fixtures/schemas/plasm_language_matrix");
         let cgs = load_schema_dir(dir).expect("plasm_language_matrix");
         // `LangItem{id=<bigint>}` is referentially `LangItem(<id>)`: the id-field brace sugar
         // rewrites it to a Get whose key preserves the string-typed id verbatim.
@@ -5538,9 +5565,10 @@ mod tests {
 
     #[test]
     fn temporal_wire_boundary_rejects_retired_relative_phrases() {
-        let cgs = load_schema_dir(std::path::Path::new(
-            "../../fixtures/schemas/plasm_language_matrix",
-        ))
+        let cgs = load_schema_dir(
+            &std::path::Path::new(crate::test_manifest_dir())
+                .join("../../fixtures/schemas/plasm_language_matrix"),
+        )
         .unwrap();
         for phrase in ["now", "next-week", "today"] {
             let error = parse(
@@ -5561,7 +5589,8 @@ mod tests {
 
     #[test]
     fn parse_uuid_value_in_id_brace() {
-        let dir = std::path::Path::new("../../fixtures/schemas/plasm_language_matrix");
+        let dir = &std::path::Path::new(crate::test_manifest_dir())
+            .join("../../fixtures/schemas/plasm_language_matrix");
         let cgs = load_schema_dir(dir).expect("plasm_language_matrix");
         let u = "550e8400-e29b-41d4-a716-446655440000";
         let r = parse(&format!("LangItem{{id={u}}}"), &cgs).unwrap();
@@ -5573,7 +5602,8 @@ mod tests {
 
     #[test]
     fn parse_quoted_string_json_style_escapes() {
-        let dir = std::path::Path::new("../../fixtures/schemas/plasm_language_matrix");
+        let dir = &std::path::Path::new(crate::test_manifest_dir())
+            .join("../../fixtures/schemas/plasm_language_matrix");
         if !dir.exists() {
             return;
         }
@@ -5590,7 +5620,8 @@ mod tests {
 
     #[test]
     fn parse_quoted_string_unknown_escape_errors_with_heredoc_hint() {
-        let dir = std::path::Path::new("../../fixtures/schemas/plasm_language_matrix");
+        let dir = &std::path::Path::new(crate::test_manifest_dir())
+            .join("../../fixtures/schemas/plasm_language_matrix");
         if !dir.exists() {
             return;
         }
@@ -5630,7 +5661,8 @@ mod tests {
     /// Unquoted multi-word string in `{…}` predicate (lenient RHS).
     #[test]
     fn parse_langitem_query_unquoted_phrase_owner_typechecks() {
-        let dir = std::path::Path::new("../../fixtures/schemas/plasm_language_matrix");
+        let dir = &std::path::Path::new(crate::test_manifest_dir())
+            .join("../../fixtures/schemas/plasm_language_matrix");
         let cgs = load_schema_dir(dir).expect("plasm_language_matrix");
         let r = parse("LangItem{owner=Sprint Sandbox}", &cgs).unwrap();
         assert!(matches!(r.expr, Expr::Query(_)));
@@ -5639,7 +5671,8 @@ mod tests {
 
     #[test]
     fn parse_dotted_call_langitem_create_unquoted_title_typechecks() {
-        let dir = std::path::Path::new("../../fixtures/schemas/plasm_language_matrix");
+        let dir = &std::path::Path::new(crate::test_manifest_dir())
+            .join("../../fixtures/schemas/plasm_language_matrix");
         let cgs = load_schema_dir(dir).expect("plasm_language_matrix");
         let r = parse("LangItem.create(title=Sprint Sandbox)", &cgs).unwrap();
         assert!(matches!(r.expr, Expr::Create(_)));
@@ -5722,7 +5755,8 @@ mod tests {
 
     #[test]
     fn empty_parens_on_sole_nullary_names_pathless_seat() {
-        let dir = std::path::Path::new("../../fixtures/schemas/sole_nullary_get");
+        let dir = &std::path::Path::new(crate::test_manifest_dir())
+            .join("../../fixtures/schemas/sole_nullary_get");
         assert!(dir.exists(), "missing fixture {dir:?}");
         let cgs = crate::loader::load_schema_dir(dir).unwrap();
         let err = parse("Profile()", &cgs).unwrap_err();
@@ -5919,7 +5953,8 @@ mod tests {
     /// Nested entity constructor on a scoped query param (`LangTag{item_id=LangItem(id=…)}`).
     #[test]
     fn parse_langtag_query_nested_langitem_constructor() {
-        let dir = std::path::Path::new("../../fixtures/schemas/plasm_language_matrix");
+        let dir = &std::path::Path::new(crate::test_manifest_dir())
+            .join("../../fixtures/schemas/plasm_language_matrix");
         let cgs = load_schema_dir(dir).expect("plasm_language_matrix");
         let r = parse("LangTag{item_id=LangItem(id=i1)}", &cgs)
             .expect("nested LangItem constructor should parse");
@@ -5940,7 +5975,8 @@ mod tests {
     /// Mid-call heredoc with comma-suffixed close on the same line (user repro / PLP-2 staging).
     #[test]
     fn parse_method_call_heredoc_mid_arg_glued_comma_trailing() {
-        let dir = std::path::Path::new("../../fixtures/schemas/plasm_language_matrix");
+        let dir = &std::path::Path::new(crate::test_manifest_dir())
+            .join("../../fixtures/schemas/plasm_language_matrix");
         if !dir.exists() {
             return;
         }
@@ -5961,7 +5997,8 @@ mod tests {
     /// Glued `TAG)` after heredoc body in a method call must parse (language matrix).
     #[test]
     fn parse_langitem_create_glued_heredoc_close() {
-        let dir = std::path::Path::new("../../fixtures/schemas/plasm_language_matrix");
+        let dir = &std::path::Path::new(crate::test_manifest_dir())
+            .join("../../fixtures/schemas/plasm_language_matrix");
         let cgs = load_schema_dir(dir).expect("plasm_language_matrix");
         let expr = concat!(
             "LangItem.create(",
@@ -5979,7 +6016,8 @@ mod tests {
     /// Unary `Entity($)` parses inside brace-query RHS (teaching table fill-in, same as scalar `$`).
     #[test]
     fn parse_accepts_unary_entity_ctor_dollar_in_brace_query() {
-        let dir = std::path::Path::new("../../fixtures/schemas/plasm_language_matrix");
+        let dir = &std::path::Path::new(crate::test_manifest_dir())
+            .join("../../fixtures/schemas/plasm_language_matrix");
         let cgs = load_schema_dir(dir).expect("plasm_language_matrix");
         let r = parse("LangTag{item_id=LangItem($)}", &cgs)
             .expect("LangItem($) in filter should parse");
@@ -6336,7 +6374,8 @@ mod tests {
 
     #[test]
     fn parse_langitem_materialized_many_relation_yields_chain() {
-        let dir = std::path::Path::new("../../fixtures/schemas/plasm_language_matrix");
+        let dir = &std::path::Path::new(crate::test_manifest_dir())
+            .join("../../fixtures/schemas/plasm_language_matrix");
         let cgs = load_schema_dir(dir).expect("plasm_language_matrix");
         for input in ["LangItem(i1).tags", "LangItem(i1).children"] {
             let r = parse(input, &cgs).unwrap();
@@ -6351,7 +6390,8 @@ mod tests {
     /// `Entity:id` must not parse as query-all + ignored tail (would return wrong first row).
     #[test]
     fn parse_rejects_entity_colon_after_name() {
-        let dir = std::path::Path::new("../../fixtures/schemas/petstore");
+        let dir = &std::path::Path::new(crate::test_manifest_dir())
+            .join("../../fixtures/schemas/petstore");
         if !dir.exists() {
             return;
         }
@@ -6369,7 +6409,8 @@ mod tests {
 
     #[test]
     fn parse_rejects_get_wrapper_keyword() {
-        let dir = std::path::Path::new("../../fixtures/schemas/petstore");
+        let dir = &std::path::Path::new(crate::test_manifest_dir())
+            .join("../../fixtures/schemas/petstore");
         if !dir.exists() {
             return;
         }
@@ -6389,7 +6430,8 @@ mod tests {
 
     #[test]
     fn program_parse_maps_known_binding_to_plasm_input_ref_in_predicate() {
-        let dir = std::path::Path::new("../../fixtures/schemas/plasm_language_matrix");
+        let dir = &std::path::Path::new(crate::test_manifest_dir())
+            .join("../../fixtures/schemas/plasm_language_matrix");
         let cgs = load_schema_dir(dir).expect("plasm_language_matrix");
         let (full, _) = entity_slices_for_render(&cgs, FocusSpec::All);
         let sym_map: Arc<dyn SymbolSession> = Arc::new(SymbolMap::build(&cgs, &full));
@@ -6427,7 +6469,8 @@ mod tests {
     fn program_parse_unknown_ident_becomes_phrase_ident_in_predicate() {
         // Bare unquoted words in query `{…}` predicates coerce to string at parse time via
         // [`coerce_value_for_field_type`] (same path as teaching-table query filters).
-        let dir = std::path::Path::new("../../fixtures/schemas/plasm_language_matrix");
+        let dir = &std::path::Path::new(crate::test_manifest_dir())
+            .join("../../fixtures/schemas/plasm_language_matrix");
         let cgs = load_schema_dir(dir).expect("plasm_language_matrix");
         let (full, _) = entity_slices_for_render(&cgs, FocusSpec::All);
         let sym_map: Arc<dyn SymbolSession> = Arc::new(SymbolMap::build(&cgs, &full));
@@ -6456,7 +6499,8 @@ mod tests {
 
     #[test]
     fn langitem_search_method_sugar() {
-        let dir = std::path::Path::new("../../fixtures/schemas/plasm_language_matrix");
+        let dir = &std::path::Path::new(crate::test_manifest_dir())
+            .join("../../fixtures/schemas/plasm_language_matrix");
         let cgs = load_schema_dir(dir).expect("plasm_language_matrix");
         let (full, _) = entity_slices_for_render(&cgs, FocusSpec::All);
         let sym_map: Arc<dyn SymbolSession> = Arc::new(SymbolMap::build(&cgs, &full));
@@ -6475,7 +6519,8 @@ mod tests {
 
     #[test]
     fn bare_search_tilde_without_text_is_search_text_error() {
-        let dir = std::path::Path::new("../../fixtures/schemas/plasm_language_matrix");
+        let dir = &std::path::Path::new(crate::test_manifest_dir())
+            .join("../../fixtures/schemas/plasm_language_matrix");
         let cgs = load_schema_dir(dir).expect("plasm_language_matrix");
         let (full, _) = entity_slices_for_render(&cgs, FocusSpec::All);
         let sym_map: Arc<dyn SymbolSession> = Arc::new(SymbolMap::build(&cgs, &full));
@@ -6489,7 +6534,8 @@ mod tests {
 
     #[test]
     fn language_matrix_search_tilde_and_brace_q_are_search_not_query_all() {
-        let dir = std::path::Path::new("../../fixtures/schemas/plasm_language_matrix");
+        let dir = &std::path::Path::new(crate::test_manifest_dir())
+            .join("../../fixtures/schemas/plasm_language_matrix");
         let cgs = load_schema_dir(dir).expect("language matrix");
         let tilde = parse(r#"LangItem~"no-such-item""#, &cgs).expect("parse tilde");
         let Expr::Query(tq) = &tilde.expr else {
@@ -6510,7 +6556,8 @@ mod tests {
 
     #[test]
     fn search_tilde_text_binds_the_structural_selection_parameter() {
-        let dir = std::path::Path::new("../../fixtures/schemas/auth_bearer_search");
+        let dir = &std::path::Path::new(crate::test_manifest_dir())
+            .join("../../fixtures/schemas/auth_bearer_search");
         if !dir.exists() {
             return;
         }
@@ -6545,7 +6592,8 @@ mod tests {
 
     #[test]
     fn create_only_filter_on_get_only_entity_does_not_name_a_search_wire() {
-        let dir = std::path::Path::new("../../fixtures/schemas/create_filter_polarity");
+        let dir = &std::path::Path::new(crate::test_manifest_dir())
+            .join("../../fixtures/schemas/create_filter_polarity");
         assert!(
             dir.exists(),
             "missing fixture schemas/create_filter_polarity"
@@ -6565,7 +6613,8 @@ mod tests {
 
     #[test]
     fn unquoted_string_filter_wire_value_typechecks_at_compile_time() {
-        let dir = std::path::Path::new("../../fixtures/schemas/plasm_language_matrix");
+        let dir = &std::path::Path::new(crate::test_manifest_dir())
+            .join("../../fixtures/schemas/plasm_language_matrix");
         if !dir.exists() {
             return;
         }
@@ -6577,7 +6626,8 @@ mod tests {
 
     #[test]
     fn unquoted_integer_field_rejects_non_numeric_at_compile_time() {
-        let dir = std::path::Path::new("../../fixtures/schemas/plasm_language_matrix");
+        let dir = &std::path::Path::new(crate::test_manifest_dir())
+            .join("../../fixtures/schemas/plasm_language_matrix");
         if !dir.exists() {
             return;
         }
@@ -6604,7 +6654,8 @@ mod tests {
         use crate::InvokeInputPayload;
         use std::sync::Arc;
 
-        let dir = std::path::Path::new("../../fixtures/schemas/plasm_language_matrix");
+        let dir = &std::path::Path::new(crate::test_manifest_dir())
+            .join("../../fixtures/schemas/plasm_language_matrix");
         if !dir.exists() {
             return;
         }
@@ -6649,7 +6700,8 @@ mod tests {
     fn program_create_payload_bare_tokens_coerce_like_invoke_args() {
         use std::sync::Arc;
 
-        let dir = std::path::Path::new("../../fixtures/schemas/plasm_language_matrix");
+        let dir = &std::path::Path::new(crate::test_manifest_dir())
+            .join("../../fixtures/schemas/plasm_language_matrix");
         if !dir.exists() {
             return;
         }
@@ -6700,10 +6752,10 @@ mod tests {
     #[test]
     fn federated_langitem_collision_parse_uses_opaque_entity_catalog() {
         use crate::symbol_tuning::TeachingExposureSession;
-        use std::path::Path;
         use std::sync::Arc;
 
-        let dir = Path::new("../../fixtures/schemas/plasm_language_matrix");
+        let dir = &std::path::Path::new(crate::test_manifest_dir())
+            .join("../../fixtures/schemas/plasm_language_matrix");
         let mut cgs_a = load_schema_dir(dir).expect("plasm_language_matrix");
         cgs_a.bind_registry_entry_id("langmatrix_a");
         let mut cgs_b = load_schema_dir(dir).expect("plasm_language_matrix");
@@ -6749,10 +6801,10 @@ mod tests {
     #[test]
     fn federated_pathless_action_preserves_opaque_entity_catalog_stamp() {
         use crate::symbol_tuning::TeachingExposureSession;
-        use std::path::Path;
         use std::sync::Arc;
 
-        let dir = Path::new("../../fixtures/schemas/plasm_language_matrix");
+        let dir = &std::path::Path::new(crate::test_manifest_dir())
+            .join("../../fixtures/schemas/plasm_language_matrix");
         if !dir.is_dir() {
             return;
         }
@@ -6806,10 +6858,10 @@ mod tests {
     #[test]
     fn federated_pathless_action_bare_wire_is_ambiguous_entity_catalog() {
         use crate::symbol_tuning::TeachingExposureSession;
-        use std::path::Path;
         use std::sync::Arc;
 
-        let dir = Path::new("../../fixtures/schemas/plasm_language_matrix");
+        let dir = &std::path::Path::new(crate::test_manifest_dir())
+            .join("../../fixtures/schemas/plasm_language_matrix");
         if !dir.is_dir() {
             return;
         }
@@ -6888,7 +6940,8 @@ mod tests {
     fn parse_langtag_predicate_session_langitem_ctor() {
         use std::sync::Arc;
 
-        let dir = std::path::Path::new("../../fixtures/schemas/plasm_language_matrix");
+        let dir = &std::path::Path::new(crate::test_manifest_dir())
+            .join("../../fixtures/schemas/plasm_language_matrix");
         let mut cgs = load_schema_dir(dir).expect("plasm_language_matrix");
         cgs.bind_registry_entry_id("langmatrix");
         let (full, _) = entity_slices_for_render(&cgs, FocusSpec::All);
@@ -6915,7 +6968,8 @@ mod tests {
         use std::collections::BTreeSet;
         use std::sync::Arc;
 
-        let dir = std::path::Path::new("../../fixtures/schemas/plasm_language_matrix");
+        let dir = &std::path::Path::new(crate::test_manifest_dir())
+            .join("../../fixtures/schemas/plasm_language_matrix");
         let mut cgs = load_schema_dir(dir).expect("plasm_language_matrix");
         cgs.bind_registry_entry_id("langmatrix");
         let (full, _) = entity_slices_for_render(&cgs, FocusSpec::All);
@@ -7072,7 +7126,7 @@ mod tests {
                 output_type: OutputType::SideEffect {
                     description: "acts on the pet".into(),
                 },
-                decoder: serde_json::json!({}),
+                decoder: Default::default(),
                 idempotent: false,
                 reconcile: None,
             }),
@@ -7136,7 +7190,7 @@ mod tests {
                 output_type: OutputType::SideEffect {
                     description: "broadcasts without path identity".into(),
                 },
-                decoder: serde_json::json!({}),
+                decoder: Default::default(),
                 idempotent: false,
                 reconcile: None,
             }),

@@ -20,7 +20,7 @@ use std::sync::Arc;
 use tower::util::ServiceExt;
 
 fn test_state() -> PlasmHostState {
-    let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../fixtures/schemas/overshow_tools");
+    let dir = Path::new(&std::env::var("CARGO_MANIFEST_DIR").expect("test runner must set CARGO_MANIFEST_DIR")).join("../../fixtures/schemas/overshow_tools");
     let cgs = Arc::new(load_schema_dir(&dir).expect("overshow_tools"));
     let reg = CgsRegistry::from_pairs(vec![(
         "overshow".into(),

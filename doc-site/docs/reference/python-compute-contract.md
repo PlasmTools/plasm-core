@@ -28,6 +28,33 @@ syntax exclusions require a policy rationale and a negative conformance case.
 
 ## Boundary judgement
 
+### Execution-scoped static preparation
+
+A live plan execution owns a `PreparedComputeScope` borrowing its immutable
+`ExecuteSession`. Catalog contexts, Python teaching state and session symbols
+used by static checking cannot be replaced through this borrow. Nested maps,
+iterations and parallel plan layers share that execution scope.
+
+On the first reached Python compute, the host runs the ordinary `check_op`
+boundary validation and retains its `PreparedCompute`. Subsequent occurrences
+reuse it only for an exactly equal `ComputeOp`, including source, catalog owner
+and pin, input/output contracts, language version/profile, input mode and
+selection contract. A fresh execution creates a fresh scope. Preparations are
+not persisted in the reviewed plan, exported to clients or shared globally.
+Lazy first reach preserves failure timing for branches that are never executed.
+
+The immutable prepared definition also owns a private once-cell for successful
+upstream type/syntax admission. Its initialization remains after owner and
+collection validation; failure or cancellation does not populate the cell.
+Retaining inference alone would still rerun full admission on every row.
+
+This retains a static proof, not execution results or interpreter state.
+Coverage checks, current row rehydration, input value validation, occurrence
+membership, output validation, cancellation and resource budgets still run at
+their existing execution boundaries. Monty worker checkout/reset and isolation
+remain unchanged. Mutable graph observations and credentials are not inputs to
+the static preparation proof and are never reused by this mechanism.
+
 A compute node has a sealed contract `Compute<I, O, E, B>`: input contract I,
 output contract O, allowed effects E and resource budget B. Admission requires:
 
@@ -218,6 +245,48 @@ corrections, and reviewed coverage for every profile classification. A passing
 CSV case alone cannot establish completion.
 
 ## Implementation ledger
+
+### Numeric inference and rejection evidence
+
+Numeric operator declarations must describe Monty's actual result carriers, including
+reflected operators and builtin equivalents. A float power has a float carrier;
+integer power with an unknown exponent sign can return integer or float. This does
+not establish that an operation succeeds: division by zero, overflow, and the
+non-finite materialization boundary remain execution errors. No arbitrary `Any`
+or unresolved type is coerced into a numeric contract.
+
+Python's builtin `int` includes Boolean inhabitants. The checker can normalize
+`int | bool` to `int` before export, including inside containers and helper
+returns. Materialization therefore translates that builtin nominal type to
+`Integer | Boolean`, preserving distinct value variants without coercion.
+Integer literals and sealed catalog Integer contracts remain exact. This is a
+conservative inferred contract, not permission to supply Boolean values to a
+catalog Integer parameter. Witnesses include
+`inferred_python_integer_subtypes_preserve_boolean_values_without_coercion`,
+`inferred_catalog_integer_remains_strict`, and
+`inferred_statistics_and_boolean_chains_execute_with_their_contract`.
+
+Nullable numeric fields require local narrowing before arithmetic. Converting
+with `float(value)` does not prove non-nullness, and filtering records into a
+separate list does not refine their declared fields. Guard the projected value;
+raise for missing required data, or omit it only when the workflow permits.
+`nullable_numeric_fields_require_local_evidence_before_arithmetic` checks both
+rejected forms and lawful local guards against the upstream checker.
+
+When an inferred return cannot be materialized, retain the checker node kind and
+query the checker for bounded expression evidence on the rejection path. The
+structured `compute_inference` rejection contains diagnostic codes, messages and
+compute-source coordinates/excerpts. These coordinates belong to the checked
+compute unit, not the submitted Program; they must not be mislabeled as Program
+byte offsets. If expression evidence is unavailable, preserve the original typed
+failure and state that limitation. Successful admission requires no diagnostic
+query and still uses the authoritative inferred return contract.
+
+Witnesses: `fractional_power_has_a_closed_numeric_contract`,
+`numeric_operators_infer_contracts_that_accept_actual_runtime_values`,
+`fractional_power_runtime_preserves_domain_errors_and_finite_output_boundary`,
+`unresolved_return_reports_checker_kind_and_compute_expression`, and
+`unmaterializable_compute_keeps_typed_evidence_in_tool_failure`.
 
 ### Inferred occurrence selection and contract version 13
 

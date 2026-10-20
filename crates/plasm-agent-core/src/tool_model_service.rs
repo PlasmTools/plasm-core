@@ -174,7 +174,7 @@ mod tests {
     #[tokio::test]
     async fn cache_hit_returns_same_arc() {
         let dir =
-            Path::new(env!("CARGO_MANIFEST_DIR")).join("../../fixtures/schemas/overshow_tools");
+            Path::new(crate::test_manifest_dir()).join("../../fixtures/schemas/overshow_tools");
         let cgs = Arc::new(load_schema_dir(&dir).expect("overshow_tools"));
         let meta = CatalogEntryMeta {
             entry_id: "overshow".into(),
@@ -199,7 +199,7 @@ mod tests {
     #[tokio::test]
     async fn concurrent_miss_singleflight_builds_once() {
         let dir =
-            Path::new(env!("CARGO_MANIFEST_DIR")).join("../../fixtures/schemas/overshow_tools");
+            Path::new(crate::test_manifest_dir()).join("../../fixtures/schemas/overshow_tools");
         let cgs = Arc::new(load_schema_dir(&dir).expect("overshow_tools"));
         let meta = CatalogEntryMeta {
             entry_id: "overshow".into(),

@@ -15,7 +15,7 @@ pub(crate) const FEATURES: &[&str] = &[
 
 fn fixture() -> (ExecuteSession, String, String, String, String) {
     let mut cgs = plasm_core::load_schema_dir(
-        &std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        &std::path::Path::new(plasm_e2e::test_manifest_dir())
             .join("../../fixtures/schemas/python_union_matrix"),
     )
     .unwrap();

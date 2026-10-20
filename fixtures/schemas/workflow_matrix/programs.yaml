@@ -1,0 +1,10 @@
+# Tagged programs for workflow_apps_e2e (not language-matrix conformance).
+programs:
+  workflow_parallel_columns: |
+    a = WorkItem.limit({{param:limit}})
+    b = WorkItem.limit({{param:limit}})
+  workflow_sequential: |
+    items = WorkItem.limit({{param:limit}})
+    out = items
+  workflow_review_gate: |
+    created = WorkItem.create(title={{param:title}})

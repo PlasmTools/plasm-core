@@ -299,8 +299,29 @@ fn build_relation_expr(
         .materialize
         .as_ref()
         .unwrap_or(&RelationMaterialization::Unavailable);
+    if mat.selected_entity().is_some() {
+        if let Some(argument) = sub_matches.ids().find(|id| {
+            sub_matches.value_source(id.as_str()) == Some(clap::parser::ValueSource::CommandLine)
+        }) {
+            return Err(AgentArgumentError::SelectedRelationArgumentUnsupported {
+                relation: relation_name.to_owned(),
+                argument: argument.to_string(),
+            }
+            .into());
+        }
+        return Ok((
+            Expr::Chain(plasm_core::ChainExpr::auto_get(
+                Expr::Get(GetExpr::from_ref(source_ref.clone())),
+                relation_name,
+            )),
+            StreamConsumeOpts::default(),
+            IndexMap::new(),
+        ));
+    }
     match mat {
-        RelationMaterialization::QueryScoped { capability, param } => {
+        RelationMaterialization::QueryScoped {
+            capability, param, ..
+        } => {
             let scope_val = relation_scope_string(entity, source_ref);
             let scope_pred = plasm_core::Predicate::eq(param.as_str(), scope_val);
             let cap = cgs.get_capability(capability.as_str()).ok_or_else(|| {
@@ -329,6 +350,7 @@ fn build_relation_expr(
         RelationMaterialization::QueryScopedBindings {
             capability,
             bindings,
+            ..
         } => {
             let cap = cgs.get_capability(capability.as_str()).ok_or_else(|| {
                 AgentArgumentError::MaterializeCapabilityNotFound {
@@ -603,7 +625,8 @@ fn collect_template_string_bindings(
         CapabilityTemplate::Http(cml) | CapabilityTemplate::GraphQl(cml) => {
             path_var_names_from_request(cml)
         }
-        CapabilityTemplate::View(_)
+        CapabilityTemplate::Mcp(_)
+        | CapabilityTemplate::View(_)
         | CapabilityTemplate::CredentialBind(_)
         | CapabilityTemplate::EvmCall(_)
         | CapabilityTemplate::EvmLogs(_) => Vec::new(),

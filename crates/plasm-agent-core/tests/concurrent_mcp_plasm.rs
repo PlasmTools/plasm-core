@@ -28,12 +28,12 @@ use plasm_runtime::{ExecutionConfig, ExecutionEngine, ExecutionMode};
 use uuid::Uuid;
 
 fn matrix_fixture_dir() -> PathBuf {
-    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../fixtures/schemas/plasm_language_matrix")
+    PathBuf::from(std::env::var("CARGO_MANIFEST_DIR").expect("test runner must set CARGO_MANIFEST_DIR")).join("../../fixtures/schemas/plasm_language_matrix")
 }
 
 fn matrix_federated_host() -> Arc<plasm_agent_core::server_state::PlasmHostState> {
     let cgs_a = Arc::new(load_schema_dir(&matrix_fixture_dir()).expect("plasm_language_matrix"));
-    let views_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+    let views_dir = PathBuf::from(std::env::var("CARGO_MANIFEST_DIR").expect("test runner must set CARGO_MANIFEST_DIR"))
         .join("../../fixtures/schemas/plasm_language_matrix_views");
     let cgs_b = Arc::new(load_schema_dir(&views_dir).expect("plasm_language_matrix_views"));
     let reg = CgsRegistry::from_pairs(vec![

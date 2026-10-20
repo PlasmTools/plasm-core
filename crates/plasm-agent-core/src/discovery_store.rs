@@ -44,7 +44,7 @@ pub enum DiscoveryStoreError {
     #[error(transparent)]
     RetrievalValidation(#[from] RetrievalValidationError),
     #[error(transparent)]
-    Embedding(#[from] crate::discovery_embeddings::EmbeddingAcquisitionError),
+    Embedding(#[from] plasm_catalog::embeddings::EmbeddingAcquisitionError),
     #[error("manifest path has no containing directory")]
     ManifestDirectoryMissing,
     #[error("intent provenance rewrites or omits pinned ancestry")]
@@ -632,7 +632,7 @@ impl DiscoveryStore {
         let vector = if let Some(cached) = cached {
             cached
         } else {
-            let vectors = crate::discovery_embeddings::EmbeddingClient::from_env()?
+            let vectors = plasm_catalog::embeddings::EmbeddingClient::from_env()?
                 .embed(&[intent.to_owned()])
                 .await?;
             let vector = vector_literal(
@@ -839,7 +839,7 @@ mod tests {
 
     fn prepared(entry: &str, version: u64) -> PreparedCatalog {
         let mut cgs = plasm_core::loader::load_schema_dir(
-            &Path::new(env!("CARGO_MANIFEST_DIR"))
+            &Path::new(crate::test_manifest_dir())
                 .join("../../fixtures/schemas/prerequisite_matrix"),
         )
         .unwrap();
@@ -963,7 +963,10 @@ mod tests {
             .await
             .unwrap();
         store.migrate().await.unwrap();
-        let catalogs: Vec<_> = (0..64)
+        // Enough candidates for multiple relevance pages, while the selected
+        // whole-environment contract remains within its independent byte bound.
+        // disjoint_channels_retain_all_128_and_reject_corruption covers the union ceiling.
+        let catalogs: Vec<_> = (0..32)
             .map(|i| prepared(&format!("union-{i:02}"), 1))
             .collect();
         let names: BTreeSet<_> = catalogs
@@ -1010,6 +1013,11 @@ mod tests {
         )
         .unwrap();
         assert!(batches.len() > 2);
+        let selected: Vec<_> = retrieval
+            .candidates
+            .iter()
+            .map(|candidate| candidate.reference.clone())
+            .collect();
         for batch in batches {
             let body: serde_json::Value = serde_json::from_str(batch.body()).unwrap();
             let answers: BTreeMap<_, _> = body["questions"]
@@ -1033,6 +1041,46 @@ mod tests {
                 .unwrap();
         }
         let expected = retrieval.candidates.len();
+        // Relevance judges every recalled candidate. Whole-environment support
+        // separately judges the selected closure; seed that phase too so this
+        // database integration test cannot call a model provider.
+        let (catalogs, bindings) = store
+            .load_discovery_generation(&generation, &allowed)
+            .await
+            .unwrap();
+        let references = catalogs.iter().map(|(id, cgs)| (id.clone(), cgs)).collect();
+        let closure = plasm_core::prerequisites::prerequisite_closure(
+            &references,
+            &bindings,
+            &selected,
+            &allowed.catalogs,
+        )
+        .unwrap();
+        let available = closure
+            .business
+            .iter()
+            .chain(&closure.prerequisites)
+            .chain(&closure.input_sources)
+            .cloned()
+            .collect();
+        let support = crate::discovery_support::issue(
+            crate::discovery_matcher::JEV_MODEL,
+            &provenance,
+            &available,
+            &catalogs,
+        )
+        .unwrap();
+        let support_raw = serde_json::json!({
+            "model":crate::discovery_matcher::JEV_MODEL,"provider":"TypeSafe",
+            "answers":{"support":{"type":"choice","choice":"established","confidence":1.0,
+                "probabilities":{"established":1.0,"not_established":0.0,"undetermined":0.0}}}
+        })
+        .to_string();
+        crate::discovery_support::decode(&support, &support_raw).unwrap();
+        store
+            .store_selector_envelope(&support.cache_key, &support_raw)
+            .await
+            .unwrap();
         let service = crate::discovery_service::DiscoveryService::cached_test_service(store);
         let receipt = service
             .route(&generation, &provenance, &allowed, &[])
@@ -1040,6 +1088,10 @@ mod tests {
             .unwrap();
         assert_eq!(receipt.matching.matches.len(), expected);
         assert_eq!(receipt.closure.as_ref().unwrap().business.len(), expected);
+        assert_eq!(
+            receipt.environment_support.as_ref().unwrap().choice,
+            crate::discovery_support::SupportChoice::Established
+        );
         let wire = serde_json::to_value(&receipt).unwrap();
         assert!(wire.get("reranking").is_none());
         let decoded: crate::discovery_service::RoutingReceipt =
@@ -1332,6 +1384,13 @@ mod tests {
             .execute(&mut *store.pool.acquire().await.unwrap())
             .await
             .unwrap();
+        let original_recipes: Vec<u8> = sqlx::query_scalar(
+            "SELECT recipes FROM discovery_compiled_recipes WHERE revision_id=(SELECT revision_id FROM discovery_generation_catalogs WHERE generation_id=$1 AND entry_id='matrix')",
+        )
+        .bind(&generation)
+        .fetch_one(&mut *store.pool.acquire().await.unwrap())
+        .await
+        .unwrap();
         sqlx::query(
             "UPDATE discovery_compiled_recipes SET recipes=$1 WHERE revision_id=(SELECT revision_id FROM discovery_generation_catalogs WHERE generation_id=$2 AND entry_id='matrix')",
         )
@@ -1340,14 +1399,21 @@ mod tests {
         .execute(&mut *store.pool.acquire().await.unwrap())
         .await
         .unwrap();
-        let error = store
-            .load_generation(&generation)
-            .await
-            .expect_err("manifest digest must guard persisted recipe bytes");
+        let corrupted_result = store.load_generation(&generation).await;
+        // Restore the test's deliberate corruption before asserting, including
+        // when the implementation unexpectedly accepts the invalid bytes.
+        sqlx::query(
+            "UPDATE discovery_compiled_recipes SET recipes=$1 WHERE revision_id=(SELECT revision_id FROM discovery_generation_catalogs WHERE generation_id=$2 AND entry_id='matrix')",
+        )
+        .bind(original_recipes)
+        .bind(&generation)
+        .execute(&mut *store.pool.acquire().await.unwrap())
+        .await
+        .unwrap();
+        let error =
+            corrupted_result.expect_err("manifest digest must guard persisted recipe bytes");
         assert!(
-            error
-                .to_string()
-                .contains("compiled request recipe digest mismatch"),
+            matches!(error, DiscoveryStoreError::StoredRecipeDigestMismatch),
             "{error:#}"
         );
     }

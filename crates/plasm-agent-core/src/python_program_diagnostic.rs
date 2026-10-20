@@ -108,7 +108,7 @@ mod tests {
     fn session() -> ExecuteSession {
         let cgs = std::sync::Arc::new(
             plasm_core::load_schema(
-                &std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+                &std::path::Path::new(crate::test_manifest_dir())
                     .join("../../fixtures/schemas/python_dag_slice"),
             )
             .unwrap(),
@@ -121,11 +121,35 @@ mod tests {
         session.teaching_exposure = Some(exposure);
         session
     }
+
+    #[tokio::test]
+    async fn unmaterializable_compute_keeps_typed_evidence_in_tool_failure() {
+        let session = session();
+        let source = "from typing import Any, cast\nclass Read(Program):\n    @compute\n    def result(self, rows):\n        return cast(Any, len(rows))\n    def build(self):\n        return self.result(e1.query())\n";
+        let error = crate::compile_program(&Default::default(), None, &session, "test", source)
+            .await
+            .unwrap_err();
+        let failure: plasm_runtime::ExecutionFailure = error.into();
+        let evidence = failure.program_rejection.as_ref().unwrap();
+        let Some(plasm_runtime::ProgramRejectionDetail::ComputeInference { diagnostics }) =
+            &evidence.detail
+        else {
+            panic!("{failure:?}");
+        };
+        assert!(diagnostics.iter().any(|entry| entry.compute_line.is_some()
+            && entry
+                .source_excerpt
+                .as_ref()
+                .is_some_and(|text| text.contains("cast(Any, len(rows))"))));
+        let wire = serde_json::to_value(&failure).unwrap();
+        let restored: plasm_runtime::ExecutionFailure = serde_json::from_value(wire).unwrap();
+        assert_eq!(restored.program_rejection, failure.program_rejection);
+    }
     #[tokio::test]
     async fn get_identity_does_not_satisfy_required_keyword_input() {
         let cgs = std::sync::Arc::new(
             plasm_core::load_schema(
-                &std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+                &std::path::Path::new(crate::test_manifest_dir())
                     .join("../../fixtures/schemas/plasm_language_matrix"),
             )
             .unwrap(),
@@ -140,9 +164,8 @@ mod tests {
             .entities(vec!["LangSecuredNote".into()])
             .build(cgs);
         session.teaching_exposure = Some(exposure);
-        let source = format!(
-            "class Read(Program):\n    def build(self):\n        return {symbol}.get('n1')\n"
-        );
+        let source =
+            format!("class Read(Program):\n    def build(self):\n        return {symbol}.get(1)\n");
         let error = compile(&session, &source).unwrap_err();
         assert!(error.span_offset().is_some());
         let text = error.correction();
@@ -150,7 +173,7 @@ mod tests {
         assert!(!text.contains("input object"), "{text}");
         compile(
             &session,
-            &source.replace(".get('n1')", ".get('n1', access_token='token')"),
+            &source.replace(".get(1)", ".get(1, access_token='token')"),
         )
         .unwrap();
     }

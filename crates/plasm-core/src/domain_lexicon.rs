@@ -370,7 +370,8 @@ mod tests {
     #[test]
     fn lexicon_resolves_for_entity() {
         // Minimal test using loader if petstore schema exists
-        let dir = std::path::Path::new("../../fixtures/schemas/petstore");
+        let dir = &std::path::Path::new(crate::test_manifest_dir())
+            .join("../../fixtures/schemas/petstore");
         if !dir.exists() {
             return;
         }

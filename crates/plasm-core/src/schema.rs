@@ -778,6 +778,9 @@ pub enum RelationMaterialization {
     QueryScoped {
         capability: CapabilityName,
         param: CapabilityParamName,
+        /// Select this nominal variant from an explicitly declared union query output.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        select_entity: Option<EntityName>,
     },
     /// Multiple scope parameters; map keys are capability param names, values are parent entity field names.
     ///
@@ -786,6 +789,9 @@ pub enum RelationMaterialization {
     QueryScopedBindings {
         capability: CapabilityName,
         bindings: IndexMap<CapabilityParamName, EntityFieldName>,
+        /// Select this nominal variant from an explicitly declared union query output.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        select_entity: Option<EntityName>,
     },
     /// Map parent fields into a target **`get`** capability's scope/path env (cardinality **one**).
     ///
@@ -796,6 +802,17 @@ pub enum RelationMaterialization {
     },
     /// Resolve targets from a composed view's `relation_outputs` after the view root row exists.
     ViewEmbed { view: String },
+}
+
+impl RelationMaterialization {
+    /// Explicit nominal selection after a scoped capability has decoded its output.
+    pub fn selected_entity(&self) -> Option<&EntityName> {
+        match self {
+            Self::QueryScoped { select_entity, .. }
+            | Self::QueryScopedBindings { select_entity, .. } => select_entity.as_ref(),
+            _ => None,
+        }
+    }
 }
 
 /// Loader-only legacy domain `via_param:` captured during assemble for normalize → `query_scoped`.
@@ -1622,8 +1639,49 @@ pub enum CrossFieldRuleType {
     Forbidden,
 }
 
-fn default_empty_json_object() -> serde_json::Value {
-    serde_json::Value::Object(serde_json::Map::new())
+/// Typed wire selection for a closed entity-union output.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
+pub enum EntityDiscriminator {
+    Present {
+        path: Vec<String>,
+    },
+    Absent {
+        path: Vec<String>,
+    },
+    Equals {
+        path: Vec<String>,
+        value: DiscriminatorValue,
+    },
+}
+
+/// Discriminator tags are scalar; records and arrays cannot confer entity authority.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(untagged)]
+pub enum DiscriminatorValue {
+    String(String),
+    Bool(bool),
+    Number(serde_json::Number),
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct EntityUnionCase {
+    pub entity_type: EntityName,
+    pub when: EntityDiscriminator,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[serde(tag = "type", rename_all = "snake_case", deny_unknown_fields)]
+pub enum OutputDecoderSpec {
+    #[default]
+    Entity,
+    EntityAssert {
+        when: EntityDiscriminator,
+    },
+    EntityUnion {
+        cases: Vec<EntityUnionCase>,
+    },
 }
 
 /// Output schema specification for capabilities
@@ -1632,9 +1690,9 @@ pub struct OutputSchema {
     /// Expected output structure (`type: side_effect` | `entity` | … at the same level as `decoder`).
     #[serde(flatten)]
     pub output_type: OutputType,
-    /// Decoder specification for parsing responses (JSON for now, typed later)
-    #[serde(default = "default_empty_json_object")]
-    pub decoder: serde_json::Value,
+    /// Typed wire selection, separate from the output's domain alternatives.
+    #[serde(default)]
+    pub decoder: OutputDecoderSpec,
     /// Whether the output is expected to be idempotent
     #[serde(default)]
     pub idempotent: bool,
@@ -1647,6 +1705,12 @@ pub struct OutputSchema {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "type")]
 pub enum OutputType {
+    /// Closed heterogeneous rows, each retaining its concrete entity identity.
+    #[serde(rename = "entity_union")]
+    EntityUnion {
+        variants: Vec<EntityName>,
+        cardinality: Cardinality,
+    },
     /// Effectful operation with no entity projection (empty or ignored response body).
     /// `description` must state **what** changes in the domain; required and non-empty when trimmed.
     #[serde(rename = "side_effect")]
@@ -3505,18 +3569,24 @@ impl CGS {
                                     Some(path.as_slice()),
                                 )?;
                             }
-                            RelationMaterialization::QueryScoped { capability, param } => {
+                            RelationMaterialization::QueryScoped {
+                                capability,
+                                param,
+                                select_entity,
+                            } => {
                                 self.validate_chain_materialize_capability(
                                     entity_name.as_str(),
                                     relation_name.as_str(),
                                     relation.target_resource.as_str(),
                                     capability,
                                     &[param.as_str()],
+                                    select_entity.as_ref(),
                                 )?;
                             }
                             RelationMaterialization::QueryScopedBindings {
                                 capability,
                                 bindings,
+                                select_entity,
                             } => {
                                 if bindings.is_empty() {
                                     return Err(SchemaError::RelationMaterializeEmptyBindings {
@@ -3531,6 +3601,7 @@ impl CGS {
                                     relation.target_resource.as_str(),
                                     capability,
                                     &keys,
+                                    select_entity.as_ref(),
                                 )?;
                                 for parent_field in bindings.values() {
                                     let ok = parent_field.as_str() == entity.id_field.as_str()
@@ -3751,6 +3822,88 @@ impl CGS {
 
         for (cap_name, cap) in &self.capabilities {
             if let Some(ref os) = cap.output_schema {
+                match (&os.output_type, &os.decoder) {
+                    (output, OutputDecoderSpec::EntityAssert { when }) => {
+                        if !matches!(
+                            output,
+                            OutputType::Entity { .. } | OutputType::Collection { .. }
+                        ) {
+                            return Err(SchemaError::EntityAssertionOutput {
+                                capability: cap_name.to_string(),
+                            });
+                        }
+                        let path = match when {
+                            EntityDiscriminator::Present { path }
+                            | EntityDiscriminator::Absent { path }
+                            | EntityDiscriminator::Equals { path, .. } => path,
+                        };
+                        if path.is_empty() || path.iter().any(String::is_empty) {
+                            return Err(SchemaError::EntityUnionDiscriminatorPath {
+                                capability: cap_name.to_string(),
+                            });
+                        }
+                    }
+                    (
+                        OutputType::EntityUnion {
+                            variants,
+                            cardinality,
+                        },
+                        OutputDecoderSpec::EntityUnion { cases },
+                    ) => {
+                        if !matches!(
+                            cap.kind,
+                            CapabilityKind::Query | CapabilityKind::Search | CapabilityKind::Action
+                        ) {
+                            return Err(SchemaError::EntityUnionCapabilityKind {
+                                capability: cap_name.to_string(),
+                            });
+                        }
+                        if matches!(cap.kind, CapabilityKind::Query | CapabilityKind::Search)
+                            && *cardinality != Cardinality::Many
+                        {
+                            return Err(SchemaError::EntityUnionQueryCardinality {
+                                capability: cap_name.to_string(),
+                            });
+                        }
+                        let names: std::collections::BTreeSet<_> = variants.iter().collect();
+                        if variants.len() < 2
+                            || names.len() != variants.len()
+                            || variants
+                                .iter()
+                                .any(|name| self.get_entity(name.as_str()).is_none())
+                        {
+                            return Err(SchemaError::EntityUnionVariants {
+                                capability: cap_name.to_string(),
+                            });
+                        }
+                        let decoded: std::collections::BTreeSet<_> =
+                            cases.iter().map(|case| &case.entity_type).collect();
+                        if decoded != names || decoded.len() != cases.len() {
+                            return Err(SchemaError::EntityUnionDecoderCases {
+                                capability: cap_name.to_string(),
+                            });
+                        }
+                        for case in cases {
+                            let path = match &case.when {
+                                EntityDiscriminator::Present { path }
+                                | EntityDiscriminator::Absent { path }
+                                | EntityDiscriminator::Equals { path, .. } => path,
+                            };
+                            if path.is_empty() || path.iter().any(String::is_empty) {
+                                return Err(SchemaError::EntityUnionDiscriminatorPath {
+                                    capability: cap_name.to_string(),
+                                });
+                            }
+                        }
+                    }
+                    (OutputType::EntityUnion { .. }, _)
+                    | (_, OutputDecoderSpec::EntityUnion { .. }) => {
+                        return Err(SchemaError::EntityUnionDecoderCases {
+                            capability: cap_name.to_string(),
+                        });
+                    }
+                    _ => {}
+                }
                 if let OutputType::SideEffect { description } = &os.output_type {
                     if description.trim().is_empty() {
                         return Err(SchemaError::SideEffectMissingDescription {
@@ -5669,6 +5822,7 @@ impl CGS {
                     target_entity,
                     capability,
                     &[param.as_str()],
+                    None,
                 ),
             RelationScopedFallback::QueryScopedBindings {
                 capability,
@@ -5687,6 +5841,7 @@ impl CGS {
                     target_entity,
                     capability,
                     &keys,
+                    None,
                 )?;
                 for parent_field in bindings.values() {
                     let ok = parent_field.as_str() == entity.id_field.as_str()
@@ -5779,6 +5934,7 @@ impl CGS {
         target_entity: &str,
         capability: &CapabilityName,
         required_param_names: &[&str],
+        select_entity: Option<&EntityName>,
     ) -> Result<(), SchemaError> {
         let err = |source: crate::error::RelationMaterializeError| {
             Err(SchemaError::RelationMaterializeCapabilityInvalid {
@@ -5792,7 +5948,27 @@ impl CGS {
         let Some(cap) = self.get_capability(capability.as_str()) else {
             return err(crate::error::RelationMaterializeError::UnknownCapability);
         };
-        if cap.domain.as_str() != target_entity {
+        if let Some(selected) = select_entity {
+            let valid = selected.as_str() == target_entity
+                && matches!(cap.output_schema.as_ref().map(|output| &output.output_type), Some(OutputType::EntityUnion { variants, .. }) if variants.contains(selected));
+            if !valid {
+                return err(
+                    crate::error::RelationMaterializeError::InvalidEntitySelection {
+                        selected: selected.to_string(),
+                        target: target_entity.to_owned(),
+                    },
+                );
+            }
+        } else if matches!(
+            cap.output_schema.as_ref().map(|output| &output.output_type),
+            Some(OutputType::EntityUnion { .. })
+        ) {
+            return err(
+                crate::error::RelationMaterializeError::EntitySelectionRequired {
+                    target: target_entity.to_owned(),
+                },
+            );
+        } else if cap.domain.as_str() != target_entity {
             return err(crate::error::RelationMaterializeError::DomainMismatch {
                 actual: cap.domain.to_string(),
                 expected: target_entity.to_owned(),
@@ -6407,11 +6583,11 @@ pub mod registry_test_util {
 #[cfg(test)]
 mod capability_index_tests {
     use super::*;
-    use std::path::Path;
 
     #[test]
     fn find_capabilities_index_matches_linear_scan() {
-        let p = Path::new("../../fixtures/schemas/petstore");
+        let p = &std::path::Path::new(crate::test_manifest_dir())
+            .join("../../fixtures/schemas/petstore");
         if !p.exists() {
             return;
         }
@@ -6446,7 +6622,8 @@ mod capability_index_tests {
 
     #[test]
     fn projection_prompt_field_prefixes_is_single_full_list() {
-        let p = Path::new("../../fixtures/schemas/petstore");
+        let p = &std::path::Path::new(crate::test_manifest_dir())
+            .join("../../fixtures/schemas/petstore");
         if !p.exists() {
             return;
         }
@@ -6475,7 +6652,8 @@ mod capability_index_tests {
 
     #[test]
     fn domain_projection_teaching_wire_fields_falls_back_to_query_when_no_get() {
-        let p = Path::new("../../fixtures/schemas/plasm_prompt_matrix");
+        let p = &std::path::Path::new(crate::test_manifest_dir())
+            .join("../../fixtures/schemas/plasm_prompt_matrix");
         let cgs = crate::loader::load_schema_dir(p).expect("plasm_prompt_matrix fixture");
         let Some(ent) = cgs.get_entity("WafPackage") else {
             panic!("missing WafPackage");
@@ -6497,7 +6675,8 @@ mod capability_index_tests {
 
     #[test]
     fn read_teaching_projection_ignores_provides_summary_subset() {
-        let p = Path::new("../../fixtures/schemas/return_projection_teaching");
+        let p = &std::path::Path::new(crate::test_manifest_dir())
+            .join("../../fixtures/schemas/return_projection_teaching");
         let cgs = crate::loader::load_schema_dir(p).expect("return_projection_teaching");
         let ent = cgs.get_entity("Notice").expect("Notice");
         let want = CGS::default_ordered_entity_field_names(ent);
@@ -6558,7 +6737,8 @@ mod capability_index_tests {
 
     #[test]
     fn chain_materialize_capability_rejects_wrong_domain() {
-        let p = Path::new("../../fixtures/schemas/plasm_language_matrix");
+        let p = &std::path::Path::new(crate::test_manifest_dir())
+            .join("../../fixtures/schemas/plasm_language_matrix");
         let cgs = crate::loader::load_schema_dir(p).expect("plasm_language_matrix");
         let cap: CapabilityName = "langitem_query".into();
         let err = cgs
@@ -6568,6 +6748,7 @@ mod capability_index_tests {
                 "LangTag",
                 &cap,
                 &["item_id"],
+                None,
             )
             .expect_err("langitem_query is on LangItem, not LangTag");
         assert!(
@@ -6581,7 +6762,8 @@ mod capability_index_tests {
 
     #[test]
     fn chain_materialize_capability_accepts_named_query() {
-        let p = Path::new("../../fixtures/schemas/plasm_language_matrix");
+        let p = &std::path::Path::new(crate::test_manifest_dir())
+            .join("../../fixtures/schemas/plasm_language_matrix");
         let cgs = crate::loader::load_schema_dir(p).expect("plasm_language_matrix");
         let cap: CapabilityName = "langtag_query".into();
         cgs.validate_chain_materialize_capability(
@@ -6590,13 +6772,15 @@ mod capability_index_tests {
             "LangTag",
             &cap,
             &["item_id"],
+            None,
         )
         .expect("langtag_query lists LangTag rows scoped by item_id");
     }
 
     #[test]
     fn template_binding_helpers_langitem_get() {
-        let p = Path::new("../../fixtures/schemas/plasm_language_matrix");
+        let p = &std::path::Path::new(crate::test_manifest_dir())
+            .join("../../fixtures/schemas/plasm_language_matrix");
         let cgs = crate::loader::load_schema_dir(p).expect("plasm_language_matrix");
         let cap = cgs.capabilities.get("langitem_get").expect("langitem_get");
         assert!(
@@ -6614,11 +6798,11 @@ mod capability_index_tests {
 mod oauth_extension_tests {
     use super::*;
     use std::collections::HashSet;
-    use std::path::Path;
 
     #[test]
     fn prompt_matrix_loads_with_oauth_block() {
-        let p = Path::new("../../fixtures/schemas/plasm_prompt_matrix");
+        let p = &std::path::Path::new(crate::test_manifest_dir())
+            .join("../../fixtures/schemas/plasm_prompt_matrix");
         let cgs = crate::loader::load_schema_dir(p).expect("plasm_prompt_matrix");
         let oauth = cgs.oauth.as_ref().expect("oauth section");
         assert!(!oauth.provider.trim().is_empty());
@@ -6627,7 +6811,8 @@ mod oauth_extension_tests {
 
     #[test]
     fn oauth_capability_satisfied_any_of() {
-        let p = Path::new("../../fixtures/schemas/plasm_prompt_matrix");
+        let p = &std::path::Path::new(crate::test_manifest_dir())
+            .join("../../fixtures/schemas/plasm_prompt_matrix");
         let cgs = crate::loader::load_schema_dir(p).expect("plasm_prompt_matrix");
         let mut granted = HashSet::new();
         granted.insert("cloudflare.zone.read".to_string());
@@ -6652,7 +6837,8 @@ mod oauth_extension_tests {
 
     #[test]
     fn oauth_json_round_trip() {
-        let p = Path::new("../../fixtures/schemas/plasm_prompt_matrix");
+        let p = &std::path::Path::new(crate::test_manifest_dir())
+            .join("../../fixtures/schemas/plasm_prompt_matrix");
         let cgs = crate::loader::load_schema_dir(p).expect("plasm_prompt_matrix");
         let json = serde_json::to_string(&cgs).expect("serialize");
         let back: CGS = serde_json::from_str(&json).expect("deserialize");
@@ -6683,7 +6869,8 @@ mod oauth_extension_tests {
 
     #[test]
     fn language_matrix_passes_body_var_input_validation() {
-        let p = Path::new("../../fixtures/schemas/plasm_language_matrix");
+        let p = &std::path::Path::new(crate::test_manifest_dir())
+            .join("../../fixtures/schemas/plasm_language_matrix");
         let cgs = crate::loader::load_schema_dir(p).expect("plasm_language_matrix");
         cgs.validate()
             .expect("language matrix validates after body-var input check");
@@ -6951,11 +7138,11 @@ mod list_capability_cardinality_tests {
 
 #[cfg(test)]
 mod view_bind_validation_tests {
-    use std::path::Path;
 
     #[test]
     fn plasm_language_matrix_views_loads_with_node_binds() {
-        let p = Path::new("../../fixtures/schemas/plasm_language_matrix_views");
+        let p = &std::path::Path::new(crate::test_manifest_dir())
+            .join("../../fixtures/schemas/plasm_language_matrix_views");
         if !p.exists() {
             return;
         }

@@ -1,6 +1,6 @@
 use super::mcp_plasm_invoke::ExecutableRunTarget;
 
-fn default_plasm_tools() -> Vec<rust_mcp_sdk::schema::Tool> {
+fn default_plasm_tools() -> Vec<rmcp::model::Tool> {
     super::tools::plasm_tools(
         crate::mcp_run_markdown::ArtifactAccessMode::ResourcesRead,
         true,
@@ -87,7 +87,7 @@ fn with_insta_snapshots<R>(f: impl FnOnce() -> R) -> R {
         .unwrap_or_else(|poisoned| poisoned.into_inner());
     let mut settings = insta::Settings::clone_current();
     settings
-        .set_snapshot_path(std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/snapshots"));
+        .set_snapshot_path(std::path::Path::new(crate::test_manifest_dir()).join("src/snapshots"));
     settings.bind(f)
 }
 
@@ -209,7 +209,7 @@ fn mcp_tool_descriptions_are_self_contained_without_initialize() {
     assert!(plasm_desc.contains(plasm_core::prompt_render::MCP_TOOL_SYNTAX_CONTRACT_MARKER));
     assert!(plasm_desc.contains("logical_session_ref") && plasm_desc.contains("run_ref"));
     assert!(plasm_desc.contains("@compute"));
-    assert!(plasm_desc.contains("incremental domain declarations"));
+    assert!(plasm_desc.contains("incremental declarations arrive through plasm_context"));
     assert!(plasm_desc.contains(plasm_core::prompt_render::TEACHING_VALID_EXPR_MARKER));
 
     assert!(plasm_core::prompt_render::PLASM_MCP_TOOL_DESCRIPTION
@@ -225,9 +225,8 @@ fn mcp_tool_descriptions_are_self_contained_without_initialize() {
     assert!(
         plasm_core::prompt_render::PLASM_CONTEXT_TOOL_DESCRIPTION.contains("Call before `plasm`")
     );
-    assert!(
-        plasm_core::prompt_render::PLASM_MCP_TOOL_DESCRIPTION.contains("do not echo the program")
-    );
+    assert!(plasm_core::prompt_render::PLASM_MCP_TOOL_DESCRIPTION
+        .contains("with the ref, not the program"));
     assert!(!plasm_core::prompt_render::PLASM_RUN_TOOL_DESCRIPTION.contains("echo the program"));
     let program_param_violations = plasm_core::prompt_render::program_param_contract_violations(
         plasm_core::prompt_render::PLASM_PROGRAM_PARAM_DESCRIPTION,
@@ -325,7 +324,10 @@ fn mcp_tool_list_wire_carries_full_untruncated_descriptions() {
 
 #[test]
 fn mcp_tool_list_hides_internal_auth_and_registry_tools() {
-    let names: Vec<String> = default_plasm_tools().into_iter().map(|t| t.name).collect();
+    let names: Vec<String> = default_plasm_tools()
+        .into_iter()
+        .map(|t| t.name.into_owned())
+        .collect();
     assert!(!names.iter().any(|n| n == "plasm_incoming_auth"));
     assert!(!names.iter().any(|n| n == "list_registry"));
     assert!(names.iter().any(|n| n == "plasm_context"));

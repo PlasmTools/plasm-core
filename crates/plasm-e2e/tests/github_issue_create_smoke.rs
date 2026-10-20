@@ -6,7 +6,7 @@ use plasm_core::value::Value;
 use std::path::PathBuf;
 
 fn github_cgs() -> plasm_core::CGS {
-    let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let root = PathBuf::from(plasm_e2e::test_manifest_dir());
     load_schema_dir(&root.join("../../apis/github")).expect("load apis/github")
 }
 

@@ -110,7 +110,7 @@ mod tests {
     use super::*;
 
     fn fixture() -> CGS {
-        let path = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        let path = std::path::PathBuf::from(crate::test_manifest_dir())
             .join("../../fixtures/schemas/request_owned_observation");
         let cgs = plasm_core::load_schema(&path).expect("abstract request observation fixture");
         serde_json::from_slice(&serde_json::to_vec(&cgs).unwrap()).unwrap()

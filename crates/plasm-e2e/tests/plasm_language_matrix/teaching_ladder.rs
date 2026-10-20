@@ -153,7 +153,7 @@ async fn execute(request: Value) -> Value {
     if let Some(schema) = request["schema"].as_str() {
         assert!(["python_value_contract", "python_union_matrix"].contains(&schema));
         let mut cgs = plasm_core::load_schema_dir(
-            &std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            &std::path::Path::new(plasm_e2e::test_manifest_dir())
                 .join("../../fixtures/schemas")
                 .join(schema),
         )

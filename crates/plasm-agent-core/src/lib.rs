@@ -25,7 +25,6 @@ pub mod cli_builder;
 pub mod control_plane_http;
 mod decision_codec;
 mod decision_transport;
-pub mod discovery_embeddings;
 pub mod discovery_matcher;
 pub mod discovery_recovery;
 pub mod discovery_service;
@@ -308,3 +307,18 @@ macro_rules! fixture_row { ($($tt:tt)*) => { plasm_core::ValueRow::try_from($cra
 pub(crate) use {fixture_row, fixture_value};
 
 pub mod compilation_error;
+
+// Shared test-support modules are also consumed by integration-test crates.
+pub(crate) fn test_manifest_dir() -> &'static str {
+    static DIRECTORY: std::sync::OnceLock<String> = std::sync::OnceLock::new();
+    DIRECTORY.get_or_init(|| {
+        let path =
+            std::env::var("CARGO_MANIFEST_DIR").expect("test runner must set CARGO_MANIFEST_DIR");
+        std::path::Path::new(&path)
+            .canonicalize()
+            .expect("test manifest directory must exist")
+            .to_str()
+            .expect("test manifest directory must be UTF-8")
+            .to_owned()
+    })
+}

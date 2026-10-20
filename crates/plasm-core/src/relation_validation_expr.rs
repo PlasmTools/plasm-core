@@ -5,7 +5,10 @@ use crate::expr::{ChainExpr, ChainStep, Expr, QueryExpr};
 use crate::schema::{Cardinality, RelationMaterialization, RelationSchema, CGS};
 use crate::{CapabilityName, EntityName, Predicate, RelationName, RelationScopedFallback, Value};
 
-/// Build a dry/live-executable expression that exercises a many-relation hop, when possible.
+/// Build a dry/live-executable probe for a many-relation's acquisition capability.
+/// Scoped-query probes validate the named transport directly without requiring a
+/// parent Get capability. They do not witness relation variant selection; that
+/// operation is covered by the language matrix's actual parent-to-child traversal.
 pub fn relation_validation_expr(
     cgs: &CGS,
     entity_name: &EntityName,
@@ -20,9 +23,12 @@ pub fn relation_validation_expr(
         .as_ref()
         .unwrap_or(&RelationMaterialization::Unavailable)
     {
-        RelationMaterialization::QueryScoped { capability, param } => {
+        RelationMaterialization::QueryScoped {
+            capability, param, ..
+        } => {
+            let owner = cgs.get_capability(capability.as_str())?.domain.clone();
             let mut q = QueryExpr::filtered(
-                rel.target_resource.clone(),
+                owner,
                 Predicate::eq(param.as_str(), Value::String("1".into())),
             );
             q.capability_name = Some(capability.clone());
@@ -31,7 +37,9 @@ pub fn relation_validation_expr(
         RelationMaterialization::QueryScopedBindings {
             capability,
             bindings,
+            ..
         } => {
+            let owner = cgs.get_capability(capability.as_str())?.domain.clone();
             let preds: Vec<Predicate> = bindings
                 .keys()
                 .map(|cap_param| Predicate::eq(cap_param.as_str(), Value::String("1".into())))
@@ -41,7 +49,7 @@ pub fn relation_validation_expr(
             } else {
                 Predicate::and(preds)
             };
-            let mut q = QueryExpr::filtered(rel.target_resource.clone(), pred);
+            let mut q = QueryExpr::filtered(owner, pred);
             q.capability_name = Some(capability.clone());
             Some(Expr::Query(q))
         }
@@ -116,7 +124,7 @@ mod tests {
 
     #[test]
     fn relation_validation_expr_builds_view_root_chain_for_view_embed() {
-        let dir = Path::new(env!("CARGO_MANIFEST_DIR"))
+        let dir = Path::new(crate::test_manifest_dir())
             .join("../../fixtures/schemas/plasm_language_matrix_views");
         if !dir.is_dir() {
             return;
@@ -137,7 +145,7 @@ mod tests {
 
     #[test]
     fn relation_validation_expr_skips_from_parent_get_many_relations() {
-        let dir = Path::new(env!("CARGO_MANIFEST_DIR"))
+        let dir = Path::new(crate::test_manifest_dir())
             .join("../../fixtures/schemas/plasm_language_matrix_views");
         if !dir.is_dir() {
             return;

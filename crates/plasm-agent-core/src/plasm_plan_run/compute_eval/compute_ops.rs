@@ -24,6 +24,12 @@ pub(crate) enum BindingRowsError {
 
 #[derive(Debug, Error)]
 pub(crate) enum ComputeEvaluationError {
+    #[error("entity narrowing requires one catalog identity per row: {rows} rows, {identities} identities")]
+    NarrowingIdentityCount { rows: usize, identities: usize },
+    #[error("entity narrowing row {index} has no catalog identity")]
+    NarrowingIdentityMissing { index: usize },
+    #[error("entity narrowing row {index} has inconsistent or foreign catalog identity")]
+    NarrowingIdentityInvalid { index: usize },
     #[error("conditional branch `{node}` was not materialized")]
     ConditionalBranchUnavailable { node: String },
     #[error("conditional branches must produce exactly one total value; got {total}")]
@@ -133,6 +139,41 @@ impl ComputedRows {
             rows,
         }
     }
+}
+
+/// Narrow catalog observations by their retained nominal identity. User values,
+/// including copied IDs and discriminator-shaped fields, are never consulted.
+pub(crate) fn narrow_entity_rows(
+    target: &plasm_core::plasm_monad::PlanQualifiedEntityKey,
+    rows: &[plasm_core::ValueRow],
+    identities: &[Option<plasm_core::RowIdentity>],
+) -> Result<ComputedRows, ComputeEvaluationError> {
+    if rows.len() != identities.len() {
+        return Err(ComputeEvaluationError::NarrowingIdentityCount {
+            rows: rows.len(),
+            identities: identities.len(),
+        });
+    }
+    let mut selected = Vec::new();
+    let mut occurrences = Vec::new();
+    for (index, (row, identity)) in rows.iter().zip(identities).enumerate() {
+        let identity = identity
+            .as_ref()
+            .ok_or(ComputeEvaluationError::NarrowingIdentityMissing { index })?;
+        if identity.qualified_entity.entry_id.as_str() != target.entry_id
+            || identity.qualified_entity.entity.as_str() != identity.reference.entity_type.as_str()
+        {
+            return Err(ComputeEvaluationError::NarrowingIdentityInvalid { index });
+        }
+        if identity.qualified_entity.entity.as_str() == target.entity {
+            selected.push(row.clone());
+            occurrences.push(Some(index));
+        }
+    }
+    Ok(ComputedRows {
+        rows: selected,
+        occurrences,
+    })
 }
 
 pub(crate) async fn eval_compute_with_row_source(

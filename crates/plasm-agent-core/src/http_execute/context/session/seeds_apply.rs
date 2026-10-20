@@ -583,7 +583,7 @@ mod sufficiency_tests {
     }
 
     async fn check_empty_extension() {
-        let path = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        let path = std::path::PathBuf::from(crate::test_manifest_dir())
             .join("../../fixtures/schemas/plasm_language_matrix");
         let cgs = Arc::new(plasm_core::loader::load_schema_dir(&path).unwrap());
         let registry =

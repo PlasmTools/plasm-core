@@ -1,0 +1,144 @@
+load("//build/bazel:integration_tests.bzl", "rust_integration_tests")
+load("//build/bazel:native_test.bzl", "rust_test_with_monty")
+load("@crates//:defs.bzl", "aliases", "all_crate_deps")
+load("@rules_rust//rust:defs.bzl", "rust_binary", "rust_library")
+
+rust_test_with_monty(
+    name = "unit_tests",
+    crate = ":plasm_agent",
+    deps = all_crate_deps(normal_dev = True),
+    proc_macro_deps = all_crate_deps(proc_macro_dev = True),
+    data = ["Cargo.toml", "//:test_fixtures"],
+    visibility = ["//visibility:public"],
+)
+
+rust_library(
+    name = "plasm_agent",
+    srcs = glob(["src/**/*.rs"]),
+    aliases = aliases(),
+    compile_data = glob(
+        ["src/**"],
+        allow_empty = True,
+        exclude = ["src/**/*.rs"],
+    ),
+    crate_features = [
+        "default",
+        "embedded_postgres",
+    ],
+    crate_root = "src/lib.rs",
+    edition = "2021",
+    proc_macro_deps = all_crate_deps(proc_macro = True),
+    version = "0.5.5",
+    visibility = ["//visibility:public"],
+    deps = [
+        "//crates/plasm-agent-core:plasm_agent_core",
+        "//crates/plasm-compile:plasm_compile",
+        "//crates/plasm-core:plasm_core",
+        "//crates/plasm-otel:plasm_otel",
+        "//crates/plasm-runtime:plasm_runtime",
+        "//crates/plasm-trace:plasm_trace",
+    ] + all_crate_deps(normal = True),
+)
+
+rust_integration_tests(
+    runtime_tools = {":plasm": "CARGO_BIN_EXE_plasm"},
+    tests = {
+        "plasm_cli_server_insta": "tests/plasm_cli_server_insta.rs",
+        "plasm_remote_help": "tests/plasm_remote_help.rs",
+        "api_capability_templates": "tests/api_capability_templates.rs",
+        "auth_cutover_contract": "tests/auth_cutover_contract.rs",
+        "lock_contention_bench": "tests/lock_contention_bench.rs",
+        "mcp_inbound_oauth_integration": "tests/mcp_inbound_oauth_integration.rs",
+        "outbound_oauth_refresh": "tests/outbound_oauth_refresh.rs"
+},
+    deps = ["//crates/plasm-agent-core:plasm_agent_core", "//crates/plasm-compile:plasm_compile", "//crates/plasm-core:plasm_core", "//crates/plasm-otel:plasm_otel_testing", "//crates/plasm-runtime:plasm_runtime", "//crates/plasm-trace:plasm_trace", "//crates/plasm:plasm_agent"],
+    compile_data = ["//:test_fixtures", "//:language_reference", "//:agent_prompt_assets", "//crates/plasm-agent-core:integration_support"] + glob(["src/**", "migrations/**"], allow_empty = True),
+    data = ["//:test_fixtures", "//:catalog_sources", "//:language_reference", "//:agent_prompt_assets"] + glob(["migrations/**"], allow_empty = True),
+)
+
+rust_binary(
+    name = "plasm",
+    srcs = glob(["src/**/*.rs"]),
+    aliases = aliases(),
+    compile_data = glob(
+        ["src/**"],
+        allow_empty = True,
+        exclude = ["src/**/*.rs"],
+    ),
+    crate_features = [
+        "default",
+        "embedded_postgres",
+    ],
+    crate_root = "src/bin/plasm.rs",
+    edition = "2021",
+    proc_macro_deps = all_crate_deps(proc_macro = True),
+    version = "0.5.5",
+    visibility = ["//visibility:public"],
+    deps = [
+        ":plasm_agent",
+        "//crates/plasm-agent-core:plasm_agent_core",
+        "//crates/plasm-compile:plasm_compile",
+        "//crates/plasm-core:plasm_core",
+        "//crates/plasm-otel:plasm_otel",
+        "//crates/plasm-runtime:plasm_runtime",
+        "//crates/plasm-trace:plasm_trace",
+    ] + all_crate_deps(normal = True),
+)
+
+rust_binary(
+    name = "plasm-import-catalogs",
+    srcs = glob(["src/**/*.rs"]),
+    aliases = aliases(),
+    compile_data = glob(
+        ["src/**"],
+        allow_empty = True,
+        exclude = ["src/**/*.rs"],
+    ),
+    crate_features = [
+        "default",
+        "embedded_postgres",
+    ],
+    crate_root = "src/bin/plasm_import_catalogs.rs",
+    edition = "2021",
+    proc_macro_deps = all_crate_deps(proc_macro = True),
+    version = "0.5.5",
+    visibility = ["//visibility:public"],
+    deps = [
+        ":plasm_agent",
+        "//crates/plasm-agent-core:plasm_agent_core",
+        "//crates/plasm-compile:plasm_compile",
+        "//crates/plasm-core:plasm_core",
+        "//crates/plasm-otel:plasm_otel",
+        "//crates/plasm-runtime:plasm_runtime",
+        "//crates/plasm-trace:plasm_trace",
+    ] + all_crate_deps(normal = True),
+)
+
+rust_binary(
+    name = "plasm-mcp",
+    srcs = glob(["src/**/*.rs"]),
+    aliases = aliases(),
+    compile_data = glob(
+        ["src/**"],
+        allow_empty = True,
+        exclude = ["src/**/*.rs"],
+    ),
+    crate_features = [
+        "default",
+        "embedded_postgres",
+    ],
+    crate_root = "src/bin/plasm_mcp.rs",
+    edition = "2021",
+    proc_macro_deps = all_crate_deps(proc_macro = True),
+    version = "0.5.5",
+    visibility = ["//visibility:public"],
+    deps = [
+        ":plasm_agent",
+        "//crates/plasm-agent-core:plasm_agent_core",
+        "//crates/plasm-compile:plasm_compile",
+        "//crates/plasm-core:plasm_core",
+        "//crates/plasm-otel:plasm_otel",
+        "//crates/plasm-runtime:plasm_runtime",
+        "//crates/plasm-trace:plasm_trace",
+    ] + all_crate_deps(normal = True),
+)

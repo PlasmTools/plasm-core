@@ -13,6 +13,7 @@ pub(in crate::plasm_dag) fn infer_surface_contract(
         QualifiedEntityKey,
         EffectClass,
         crate::plasm_plan::ResultShape,
+        crate::program_binding::RowEntityAuthority,
     ),
     DagCompilationError,
 > {
@@ -86,7 +87,48 @@ pub(in crate::plasm_dag) fn infer_surface_contract(
             }
         }
     }
-    Ok((kind, qe, effect, shape))
+    let authority = {
+        let cgs = cgs_for_qualified_entity(session, &qe).ok_or_else(|| {
+            DagCompilationError::CatalogMissing {
+                entry_id: qe.entry_id.clone(),
+                entity: qe.entity.clone(),
+            }
+        })?;
+        let capability = match expr {
+            Expr::Query(query) => Some(plasm_core::resolve_query_capability(query, &cgs).map_err(
+                super::super::schema_validate::SchemaCatalogError::QueryCapabilityResolution,
+            )?),
+            Expr::Invoke(invoke) => cgs.get_capability(invoke.capability.as_str()),
+            Expr::Create(create) => cgs.get_capability(create.capability.as_str()),
+            _ => None,
+        };
+        match capability
+            .and_then(|cap| cap.output_schema.as_ref())
+            .map(|output| &output.output_type)
+        {
+            Some(plasm_core::OutputType::EntityUnion {
+                variants,
+                cardinality,
+            }) => {
+                shape = if *cardinality == plasm_core::Cardinality::Many {
+                    crate::plasm_plan::ResultShape::List
+                } else {
+                    crate::plasm_plan::ResultShape::MutationResult
+                };
+                crate::program_binding::RowEntityAuthority::Union(
+                    variants
+                        .iter()
+                        .map(|entity| QualifiedEntityKey {
+                            entry_id: qe.entry_id.clone(),
+                            entity: entity.to_string(),
+                        })
+                        .collect(),
+                )
+            }
+            _ => crate::program_binding::RowEntityAuthority::Single(qe.clone()),
+        }
+    };
+    Ok((kind, qe, effect, shape, authority))
 }
 
 pub(in crate::plasm_dag) fn infer_surface_contract_from_expr(

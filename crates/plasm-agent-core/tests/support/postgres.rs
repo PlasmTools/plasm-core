@@ -1,6 +1,6 @@
-//! Hermetic Postgres for integration tests: optional [`INTEGRATION_POSTGRES_URL_ENV`], else testcontainers.
-//!
-//! Other workspace integration tests include this file via `#[path = "..."]` (see `docs/env-profiles.md`).
+// Hermetic Postgres for integration tests: optional INTEGRATION_POSTGRES_URL_ENV,
+// otherwise testcontainers. Shared by path within core and as a declared
+// compile input across the SaaS module boundary (see docs/env-profiles.md).
 
 use std::time::Duration;
 

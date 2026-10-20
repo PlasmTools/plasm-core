@@ -1,0 +1,37 @@
+load("//build/bazel:integration_tests.bzl", "rust_integration_tests")
+load("@crates//:defs.bzl", "aliases", "all_crate_deps")
+load("@rules_rust//rust:defs.bzl", "rust_binary", "rust_library")
+
+rust_library(
+    name = "plasm_eval",
+    srcs = glob(["src/**/*.rs"]),
+    aliases = aliases(),
+    compile_data = glob(
+        ["src/**"],
+        allow_empty = True,
+        exclude = ["src/**/*.rs"],
+    ),
+    crate_features = ["default"],
+    crate_root = "src/lib.rs",
+    edition = "2021",
+    proc_macro_deps = all_crate_deps(proc_macro = True),
+    version = "0.5.5",
+    visibility = ["//visibility:public"],
+    deps = [
+        "//crates/plasm-agent-core:plasm_agent_core",
+        "//crates/plasm-compile:plasm_compile",
+        "//crates/plasm-core:plasm_core",
+        "//crates/plasm-eval-common:plasm_eval_common",
+    ] + all_crate_deps(normal = True),
+)
+
+rust_integration_tests(
+    tests = {
+        "catalog_python_references": "tests/catalog_python_references.rs",
+        "packed_client_fixtures": "tests/packed_client_fixtures.rs",
+        "python_documentation": "tests/python_documentation.rs"
+},
+    deps = ["//crates/plasm-agent-core:plasm_agent_core", "//crates/plasm-compile:plasm_compile", "//crates/plasm-core:plasm_core", "//crates/plasm-eval-common:plasm_eval_common", "//crates/plasm-eval:plasm_eval"],
+    compile_data = ["//:test_fixtures", "//:language_reference", "//:agent_prompt_assets"] + glob(["src/**", "migrations/**"], allow_empty = True),
+    data = ["//:test_fixtures", "//:catalog_sources", "//:language_reference", "//:agent_prompt_assets"] + glob(["migrations/**"], allow_empty = True),
+)

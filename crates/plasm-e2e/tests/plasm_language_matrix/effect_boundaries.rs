@@ -34,8 +34,9 @@ async fn case(count: usize, fault: Option<(usize, Fault)>) {
             let row = json!({"id":format!("w{index}"),"title":body["title"],"score":7,"owner":body["owner"]});
             store.committed.push(row.clone());
             match fault {
-                // The write committed; the client receives no successful receipt.
-                Some(Fault::ResponseLost) => (StatusCode::SERVICE_UNAVAILABLE, Json(json!({"error":"response lost after commit"}))).into_response(),
+                // The write committed; the client receives an error response,
+                // which is transport evidence but not a successful acknowledgement.
+                Some(Fault::FailedAfterCommit) => (StatusCode::SERVICE_UNAVAILABLE, Json(json!({"error":"failure after commit"}))).into_response(),
                 Some(Fault::InvalidResponse) => Json(json!({"title":true})).into_response(),
                 _ => Json(row).into_response(),
             }
@@ -133,7 +134,7 @@ async fn case(count: usize, fault: Option<(usize, Fault)>) {
     if let Err(failure) = &actual {
         let cause = match fault.unwrap().1 {
             Fault::InvalidResponse => plasm_runtime::FailureCause::ResponseContract,
-            Fault::Rejected | Fault::ResponseLost => plasm_runtime::FailureCause::Upstream,
+            Fault::Rejected | Fault::FailedAfterCommit => plasm_runtime::FailureCause::Upstream,
         };
         assert_eq!(failure.cause, cause);
         assert_eq!(
@@ -166,7 +167,8 @@ async fn case(count: usize, fault: Option<(usize, Fault)>) {
             .iter()
             .filter(|d| d.status == MutationDispatchStatus::Unresolved)
             .count(),
-        expected.unresolved
+        expected.unresolved,
+        "transport receipt is distinct from acknowledgement: count={count} fault={fault:?}"
     );
     assert!(dispatches
         .iter()
@@ -215,7 +217,11 @@ pub(super) async fn run() -> usize {
         case(count, None).await;
         checked += 1;
         if count > 0 {
-            for fault in [Fault::Rejected, Fault::ResponseLost, Fault::InvalidResponse] {
+            for fault in [
+                Fault::Rejected,
+                Fault::FailedAfterCommit,
+                Fault::InvalidResponse,
+            ] {
                 for at in 0..count * count {
                     case(count, Some((at, fault))).await;
                     checked += 1;

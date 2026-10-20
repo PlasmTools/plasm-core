@@ -12,7 +12,7 @@ use crate::{ExecutionConfig, ExecutionEngine, RuntimeError, SessionMaterializati
 
 fn schema() -> plasm_core::CGS {
     plasm_core::loader::load_schema_dir(
-        &std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        &std::path::PathBuf::from(crate::test_manifest_dir())
             .join("../../fixtures/schemas/view_rowsets"),
     )
     .expect("abstract rowset view")

@@ -7,6 +7,7 @@ pub(crate) mod build_statements;
 mod callback_flow;
 mod callbacks;
 pub(crate) mod catalog_operations;
+mod entity_narrowing;
 mod expression_captures;
 mod fanout;
 mod helpers;
@@ -421,9 +422,10 @@ impl Lower<'_> {
                     PythonSourceError::WriteReceiverNeedsIdentitySingleton,
                 ));
             }
+            let concrete = contract.concrete_entity().map_err(|error| at(e, error))?;
             let owner = plasm_core::symbol_tuning::EntityBinding {
-                entry_id: contract.row_entity.entry_id.as_str().into(),
-                entity: contract.row_entity.entity.as_str().into(),
+                entry_id: concrete.entry_id.as_str().into(),
+                entity: concrete.entity.as_str().into(),
             };
             let resolved = catalog_operations::resolve_taught_method(
                 self.es,

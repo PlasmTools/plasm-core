@@ -100,7 +100,7 @@ mod tests {
     use std::sync::Arc;
 
     fn langitem_tag_map() -> (Arc<crate::CGS>, SymbolMap) {
-        let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+        let root = PathBuf::from(crate::test_manifest_dir());
         let cgs = Arc::new(
             load_schema_dir(&root.join("../../fixtures/schemas/plasm_language_matrix"))
                 .expect("plasm_language_matrix"),

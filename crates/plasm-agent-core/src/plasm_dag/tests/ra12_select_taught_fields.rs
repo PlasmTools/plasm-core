@@ -9,7 +9,7 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 fn return_projection_session() -> ExecuteSession {
-    let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let root = PathBuf::from(crate::test_manifest_dir());
     let cgs = Arc::new(
         plasm_core::loader::load_schema_dir(
             &root.join("../../fixtures/schemas/return_projection_teaching"),

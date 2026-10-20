@@ -6,7 +6,7 @@
 
 use std::collections::BTreeMap;
 
-use rust_mcp_sdk::schema::{ClientCapabilities, InitializeRequestParams, ServerCapabilities};
+use rmcp::model::{ClientCapabilities, InitializeRequestParams, ServerCapabilities};
 use serde_json::{Map, Value};
 
 use crate::mcp_client_info::McpClientInfo;
@@ -116,26 +116,34 @@ pub fn client_supports_mcp_ui_apps(client: &McpClientInfo) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use rust_mcp_sdk::schema::{Implementation, LATEST_PROTOCOL_VERSION};
+    use rmcp::model::Implementation;
 
     fn client_with_extensions(
         extensions: BTreeMap<String, Map<String, Value>>,
     ) -> InitializeRequestParams {
-        InitializeRequestParams {
-            capabilities: ClientCapabilities {
-                extensions: Some(extensions),
-                ..Default::default()
-            },
-            client_info: Implementation {
-                name: "mcp-ui-test".into(),
-                version: "0".into(),
-                title: None,
-                description: None,
-                icons: vec![],
-                website_url: None,
-            },
-            protocol_version: LATEST_PROTOCOL_VERSION.into(),
-            meta: None,
+        {
+            let mut model = InitializeRequestParams::new(
+                Default::default(),
+                rmcp::model::Implementation::new("test", "0"),
+            );
+            model.capabilities = {
+                let mut model = ClientCapabilities::default();
+                model.extensions = Some(extensions);
+                model
+            };
+            model.client_info = {
+                let mut model = Implementation::new("test", "0");
+                model.name = "mcp-ui-test".into();
+                model.version = "0".into();
+                model.title = None;
+                model.description = None;
+                model.icons = None;
+                model.website_url = None;
+                model
+            };
+            model.protocol_version = rmcp::model::ProtocolVersion::V_2025_11_25;
+            model.meta = None;
+            model
         }
     }
 
@@ -154,36 +162,50 @@ mod tests {
 
     #[test]
     fn missing_extension_falls_back_to_known_host() {
-        let params = McpClientInfo::from_initialize(InitializeRequestParams {
-            capabilities: ClientCapabilities::default(),
-            client_info: Implementation {
-                name: "cursor-vscode".into(),
-                version: "1".into(),
-                title: None,
-                description: None,
-                icons: vec![],
-                website_url: None,
-            },
-            protocol_version: LATEST_PROTOCOL_VERSION.into(),
-            meta: None,
+        let params = McpClientInfo::from_initialize({
+            let mut model = InitializeRequestParams::new(
+                Default::default(),
+                rmcp::model::Implementation::new("test", "0"),
+            );
+            model.capabilities = ClientCapabilities::default();
+            model.client_info = {
+                let mut model = Implementation::new("test", "0");
+                model.name = "cursor-vscode".into();
+                model.version = "1".into();
+                model.title = None;
+                model.description = None;
+                model.icons = None;
+                model.website_url = None;
+                model
+            };
+            model.protocol_version = rmcp::model::ProtocolVersion::V_2025_11_25;
+            model.meta = None;
+            model
         });
         assert!(client_supports_mcp_ui_apps(&params));
     }
 
     #[test]
     fn unknown_host_without_extension_is_disabled() {
-        let params = McpClientInfo::from_initialize(InitializeRequestParams {
-            capabilities: ClientCapabilities::default(),
-            client_info: Implementation {
-                name: "unknown-mcp-client".into(),
-                version: "0".into(),
-                title: None,
-                description: None,
-                icons: vec![],
-                website_url: None,
-            },
-            protocol_version: LATEST_PROTOCOL_VERSION.into(),
-            meta: None,
+        let params = McpClientInfo::from_initialize({
+            let mut model = InitializeRequestParams::new(
+                Default::default(),
+                rmcp::model::Implementation::new("test", "0"),
+            );
+            model.capabilities = ClientCapabilities::default();
+            model.client_info = {
+                let mut model = Implementation::new("test", "0");
+                model.name = "unknown-mcp-client".into();
+                model.version = "0".into();
+                model.title = None;
+                model.description = None;
+                model.icons = None;
+                model.website_url = None;
+                model
+            };
+            model.protocol_version = rmcp::model::ProtocolVersion::V_2025_11_25;
+            model.meta = None;
+            model
         });
         assert!(!client_supports_mcp_ui_apps(&params));
     }

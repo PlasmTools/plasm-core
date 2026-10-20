@@ -152,6 +152,8 @@ pub enum ScanError {
 
 #[derive(Debug, Clone, PartialEq, Eq, Error)]
 pub enum FusionError {
+    #[error("entity narrowing requires catalog row identity evidence, not value-only rows")]
+    EntityNarrowingInPipeline,
     #[error("sort and limit must not be commuted")]
     CommuteSortLimit,
     #[error("optimizer must not rewrite row filters into catalog filters")]

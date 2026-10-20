@@ -114,7 +114,7 @@ mod tests {
     use std::sync::Arc;
 
     fn pokeapi_cgs() -> Arc<CGS> {
-        let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+        let root = PathBuf::from(crate::test_manifest_dir());
         Arc::new(
             plasm_core::load_schema(&root.join("../../fixtures/schemas/pokeapi_mini"))
                 .expect("pokeapi_mini cgs"),

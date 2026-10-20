@@ -131,7 +131,7 @@ mod tests {
     use super::*;
     #[test]
     fn top_k_resolves_declared_catalog_domain_before_any_page() {
-        let root = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+        let root = std::path::PathBuf::from(crate::test_manifest_dir());
         let cgs =
             plasm_core::load_schema(&root.join("../../fixtures/schemas/plasm_pagination_matrix"))
                 .unwrap();

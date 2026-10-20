@@ -4,7 +4,7 @@ use axum::http::header::{CACHE_CONTROL, CONTENT_TYPE};
 use axum::response::{IntoResponse, Response};
 use axum::routing::get;
 use axum::Router;
-use rust_mcp_sdk::schema::TextResourceContents;
+use rmcp::model::ResourceContents;
 use serde_json::Map;
 
 /// Static assets + routing for one MCP App bundle.
@@ -85,17 +85,12 @@ pub fn bundle_for_uri(uri: &str) -> Option<&'static McpAppBundle> {
     BUNDLES.iter().copied().find(|b| b.uri == uri)
 }
 
-pub fn read_resource_text(
-    uri: &str,
-) -> Option<(TextResourceContents, Map<String, serde_json::Value>)> {
+pub fn read_resource_text(uri: &str) -> Option<(ResourceContents, Map<String, serde_json::Value>)> {
     let bundle = bundle_for_uri(uri)?;
     Some((
-        TextResourceContents {
-            uri: uri.to_string(),
-            mime_type: Some(bundle.mime.into()),
-            text: inject_mcp_app_client_config(bundle.mcp_inline_html),
-            meta: Some(resource_read_content_meta()),
-        },
+        ResourceContents::text(inject_mcp_app_client_config(bundle.mcp_inline_html), uri)
+            .with_mime_type(bundle.mime)
+            .with_meta(resource_read_content_meta().into()),
         resource_read_content_meta(),
     ))
 }
@@ -164,45 +159,51 @@ pub fn mount_bundle(bundle: &'static McpAppBundle) -> Router {
 }
 
 /// MCP App `resources/templates/list` entries (omitted when client lacks UI extension).
-pub fn mcp_app_resource_templates() -> Vec<rust_mcp_sdk::schema::ResourceTemplate> {
-    use rust_mcp_sdk::schema::ResourceTemplate;
+pub fn mcp_app_resource_templates() -> Vec<rmcp::model::ResourceTemplate> {
+    use rmcp::model::ResourceTemplate;
     vec![
-        ResourceTemplate {
-            annotations: None,
-            description: Some(
-                "Plasm cross-catalog workflow MCP App (parameter form + plan canvas).".into(),
-            ),
-            icons: vec![],
-            meta: None,
-            mime_type: Some(WORKFLOW.mime.into()),
-            name: "plasm_workflow_app".into(),
-            title: Some("Plasm workflow MCP App".into()),
-            uri_template: WORKFLOW.uri.into(),
+        {
+            let mut model = ResourceTemplate::new("", "");
+            model.annotations = None;
+            model.description =
+                Some("Plasm cross-catalog workflow MCP App (parameter form + plan canvas).".into());
+            model.icons = None;
+            model.meta = None;
+            model.mime_type = Some(WORKFLOW.mime.into());
+            model.name = "plasm_workflow_app".into();
+            model.title = Some("Plasm workflow MCP App".into());
+            model.uri_template = WORKFLOW.uri.into();
+            model
         },
-        ResourceTemplate {
-            annotations: None,
-            description: Some(
-                "Plasm plan review MCP App (program editor + plan canvas for `plasm` dry-run).".into(),
-            ),
-            icons: vec![],
-            meta: None,
-            mime_type: Some(PLAN_REVIEW.mime.into()),
-            name: "plasm_plan_review_app".into(),
-            title: Some("Plasm plan review MCP App".into()),
-            uri_template: PLAN_REVIEW.uri.into(),
+        {
+            let mut model = ResourceTemplate::new("", "");
+            model.annotations = None;
+            model.description = Some(
+                "Plasm plan review MCP App (program editor + plan canvas for `plasm` dry-run)."
+                    .into(),
+            );
+            model.icons = None;
+            model.meta = None;
+            model.mime_type = Some(PLAN_REVIEW.mime.into());
+            model.name = "plasm_plan_review_app".into();
+            model.title = Some("Plasm plan review MCP App".into());
+            model.uri_template = PLAN_REVIEW.uri.into();
+            model
         },
-        ResourceTemplate {
-            annotations: None,
-            description: Some(
+        {
+            let mut model = ResourceTemplate::new("", "");
+            model.annotations = None;
+            model.description = Some(
                 "Plasm run explorer MCP App (step list + entity table for live `plasm_run` / `run_workflow`)."
                     .into(),
-            ),
-            icons: vec![],
-            meta: None,
-            mime_type: Some(RUN_EXPLORER.mime.into()),
-            name: "plasm_run_explorer_app".into(),
-            title: Some("Plasm run explorer MCP App".into()),
-            uri_template: RUN_EXPLORER.uri.into(),
+            );
+            model.icons = None;
+            model.meta = None;
+            model.mime_type = Some(RUN_EXPLORER.mime.into());
+            model.name = "plasm_run_explorer_app".into();
+            model.title = Some("Plasm run explorer MCP App".into());
+            model.uri_template = RUN_EXPLORER.uri.into();
+            model
         },
     ]
 }

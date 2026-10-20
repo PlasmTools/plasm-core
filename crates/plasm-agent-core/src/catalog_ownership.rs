@@ -160,7 +160,7 @@ mod tests {
     }
 
     fn matrix_cgs() -> Arc<CGS> {
-        let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+        let root = PathBuf::from(crate::test_manifest_dir());
         Arc::new(
             load_schema(&root.join("../../fixtures/schemas/plasm_language_matrix"))
                 .expect("load plasm_language_matrix"),

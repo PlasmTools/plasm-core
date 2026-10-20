@@ -387,11 +387,12 @@ pub use schema::{
     CapabilityInputs, CapabilityKind, CapabilityManifest, CapabilityMapping, CapabilityReceiver,
     CapabilitySchema, CapabilityTemplateJson, Cardinality, CgsCapabilityIndex, CrossFieldRule,
     CrossFieldRuleType, DataClassDimension, DataClassName, DataClassSchema, DataClassSeverity,
-    DiscoveryCapabilityHints, DiscoveryEntityHints, DiscoveryRelationHints, EmbedOnMissPolicy,
-    EmbeddedCollectionCoverage, EntityDef, FieldDeriveRule, FieldSchema, FieldValueKind, IdFormat,
-    InputFieldSchema, InputFieldWire, InputSchema, InputType, InputValidation, InputValueCondition,
-    InputVariantSchema, InvocationControlsSchema, JsonPathSegment, NamedValueSchema,
-    OauthDefaultScopeSet, OauthExtension, OauthRequirements, OauthScopeEntry, OutputSchema,
+    DiscoveryCapabilityHints, DiscoveryEntityHints, DiscoveryRelationHints, DiscriminatorValue,
+    EmbedOnMissPolicy, EmbeddedCollectionCoverage, EntityDef, EntityDiscriminator, EntityUnionCase,
+    FieldDeriveRule, FieldSchema, FieldValueKind, IdFormat, InputFieldSchema, InputFieldWire,
+    InputSchema, InputType, InputValidation, InputValueCondition, InputVariantSchema,
+    InvocationControlsSchema, JsonPathSegment, NamedValueSchema, OauthDefaultScopeSet,
+    OauthExtension, OauthRequirements, OauthScopeEntry, OutputDecoderSpec, OutputSchema,
     OutputType, ParentScopeSchema, RelationMaterialization, RelationSchema, RelationScopedFallback,
     ResourceSchema, ScopeAggregateKeyPolicy, ScopeRequirement, SelectionEffect, SinkClassName,
     ValueDomainKey, ValueDomainKeyError, ValueDomainSlot, ViewDefinition, ViewNodeSpec,
@@ -488,3 +489,18 @@ pub(crate) use {fixture_row, fixture_value};
 pub mod value_arithmetic;
 pub mod value_equality;
 pub mod value_order;
+
+#[cfg(test)]
+pub(crate) fn test_manifest_dir() -> &'static str {
+    static DIRECTORY: std::sync::OnceLock<String> = std::sync::OnceLock::new();
+    DIRECTORY.get_or_init(|| {
+        let path =
+            std::env::var("CARGO_MANIFEST_DIR").expect("test runner must set CARGO_MANIFEST_DIR");
+        std::path::Path::new(&path)
+            .canonicalize()
+            .expect("test manifest directory must exist")
+            .to_str()
+            .expect("test manifest directory must be UTF-8")
+            .to_owned()
+    })
+}

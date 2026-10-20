@@ -87,6 +87,7 @@ pub(crate) struct PlanLineJob {
     pub trace_line_index: usize,
     pub parsed: ParsedExpr,
     pub source_identity: Option<String>,
+    pub observed_relation_source: Option<ExecutionResult>,
 }
 
 pub(crate) struct PlanLineJobResult {
@@ -136,11 +137,7 @@ impl PlanLineExecutionFold {
             child.materialize(plasm_core::collection_codec::Demand::Observed)?;
         }
         let result = match parent {
-            Some(parent) => parent.flat_map(
-                plasm_runtime::execution::RowMaterialization::Catalog,
-                &identity,
-                &self.collections,
-            )?,
+            Some(parent) => parent.flat_map(&identity, &self.collections)?,
             None if self.collections.is_empty() => ExecutionCollection::evaluate(
                 plasm_runtime::execution::RowMaterialization::Catalog,
                 identity,
@@ -165,7 +162,7 @@ impl PlanLineExecutionFold {
                 .resident_entities()
                 .select(0..count.min(result.count()))?;
             ExecutionCollection::derive(
-                plasm_runtime::execution::RowMaterialization::Catalog,
+                result.row_materialization(),
                 id,
                 &[&result],
                 Transform::Take(count),
@@ -342,6 +339,7 @@ pub(crate) fn push_verified_row_job(
         })?,
         parsed,
         source_identity: None,
+        observed_relation_source: None,
     });
     Ok(())
 }
@@ -359,6 +357,7 @@ pub(crate) fn push_row_job(
         trace_line_index: plan_subline_index(node_index, row_index)?,
         parsed,
         source_identity: None,
+        observed_relation_source: None,
     });
     Ok(())
 }
@@ -377,6 +376,7 @@ pub(crate) fn push_row_job_with_source(
         trace_line_index: plan_subline_index(node_index, row_index)?,
         parsed,
         source_identity,
+        observed_relation_source: None,
     });
     Ok(())
 }
@@ -665,6 +665,7 @@ async fn run_plan_line_job(
         trace_line_index,
         parsed,
         source_identity,
+        observed_relation_source,
     } = job;
     let (parsed, result, _artifact) = match preflight {
         PlanLinePreflight::CallerVerified => run_parsed_plasm_line(
@@ -680,6 +681,10 @@ async fn run_plan_line_job(
             None,
             Some(PreflightToken::VERIFIED),
             plan_shared.as_deref(),
+            observed_relation_source.as_ref().map_or(
+                crate::execute_pipeline::CompileSource::Authored,
+                crate::execute_pipeline::CompileSource::BoundRelation,
+            ),
         )
         .await
         .map_err(ExecutionFailure::from)?,

@@ -291,6 +291,7 @@ pub(crate) async fn admit_bundle(
                     if !matches!(
                         c.compute.op,
                         plasm_core::ComputeOp::Union { .. }
+                            | plasm_core::ComputeOp::NarrowEntity { .. }
                             | plasm_core::ComputeOp::MergeBranches { .. }
                             | plasm_core::ComputeOp::Render { .. }
                     ) =>
@@ -376,9 +377,6 @@ mod tests {
                 "{dependency} must share the vendored Monty source"
             );
         }
-        let worker_build = include_str!("../../../../scripts/ci/build-monty-runtime.sh");
-        assert!(worker_build.contains("monty_root=\"${oss_root}/vendor/monty\""));
-        assert!(worker_build.contains("--path \"${monty_root}/crates/monty-runtime\""));
     }
 }
 

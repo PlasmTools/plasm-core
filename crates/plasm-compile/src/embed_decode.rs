@@ -17,6 +17,183 @@ use crate::embed_target_decoder::entity_decoder_for_from_parent_get_target;
 use crate::json_path::path_expr_from_json_segments;
 use crate::DecodeError;
 
+/// Decode an output sum without erasing a row's concrete entity type or identity.
+pub fn decode_output_with_cgs(
+    decoder: &crate::OutputDecoder,
+    response: &serde_json::Value,
+    cgs: Option<&CGS>,
+) -> Result<Vec<DecodedEntity>, DecodeError> {
+    match decoder {
+        crate::OutputDecoder::Entity(decoder) => decode_entities_with_cgs(decoder, response, cgs),
+        crate::OutputDecoder::AssertedEntity { decoder, when } => {
+            extract_path(&decoder.source, response)?
+                .iter()
+                .enumerate()
+                .map(|(row, source)| {
+                    if !discriminator_matches(when, source)? {
+                        return Err(DecodeError::EntityAssertionMismatch {
+                            entity: decoder.entity.clone(),
+                            row,
+                        });
+                    }
+                    decode_single_entity(decoder, source, cgs)
+                })
+                .collect()
+        }
+        crate::OutputDecoder::Union(decoder) => extract_path(&decoder.source, response)?
+            .iter()
+            .enumerate()
+            .map(|(row, source)| {
+                let mut matches = Vec::new();
+                for variant in &decoder.variants {
+                    if discriminator_matches(&variant.when, source)? {
+                        matches.push(&variant.decoder);
+                    }
+                }
+                match matches.as_slice() {
+                    [] => Err(DecodeError::EntityUnionUnknownVariant { row }),
+                    [selected] => decode_single_entity(selected, source, cgs),
+                    _ => Err(DecodeError::EntityUnionAmbiguousVariant {
+                        row,
+                        entities: matches
+                            .iter()
+                            .map(|decoder| decoder.entity.clone())
+                            .collect(),
+                    }),
+                }
+            })
+            .collect(),
+    }
+}
+
+fn discriminator_matches(
+    discriminator: &plasm_core::EntityDiscriminator,
+    source: &serde_json::Value,
+) -> Result<bool, DecodeError> {
+    use plasm_core::{DiscriminatorValue, EntityDiscriminator};
+    let path = match discriminator {
+        EntityDiscriminator::Present { path }
+        | EntityDiscriminator::Absent { path }
+        | EntityDiscriminator::Equals { path, .. } => path,
+    };
+    let mut observed = Some(source);
+    for (index, key) in path.iter().enumerate() {
+        let Some(value) = observed else {
+            break;
+        };
+        let object =
+            value
+                .as_object()
+                .ok_or_else(|| DecodeError::EntityUnionDiscriminatorShape {
+                    path: path[..index].join("."),
+                })?;
+        observed = object.get(key);
+    }
+    Ok(match discriminator {
+        EntityDiscriminator::Present { .. } => observed.is_some(),
+        EntityDiscriminator::Absent { .. } => observed.is_none(),
+        EntityDiscriminator::Equals { value, .. } => observed.is_some_and(|observed| match value {
+            DiscriminatorValue::String(value) => observed.as_str() == Some(value),
+            DiscriminatorValue::Bool(value) => observed.as_bool() == Some(*value),
+            DiscriminatorValue::Number(value) => observed.as_number() == Some(value),
+        }),
+    })
+}
+
+#[cfg(test)]
+mod output_union_codec_laws {
+    use super::*;
+    use crate::{EntityUnionDecoder, EntityVariantDecoder, OutputDecoder, PathExpr};
+    use plasm_core::EntityDiscriminator;
+    use serde_json::json;
+
+    fn decoder() -> OutputDecoder {
+        OutputDecoder::Union(EntityUnionDecoder {
+            source: PathExpr::empty().wildcard(),
+            variants: vec![
+                EntityVariantDecoder {
+                    when: EntityDiscriminator::Absent {
+                        path: vec!["marker".into()],
+                    },
+                    decoder: EntityDecoder::new("Left", PathExpr::empty()).with_id_field("id"),
+                },
+                EntityVariantDecoder {
+                    when: EntityDiscriminator::Present {
+                        path: vec!["marker".into()],
+                    },
+                    decoder: EntityDecoder::new("Right", PathExpr::empty()).with_id_field("id"),
+                },
+            ],
+        })
+    }
+
+    #[test]
+    fn concrete_entity_assertion_rejects_present_null_before_decode() {
+        let decoder = OutputDecoder::AssertedEntity {
+            decoder: EntityDecoder::new("Left", PathExpr::empty()).with_id_field("id"),
+            when: EntityDiscriminator::Absent {
+                path: vec!["marker".into()],
+            },
+        };
+        let packed = serde_json::to_vec(&decoder).unwrap();
+        let restored: OutputDecoder = serde_json::from_slice(&packed).unwrap();
+        let rows = decode_output_with_cgs(&restored, &json!({"id":"7"}), None).unwrap();
+        assert_eq!(rows[0].reference.entity_type.as_str(), "Left");
+        // No id is supplied: the nominal assertion must fail before identity extraction.
+        assert!(
+            matches!(decode_output_with_cgs(&restored, &json!({"marker":null}), None),
+            Err(DecodeError::EntityAssertionMismatch { entity, row: 0 }) if entity == "Left")
+        );
+    }
+
+    #[test]
+    fn union_decode_preserves_variant_identity_and_missing_versus_null() {
+        let decoder = decoder();
+        let packed = serde_json::to_vec(&decoder).unwrap();
+        let restored: OutputDecoder = serde_json::from_slice(&packed).unwrap();
+        let rows = decode_output_with_cgs(
+            &restored,
+            &json!([
+                {"id": "same"}, {"id": "same", "marker": null}
+            ]),
+            None,
+        )
+        .unwrap();
+        assert_eq!(rows[0].reference.entity_type.as_str(), "Left");
+        assert_eq!(rows[1].reference.entity_type.as_str(), "Right");
+        assert_ne!(rows[0].reference, rows[1].reference);
+    }
+
+    #[test]
+    fn union_decode_rejects_unknown_ambiguous_and_malformed_discriminators() {
+        let OutputDecoder::Union(mut union) = decoder() else {
+            unreachable!()
+        };
+        union.variants.remove(0);
+        assert!(matches!(
+            decode_output_with_cgs(
+                &OutputDecoder::Union(union.clone()),
+                &json!([{"id":"1"}]),
+                None
+            ),
+            Err(DecodeError::EntityUnionUnknownVariant { row: 0 })
+        ));
+        union.variants.push(union.variants[0].clone());
+        assert!(matches!(
+            decode_output_with_cgs(
+                &OutputDecoder::Union(union),
+                &json!([{"id":"1","marker":true}]),
+                None
+            ),
+            Err(DecodeError::EntityUnionAmbiguousVariant { row: 0, .. })
+        ));
+        assert!(matches!(
+            decode_output_with_cgs(&decoder(), &json!([null]), None),
+            Err(DecodeError::EntityUnionDiscriminatorShape { .. })
+        ));
+    }
+}
+
 /// Decode entities using an [`EntityDecoder`].
 pub fn decode_entities(
     decoder: &EntityDecoder,
@@ -623,7 +800,7 @@ mod tests {
     #[test]
     fn exhaustive_embed_rejects_missing_wildcard_suffix_before_cache_normalization() {
         let mut cgs = plasm_core::load_schema_dir(
-            &std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            &std::path::PathBuf::from(crate::test_manifest_dir())
                 .join("../../fixtures/schemas/hydration_boundary_matrix"),
         )
         .unwrap();
@@ -672,7 +849,7 @@ mod tests {
     #[test]
     fn prefer_from_parent_get_complete_coverage_proves_embedded_membership() {
         let mut cgs = plasm_core::load_schema_dir(
-            &std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            &std::path::PathBuf::from(crate::test_manifest_dir())
                 .join("../../fixtures/schemas/hydration_boundary_matrix"),
         )
         .unwrap();
@@ -711,7 +888,7 @@ mod tests {
             owner in "[0-9]{1,8}",
             explicit_null in proptest::bool::ANY,
         ) {
-            let mut cgs = plasm_core::load_schema_dir(&std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            let mut cgs = plasm_core::load_schema_dir(&std::path::PathBuf::from(crate::test_manifest_dir())
                 .join("../../fixtures/schemas/plasm_language_matrix")).unwrap();
             cgs.values.get_mut("nv_compound_branch_item_id").unwrap().field_type=plasm_core::FieldType::Integer;
             cgs.values.get_mut("nv_compound_branch_item_id").unwrap().domain.kernel=plasm_core::value_domain::KernelKind::Integer;
@@ -744,7 +921,7 @@ mod tests {
     fn transitive_from_parent_get_expand_with_cgs() {
         use plasm_core::loader::load_schema_dir;
 
-        let dir = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        let dir = std::path::PathBuf::from(crate::test_manifest_dir())
             .join("../../fixtures/schemas/plasm_language_matrix");
         let cgs = load_schema_dir(&dir).expect("langmatrix");
         let summary = EntityDecoder::new("LangSummary", PathExpr::from_slice(&["summary"]))
@@ -785,7 +962,7 @@ mod tests {
     proptest::proptest! {
         #[test]
         fn transitive_collection_codec_preserves_order_duplicates_and_empty(ids in proptest::collection::vec(0u8..5, 0..12)) {
-            let dir = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            let dir = std::path::PathBuf::from(crate::test_manifest_dir())
                 .join("../../fixtures/schemas/plasm_language_matrix");
             let mut cgs = plasm_core::loader::load_schema_dir(&dir).unwrap();
             let relation = cgs.entities.get_mut("LangSummary").unwrap().relations.get_mut("detail").unwrap();

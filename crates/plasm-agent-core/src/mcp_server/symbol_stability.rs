@@ -26,7 +26,7 @@ mod tests {
     const ENTRY: &str = "langmatrix";
 
     fn matrix_fixture_dir() -> PathBuf {
-        PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        PathBuf::from(crate::test_manifest_dir())
             .join("../../fixtures/schemas/plasm_language_matrix")
     }
 

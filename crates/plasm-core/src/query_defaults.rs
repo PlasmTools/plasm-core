@@ -112,7 +112,7 @@ mod tests {
     use std::path::Path;
 
     fn matrix_cgs() -> CGS {
-        let dir = Path::new(env!("CARGO_MANIFEST_DIR"))
+        let dir = Path::new(crate::test_manifest_dir())
             .join("../../fixtures/schemas/plasm_language_matrix");
         load_schema_dir(&dir).expect("language matrix cgs")
     }

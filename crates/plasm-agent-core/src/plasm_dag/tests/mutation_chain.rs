@@ -8,10 +8,27 @@ fn create_then_update_chained_in_one_program_compiles() {
 updated = LangItem(created.id).update(title="approved")
 created, updated"#;
     let plan = compile_plasm_dag_to_plan(
-        &PromptPipelineConfig::default(), None, &session, "mutation-chain", source,
-    ).expect("chained writes compile");
+        &PromptPipelineConfig::default(),
+        None,
+        &session,
+        "mutation-chain",
+        source,
+    )
+    .expect("chained writes compile");
     let dry = evaluate_plasm_plan_dry(&session, &plan).expect("dry-run");
-    assert!(matches!(dry.flow.verdict, crate::plan_flow::FlowVerdict::Clean));
-    let updated = plan["nodes"].as_array().unwrap().iter().find(|node| node["id"] == "updated").unwrap();
-    assert!(updated["uses_result"].as_array().unwrap().iter().any(|input| input["node"] == "created"));
+    assert!(matches!(
+        dry.flow.verdict,
+        crate::plan_flow::FlowVerdict::Clean
+    ));
+    let updated = plan["nodes"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|node| node["id"] == "updated")
+        .unwrap();
+    assert!(updated["uses_result"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|input| input["node"] == "created"));
 }

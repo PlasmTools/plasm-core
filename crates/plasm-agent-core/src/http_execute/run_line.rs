@@ -175,6 +175,7 @@ pub(crate) async fn run_parsed_plasm_line(
     rows_progress: Option<plasm_runtime::RowsProgressFn>,
     preflight: Option<plasm_core::PreflightToken>,
     plan_shared: Option<&crate::plan_execute_shared::PlanLineExecuteShared>,
+    compile_source: crate::execute_pipeline::CompileSource<'_>,
 ) -> Result<(ParsedExpr, ExecutionResult, Option<RunArtifactHandle>), RunLineError> {
     let preflight_token = match preflight {
         Some(token) => token,
@@ -287,8 +288,12 @@ pub(crate) async fn run_parsed_plasm_line(
     )
     .map_err(RunLineError::CatalogOwnership)?;
     let preflight = sess.preflight_snapshot().await;
-    let parsed = crate::execute_pipeline::preflight_line_compile_dispatch(
-        &preflight, &preflight, &parsed, line, exec_cgs,
+    let parsed = crate::execute_pipeline::preflight_line_compile_dispatch_from(
+        &preflight,
+        &preflight,
+        &parsed,
+        exec_cgs,
+        compile_source,
     )
     .map_err(|error| {
         RunLineError::from(crate::program_diagnostic::ProgramStageError::from(error))
@@ -343,6 +348,10 @@ pub(crate) async fn run_parsed_plasm_line(
         host_page_size,
         surface_read_budget: surface_read_budget.clone(),
         expr_span: expr_span.clone(),
+        observed_relation_source: match compile_source {
+            crate::execute_pipeline::CompileSource::Authored => None,
+            crate::execute_pipeline::CompileSource::BoundRelation(source) => Some(source),
+        },
     };
     let mut result = match crate::graph_execute::run_with_write_conflict_retry(sess, &input).await {
         Ok(r) => r,
@@ -355,7 +364,7 @@ pub(crate) async fn run_parsed_plasm_line(
     if let Some(ref storage_key) = page_storage_key {
         if result.has_more {
             if let Some(next) = result.pagination_resume.take() {
-                sess.upsert_paging_resume(storage_key, next);
+                sess.upsert_paging_resume(storage_key, *next);
                 result.paging_handle = Some(storage_key.clone());
             } else {
                 sess.remove_paging_resume(storage_key);
@@ -366,7 +375,7 @@ pub(crate) async fn run_parsed_plasm_line(
     } else if result.has_more {
         if let Some(resume) = result.pagination_resume.take() {
             let h = sess.register_paging_continuation(
-                resume,
+                *resume,
                 qualified_entity.clone(),
                 trace.and_then(|t| t.logical_session_ref.as_deref()),
             );

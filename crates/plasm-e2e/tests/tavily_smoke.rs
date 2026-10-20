@@ -6,7 +6,7 @@ use plasm_core::value::Value;
 use std::path::PathBuf;
 
 fn tavily_cgs() -> plasm_core::CGS {
-    let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let root = PathBuf::from(plasm_e2e::test_manifest_dir());
     let dir = root.join("../../apis/tavily");
     load_schema_dir(&dir).expect("load apis/tavily")
 }

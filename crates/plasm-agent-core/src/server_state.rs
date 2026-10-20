@@ -305,63 +305,72 @@ impl PlasmHostState {
     }
 
     /// Local execute row, then Redis-backed rehydrate when configured.
-    pub async fn try_get_execute_session(
-        &self,
-        prompt_hash: &str,
-        session_id: &str,
-    ) -> Result<Option<Arc<ExecuteSession>>, crate::catalog_runtime::CatalogRuntimeError> {
-        if let Some(sess) = self.sessions.get_by_strs(prompt_hash, session_id).await {
-            let reg = self.catalog.snapshot();
-            let pins =
-                crate::execute_session_rehydrate::RegistryCatalogPins::from_execute_session(&sess);
-            let valid = if let Some(pin) = &sess.discovery_pin {
-                self.catalog
-                    .discovery_store()
-                    .await?
-                    .refresh_session_pin(pin)
-                    .await?;
-                true
-            } else {
-                crate::execute_session_rehydrate::registry_pins_match_live(reg.as_ref(), &pins)
-                    .is_ok()
-            };
-            if valid {
-                use crate::mcp_transport_store::execute_session_registry::MergeLiveOutcome;
-                match self
-                    .execute_session_registry
-                    .merge_into_live_session(&sess, prompt_hash, session_id)
-                    .await
-                {
-                    MergeLiveOutcome::Merged => return Ok(Some(sess)),
-                    MergeLiveOutcome::NeedsRehydrate => {
-                        tracing::info!(
-                            target: "plasm_agent::execute_session",
-                            prompt_hash = %prompt_hash,
-                            session_id = %session_id,
-                            hot_revision = sess.domain_revision,
-                            "hot execute session behind durable exposure; rehydrating"
-                        );
-                        // Drop hot only — durable descriptor is the source of truth.
-                        self.sessions.remove_by_strs(prompt_hash, session_id).await;
+    /// Erase storage/rehydration future layout at the session service boundary.
+    /// Callers retain the typed result without embedding the durable backend state machine.
+    pub fn try_get_execute_session<'a>(
+        &'a self,
+        prompt_hash: &'a str,
+        session_id: &'a str,
+    ) -> futures_util::future::BoxFuture<
+        'a,
+        Result<Option<Arc<ExecuteSession>>, crate::catalog_runtime::CatalogRuntimeError>,
+    > {
+        Box::pin(async move {
+            if let Some(sess) = self.sessions.get_by_strs(prompt_hash, session_id).await {
+                let reg = self.catalog.snapshot();
+                let pins =
+                    crate::execute_session_rehydrate::RegistryCatalogPins::from_execute_session(
+                        &sess,
+                    );
+                let valid = if let Some(pin) = &sess.discovery_pin {
+                    self.catalog
+                        .discovery_store()
+                        .await?
+                        .refresh_session_pin(pin)
+                        .await?;
+                    true
+                } else {
+                    crate::execute_session_rehydrate::registry_pins_match_live(reg.as_ref(), &pins)
+                        .is_ok()
+                };
+                if valid {
+                    use crate::mcp_transport_store::execute_session_registry::MergeLiveOutcome;
+                    match self
+                        .execute_session_registry
+                        .merge_into_live_session(&sess, prompt_hash, session_id)
+                        .await
+                    {
+                        MergeLiveOutcome::Merged => return Ok(Some(sess)),
+                        MergeLiveOutcome::NeedsRehydrate => {
+                            tracing::info!(
+                                target: "plasm_agent::execute_session",
+                                prompt_hash = %prompt_hash,
+                                session_id = %session_id,
+                                hot_revision = sess.domain_revision,
+                                "hot execute session behind durable exposure; rehydrating"
+                            );
+                            // Drop hot only — durable descriptor is the source of truth.
+                            self.sessions.remove_by_strs(prompt_hash, session_id).await;
+                        }
                     }
+                } else {
+                    tracing::info!(
+                        target: "plasm_agent::execute_session",
+                        prompt_hash = %prompt_hash,
+                        session_id = %session_id,
+                        "in-memory execute session stale (catalog rotation); discarding"
+                    );
+                    // A database outage must not destroy pinned session state.
+                    if sess.discovery_pin.is_none() {
+                        self.discard_persisted_execute_row(prompt_hash, session_id)
+                            .await;
+                    }
+                    return Ok(None);
                 }
-            } else {
-                tracing::info!(
-                    target: "plasm_agent::execute_session",
-                    prompt_hash = %prompt_hash,
-                    session_id = %session_id,
-                    "in-memory execute session stale (catalog rotation); discarding"
-                );
-                // A database outage must not destroy pinned session state.
-                if sess.discovery_pin.is_none() {
-                    self.discard_persisted_execute_row(prompt_hash, session_id)
-                        .await;
-                }
-                return Ok(None);
             }
-        }
-        self.rehydrate_execute_session_from_durable(prompt_hash, session_id)
-            .await
+            self.rehydrate_execute_session_from_durable(prompt_hash, session_id)
+                .await
+        })
     }
 
     async fn rehydrate_execute_session_from_durable(
@@ -662,7 +671,7 @@ mod tests {
 
     fn test_host_state() -> PlasmHostState {
         let dir =
-            Path::new(env!("CARGO_MANIFEST_DIR")).join("../../fixtures/schemas/overshow_tools");
+            Path::new(crate::test_manifest_dir()).join("../../fixtures/schemas/overshow_tools");
         let cgs = Arc::new(load_schema_dir(&dir).expect("overshow_tools"));
         let reg = CgsRegistry::from_pairs(vec![(
             "overshow".into(),
@@ -695,7 +704,7 @@ mod tests {
 
     fn fibery_shaped_registry() -> CgsRegistry {
         let dir =
-            Path::new(env!("CARGO_MANIFEST_DIR")).join("../../fixtures/schemas/overshow_tools");
+            Path::new(crate::test_manifest_dir()).join("../../fixtures/schemas/overshow_tools");
         let mut cgs = load_schema_dir(&dir).expect("overshow_tools");
         cgs.http_backend = "https://YOUR_ACCOUNT.fibery.io".to_string();
         CgsRegistry::from_pairs(vec![(
@@ -708,7 +717,7 @@ mod tests {
 
     fn rotated_overshow_registry() -> CgsRegistry {
         let dir =
-            Path::new(env!("CARGO_MANIFEST_DIR")).join("../../fixtures/schemas/overshow_tools");
+            Path::new(crate::test_manifest_dir()).join("../../fixtures/schemas/overshow_tools");
         let mut cgs = load_schema_dir(&dir).expect("overshow_tools");
         cgs.http_backend.push_str("/catalog-reload-test");
         let cgs = cgs.fresh_catalog_digest();
@@ -1047,7 +1056,7 @@ mod tests {
     async fn cross_pod_rehydrate_after_tenant_materialization_patch() {
         let (execute_registry, _) = ExecuteSessionRegistry::with_test_json_store();
         let dir =
-            Path::new(env!("CARGO_MANIFEST_DIR")).join("../../fixtures/schemas/overshow_tools");
+            Path::new(crate::test_manifest_dir()).join("../../fixtures/schemas/overshow_tools");
         let cgs = Arc::new(load_schema_dir(&dir).expect("overshow_tools"));
         let registry = Arc::new(CgsRegistry::from_pairs(vec![(
             "overshow".into(),

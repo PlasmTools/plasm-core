@@ -132,8 +132,8 @@ pub(super) fn assert_supplemental(id: &str, run: &PlasmPlanRunResult) {
         "compute_inferred_callsite_inputs" => {
             json!([{"titles": ["Alpha", "Beta"], "first": "Alpha"}])
         }
-        "compute_inferred_guarded_empty_list" => json!([{"value": ["alice"]}]),
-        "compute_inferred_mutated_set" => json!([{"value": ["alice", "bob"]}]),
+        "compute_inferred_guarded_empty_list" => json!([{"value": "alice"}]),
+        "compute_inferred_mutated_set" => json!([{"value": "alice"}, {"value": "bob"}]),
         "predicate_truth_string" | "predicate_truth_and" | "predicate_truth_iteration" => {
             json!([{ "id": "i1" }])
         }
@@ -384,21 +384,8 @@ pub(super) fn assert_supplemental(id: &str, run: &PlasmPlanRunResult) {
 pub(super) fn assert_coverage(id: &str, run: &PlasmPlanRunResult) {
     use plasm_runtime::ResultCoverage::{Complete, Unknown};
     let expected = match id {
-        "cert_bind_limit1_continuation"
-        | "prefix_union_single_relation"
-        | "cert_relation_opaque_r_symbol"
-        | "relation_one_chain"
-        | "relation_relation_tags_scoped"
-        | "relation_bind_projection_then_relation"
+        "relation_one_chain"
         | "relation_bind_relation_hop_one_one"
-        | "relation_bind_filter_continuation"
-        | "relation_relation_many_from_plural_query"
-        | "relation_relation_prefer_embed_hit"
-        | "relation_ra4_apply_relation_monolith"
-        | "relation_ra4_apply_relation_bind_cut"
-        | "complete_binding_continuation"
-        | "complete_bind_plural_relation_opaque_p"
-        | "complete_homograph_lhs_coercion"
         | "cert_federated_target_entry" => Unknown,
         _ => Complete,
     };

@@ -12,6 +12,257 @@ struct PreparedViewPreflight {
     ambient: ViewAmbientContext,
 }
 
+/// Compile a relation over a row already admitted by the plan's source binding.
+/// The root reference denotes observed input, not an authored request to reread it.
+pub fn preflight_compile_bound_relation(
+    expr: &Expr,
+    observed: &ExecutionResult,
+    cgs: &CGS,
+    compiled: &plasm_compile::CompiledCatalog,
+    ambient: &ViewAmbientContext,
+    mat: &SessionMaterialization,
+) -> Result<(), RuntimeError> {
+    let Expr::Chain(chain) = expr else {
+        return Err(plasm_core::collection_codec::CollectionFault::Conservation.into());
+    };
+    let Expr::Get(source) = chain.source.as_ref() else {
+        return Err(plasm_core::collection_codec::CollectionFault::Conservation.into());
+    };
+    let parent = cgs
+        .get_entity(source.reference.entity_type.as_str())
+        .ok_or_else(|| RuntimeError::EntityUnknown {
+            entity: source.reference.entity_type.to_string(),
+        })?;
+    observed
+        .collection
+        .materialize(plasm_core::collection_codec::Demand::Observed)?;
+    let row = observed
+        .entities()
+        .first()
+        .filter(|row| observed.count() == 1 && row.reference == source.reference)
+        .ok_or_else(|| {
+            RuntimeError::from(plasm_core::collection_codec::CollectionFault::Conservation)
+        })?;
+    let Some(relation) = parent.relations.get(chain.selector.as_str()) else {
+        let field = parent.fields.get(chain.selector.as_str()).ok_or_else(|| {
+            crate::ChainError::SelectorMissing {
+                entity: parent.name.to_string(),
+                selector: chain.selector.to_string(),
+            }
+        })?;
+        let value = cgs.named_value_for_slot(field)?;
+        let FieldType::EntityRef { target, .. } = &value.field_type else {
+            return Err(crate::ChainError::FieldNotEntityRef {
+                entity: parent.name.to_string(),
+                field: chain.selector.to_string(),
+                actual: value.field_type.clone(),
+            }
+            .into());
+        };
+        let reference = super::predicates::extract_ref_id(row, chain.selector.as_str(), cgs)
+            .map(|id| Ref::new(target.clone(), id));
+        return preflight_bound_targets(
+            chain,
+            row,
+            reference.iter(),
+            target,
+            cgs,
+            compiled,
+            ambient,
+            mat,
+        );
+    };
+    let materialize = relation
+        .materialize
+        .as_ref()
+        .unwrap_or(&RelationMaterialization::Unavailable);
+    match materialize {
+        RelationMaterialization::GetScopedBindings {
+            capability,
+            bindings,
+        } => {
+            let cap = cgs.get_capability(capability.as_str()).ok_or_else(|| {
+                RuntimeError::CapabilityUnknown {
+                    capability: capability.to_string(),
+                }
+            })?;
+            if cap.domain != relation.target_resource {
+                return Err(crate::ChainError::CapabilityDomainMismatch {
+                    capability: capability.to_string(),
+                    expected: relation.target_resource.to_string(),
+                    actual: cap.domain.to_string(),
+                }
+                .into());
+            }
+            let target = cgs
+                .get_entity(relation.target_resource.as_str())
+                .ok_or_else(|| RuntimeError::EntityUnknown {
+                    entity: relation.target_resource.to_string(),
+                })?;
+            let bound = bindings
+                .iter()
+                .map(|(param, field)| {
+                    super::scoped_fanout::chain_binding_value(row, parent, field, cgs)
+                        .map(|value| (param.to_string(), value))
+                })
+                .collect::<Result<IndexMap<String, String>, RuntimeError>>()?;
+            let reference =
+                super::scoped_fanout::ref_from_materialize_bindings_for_get_chain(target, &bound)?;
+            let mut get = GetExpr::from_ref(reference);
+            get.capability_name = Some(capability.clone());
+            let inherited = CapabilityParamEnv::from_source_row_for_cap(cgs, mat, row, cap);
+            let target_ambient = ambient
+                .clone()
+                .with_capability_params(inherited.bindings().clone());
+            return preflight_compile_expr(&Expr::Get(get), cgs, compiled, &target_ambient, mat);
+        }
+        RelationMaterialization::FromParentGet { .. }
+        | RelationMaterialization::ViewEmbed { .. } => {
+            let refs = row.relations.get(relation.name.as_str()).ok_or_else(|| {
+                crate::CacheError::RelationUnobserved {
+                    reference: row.reference.clone(),
+                    relation: relation.name.to_string(),
+                }
+            })?;
+            return preflight_bound_targets(
+                chain,
+                row,
+                refs.iter(),
+                &relation.target_resource,
+                cgs,
+                compiled,
+                ambient,
+                mat,
+            );
+        }
+        RelationMaterialization::PreferFromParentGet { fallback, .. } => {
+            let (_, jobs) = super::scoped_fanout::partition_prefer_from_parent_get(
+                observed.entities(),
+                materialize,
+                relation.name.as_str(),
+                relation.target_resource.as_str(),
+                mat,
+                parent,
+                cgs,
+                &relation.target_resource,
+                fallback,
+            )?;
+            for (_, query) in jobs {
+                preflight_compile_expr(&Expr::Query(query), cgs, compiled, ambient, mat)?;
+            }
+            return Ok(());
+        }
+        RelationMaterialization::Unavailable => {
+            if relation.cardinality == plasm_core::Cardinality::Many {
+                return Err(crate::ChainError::MaterializationMissing {
+                    entity: parent.name.to_string(),
+                    relation: relation.name.to_string(),
+                }
+                .into());
+            }
+            let reference = super::predicates::extract_ref_id(row, chain.selector.as_str(), cgs)
+                .map(|id| Ref::new(relation.target_resource.clone(), id));
+            return preflight_bound_targets(
+                chain,
+                row,
+                reference.iter(),
+                &relation.target_resource,
+                cgs,
+                compiled,
+                ambient,
+                mat,
+            );
+        }
+        RelationMaterialization::QueryScoped { .. }
+        | RelationMaterialization::QueryScopedBindings { .. } => {}
+    }
+    let (name, bindings) = match materialize {
+        RelationMaterialization::QueryScopedBindings {
+            capability,
+            bindings,
+            ..
+        } => (capability, bindings.clone()),
+        RelationMaterialization::QueryScoped {
+            capability, param, ..
+        } => (
+            capability,
+            indexmap::IndexMap::from([(param.clone(), parent.id_field.clone())]),
+        ),
+        _ => unreachable!("non-query materializers return above"),
+    };
+    let capability =
+        cgs.get_capability(name.as_str())
+            .ok_or_else(|| RuntimeError::CapabilityUnknown {
+                capability: name.to_string(),
+            })?;
+    let params: Vec<_> = capability.query_surface_fields().cloned().collect();
+    let predicates = bindings
+        .iter()
+        .map(|(param, field)| {
+            let raw = super::scoped_fanout::chain_binding_raw_json(row, parent, field, cgs)?;
+            let value = super::scoped_fanout::chain_binding_plasm_value(
+                &raw,
+                param.as_str(),
+                &params,
+                cgs,
+            )?;
+            Ok(plasm_core::Predicate::eq(param.as_str(), value))
+        })
+        .collect::<Result<Vec<_>, RuntimeError>>()?;
+    let mut query = QueryExpr::filtered(
+        capability.domain.clone(),
+        plasm_core::Predicate::and(predicates),
+    );
+    query.capability_name = Some(name.clone());
+    super::hydrate::relation_inherit_for_scoped_query(cgs, mat, row, capability, &query)?
+        .apply_to_scoped_query(&mut query);
+    preflight_compile_expr(&Expr::Query(query), cgs, compiled, ambient, mat)
+}
+
+/// Validate only target work required by observed references, never reread the bound parent.
+#[allow(clippy::too_many_arguments)]
+fn preflight_bound_targets<'a>(
+    chain: &plasm_core::ChainExpr,
+    parent: &CachedEntity,
+    references: impl Iterator<Item = &'a Ref>,
+    target: &EntityName,
+    cgs: &CGS,
+    compiled: &plasm_compile::CompiledCatalog,
+    ambient: &ViewAmbientContext,
+    mat: &SessionMaterialization,
+) -> Result<(), RuntimeError> {
+    for reference in references {
+        if &reference.entity_type != target {
+            return Err(RuntimeError::TraversalParentTypeMismatch {
+                expected: target.to_string(),
+                actual: reference.entity_type.to_string(),
+            });
+        }
+        match &chain.step {
+            ChainStep::Explicit { expr } => {
+                preflight_compile_expr(expr, cgs, compiled, ambient, mat)?
+            }
+            ChainStep::AutoGet => {
+                if !super::chain::observed_row_needs_no_detail_get(mat.get(reference), cgs) {
+                    let inherited =
+                        CapabilityParamEnv::from_source_row(cgs, target.as_str(), mat, parent);
+                    let target_ambient = ambient
+                        .clone()
+                        .with_capability_params(inherited.bindings().clone());
+                    preflight_compile_expr(
+                        &Expr::Get(GetExpr::from_ref(reference.clone())),
+                        cgs,
+                        compiled,
+                        &target_ambient,
+                        mat,
+                    )?;
+                }
+            }
+        }
+    }
+    Ok(())
+}
+
 /// Compile capability templates for `expr` without dispatching HTTP.
 ///
 /// Identity GETs inherit non-identity capability params from `mat`.

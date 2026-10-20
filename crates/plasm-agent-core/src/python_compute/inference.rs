@@ -5,6 +5,7 @@ use plasm_core::{
     value_contract::{ValueContract as Type, ValueShape},
     FieldType,
 };
+use plasm_runtime::execution_failure::UnmaterializableNode;
 use ruff_python_ast::Expr;
 use ruff_text_size::Ranged;
 use std::collections::BTreeMap;
@@ -12,6 +13,7 @@ use std::collections::BTreeMap;
 mod collections;
 mod declarations;
 mod helpers;
+mod materialization;
 #[cfg(test)]
 mod tests;
 
@@ -69,6 +71,26 @@ impl std::fmt::Display for InferenceDiagnostics {
 impl std::error::Error for InferenceDiagnostics {}
 
 impl InferenceDiagnostics {
+    pub(crate) fn rejection_detail(
+        &self,
+        kind: Option<UnmaterializableNode>,
+    ) -> plasm_runtime::ProgramRejectionDetail {
+        use plasm_runtime::execution_failure::ComputeInferenceDiagnostic;
+        plasm_runtime::ProgramRejectionDetail::ComputeInference {
+            diagnostics: self
+                .entries
+                .iter()
+                .map(|entry| ComputeInferenceDiagnostic {
+                    code: entry.diagnostic.code.clone(),
+                    unmaterializable_type: kind,
+                    message: entry.diagnostic.message.clone(),
+                    compute_line: entry.location.map(|p| p.0),
+                    compute_column: entry.location.map(|p| p.1),
+                    source_excerpt: entry.excerpt.clone(),
+                })
+                .collect(),
+        }
+    }
     fn write_semantic_text(&self, f: &mut std::fmt::Formatter<'_>, text: &str) -> std::fmt::Result {
         for part in text.split_inclusive(|c: char| !c.is_alphanumeric() && c != '_') {
             let end = part
@@ -85,6 +107,22 @@ impl InferenceDiagnostics {
             )?;
         }
         Ok(())
+    }
+}
+
+impl InferenceError {
+    pub(crate) fn rejection_detail(&self) -> Option<plasm_runtime::ProgramRejectionDetail> {
+        match self {
+            Self::Diagnostics { diagnostics } => Some(diagnostics.rejection_detail(None)),
+            Self::Materialization {
+                diagnostics,
+                source,
+            } => Some(diagnostics.rejection_detail(match source {
+                InferenceGraphError::UnsupportedNode { kind } => Some(*kind),
+                _ => None,
+            })),
+            _ => None,
+        }
     }
 }
 
@@ -122,6 +160,12 @@ pub enum InferenceError {
     SymbolResolve(#[from] plasm_core::symbol_tuning::SymbolResolveError),
     #[error("inferred type graph is invalid: {0}")]
     Graph(#[from] InferenceGraphError),
+    #[error("return contract cannot be materialized: {source}\n{diagnostics}")]
+    Materialization {
+        #[source]
+        source: InferenceGraphError,
+        diagnostics: InferenceDiagnostics,
+    },
     #[error("Python type declaration failed: {0}")]
     Declaration(#[from] DeclarationError),
     #[error("Python return contract check failed: {0}")]
@@ -174,8 +218,8 @@ pub enum InferenceGraphError {
     UnsupportedNamedType { name: String },
     #[error("inferred Python nominal type `{identity}` is not sealed")]
     UnsealedNamedType { identity: String },
-    #[error("inferred type graph contains an unsupported node")]
-    UnsupportedNode,
+    #[error("inferred {kind} cannot be materialized")]
+    UnsupportedNode { kind: UnmaterializableNode },
     #[error("inferred intersection has no positive materialized constraint")]
     EmptyIntersection,
     #[error(transparent)]
@@ -322,7 +366,8 @@ pub(super) fn infer_output(
             declarations: &declarations,
         };
         let contract = decoder
-            .decode_roots(&graph.roots)?
+            .decode_roots(&graph.roots)
+            .map_err(|error| materialization::locate(error, &source, &declarations))?
             .into_iter()
             .reduce(Type::join)
             .ok_or(ReturnContractError::ReturnContractMissing)?;
@@ -829,7 +874,16 @@ impl Decoder<'_> {
                 if identity.source.ends_with("/builtins.pyi") {
                     match (name, arguments.as_slice()) {
                         ("bool", []) => Type::scalar(FieldType::Boolean),
-                        ("int", []) => Type::scalar(FieldType::Integer),
+                        // Python's nominal int includes bool. Its union
+                        // normalization may erase an explicit bool alternative
+                        // before export (for example dict[str, int | bool]).
+                        // Materialized values retain distinct wire variants;
+                        // preserve the inhabited set without coercing either.
+                        // IntLiteral and sealed catalog types above stay exact.
+                        ("int", []) => Type::join(
+                            Type::scalar(FieldType::Integer),
+                            Type::scalar(FieldType::Boolean),
+                        ),
                         ("float", []) => Type::scalar(FieldType::Number),
                         ("str", []) => Type::scalar(FieldType::String),
                         ("list", [element]) => array(recur(*element)?),
@@ -906,7 +960,60 @@ impl Decoder<'_> {
                 }
                 value
             }
-            _ => return Err(InferenceGraphError::UnsupportedNode.into()),
+            Node::Any => {
+                return Err(InferenceGraphError::UnsupportedNode {
+                    kind: UnmaterializableNode::Any,
+                }
+                .into())
+            }
+            Node::Unknown => {
+                return Err(InferenceGraphError::UnsupportedNode {
+                    kind: UnmaterializableNode::Unknown,
+                }
+                .into())
+            }
+            Node::Unsupported => {
+                return Err(InferenceGraphError::UnsupportedNode {
+                    kind: UnmaterializableNode::Unsupported,
+                }
+                .into())
+            }
+            Node::BytesLiteral(_) => {
+                return Err(InferenceGraphError::UnsupportedNode {
+                    kind: UnmaterializableNode::Bytes,
+                }
+                .into())
+            }
+            Node::EnumLiteral { .. } => {
+                return Err(InferenceGraphError::UnsupportedNode {
+                    kind: UnmaterializableNode::Enum,
+                }
+                .into())
+            }
+            Node::Protocol { .. } => {
+                return Err(InferenceGraphError::UnsupportedNode {
+                    kind: UnmaterializableNode::Protocol,
+                }
+                .into())
+            }
+            Node::NewType { .. } => {
+                return Err(InferenceGraphError::UnsupportedNode {
+                    kind: UnmaterializableNode::NewType,
+                }
+                .into())
+            }
+            Node::Record { .. } => {
+                return Err(InferenceGraphError::UnsupportedNode {
+                    kind: UnmaterializableNode::Record,
+                }
+                .into())
+            }
+            Node::Truthy | Node::Falsy => {
+                return Err(InferenceGraphError::UnsupportedNode {
+                    kind: UnmaterializableNode::TruthRefinement,
+                }
+                .into())
+            }
         })
     }
 }

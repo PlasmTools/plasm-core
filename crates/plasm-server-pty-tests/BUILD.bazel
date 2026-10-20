@@ -1,0 +1,24 @@
+load("@pty_crates//:defs.bzl", "aliases", "all_crate_deps")
+load("//build/bazel:native_test.bzl", "rust_test_with_monty")
+
+exports_files(["Cargo.toml"])
+
+rust_test_with_monty(
+    name = "tui_pty_quit_smoke_tests",
+    srcs = [
+        "tests/tui_pty_quit_smoke.rs",
+        "//crates/plasm-server:tests/appliance_boot_support.rs",
+    ],
+    aliases = aliases(),
+    crate_root = "tests/tui_pty_quit_smoke.rs",
+    data = ["//:test_fixtures"],
+    edition = "2021",
+    proc_macro_deps = all_crate_deps(proc_macro_dev = True),
+    runtime_tools = {"//crates/plasm-server:plasm-server": "CARGO_BIN_EXE_plasm_server"},
+    tags = [
+        "external",
+        "no-sandbox",
+    ],
+    visibility = ["//visibility:public"],
+    deps = all_crate_deps(normal_dev = True),
+)

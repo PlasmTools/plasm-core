@@ -4,6 +4,32 @@ use plasm_core::row_contract::RelationMembership;
 use plasm_core::{Cardinality, FieldDeriveRule, Ref, Value};
 use serde::{Deserialize, Serialize};
 
+/// Result decoding preserves a concrete entity authority for every returned row.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(tag = "type", content = "decoder", rename_all = "snake_case")]
+pub enum OutputDecoder {
+    Entity(EntityDecoder),
+    AssertedEntity {
+        decoder: EntityDecoder,
+        when: plasm_core::EntityDiscriminator,
+    },
+    Union(EntityUnionDecoder),
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct EntityUnionDecoder {
+    pub source: PathExpr,
+    pub variants: Vec<EntityVariantDecoder>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct EntityVariantDecoder {
+    pub when: plasm_core::EntityDiscriminator,
+    pub decoder: EntityDecoder,
+}
+
 /// Entity decoder - specifies how to extract entities from API responses
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -1407,7 +1433,7 @@ mod temporal_response_contract_tests {
     #[test]
     fn response_temporal_contract_distinguishes_missing_null_and_invalid() {
         let cgs = plasm_core::load_schema(
-            &std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            &std::path::Path::new(crate::test_manifest_dir())
                 .join("../../fixtures/schemas/python_value_contract"),
         )
         .unwrap();

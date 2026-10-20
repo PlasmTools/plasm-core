@@ -63,7 +63,7 @@ mod tests {
 
     #[test]
     fn token_identity_mutator_seat_uses_braces() {
-        let dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        let dir = PathBuf::from(crate::test_manifest_dir())
             .join("../../fixtures/schemas/session_token_get");
         let cgs = load_schema_dir(&dir).unwrap();
         let ent = cgs.get_entity("Wallet").unwrap();
@@ -83,7 +83,7 @@ mod tests {
 
     #[test]
     fn unary_identity_mutator_seat_uses_parens() {
-        let dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        let dir = PathBuf::from(crate::test_manifest_dir())
             .join("../../fixtures/schemas/plasm_language_matrix");
         let Ok(cgs) = load_schema_dir(&dir) else {
             return;

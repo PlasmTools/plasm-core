@@ -324,6 +324,23 @@ fn explorer_return_for_cap(cgs: &CGS, cap: &CapabilitySchema) -> ExplorerReturn 
 
 fn explorer_return_for_output_type(cgs: &CGS, ot: &OutputType) -> ExplorerReturn {
     match ot {
+        OutputType::EntityUnion {
+            variants,
+            cardinality,
+        } => ExplorerReturn {
+            kind: "entity_union".into(),
+            label: format!(
+                "{} ({cardinality:?})",
+                variants
+                    .iter()
+                    .map(|v| v.as_str())
+                    .collect::<Vec<_>>()
+                    .join(" | ")
+            ),
+            description: "Each row retains its concrete entity identity.".into(),
+            entity: None,
+            entity_navigable: false,
+        },
         OutputType::SideEffect { description } => {
             let full = description.trim().to_string();
             let label = trim_tool_desc(description);
@@ -829,7 +846,8 @@ fn explorer_args_for_get(entity: &EntityDef, get_cap: &CapabilitySchema) -> Vec<
         CapabilityTemplate::Http(cml) | CapabilityTemplate::GraphQl(cml) => {
             path_var_names_from_request(cml)
         }
-        CapabilityTemplate::View(_)
+        CapabilityTemplate::Mcp(_)
+        | CapabilityTemplate::View(_)
         | CapabilityTemplate::CredentialBind(_)
         | CapabilityTemplate::EvmCall(_)
         | CapabilityTemplate::EvmLogs(_) => Vec::new(),
@@ -950,17 +968,18 @@ fn materialization_view(m: &RelationMaterialization) -> ExplorerRelationMaterial
             };
             view
         }
-        RelationMaterialization::QueryScoped { capability, param } => {
-            ExplorerRelationMaterialization {
-                kind: "query_scoped",
-                capability: Some(capability.to_string()),
-                param: Some(param.to_string()),
-                binding_keys: None,
-            }
-        }
+        RelationMaterialization::QueryScoped {
+            capability, param, ..
+        } => ExplorerRelationMaterialization {
+            kind: "query_scoped",
+            capability: Some(capability.to_string()),
+            param: Some(param.to_string()),
+            binding_keys: None,
+        },
         RelationMaterialization::QueryScopedBindings {
             capability,
             bindings,
+            ..
         } => ExplorerRelationMaterialization {
             kind: "query_scoped_bindings",
             capability: Some(capability.to_string()),
@@ -1534,7 +1553,7 @@ mod tests {
     #[test]
     fn fixture_tool_model_all_smoke() {
         let dir =
-            Path::new(env!("CARGO_MANIFEST_DIR")).join("../../fixtures/schemas/overshow_tools");
+            Path::new(crate::test_manifest_dir()).join("../../fixtures/schemas/overshow_tools");
         let cgs = load_schema_dir(&dir).expect("overshow_tools");
         let meta = CatalogEntryMeta {
             entry_id: "overshow".into(),
@@ -1568,7 +1587,7 @@ mod tests {
 
     #[test]
     fn prompt_matrix_tool_model_exposes_bearer_auth_metadata() {
-        let dir = Path::new(env!("CARGO_MANIFEST_DIR"))
+        let dir = Path::new(crate::test_manifest_dir())
             .join("../../fixtures/schemas/plasm_prompt_matrix");
         let cgs = load_schema(&dir).expect("prompt matrix");
         let meta = CatalogEntryMeta {
@@ -1594,7 +1613,7 @@ mod tests {
 
     #[test]
     fn fixture_projection_carries_field_descriptions() {
-        let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../fixtures/schemas/pokeapi_mini");
+        let dir = Path::new(crate::test_manifest_dir()).join("../../fixtures/schemas/pokeapi_mini");
         let cgs = load_schema_dir(&dir).expect("pokeapi_mini");
         let meta = CatalogEntryMeta {
             entry_id: "pokeapi_mini".into(),
@@ -1626,7 +1645,7 @@ mod tests {
 
     #[test]
     fn langitem_get_infers_returns_when_output_omitted() {
-        let dir = Path::new(env!("CARGO_MANIFEST_DIR"))
+        let dir = Path::new(crate::test_manifest_dir())
             .join("../../fixtures/schemas/plasm_language_matrix");
         let cgs = load_schema(&dir).expect("plasm_language_matrix");
         let item_get = cgs.get_capability("langitem_get").expect("langitem_get");
@@ -1673,7 +1692,7 @@ mod tests {
 
     #[test]
     fn langitem_create_title_param_is_string() {
-        let dir = Path::new(env!("CARGO_MANIFEST_DIR"))
+        let dir = Path::new(crate::test_manifest_dir())
             .join("../../fixtures/schemas/plasm_language_matrix");
         let cgs = load_schema(&dir).expect("plasm_language_matrix");
         let meta = CatalogEntryMeta {

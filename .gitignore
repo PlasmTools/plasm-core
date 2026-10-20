@@ -73,3 +73,7 @@ plasm-mcp.*.pem
 # Accidental nested tree (wrong `cwd` / duplicate checkout). Real layout is `./crates/...`;
 # a second `plasm-oss/` here is not a package — insta may drop `*.pending-snap` under it for inline snapshots.
 /plasm-oss/
+
+# Bazel output symlinks and workstation configuration
+/bazel-*
+/.bazelrc.local

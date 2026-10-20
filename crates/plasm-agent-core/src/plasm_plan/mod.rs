@@ -13,6 +13,7 @@ pub(crate) use cardinality::{
 };
 pub(crate) use compute_transfer::{
     compute_cardinality_transfer, compute_result_shape, map_body_cardinality_transfer,
+    narrowed_entity_cardinality,
 };
 pub use types::*;
 pub use validate::*;

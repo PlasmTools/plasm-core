@@ -6,6 +6,7 @@ pub(crate) mod arguments;
 #[cfg(test)]
 mod budget_tests;
 mod multiple;
+pub(crate) mod prepared_scope;
 pub(crate) use arguments::is_row as is_row_annotation;
 pub(crate) mod inference;
 pub(crate) mod selection;
@@ -447,6 +448,8 @@ fn diagnostic_imports(
 }
 
 pub struct PreparedCompute {
+    // Immutable definition/stubs: retain only successful static admission.
+    admitted: tokio::sync::OnceCell<()>,
     pub(crate) selected_parameters: std::collections::BTreeSet<String>,
     independent_inputs: bool,
     optional_fields: std::collections::BTreeSet<String>,
@@ -737,6 +740,7 @@ impl PreparedCompute {
         );
         let executable = format!("{}\n{}({})", definition, def.name, argument.expression());
         Ok(Self {
+            admitted: tokio::sync::OnceCell::new(),
             selected_parameters,
             independent_inputs: false,
             optional_fields: rows
@@ -795,7 +799,14 @@ impl PreparedCompute {
             }
         }
         validate_collection_input(membership, rows.len())?;
-        admission::check_definitions(vec![(self.definition.clone(), self.stubs.clone())]).await?;
+        self.admitted
+            .get_or_try_init(|| async {
+                #[cfg(test)]
+                prepared_scope::record_execution_admission();
+                admission::check_definitions(vec![(self.definition.clone(), self.stubs.clone())])
+                    .await
+            })
+            .await?;
         let input = if let Some(fields) = &self.row_fields {
             schema::materialize_rows_in(
                 fields,
@@ -1140,11 +1151,14 @@ pub(crate) fn validate_plan_compute(
             .find(|n| n.id().as_str() == compute.compute.source.as_str())
             .ok_or(PythonComputeError::SourceNodeAbsent)?;
         if let ValidatedPlanNode::Compute(source) = source {
-            // Row-preserving operators retain navigation capabilities, but those
+            // Entity selections retain navigation capabilities, but those
             // capabilities are not implicitly materialized compute values.
+            // Narrowing has a concrete nominal owner and follows the same rule:
+            // validate the captured fields and owner below, not navigation-schema equality.
             let preserves_entity = matches!(
                 source.compute.op,
-                plasm_core::plasm_monad::ComputeOp::Limit { .. }
+                plasm_core::plasm_monad::ComputeOp::NarrowEntity { .. }
+                    | plasm_core::plasm_monad::ComputeOp::Limit { .. }
                     | plasm_core::plasm_monad::ComputeOp::Filter { .. }
                     | plasm_core::plasm_monad::ComputeOp::Sort { .. }
                     | plasm_core::plasm_monad::ComputeOp::DedupeBy { .. }
@@ -1157,13 +1171,13 @@ pub(crate) fn validate_plan_compute(
             source,
             ValidatedPlanNode::Data(_) | ValidatedPlanNode::Derive(_)
         ) {
-            let actual =
-                crate::map_body_schema::row_contract(es, nodes, compute.compute.source.as_str())
-                    .map_err(PythonComputeRejection::from)?;
-            if plasm_core::plasm_monad::SyntheticResultSchema::for_value(actual)
-                .map_err(PythonComputeRejection::from)?
-                .row_contract()
-                .map_err(PythonComputeRejection::from)?
+            let actual = crate::map_body_schema::row_operation_contract(
+                es,
+                nodes,
+                compute.compute.source.as_str(),
+            )
+            .map_err(PythonComputeRejection::from)?;
+            if actual
                 != schema
                     .row_contract()
                     .map_err(PythonComputeRejection::from)?
@@ -1231,7 +1245,8 @@ pub(crate) fn validate_plan_compute(
                 break source
                     .qualified_entity
                     .as_ref()
-                    .ok_or(PythonComputeError::CatalogOwnershipRequired)?;
+                    .ok_or(PythonComputeError::CatalogOwnershipRequired)?
+                    .clone();
             }
             ValidatedPlanNode::RelationTraversal(source) => {
                 if let Some(fields) = &source.relation.ir.projection {
@@ -1243,11 +1258,17 @@ pub(crate) fn validate_plan_compute(
                         .into());
                     }
                 }
-                break &source.relation.target;
+                break source.relation.target.clone();
             }
             ValidatedPlanNode::Compute(source) => {
                 use plasm_core::plasm_monad::ComputeOp;
                 match &source.compute.op {
+                    ComputeOp::NarrowEntity { target, .. } => {
+                        break crate::plasm_plan::QualifiedEntityKey {
+                            entry_id: target.entry_id.clone(),
+                            entity: target.entity.clone(),
+                        };
+                    }
                     ComputeOp::Project { fields } => {
                         if contract.fields.keys().any(|name| {
                             !fields
@@ -1296,7 +1317,7 @@ pub(crate) fn validate_plan_compute(
                         .into());
                     }
                 }
-                break &source.effect_template.qualified_entity;
+                break source.effect_template.qualified_entity.clone();
             }
             _ => return Err(PythonComputeError::TypedEntityRowsRequired.into()),
         }

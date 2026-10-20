@@ -1,6 +1,73 @@
 use super::*;
 
 #[test]
+fn python_filter_thousand_occurrences_prepare_once_per_execution() {
+    on_runtime(async {
+        let (es, host, calls) = fixture(1000);
+        let item = es
+            .teaching_exposure
+            .as_ref()
+            .unwrap()
+            .to_symbol_map()
+            .entity_sym_for("fixture", "Item");
+        let source = format!("class P(Program):\n    def build(self):\n        return {item}.query().where(lambda row: row.title != 'Title 500').select('id')\n");
+        let bundle = compile_python_program(&es, &source).await.unwrap();
+        for _ in 0..2 {
+            let before = crate::python_compute::prepared_scope::preparation_count();
+            let admissions_before =
+                crate::python_compute::prepared_scope::execution_admission_count();
+            let run = execute(&es, &host, &bundle).await.unwrap();
+            let actual = returned_fields(&run);
+            // Returned rows are a bounded delivery window; the execution receipt
+            // records the full source and filtered collection before pagination.
+            let scope = &run.graph_summary["scope_instances"][0];
+            assert_eq!(scope["occurrences"], 1000);
+            assert_eq!(scope["completed"], 1000);
+            assert_eq!(scope["rows"], 999);
+            assert!(!actual.is_empty());
+            assert!(!actual.iter().any(|row| row["id"] == "i500"));
+            assert_eq!(
+                crate::python_compute::prepared_scope::preparation_count() - before,
+                1,
+                "one static proof per execution, not per row; separate executions recheck"
+            );
+            assert_eq!(
+                crate::python_compute::prepared_scope::execution_admission_count()
+                    - admissions_before,
+                1,
+                "runtime syntax and type admission must also be retained across occurrences"
+            );
+        }
+        assert!(calls.lock().unwrap().iter().all(|path| path == "/items"));
+    });
+}
+
+#[test]
+fn python_prepared_filter_preserves_later_occurrence_failure() {
+    on_runtime(async {
+        let (es, host, calls) = fixture(4);
+        let item = es
+            .teaching_exposure
+            .as_ref()
+            .unwrap()
+            .to_symbol_map()
+            .entity_sym_for("fixture", "Item");
+        let source = format!("class P(Program):\n    def build(self):\n        return {item}.query().where(lambda row: 1 // (int(row.id[1:]) - 2) > 0)\n");
+        let bundle = compile_python_program(&es, &source).await.unwrap();
+        let before = crate::python_compute::prepared_scope::execution_admission_count();
+        let failure = execute(&es, &host, &bundle).await.unwrap_err();
+        assert_eq!(failure.cause, plasm_runtime::FailureCause::Program);
+        assert_eq!(failure.code, "python_exception");
+        assert_eq!(failure.occurrence_path, vec![2]);
+        assert_eq!(
+            crate::python_compute::prepared_scope::execution_admission_count() - before,
+            1
+        );
+        assert_eq!(*calls.lock().unwrap(), ["/items"]);
+    });
+}
+
+#[test]
 fn numeric_optional_child_reference_selection_repro() {
     on_runtime(async {
         for relation in [false, true] {
@@ -1057,7 +1124,7 @@ fn python_compact_teaching_example_compiles_and_reference_is_not_a_program() {
     };
     on_runtime(async {
         let mut cgs = plasm_core::load_schema(
-            &std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            &std::path::Path::new(crate::test_manifest_dir())
                 .join("../../fixtures/schemas/plasm_language_matrix"),
         )
         .unwrap();
