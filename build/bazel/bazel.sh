@@ -5,7 +5,8 @@ set -euo pipefail
 # symlinks that Bazel resolves to the cache CLI instead of the compiler.
 # Cross compilation still uses the registered Bazel toolchains.
 case "$(uname -s)" in
-  Darwin) export CC="$(/usr/bin/xcrun --find clang)" CXX="$(/usr/bin/xcrun --find clang++)" ;;
+  # Apple's /usr/bin drivers supply the active SDK even in sandboxed actions.
+  Darwin) export CC=/usr/bin/clang CXX=/usr/bin/clang++ ;;
   Linux) export CC=/usr/bin/gcc CXX=/usr/bin/g++ ;;
 esac
 workspace="$(pwd -P)"
