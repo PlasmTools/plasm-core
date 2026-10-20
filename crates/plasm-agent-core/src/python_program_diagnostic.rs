@@ -108,7 +108,7 @@ mod tests {
     fn session() -> ExecuteSession {
         let cgs = std::sync::Arc::new(
             plasm_core::load_schema(
-                &std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+                &std::path::Path::new(crate::test_manifest_dir())
                     .join("../../fixtures/schemas/python_dag_slice"),
             )
             .unwrap(),
@@ -149,7 +149,7 @@ mod tests {
     async fn get_identity_does_not_satisfy_required_keyword_input() {
         let cgs = std::sync::Arc::new(
             plasm_core::load_schema(
-                &std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+                &std::path::Path::new(crate::test_manifest_dir())
                     .join("../../fixtures/schemas/plasm_language_matrix"),
             )
             .unwrap(),

@@ -671,7 +671,7 @@ mod tests {
 
     fn test_host_state() -> PlasmHostState {
         let dir =
-            Path::new(env!("CARGO_MANIFEST_DIR")).join("../../fixtures/schemas/overshow_tools");
+            Path::new(crate::test_manifest_dir()).join("../../fixtures/schemas/overshow_tools");
         let cgs = Arc::new(load_schema_dir(&dir).expect("overshow_tools"));
         let reg = CgsRegistry::from_pairs(vec![(
             "overshow".into(),
@@ -704,7 +704,7 @@ mod tests {
 
     fn fibery_shaped_registry() -> CgsRegistry {
         let dir =
-            Path::new(env!("CARGO_MANIFEST_DIR")).join("../../fixtures/schemas/overshow_tools");
+            Path::new(crate::test_manifest_dir()).join("../../fixtures/schemas/overshow_tools");
         let mut cgs = load_schema_dir(&dir).expect("overshow_tools");
         cgs.http_backend = "https://YOUR_ACCOUNT.fibery.io".to_string();
         CgsRegistry::from_pairs(vec![(
@@ -717,7 +717,7 @@ mod tests {
 
     fn rotated_overshow_registry() -> CgsRegistry {
         let dir =
-            Path::new(env!("CARGO_MANIFEST_DIR")).join("../../fixtures/schemas/overshow_tools");
+            Path::new(crate::test_manifest_dir()).join("../../fixtures/schemas/overshow_tools");
         let mut cgs = load_schema_dir(&dir).expect("overshow_tools");
         cgs.http_backend.push_str("/catalog-reload-test");
         let cgs = cgs.fresh_catalog_digest();
@@ -1056,7 +1056,7 @@ mod tests {
     async fn cross_pod_rehydrate_after_tenant_materialization_patch() {
         let (execute_registry, _) = ExecuteSessionRegistry::with_test_json_store();
         let dir =
-            Path::new(env!("CARGO_MANIFEST_DIR")).join("../../fixtures/schemas/overshow_tools");
+            Path::new(crate::test_manifest_dir()).join("../../fixtures/schemas/overshow_tools");
         let cgs = Arc::new(load_schema_dir(&dir).expect("overshow_tools"));
         let registry = Arc::new(CgsRegistry::from_pairs(vec![(
             "overshow".into(),

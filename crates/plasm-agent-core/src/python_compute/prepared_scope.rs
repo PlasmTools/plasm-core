@@ -78,7 +78,7 @@ mod tests {
     fn session() -> ExecuteSession {
         let cgs = Arc::new(
             plasm_core::load_schema(
-                &std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+                &std::path::Path::new(crate::test_manifest_dir())
                     .join("../../fixtures/schemas/python_value_contract"),
             )
             .unwrap(),

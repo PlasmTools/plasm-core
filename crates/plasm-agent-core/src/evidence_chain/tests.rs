@@ -238,7 +238,7 @@ fn minimal_execute_session() -> ExecuteSession {
     use plasm_core::{load_schema, CgsContext, TeachingExposureSession};
     use std::path::PathBuf;
     use std::sync::Arc;
-    let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let root = PathBuf::from(crate::test_manifest_dir());
     let cgs = Arc::new(
         load_schema(&root.join("tests/fixtures/execute_tiny")).expect("load execute_tiny"),
     );

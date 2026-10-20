@@ -45,7 +45,7 @@ proptest! {
     fn scoped_hydration_preserves_order_and_row_scoped_parameters(ids in prop::collection::vec(1i64..12, 2..12)) {
         let ids = [vec![4, 9], ids].concat();
         tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap().block_on(async {
-            let cgs = plasm_core::load_schema_dir(&std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../fixtures/schemas/hydration_boundary_matrix")).unwrap();
+            let cgs = plasm_core::load_schema_dir(&std::path::Path::new(crate::test_manifest_dir()).join("../../fixtures/schemas/hydration_boundary_matrix")).unwrap();
             let engine = ExecutionEngine::new_with_transport(crate::ExecutionConfig::default(), Arc::new(DelayedTransport), None);
             let mut mat = SessionMaterialization::new();
             let entities: Vec<_> = ids.iter().map(|id| {

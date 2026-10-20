@@ -19,7 +19,7 @@ pub const LANGMATRIX_A: &str = "langmatrix_a";
 pub const LANGMATRIX_B: &str = "langmatrix_b";
 
 pub fn matrix_language_matrix_dir() -> PathBuf {
-    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../fixtures/schemas/plasm_language_matrix")
+    PathBuf::from(crate::test_manifest_dir()).join("../../fixtures/schemas/plasm_language_matrix")
 }
 
 pub fn matrix_language_matrix_cgs() -> Arc<CGS> {

@@ -182,7 +182,7 @@ async fn case(field: &str, expression: &str, expected: &str, presence: Presence,
     };
     let boxed = &run.return_steps[0].result;
     assert_eq!(
-        serde_json::to_value(&boxed.entities()[0].fields).unwrap(),
+        super::value_fields(&boxed.entities()[0]),
         json!({"boxed":{"items":expected_value}}),
         "{field}/{presence:?}/{observed}"
     );
@@ -194,7 +194,7 @@ async fn case(field: &str, expression: &str, expected: &str, presence: Presence,
         Presence::Null => "None",
     };
     assert_eq!(
-        serde_json::to_value(&run.return_steps[1].result.entities()[0].fields).unwrap(),
+        super::value_fields(&run.return_steps[1].result.entities()[0]),
         json!({"value":text}),
         "{field}/{presence:?}/{observed}"
     );

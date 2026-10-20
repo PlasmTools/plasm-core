@@ -155,7 +155,7 @@ fn fixture_with_identity(
     export_rows: Option<usize>,
     numeric_ids: bool,
 ) -> (ExecuteSession, PlasmHostState, Arc<Mutex<Vec<String>>>) {
-    let mut cgs = plasm_core::load_schema(&std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join(
+    let mut cgs = plasm_core::load_schema(&std::path::Path::new(crate::test_manifest_dir()).join(
         if export_rows.is_some() {
             "../../fixtures/schemas/python_action_output"
         } else {

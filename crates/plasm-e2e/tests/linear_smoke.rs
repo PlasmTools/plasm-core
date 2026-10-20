@@ -15,7 +15,7 @@ use plasm_core::{CgsContext, TeachingExposureSession};
 const FIXTURE_ENTRY: &str = "smoke_matrix";
 
 fn fixture_cgs(name: &str) -> Arc<plasm_core::CGS> {
-    let dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+    let dir = PathBuf::from(plasm_e2e::test_manifest_dir())
         .join("../../fixtures/schemas")
         .join(name);
     Arc::new(load_schema_dir(&dir).unwrap_or_else(|error| panic!("{name}: {error}")))
@@ -46,7 +46,7 @@ fn fixture_session(cgs: Arc<plasm_core::CGS>, entities: &[&str]) -> ExecuteSessi
 }
 
 fn linear_cgs() -> plasm_core::CGS {
-    let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let root = PathBuf::from(plasm_e2e::test_manifest_dir());
     let dir = root.join("../../apis/linear");
     load_schema_dir(&dir).expect("load apis/linear")
 }

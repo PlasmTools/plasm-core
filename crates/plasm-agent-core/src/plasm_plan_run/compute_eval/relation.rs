@@ -884,7 +884,7 @@ mod parent_get_row_tests {
     #[test]
     fn missing_cached_child_uses_only_matching_observed_wire_row() {
         let cgs = plasm_core::load_schema_dir(
-            &std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            &std::path::Path::new(crate::test_manifest_dir())
                 .join("../../fixtures/schemas/plasm_language_matrix"),
         )
         .unwrap();
@@ -964,7 +964,7 @@ mod parent_get_row_tests {
     #[test]
     fn execution_rows_reject_display_identity_and_keep_metadata_out_of_fields() {
         let cgs = plasm_core::load_schema_dir(
-            &std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            &std::path::Path::new(crate::test_manifest_dir())
                 .join("../../fixtures/schemas/hydration_boundary_matrix"),
         )
         .unwrap();

@@ -534,7 +534,7 @@ mod tests {
     #[test]
     fn catalog_identity_is_preserved_across_provider_storage_and_observation() {
         let mut cgs = crate::loader::load_schema_dir(
-            &std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            &std::path::Path::new(crate::test_manifest_dir())
                 .join("../../fixtures/schemas/python_dag_slice"),
         )
         .unwrap();

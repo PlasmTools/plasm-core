@@ -254,7 +254,8 @@ mod tests {
 
     #[test]
     fn correction_with_language_matrix_schema() {
-        let dir = std::path::Path::new("../../fixtures/schemas/plasm_language_matrix");
+        let dir = &std::path::Path::new(crate::test_manifest_dir())
+            .join("../../fixtures/schemas/plasm_language_matrix");
         let cgs = crate::loader::load_schema_dir(dir).expect("plasm_language_matrix");
         let lexicon = DomainLexicon::from_cgs(&cgs);
 

@@ -3,7 +3,7 @@ use super::*;
 #[test]
 fn prompt_matrix_entity_union_teaches_variants_and_lawful_narrowing() {
     let mut cgs = crate::loader::load_schema_dir(
-        &std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        &std::path::Path::new(crate::test_manifest_dir())
             .join("../../fixtures/schemas/plasm_prompt_matrix"),
     )
     .unwrap();
@@ -75,7 +75,7 @@ fn prompt_matrix_entity_union_teaches_variants_and_lawful_narrowing() {
 
 fn fixture() -> CGS {
     crate::loader::load_schema_dir(
-        &std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        &std::path::Path::new(crate::test_manifest_dir())
             .join("../../fixtures/schemas/python_dag_slice"),
     )
     .unwrap()
@@ -150,7 +150,7 @@ fn python_card_initial_extension_and_retry() {
 #[test]
 fn python_query_card_advertises_only_source_call_inputs() {
     let cgs = crate::loader::load_schema_dir(
-        &std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        &std::path::Path::new(crate::test_manifest_dir())
             .join("../../fixtures/schemas/plasm_prompt_matrix"),
     )
     .unwrap();
@@ -187,7 +187,7 @@ fn python_language_teaches_inferred_compute_inputs() {
 #[test]
 fn python_query_card_renders_typed_selection_meanings() {
     let mut cgs = crate::loader::load_schema_dir(
-        &std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        &std::path::Path::new(crate::test_manifest_dir())
             .join("../../fixtures/schemas/plasm_prompt_matrix"),
     )
     .unwrap();
@@ -288,7 +288,7 @@ fn python_card_rejects_revision_drift_and_records_unavailable() {
 #[test]
 fn python_card_preserves_recursive_domains_and_primitive_profiles() {
     let cgs = crate::loader::load_schema_dir(
-        &std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        &std::path::Path::new(crate::test_manifest_dir())
             .join("../../fixtures/schemas/python_value_contract"),
     )
     .unwrap();
@@ -342,7 +342,7 @@ fn python_card_cannot_reassign_existing_entity_symbols() {
 #[test]
 fn python_cutover_prompt_matrix_card_reports_every_capability() {
     let cgs = crate::loader::load_schema_dir(
-        &std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        &std::path::Path::new(crate::test_manifest_dir())
             .join("../../fixtures/schemas/plasm_prompt_matrix"),
     )
     .unwrap();
@@ -364,7 +364,7 @@ fn python_cutover_prompt_matrix_card_reports_every_capability() {
 #[test]
 fn python_cutover_language_matrix_card_reports_every_capability() {
     let cgs = crate::loader::load_schema_dir(
-        &std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        &std::path::Path::new(crate::test_manifest_dir())
             .join("../../fixtures/schemas/plasm_language_matrix"),
     )
     .unwrap();
@@ -391,7 +391,7 @@ fn python_cutover_language_matrix_card_reports_every_capability() {
 #[test]
 fn union_overloads_keep_variant_specific_nested_type_names() {
     let mut cgs = crate::load_schema_dir(
-        &std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        &std::path::Path::new(crate::test_manifest_dir())
             .join("../../fixtures/schemas/python_union_matrix"),
     )
     .unwrap();

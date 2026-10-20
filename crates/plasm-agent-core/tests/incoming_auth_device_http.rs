@@ -23,7 +23,7 @@ const TEST_SECRET: &str = "device-http-test-secret-01234567890123456789012";
 
 fn fixture_registry() -> Arc<CgsRegistry> {
     let dir =
-        Path::new(env!("CARGO_MANIFEST_DIR")).join("../../fixtures/schemas/plasm_prompt_matrix");
+        Path::new(&std::env::var("CARGO_MANIFEST_DIR").expect("test runner must set CARGO_MANIFEST_DIR")).join("../../fixtures/schemas/plasm_prompt_matrix");
     let cgs = Arc::new(load_schema(&dir).expect("prompt matrix schema"));
     Arc::new(CgsRegistry::from_pairs(vec![(
         "prompt_matrix".into(),

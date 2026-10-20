@@ -149,7 +149,7 @@ mod identity_binding_laws {
     #[test]
     fn receiver_identity_is_typed_for_reads_mutations_and_actions() {
         let cgs = plasm_core::load_schema_dir(
-            &std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            &std::path::Path::new(crate::test_manifest_dir())
                 .join("../../fixtures/schemas/mcp_transport_matrix"),
         )
         .unwrap();
@@ -182,7 +182,7 @@ mod identity_binding_laws {
         fn serialized_identity_projects_unchanged_into_every_targeted_transport(
             path in "/[a-zA-Z0-9_ /.-]{1,64}", foreign in any::<i64>(),
         ) {
-            let cgs = plasm_core::load_schema_dir(&std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            let cgs = plasm_core::load_schema_dir(&std::path::Path::new(crate::test_manifest_dir())
                 .join("../../fixtures/schemas/target_identity_matrix")).unwrap();
             let compiled = plasm_compile::compile_cgs_capability_templates(&cgs).unwrap();
             let reference = Ref::new("Document", path.clone());

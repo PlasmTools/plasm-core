@@ -1,0 +1,122 @@
+load("@crates//:defs.bzl", "aliases", "all_crate_deps")
+load("@rules_rust//rust:defs.bzl", "rust_binary", "rust_library")
+
+rust_binary(
+    name = "cache_demo",
+    srcs = glob(["src/**/*.rs"]),
+    aliases = aliases(),
+    compile_data = glob(
+        ["src/**"],
+        allow_empty = True,
+        exclude = ["src/**/*.rs"],
+    ),
+    crate_features = [],
+    crate_root = "src/bin/cache_demo.rs",
+    edition = "2021",
+    proc_macro_deps = all_crate_deps(proc_macro = True),
+    version = "0.5.5",
+    visibility = ["//visibility:public"],
+    deps = [
+        "//crates/plasm-compile:plasm_compile",
+        "//crates/plasm-core:plasm_core",
+        "//crates/plasm-mock:plasm_mock",
+        "//crates/plasm-runtime:plasm_runtime",
+        "//vendor/hermit:beavuck_hermit",
+    ] + all_crate_deps(normal = True),
+)
+
+rust_binary(
+    name = "demo",
+    srcs = glob(["src/**/*.rs"]),
+    aliases = aliases(),
+    compile_data = glob(
+        ["src/**"],
+        allow_empty = True,
+        exclude = ["src/**/*.rs"],
+    ),
+    crate_features = [],
+    crate_root = "src/bin/demo.rs",
+    edition = "2021",
+    proc_macro_deps = all_crate_deps(proc_macro = True),
+    version = "0.5.5",
+    visibility = ["//visibility:public"],
+    deps = [
+        "//crates/plasm-compile:plasm_compile",
+        "//crates/plasm-core:plasm_core",
+        "//crates/plasm-mock:plasm_mock",
+        "//crates/plasm-runtime:plasm_runtime",
+        "//vendor/hermit:beavuck_hermit",
+    ] + all_crate_deps(normal = True),
+)
+
+rust_binary(
+    name = "input_validation_demo",
+    srcs = glob(["src/**/*.rs"]),
+    aliases = aliases(),
+    compile_data = glob(
+        ["src/**"],
+        allow_empty = True,
+        exclude = ["src/**/*.rs"],
+    ),
+    crate_features = [],
+    crate_root = "src/bin/input_validation_demo.rs",
+    edition = "2021",
+    proc_macro_deps = all_crate_deps(proc_macro = True),
+    version = "0.5.5",
+    visibility = ["//visibility:public"],
+    deps = [
+        "//crates/plasm-compile:plasm_compile",
+        "//crates/plasm-core:plasm_core",
+        "//crates/plasm-mock:plasm_mock",
+        "//crates/plasm-runtime:plasm_runtime",
+        "//vendor/hermit:beavuck_hermit",
+    ] + all_crate_deps(normal = True),
+)
+
+rust_binary(
+    name = "mock_server_demo",
+    srcs = glob(["src/**/*.rs"]),
+    aliases = aliases(),
+    compile_data = glob(
+        ["src/**"],
+        allow_empty = True,
+        exclude = ["src/**/*.rs"],
+    ),
+    crate_features = [],
+    crate_root = "src/bin/mock_server_demo.rs",
+    edition = "2021",
+    proc_macro_deps = all_crate_deps(proc_macro = True),
+    version = "0.5.5",
+    visibility = ["//visibility:public"],
+    deps = [
+        "//crates/plasm-compile:plasm_compile",
+        "//crates/plasm-core:plasm_core",
+        "//crates/plasm-mock:plasm_mock",
+        "//crates/plasm-runtime:plasm_runtime",
+        "//vendor/hermit:beavuck_hermit",
+    ] + all_crate_deps(normal = True),
+)
+
+rust_binary(
+    name = "plasm-cgs",
+    srcs = glob(["src/**/*.rs"]),
+    aliases = aliases(),
+    compile_data = glob(
+        ["src/**"],
+        allow_empty = True,
+        exclude = ["src/**/*.rs"],
+    ),
+    crate_features = [],
+    crate_root = "src/main.rs",
+    edition = "2021",
+    proc_macro_deps = all_crate_deps(proc_macro = True),
+    version = "0.5.5",
+    visibility = ["//visibility:public"],
+    deps = [
+        "//crates/plasm-compile:plasm_compile",
+        "//crates/plasm-core:plasm_core",
+        "//crates/plasm-mock:plasm_mock",
+        "//crates/plasm-runtime:plasm_runtime",
+        "//vendor/hermit:beavuck_hermit",
+    ] + all_crate_deps(normal = True),
+)

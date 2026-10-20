@@ -81,7 +81,7 @@ mod presentation_contract_tests {
     #[test]
     fn execution_values_use_domain_fields_not_the_storage_envelope() {
         let cgs = plasm_core::loader::load_schema_dir(
-            &std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            &std::path::Path::new(crate::test_manifest_dir())
                 .join("../../fixtures/schemas/plasm_language_matrix"),
         )
         .unwrap();

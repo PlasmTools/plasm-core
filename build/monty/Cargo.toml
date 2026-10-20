@@ -1,0 +1,36 @@
+# Dependency metadata for the vendored worker; versions remain locked to Monty.
+[package]
+name = "monty-runtime"
+version = "1.0.0"
+edition = "2024"
+
+[workspace]
+resolver = "2"
+exclude = ["vendor/monty"]
+
+[[bin]]
+name = "monty"
+path = "vendor/monty/crates/monty-runtime/src/main.rs"
+
+[features]
+default = ["standalone"]
+standalone = ["dep:anstream", "dep:anstyle", "dep:rustyline"]
+telemetry = ["standalone", "dep:logfire", "dep:tracing"]
+
+[dependencies]
+anstream = { version = "0.6", optional = true }
+anstyle = { version = "1", optional = true }
+clap = { version = "4", features = ["derive"] }
+logfire = { version = "0.12", default-features = false, features = ["export-http-protobuf"], optional = true }
+monty = { path = "vendor/monty/crates/monty", version = "1.0.0" }
+monty-fs = { path = "vendor/monty/crates/monty-fs", version = "1.0.0" }
+monty-alloc = { path = "vendor/monty/crates/monty-alloc", version = "1.0.0", features = ["exit-code"] }
+monty-proto = { path = "vendor/monty/crates/monty-proto", version = "1.0.0", features = ["worker"] }
+monty-type-checking = { path = "vendor/monty/crates/monty-type-checking", version = "1.0.0" }
+monty-types = { path = "vendor/monty/crates/monty-types", version = "1.0.0", features = ["tzdb"] }
+rustyline = { version = "15", optional = true }
+tracing = { version = "0.1", optional = true }
+
+[patch.crates-io]
+ty_python_core = { path = "vendor/monty/vendor/ty_python_core" }
+ty_python_semantic = { path = "vendor/monty/vendor/ty_python_semantic" }

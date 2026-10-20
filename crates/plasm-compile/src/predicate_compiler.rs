@@ -430,7 +430,7 @@ mod tests {
 
     #[test]
     fn required_scope_input_is_transport_data_not_a_row_filter() {
-        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        let path = std::path::Path::new(crate::test_manifest_dir())
             .join("../../fixtures/schemas/scoped_query_matrix");
         let cgs = plasm_core::loader::load_schema_dir(&path).unwrap();
         crate::validate_cgs_capability_templates(&cgs).unwrap();

@@ -1929,7 +1929,7 @@ mod tests {
 
     fn fixture() -> CGS {
         crate::loader::load_schema_dir(
-            &std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            &std::path::Path::new(crate::test_manifest_dir())
                 .join("../../fixtures/schemas/prerequisite_matrix"),
         )
         .expect("abstract prerequisite matrix")
@@ -2033,7 +2033,7 @@ mod tests {
 
     #[test]
     fn membership_foreign_keys_retain_catalog_qualified_identity() {
-        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        let path = std::path::Path::new(crate::test_manifest_dir())
             .join("../../fixtures/schemas/plasm_language_matrix");
         let mut left = crate::loader::load_schema_dir(&path).unwrap();
         let mut right = left.clone();
@@ -2852,7 +2852,7 @@ mod tests {
     }
 
     fn dual_session_catalogs() -> (CGS, CGS) {
-        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        let root = std::path::Path::new(crate::test_manifest_dir())
             .join("../../fixtures/schemas/prerequisite_dual_session");
         let source = crate::loader::load_schema_dir(&root.join("source"))
             .expect("abstract source session catalog");

@@ -539,7 +539,7 @@ fn hermit_shared_server_survives_caller_runtime_shutdown() {
 fn spotify_artist_search_and_listing_have_distinct_wire_contracts() {
     use plasm_compile::{compile_operation, parse_capability_template, CmlEnv, CompiledOperation};
     use plasm_core::{CapabilityKind, Value, CGS};
-    let directory = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../apis/appworld/spotify");
+    let directory = Path::new(plasm_e2e::test_manifest_dir()).join("../../apis/appworld/spotify");
     let loaded = plasm_core::load_schema(&directory).expect("Spotify production catalog");
     let cgs: CGS = serde_json::from_slice(&serde_json::to_vec(&loaded).unwrap()).unwrap();
     assert_eq!(
@@ -592,7 +592,7 @@ fn spotify_artist_search_and_listing_have_distinct_wire_contracts() {
 fn venmo_friend_owner_role_preserves_openapi_wire_contract() {
     use plasm_compile::{compile_operation, parse_capability_template, CmlEnv, CompiledOperation};
     use plasm_core::Value;
-    let directory = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../apis/appworld/venmo");
+    let directory = Path::new(plasm_e2e::test_manifest_dir()).join("../../apis/appworld/venmo");
     let cgs = plasm_core::load_schema(&directory).expect("Venmo production catalog");
     let spec: serde_json::Value =
         serde_json::from_slice(&std::fs::read(directory.join("openapi.json")).unwrap()).unwrap();
@@ -718,7 +718,7 @@ fn appworld_record_authorship_matches_openapi() {
             1,
         ),
     ] {
-        let dir = Path::new(env!("CARGO_MANIFEST_DIR"))
+        let dir = Path::new(plasm_e2e::test_manifest_dir())
             .join("../../apis/appworld")
             .join(app);
         let cgs = plasm_core::load_schema(&dir).unwrap();

@@ -91,7 +91,7 @@ fn session() -> ExecuteSession {
 
 fn session_with_primary_catalog(auxiliary: bool) -> ExecuteSession {
     let mut schema = plasm_core::load_schema(
-        &std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        &std::path::Path::new(crate::test_manifest_dir())
             .join("../../fixtures/schemas/hydration_boundary_matrix"),
     )
     .unwrap();

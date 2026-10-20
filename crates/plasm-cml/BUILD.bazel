@@ -1,0 +1,36 @@
+load("@crates//:defs.bzl", "aliases", "all_crate_deps")
+load("@rules_rust//rust:defs.bzl", "rust_library", "rust_test")
+
+rust_library(
+    name = "plasm_cml",
+    srcs = glob(["src/**/*.rs"]),
+    aliases = aliases(),
+    crate_features = ["evm"],
+    crate_root = "src/lib.rs",
+    edition = "2021",
+    proc_macro_deps = all_crate_deps(proc_macro = True),
+    version = "0.5.5",
+    visibility = ["//visibility:public"],
+    deps = ["//crates/plasm-core:plasm_core"] + all_crate_deps(normal = True),
+)
+
+rust_test(
+    name = "unit_tests",
+    compile_data = [
+        "//:test_fixtures",
+        "//:agent_prompt_assets",
+    ],
+    crate = ":plasm_cml",
+    data = [
+        "Cargo.toml",
+        "//:agent_prompt_assets",
+        "//:test_fixtures",
+    ] + glob(
+        ["src/**/*.snap"],
+        allow_empty = True,
+    ),
+    env = {"INSTA_WORKSPACE_ROOT": "."},
+    proc_macro_deps = all_crate_deps(proc_macro_dev = True),
+    visibility = ["//visibility:public"],
+    deps = all_crate_deps(normal_dev = True),
+)

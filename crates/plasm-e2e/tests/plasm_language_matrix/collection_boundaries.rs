@@ -77,7 +77,7 @@ async fn page_case(kind: &str, count: usize, context: Context) {
         axum::serve(listener, app).await.unwrap();
     });
     let mut cgs = plasm_core::loader::load_schema_dir(
-        &std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        &std::path::Path::new(plasm_e2e::test_manifest_dir())
             .join("../../fixtures/schemas/plasm_pagination_matrix"),
     )
     .unwrap();

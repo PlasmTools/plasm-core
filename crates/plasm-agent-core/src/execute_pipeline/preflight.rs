@@ -172,7 +172,7 @@ mod tests {
     use super::PlasmPreflight;
 
     fn matrix_session() -> ExecuteSession {
-        let root = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+        let root = std::path::PathBuf::from(crate::test_manifest_dir());
         let cgs = std::sync::Arc::new(
             plasm_core::load_schema(&root.join("../../fixtures/schemas/plasm_language_matrix"))
                 .expect("matrix"),

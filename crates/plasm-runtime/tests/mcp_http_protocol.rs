@@ -52,7 +52,7 @@ async fn assert_catalog_coverage(exhaustive: bool, paginated: bool, cursor: bool
     })
     .await
     .unwrap();
-    let fixture = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+    let fixture = std::path::Path::new(&std::env::var("CARGO_MANIFEST_DIR").expect("test runner must set CARGO_MANIFEST_DIR"))
         .join("../../fixtures/schemas/mcp_transport_matrix");
     let temporary = tempfile::tempdir().unwrap();
     std::fs::copy(
@@ -174,7 +174,7 @@ async fn assert_catalog_coverage(exhaustive: bool, paginated: bool, cursor: bool
         assert_eq!(first.entities().len(), 1);
         let second = engine
             .execute_pagination_resume(
-                first.pagination_resume.unwrap(),
+                *first.pagination_resume.unwrap(),
                 &cgs,
                 &mut resumed_materialization,
                 None,

@@ -19,7 +19,7 @@ use plasm_runtime::{ExecutionEngine, ExecutionMode};
 pub const VIEWS_MATRIX_ENTRY_ID: &str = "langmatrix_views";
 
 pub fn language_matrix_views_schema_dir() -> PathBuf {
-    let crate_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let crate_root = PathBuf::from(plasm_e2e::test_manifest_dir());
     let candidates = [
         crate_root.join("../../fixtures/schemas/plasm_language_matrix_views"),
         crate_root.join("fixtures/schemas/plasm_language_matrix_views"),

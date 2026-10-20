@@ -839,7 +839,7 @@ mod tests {
 
     fn prepared(entry: &str, version: u64) -> PreparedCatalog {
         let mut cgs = plasm_core::loader::load_schema_dir(
-            &Path::new(env!("CARGO_MANIFEST_DIR"))
+            &Path::new(crate::test_manifest_dir())
                 .join("../../fixtures/schemas/prerequisite_matrix"),
         )
         .unwrap();

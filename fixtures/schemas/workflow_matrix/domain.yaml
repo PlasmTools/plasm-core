@@ -1,0 +1,155 @@
+version: 2
+workflow_identity: true
+auth:
+  scheme: none
+http_backend: http://127.0.0.1:9
+entities:
+  WorkItem:
+    id_field: id
+    description: Workflow identity matrix entity.
+    fields:
+      id:
+        required: true
+        value_ref: nv_workitem_id
+      title:
+        required: true
+        value_ref: nv_workitem_title
+      outcome:
+        required: false
+        value_ref: nv_workitem_outcome
+    relations: {}
+  WorkItemEnsureResult:
+    id_field: id
+    description: Receipt of a conditional work-item creation attempt.
+    fields:
+      id:
+        required: true
+        value_ref: nv_workitem_id
+      title:
+        required: true
+        value_ref: nv_workitem_title
+      outcome:
+        required: false
+        value_ref: nv_workitem_outcome
+    relations: {}
+capabilities:
+  workitem_query:
+    description: List work items (paginated)
+    kind: query
+    entity: WorkItem
+    selection:
+    - name: title
+      selection_effect: other
+      value_ref: nv_workitem_title
+      required: false
+    controls:
+    - name: limit
+      value_ref: nv_workitem_limit
+      required: false
+  workitem_get:
+    description: Fetch one work item by id
+    kind: get
+    entity: WorkItem
+  workitem_create:
+    description: Create a work item (non-idempotent; requires existence proof in PLT)
+    kind: action
+    entity: WorkItem
+    identity_key:
+    - title
+    provides:
+    - id
+    - title
+    output:
+      type: entity
+      entity_type: WorkItem
+    arguments:
+      input_type:
+        type: object
+        fields:
+        - name: title
+          value_ref: nv_workitem_title
+          required: true
+  workitem_create_idempotent:
+    description: Idempotent create with a declared read-backed identity postcondition
+    kind: action
+    entity: WorkItem
+    identity_key:
+    - title
+    provides:
+    - id
+    - title
+    output:
+      type: entity
+      entity_type: WorkItem
+      idempotent: true
+      reconcile:
+        via: workitem_query
+        bind_identity_from: params
+    arguments:
+      input_type:
+        type: object
+        fields:
+        - name: title
+          value_ref: nv_workitem_title
+          required: true
+  workitem_ensure_query:
+    description: Conditional write view — create when absent
+    kind: query
+    entity: WorkItemEnsureResult
+    selection:
+    - name: title
+      selection_effect: other
+      value_ref: nv_workitem_title
+      required: true
+views:
+  workitem_ensure:
+    description: Query-then-create work item when title is absent
+    capability: workitem_ensure_query
+    entity: WorkItemEnsureResult
+    scope:
+    - name: title
+      required: true
+      value_ref: nv_workitem_title
+    nodes:
+    - id: check
+      capability: workitem_query
+      bind:
+        title:
+          kind: scope
+          param: title
+    - id: write
+      capability: workitem_create
+      bind:
+        title:
+          kind: scope
+          param: title
+      when:
+        kind: skip_if
+        condition:
+          kind: node_row_count_positive
+          node: check
+    output:
+      id:
+        kind: node_field
+        node: write
+        field: id
+      title:
+        kind: node_field
+        node: write
+        field: title
+      outcome:
+        kind: write_created
+        node: write
+values:
+  nv_workitem_id:
+    type: string
+    description: Work item id
+  nv_workitem_title:
+    type: string
+    description: Work item title
+  nv_workitem_limit:
+    type: integer
+    description: List limit
+  nv_workitem_outcome:
+    type: string
+    description: Write outcome (created | reused | skipped)

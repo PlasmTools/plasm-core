@@ -303,7 +303,7 @@ mod tests {
 
     #[tokio::test]
     async fn materialize_is_idempotent_without_hosted_kv_overlay() {
-        let dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        let dir = PathBuf::from(crate::test_manifest_dir())
             .join("../../fixtures/schemas/plasm_language_matrix");
         if !dir.is_dir() {
             return;

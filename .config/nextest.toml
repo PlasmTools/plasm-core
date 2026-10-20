@@ -1,0 +1,14 @@
+[profile.default]
+fail-fast = false
+retries = 0
+
+[profile.ci]
+fail-fast = false
+retries = 0
+status-level = "fail"
+final-status-level = "fail"
+
+[profile.ci.junit]
+path = "junit.xml"
+store-success-output = false
+store-failure-output = true

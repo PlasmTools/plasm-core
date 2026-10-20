@@ -225,7 +225,7 @@ mod tests {
         use plasm_compile::{EntityDecoder, PathExpr, RelationDecoder};
         use plasm_core::row_contract::{RowCodec, RowRecord};
         let cgs = plasm_core::load_schema_dir(
-            &std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            &std::path::Path::new(crate::test_manifest_dir())
                 .join("../../fixtures/schemas/hydration_boundary_matrix"),
         )
         .unwrap();

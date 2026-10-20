@@ -16,7 +16,7 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 fn projected_alias_session() -> ExecuteSession {
-    let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let root = PathBuf::from(crate::test_manifest_dir());
     let cgs = Arc::new(
         plasm_core::loader::load_schema_dir(
             &root.join("../../fixtures/schemas/projected_alias_grain"),
@@ -144,5 +144,9 @@ peers
 
 #[test]
 fn nested_parenthesized_row_binding_preserves_schema() {
-    compile_grain("grouped_binding", "sent = Transfer\npeers = ((sent)) | select email = receiver_email\npeers").expect("grouping a row binding preserves its schema");
+    compile_grain(
+        "grouped_binding",
+        "sent = Transfer\npeers = ((sent)) | select email = receiver_email\npeers",
+    )
+    .expect("grouping a row binding preserves its schema");
 }

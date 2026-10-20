@@ -1,0 +1,14 @@
+diff --git a/build.rs b/build.rs
+--- a/build.rs
++++ b/build.rs
+@@ -55,8 +55,9 @@
+     let options = SimpleFileOptions::default()
+         .compression_method(method)
++        .last_modified_time(zip::DateTime::default())
+         .unix_permissions(0o644);
+ 
+-    for entry in walkdir::WalkDir::new(TYPESHED_SOURCE_DIR) {
++    for entry in walkdir::WalkDir::new(TYPESHED_SOURCE_DIR).sort_by_file_name() {
+         let dir_entry = entry.unwrap();
+         let absolute_path = dir_entry.path();
+         let normalized_relative_path = absolute_path

@@ -555,7 +555,8 @@ mod tests {
 
     #[test]
     fn language_matrix_tilde_search_stamps_search_not_query() {
-        let dir = std::path::Path::new("../../fixtures/schemas/plasm_language_matrix");
+        let dir = &std::path::Path::new(crate::test_manifest_dir())
+            .join("../../fixtures/schemas/plasm_language_matrix");
         let cgs = load_schema_dir(dir).expect("language matrix");
         let mut q = QueryExpr::filtered("LangItem", Predicate::eq("q", "no-such-item"));
         q.capability_name = Some("langitem_search".into());
@@ -566,7 +567,8 @@ mod tests {
 
     #[test]
     fn language_matrix_search_only_brace_q_resolves_search_not_primary_query() {
-        let dir = std::path::Path::new("../../fixtures/schemas/plasm_language_matrix");
+        let dir = &std::path::Path::new(crate::test_manifest_dir())
+            .join("../../fixtures/schemas/plasm_language_matrix");
         let cgs = load_schema_dir(dir).expect("language matrix");
         let q = QueryExpr::filtered("LangItem", Predicate::eq("q", "no-such-item"));
         let cap = resolve_query_capability(&q, &cgs).expect("RA-2 search-only brace");
@@ -580,7 +582,8 @@ mod tests {
 
     #[test]
     fn language_matrix_query_owner_brace_still_resolves_query() {
-        let dir = std::path::Path::new("../../fixtures/schemas/plasm_language_matrix");
+        let dir = &std::path::Path::new(crate::test_manifest_dir())
+            .join("../../fixtures/schemas/plasm_language_matrix");
         let cgs = load_schema_dir(dir).expect("language matrix");
         let q = QueryExpr::filtered("LangItem", Predicate::eq("owner", "alice"));
         let cap = resolve_query_capability(&q, &cgs).expect("query owner brace");
@@ -590,7 +593,8 @@ mod tests {
 
     #[test]
     fn normalize_sets_capability_name() {
-        let dir = std::path::Path::new("../../fixtures/schemas/plasm_language_matrix");
+        let dir = &std::path::Path::new(crate::test_manifest_dir())
+            .join("../../fixtures/schemas/plasm_language_matrix");
         let cgs = load_schema_dir(dir).expect("plasm_language_matrix");
         let mut expr = crate::Expr::Query(QueryExpr::filtered(
             "LangItem",
@@ -607,7 +611,8 @@ mod tests {
 
     #[test]
     fn petstore_tags_predicate_resolves_pet_find_by_tags() {
-        let dir = std::path::Path::new("../../fixtures/schemas/petstore");
+        let dir = &std::path::Path::new(crate::test_manifest_dir())
+            .join("../../fixtures/schemas/petstore");
         if !dir.exists() {
             return;
         }
@@ -628,7 +633,8 @@ mod tests {
 
     #[test]
     fn langline_unscoped_is_not_a_global_list() {
-        let dir = std::path::Path::new("../../fixtures/schemas/plasm_language_matrix");
+        let dir = &std::path::Path::new(crate::test_manifest_dir())
+            .join("../../fixtures/schemas/plasm_language_matrix");
         let cgs = load_schema_dir(dir).expect("plasm_language_matrix");
         let q = QueryExpr::all("LangLine");
         let err = resolve_query_capability(&q, &cgs).unwrap_err();
@@ -645,7 +651,8 @@ mod tests {
         use indexmap::IndexMap;
         use std::sync::Arc;
 
-        let dir = std::path::Path::new("../../fixtures/schemas/plasm_language_matrix");
+        let dir = &std::path::Path::new(crate::test_manifest_dir())
+            .join("../../fixtures/schemas/plasm_language_matrix");
         if !dir.exists() {
             return;
         }
@@ -692,7 +699,8 @@ mod tests {
 
     #[test]
     fn bare_profile_desugars_to_sole_nullary_get() {
-        let dir = std::path::Path::new("../../fixtures/schemas/sole_nullary_get");
+        let dir = &std::path::Path::new(crate::test_manifest_dir())
+            .join("../../fixtures/schemas/sole_nullary_get");
         if !dir.exists() {
             return;
         }
@@ -720,7 +728,8 @@ mod tests {
 
     #[test]
     fn compound_key_and_query_entities_are_not_sole_nullary() {
-        let dir = std::path::Path::new("../../fixtures/schemas/plasm_language_matrix");
+        let dir = &std::path::Path::new(crate::test_manifest_dir())
+            .join("../../fixtures/schemas/plasm_language_matrix");
         assert!(dir.exists(), "missing fixture {dir:?}");
         let cgs = load_schema_dir(dir).unwrap();
         assert!(

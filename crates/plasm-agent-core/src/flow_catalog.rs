@@ -229,7 +229,7 @@ mod tests {
 
     #[test]
     fn sanitizer_behavior_controls_survive_each_typed_input_lane() {
-        let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        let dir = std::path::Path::new(crate::test_manifest_dir())
             .join("../../fixtures/schemas/flow_matrix");
         let original = load_schema_dir_unvalidated(&dir).expect("flow_matrix fixture");
         let key = QualifiedCapabilityKey::from_parts("flow", "Redactor", "redact");
@@ -265,7 +265,7 @@ mod tests {
 
     #[test]
     fn from_cgs_uses_typed_sink_and_output_helpers() {
-        let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        let dir = std::path::Path::new(crate::test_manifest_dir())
             .join("../../fixtures/schemas/flow_matrix");
         let cgs = load_schema_dir_unvalidated(&dir).expect("load flow_matrix fixture");
         let view = FlowCatalogView::from_cgs("flow", &cgs);

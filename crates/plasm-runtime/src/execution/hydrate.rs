@@ -600,7 +600,7 @@ mod tests {
     fn session_params_overlay_explicit_wins() {
         use plasm_core::loader::load_schema_dir;
         let cgs = load_schema_dir(
-            &std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            &std::path::PathBuf::from(crate::test_manifest_dir())
                 .join("../../fixtures/schemas/plasm_language_matrix"),
         )
         .expect("language matrix CGS");
@@ -644,7 +644,7 @@ mod tests {
         use plasm_core::loader::load_schema_dir;
         use plasm_core::{Expr, GetExpr, Ref};
         let cgs = load_schema_dir(
-            &std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            &std::path::PathBuf::from(crate::test_manifest_dir())
                 .join("../../fixtures/schemas/plasm_language_matrix_views"),
         )
         .expect("matrix views CGS");
@@ -715,7 +715,7 @@ mod tests {
         }
 
         let cgs = load_schema_dir(
-            &std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            &std::path::PathBuf::from(crate::test_manifest_dir())
                 .join("../../fixtures/schemas/plasm_language_matrix_views"),
         )
         .expect("matrix views CGS");
@@ -762,7 +762,7 @@ mod tests {
     fn preflight_identity_get_compiles_from_session_stamps() {
         use plasm_core::loader::load_schema_dir;
         let cgs = load_schema_dir(
-            &std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            &std::path::PathBuf::from(crate::test_manifest_dir())
                 .join("../../fixtures/schemas/plasm_language_matrix"),
         )
         .expect("language matrix CGS");
@@ -801,7 +801,7 @@ mod tests {
     fn auth_bearer_search_tokenless_search_does_not_inherit_get_session_inject() {
         use plasm_core::expr_parser::parse;
         use plasm_core::loader::load_schema_dir;
-        let dir = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        let dir = std::path::PathBuf::from(crate::test_manifest_dir())
             .join("../../fixtures/schemas/auth_bearer_search");
         if !dir.is_dir() {
             return;
@@ -859,7 +859,7 @@ mod tests {
         use plasm_core::expr_parser::parse;
         use plasm_core::loader::load_schema_dir;
         use std::sync::Arc;
-        let dir = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        let dir = std::path::PathBuf::from(crate::test_manifest_dir())
             .join("../../fixtures/schemas/auth_bearer_search");
         if !dir.is_dir() {
             return;
@@ -959,7 +959,7 @@ mod tests {
             }
         }
 
-        let dir = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        let dir = std::path::PathBuf::from(crate::test_manifest_dir())
             .join("../../fixtures/schemas/auth_bearer_search");
         if !dir.is_dir() {
             return;
@@ -1126,7 +1126,7 @@ mod tests {
             }
         }
 
-        let dir = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        let dir = std::path::PathBuf::from(crate::test_manifest_dir())
             .join("../../fixtures/schemas/auth_bearer_search");
         if !dir.is_dir() {
             return;
@@ -1331,7 +1331,7 @@ mod tests {
             None,
         );
         let cgs = load_schema_dir(
-            &std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            &std::path::PathBuf::from(crate::test_manifest_dir())
                 .join("../../fixtures/schemas/plasm_language_matrix"),
         )
         .expect("language matrix CGS");
@@ -1454,7 +1454,7 @@ mod tests {
             None,
         );
         let cgs = load_schema_dir(
-            &std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            &std::path::PathBuf::from(crate::test_manifest_dir())
                 .join("../../fixtures/schemas/plasm_language_matrix"),
         )
         .expect("language matrix CGS");
@@ -1524,7 +1524,7 @@ mod tests {
     fn ra6_query_only_parent_for_entity_get_keeps_scoped_param() {
         use plasm_core::loader::load_schema_dir;
         let matrix = load_schema_dir(
-            &std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            &std::path::PathBuf::from(crate::test_manifest_dir())
                 .join("../../fixtures/schemas/plasm_language_matrix"),
         )
         .expect("language matrix CGS");
@@ -1543,7 +1543,7 @@ mod tests {
         );
 
         let scoped = load_schema_dir(
-            &std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            &std::path::PathBuf::from(crate::test_manifest_dir())
                 .join("../../fixtures/schemas/relation_scoped_token"),
         )
         .expect("relation_scoped_token CGS");
@@ -1567,7 +1567,7 @@ mod tests {
     fn ra6_query_only_parent_stamp_reaches_child_cap() {
         use plasm_core::loader::load_schema_dir;
         let cgs = load_schema_dir(
-            &std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            &std::path::PathBuf::from(crate::test_manifest_dir())
                 .join("../../fixtures/schemas/relation_scoped_token"),
         )
         .expect("relation_scoped_token CGS");
@@ -1710,7 +1710,7 @@ mod tests {
             None,
         );
         let cgs = load_schema_dir(
-            &std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            &std::path::PathBuf::from(crate::test_manifest_dir())
                 .join("../../fixtures/schemas/relation_scoped_token"),
         )
         .expect("relation_scoped_token CGS");
@@ -1750,7 +1750,7 @@ mod tests {
     fn ra6_unary_get_session_overlay_reaches_child_without_per_ref_stamp() {
         use plasm_core::loader::load_schema_dir;
         let cgs = load_schema_dir(
-            &std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            &std::path::PathBuf::from(crate::test_manifest_dir())
                 .join("../../fixtures/schemas/relation_get_scoped_token"),
         )
         .expect("relation_get_scoped_token CGS");
@@ -1787,7 +1787,7 @@ mod tests {
     fn ra6_unary_get_empty_token_names_missing_env() {
         use plasm_core::loader::load_schema_dir;
         let cgs = load_schema_dir(
-            &std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            &std::path::PathBuf::from(crate::test_manifest_dir())
                 .join("../../fixtures/schemas/relation_get_scoped_token"),
         )
         .expect("relation_get_scoped_token CGS");
@@ -1895,7 +1895,7 @@ mod tests {
             None,
         );
         let cgs = load_schema_dir(
-            &std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            &std::path::PathBuf::from(crate::test_manifest_dir())
                 .join("../../fixtures/schemas/relation_get_scoped_token"),
         )
         .expect("relation_get_scoped_token CGS");
@@ -1983,7 +1983,7 @@ mod tests {
             None,
         );
         let cgs = load_schema_dir(
-            &std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            &std::path::PathBuf::from(crate::test_manifest_dir())
                 .join("../../fixtures/schemas/relation_get_scoped_token"),
         )
         .expect("relation_get_scoped_token CGS");
@@ -2023,7 +2023,7 @@ mod tests {
 
     fn dual_session_consumer() -> CGS {
         let mut cgs = plasm_core::loader::load_schema_dir(
-            &std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            &std::path::PathBuf::from(crate::test_manifest_dir())
                 .join("../../fixtures/schemas/prerequisite_dual_session/consumer"),
         )
         .expect("prerequisite_dual_session consumer");
@@ -2170,7 +2170,7 @@ mod tests {
         }
 
         let cgs = load_schema_dir(
-            &std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            &std::path::PathBuf::from(crate::test_manifest_dir())
                 .join("../../fixtures/schemas/plasm_language_matrix"),
         )
         .expect("language matrix CGS");
@@ -2270,7 +2270,7 @@ mod tests {
         }
 
         let cgs = load_schema_dir(
-            &std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            &std::path::PathBuf::from(crate::test_manifest_dir())
                 .join("../../fixtures/schemas/plasm_direction_matrix"),
         )
         .expect("direction matrix CGS");
@@ -2366,7 +2366,7 @@ mod tests {
         }
 
         let cgs = load_schema_dir(
-            &std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            &std::path::PathBuf::from(crate::test_manifest_dir())
                 .join("../../fixtures/schemas/plasm_language_matrix"),
         )
         .expect("language matrix CGS");
@@ -2473,7 +2473,7 @@ mod tests {
         }
 
         let cgs = load_schema_dir(
-            &std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            &std::path::PathBuf::from(crate::test_manifest_dir())
                 .join("../../fixtures/schemas/plasm_language_matrix"),
         )
         .expect("language matrix CGS");
@@ -2613,7 +2613,7 @@ mod tests {
         }
 
         let cgs = load_schema_dir(
-            &std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            &std::path::PathBuf::from(crate::test_manifest_dir())
                 .join("../../fixtures/schemas/plasm_pagination_matrix"),
         )
         .expect("pagination matrix CGS");
@@ -2701,7 +2701,7 @@ mod tests {
         }
 
         let cgs = load_schema_dir(
-            &std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            &std::path::PathBuf::from(crate::test_manifest_dir())
                 .join("../../fixtures/schemas/plasm_language_matrix"),
         )
         .expect("language matrix CGS");
@@ -2797,7 +2797,7 @@ mod tests {
         }
 
         let cgs = load_schema_dir(
-            &std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            &std::path::PathBuf::from(crate::test_manifest_dir())
                 .join("../../fixtures/schemas/plasm_language_matrix"),
         )
         .expect("language matrix CGS");
@@ -2986,7 +2986,7 @@ mod tests {
             None
         };
         let cgs = load_schema_dir(
-            &std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            &std::path::PathBuf::from(crate::test_manifest_dir())
                 .join("../../fixtures/schemas/plasm_language_matrix"),
         )
         .expect("language matrix CGS");
@@ -3243,7 +3243,7 @@ mod tests {
         }
 
         let cgs = load_schema_dir(
-            &std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            &std::path::PathBuf::from(crate::test_manifest_dir())
                 .join("../../fixtures/schemas/plasm_pagination_matrix"),
         )
         .expect("pagination matrix CGS");

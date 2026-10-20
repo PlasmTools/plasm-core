@@ -1,0 +1,7 @@
+diff --git a/cargo/private/cargo_build_script.bzl b/cargo/private/cargo_build_script.bzl
+--- a/cargo/private/cargo_build_script.bzl
++++ b/cargo/private/cargo_build_script.bzl
+@@ -526,1 +526,3 @@
+         cc_c_args, cc_cxx_args, cc_env = get_cc_compile_args_and_env(cc_toolchain, feature_configuration)
++        cc_c_args = cc_c_args + ctx.fragments.cpp.copts + ctx.fragments.cpp.conlyopts
++        cc_cxx_args = cc_cxx_args + ctx.fragments.cpp.copts + ctx.fragments.cpp.cxxopts

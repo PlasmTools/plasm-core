@@ -646,7 +646,7 @@ mod federated_record_tests {
     #[test]
     fn map_record_preserves_foreign_nested_value_domains() {
         let foreign = plasm_core::loader::load_schema_dir(
-            &std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            &std::path::Path::new(crate::test_manifest_dir())
                 .join("../../fixtures/schemas/python_value_contract"),
         )
         .unwrap();

@@ -384,7 +384,7 @@ mod tests {
     #[test]
     fn declared_output_cardinality_distinguishes_entity_and_collection() {
         let cgs = load_schema_dir(
-            &std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            &std::path::Path::new(crate::test_manifest_dir())
                 .join("../../fixtures/schemas/python_action_output"),
         )
         .unwrap();
@@ -401,7 +401,7 @@ mod tests {
     #[test]
     fn action_decoder_uses_declared_output_entity_without_receiver_identity() {
         let cgs = load_schema_dir(
-            &std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            &std::path::Path::new(crate::test_manifest_dir())
                 .join("../../fixtures/schemas/python_action_output"),
         )
         .unwrap();
@@ -444,7 +444,7 @@ mod tests {
 
     #[test]
     fn runtime_from_parent_get_embed_decoders_are_leaf() {
-        let dir = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        let dir = std::path::PathBuf::from(crate::test_manifest_dir())
             .join("../../fixtures/schemas/plasm_language_matrix");
         let cgs = load_schema_dir(&dir).expect("langmatrix");
         let decoder = create_entity_decoder_for_capability(
@@ -460,7 +460,7 @@ mod tests {
 
     #[test]
     fn pokeapi_get_embed_decoders_are_leaf() {
-        let dir = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        let dir = std::path::PathBuf::from(crate::test_manifest_dir())
             .join("../../fixtures/schemas/embed_decoder_matrix");
         let cgs = load_schema_dir(&dir).expect("pokeapi");
         let decoder = create_entity_decoder_for_capability(
@@ -482,7 +482,7 @@ mod tests {
 
     #[test]
     fn pokeapi_type_and_ability_get_embed_decoders_are_leaf() {
-        let dir = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        let dir = std::path::PathBuf::from(crate::test_manifest_dir())
             .join("../../fixtures/schemas/embed_reverse_matrix");
         let cgs = load_schema_dir(&dir).expect("pokeapi");
         for (entity, cap) in [("Type", "type_get"), ("Ability", "ability_get")] {
@@ -508,7 +508,7 @@ mod tests {
         use plasm_compile::DecodedRelation;
         use plasm_core::Value;
 
-        let dir = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        let dir = std::path::PathBuf::from(crate::test_manifest_dir())
             .join("../../fixtures/schemas/embed_reverse_matrix");
         let cgs = load_schema_dir(&dir).expect("pokeapi");
         let decoder = create_entity_decoder_for_capability(

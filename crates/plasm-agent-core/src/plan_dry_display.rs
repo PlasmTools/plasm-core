@@ -1317,7 +1317,7 @@ mod tests {
 
     #[test]
     fn plan_resolves_used_selection_effects_from_catalog() {
-        let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        let dir = std::path::Path::new(crate::test_manifest_dir())
             .join("../../fixtures/schemas/plasm_prompt_matrix");
         let mut schema = plasm_core::load_schema_dir(&dir).unwrap();
         schema.bind_registry_entry_id("matrix");
@@ -1408,7 +1408,7 @@ mod tests {
 
     #[test]
     fn plan_expr_wire_surface_is_not_il_summary() {
-        let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        let dir = std::path::Path::new(crate::test_manifest_dir())
             .join("../../fixtures/schemas/petstore_minimal");
         if !dir.exists() {
             return;

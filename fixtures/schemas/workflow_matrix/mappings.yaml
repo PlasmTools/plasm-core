@@ -1,0 +1,64 @@
+workitem_query:
+  method: GET
+  path:
+  - type: literal
+    value: language
+  - type: literal
+    value: v1
+  - type: literal
+    value: items
+  query:
+    type: object
+    fields:
+    - - title
+      - type: if
+        condition: { type: exists, var: title }
+        then_expr: { type: var, name: title }
+        else_expr: { type: const, value: null }
+    - - limit
+      - type: if
+        condition: { type: exists, var: limit }
+        then_expr: { type: var, name: limit }
+        else_expr: { type: const, value: null }
+
+workitem_get:
+  method: GET
+  path:
+  - type: literal
+    value: language
+  - type: literal
+    value: v1
+  - type: literal
+    value: items
+  - type: var
+    name: id
+
+workitem_create:
+  method: POST
+  path:
+  - type: literal
+    value: language
+  - type: literal
+    value: v1
+  - type: literal
+    value: items
+  body:
+    type: object
+    fields:
+    - ["title", { type: var, name: title }]
+workitem_create_idempotent:
+  method: POST
+  path:
+  - type: literal
+    value: language
+  - type: literal
+    value: v1
+  - type: literal
+    value: items
+  body:
+    type: object
+    fields:
+    - ["title", { type: var, name: title }]
+workitem_ensure_query:
+  transport: view
+  view: workitem_ensure

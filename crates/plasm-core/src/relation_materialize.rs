@@ -355,7 +355,7 @@ mod tests {
 
     #[test]
     fn catalog_rejects_many_embeds_without_membership_evidence() {
-        let directory = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        let directory = std::path::Path::new(crate::test_manifest_dir())
             .join("../../fixtures/schemas/from_parent_get_nav");
         let mut cgs = crate::load_schema_dir(&directory).unwrap();
         let relation = cgs
@@ -380,7 +380,7 @@ mod tests {
 
     #[test]
     fn catalog_rejects_preferred_many_embed_without_membership_evidence() {
-        let directory = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        let directory = std::path::Path::new(crate::test_manifest_dir())
             .join("../../fixtures/schemas/plasm_language_matrix");
         let mut cgs = crate::load_schema_dir(&directory).unwrap();
         let relation = cgs
@@ -709,7 +709,7 @@ mod tests {
 
     #[test]
     fn language_matrix_prefer_embed_loads_and_validates() {
-        let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        let dir = std::path::Path::new(crate::test_manifest_dir())
             .join("../../fixtures/schemas/plasm_language_matrix");
         let cgs = crate::loader::load_schema(&dir).expect("plasm_language_matrix");
         cgs.validate()
@@ -728,7 +728,7 @@ mod tests {
 
     #[test]
     fn matrix_schema_fixtures_load_and_validate() {
-        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../fixtures/schemas");
+        let root = std::path::Path::new(crate::test_manifest_dir()).join("../../fixtures/schemas");
         for name in [
             "plasm_language_matrix",
             "plasm_language_matrix_views",

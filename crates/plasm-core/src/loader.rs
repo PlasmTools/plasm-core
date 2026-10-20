@@ -1573,7 +1573,8 @@ mod tests {
 
     #[test]
     fn unlabeled_output_data_warnings_when_catalog_opts_into_data_classes() {
-        let dir = Path::new("../../fixtures/schemas/flow_matrix");
+        let dir = &std::path::Path::new(crate::test_manifest_dir())
+            .join("../../fixtures/schemas/flow_matrix");
         let cgs = load_schema_dir(dir).expect("flow_matrix");
         assert!(
             !cgs.data_classes.is_empty(),
@@ -1590,7 +1591,8 @@ mod tests {
 
     #[test]
     fn unlabeled_output_data_warnings_skipped_without_data_classes_registry() {
-        let dir = Path::new("../../fixtures/schemas/plasm_language_matrix");
+        let dir = &std::path::Path::new(crate::test_manifest_dir())
+            .join("../../fixtures/schemas/plasm_language_matrix");
         if !dir.exists() {
             return;
         }
@@ -1607,7 +1609,8 @@ mod tests {
 
     #[test]
     fn language_matrix_loads_money_offer() {
-        let dir = Path::new("../../fixtures/schemas/plasm_language_matrix");
+        let dir = &std::path::Path::new(crate::test_manifest_dir())
+            .join("../../fixtures/schemas/plasm_language_matrix");
         if !dir.exists() {
             return;
         }
@@ -1767,7 +1770,8 @@ capabilities:
     #[test]
     fn test_load_split_schema() {
         init_loader_tracing_test();
-        let dir = Path::new("../../fixtures/schemas/petstore");
+        let dir = &std::path::Path::new(crate::test_manifest_dir())
+            .join("../../fixtures/schemas/petstore");
         if !dir.exists() {
             return; // Skip if not generated yet
         }
@@ -1780,7 +1784,8 @@ capabilities:
     #[test]
     fn test_load_flow_matrix_split_schema_preserves_flow_annotations() {
         init_loader_tracing_test();
-        let dir = Path::new("../../fixtures/schemas/flow_matrix");
+        let dir = &std::path::Path::new(crate::test_manifest_dir())
+            .join("../../fixtures/schemas/flow_matrix");
         if !dir.join("domain.yaml").is_file() {
             return;
         }
@@ -1814,12 +1819,14 @@ capabilities:
     #[test]
     fn load_schema_dir_resolves_overshow_tool_typo_to_overshow_tools() {
         init_loader_tracing_test();
-        let typo = Path::new("../../fixtures/schemas/overshow_tool");
+        let typo = &std::path::Path::new(crate::test_manifest_dir())
+            .join("../../fixtures/schemas/overshow_tool");
         assert!(
             !typo.join("domain.yaml").is_file(),
             "typo path should not carry domain.yaml so sibling resolution is exercised"
         );
-        let canonical = Path::new("../../fixtures/schemas/overshow_tools");
+        let canonical = &std::path::Path::new(crate::test_manifest_dir())
+            .join("../../fixtures/schemas/overshow_tools");
         if !canonical.join("domain.yaml").is_file() {
             return;
         }
@@ -1829,7 +1836,8 @@ capabilities:
 
     #[test]
     fn test_load_cgs_yaml_fallback() {
-        let path = Path::new("../../fixtures/schemas/test_schema.cgs.yaml");
+        let path = &std::path::Path::new(crate::test_manifest_dir())
+            .join("../../fixtures/schemas/test_schema.cgs.yaml");
         if !path.exists() {
             return;
         }
@@ -1867,7 +1875,8 @@ capabilities:
     #[test]
     fn test_entity_ref_yaml_and_reverse_caps() {
         init_loader_tracing_test();
-        let dir = Path::new("../../fixtures/schemas/plasm_language_matrix");
+        let dir = &std::path::Path::new(crate::test_manifest_dir())
+            .join("../../fixtures/schemas/plasm_language_matrix");
         let cgs = load_schema_dir(dir).expect("plasm_language_matrix");
         assert!(cgs.get_entity("LangTag").is_some());
         let caps = cgs.find_reverse_traversal_caps("LangItem");
@@ -1881,7 +1890,8 @@ capabilities:
 
     #[test]
     fn load_schema_dir_rejects_relation_unknown_target_entity() {
-        let dir = Path::new("../../fixtures/schemas/relation_unknown_target_test");
+        let dir = &std::path::Path::new(crate::test_manifest_dir())
+            .join("../../fixtures/schemas/relation_unknown_target_test");
         if !dir.join("domain.yaml").is_file() {
             return;
         }
@@ -1896,7 +1906,8 @@ capabilities:
 
     #[test]
     fn load_schema_dir_rejects_entity_ref_as_identity() {
-        let dir = Path::new("../../fixtures/schemas/entity_ref_as_identity");
+        let dir = &std::path::Path::new(crate::test_manifest_dir())
+            .join("../../fixtures/schemas/entity_ref_as_identity");
         let err = load_schema_dir(dir)
             .expect_err("entity_ref id_field must fail CGS validate")
             .to_string();
@@ -1911,7 +1922,9 @@ capabilities:
     #[test]
     fn load_schema_dir_accepts_lawful_identity_scalars() {
         for name in ["digit_id_identity", "date_identity"] {
-            let dir = Path::new("../../fixtures/schemas").join(name);
+            let dir = std::path::Path::new(crate::test_manifest_dir())
+                .join("../../fixtures/schemas")
+                .join(name);
             let cgs = load_schema_dir(&dir).unwrap_or_else(|e| panic!("load {name}: {e}"));
             cgs.validate()
                 .unwrap_or_else(|e| panic!("validate {name}: {e}"));
@@ -1931,7 +1944,8 @@ capabilities:
 
     #[test]
     fn test_load_evm_erc20_fixture() {
-        let dir = Path::new("../../fixtures/schemas/evm_erc20");
+        let dir = &std::path::Path::new(crate::test_manifest_dir())
+            .join("../../fixtures/schemas/evm_erc20");
         if !dir.exists() {
             return;
         }
@@ -1958,21 +1972,23 @@ capabilities:
             "flow_matrix",
             "repository_commit_matrix",
         ];
-        let root = Path::new("../../fixtures/schemas");
+        let root = &std::path::Path::new(crate::test_manifest_dir()).join("../../fixtures/schemas");
         for name in NAMES {
             let dir = root.join(name);
             let cgs = load_schema_dir(&dir).unwrap_or_else(|e| panic!("load fixture {name}: {e}"));
             cgs.validate()
                 .unwrap_or_else(|e| panic!("validate fixture {name}: {e}"));
         }
-        let pet_dir = Path::new("../../fixtures/schemas/petstore");
+        let pet_dir = &std::path::Path::new(crate::test_manifest_dir())
+            .join("../../fixtures/schemas/petstore");
         if pet_dir.join("domain.yaml").exists() && pet_dir.join("mappings.yaml").exists() {
             let cgs =
                 load_schema_dir(pet_dir).unwrap_or_else(|e| panic!("load fixtures/petstore: {e}"));
             cgs.validate()
                 .unwrap_or_else(|e| panic!("validate fixtures/petstore: {e}"));
         }
-        let poke_mini_dir = Path::new("../../fixtures/schemas/pokeapi_mini");
+        let poke_mini_dir = &std::path::Path::new(crate::test_manifest_dir())
+            .join("../../fixtures/schemas/pokeapi_mini");
         if poke_mini_dir.join("domain.yaml").exists()
             && poke_mini_dir.join("mappings.yaml").exists()
         {
@@ -1996,7 +2012,7 @@ capabilities:
             "capability_with_input",
             "repository_commit_matrix",
         ];
-        let root = Path::new("../../fixtures/schemas");
+        let root = &std::path::Path::new(crate::test_manifest_dir()).join("../../fixtures/schemas");
         for name in NAMES {
             let dir = root.join(name);
             let cgs = load_schema_dir(&dir).unwrap_or_else(|e| panic!("load fixture {name}: {e}"));
@@ -2005,7 +2021,8 @@ capabilities:
                 panic!("serde_yaml round-trip fixture {name}: {e}\n---\n{yaml}")
             });
         }
-        let pet_dir = Path::new("../../fixtures/schemas/petstore");
+        let pet_dir = &std::path::Path::new(crate::test_manifest_dir())
+            .join("../../fixtures/schemas/petstore");
         if pet_dir.join("domain.yaml").exists() && pet_dir.join("mappings.yaml").exists() {
             let cgs =
                 load_schema_dir(pet_dir).unwrap_or_else(|e| panic!("load fixtures/petstore: {e}"));
@@ -2014,7 +2031,8 @@ capabilities:
                 panic!("serde_yaml round-trip fixtures/petstore: {e}\n---\n{yaml}")
             });
         }
-        let poke_mini_dir = Path::new("../../fixtures/schemas/pokeapi_mini");
+        let poke_mini_dir = &std::path::Path::new(crate::test_manifest_dir())
+            .join("../../fixtures/schemas/pokeapi_mini");
         if poke_mini_dir.join("domain.yaml").exists()
             && poke_mini_dir.join("mappings.yaml").exists()
         {
@@ -2686,7 +2704,7 @@ capabilities:
 
     #[test]
     fn matrix_schema_fixtures_validate() {
-        let root = std::path::Path::new("../../fixtures/schemas");
+        let root = &std::path::Path::new(crate::test_manifest_dir()).join("../../fixtures/schemas");
         for name in [
             "plasm_language_matrix",
             "plasm_language_matrix_views",

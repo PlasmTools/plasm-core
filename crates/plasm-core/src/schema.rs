@@ -6583,11 +6583,11 @@ pub mod registry_test_util {
 #[cfg(test)]
 mod capability_index_tests {
     use super::*;
-    use std::path::Path;
 
     #[test]
     fn find_capabilities_index_matches_linear_scan() {
-        let p = Path::new("../../fixtures/schemas/petstore");
+        let p = &std::path::Path::new(crate::test_manifest_dir())
+            .join("../../fixtures/schemas/petstore");
         if !p.exists() {
             return;
         }
@@ -6622,7 +6622,8 @@ mod capability_index_tests {
 
     #[test]
     fn projection_prompt_field_prefixes_is_single_full_list() {
-        let p = Path::new("../../fixtures/schemas/petstore");
+        let p = &std::path::Path::new(crate::test_manifest_dir())
+            .join("../../fixtures/schemas/petstore");
         if !p.exists() {
             return;
         }
@@ -6651,7 +6652,8 @@ mod capability_index_tests {
 
     #[test]
     fn domain_projection_teaching_wire_fields_falls_back_to_query_when_no_get() {
-        let p = Path::new("../../fixtures/schemas/plasm_prompt_matrix");
+        let p = &std::path::Path::new(crate::test_manifest_dir())
+            .join("../../fixtures/schemas/plasm_prompt_matrix");
         let cgs = crate::loader::load_schema_dir(p).expect("plasm_prompt_matrix fixture");
         let Some(ent) = cgs.get_entity("WafPackage") else {
             panic!("missing WafPackage");
@@ -6673,7 +6675,8 @@ mod capability_index_tests {
 
     #[test]
     fn read_teaching_projection_ignores_provides_summary_subset() {
-        let p = Path::new("../../fixtures/schemas/return_projection_teaching");
+        let p = &std::path::Path::new(crate::test_manifest_dir())
+            .join("../../fixtures/schemas/return_projection_teaching");
         let cgs = crate::loader::load_schema_dir(p).expect("return_projection_teaching");
         let ent = cgs.get_entity("Notice").expect("Notice");
         let want = CGS::default_ordered_entity_field_names(ent);
@@ -6734,7 +6737,8 @@ mod capability_index_tests {
 
     #[test]
     fn chain_materialize_capability_rejects_wrong_domain() {
-        let p = Path::new("../../fixtures/schemas/plasm_language_matrix");
+        let p = &std::path::Path::new(crate::test_manifest_dir())
+            .join("../../fixtures/schemas/plasm_language_matrix");
         let cgs = crate::loader::load_schema_dir(p).expect("plasm_language_matrix");
         let cap: CapabilityName = "langitem_query".into();
         let err = cgs
@@ -6758,7 +6762,8 @@ mod capability_index_tests {
 
     #[test]
     fn chain_materialize_capability_accepts_named_query() {
-        let p = Path::new("../../fixtures/schemas/plasm_language_matrix");
+        let p = &std::path::Path::new(crate::test_manifest_dir())
+            .join("../../fixtures/schemas/plasm_language_matrix");
         let cgs = crate::loader::load_schema_dir(p).expect("plasm_language_matrix");
         let cap: CapabilityName = "langtag_query".into();
         cgs.validate_chain_materialize_capability(
@@ -6774,7 +6779,8 @@ mod capability_index_tests {
 
     #[test]
     fn template_binding_helpers_langitem_get() {
-        let p = Path::new("../../fixtures/schemas/plasm_language_matrix");
+        let p = &std::path::Path::new(crate::test_manifest_dir())
+            .join("../../fixtures/schemas/plasm_language_matrix");
         let cgs = crate::loader::load_schema_dir(p).expect("plasm_language_matrix");
         let cap = cgs.capabilities.get("langitem_get").expect("langitem_get");
         assert!(
@@ -6792,11 +6798,11 @@ mod capability_index_tests {
 mod oauth_extension_tests {
     use super::*;
     use std::collections::HashSet;
-    use std::path::Path;
 
     #[test]
     fn prompt_matrix_loads_with_oauth_block() {
-        let p = Path::new("../../fixtures/schemas/plasm_prompt_matrix");
+        let p = &std::path::Path::new(crate::test_manifest_dir())
+            .join("../../fixtures/schemas/plasm_prompt_matrix");
         let cgs = crate::loader::load_schema_dir(p).expect("plasm_prompt_matrix");
         let oauth = cgs.oauth.as_ref().expect("oauth section");
         assert!(!oauth.provider.trim().is_empty());
@@ -6805,7 +6811,8 @@ mod oauth_extension_tests {
 
     #[test]
     fn oauth_capability_satisfied_any_of() {
-        let p = Path::new("../../fixtures/schemas/plasm_prompt_matrix");
+        let p = &std::path::Path::new(crate::test_manifest_dir())
+            .join("../../fixtures/schemas/plasm_prompt_matrix");
         let cgs = crate::loader::load_schema_dir(p).expect("plasm_prompt_matrix");
         let mut granted = HashSet::new();
         granted.insert("cloudflare.zone.read".to_string());
@@ -6830,7 +6837,8 @@ mod oauth_extension_tests {
 
     #[test]
     fn oauth_json_round_trip() {
-        let p = Path::new("../../fixtures/schemas/plasm_prompt_matrix");
+        let p = &std::path::Path::new(crate::test_manifest_dir())
+            .join("../../fixtures/schemas/plasm_prompt_matrix");
         let cgs = crate::loader::load_schema_dir(p).expect("plasm_prompt_matrix");
         let json = serde_json::to_string(&cgs).expect("serialize");
         let back: CGS = serde_json::from_str(&json).expect("deserialize");
@@ -6861,7 +6869,8 @@ mod oauth_extension_tests {
 
     #[test]
     fn language_matrix_passes_body_var_input_validation() {
-        let p = Path::new("../../fixtures/schemas/plasm_language_matrix");
+        let p = &std::path::Path::new(crate::test_manifest_dir())
+            .join("../../fixtures/schemas/plasm_language_matrix");
         let cgs = crate::loader::load_schema_dir(p).expect("plasm_language_matrix");
         cgs.validate()
             .expect("language matrix validates after body-var input check");
@@ -7129,11 +7138,11 @@ mod list_capability_cardinality_tests {
 
 #[cfg(test)]
 mod view_bind_validation_tests {
-    use std::path::Path;
 
     #[test]
     fn plasm_language_matrix_views_loads_with_node_binds() {
-        let p = Path::new("../../fixtures/schemas/plasm_language_matrix_views");
+        let p = &std::path::Path::new(crate::test_manifest_dir())
+            .join("../../fixtures/schemas/plasm_language_matrix_views");
         if !p.exists() {
             return;
         }

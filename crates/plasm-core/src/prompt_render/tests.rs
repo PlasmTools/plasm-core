@@ -275,7 +275,7 @@ fn example_expressions_from_prompt_tsv(prompt: &str) -> Vec<String> {
 /// Build paths from [`CARGO_MANIFEST_DIR`] so `fixtures/…` resolve correctly in
 /// `cargo test` and CI the same as local `cd plasm-oss && cargo test`.
 fn repo_path(components: &[&str]) -> std::path::PathBuf {
-    let mut p = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let mut p = std::path::PathBuf::from(crate::test_manifest_dir());
     for c in components {
         p.push(c);
     }
@@ -760,7 +760,7 @@ fn with_insta_snapshots<R>(f: impl FnOnce() -> R) -> R {
         .unwrap_or_else(|poisoned| poisoned.into_inner());
     let mut settings = insta::Settings::clone_current();
     settings
-        .set_snapshot_path(std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/snapshots"));
+        .set_snapshot_path(std::path::Path::new(crate::test_manifest_dir()).join("src/snapshots"));
     settings.bind(f)
 }
 

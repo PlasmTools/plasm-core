@@ -3,7 +3,7 @@ use plasm_eval::ProgramSession;
 
 #[tokio::test]
 async fn published_language_definition_compiles_against_the_semantic_matrix() {
-    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+    let root = std::path::Path::new(&std::env::var("CARGO_MANIFEST_DIR").expect("test runner must set CARGO_MANIFEST_DIR")).join("../..");
     let cgs =
         plasm_core::load_schema_dir(&root.join("fixtures/schemas/plasm_language_matrix")).unwrap();
     let session = ProgramSession::new(&cgs, Some("LangItem")).unwrap();

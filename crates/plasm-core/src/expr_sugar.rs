@@ -192,7 +192,7 @@ mod tests {
     #[test]
     fn non_scalar_identity_retains_semantic_cause() {
         use std::error::Error;
-        let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        let dir = std::path::Path::new(crate::test_manifest_dir())
             .join("../../fixtures/schemas/plasm_language_matrix");
         let cgs = load_schema_dir(&dir).expect("language matrix");
         for value in [Value::Null, Value::Array(vec![Value::String("id".into())])] {
@@ -215,7 +215,7 @@ mod tests {
 
     #[test]
     fn single_catalog_parse_preserves_bound_catalog_for_brace_lowering() {
-        let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        let dir = std::path::Path::new(crate::test_manifest_dir())
             .join("../../fixtures/schemas/plasm_language_matrix_views");
         let mut cgs = load_schema_dir(&dir).unwrap();
         cgs.bind_registry_entry_id("bound-matrix");
@@ -229,7 +229,8 @@ mod tests {
 
     #[test]
     fn rewrite_langitem_id_brace_to_get() {
-        let dir = std::path::Path::new("../../fixtures/schemas/plasm_language_matrix");
+        let dir = &std::path::Path::new(crate::test_manifest_dir())
+            .join("../../fixtures/schemas/plasm_language_matrix");
         let cgs = load_schema_dir(dir).expect("plasm_language_matrix");
         let q = QueryExpr::filtered("LangItem", Predicate::eq("id", "EVA-60"));
         let expr = lower_id_field_brace_to_get(Expr::Query(q), &cgs).unwrap();
@@ -241,7 +242,8 @@ mod tests {
 
     #[test]
     fn lang_key_pick_brace_and_paren_reach_same_get_ir() {
-        let dir = std::path::Path::new("../../fixtures/schemas/plasm_language_matrix_views");
+        let dir = &std::path::Path::new(crate::test_manifest_dir())
+            .join("../../fixtures/schemas/plasm_language_matrix_views");
         if !dir.exists() {
             return;
         }
@@ -256,7 +258,8 @@ mod tests {
 
     #[test]
     fn federated_identity_brace_preserves_non_layer0_stamp() {
-        let dir = std::path::Path::new("../../fixtures/schemas/plasm_language_matrix_views");
+        let dir = &std::path::Path::new(crate::test_manifest_dir())
+            .join("../../fixtures/schemas/plasm_language_matrix_views");
         if !dir.exists() {
             return;
         }
@@ -277,7 +280,8 @@ mod tests {
 
     #[test]
     fn identity_brace_without_get_stays_query() {
-        let dir = std::path::Path::new("../../fixtures/schemas/plasm_prompt_matrix");
+        let dir = &std::path::Path::new(crate::test_manifest_dir())
+            .join("../../fixtures/schemas/plasm_prompt_matrix");
         if !dir.exists() {
             return;
         }
@@ -303,7 +307,8 @@ mod tests {
 
     #[test]
     fn federated_parse_identity_brace_on_layer1_is_get() {
-        let dir = std::path::Path::new("../../fixtures/schemas/plasm_language_matrix_views");
+        let dir = &std::path::Path::new(crate::test_manifest_dir())
+            .join("../../fixtures/schemas/plasm_language_matrix_views");
         if !dir.exists() {
             return;
         }
@@ -317,7 +322,8 @@ mod tests {
 
     #[test]
     fn identity_brace_field_path_lowers_to_binding_get() {
-        let dir = std::path::Path::new("../../fixtures/schemas/plasm_language_matrix_views");
+        let dir = &std::path::Path::new(crate::test_manifest_dir())
+            .join("../../fixtures/schemas/plasm_language_matrix_views");
         if !dir.exists() {
             return;
         }
@@ -346,7 +352,8 @@ mod tests {
 
     #[test]
     fn matrix_views_loads_derived_lang_key_pick_get() {
-        let dir = std::path::Path::new("../../fixtures/schemas/plasm_language_matrix_views");
+        let dir = &std::path::Path::new(crate::test_manifest_dir())
+            .join("../../fixtures/schemas/plasm_language_matrix_views");
         if !dir.exists() {
             return;
         }

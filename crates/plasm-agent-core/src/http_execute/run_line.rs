@@ -364,7 +364,7 @@ pub(crate) async fn run_parsed_plasm_line(
     if let Some(ref storage_key) = page_storage_key {
         if result.has_more {
             if let Some(next) = result.pagination_resume.take() {
-                sess.upsert_paging_resume(storage_key, next);
+                sess.upsert_paging_resume(storage_key, *next);
                 result.paging_handle = Some(storage_key.clone());
             } else {
                 sess.remove_paging_resume(storage_key);
@@ -375,7 +375,7 @@ pub(crate) async fn run_parsed_plasm_line(
     } else if result.has_more {
         if let Some(resume) = result.pagination_resume.take() {
             let h = sess.register_paging_continuation(
-                resume,
+                *resume,
                 qualified_entity.clone(),
                 trace.and_then(|t| t.logical_session_ref.as_deref()),
             );

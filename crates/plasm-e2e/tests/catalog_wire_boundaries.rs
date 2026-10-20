@@ -14,7 +14,7 @@ use serde_json::json;
 use std::{collections::HashSet, path::PathBuf};
 
 fn root(api: &str) -> PathBuf {
-    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+    PathBuf::from(plasm_e2e::test_manifest_dir())
         .join("../../apis")
         .join(api)
 }

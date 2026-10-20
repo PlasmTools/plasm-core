@@ -7,7 +7,7 @@ use std::path::PathBuf;
 
 #[test]
 fn lookup_langitem_create_in_federated_layers() {
-    let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let root = PathBuf::from(crate::test_manifest_dir());
     let dir = root.join("../../fixtures/schemas/plasm_language_matrix");
     let mut cgs_a = load_schema(&dir).expect("plasm_language_matrix");
     cgs_a.bind_registry_entry_id("langmatrix_a");
@@ -26,7 +26,7 @@ fn lookup_langitem_create_in_federated_layers() {
 
 #[test]
 fn resolve_entity_field_unknown_opaque_p_sym() {
-    let dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+    let dir = PathBuf::from(crate::test_manifest_dir())
         .join("../../fixtures/schemas/capability_with_input");
     let cgs = load_schema_dir(&dir).expect("capability_with_input");
     let exp = TeachingExposureSession::new(&cgs, "", &["Account"]);
@@ -41,7 +41,7 @@ fn resolve_entity_field_unknown_opaque_p_sym() {
 #[test]
 fn resolve_cap_param_accepts_session_reverse_opaque_p_on_unset_fixture() {
     let dir =
-        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../fixtures/schemas/overshow_tools");
+        PathBuf::from(crate::test_manifest_dir()).join("../../fixtures/schemas/overshow_tools");
     if !dir.is_dir() {
         return;
     }
@@ -66,7 +66,7 @@ fn resolve_cap_param_accepts_session_reverse_opaque_p_on_unset_fixture() {
 
 #[test]
 fn resolve_entity_field_rejects_cross_entity_homograph() {
-    let dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+    let dir = PathBuf::from(crate::test_manifest_dir())
         .join("../../fixtures/schemas/plasm_language_matrix");
     let Ok(cgs) = load_schema_dir(&dir) else {
         return;
@@ -91,7 +91,7 @@ fn resolve_entity_field_rejects_cross_entity_homograph() {
 
 #[test]
 fn resolve_cap_param_rejects_query_scope_p_on_mutator_invoke() {
-    let dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+    let dir = PathBuf::from(crate::test_manifest_dir())
         .join("../../fixtures/schemas/plasm_language_matrix");
     let Ok(cgs) = load_schema_dir(&dir) else {
         return;
@@ -135,7 +135,7 @@ fn resolve_cap_param_rejects_query_scope_p_on_mutator_invoke() {
 
 #[test]
 fn resolve_query_filter_field_accepts_cap_scope_param_p_sym() {
-    let dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+    let dir = PathBuf::from(crate::test_manifest_dir())
         .join("../../fixtures/schemas/plasm_language_matrix");
     let mut cgs = load_schema_dir(&dir).expect("plasm_language_matrix");
     cgs.bind_registry_entry_id("langmatrix");
@@ -156,7 +156,7 @@ fn resolve_query_filter_field_accepts_cap_scope_param_p_sym() {
 
 #[test]
 fn resolve_entity_field_projection_stable_after_exposure_extend() {
-    let dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+    let dir = PathBuf::from(crate::test_manifest_dir())
         .join("../../fixtures/schemas/plasm_language_matrix");
     let Ok(cgs) = load_schema_dir(&dir) else {
         return;
@@ -188,7 +188,7 @@ fn resolve_entity_field_projection_stable_after_exposure_extend() {
 
 #[test]
 fn taught_relation_in_field_position_has_relation_specific_correction() {
-    let dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+    let dir = PathBuf::from(crate::test_manifest_dir())
         .join("../../fixtures/schemas/plasm_language_matrix");
     let cgs = load_schema_dir(&dir).expect("matrix fixture");
     let entry = "langmatrix";
@@ -212,7 +212,7 @@ fn taught_relation_in_field_position_has_relation_specific_correction() {
 /// Federated extend: colliding `name` wire on WaveLang vs WaveMon resolves by receiver entity.
 #[test]
 fn resolve_entity_field_federated_wire_name_by_receiver_after_extend() {
-    let dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+    let dir = PathBuf::from(crate::test_manifest_dir())
         .join("../../fixtures/schemas/extend_wave_homograph");
     let Ok(cgs) = load_schema_dir(&dir) else {
         return;
@@ -259,7 +259,7 @@ fn resolve_entity_field_federated_wire_name_by_receiver_after_extend() {
 
 #[test]
 fn resolve_cap_param_shared_scope_p_on_create_when_only_query_committed() {
-    let dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+    let dir = PathBuf::from(crate::test_manifest_dir())
         .join("../../fixtures/schemas/plasm_language_matrix");
     let mut cgs = load_schema_dir(&dir).expect("plasm_language_matrix");
     cgs.bind_registry_entry_id("langmatrix");
@@ -305,7 +305,7 @@ fn agent_program_error_includes_query_filter_hint() {
 
 #[test]
 fn mutator_param_misused_as_row_or_filter_hints_invoke_form() {
-    let dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+    let dir = PathBuf::from(crate::test_manifest_dir())
         .join("../../fixtures/schemas/plasm_language_matrix");
     let Ok(cgs) = load_schema_dir(&dir) else {
         return;
@@ -352,7 +352,7 @@ fn mutator_param_misused_as_row_or_filter_hints_invoke_form() {
 
 #[test]
 fn query_selection_param_misused_as_row_field_hints_python_read() {
-    let dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+    let dir = PathBuf::from(crate::test_manifest_dir())
         .join("../../fixtures/schemas/plasm_language_matrix");
     let Ok(cgs) = load_schema_dir(&dir) else {
         return;
@@ -383,7 +383,7 @@ fn query_selection_param_misused_as_row_field_hints_python_read() {
 
 #[test]
 fn resolve_cap_param_homographed_create_update_title() {
-    let dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+    let dir = PathBuf::from(crate::test_manifest_dir())
         .join("../../fixtures/schemas/plasm_language_matrix");
     let mut cgs = load_schema_dir(&dir).expect("plasm_language_matrix");
     cgs.bind_registry_entry_id("langmatrix");
@@ -421,7 +421,7 @@ fn resolve_cap_param_homographed_create_update_title() {
 
 #[test]
 fn opaque_query_m_sym_rejected_on_mutator_payload_dotted_call() {
-    let dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+    let dir = PathBuf::from(crate::test_manifest_dir())
         .join("../../fixtures/schemas/plasm_language_matrix");
     let Ok(cgs) = load_schema_dir(&dir) else {
         return;
@@ -450,7 +450,7 @@ fn opaque_query_m_sym_rejected_on_mutator_payload_dotted_call() {
 
 #[test]
 fn opaque_get_m_sym_names_taught_get_seat_not_mutator() {
-    let dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+    let dir = PathBuf::from(crate::test_manifest_dir())
         .join("../../fixtures/schemas/plasm_language_matrix");
     let Ok(cgs) = load_schema_dir(&dir) else {
         return;
@@ -478,7 +478,7 @@ fn opaque_get_m_sym_names_taught_get_seat_not_mutator() {
 
 #[test]
 fn pathless_identity_mutator_names_taught_seat_not_illegal_form() {
-    let dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+    let dir = PathBuf::from(crate::test_manifest_dir())
         .join("../../fixtures/schemas/plasm_language_matrix");
     let Ok(cgs) = load_schema_dir(&dir) else {
         return;
@@ -523,7 +523,7 @@ fn pathless_identity_mutator_names_taught_seat_not_illegal_form() {
 
 #[test]
 fn compound_key_accepts_wire_names() {
-    let dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+    let dir = PathBuf::from(crate::test_manifest_dir())
         .join("../../fixtures/schemas/plasm_language_matrix");
     let Ok(cgs) = load_schema_dir(&dir) else {
         return;
@@ -569,7 +569,7 @@ fn compound_key_accepts_wire_names() {
 /// Regression: deleted qualified reverse-map fields must not reappear on opaque resolution paths.
 #[test]
 fn opaque_resolution_source_has_no_qualified_reverse_maps() {
-    let manifest = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let manifest = PathBuf::from(crate::test_manifest_dir());
     let paths = [
         manifest.join("src/symbol_tuning/mod.rs"),
         manifest.join("src/expr_parser/mod.rs"),

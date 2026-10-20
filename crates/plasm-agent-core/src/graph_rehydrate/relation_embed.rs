@@ -432,7 +432,7 @@ mod tests {
         ) {
             static MATRIX: std::sync::OnceLock<CGS> = std::sync::OnceLock::new();
             let cgs = MATRIX.get_or_init(|| plasm_core::load_schema_dir(
-                &std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+                &std::path::Path::new(crate::test_manifest_dir())
                     .join("../../fixtures/schemas/plasm_language_matrix"),
             ).unwrap());
             let refs: Vec<_> = (0..present.len())
@@ -472,7 +472,7 @@ mod tests {
     fn wire_row_embeds_unknown_singleton_prefer_relation_from_graph() {
         use plasm_core::loader::load_schema_dir;
 
-        let dir = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        let dir = std::path::PathBuf::from(crate::test_manifest_dir())
             .join("../../fixtures/schemas/plasm_language_matrix");
         let mut cgs = load_schema_dir(&dir).expect("langmatrix");
         cgs.entities
@@ -543,7 +543,7 @@ mod tests {
     fn wire_row_does_not_embed_prefer_relation_without_complete_coverage() {
         use plasm_core::loader::load_schema_dir;
 
-        let dir = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        let dir = std::path::PathBuf::from(crate::test_manifest_dir())
             .join("../../fixtures/schemas/plasm_language_matrix");
         let mut cgs = load_schema_dir(&dir).expect("langmatrix");
         let materialize = cgs

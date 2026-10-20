@@ -1,0 +1,13 @@
+common --enable_bzlmod
+build --compilation_mode=fastbuild
+build --show_result=10
+# Bound memory use on shared developer/CI hosts; callers can override --jobs.
+build --jobs=4
+test --test_output=errors
+build:release --compilation_mode=opt
+build:local --define=plasm_local_env_bootstrap=true
+build:linux-x86_64 --platforms=@zig_sdk//libc_aware/platform:linux_amd64_gnu.2.38
+build:linux-x86_64 --extra_toolchains=@zig_sdk//libc_aware/toolchain:linux_amd64_gnu.2.38
+# Match the unsanitized release ABI for native C dependencies. Zig otherwise
+# instruments aws-lc's mandatory -O0 jitter-entropy objects without a UBSan runtime.
+build:linux-x86_64 --copt=-fno-sanitize=undefined

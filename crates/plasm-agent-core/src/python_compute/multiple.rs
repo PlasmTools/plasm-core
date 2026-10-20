@@ -296,7 +296,7 @@ mod tests {
     #[test]
     fn multi_input_return_row_is_inferred_from_returned_rows() {
         let cgs = plasm_core::loader::load_schema_dir(
-            &std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            &std::path::Path::new(crate::test_manifest_dir())
                 .join("../../fixtures/schemas/python_value_contract"),
         )
         .unwrap();

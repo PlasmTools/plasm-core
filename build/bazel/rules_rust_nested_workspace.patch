@@ -1,0 +1,81 @@
+diff --git a/crate_universe/src/metadata/cargo_tree_resolver.rs b/crate_universe/src/metadata/cargo_tree_resolver.rs
+--- a/crate_universe/src/metadata/cargo_tree_resolver.rs
++++ b/crate_universe/src/metadata/cargo_tree_resolver.rs
+@@ -603,10 +603,10 @@
+         // To add dependencies to a virtual workspace, we need to add them to a package inside the workspace,
+         // we can't just add them to the workspace directly.
+         if !proc_macros.is_empty() && manifest.package.is_none() {
+-            if let Some(ref mut workspace) = &mut manifest.workspace {
+-                if !workspace.members.contains(&".".to_owned()) {
+-                    workspace.members.push(".".to_owned());
+-                }
++            if manifest.workspace.is_some() {
++                // Cargo includes the root package implicitly. An explicit "." member
++                // also captures nested path dependencies during workspace discovery,
++                // breaking their inheritance from an independent nested workspace.
+                 manifest.package = Some(cargo_toml::Package::new(
+                     "rules_rust_fake_proc_macro_root",
+                     "0.0.0",
+diff --git a/crate_universe/private/urls.bzl b/crate_universe/private/urls.bzl
+--- a/crate_universe/private/urls.bzl
++++ b/crate_universe/private/urls.bzl
+@@ -13,13 +13,4 @@
+-CARGO_BAZEL_URLS = {
+-  "aarch64-apple-darwin": "https://github.com/bazelbuild/rules_rust/releases/download/0.74.0/cargo-bazel-aarch64-apple-darwin",
+-  "aarch64-pc-windows-msvc": "https://github.com/bazelbuild/rules_rust/releases/download/0.74.0/cargo-bazel-aarch64-pc-windows-msvc.exe",
+-  "aarch64-unknown-linux-gnu": "https://github.com/bazelbuild/rules_rust/releases/download/0.74.0/cargo-bazel-aarch64-unknown-linux-gnu",
+-  "aarch64-unknown-linux-musl": "https://github.com/bazelbuild/rules_rust/releases/download/0.74.0/cargo-bazel-aarch64-unknown-linux-musl",
+-  "s390x-unknown-linux-gnu": "https://github.com/bazelbuild/rules_rust/releases/download/0.74.0/cargo-bazel-s390x-unknown-linux-gnu",
+-  "x86_64-apple-darwin": "https://github.com/bazelbuild/rules_rust/releases/download/0.74.0/cargo-bazel-x86_64-apple-darwin",
+-  "x86_64-pc-windows-gnu": "https://github.com/bazelbuild/rules_rust/releases/download/0.74.0/cargo-bazel-x86_64-pc-windows-gnu.exe",
+-  "x86_64-pc-windows-msvc": "https://github.com/bazelbuild/rules_rust/releases/download/0.74.0/cargo-bazel-x86_64-pc-windows-msvc.exe",
+-  "x86_64-unknown-linux-gnu": "https://github.com/bazelbuild/rules_rust/releases/download/0.74.0/cargo-bazel-x86_64-unknown-linux-gnu",
+-  "x86_64-unknown-linux-musl": "https://github.com/bazelbuild/rules_rust/releases/download/0.74.0/cargo-bazel-x86_64-unknown-linux-musl"
+-}
++# Build the patched generator through rules_rust's source-bootstrap repository.
++# Release binaries do not contain the nested-workspace correction.
++CARGO_BAZEL_URLS = {}
+ 
+diff --git a/crate_universe/src/cli/splice.rs b/crate_universe/src/cli/splice.rs
+--- a/crate_universe/src/cli/splice.rs
++++ b/crate_universe/src/cli/splice.rs
+@@ -115,7 +115,15 @@
+     {
+-        cargo_lock::Lockfile::load(cargo_lockfile_path).context(format!(
++        let lockfile = cargo_lock::Lockfile::load(cargo_lockfile_path).context(format!(
+             "Failed to load lockfile: {}",
+             cargo_lockfile_path.display()
+-        ))?
++        ))?;
++        // Feature resolution needs the lock beside the temporary manifest even
++        // when the caller forbids overwriting its canonical lockfile.
++        let staged_lock = manifest_path.as_path_buf().parent().unwrap().join("Cargo.lock");
++        if !staged_lock.exists() {
++            std::fs::copy(cargo_lockfile_path, staged_lock)
++                .context("Failed to stage preserved Cargo lockfile")?;
++        }
++        lockfile
+     } else {
+         generate_lockfile(
+diff --git a/crate_universe/src/rendering.rs b/crate_universe/src/rendering.rs
+--- a/crate_universe/src/rendering.rs
++++ b/crate_universe/src/rendering.rs
+@@ -14,7 +14,6 @@
+ use crate::config::{AliasRule, RenderConfig, VendorMode};
+ use crate::context::crate_context::{CrateContext, CrateDependency, Rule};
+ use crate::context::{Context, TargetAttributes};
+-use crate::metadata::SourceAnnotation;
+ use crate::rendering::template_engine::TemplateEngine;
+ use crate::select::Select;
+ use crate::splicing::default_splicing_package_crate_id;
+@@ -496,7 +496,6 @@
+-                let filename = match &context.crates[id].repository {
+-                    Some(SourceAnnotation::Path { path }) => path.join("BUILD.bazel").into(),
+-                    _ => Renderer::label_to_path(&label),
+-                };
++                // Path crates are rendered again inside local_crate_mirror.
++                // Keep hub output in the repository, never in the source checkout.
++                let filename = Renderer::label_to_path(&label);
+                 let content = self.render_one_build_file(engine, platforms, &context.crates[id])?;
+                 Ok((filename, content))
+             })

@@ -340,7 +340,7 @@ mod tests {
     #[test]
     fn semantic_wire_nested_inputs_keep_shape_not_transport() {
         let mut cgs = crate::load_schema(
-            &std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            &std::path::Path::new(crate::test_manifest_dir())
                 .join("../../fixtures/schemas/prerequisite_matrix"),
         )
         .unwrap();
@@ -401,7 +401,7 @@ mod tests {
     #[test]
     fn semantic_wire_preserves_fields_and_excludes_transport() {
         let mut cgs = crate::load_schema(
-            &std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            &std::path::Path::new(crate::test_manifest_dir())
                 .join("../../fixtures/schemas/prerequisite_matrix"),
         )
         .unwrap();

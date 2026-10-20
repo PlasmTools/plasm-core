@@ -1171,13 +1171,13 @@ pub(crate) fn validate_plan_compute(
             source,
             ValidatedPlanNode::Data(_) | ValidatedPlanNode::Derive(_)
         ) {
-            let actual =
-                crate::map_body_schema::row_contract(es, nodes, compute.compute.source.as_str())
-                    .map_err(PythonComputeRejection::from)?;
-            if plasm_core::plasm_monad::SyntheticResultSchema::for_value(actual)
-                .map_err(PythonComputeRejection::from)?
-                .row_contract()
-                .map_err(PythonComputeRejection::from)?
+            let actual = crate::map_body_schema::row_operation_contract(
+                es,
+                nodes,
+                compute.compute.source.as_str(),
+            )
+            .map_err(PythonComputeRejection::from)?;
+            if actual
                 != schema
                     .row_contract()
                     .map_err(PythonComputeRejection::from)?

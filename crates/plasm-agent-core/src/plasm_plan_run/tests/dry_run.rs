@@ -43,7 +43,7 @@ fn singleton_failure_projects_source_names_without_generated_identifiers() {
 }
 
 fn repository_commit_session() -> ExecuteSession {
-    let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let root = PathBuf::from(crate::test_manifest_dir());
     let cgs = Arc::new(
         load_schema(&root.join("../../fixtures/schemas/repository_commit_matrix"))
             .expect("load repository_commit_matrix"),
@@ -491,7 +491,7 @@ fn evaluate_plasm_plan_dry_accepts_search_node() {
 }
 
 fn langmatrix_session() -> ExecuteSession {
-    let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let root = PathBuf::from(crate::test_manifest_dir());
     let cgs = Arc::new(
         load_schema(&root.join("../../fixtures/schemas/plasm_language_matrix"))
             .expect("load plasm_language_matrix"),

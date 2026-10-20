@@ -456,7 +456,7 @@ mod dry_stub_tests {
 
     #[test]
     fn dry_stub_lang_item_score_is_integer_json() {
-        let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+        let root = PathBuf::from(crate::test_manifest_dir());
         let cgs = load_schema(&root.join("../../fixtures/schemas/plasm_language_matrix"))
             .expect("load matrix");
         let ent = cgs.get_entity("LangItem").expect("LangItem");

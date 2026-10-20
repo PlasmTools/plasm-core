@@ -145,7 +145,7 @@ mod tests {
     use std::sync::Arc;
 
     fn matrix_sym_map() -> std::sync::Arc<SymbolMap> {
-        let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        let dir = std::path::Path::new(crate::test_manifest_dir())
             .join("../../fixtures/schemas/plasm_language_matrix");
         let cgs = Arc::new(crate::loader::load_schema_dir(&dir).expect("matrix"));
         crate::symbol_tuning::symbol_map_for_prompt(
@@ -201,7 +201,7 @@ mod tests {
 
     #[test]
     fn resolve_cgs_for_stamped_catalog_honors_entry_id() {
-        let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        let dir = std::path::Path::new(crate::test_manifest_dir())
             .join("../../fixtures/schemas/plasm_language_matrix");
         let cgs = Arc::new(crate::loader::load_schema_dir(&dir).expect("matrix"));
         let mut by_entry = IndexMap::new();

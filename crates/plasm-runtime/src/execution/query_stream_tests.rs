@@ -60,7 +60,7 @@ impl HttpTransport for Pages {
 
 async fn run_case(summary: bool, missing: bool, stale: bool, unavailable: bool) {
     let mut cgs = load_schema_dir(
-        &std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        &std::path::PathBuf::from(crate::test_manifest_dir())
             .join("../../fixtures/schemas/plasm_pagination_matrix"),
     )
     .unwrap();
@@ -182,7 +182,7 @@ async fn exhausted_membership_survives_unavailable_hydration_fields() {
 #[test]
 fn terminal_query_rejects_undecomposed_cross_entity_predicate() {
     let cgs = load_schema_dir(
-        &std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        &std::path::PathBuf::from(crate::test_manifest_dir())
             .join("../../fixtures/schemas/plasm_language_matrix"),
     )
     .unwrap();
@@ -234,7 +234,7 @@ impl HttpTransport for CrossQueryPages {
 #[tokio::test]
 async fn cross_entity_query_executes_two_terminal_queries() {
     let mut cgs = load_schema_dir(
-        &std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        &std::path::PathBuf::from(crate::test_manifest_dir())
             .join("../../fixtures/schemas/plasm_language_matrix"),
     )
     .unwrap();

@@ -1553,7 +1553,7 @@ mod tests {
     #[test]
     fn fixture_tool_model_all_smoke() {
         let dir =
-            Path::new(env!("CARGO_MANIFEST_DIR")).join("../../fixtures/schemas/overshow_tools");
+            Path::new(crate::test_manifest_dir()).join("../../fixtures/schemas/overshow_tools");
         let cgs = load_schema_dir(&dir).expect("overshow_tools");
         let meta = CatalogEntryMeta {
             entry_id: "overshow".into(),
@@ -1587,7 +1587,7 @@ mod tests {
 
     #[test]
     fn prompt_matrix_tool_model_exposes_bearer_auth_metadata() {
-        let dir = Path::new(env!("CARGO_MANIFEST_DIR"))
+        let dir = Path::new(crate::test_manifest_dir())
             .join("../../fixtures/schemas/plasm_prompt_matrix");
         let cgs = load_schema(&dir).expect("prompt matrix");
         let meta = CatalogEntryMeta {
@@ -1613,7 +1613,7 @@ mod tests {
 
     #[test]
     fn fixture_projection_carries_field_descriptions() {
-        let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../fixtures/schemas/pokeapi_mini");
+        let dir = Path::new(crate::test_manifest_dir()).join("../../fixtures/schemas/pokeapi_mini");
         let cgs = load_schema_dir(&dir).expect("pokeapi_mini");
         let meta = CatalogEntryMeta {
             entry_id: "pokeapi_mini".into(),
@@ -1645,7 +1645,7 @@ mod tests {
 
     #[test]
     fn langitem_get_infers_returns_when_output_omitted() {
-        let dir = Path::new(env!("CARGO_MANIFEST_DIR"))
+        let dir = Path::new(crate::test_manifest_dir())
             .join("../../fixtures/schemas/plasm_language_matrix");
         let cgs = load_schema(&dir).expect("plasm_language_matrix");
         let item_get = cgs.get_capability("langitem_get").expect("langitem_get");
@@ -1692,7 +1692,7 @@ mod tests {
 
     #[test]
     fn langitem_create_title_param_is_string() {
-        let dir = Path::new(env!("CARGO_MANIFEST_DIR"))
+        let dir = Path::new(crate::test_manifest_dir())
             .join("../../fixtures/schemas/plasm_language_matrix");
         let cgs = load_schema(&dir).expect("plasm_language_matrix");
         let meta = CatalogEntryMeta {

@@ -4,7 +4,7 @@
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Fault {
     Rejected,
-    ResponseLost,
+    FailedAfterCommit,
     InvalidResponse,
 }
 
@@ -29,18 +29,20 @@ pub fn nested_writes(parents: usize, fault: Option<(usize, Fault)>) -> Expected 
         attempts,
         committed: attempts - usize::from(fault == Some(Fault::Rejected)),
         acknowledged: attempts - usize::from(fails),
-        unresolved: usize::from(matches!(fault, Some(Fault::Rejected | Fault::ResponseLost))),
+        // Every fixture response, including 422/503, reaches the client. This
+        // records transport receipt, independently of semantic acknowledgement.
+        unresolved: 0,
         succeeds: !fails,
     }
 }
 
 #[test]
-fn response_loss_is_not_evidence_of_rollback() {
+fn failure_response_is_not_evidence_of_rollback() {
     for count in [1, 3] {
-        let lost = nested_writes(count, Some((0, Fault::ResponseLost)));
+        let lost = nested_writes(count, Some((0, Fault::FailedAfterCommit)));
         assert_eq!(lost.committed, 1);
         assert_eq!(lost.acknowledged, 0);
-        assert_eq!(lost.unresolved, 1);
+        assert_eq!(lost.unresolved, 0);
         assert!(!lost.succeeds);
         let rejected = nested_writes(count, Some((0, Fault::Rejected)));
         assert_eq!(rejected.committed, 0);

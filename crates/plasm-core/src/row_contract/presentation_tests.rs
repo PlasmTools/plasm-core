@@ -25,7 +25,7 @@ fn invalid_nested_payload_fails_storage_and_presentation() {
 #[test]
 fn qualified_reference_projection_retains_owning_catalog_identity() {
     let mut cgs = crate::loader::load_schema_dir(
-        &std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        &std::path::Path::new(crate::test_manifest_dir())
             .join("../../fixtures/schemas/plasm_language_matrix"),
     )
     .unwrap();
@@ -54,7 +54,7 @@ fn qualified_reference_projection_retains_owning_catalog_identity() {
 #[test]
 fn nested_relation_projection_uses_declared_targets_without_mutating_storage() {
     let cgs = crate::loader::load_schema_dir(
-        &std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        &std::path::Path::new(crate::test_manifest_dir())
             .join("../../fixtures/schemas/plasm_language_matrix"),
     )
     .unwrap();
@@ -82,7 +82,7 @@ fn nested_relation_projection_uses_declared_targets_without_mutating_storage() {
 #[test]
 fn observations_and_projections_have_explicit_field_ownership() {
     let cgs = crate::loader::load_schema_dir(
-        &std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        &std::path::Path::new(crate::test_manifest_dir())
             .join("../../fixtures/schemas/plasm_language_matrix"),
     )
     .unwrap();

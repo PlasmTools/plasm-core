@@ -267,7 +267,7 @@ mod tests {
 
     #[test]
     fn catalog_il_json_round_trip_preserves_cgs_hash() {
-        let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        let dir = std::path::Path::new(crate::test_manifest_dir())
             .join("../../fixtures/schemas/pokeapi_mini");
         let cgs = load_schema_dir(&dir).expect("load pokeapi_mini fixture");
         let hash_before = cgs.catalog_cgs_hash_hex();
@@ -298,7 +298,7 @@ mod tests {
 
     #[test]
     fn language_matrix_catalog_il_round_trip() {
-        let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        let dir = std::path::Path::new(crate::test_manifest_dir())
             .join("../../fixtures/schemas/plasm_language_matrix");
         let cgs = load_schema_dir(&dir).expect("load plasm_language_matrix");
         let hash_before = cgs.catalog_cgs_hash_hex();

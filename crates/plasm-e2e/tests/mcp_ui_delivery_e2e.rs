@@ -1,5 +1,8 @@
 //! SEP-1865 MCP UI delivery: triple-lane tool results survive Cursor-like `_meta` strip.
 
+// Nested async host futures require deeper compile-time layout evaluation.
+#![recursion_limit = "256"]
+
 #[path = "common/hermit_lang_matrix.rs"]
 mod hermit_lang_matrix;
 
@@ -191,7 +194,7 @@ async fn mcp_ui_delivery_e2e_async() {
         "plasm",
         json!({
             "logical_session_ref": ls_ref,
-            "program": "class ReadItems(Program):\n    def build(self):\n        return e1.query().take(2)\n"
+            "program": language_matrix::reviewed_update_program()
         }),
         11,
     )

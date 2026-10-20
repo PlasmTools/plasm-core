@@ -13,6 +13,23 @@ impl Lower<'_> {
     ) -> Result<String, PythonLoweringError> {
         let mut inputs = BTreeMap::new();
         let value = self.scoped_value(site, &mut inputs)?;
+        // A singleton's field is one cell even when its value is an array.
+        // General value derivation treats arrays as result collections, which
+        // would strip a dimension before admitting a typed compute argument.
+        if let PlasmDataValue::NodeSymbol { node, path, .. } = &value {
+            if let [wire] = path.as_slice() {
+                if inputs.get(node).is_some_and(|input| {
+                    input.cardinality == crate::plasm_plan::InputCardinality::Singleton
+                }) {
+                    return self.insert(super::super::scalar_extract::scalar_extract_node(
+                        id,
+                        "",
+                        node,
+                        wire.clone(),
+                    ));
+                }
+            }
+        }
         self.emit_value(value, inputs.into_values().collect(), id)
     }
 

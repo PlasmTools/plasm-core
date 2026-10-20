@@ -98,7 +98,7 @@ fn reference_union_is_first_wins_set_union_on_declared_columns() {
     );
     assert!(
         include_str!("../../../../plasm-core/src/prompt_render/assets/python-plasm-dag.txt")
-            .contains("union dedups first-wins")
+            .contains("first-wins dedup")
     );
 }
 

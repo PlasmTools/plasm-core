@@ -1,0 +1,66 @@
+load("//build/bazel:integration_tests.bzl", "rust_integration_tests")
+load("@crates//:defs.bzl", "aliases", "all_crate_deps")
+load("@rules_rust//rust:defs.bzl", "rust_binary", "rust_library")
+
+rust_library(
+    name = "plasm_e2e",
+    srcs = glob(["src/**/*.rs"]),
+    aliases = aliases(),
+    compile_data = glob(
+        ["src/**"],
+        allow_empty = True,
+        exclude = ["src/**/*.rs"],
+    ),
+    crate_features = ["default"],
+    crate_root = "src/lib.rs",
+    edition = "2021",
+    proc_macro_deps = all_crate_deps(proc_macro = True),
+    version = "0.5.5",
+    visibility = ["//visibility:public"],
+    deps = [
+        "//crates/plasm:plasm_agent",
+        "//crates/plasm-compile:plasm_compile",
+        "//crates/plasm-core:plasm_core",
+        "//crates/plasm-evidence:plasm_evidence",
+        "//crates/plasm-runtime:plasm_runtime",
+    ] + all_crate_deps(normal = True),
+)
+
+rust_integration_tests(
+    tests = {
+        "appworld_catalog_contracts": "tests/appworld_catalog_contracts.rs",
+        "catalog_wire_boundaries": "tests/catalog_wire_boundaries.rs",
+        "direction_payer_debtor": "tests/direction_payer_debtor.rs",
+        "embedded_relation_without_get": "tests/embedded_relation_without_get.rs",
+        "evidence_chain_e2e": "tests/evidence_chain_e2e.rs",
+        "evm_auth_e2e": "tests/evm_auth_e2e.rs",
+        "evm_e2e": "tests/evm_e2e.rs",
+        "github_issue_create_smoke": "tests/github_issue_create_smoke.rs",
+        "graph_spill_e2e": "tests/graph_spill_e2e.rs",
+        "graphqlzero_live": "tests/graphqlzero_live.rs",
+        "graphqlzero_smoke": "tests/graphqlzero_smoke.rs",
+        "hermit_e2e": "tests/hermit_e2e.rs",
+        "lang_relation_hop_one_one": "tests/lang_relation_hop_one_one.rs",
+        "limit_pushdown_e2e": "tests/limit_pushdown_e2e.rs",
+        "linear_live": "tests/linear_live.rs",
+        "linear_smoke": "tests/linear_smoke.rs",
+        "long_operation_e2e": "tests/long_operation_e2e.rs",
+        "mcp_ui_delivery_e2e": "tests/mcp_ui_delivery_e2e.rs",
+        "operation_progress_push_e2e": "tests/operation_progress_push_e2e.rs",
+        "pagination_matrix_stub_e2e": "tests/pagination_matrix_stub_e2e.rs",
+        "plasm_language_matrix": "tests/plasm_language_matrix/main.rs",
+        "plasm_language_matrix_invoke": "tests/plasm_language_matrix_invoke.rs",
+        "plasm_language_matrix_views": "tests/plasm_language_matrix_views.rs",
+        "ra11_unary_get_after_mutator": "tests/ra11_unary_get_after_mutator.rs",
+        "relation_render_e2e": "tests/relation_render_e2e.rs",
+        "semantic_receiver": "tests/semantic_receiver.rs",
+        "tavily_smoke": "tests/tavily_smoke.rs",
+        "typed_execution_closure": "tests/typed_execution_closure.rs",
+        "workflow_apps_e2e": "tests/workflow_apps_e2e.rs",
+        "workflow_identity_e2e": "tests/workflow_identity_e2e.rs",
+        "write_contract": "tests/write_contract.rs",
+    },
+    deps = [":plasm_e2e", "//vendor/hermit:beavuck_hermit", "//crates/plasm:plasm_agent", "//crates/plasm-core:plasm_core", "//crates/plasm-compile:plasm_compile", "//crates/plasm-runtime:plasm_runtime", "//crates/plasm-evidence:plasm_evidence"],
+    compile_data = ["//:test_fixtures", "//:language_reference", "//crates/plasm-core:src/prompt_render/assets/python-plasm-dag.txt"],
+    data = ["//:test_fixtures", "//:catalog_sources", "//:agent_prompt_assets"],
+)

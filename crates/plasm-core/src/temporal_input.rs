@@ -266,7 +266,7 @@ mod tests {
     #[test]
     fn temporal_input_recurses_through_records_arrays_and_remapped_unions() {
         let cgs = crate::load_schema_dir(
-            &std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            &std::path::Path::new(crate::test_manifest_dir())
                 .join("../../fixtures/schemas/python_value_contract"),
         )
         .unwrap();
@@ -326,7 +326,7 @@ mod tests {
     #[test]
     fn temporal_input_encodes_each_parameter_lane_recursively() {
         let cgs = crate::load_schema_dir(
-            &std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            &std::path::Path::new(crate::test_manifest_dir())
                 .join("../../fixtures/schemas/python_value_contract"),
         )
         .unwrap();
@@ -372,7 +372,7 @@ mod tests {
     #[test]
     fn temporal_input_rejects_loss_before_transport() {
         let cgs = crate::load_schema_dir(
-            &std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            &std::path::Path::new(crate::test_manifest_dir())
                 .join("../../fixtures/schemas/python_value_contract"),
         )
         .unwrap();

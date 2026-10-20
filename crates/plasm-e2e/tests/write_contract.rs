@@ -64,8 +64,8 @@ async fn engine(
     )
 }
 fn catalog() -> plasm_core::CGS {
-    let root = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    plasm_core::load_schema_dir_unvalidated(&root.join("../../../fixtures/schemas/workflow_matrix"))
+    let root = std::path::PathBuf::from(plasm_e2e::test_manifest_dir());
+    plasm_core::load_schema_dir_unvalidated(&root.join("../../fixtures/schemas/workflow_matrix"))
         .unwrap()
 }
 fn invocation() -> Expr {

@@ -149,7 +149,7 @@ mod il_snapshots {
     use std::path::PathBuf;
 
     fn tiny_cgs() -> plasm_core::CGS {
-        let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+        let root = PathBuf::from(crate::test_manifest_dir());
         load_schema(&root.join("tests/fixtures/execute_tiny")).expect("load execute_tiny")
     }
 

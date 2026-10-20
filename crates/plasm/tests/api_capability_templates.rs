@@ -8,7 +8,7 @@ use std::path::PathBuf;
 
 #[test]
 fn apis_capability_templates_validate() {
-    let apis_root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../apis");
+    let apis_root = PathBuf::from(std::env::var("CARGO_MANIFEST_DIR").expect("test runner must set CARGO_MANIFEST_DIR")).join("../../apis");
     if !apis_root.is_dir() {
         return;
     }

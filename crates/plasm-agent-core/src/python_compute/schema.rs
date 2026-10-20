@@ -511,7 +511,7 @@ mod tests {
         use plasm_core::symbol_tuning::SymbolRender;
         use plasm_core::value_contract::ValueShape;
         let cgs = plasm_core::loader::load_schema_dir(
-            &std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            &std::path::Path::new(crate::test_manifest_dir())
                 .join("../../fixtures/schemas/plasm_language_matrix"),
         )
         .unwrap();
@@ -624,7 +624,7 @@ mod tests {
         use plasm_core::symbol_tuning::SymbolRender;
         use plasm_core::value_contract::{ValueContract as T, ValueShape};
         let cgs = plasm_core::loader::load_schema_dir(
-            &std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            &std::path::Path::new(crate::test_manifest_dir())
                 .join("../../fixtures/schemas/python_value_contract"),
         )
         .unwrap();
@@ -778,7 +778,7 @@ mod tests {
         use plasm_core::symbol_tuning::SymbolRender;
         use plasm_core::value_contract::ValueContract as T;
         let cgs = plasm_core::loader::load_schema_dir(
-            &std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            &std::path::Path::new(crate::test_manifest_dir())
                 .join("../../fixtures/schemas/python_value_contract"),
         )
         .unwrap();

@@ -18,7 +18,7 @@ use crate::test_support::session_fixtures::ExecuteSessionFixture;
 use plasm_core::discovery::CgsRegistry;
 
 pub fn load_pokeapi_mini_cgs() -> Arc<CGS> {
-    let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let root = PathBuf::from(crate::test_manifest_dir());
     Arc::new(
         plasm_core::loader::load_schema_dir(&root.join("../../fixtures/schemas/pokeapi_mini"))
             .expect("pokeapi_mini"),

@@ -1,0 +1,39 @@
+load("//build/bazel:npm_package.bzl", "npm_package")
+
+filegroup(
+    name = "prompt_assets",
+    srcs = glob(["src/prompts/assets/**"]),
+    visibility = ["//visibility:public"],
+)
+
+npm_package(
+    name = "package",
+    srcs = glob(
+        [
+            "src/**",
+            "bin/**",
+            "templates/**",
+            "agent/**",
+        ],
+        exclude = [
+            "**/node_modules/**",
+            "agent/.plasm/**",
+            "**/evals/**",
+            "**/*.eval.ts",
+        ],
+    ) + [
+        "LICENSE-APACHE",
+        "LICENSE-MIT",
+        "README.md",
+        "scripts/build-stubs.ts",
+        "scripts/plasm-cli.ts",
+        "scripts/plasm-node.mjs",
+        "scripts/register-plasm-loader.mjs",
+        "scripts/resolve-ts-extension.mjs",
+        "scripts/run-plasm-cli.mjs",
+    ],
+    engine_manifest = "//packages/plasm-engine:package.json",
+    ignore_file = ".npmignore",
+    manifest = "package.json",
+    visibility = ["//visibility:public"],
+)

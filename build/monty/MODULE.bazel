@@ -1,0 +1,48 @@
+module(
+    name = "plasm_monty",
+    version = "1.0.0",
+)
+
+bazel_dep(name = "rules_rust", version = "0.74.0")
+bazel_dep(name = "rules_python", version = "0.40.0")
+
+python = use_extension("@rules_python//python/extensions:python.bzl", "python")
+python.toolchain(python_version = "3.12.7")
+use_repo(python, "python_versions")
+
+single_version_override(
+    module_name = "rules_rust",
+    patch_strip = 1,
+    patches = [
+        "//:rules_rust_nested_workspace.patch",
+        "//:rules_rust_relocatable_lock.patch",
+    ],
+    version = "0.74.0",
+)
+
+rust = use_extension("@rules_rust//rust:extensions.bzl", "rust")
+rust.toolchain(
+    edition = "2021",
+    versions = ["1.99.0"],
+)
+use_repo(rust, "rust_toolchains")
+
+register_toolchains("@rust_toolchains//:all")
+
+crate = use_extension("@rules_rust//crate_universe:extensions.bzl", "crate")
+crate.from_cargo(
+    name = "monty_crates",
+    cargo_lockfile = "//:Cargo.lock",
+    lockfile = "//:Cargo.Bazel.lock",
+    manifests = ["//:Cargo.toml"],
+    skip_cargo_lockfile_overwrite = True,
+)
+use_repo(crate, "monty_crates")
+
+crate.annotation(
+    crate = "ty_vendored",
+    patch_args = ["-p1"],
+    patches = ["//:ty_vendored_deterministic.patch"],
+    repositories = ["monty_crates"],
+    version = "0.0.14",
+)

@@ -449,7 +449,7 @@ mod tests {
     use std::sync::Arc;
 
     fn test_session(entities: Vec<&str>) -> crate::execute_session::ExecuteSession {
-        let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+        let root = PathBuf::from(crate::test_manifest_dir());
         let cgs = Arc::new(
             load_schema(&root.join("tests/fixtures/execute_tiny")).expect("load execute_tiny"),
         );

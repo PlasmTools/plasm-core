@@ -120,7 +120,7 @@ mod tests {
             let runtime = tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap();
             runtime.block_on(async {
                 let origin = format!("https://{}.test", uuid::Uuid::new_v4());
-                let mut cgs = plasm_core::loader::load_schema_dir(&std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../fixtures/schemas/plasm_language_matrix")).unwrap();
+                let mut cgs = plasm_core::loader::load_schema_dir(&std::path::Path::new(crate::test_manifest_dir()).join("../../fixtures/schemas/plasm_language_matrix")).unwrap();
                 cgs.bind_registry_entry_id("fixture");
                 let catalog = Arc::new(plasm_compile::compile_cgs_capability_templates(&cgs).unwrap());
                 let observed = Arc::new(ObservedTransport::default());

@@ -12,7 +12,7 @@ use plasm_core::loader::load_schema_dir;
 use plasm_runtime::{ExecutionConfig, ExecutionEngine, ExecutionMode};
 
 fn test_host() -> plasm_agent_core::server_state::PlasmHostState {
-    let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+    let dir = std::path::Path::new(&std::env::var("CARGO_MANIFEST_DIR").expect("test runner must set CARGO_MANIFEST_DIR"))
         .join("../../fixtures/schemas/plasm_language_matrix");
     let cgs = Arc::new(load_schema_dir(&dir).expect("plasm_language_matrix"));
     let reg = CgsRegistry::from_pairs(vec![(

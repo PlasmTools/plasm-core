@@ -961,7 +961,7 @@ mod tests {
     #[test]
     fn appended_chains_and_relation_predicates_use_heap_frames() {
         let mut cgs = crate::loader::load_schema_dir(
-            &std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            &std::path::Path::new(crate::test_manifest_dir())
                 .join("../../fixtures/schemas/plasm_language_matrix"),
         )
         .unwrap();
@@ -1492,14 +1492,15 @@ mod tests {
     }
 
     fn fixture_schema_dir(name: &str) -> std::path::PathBuf {
-        std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        std::path::Path::new(crate::test_manifest_dir())
             .join("../../fixtures/schemas")
             .join(name)
     }
 
     #[test]
     fn test_chain_allows_query_scoped_many_relation_without_target_get() {
-        let dir = std::path::Path::new("../../fixtures/schemas/overshow_tools");
+        let dir = &std::path::Path::new(crate::test_manifest_dir())
+            .join("../../fixtures/schemas/overshow_tools");
         if !dir.exists() {
             return;
         }
@@ -2068,7 +2069,7 @@ mod tests {
 
     #[test]
     fn federated_chain_target_resolves_in_source_catalog_not_primary() {
-        let root = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        let root = std::path::PathBuf::from(crate::test_manifest_dir())
             .join("../../fixtures/schemas/plasm_language_matrix");
         let cgs_primary = std::sync::Arc::new(load_schema_dir(&root).expect("matrix primary"));
         let cgs_secondary = std::sync::Arc::new(load_schema_dir(&root).expect("matrix secondary"));
@@ -2098,7 +2099,7 @@ mod tests {
     fn federated_duplicate_entity_name_requires_session_catalog_stamp() {
         use crate::{CatalogEntryStamp, Expr, QueryExpr, RegistryEntryId};
 
-        let root = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        let root = std::path::PathBuf::from(crate::test_manifest_dir())
             .join("../../fixtures/schemas/plasm_language_matrix");
         let cgs = std::sync::Arc::new(load_schema_dir(&root).expect("matrix"));
         let mut by_entry = IndexMap::new();
@@ -2142,7 +2143,7 @@ mod tests {
     fn federated_chain_langitem_children_resolves_in_source_catalog() {
         use crate::{CatalogEntryStamp, ChainExpr, Expr, GetExpr, RegistryEntryId};
 
-        let root = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+        let root = std::path::PathBuf::from(crate::test_manifest_dir());
         let dir = root.join("../../fixtures/schemas/plasm_language_matrix");
         let mut cgs_a = load_schema_dir(&dir).expect("plasm_language_matrix");
         cgs_a.bind_registry_entry_id("langmatrix_a");

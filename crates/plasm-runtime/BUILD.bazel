@@ -1,0 +1,50 @@
+load("@crates//:defs.bzl", "aliases", "all_crate_deps")
+load("@rules_rust//rust:defs.bzl", "rust_library", "rust_test")
+load("//build/bazel:integration_tests.bzl", "rust_integration_tests")
+
+rust_integration_tests(
+    tests = {
+        "hydrate_invoke_target": "tests/hydrate_invoke_target.rs",
+        "mcp_http_protocol": "tests/mcp_http_protocol.rs",
+        "view_literal_optional_cml_preflight": "tests/view_literal_optional_cml_preflight.rs",
+    },
+    deps = [":plasm_runtime", "//crates/plasm-core:plasm_core", "//crates/plasm-compile:plasm_compile", "//crates/plasm-otel:plasm_otel_testing"],
+    data = ["//:test_fixtures"],
+)
+
+rust_library(
+    name = "plasm_runtime",
+    srcs = glob(["src/**/*.rs"]),
+    aliases = aliases(),
+    crate_features = [],
+    crate_root = "src/lib.rs",
+    edition = "2021",
+    proc_macro_deps = all_crate_deps(proc_macro = True),
+    version = "0.5.5",
+    visibility = ["//visibility:public"],
+    deps = [
+        "//crates/plasm-compile:plasm_compile",
+        "//crates/plasm-core:plasm_core",
+    ] + all_crate_deps(normal = True),
+)
+
+rust_test(
+    name = "unit_tests",
+    compile_data = [
+        "//:test_fixtures",
+        "//:agent_prompt_assets",
+    ],
+    crate = ":plasm_runtime",
+    data = [
+        "Cargo.toml",
+        "//:agent_prompt_assets",
+        "//:test_fixtures",
+    ] + glob(
+        ["src/**/*.snap"],
+        allow_empty = True,
+    ),
+    env = {"INSTA_WORKSPACE_ROOT": "."},
+    proc_macro_deps = all_crate_deps(proc_macro_dev = True),
+    visibility = ["//visibility:public"],
+    deps = ["//crates/plasm-otel:plasm_otel_testing"] + all_crate_deps(normal_dev = True),
+)

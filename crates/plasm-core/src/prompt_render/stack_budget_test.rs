@@ -18,7 +18,7 @@ fn stack_bytes() -> usize {
 }
 
 fn matrix_fixture_dir() -> PathBuf {
-    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../fixtures/schemas/plasm_language_matrix")
+    PathBuf::from(crate::test_manifest_dir()).join("../../fixtures/schemas/plasm_language_matrix")
 }
 
 fn run_on_stack<F>(f: F)
@@ -75,7 +75,7 @@ fn teaching_first_wave_render_survives_two_mib_worker_stack_all_focus() {
 #[test]
 fn teaching_first_wave_render_survives_two_mib_worker_stack_prompt_matrix() {
     run_on_stack(|| {
-        let dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        let dir = PathBuf::from(crate::test_manifest_dir())
             .join("../../fixtures/schemas/plasm_prompt_matrix");
         if !dir.is_dir() {
             return;

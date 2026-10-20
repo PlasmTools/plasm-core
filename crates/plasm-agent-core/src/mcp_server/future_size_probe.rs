@@ -20,7 +20,7 @@ fn matrix_host() -> crate::server_state::PlasmHostState {
         // SAFETY: test-only process env before reqwest Client build.
         unsafe { std::env::set_var("PLASM_HTTP_NO_SYSTEM_PROXY", "1") };
     }
-    let dir = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+    let dir = std::path::PathBuf::from(crate::test_manifest_dir())
         .join("../../fixtures/schemas/plasm_language_matrix");
     let cgs = Arc::new(load_schema_dir(&dir).expect("plasm_language_matrix"));
     let reg = CgsRegistry::from_pairs(vec![(

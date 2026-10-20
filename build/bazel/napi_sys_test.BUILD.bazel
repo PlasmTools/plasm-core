@@ -1,0 +1,63 @@
+# Test-only variant of the pinned crate. Production features remain unchanged.
+rust_library(
+    name = "napi_sys_dyn_symbols",
+    crate_name = "napi_sys",
+    testonly = True,
+    deps = [
+        "@crates__libloading-0.9.0//:libloading",
+    ],
+    compile_data = glob(
+        allow_empty = True,
+        include = ["**"],
+        exclude = [
+            "**/* *",
+            ".tmp_git_root/**/*",
+            "BUILD",
+            "BUILD.bazel",
+            "WORKSPACE",
+            "WORKSPACE.bazel",
+        ],
+    ),
+    crate_features = [
+        "dyn-symbols",
+        "napi1",
+        "napi2",
+        "napi3",
+        "napi4",
+        "napi5",
+        "napi6",
+        "napi7",
+        "napi8",
+        "napi9",
+    ],
+    crate_root = "src/lib.rs",
+    edition = "2021",
+    rustc_env_files = [
+        ":cargo_toml_env_vars",
+    ],
+    rustc_flags = [
+        "--cap-lints=allow",
+    ],
+    srcs = glob(
+        allow_empty = True,
+        include = ["**/*.rs"],
+    ),
+    tags = [
+        "cargo-bazel",
+        "crate-name=napi-sys",
+        "manual",
+        "noclippy",
+        "norustfmt",
+    ],
+    target_compatible_with = select({
+        "@rules_rust//rust/platform:aarch64-apple-darwin": [],
+        "@rules_rust//rust/platform:aarch64-unknown-linux-gnu": [],
+        "@rules_rust//rust/platform:wasm32-unknown-unknown": [],
+        "@rules_rust//rust/platform:wasm32-wasip1": [],
+        "@rules_rust//rust/platform:x86_64-pc-windows-msvc": [],
+        "@rules_rust//rust/platform:x86_64-unknown-linux-gnu": [],
+        "@rules_rust//rust/platform:x86_64-unknown-nixos-gnu": [],
+        "//conditions:default": ["@platforms//:incompatible"],
+    }),
+    version = "3.3.0",
+)

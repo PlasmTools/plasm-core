@@ -173,7 +173,7 @@ mod tests {
     proptest::proptest! {
         #[test]
         fn nested_identity_path_survives_decoder_codec(id in "[a-z][a-z0-9]{0,20}") {
-            let mut cgs = load_schema_dir(&std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            let mut cgs = load_schema_dir(&std::path::PathBuf::from(crate::test_manifest_dir())
                 .join("../../fixtures/schemas/plasm_language_matrix")).unwrap();
             cgs.entities.get_mut("LangLine").unwrap().fields.get_mut("id").unwrap().wire_path =
                 Some(vec!["identity".into(), "value".into()]);
@@ -201,7 +201,7 @@ mod tests {
     #[test]
     fn malformed_embedded_identity_is_rejected_before_execution() {
         let cgs = load_schema_dir(
-            &std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            &std::path::PathBuf::from(crate::test_manifest_dir())
                 .join("../../fixtures/schemas/plasm_language_matrix"),
         )
         .unwrap();
@@ -236,7 +236,7 @@ mod tests {
     #[test]
     fn inherited_identity_type_mismatch_is_rejected_before_execution() {
         let mut cgs = load_schema_dir(
-            &std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            &std::path::PathBuf::from(crate::test_manifest_dir())
                 .join("../../fixtures/schemas/plasm_language_matrix"),
         )
         .unwrap();
@@ -268,7 +268,7 @@ mod tests {
 
     #[test]
     fn from_parent_get_target_decoders_have_no_nested_relations() {
-        let dir = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        let dir = std::path::PathBuf::from(crate::test_manifest_dir())
             .join("../../fixtures/schemas/plasm_language_matrix");
         let cgs = load_schema_dir(&dir).expect("langmatrix");
         let item = cgs.get_entity("LangItem").expect("LangItem");

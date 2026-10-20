@@ -52,7 +52,7 @@ fn inferred_mixed_numeric_boolean_dictionary_preserves_runtime_values() {
     use super::*;
     use plasm_core::symbol_tuning::SymbolRender;
     let cgs = plasm_core::loader::load_schema_dir(
-        &std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        &std::path::Path::new(crate::test_manifest_dir())
             .join("../../fixtures/schemas/python_value_contract"),
     )
     .unwrap();
@@ -100,7 +100,7 @@ async fn inferred_statistics_and_boolean_chains_execute_with_their_contract() {
     use super::*;
     use plasm_core::symbol_tuning::SymbolRender;
     let cgs = plasm_core::loader::load_schema_dir(
-        &std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        &std::path::Path::new(crate::test_manifest_dir())
             .join("../../fixtures/schemas/python_value_contract"),
     )
     .unwrap();
@@ -206,7 +206,7 @@ fn inferred_catalog_integer_remains_strict() {
     use super::*;
     use plasm_core::symbol_tuning::SymbolRender;
     let cgs = plasm_core::loader::load_schema_dir(
-        &std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        &std::path::Path::new(crate::test_manifest_dir())
             .join("../../fixtures/schemas/python_value_contract"),
     )
     .unwrap();
@@ -317,7 +317,7 @@ fn row_entity_annotation_matches_value_contract_recursively() {
     use super::*;
     use plasm_core::symbol_tuning::SymbolRender;
     let cgs = plasm_core::loader::load_schema_dir(
-        &std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        &std::path::Path::new(crate::test_manifest_dir())
             .join("../../fixtures/schemas/python_value_contract"),
     )
     .unwrap();

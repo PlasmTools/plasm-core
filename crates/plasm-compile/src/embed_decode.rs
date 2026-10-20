@@ -800,7 +800,7 @@ mod tests {
     #[test]
     fn exhaustive_embed_rejects_missing_wildcard_suffix_before_cache_normalization() {
         let mut cgs = plasm_core::load_schema_dir(
-            &std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            &std::path::PathBuf::from(crate::test_manifest_dir())
                 .join("../../fixtures/schemas/hydration_boundary_matrix"),
         )
         .unwrap();
@@ -849,7 +849,7 @@ mod tests {
     #[test]
     fn prefer_from_parent_get_complete_coverage_proves_embedded_membership() {
         let mut cgs = plasm_core::load_schema_dir(
-            &std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            &std::path::PathBuf::from(crate::test_manifest_dir())
                 .join("../../fixtures/schemas/hydration_boundary_matrix"),
         )
         .unwrap();
@@ -888,7 +888,7 @@ mod tests {
             owner in "[0-9]{1,8}",
             explicit_null in proptest::bool::ANY,
         ) {
-            let mut cgs = plasm_core::load_schema_dir(&std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            let mut cgs = plasm_core::load_schema_dir(&std::path::PathBuf::from(crate::test_manifest_dir())
                 .join("../../fixtures/schemas/plasm_language_matrix")).unwrap();
             cgs.values.get_mut("nv_compound_branch_item_id").unwrap().field_type=plasm_core::FieldType::Integer;
             cgs.values.get_mut("nv_compound_branch_item_id").unwrap().domain.kernel=plasm_core::value_domain::KernelKind::Integer;
@@ -921,7 +921,7 @@ mod tests {
     fn transitive_from_parent_get_expand_with_cgs() {
         use plasm_core::loader::load_schema_dir;
 
-        let dir = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        let dir = std::path::PathBuf::from(crate::test_manifest_dir())
             .join("../../fixtures/schemas/plasm_language_matrix");
         let cgs = load_schema_dir(&dir).expect("langmatrix");
         let summary = EntityDecoder::new("LangSummary", PathExpr::from_slice(&["summary"]))
@@ -962,7 +962,7 @@ mod tests {
     proptest::proptest! {
         #[test]
         fn transitive_collection_codec_preserves_order_duplicates_and_empty(ids in proptest::collection::vec(0u8..5, 0..12)) {
-            let dir = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            let dir = std::path::PathBuf::from(crate::test_manifest_dir())
                 .join("../../fixtures/schemas/plasm_language_matrix");
             let mut cgs = plasm_core::loader::load_schema_dir(&dir).unwrap();
             let relation = cgs.entities.get_mut("LangSummary").unwrap().relations.get_mut("detail").unwrap();

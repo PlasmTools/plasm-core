@@ -99,7 +99,8 @@ mod tests {
 
     #[test]
     fn wire_render_roundtrips_petstore_get() {
-        let dir = std::path::Path::new("../../fixtures/schemas/petstore");
+        let dir = &std::path::Path::new(crate::test_manifest_dir())
+            .join("../../fixtures/schemas/petstore");
         if !dir.exists() {
             return;
         }
@@ -112,7 +113,8 @@ mod tests {
 
     #[test]
     fn wire_surface_from_opaque_petstore() {
-        let dir = std::path::Path::new("../../fixtures/schemas/petstore");
+        let dir = &std::path::Path::new(crate::test_manifest_dir())
+            .join("../../fixtures/schemas/petstore");
         if !dir.exists() {
             return;
         }
@@ -127,7 +129,8 @@ mod tests {
 
     #[test]
     fn wire_surface_dotted_create_langitem() {
-        let dir = std::path::Path::new("../../fixtures/schemas/plasm_language_matrix");
+        let dir = &std::path::Path::new(crate::test_manifest_dir())
+            .join("../../fixtures/schemas/plasm_language_matrix");
         let cgs = load_schema_dir(dir).expect("plasm_language_matrix");
         let surface = r#"LangItem.create(title="Sprint Sandbox")"#;
         let parsed = parse(surface, &cgs).unwrap();
@@ -137,7 +140,8 @@ mod tests {
 
     #[test]
     fn wire_surface_opaque_dotted_invoke_langitem() {
-        let dir = std::path::Path::new("../../fixtures/schemas/plasm_language_matrix");
+        let dir = &std::path::Path::new(crate::test_manifest_dir())
+            .join("../../fixtures/schemas/plasm_language_matrix");
         let mut cgs = load_schema_dir(dir).expect("plasm_language_matrix");
         cgs.bind_registry_entry_id("langmatrix");
         let session = TeachingExposureSession::new(&cgs, "langmatrix", &["LangItem"]);

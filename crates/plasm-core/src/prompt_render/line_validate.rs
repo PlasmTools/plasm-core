@@ -289,7 +289,7 @@ mod tests {
 
     #[test]
     fn required_entity_reference_scope_has_executable_teaching() {
-        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        let path = std::path::Path::new(crate::test_manifest_dir())
             .join("../../fixtures/schemas/scoped_query_matrix");
         let cgs = load_schema_dir_unvalidated(&path).unwrap();
         let exposure = teaching_exposure_session_from_focus(&cgs, FocusSpec::All);
@@ -306,7 +306,7 @@ mod tests {
 
     #[test]
     fn langitem_ping_dotted_call_line_validates() {
-        let p = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        let p = std::path::Path::new(crate::test_manifest_dir())
             .join("../../fixtures/schemas/plasm_language_matrix");
         let mut cgs = load_schema_dir_unvalidated(&p).expect("plasm_language_matrix");
         cgs.bind_registry_entry_id("langmatrix");
@@ -321,7 +321,8 @@ mod tests {
 
     #[test]
     fn invalid_teaching_line_probe_is_not_memoized() {
-        let p = std::path::Path::new("../../fixtures/schemas/plasm_prompt_matrix");
+        let p = &std::path::Path::new(crate::test_manifest_dir())
+            .join("../../fixtures/schemas/plasm_prompt_matrix");
         if !p.is_dir() {
             return;
         }
@@ -340,7 +341,7 @@ mod tests {
 
     #[test]
     fn program_stratum_relation_fanout_ident_line_validates() {
-        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        let path = std::path::Path::new(crate::test_manifest_dir())
             .join("../../fixtures/schemas/plasm_prompt_matrix");
         let cgs = load_schema_dir_unvalidated(&path).expect("plasm_prompt_matrix");
         let exposure = teaching_exposure_session_from_focus(&cgs, FocusSpec::All);
@@ -392,7 +393,7 @@ mod tests {
 
     #[test]
     fn program_stratum_admits_only_ident_relation_apply() {
-        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        let path = std::path::Path::new(crate::test_manifest_dir())
             .join("../../fixtures/schemas/plasm_prompt_matrix");
         let cgs = load_schema_dir_unvalidated(&path).expect("plasm_prompt_matrix");
         let exposure = teaching_exposure_session_from_focus(&cgs, FocusSpec::All);

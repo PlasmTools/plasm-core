@@ -50,7 +50,7 @@ enum PartialWriteCheckError {
 
 fn load_pw_cgs() -> plasm_core::CGS {
     load_schema_dir(
-        &std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        &std::path::PathBuf::from(crate::test_manifest_dir())
             .join("../../fixtures/schemas/partial_write_relation_matrix"),
     )
     .expect("partial_write_relation_matrix CGS")

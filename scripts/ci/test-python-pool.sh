@@ -1,12 +1,10 @@
 #!/usr/bin/env bash
 set -euo pipefail
-oss_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
-workspace="$(pwd)"
-bash "${oss_root}/scripts/ci/build-monty-runtime.sh" "${workspace}/target/monty-runtime"
-export PLASM_MONTY_BINARY="${workspace}/target/monty-runtime/bin/monty"
-cargo test -p plasm-agent-core --lib python_pool -- --test-threads=1
-cargo test -p plasm-agent-core --test python_compute_feasibility
-cargo test -p plasm-agent-core --lib map_body
-cargo test -p plasm-agent-core --lib python_host
-cargo test -p plasm-agent-core --lib membership_evidence
-cargo test -p plasm-agent-core --lib python_iteration_stateful_contract_both_drivers
+root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+cd "$root"
+bash build/bazel/bazel.sh test //:nextest --test_arg=--test-threads=1 \
+  --test_arg=-E --test_arg='package(plasm-agent-core) & (test(python_pool) | test(map_body) | test(python_host) | test(membership_evidence) | test(python_iteration_stateful_contract_both_drivers))' \
+  --test_output=errors --test_timeout=7200
+bash build/bazel/bazel.sh test //:nextest_integrations \
+  --test_arg=-E --test_arg='binary(python_compute_feasibility)' \
+  --test_output=errors --test_timeout=7200

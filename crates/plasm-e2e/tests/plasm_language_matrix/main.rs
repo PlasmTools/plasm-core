@@ -129,3 +129,12 @@ mod aggregate_registry;
 mod outer_values;
 mod primitive_reductions;
 mod typed_returns;
+
+// Compare native values, retaining money metadata without the field-storage
+// encoding's unsigned integer tags or a presentation layer's synthetic identity.
+fn value_fields(entity: &plasm_runtime::CachedEntity) -> serde_json::Value {
+    serde_json::to_value(
+        entity.fields.iter().map(|(name, value)| (name, value.to_value()))
+            .collect::<std::collections::BTreeMap<_, _>>()
+    ).unwrap()
+}

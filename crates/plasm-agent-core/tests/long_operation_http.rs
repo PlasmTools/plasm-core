@@ -39,7 +39,7 @@ fn langmatrix_host_with_registry(
     run_artifacts: Arc<RunArtifactStore>,
 ) -> plasm_agent_core::server_state::PlasmHostState {
     let dir =
-        Path::new(env!("CARGO_MANIFEST_DIR")).join("../../fixtures/schemas/plasm_language_matrix");
+        Path::new(&std::env::var("CARGO_MANIFEST_DIR").expect("test runner must set CARGO_MANIFEST_DIR")).join("../../fixtures/schemas/plasm_language_matrix");
     let cgs = Arc::new(load_schema_dir(&dir).expect("plasm_language_matrix"));
     let reg = CgsRegistry::from_pairs(vec![(
         "langmatrix".into(),

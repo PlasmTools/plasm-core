@@ -77,7 +77,7 @@ fn cli_routed_context_and_plan_protocol() {
     )
     .unwrap();
     let command = |args: &[&str]| {
-        Command::new(env!("CARGO_BIN_EXE_plasm"))
+        Command::new(std::env::var_os("CARGO_BIN_EXE_plasm").expect("test runner must supply the built plasm binary"))
             .current_dir(workspace.path())
             .env("PLASM_WORKSPACE", workspace.path())
             .args(args)

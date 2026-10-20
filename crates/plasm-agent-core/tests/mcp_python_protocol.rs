@@ -213,7 +213,7 @@ async fn intent_discovery_python_inline_read_and_extension_over_mcp() {
     let cgs = discovery::pack(
         dir.path(),
         plasm_core::loader::load_schema_dir(
-            &std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            &std::path::Path::new(&std::env::var("CARGO_MANIFEST_DIR").expect("test runner must set CARGO_MANIFEST_DIR"))
                 .join("../../fixtures/schemas/mcp_transport_matrix"),
         )
         .unwrap(),
@@ -346,7 +346,7 @@ async fn python_inline_read_uses_mcp_and_rejection_dispatches_nothing() {
     assert_eq!(listed.tools[0].name, "list_items");
     let cgs = Arc::new(
         plasm_core::loader::load_schema_dir(
-            &std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            &std::path::Path::new(&std::env::var("CARGO_MANIFEST_DIR").expect("test runner must set CARGO_MANIFEST_DIR"))
                 .join("../../fixtures/schemas/mcp_transport_matrix"),
         )
         .unwrap(),

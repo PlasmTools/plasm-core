@@ -1,0 +1,77 @@
+load("//build/bazel:integration_tests.bzl", "rust_integration_tests")
+load(":build_targets.bzl", "build_targets")
+
+build_targets()
+
+filegroup(
+    name = "embedded_ui_assets",
+    srcs = glob(["src/assets/**"]),
+    visibility = ["//visibility:public"],
+)
+
+exports_files(["tests/support/postgres.rs"])
+
+filegroup(
+    name = "test_fixtures",
+    srcs = glob(["tests/fixtures/**"]),
+    visibility = ["//visibility:public"],
+)
+
+filegroup(
+    name = "integration_support",
+    srcs = glob(["tests/support/**"]),
+    visibility = ["//visibility:public"],
+)
+
+rust_integration_tests(
+    compile_data = [
+        "//:test_fixtures",
+        "//:language_reference",
+        "//:agent_prompt_assets",
+    ] + glob(
+        [
+            "src/**",
+            "migrations/**",
+        ],
+        allow_empty = True,
+    ),
+    data = [
+        "//:agent_prompt_assets",
+        "//:catalog_sources",
+        "//:language_reference",
+        "//:test_fixtures",
+    ] + glob(
+        ["migrations/**"],
+        allow_empty = True,
+    ),
+    tests = {
+        "binding_store": "tests/binding_store.rs",
+        "concurrent_mcp_plasm": "tests/concurrent_mcp_plasm.rs",
+        "cross_pod_operations": "tests/cross_pod_operations.rs",
+        "evidence_http": "tests/evidence_http.rs",
+        "flow_policy_golden_scenarios": "tests/flow_policy_golden_scenarios.rs",
+        "flow_policy_simulate_http_contract": "tests/flow_policy_simulate_http_contract.rs",
+        "flow_policy_simulate_scenarios": "tests/flow_policy_simulate_scenarios.rs",
+        "http_terminal_protocol": "tests/http_terminal_protocol.rs",
+        "incoming_auth_device_http": "tests/incoming_auth_device_http.rs",
+        "long_operation_http": "tests/long_operation_http.rs",
+        "mcp_config_admin": "tests/mcp_config_admin.rs",
+        "mcp_python_protocol": "tests/mcp_python_protocol.rs",
+        "mcp_readiness_pending_auth": "tests/mcp_readiness_pending_auth.rs",
+        "mcp_standalone_sse_reconnect": "tests/mcp_standalone_sse_reconnect.rs",
+        "operation_lifecycle": "tests/operation_lifecycle.rs",
+        "python_compute_feasibility": "tests/python_compute_feasibility.rs",
+        "run_ui_progress_http": "tests/run_ui_progress_http.rs",
+    },
+    deps = [
+        "//crates/plasm-agent-core:plasm_agent_core",
+        "//crates/plasm-catalog:plasm_catalog",
+        "//crates/plasm-compile:plasm_compile",
+        "//crates/plasm-core:plasm_core",
+        "//crates/plasm-evidence:plasm_evidence",
+        "//crates/plasm-otel:plasm_otel_testing",
+        "//crates/plasm-runtime:plasm_runtime",
+        "//crates/plasm-trace:plasm_trace",
+        "//crates/plasm-trace-wire:plasm_trace_wire",
+    ],
+)

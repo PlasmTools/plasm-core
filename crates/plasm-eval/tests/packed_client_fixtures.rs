@@ -13,7 +13,7 @@ fn export_packed_client_fixtures() {
         return;
     };
     let output = std::path::PathBuf::from(output);
-    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+    let root = std::path::Path::new(&std::env::var("CARGO_MANIFEST_DIR").expect("test runner must set CARGO_MANIFEST_DIR")).join("../..");
     for (name, relative) in [
         (
             "plasm_language_matrix",

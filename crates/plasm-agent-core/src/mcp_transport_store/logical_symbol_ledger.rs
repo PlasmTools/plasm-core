@@ -292,14 +292,14 @@ mod tests {
     use tempfile::TempDir;
 
     fn matrix_exposure() -> TeachingExposureSession {
-        let dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        let dir = PathBuf::from(crate::test_manifest_dir())
             .join("../../fixtures/schemas/plasm_language_matrix");
         let cgs = load_schema_dir(&dir).expect("matrix");
         TeachingExposureSession::new(&cgs, "langmatrix", &["HomographRowA", "HomographRowB"])
     }
 
     fn matrix_catalog_cgs() -> IndexMap<String, Arc<plasm_core::CGS>> {
-        let dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        let dir = PathBuf::from(crate::test_manifest_dir())
             .join("../../fixtures/schemas/plasm_language_matrix");
         let cgs = load_schema_dir(&dir).expect("matrix");
         let mut catalog_cgs = IndexMap::new();

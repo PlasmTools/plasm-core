@@ -7,7 +7,7 @@ use std::sync::Arc;
 
 pub(crate) fn load_matrix_cgs() -> CGS {
     load_schema_dir(
-        &PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        &PathBuf::from(crate::test_manifest_dir())
             .join("../../fixtures/schemas/plasm_language_matrix"),
     )
     .expect("plasm_language_matrix")

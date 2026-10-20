@@ -485,7 +485,7 @@ mod tests {
 
     fn fixture() -> crate::CGS {
         crate::load_schema(
-            &std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            &std::path::Path::new(crate::test_manifest_dir())
                 .join("../../fixtures/schemas/discovery_value_roles"),
         )
         .unwrap()

@@ -1,0 +1,218 @@
+load("//build/bazel:catalogs.bzl", "catalog_bundle")
+load("//build/bazel:e2e_targets.bzl", "E2E_BINARIES")
+load("//build/bazel:host_test_targets.bzl", "HOST_TEST_BINARIES")
+load("//build/bazel:nextest.bzl", "nextest")
+load("//build/bazel:release.bzl", "oss_release")
+
+exports_files(["licenses/monty-MIT.txt"])
+
+filegroup(
+    name = "npm_packages",
+    srcs = [
+        "//packages/plasm-agent:package",
+        "//packages/plasm-engine:package",
+        "//packages/plasm-engine:platform_package",
+    ],
+    visibility = ["//visibility:public"],
+)
+
+config_setting(
+    name = "release_linux_x86_64",
+    constraint_values = [
+        "@platforms//os:linux",
+        "@platforms//cpu:x86_64",
+    ],
+    visibility = ["//visibility:public"],
+)
+
+config_setting(
+    name = "release_linux_arm64",
+    constraint_values = [
+        "@platforms//os:linux",
+        "@platforms//cpu:aarch64",
+    ],
+    visibility = ["//visibility:public"],
+)
+
+config_setting(
+    name = "release_macos_arm64",
+    constraint_values = [
+        "@platforms//os:macos",
+        "@platforms//cpu:aarch64",
+    ],
+    visibility = ["//visibility:public"],
+)
+
+oss_release(
+    name = "release_archives",
+    triple = select({
+        ":release_linux_x86_64": "x86_64-unknown-linux-gnu",
+        ":release_linux_arm64": "aarch64-unknown-linux-gnu",
+        ":release_macos_arm64": "aarch64-apple-darwin",
+    }),
+    visibility = ["//visibility:public"],
+)
+
+exports_files([
+    "build/catalog-embeddings/.gitignore",
+    "apis/proof/deployment-bindings.json",
+])
+
+filegroup(
+    name = "embedding_inputs",
+    srcs = glob(["build/catalog-embeddings/**/*.json"]),
+    visibility = ["//visibility:public"],
+)
+
+catalog_bundle(
+    name = "catalogs",
+    package_list = "scripts/oss-packaged-apis.txt",
+    visibility = ["//visibility:public"],
+)
+
+nextest(
+    name = "nextest_language",
+    testonly = True,
+    binaries = {
+        "//crates/plasm-e2e:plasm_language_matrix_tests": "plasm-e2e::test::plasm_language_matrix",
+        "//crates/plasm-e2e:plasm_language_matrix_views_tests": "plasm-e2e::test::plasm_language_matrix_views",
+        "//crates/plasm-e2e:hermit_e2e_tests": "plasm-e2e::test::hermit_e2e",
+    },
+    manifest = "Cargo.toml",
+    runtime_tools = {"//:monty": "PLASM_MONTY_BINARY"},
+    visibility = ["//visibility:public"],
+)
+
+nextest(
+    name = "nextest_shuttle",
+    testonly = True,
+    args = [
+        "-E",
+        "test(shuttle_)",
+    ],
+    binaries = {"//crates/plasm-agent-core:unit_tests": "plasm-agent-core::lib::plasm_agent_core"},
+    manifest = "Cargo.toml",
+    runtime_tools = {"//:monty": "PLASM_MONTY_BINARY"},
+    visibility = ["//visibility:public"],
+)
+
+nextest(
+    name = "nextest_performance",
+    testonly = True,
+    args = [
+        "--run-ignored=only",
+        "--test-threads=1",
+        "-E",
+        "test(=operation::tests::plan_commit_semantic_comp_hash_benchmark)",
+    ],
+    binaries = {"//crates/plasm-agent-core:unit_tests": "plasm-agent-core::lib::plasm_agent_core"},
+    manifest = "Cargo.toml",
+    runtime_tools = {"//:monty": "PLASM_MONTY_BINARY"},
+    tags = ["exclusive"],
+    visibility = ["//visibility:public"],
+)
+
+nextest(
+    name = "nextest_e2e",
+    testonly = True,
+    binaries = E2E_BINARIES,
+    manifest = "Cargo.toml",
+    runtime_tools = {"//:monty": "PLASM_MONTY_BINARY"},
+    visibility = ["//visibility:public"],
+)
+
+config_setting(
+    name = "local_env_bootstrap",
+    define_values = {"plasm_local_env_bootstrap": "true"},
+    visibility = ["//visibility:public"],
+)
+
+test_suite(
+    name = "metadata_tests",
+    tests = ["@plasm_monty//:metadata_tests"],
+)
+
+exports_files([
+    "Cargo.toml",
+    "Cargo.lock",
+    "Cargo.Bazel.lock",
+    ".config/nextest.toml",
+    "vendor/README.md",
+    "scripts/ci/build-monty-runtime.sh",
+])
+
+alias(
+    name = "monty",
+    actual = "@plasm_monty//:monty",
+    visibility = ["//visibility:public"],
+)
+
+nextest(
+    name = "nextest",
+    testonly = True,
+    binaries = {
+        "//crates/plasm:unit_tests": "plasm::lib::plasm_agent",
+        "//crates/plasm-node:unit_tests": "plasm-node::lib::plasm_node",
+        "//crates/plasm-trace-sink:unit_tests": "plasm-trace-sink::lib::plasm_trace_sink",
+        "//crates/plasm-runtime:hydrate_invoke_target_tests": "plasm-runtime::test::hydrate_invoke_target",
+        "//crates/plasm-runtime:mcp_http_protocol_tests": "plasm-runtime::test::mcp_http_protocol",
+        "//crates/plasm-runtime:view_literal_optional_cml_preflight_tests": "plasm-runtime::test::view_literal_optional_cml_preflight",
+        "//crates/plasm-agent-core:unit_tests": "plasm-agent-core::lib::plasm_agent_core",
+        "//crates/plasm-evidence:unit_tests": "plasm-evidence::lib::plasm_evidence",
+        "//crates/plasm-catalog:unit_tests": "plasm-catalog::lib::plasm_catalog",
+        "//crates/plasm-catalog:packer_tests": "plasm-catalog::bin::plasm-pack-catalogs",
+        "//crates/plasm-core:unit_tests": "plasm-core::lib::plasm_core",
+        "//crates/plasm-cml:unit_tests": "plasm-cml::lib::plasm_cml",
+        "//crates/plasm-compile:unit_tests": "plasm-compile::lib::plasm_compile",
+        "//crates/plasm-runtime:unit_tests": "plasm-runtime::lib::plasm_runtime",
+        "//crates/plasm-trace-wire:wire_roundtrip_tests": "plasm-trace-wire::test::wire_roundtrip",
+    },
+    manifest = "Cargo.toml",
+    runtime_tools = {"//:monty": "PLASM_MONTY_BINARY"},
+    visibility = ["//visibility:public"],
+)
+
+filegroup(
+    name = "test_fixtures",
+    srcs = glob(["fixtures/**"]),
+    visibility = ["//visibility:public"],
+)
+
+filegroup(
+    name = "catalog_sources",
+    srcs = glob(["apis/**"]),
+    visibility = ["//visibility:public"],
+)
+
+filegroup(
+    name = "demo_catalog_domains",
+    srcs = glob([
+        "apis/linear/domain.yaml",
+        "apis/vultr/domain.yaml",
+    ]),
+    visibility = ["//visibility:public"],
+)
+
+filegroup(
+    name = "language_reference",
+    srcs = glob(["doc-site/docs/reference/**"]),
+    visibility = ["//visibility:public"],
+)
+
+filegroup(
+    name = "agent_prompt_assets",
+    srcs = ["//packages/plasm-agent:prompt_assets"],
+    visibility = ["//visibility:public"],
+)
+
+nextest(
+    name = "nextest_integrations",
+    testonly = True,
+    binaries = dict(HOST_TEST_BINARIES.items() + {
+        "//crates/plasm-node:spotify_membership_tests": "plasm-node::test::spotify_membership",
+        "//crates/plasm-node:tracing_setup_tests": "plasm-node::test::tracing_setup",
+    }.items()),
+    manifest = "Cargo.toml",
+    runtime_tools = {"//:monty": "PLASM_MONTY_BINARY"},
+    visibility = ["//visibility:public"],
+)

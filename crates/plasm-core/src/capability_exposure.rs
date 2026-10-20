@@ -192,13 +192,13 @@ mod tests {
     use crate::symbol_tuning::{ExposureSlotKey, ExposureSurfaceDelta};
 
     fn auth_bearer_search_dir() -> std::path::PathBuf {
-        std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        std::path::Path::new(crate::test_manifest_dir())
             .join("../../fixtures/schemas/auth_bearer_search")
     }
 
     #[test]
     fn selected_parent_read_does_not_admit_relation_target_capabilities() {
-        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        let root = std::path::Path::new(crate::test_manifest_dir())
             .join("../../fixtures/schemas/plasm_language_matrix");
         let cgs = plasm_core_fixture_load(&root);
         let read = cgs
@@ -274,7 +274,7 @@ mod tests {
     }
 
     fn scoped_query_matrix_dir() -> std::path::PathBuf {
-        std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        std::path::Path::new(crate::test_manifest_dir())
             .join("../../fixtures/schemas/scoped_query_matrix")
     }
 
@@ -378,7 +378,7 @@ mod tests {
 
     #[test]
     fn read_surface_admits_full_authored_fields_not_provides_subset() {
-        let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        let dir = std::path::Path::new(crate::test_manifest_dir())
             .join("../../fixtures/schemas/return_projection_teaching");
         let cgs = load_schema_dir(&dir).expect("return_projection_teaching");
         let want =

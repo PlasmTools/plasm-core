@@ -1,0 +1,52 @@
+load("@monty_crates//:defs.bzl", "aliases", "all_crate_deps")
+load("@python_versions//3.12.7:defs.bzl", "py_test")
+load("@rules_rust//rust:defs.bzl", "rust_binary")
+load(":optimized_binary.bzl", "optimized_binary")
+
+py_test(
+    name = "metadata_tests",
+    srcs = ["check_metadata.py"],
+    args = [
+        "--manifest",
+        "$(rootpath Cargo.toml)",
+    ],
+    data = [
+        "Cargo.lock",
+        "Cargo.toml",
+    ] + glob([
+        "vendor/monty/**/Cargo.toml",
+        "vendor/monty/Cargo.lock",
+    ]),
+    main = "check_metadata.py",
+    visibility = ["//visibility:public"],
+)
+
+exports_files([
+    "ty_vendored_deterministic.patch",
+    "Cargo.toml",
+    "Cargo.lock",
+    "Cargo.Bazel.lock",
+    "rules_rust_nested_workspace.patch",
+    "rules_rust_relocatable_lock.patch",
+])
+
+optimized_binary(
+    name = "monty",
+    binary = ":monty_binary",
+    visibility = ["//visibility:public"],
+)
+
+rust_binary(
+    name = "monty_binary",
+    srcs = glob(["vendor/monty/crates/monty-runtime/src/**/*.rs"]),
+    aliases = aliases(),
+    compile_data = ["vendor/monty/crates/monty-runtime/README.md"],
+    crate_features = ["standalone"],
+    crate_name = "monty",
+    crate_root = "vendor/monty/crates/monty-runtime/src/main.rs",
+    edition = "2024",
+    proc_macro_deps = all_crate_deps(proc_macro = True),
+    version = "1.0.0",
+    visibility = ["//visibility:public"],
+    deps = all_crate_deps(normal = True),
+)

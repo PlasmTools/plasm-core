@@ -97,8 +97,10 @@ fn native_boundary_hydration_repeated_live() {
 }
 
 async fn run_native_hydration() {
-    let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("../../fixtures/schemas/hydration_boundary_matrix");
+    let dir = std::path::PathBuf::from(
+        std::env::var("CARGO_MANIFEST_DIR").expect("test manifest directory"),
+    )
+    .join("../../fixtures/schemas/hydration_boundary_matrix");
     let mut cgs = plasm_core::load_schema(&dir).unwrap();
     cgs.bind_registry_entry_id("matrix");
     let cgs =

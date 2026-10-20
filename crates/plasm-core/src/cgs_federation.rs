@@ -369,7 +369,7 @@ mod tests {
     use std::sync::Arc;
 
     fn matrix_cgs() -> Arc<CGS> {
-        let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        let dir = std::path::Path::new(crate::test_manifest_dir())
             .join("../../fixtures/schemas/plasm_language_matrix");
         Arc::new(crate::loader::load_schema_dir(&dir).expect("matrix cgs"))
     }

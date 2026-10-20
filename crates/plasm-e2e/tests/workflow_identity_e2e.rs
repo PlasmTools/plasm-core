@@ -10,17 +10,8 @@ use plasm_runtime::workflow_reconcile::{
 };
 
 fn workflow_matrix_dir() -> std::path::PathBuf {
-    let crate_root = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    let candidates = [
-        crate_root.join("../../fixtures/schemas/workflow_matrix"),
-        crate_root.join("../../../fixtures/schemas/workflow_matrix"),
-    ];
-    for p in &candidates {
-        if p.join("domain.yaml").exists() {
-            return p.clone();
-        }
-    }
-    panic!("workflow_matrix fixture not found (tried {candidates:?})");
+    std::path::PathBuf::from(plasm_e2e::test_manifest_dir())
+        .join("../../fixtures/schemas/workflow_matrix")
 }
 
 #[test]

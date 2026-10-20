@@ -6,11 +6,18 @@ use proptest::prelude::*;
 fn application_suffix_rejects_with_selection_preserving_repair() {
     let session = test_session();
     let error = compile_plasm_dag_to_plan(
-        &PromptPipelineConfig::default(), None, &session, "suffix",
+        &PromptPipelineConfig::default(),
+        None,
+        &session,
+        "suffix",
         "items = LangItem\nselected = items => LangItem(_.id) | where score > 2\nselected",
-    ).expect_err("a suffix must never disappear from execution");
+    )
+    .expect_err("a suffix must never disappear from execution");
     assert!(error.contains("final stage"), "{error}");
-    assert!(error.contains("result = applied | where score > 2"), "{error}");
+    assert!(
+        error.contains("result = applied | where score > 2"),
+        "{error}"
+    );
 }
 
 proptest! {

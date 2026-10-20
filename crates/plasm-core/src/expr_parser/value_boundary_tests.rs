@@ -5,7 +5,7 @@ use proptest::prelude::*;
 
 fn schema() -> CGS {
     load_schema_dir(
-        &std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        &std::path::Path::new(crate::test_manifest_dir())
             .join("../../fixtures/schemas/plasm_language_matrix"),
     )
     .unwrap()

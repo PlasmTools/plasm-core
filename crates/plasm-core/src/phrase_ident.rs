@@ -635,7 +635,7 @@ mod tests {
         use std::path::Path;
         use std::sync::Arc;
 
-        let root = Path::new(env!("CARGO_MANIFEST_DIR"));
+        let root = Path::new(crate::test_manifest_dir());
         let pokeapi_dir = root.join("../../fixtures/schemas/pokeapi_mini");
         let matrix_dir = root.join("../../fixtures/schemas/plasm_language_matrix");
         let pokeapi = Arc::new(crate::loader::load_schema_dir(&pokeapi_dir).expect("pokeapi_mini"));

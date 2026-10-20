@@ -9,7 +9,9 @@ pub(crate) mod refinements;
 
 #[derive(Debug, Error)]
 pub enum MapBodySchemaError {
-    #[error("binding `{binding}` contains an entity union; narrow with .of_type(Entity) before capturing its rows into a computation or map")]
+    #[error(
+        "binding `{binding}` contains an entity union; narrow with .of_type(Entity) before capturing its rows into a computation or map"
+    )]
     EntityUnionNeedsNarrowing { binding: String },
     #[error(transparent)]
     QueryCapability(#[from] plasm_core::QueryCapabilityResolveError),
@@ -177,10 +179,16 @@ fn synthetic_result_contract(
     value: ValueContract,
     purpose: RecordUse,
 ) -> Result<ValueContract, MapBodySchemaError> {
-    let row = value.result_row_type().clone();
+    synthetic_value_contract(value.result_row_type().clone(), purpose)
+}
+
+fn synthetic_value_contract(
+    value: ValueContract,
+    purpose: RecordUse,
+) -> Result<ValueContract, MapBodySchemaError> {
     match purpose {
-        RecordUse::Value => Ok(row),
-        RecordUse::RowOperation => SyntheticResultSchema::for_value(row)?
+        RecordUse::Value => Ok(value),
+        RecordUse::RowOperation => SyntheticResultSchema::for_value(value)?
             .row_contract()
             .map_err(Into::into),
     }
@@ -236,6 +244,15 @@ fn classify_record_contract(
                     },
                 )
             })?;
+            if d.kind == crate::plasm_plan::DeriveKind::Cell {
+                return match purpose {
+                    RecordUse::Value => Ok(value),
+                    RecordUse::RowOperation => Ok(ValueContract::record(
+                        std::collections::BTreeMap::from([("value".to_owned(), value)]),
+                        Default::default(),
+                    )),
+                };
+            }
             return synthetic_result_contract(value, purpose);
         }
         // Iteration re-observes the seed receiver; it does not create a new domain.
@@ -243,12 +260,12 @@ fn classify_record_contract(
             return lookup.record(
                 iteration.source.as_str(),
                 matches!(purpose, RecordUse::RowOperation),
-            )
+            );
         }
         N::MapBody(map) => Some(output_schema(es, &map.body)?),
         N::Compute(c) => match &c.compute.op {
             ComputeOp::Python { output_type, .. } => {
-                return synthetic_result_contract(output_type.clone(), purpose)
+                return synthetic_result_contract(output_type.clone(), purpose);
             }
             ComputeOp::Limit { .. }
             | ComputeOp::Filter { .. }
@@ -296,7 +313,7 @@ fn classify_record_contract(
                     ),
                 ]),
                 Default::default(),
-            ))
+            ));
         }
         N::Surface(_) | N::RelationTraversal(_) | N::ForEach(_) => None,
     };

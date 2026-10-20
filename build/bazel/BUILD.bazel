@@ -1,0 +1,38 @@
+load("@python_versions//3.12.7:defs.bzl", "py_binary")
+
+py_binary(
+    name = "npm_package",
+    srcs = ["npm_package.py"],
+    main = "npm_package.py",
+    visibility = ["//visibility:public"],
+)
+
+py_binary(
+    name = "nextest_runner",
+    srcs = ["nextest_runner.py"],
+    main = "nextest_runner.py",
+    visibility = ["//visibility:public"],
+)
+
+exports_files([
+    "ty_vendored_deterministic.patch",
+    "pty.Cargo.Bazel.lock",
+    "pty.Cargo.lock",
+    "rules_rust_build_script_copts.patch",
+    "rules_rust_nested_workspace.patch",
+    "rules_rust_relocatable_lock.patch",
+])
+
+exports_files(["nextest_runner.py"])
+
+exports_files([
+    "napi_test.BUILD.bazel",
+    "napi_sys_test.BUILD.bazel",
+])
+
+py_binary(
+    name = "release_archive",
+    srcs = ["release_archive.py"],
+    main = "release_archive.py",
+    visibility = ["//visibility:public"],
+)

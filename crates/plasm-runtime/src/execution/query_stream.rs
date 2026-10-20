@@ -580,8 +580,8 @@ impl ExecutionEngine {
                     let resume = if more && !expression_done {
                         let mut state = driver.snapshot();
                         state.mcp_collection = mcp_collection.clone();
-                        Some(QueryPaginationResumeData { query: query.clone(), capability_name: capability.name.to_string(), env: env.clone(),
-                            template: capability_template.clone(), config: pconf.clone(), state })
+                        Some(Box::new(QueryPaginationResumeData { query: query.clone(), capability_name: capability.name.to_string(), env: env.clone(),
+                            template: capability_template.clone(), config: pconf.clone(), state }))
                     } else { None };
                     break (more && !expression_done, resume);
                 }

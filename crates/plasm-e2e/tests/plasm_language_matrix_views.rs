@@ -667,7 +667,7 @@ async fn matrix_views_python_rejects_unmaterialized_many_relation_before_normali
 
 #[tokio::test]
 async fn matrix_views_rowsets_taught_navigation_compiles_and_preflights() {
-    let dir = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+    let dir = std::path::PathBuf::from(plasm_e2e::test_manifest_dir())
         .join("../../fixtures/schemas/view_rowsets");
     let cgs = Arc::new(plasm_core::loader::load_schema_dir(&dir).unwrap());
     let session = language_matrix_views::execute_session_for_entities(
@@ -714,7 +714,7 @@ fn matrix_views_query_only_parent_relations_live() {
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let base = format!("http://{}", listener.local_addr().unwrap());
         let server = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
-        let dir = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        let dir = std::path::PathBuf::from(plasm_e2e::test_manifest_dir())
             .join("../../fixtures/schemas/view_rowsets");
         let mut cgs = plasm_core::loader::load_schema_dir(&dir).unwrap();
         cgs.http_backend = base.clone();

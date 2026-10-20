@@ -153,7 +153,7 @@ mod recursive_array_contract_tests {
     #[test]
     fn nested_catalog_arrays_validate_each_leaf() {
         let cgs = crate::loader::load_schema_dir(
-            &std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            &std::path::Path::new(crate::test_manifest_dir())
                 .join("../../fixtures/schemas/python_value_contract"),
         )
         .unwrap();
@@ -1117,7 +1117,7 @@ mod tests {
 
     #[test]
     fn conditional_source_rules_fail_at_typecheck_and_survive_codec() {
-        let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        let dir = std::path::Path::new(crate::test_manifest_dir())
             .join("../../fixtures/schemas/conditional_source_inputs");
         let loaded = crate::load_schema_dir(&dir).unwrap();
         let cgs: crate::CGS =
@@ -1303,7 +1303,7 @@ mod tests {
     /// Fixture `account_update` AtLeastOne(name, revenue, priority) — empty must fail; `$` vacates.
     #[test]
     fn account_update_rejects_empty_at_least_one() {
-        let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        let dir = std::path::Path::new(crate::test_manifest_dir())
             .join("../../fixtures/schemas/capability_with_input");
         let cgs = crate::loader::load_schema_dir(&dir).expect("capability_with_input");
         let cap = cgs
@@ -1512,11 +1512,9 @@ mod tests {
         use crate::loader::load_schema_dir_unvalidated;
         use crate::type_check_expr;
         use std::path::Path;
-        let root = Path::new(concat!(
-            env!("CARGO_MANIFEST_DIR"),
-            "/../../fixtures/schemas/plasm_language_matrix"
-        ));
-        let cgs = load_schema_dir_unvalidated(root).expect("plasm_language_matrix");
+        let root = Path::new(crate::test_manifest_dir())
+            .join("../../fixtures/schemas/plasm_language_matrix");
+        let cgs = load_schema_dir_unvalidated(&root).expect("plasm_language_matrix");
         let cap = cgs
             .get_capability("langitem_create")
             .expect("langitem_create");

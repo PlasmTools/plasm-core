@@ -2178,6 +2178,8 @@
     "render_parity_lang_with_when_len",
     "repair_runtime_compute",
     "repair_runtime_projection",
+    "callback_collection_argument",
+    "compute_private_unused",
     "callback_branch_predicate",
     "callback_branch_record",
     "callback_lexical_capture",

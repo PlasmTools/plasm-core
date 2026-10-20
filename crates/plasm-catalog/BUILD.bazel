@@ -1,0 +1,51 @@
+load("@crates//:defs.bzl", "aliases", "all_crate_deps")
+load("@rules_rust//rust:defs.bzl", "rust_binary", "rust_library", "rust_test")
+
+rust_test(
+    name = "unit_tests",
+    crate = ":plasm_catalog",
+    deps = all_crate_deps(normal_dev = True),
+    proc_macro_deps = all_crate_deps(proc_macro_dev = True),
+    visibility = ["//visibility:public"],
+)
+
+rust_test(
+    name = "packer_tests",
+    crate = ":plasm-pack-catalogs",
+    data = ["Cargo.toml", "//:test_fixtures", "//:catalog_sources"],
+    deps = all_crate_deps(normal_dev = True),
+    proc_macro_deps = all_crate_deps(proc_macro_dev = True),
+    visibility = ["//visibility:public"],
+)
+
+rust_library(
+    name = "plasm_catalog",
+    srcs = glob(["src/**/*.rs"]),
+    aliases = aliases(),
+    crate_features = ["evm"],
+    crate_root = "src/lib.rs",
+    edition = "2021",
+    proc_macro_deps = all_crate_deps(proc_macro = True),
+    version = "0.5.5",
+    visibility = ["//visibility:public"],
+    deps = [
+        "//crates/plasm-compile:plasm_compile",
+        "//crates/plasm-core:plasm_core",
+    ] + all_crate_deps(normal = True),
+)
+
+rust_binary(
+    name = "plasm-pack-catalogs",
+    srcs = ["src/bin/plasm_pack_catalogs.rs"],
+    aliases = aliases(),
+    crate_features = ["evm"],
+    edition = "2021",
+    proc_macro_deps = all_crate_deps(proc_macro = True),
+    version = "0.5.5",
+    visibility = ["//visibility:public"],
+    deps = [
+        ":plasm_catalog",
+        "//crates/plasm-compile:plasm_compile",
+        "//crates/plasm-core:plasm_core",
+    ] + all_crate_deps(normal = True),
+)

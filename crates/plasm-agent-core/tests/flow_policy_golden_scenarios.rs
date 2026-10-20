@@ -24,7 +24,7 @@ use plasm_core::{load_schema_dir_unvalidated, CapabilityParamName, DataClassName
 
 /// Workspace-root-relative path to the flow_matrix fixture.
 fn flow_matrix_dir() -> std::path::PathBuf {
-    Path::new(env!("CARGO_MANIFEST_DIR")).join("../../fixtures/schemas/flow_matrix")
+    Path::new(&std::env::var("CARGO_MANIFEST_DIR").expect("test runner must set CARGO_MANIFEST_DIR")).join("../../fixtures/schemas/flow_matrix")
 }
 
 /// Build a minimal `FlowCatalogView` from the flow_matrix fixture CGS.

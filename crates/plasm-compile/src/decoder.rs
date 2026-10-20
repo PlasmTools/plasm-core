@@ -1433,7 +1433,7 @@ mod temporal_response_contract_tests {
     #[test]
     fn response_temporal_contract_distinguishes_missing_null_and_invalid() {
         let cgs = plasm_core::load_schema(
-            &std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            &std::path::Path::new(crate::test_manifest_dir())
                 .join("../../fixtures/schemas/python_value_contract"),
         )
         .unwrap();

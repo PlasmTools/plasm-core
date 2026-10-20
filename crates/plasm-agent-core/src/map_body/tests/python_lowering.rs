@@ -1124,7 +1124,7 @@ fn python_compact_teaching_example_compiles_and_reference_is_not_a_program() {
     };
     on_runtime(async {
         let mut cgs = plasm_core::load_schema(
-            &std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            &std::path::Path::new(crate::test_manifest_dir())
                 .join("../../fixtures/schemas/plasm_language_matrix"),
         )
         .unwrap();

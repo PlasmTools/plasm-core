@@ -16,7 +16,7 @@ use plasm_agent_core::{EffectEvent, FlowPolicy, NodeDisposition, OperatorDisposi
 use serde::Deserialize;
 
 fn workspace_root() -> PathBuf {
-    Path::new(env!("CARGO_MANIFEST_DIR"))
+    Path::new(&std::env::var("CARGO_MANIFEST_DIR").expect("test runner must set CARGO_MANIFEST_DIR"))
         .join("../../..")
         .canonicalize()
         .expect("workspace root")
@@ -294,7 +294,7 @@ mod live_dry_run {
         if std::env::var_os("PLASM_HTTP_NO_SYSTEM_PROXY").is_none() {
             unsafe { std::env::set_var("PLASM_HTTP_NO_SYSTEM_PROXY", "1") };
         }
-        let dir = Path::new(env!("CARGO_MANIFEST_DIR"))
+        let dir = Path::new(&std::env::var("CARGO_MANIFEST_DIR").expect("test runner must set CARGO_MANIFEST_DIR"))
             .join("../../fixtures/schemas/plasm_language_matrix");
         let cgs = Arc::new(load_schema_dir(&dir).expect("plasm_language_matrix"));
         let reg = CgsRegistry::from_pairs(vec![(

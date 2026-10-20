@@ -2329,7 +2329,8 @@ mod tests {
 
     #[test]
     fn unknown_entity_symbolic_llm_hints_quoted_scalar_for_bare_words() {
-        let dir = std::path::Path::new("../../fixtures/schemas/petstore");
+        let dir = &std::path::Path::new(crate::test_manifest_dir())
+            .join("../../fixtures/schemas/petstore");
         if !dir.exists() {
             return;
         }
@@ -2355,7 +2356,8 @@ mod tests {
 
     #[test]
     fn unknown_entity_root_omits_scalar_quote_hint() {
-        let dir = std::path::Path::new("../../fixtures/schemas/petstore");
+        let dir = &std::path::Path::new(crate::test_manifest_dir())
+            .join("../../fixtures/schemas/petstore");
         if !dir.exists() {
             return;
         }
@@ -2389,7 +2391,8 @@ mod tests {
 
     #[test]
     fn identity_mutator_correction_names_taught_seat() {
-        let dir = std::path::Path::new("../../fixtures/schemas/plasm_language_matrix");
+        let dir = &std::path::Path::new(crate::test_manifest_dir())
+            .join("../../fixtures/schemas/plasm_language_matrix");
         if !dir.exists() {
             return;
         }
@@ -2433,7 +2436,8 @@ mod tests {
 
     #[test]
     fn unknown_entity_symbolic_llm_lists_session_symbols_not_catalog_dump() {
-        let dir = std::path::Path::new("../../fixtures/schemas/petstore");
+        let dir = &std::path::Path::new(crate::test_manifest_dir())
+            .join("../../fixtures/schemas/petstore");
         if !dir.exists() {
             return;
         }
@@ -2470,7 +2474,8 @@ mod tests {
 
     #[test]
     fn predicate_field_symbolic_llm_stays_short_without_catalog_dump() {
-        let dir = std::path::Path::new("../../fixtures/schemas/petstore");
+        let dir = &std::path::Path::new(crate::test_manifest_dir())
+            .join("../../fixtures/schemas/petstore");
         if !dir.exists() {
             return;
         }
@@ -2498,7 +2503,8 @@ mod tests {
 
     #[test]
     fn not_navigable_symbolic_llm_stays_short_without_catalog_dump() {
-        let dir = std::path::Path::new("../../fixtures/schemas/petstore");
+        let dir = &std::path::Path::new(crate::test_manifest_dir())
+            .join("../../fixtures/schemas/petstore");
         if !dir.exists() {
             return;
         }
@@ -2528,7 +2534,8 @@ mod tests {
 
     #[test]
     fn format_recovery_hints_symbolic_collapses_lexicon_options() {
-        let dir = std::path::Path::new("../../fixtures/schemas/petstore");
+        let dir = &std::path::Path::new(crate::test_manifest_dir())
+            .join("../../fixtures/schemas/petstore");
         if !dir.exists() {
             return;
         }
@@ -2555,7 +2562,8 @@ mod tests {
 
     #[test]
     fn query_resolve_no_matching_scope_symbolic_appends_actionable_hint() {
-        let dir = std::path::Path::new("../../fixtures/schemas/petstore");
+        let dir = &std::path::Path::new(crate::test_manifest_dir())
+            .join("../../fixtures/schemas/petstore");
         if !dir.exists() {
             return;
         }
@@ -2585,7 +2593,8 @@ mod tests {
 
     #[test]
     fn feedback_ident_symbol_uses_canonical_name_when_symbol_is_ambiguous() {
-        let dir = std::path::Path::new("../../fixtures/schemas/overshow_tools");
+        let dir = &std::path::Path::new(crate::test_manifest_dir())
+            .join("../../fixtures/schemas/overshow_tools");
         if !dir.exists() {
             return;
         }
@@ -2613,7 +2622,8 @@ mod tests {
 
     #[test]
     fn ambiguous_field_candidates_do_not_collapse_ambiguous_id_to_wrong_p_symbol() {
-        let dir = std::path::Path::new("../../fixtures/schemas/overshow_tools");
+        let dir = &std::path::Path::new(crate::test_manifest_dir())
+            .join("../../fixtures/schemas/overshow_tools");
         if !dir.exists() {
             return;
         }
@@ -2683,7 +2693,8 @@ mod tests {
 
     #[test]
     fn parse_error_expected_identifier_suggests_raw_block_when_markdown_slot_resolves() {
-        let dir = std::path::Path::new("../../fixtures/schemas/plasm_language_matrix");
+        let dir = &std::path::Path::new(crate::test_manifest_dir())
+            .join("../../fixtures/schemas/plasm_language_matrix");
         let mut cgs = loader::load_schema_dir(dir).expect("plasm_language_matrix");
         // The receiver's action input slots must carry the presentation profile.
         // Its read-side entity title remains an ordinary string.
@@ -2751,7 +2762,8 @@ mod tests {
 
     #[test]
     fn parse_error_correction_not_raw_diagnostic() {
-        let dir = std::path::Path::new("../../fixtures/schemas/petstore");
+        let dir = &std::path::Path::new(crate::test_manifest_dir())
+            .join("../../fixtures/schemas/petstore");
         if !dir.exists() {
             return;
         }
@@ -2774,7 +2786,8 @@ mod tests {
 
     #[test]
     fn type_error_field_not_found_hints_name_issue_and_full_field_list() {
-        let dir = std::path::Path::new("../../fixtures/schemas/petstore");
+        let dir = &std::path::Path::new(crate::test_manifest_dir())
+            .join("../../fixtures/schemas/petstore");
         if !dir.exists() {
             return;
         }
@@ -2846,7 +2859,8 @@ mod tests {
 
     #[test]
     fn langitem_nav_typo_levenshtein_to_tags() {
-        let dir = std::path::Path::new("../../fixtures/schemas/plasm_language_matrix");
+        let dir = &std::path::Path::new(crate::test_manifest_dir())
+            .join("../../fixtures/schemas/plasm_language_matrix");
         let cgs = loader::load_schema_dir(dir).expect("plasm_language_matrix");
         let err = expr_parser::parse("LangItem(1).tgs", &cgs).unwrap_err();
         let se = render_parse_error(&err, "LangItem(1).tgs", &cgs);
@@ -2859,7 +2873,8 @@ mod tests {
 
     #[test]
     fn parse_correction_spaces_in_entity_id() {
-        let dir = std::path::Path::new("../../fixtures/schemas/plasm_language_matrix");
+        let dir = &std::path::Path::new(crate::test_manifest_dir())
+            .join("../../fixtures/schemas/plasm_language_matrix");
         let cgs = loader::load_schema_dir(dir).expect("plasm_language_matrix");
         let expr = "LangItem(123 456)";
         let err = expr_parser::parse(expr, &cgs).unwrap_err();
@@ -2878,7 +2893,8 @@ mod tests {
 
     #[test]
     fn predicate_unknown_field_explicit_correction() {
-        let dir = std::path::Path::new("../../fixtures/schemas/plasm_language_matrix");
+        let dir = &std::path::Path::new(crate::test_manifest_dir())
+            .join("../../fixtures/schemas/plasm_language_matrix");
         let cgs = loader::load_schema_dir(dir).expect("plasm_language_matrix");
         let expr = r#"LangTag{owner=LangItem(i1)}"#;
         let err = expr_parser::parse(expr, &cgs).unwrap_err();
@@ -2902,7 +2918,8 @@ mod tests {
 
     #[test]
     fn symbolic_feedback_skips_zero_arity_and_kebab_jargon() {
-        let dir = std::path::Path::new("../../fixtures/schemas/petstore");
+        let dir = &std::path::Path::new(crate::test_manifest_dir())
+            .join("../../fixtures/schemas/petstore");
         if !dir.exists() {
             return;
         }
@@ -2936,7 +2953,8 @@ mod tests {
 
     #[test]
     fn canonical_feedback_bad_zero_arity_method_keeps_dev_wording() {
-        let dir = std::path::Path::new("../../fixtures/schemas/petstore");
+        let dir = &std::path::Path::new(crate::test_manifest_dir())
+            .join("../../fixtures/schemas/petstore");
         if !dir.exists() {
             return;
         }
@@ -2954,7 +2972,8 @@ mod tests {
 
     #[test]
     fn symbolic_not_field_or_relation_lists_segment_symbols() {
-        let dir = std::path::Path::new("../../fixtures/schemas/petstore");
+        let dir = &std::path::Path::new(crate::test_manifest_dir())
+            .join("../../fixtures/schemas/petstore");
         if !dir.exists() {
             return;
         }
@@ -2995,7 +3014,7 @@ mod tests {
 
     #[test]
     fn ambiguous_entity_catalog_feedback_lists_session_stamps() {
-        let root = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        let root = std::path::PathBuf::from(crate::test_manifest_dir())
             .join("../../fixtures/schemas/plasm_language_matrix");
         if !root.is_dir() {
             return;
@@ -3041,7 +3060,8 @@ mod tests {
 
     #[test]
     fn symbolic_type_error_field_not_found_keeps_canonical_error_symbolic_correction() {
-        let dir = std::path::Path::new("../../fixtures/schemas/plasm_language_matrix");
+        let dir = &std::path::Path::new(crate::test_manifest_dir())
+            .join("../../fixtures/schemas/plasm_language_matrix");
         let cgs = loader::load_schema_dir(dir).expect("plasm_language_matrix");
         let (full, _) = crate::symbol_tuning::entity_slices_for_render(
             &cgs,
@@ -3070,7 +3090,8 @@ mod tests {
 
     #[test]
     fn unknown_entity_summary_prefixes_total_entity_count() {
-        let dir = std::path::Path::new("../../fixtures/schemas/plasm_language_matrix");
+        let dir = &std::path::Path::new(crate::test_manifest_dir())
+            .join("../../fixtures/schemas/plasm_language_matrix");
         if !dir.is_dir() {
             return;
         }
@@ -3111,7 +3132,8 @@ mod tests {
     /// PLP-1: positional Get + extra named args is agent-invented, not a taught form.
     #[test]
     fn get_identity_extra_argument_names_identity_only_law() {
-        let dir = std::path::Path::new("../../fixtures/schemas/plasm_language_matrix");
+        let dir = &std::path::Path::new(crate::test_manifest_dir())
+            .join("../../fixtures/schemas/plasm_language_matrix");
         if !dir.exists() {
             return;
         }
@@ -3170,7 +3192,8 @@ mod tests {
     /// Lawful Get+token: unary identity Get / brace Search; invented mash stays illegal.
     #[test]
     fn get_identity_omits_token_argument_in_parens() {
-        let dir = std::path::Path::new("../../fixtures/schemas/auth_bearer_search");
+        let dir = &std::path::Path::new(crate::test_manifest_dir())
+            .join("../../fixtures/schemas/auth_bearer_search");
         if !dir.exists() {
             return;
         }

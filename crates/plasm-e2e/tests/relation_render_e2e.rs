@@ -132,11 +132,8 @@ line"#;
         .find(|s| s.node_id.as_deref() == Some("line"))
         .expect("line return step");
     let entity = line_step.result.entities().first().expect("render row");
-    let row = plasm_runtime::entity_to_agent_row_json(entity, line_step.cgs.as_deref()).unwrap();
-    let content = row
-        .get("content")
-        .and_then(|v| v.as_str())
-        .unwrap_or_default();
+    let rendered = entity.fields["content"].to_value();
+    let content = rendered.as_str().expect("render content is a string");
     assert!(
         content.contains("capture="),
         "expected capture_rate column in render output, got {content:?}"
@@ -315,11 +312,8 @@ doc"#;
         .find(|s| s.node_id.as_deref() == Some("doc"))
         .expect("doc return step");
     let entity = doc_step.result.entities().first().expect("render row");
-    let row = plasm_runtime::entity_to_agent_row_json(entity, doc_step.cgs.as_deref()).unwrap();
-    let content = row
-        .get("content")
-        .and_then(|v| v.as_str())
-        .unwrap_or_default();
+    let rendered = entity.fields["content"].to_value();
+    let content = rendered.as_str().expect("render content is a string");
     assert!(
         content.contains("Pokémon"),
         "expected UTF-8 Pokémon in render output, got {content:?}"

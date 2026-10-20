@@ -124,7 +124,7 @@ mod tests {
 
     #[test]
     fn relation_validation_expr_builds_view_root_chain_for_view_embed() {
-        let dir = Path::new(env!("CARGO_MANIFEST_DIR"))
+        let dir = Path::new(crate::test_manifest_dir())
             .join("../../fixtures/schemas/plasm_language_matrix_views");
         if !dir.is_dir() {
             return;
@@ -145,7 +145,7 @@ mod tests {
 
     #[test]
     fn relation_validation_expr_skips_from_parent_get_many_relations() {
-        let dir = Path::new(env!("CARGO_MANIFEST_DIR"))
+        let dir = Path::new(crate::test_manifest_dir())
             .join("../../fixtures/schemas/plasm_language_matrix_views");
         if !dir.is_dir() {
             return;

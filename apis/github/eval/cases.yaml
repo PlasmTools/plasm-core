@@ -675,7 +675,7 @@
     class Reference(Program):
         def build(self):
             repo = e20.get(owner="owner", repo="repo")
-            labels = e10.query(repository=repo.full_name, shelf="label").select("name", "description", "color", "default")
+            labels = e10.query(repository=repo.full_name).select("name", "description", "color", "default")
             names = labels.select("name")
             created = e6.m12(repository=repo.full_name, title="Label guide", body="Demonstration issue")
             updated = created.m20(labels=names)

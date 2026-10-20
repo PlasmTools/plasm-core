@@ -1,0 +1,13 @@
+load("//build/bazel:integration_tests.bzl", "rust_integration_tests")
+load(":build_targets.bzl", "build_targets")
+
+build_targets()
+
+rust_integration_tests(
+    tests = {
+        "span_capture_parallel": "tests/span_capture_parallel.rs"
+},
+    deps = ["//crates/plasm-otel:plasm_otel_testing"],
+    compile_data = ["//:test_fixtures", "//:language_reference", "//:agent_prompt_assets"] + glob(["src/**", "migrations/**"], allow_empty = True),
+    data = ["//:test_fixtures", "//:catalog_sources", "//:language_reference", "//:agent_prompt_assets"] + glob(["migrations/**"], allow_empty = True),
+)

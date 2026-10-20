@@ -1,0 +1,46 @@
+load("@crates//:defs.bzl", "aliases", "all_crate_deps")
+load("@rules_rust//rust:defs.bzl", "rust_binary", "rust_library")
+load("//build/bazel:integration_tests.bzl", "rust_integration_tests")
+
+rust_integration_tests(
+    crate_features = [
+        "default",
+        "embedded_postgres",
+    ],
+    data = ["//:test_fixtures"],
+    runtime_tools = {":plasm-server": "CARGO_BIN_EXE_plasm-server"},
+    tests = {
+        "appliance_headless_boot": "tests/appliance_headless_boot.rs",
+        "appliance_boot_support": "tests/appliance_boot_support.rs",
+    },
+    deps = [],
+)
+
+exports_files(["tests/appliance_boot_support.rs"])
+
+rust_binary(
+    name = "plasm-server",
+    srcs = glob(["src/**/*.rs"]),
+    aliases = aliases(),
+    compile_data = glob(
+        ["src/**"],
+        allow_empty = True,
+        exclude = ["src/**/*.rs"],
+    ),
+    crate_features = [
+        "default",
+        "embedded_postgres",
+    ],
+    crate_root = "src/main.rs",
+    edition = "2021",
+    proc_macro_deps = all_crate_deps(proc_macro = True),
+    version = "0.5.5",
+    visibility = ["//visibility:public"],
+    deps = [
+        "//crates/plasm:plasm_agent",
+        "//crates/plasm-agent-core:plasm_agent_core",
+        "//crates/plasm-core:plasm_core",
+        "//crates/plasm-otel:plasm_otel",
+        "//crates/plasm-runtime:plasm_runtime",
+    ] + all_crate_deps(normal = True),
+)

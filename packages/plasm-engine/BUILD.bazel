@@ -1,0 +1,35 @@
+load("//build/bazel:npm_package.bzl", "npm_package")
+
+exports_files(["package.json"])
+
+npm_package(
+    name = "package",
+    srcs = [
+        "LICENSE-APACHE",
+        "LICENSE-MIT",
+        "README.md",
+        "index.d.ts",
+        "index.js",
+        "napi.json",
+        "runtime.cjs",
+    ],
+    manifest = "package.json",
+    visibility = ["//visibility:public"],
+)
+
+npm_package(
+    name = "platform_package",
+    srcs = [
+        "LICENSE-APACHE",
+        "LICENSE-MIT",
+    ],
+    binding = "//crates/plasm-node:node_binding",
+    manifest = "package.json",
+    monty = "//:monty",
+    platform = select({
+        "//:release_macos_arm64": "darwin-arm64",
+        "//:release_linux_x86_64": "linux-x64-gnu",
+        "//:release_linux_arm64": "linux-arm64-gnu",
+    }),
+    visibility = ["//visibility:public"],
+)

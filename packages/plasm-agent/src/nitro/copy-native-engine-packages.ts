@@ -9,7 +9,6 @@ const ENGINE_PACKAGES = [
   "@plasm_lang/engine-linux-x64-gnu",
   "@plasm_lang/engine-linux-x64-musl",
   "@plasm_lang/engine-darwin-arm64",
-  "@plasm_lang/engine-darwin-x64",
 ] as const;
 
 const VERCEL_ENGINE_PACKAGES = [

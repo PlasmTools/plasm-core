@@ -689,7 +689,7 @@ mod tests {
     use crate::{compile_operation, CmlEnv, CompiledOperation};
 
     fn commit_matrix_cgs() -> plasm_core::CGS {
-        let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+        let root = PathBuf::from(crate::test_manifest_dir());
         load_schema(&root.join("../../fixtures/schemas/repository_commit_matrix"))
             .expect("load repository_commit_matrix")
     }
@@ -748,7 +748,7 @@ mod tests {
 
     #[test]
     fn matrix_views_validate_at_load() {
-        let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+        let root = PathBuf::from(crate::test_manifest_dir());
         let cgs = plasm_core::load_schema_dir(
             &root.join("../../fixtures/schemas/plasm_language_matrix_views"),
         )
@@ -760,7 +760,7 @@ mod tests {
     #[test]
     fn view_private_computed_bindings_receive_template_validation() {
         use plasm_core::schema::ViewOutputBinding;
-        let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+        let root = PathBuf::from(crate::test_manifest_dir());
         let original = plasm_core::load_schema_dir(
             &root.join("../../fixtures/schemas/plasm_language_matrix_views"),
         )
@@ -907,7 +907,7 @@ mod tests {
     fn validate_rejects_capability_param_not_referenced_in_cml() {
         use plasm_core::schema::{InputFieldSchema, InputFieldWire};
 
-        let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+        let root = PathBuf::from(crate::test_manifest_dir());
         let mut cgs = plasm_core::load_schema_dir(
             &root.join("../../fixtures/schemas/plasm_language_matrix_views"),
         )
@@ -939,7 +939,7 @@ mod tests {
 
     #[test]
     fn compound_scope_requires_all_expanded_identity_keys_on_the_wire() {
-        let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+        let root = PathBuf::from(crate::test_manifest_dir());
         let cgs = plasm_core::load_schema_dir(
             &root.join("../../fixtures/schemas/repository_commit_matrix"),
         )
@@ -981,7 +981,7 @@ mod tests {
 
     #[test]
     fn language_matrix_templates_validate() {
-        let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+        let root = PathBuf::from(crate::test_manifest_dir());
         let cgs =
             plasm_core::load_schema(&root.join("../../fixtures/schemas/plasm_language_matrix"))
                 .expect("load");
@@ -991,7 +991,7 @@ mod tests {
 
     #[test]
     fn pagination_and_prompt_matrix_templates_validate() {
-        let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+        let root = PathBuf::from(crate::test_manifest_dir());
         for rel in [
             "../../fixtures/schemas/plasm_pagination_matrix",
             "../../fixtures/schemas/plasm_prompt_matrix",
@@ -1082,7 +1082,7 @@ mod tests {
 
     #[test]
     fn validate_cgs_views_rejects_duplicate_node_id() {
-        let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+        let root = PathBuf::from(crate::test_manifest_dir());
         let mut cgs = plasm_core::load_schema_dir(
             &root.join("../../fixtures/schemas/plasm_language_matrix_views"),
         )
@@ -1107,7 +1107,7 @@ mod tests {
 
     #[test]
     fn compiled_catalog_entry_identity_is_bound_from_cgs_not_artifact() {
-        let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+        let root = PathBuf::from(crate::test_manifest_dir());
         let mut cgs =
             plasm_core::load_schema_dir(&root.join("../../fixtures/schemas/prerequisite_matrix"))
                 .unwrap();
@@ -1128,7 +1128,7 @@ mod tests {
 
     #[test]
     fn compiled_catalog_round_trip_is_bound_to_exact_cgs_revision() {
-        let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+        let root = PathBuf::from(crate::test_manifest_dir());
         let cgs =
             plasm_core::load_schema_dir(&root.join("../../fixtures/schemas/prerequisite_matrix"))
                 .expect("load prerequisite matrix");

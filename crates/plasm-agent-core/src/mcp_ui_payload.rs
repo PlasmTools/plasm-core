@@ -376,7 +376,9 @@ fn json_schema_object(
 fn call_tool_result_with_ui(ui: Map<String, Value>) -> CallToolResult {
     let mut structured = Map::new();
     structured.insert("ui".into(), Value::Object(ui));
-    CallToolResult::structured(serde_json::Value::Object(structured))
+    let mut result = CallToolResult::success(vec![]);
+    result.structured_content = Some(Value::Object(structured));
+    result
 }
 
 /// Build app-only hydration tool result with plan DAG in `structuredContent.ui`.
@@ -420,6 +422,22 @@ mod tests {
     use crate::mcp_agent_present::{AgentContent, PlanTokenRefs, RunTokens};
     use rmcp::model::{CallToolResult, ContentBlock};
     use serde_json::json;
+
+    #[test]
+    fn app_hydration_keeps_payload_out_of_agent_text() {
+        for result in [
+            ui_read_plan_tool_result(json!({"steps": {}}), json!({})),
+            ui_read_run_tool_result("run", "items", 1, json!([{"id": "one"}])),
+        ] {
+            assert!(result.content.is_empty());
+            assert!(result
+                .structured_content
+                .as_ref()
+                .unwrap()
+                .get("ui")
+                .is_some());
+        }
+    }
 
     fn sample_dry_tool_meta() -> Map<String, Value> {
         let mut agent = Map::new();
@@ -490,7 +508,9 @@ mod tests {
         assert_eq!(
             wire.pointer("/structuredContent/ui/plan_uri")
                 .and_then(|v| v.as_str()),
-            Some("plasm://execute/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/s1/plan/00000000-0000-4000-8000-000000000001")
+            Some(
+                "plasm://execute/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/s1/plan/00000000-0000-4000-8000-000000000001"
+            )
         );
         let text = first_text(&out);
         assert!(text.contains("kind\tplan"));

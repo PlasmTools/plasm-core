@@ -660,7 +660,7 @@ mod tests {
     #[test]
     fn union_wire_decode_retains_common_lanes_and_optional_nested_fields() {
         let cgs = crate::load_schema_dir(
-            &std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            &std::path::Path::new(crate::test_manifest_dir())
                 .join("../../fixtures/schemas/python_union_matrix"),
         )
         .unwrap();
@@ -692,7 +692,7 @@ mod tests {
     #[test]
     fn union_array_wrapping_composes_with_paths_without_erasing_deferred_values() {
         let cgs = crate::load_schema_dir(
-            &std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            &std::path::Path::new(crate::test_manifest_dir())
                 .join("../../fixtures/schemas/python_union_matrix"),
         )
         .unwrap();

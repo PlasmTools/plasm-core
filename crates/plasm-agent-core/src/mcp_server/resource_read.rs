@@ -296,7 +296,7 @@ mod tests {
     #[tokio::test]
     async fn computed_artifact_context_is_tsv_with_session_paging_while_ui_is_json() {
         let mut cgs = plasm_core::load_schema(
-            &std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            &std::path::Path::new(crate::test_manifest_dir())
                 .join("../../fixtures/schemas/python_dag_slice"),
         )
         .unwrap();

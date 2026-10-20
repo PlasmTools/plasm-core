@@ -401,7 +401,7 @@ mod tests {
 
     #[test]
     fn filtered_delta_includes_optional_legend_gloss_rows() {
-        let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+        let root = PathBuf::from(crate::test_manifest_dir());
         let cgs = load_schema_dir(&root.join("../../fixtures/schemas/plasm_language_matrix"))
             .expect("plasm_language_matrix");
         let entities = vec!["LangItem".to_string()];
@@ -454,7 +454,7 @@ mod tests {
 
     #[test]
     fn mutator_recap_homograph_tags_scalar_vs_array_on_matrix() {
-        let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+        let root = PathBuf::from(crate::test_manifest_dir());
         let cgs = load_schema_dir(&root.join("../../fixtures/schemas/plasm_language_matrix"))
             .expect("matrix");
         let entities = vec!["LangItem".to_string()];
@@ -488,7 +488,7 @@ mod tests {
 
     #[test]
     fn teaching_gloss_emits_p_sym_for_create_witness_params() {
-        let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+        let root = PathBuf::from(crate::test_manifest_dir());
         let cgs = load_schema_dir(&root.join("../../fixtures/schemas/plasm_language_matrix"))
             .expect("matrix");
         let entities = vec!["LangItem".to_string()];
@@ -549,7 +549,7 @@ mod tests {
 
     #[test]
     fn optional_legend_pairs_name_wire_for_langitem_create() {
-        let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+        let root = PathBuf::from(crate::test_manifest_dir());
         let cgs = load_schema_dir(&root.join("../../fixtures/schemas/plasm_language_matrix"))
             .expect("plasm_language_matrix");
         let exp = TeachingExposureSession::new(&cgs, "langmatrix", &["LangItem"]);

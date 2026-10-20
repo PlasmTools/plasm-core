@@ -125,6 +125,11 @@ struct Args {
     #[arg(long)]
     embedding_cache_dir: Option<PathBuf>,
 
+    /// Acquire missing embeddings into the cache, then exit without packing catalogs.
+    /// This explicit preparation step may make authenticated, billable requests.
+    #[arg(long)]
+    prepare_embeddings: bool,
+
     /// Rebuild artifact metadata; matching cached vectors are still reused.
     #[arg(long, action = clap::ArgAction::SetTrue)]
     force: bool,
@@ -199,6 +204,7 @@ async fn reusable_catalogs(
     out_dir: &Path,
     embedding_cache: &Path,
     prepared_hashes: &std::collections::BTreeMap<String, String>,
+    seed_cache: bool,
 ) -> Result<std::collections::BTreeMap<String, (String, CatalogManifest)>> {
     let mut reusable = std::collections::BTreeMap::new();
     if !out_dir.join("catalog-set.json").exists() {
@@ -263,7 +269,9 @@ async fn reusable_catalogs(
                     error,
                 )
             })?;
-        plasm_catalog::embeddings::cache_artifact(&artifact, embedding_cache).await?;
+        if seed_cache {
+            plasm_catalog::embeddings::cache_artifact(&artifact, embedding_cache).await?;
+        }
         let name = path
             .file_name()
             .and_then(|name| name.to_str())
@@ -406,7 +414,28 @@ async fn pack(args: Args) -> Result<()> {
         .iter()
         .map(|(name, cgs)| (name.clone(), cgs.catalog_cgs_hash_hex()))
         .collect();
-    let reusable = reusable_catalogs(&out_dir, &embedding_cache_dir, &prepared_hashes).await?;
+    let reusable = reusable_catalogs(
+        &out_dir,
+        &embedding_cache_dir,
+        &prepared_hashes,
+        args.prepare_embeddings,
+    )
+    .await?;
+    if args.prepare_embeddings {
+        for (name, cgs) in &catalogs {
+            let documents =
+                plasm_core::catalog_discovery::capability_documents(cgs).map_err(|error| {
+                    catalog_failure(CatalogStage::CapabilityDocumentRendering, name, error)
+                })?;
+            let embedded =
+                plasm_catalog::embeddings::embed_documents(documents, &embedding_cache_dir).await?;
+            eprintln!(
+                "plasm-pack-catalogs: prepared `{name}`: {} cached, {} acquired in {} requests",
+                embedded.reused_documents, embedded.embedded_documents, embedded.requests
+            );
+        }
+        return Ok(());
+    }
     let mut embedded_documents = 0usize;
     let mut reused_documents = 0usize;
     let mut embedding_requests = 0usize;
@@ -451,7 +480,7 @@ async fn pack(args: Args) -> Result<()> {
                 catalog_failure(CatalogStage::CapabilityDocumentRendering, name, error)
             })?;
         let embedded =
-            plasm_catalog::embeddings::embed_documents(documents, &embedding_cache_dir).await?;
+            plasm_catalog::embeddings::load_cached_documents(documents, &embedding_cache_dir)?;
         reused_documents += embedded.reused_documents;
         embedded_documents += embedded.embedded_documents;
         embedding_requests += embedded.requests;
@@ -540,6 +569,21 @@ async fn pack(args: Args) -> Result<()> {
 }
 
 #[cfg(test)]
+fn test_manifest_dir() -> &'static str {
+    static DIRECTORY: std::sync::OnceLock<String> = std::sync::OnceLock::new();
+    DIRECTORY.get_or_init(|| {
+        let path =
+            std::env::var("CARGO_MANIFEST_DIR").expect("test runner must set CARGO_MANIFEST_DIR");
+        std::path::Path::new(&path)
+            .canonicalize()
+            .expect("test manifest directory must exist")
+            .to_str()
+            .expect("test manifest directory must be UTF-8")
+            .to_owned()
+    })
+}
+
+#[cfg(test)]
 mod tests {
     use super::*;
     use plasm_core::prerequisites::{prerequisite_closure, CapabilityRef, DeploymentBindings};
@@ -618,7 +662,7 @@ mod tests {
 
     #[test]
     fn all_catalog_packages_pass_pack_preflight() {
-        let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../apis");
+        let root = Path::new(test_manifest_dir()).join("../../apis");
         let mut errors = Vec::new();
         for entry in fs::read_dir(root).unwrap() {
             let entry = entry.unwrap();
@@ -656,7 +700,7 @@ mod tests {
         capability: &str,
         inputs: serde_json::Value,
     ) -> serde_json::Value {
-        let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../apis");
+        let root = Path::new(test_manifest_dir()).join("../../apis");
         let cgs = prepare_cgs_for_catalog(&root.join(catalog), catalog)
             .unwrap_or_else(|e| panic!("{catalog}: {e:#}"));
         let cap = cgs
@@ -683,7 +727,7 @@ mod tests {
             ("vultr", "KubernetesNodePool", "vke_labels"),
             ("vultr", "KubernetesNodePool", "vke_taints"),
         ] {
-            let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../apis");
+            let root = Path::new(test_manifest_dir()).join("../../apis");
             let cgs = prepare_cgs_for_catalog(&root.join(catalog), catalog).unwrap();
             let entity = cgs.get_entity(parent).unwrap();
             let relation = entity.relations.get(relation_name).unwrap();
@@ -851,7 +895,7 @@ mod tests {
 
     #[test]
     fn proof_credential_templates_compile_without_host_dispatch() {
-        let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../apis/proof");
+        let root = Path::new(test_manifest_dir()).join("../../apis/proof");
         let cgs = prepare_cgs_for_catalog(&root, "proof").unwrap();
         let bindings: DeploymentBindings =
             serde_json::from_slice(&fs::read(root.join("deployment-bindings.json")).unwrap())
@@ -921,7 +965,7 @@ mod tests {
 
     #[test]
     fn catalog_query_cutover_preserves_vendor_requests() {
-        let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../apis/musixmatch");
+        let root = Path::new(test_manifest_dir()).join("../../apis/musixmatch");
         let cgs = prepare_cgs_for_catalog(&root, "musixmatch").unwrap();
         for source in [
             r#"Track{mode="search", q_artist="composer"}"#,
@@ -972,7 +1016,7 @@ mod tests {
 
     #[test]
     fn catalog_parent_and_listing_contracts_compile() {
-        let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../apis/clickup");
+        let root = Path::new(test_manifest_dir()).join("../../apis/clickup");
         let cgs = prepare_cgs_for_catalog(&root, "clickup").unwrap();
         for source in [
             r#"Space{team_id="123", archived=false}"#,
@@ -1071,7 +1115,7 @@ mod tests {
 
     #[test]
     fn appworld_declared_prerequisite_generation() {
-        let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../apis/appworld");
+        let root = Path::new(test_manifest_dir()).join("../../apis/appworld");
         let names = [
             "supervisor",
             "amazon",
@@ -1178,8 +1222,8 @@ mod tests {
     async fn whole_catalog_reuse_recovers_vectors_without_stamps_or_credentials() {
         let output = tempfile::tempdir().unwrap();
         let cache = tempfile::tempdir().unwrap();
-        let fixture = Path::new(env!("CARGO_MANIFEST_DIR"))
-            .join("../../fixtures/schemas/prerequisite_matrix");
+        let fixture =
+            Path::new(test_manifest_dir()).join("../../fixtures/schemas/prerequisite_matrix");
         let mut cgs = plasm_core::loader::load_schema_dir_unvalidated(&fixture).unwrap();
         cgs.bind_registry_entry_id("prerequisite_matrix");
         finalize_cgs_load(&mut cgs).unwrap();
@@ -1264,7 +1308,7 @@ mod tests {
             manifest.cgs_hash.clone(),
         )]);
         for _ in 0..2 {
-            let reused = reusable_catalogs(output.path(), cache.path(), &prepared_hashes)
+            let reused = reusable_catalogs(output.path(), cache.path(), &prepared_hashes, true)
                 .await
                 .unwrap();
             assert_eq!(reused["prerequisite_matrix"].1.cgs_hash, manifest.cgs_hash);
@@ -1284,8 +1328,9 @@ mod tests {
         let args = |force| Args {
             apis_root: fixture.parent().unwrap().to_path_buf(),
             output_dir: output.path().to_path_buf(),
-            workspace: PathBuf::from(env!("CARGO_MANIFEST_DIR")),
+            workspace: PathBuf::from(test_manifest_dir()),
             embedding_cache_dir: Some(cache.path().to_path_buf()),
+            prepare_embeddings: false,
             force,
             package_list: Some(package_list.path().to_path_buf()),
         };
@@ -1321,7 +1366,7 @@ mod tests {
         let recipe_bytes = fs::read(&recipe_path).unwrap();
         fs::write(&recipe_path, b"{}").unwrap();
         assert!(
-            reusable_catalogs(output.path(), cache.path(), &prepared_hashes)
+            reusable_catalogs(output.path(), cache.path(), &prepared_hashes, true)
                 .await
                 .is_err(),
             "damaged compiled recipes must not be published as cache hits"
@@ -1329,7 +1374,7 @@ mod tests {
         fs::write(&recipe_path, recipe_bytes).unwrap();
         fs::write(output.path().join(&active_manifest.discovery_json), b"{}").unwrap();
         assert!(
-            reusable_catalogs(output.path(), cache.path(), &prepared_hashes)
+            reusable_catalogs(output.path(), cache.path(), &prepared_hashes, true)
                 .await
                 .is_err(),
             "damaged artifacts must not be published as cache hits"
@@ -1342,8 +1387,8 @@ mod tests {
         let root = workspace.path().join("apis");
         let valid = root.join("prerequisite_matrix");
         fs::create_dir_all(&valid).unwrap();
-        let fixture = Path::new(env!("CARGO_MANIFEST_DIR"))
-            .join("../../fixtures/schemas/prerequisite_matrix");
+        let fixture =
+            Path::new(test_manifest_dir()).join("../../fixtures/schemas/prerequisite_matrix");
         for name in ["domain.yaml", "mappings.yaml"] {
             fs::copy(fixture.join(name), valid.join(name)).unwrap();
         }
@@ -1361,6 +1406,7 @@ mod tests {
             output_dir: output.clone(),
             workspace: workspace.path().to_path_buf(),
             embedding_cache_dir: Some(cache.clone()),
+            prepare_embeddings: false,
             force: false,
             package_list: None,
         })

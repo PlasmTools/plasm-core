@@ -8,7 +8,7 @@ use std::sync::Arc;
 #[tokio::test]
 async fn embedded_relation_without_get_preserves_rows_and_summary_status() {
     let mut cgs = plasm_core::load_schema_dir(
-        &std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        &std::path::Path::new(plasm_e2e::test_manifest_dir())
             .join("../../fixtures/schemas/plasm_language_matrix_views"),
     )
     .unwrap();

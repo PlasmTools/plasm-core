@@ -1,10 +1,10 @@
 //! Finite branch-type product plus arithmetic/effect boundaries, through Python admission.
 use plasm_agent::plasm_compile::compile_python_program;
 use plasm_runtime::{FailureCause, RecoveryDisposition};
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use std::sync::{
-    atomic::{AtomicUsize, Ordering},
     Arc,
+    atomic::{AtomicUsize, Ordering},
 };
 
 struct Server(tokio::task::JoinHandle<()>);
@@ -66,7 +66,9 @@ async fn branch_product(base: String) -> usize {
         for (right, r) in &leaves {
             for (id, expected) in [("000123", l), ("000124", r)] {
                 let (es, host, token) = super::recursive_values::fixture_context(base.clone());
-                let source = format!("class Choice(Program):\n    @compute\n    def consume(self, row: Row) -> Row.value:\n        return row.value\n    def build(self):\n        root = {token}.get('{id}')\n        result = root.select(value=lambda row: {left} if row.flag == True else {right})\n        return self.consume(result)\n");
+                let source = format!(
+                    "class Choice(Program):\n    @compute\n    def consume(self, row: Row) -> Row.value:\n        return row.value\n    def build(self):\n        root = {token}.get('{id}')\n        result = root.select(value=lambda row: {left} if row.flag == True else {right})\n        return {{'value': self.consume(result)}}\n"
+                );
                 let bundle = compile_python_program(&es, &source)
                     .await
                     .unwrap_or_else(|e| panic!("{source}\n{e}"));
@@ -86,8 +88,10 @@ async fn branch_product(base: String) -> usize {
                 )
                 .await
                 .unwrap_or_else(|e| panic!("{source}\n{e}"));
+                assert_eq!(run.return_steps.len(), 1, "{source}");
+                assert_eq!(run.return_steps[0].result.entities().len(), 1, "{source}");
                 assert_eq!(
-                    serde_json::to_value(&run.return_steps[0].result.entities()[0].fields).unwrap(),
+                    super::value_fields(&run.return_steps[0].result.entities()[0]),
                     json!({"value": expected}),
                     "{source}"
                 );
@@ -114,7 +118,7 @@ async fn arithmetic(base: String) -> usize {
         ("row.text + row.text", json!("[1][1]")),
         (
             "money_mul(row.price, 2)",
-            json!({"__plasm_money":"24691357802469135780.24691356","currency":"USD","format":{"encoding":"decimal_string"}}),
+            json!({"__plasm_money":"24691357802469135780.24691356","currency":"USD"}),
         ),
         (
             "row.count if row.flag == True else 1 / 0",
@@ -122,7 +126,9 @@ async fn arithmetic(base: String) -> usize {
         ),
     ] {
         let (es, host, token) = super::recursive_values::fixture_context(base.clone());
-        let source = format!("class Arithmetic(Program):\n    @compute\n    def consume(self, row: Row) -> Row.value:\n        return row.value\n    def build(self):\n        root = {token}.get('000123')\n        result = root.select(value=lambda row: {expression})\n        return self.consume(result)\n");
+        let source = format!(
+            "class Arithmetic(Program):\n    @compute\n    def consume(self, row: Row) -> Row.value:\n        return row.value\n    def build(self):\n        root = {token}.get('000123')\n        result = root.select(value=lambda row: {expression})\n        return self.consume(result)\n"
+        );
         let bundle = compile_python_program(&es, &source)
             .await
             .unwrap_or_else(|e| panic!("{source}\n{e}"));
@@ -141,7 +147,7 @@ async fn arithmetic(base: String) -> usize {
         .await
         .unwrap_or_else(|e| panic!("{source}\n{e}"));
         assert_eq!(
-            serde_json::to_value(&run.return_steps[0].result.entities()[0].fields).unwrap(),
+            super::value_fields(&run.return_steps[0].result.entities()[0]),
             json!({"value":expected})
         );
         count += 1;
@@ -158,7 +164,9 @@ async fn operator_rejections(base: String) -> usize {
         "row.text + row.count",
     ] {
         let (es, _, token) = super::recursive_values::fixture_context(base.clone());
-        let source = format!("class Invalid(Program):\n    def build(self):\n        return {token}.get('000123').select(value=lambda row: {expression})\n");
+        let source = format!(
+            "class Invalid(Program):\n    def build(self):\n        return {token}.get('000123').select(value=lambda row: {expression})\n"
+        );
         let error = compile_python_program(&es, &source)
             .await
             .unwrap_err()
@@ -196,7 +204,9 @@ async fn mixed_structures(base: String) -> usize {
         ),
     ] {
         let (es, host, token) = super::recursive_values::fixture_context(base.clone());
-        let source = format!("class Mixed(Program):\n    @compute\n    def consume(self, rows: list[Row]) -> list[Row.value]:\n        return [row.value for row in rows]\n    def build(self):\n        left = {token}.get('000123')\n        right = {token}.get('000124')\n        root = left.union(right)\n        result = root.select(value=lambda row: {expression}){suffix}\n        return self.consume(result)\n");
+        let source = format!(
+            "class Mixed(Program):\n    @compute\n    def consume(self, rows: list[Row]) -> list[Row.value]:\n        return [row.value for row in rows]\n    def build(self):\n        left = {token}.get('000123')\n        right = {token}.get('000124')\n        root = left.union(right)\n        result = root.select(value=lambda row: {expression}){suffix}\n        return {{'value': self.consume(result)}}\n"
+        );
         let bundle = compile_python_program(&es, &source)
             .await
             .unwrap_or_else(|e| panic!("{source}\n{e}"));
@@ -215,7 +225,7 @@ async fn mixed_structures(base: String) -> usize {
         .await
         .unwrap_or_else(|e| panic!("{source}\n{e}"));
         assert_eq!(
-            serde_json::to_value(&run.return_steps[0].result.entities()[0].fields).unwrap(),
+            super::value_fields(&run.return_steps[0].result.entities()[0]),
             json!({"value":expected}),
             "{source}"
         );
@@ -234,7 +244,9 @@ async fn mixed_structures(base: String) -> usize {
         ),
     ] {
         let (es, host, token) = super::recursive_values::fixture_context(base.clone());
-        let source = format!("class Structured(Program):\n    @compute\n    def consume(self, rows: list[Row]) -> list[Row.value]:\n        return [row.value for row in rows]\n    def build(self):\n        left = {token}.get('000123')\n        right = {token}.get('000124')\n        root = left.union(right)\n        shaped = root.map(lambda r: {{'a': {a}, 'b': {b}, 'flag': r.flag}}, max_parents=2)\n        result = shaped.select(value=lambda r: r.a if r.flag == True else r.b)\n        return self.consume(result)\n");
+        let source = format!(
+            "class Structured(Program):\n    @compute\n    def consume(self, rows: list[Row]) -> list[Row.value]:\n        return [row.value for row in rows]\n    def build(self):\n        left = {token}.get('000123')\n        right = {token}.get('000124')\n        root = left.union(right)\n        shaped = root.map(lambda r: {{'a': {a}, 'b': {b}, 'flag': r.flag}}, max_parents=2)\n        result = shaped.select(value=lambda r: r.a if r.flag == True else r.b)\n        return {{'value': self.consume(result)}}\n"
+        );
         let bundle = compile_python_program(&es, &source)
             .await
             .unwrap_or_else(|e| panic!("{source}\n{e}"));
@@ -253,7 +265,7 @@ async fn mixed_structures(base: String) -> usize {
         .await
         .unwrap_or_else(|e| panic!("{source}\n{e}"));
         assert_eq!(
-            serde_json::to_value(&run.return_steps[0].result.entities()[0].fields).unwrap(),
+            super::value_fields(&run.return_steps[0].result.entities()[0]),
             json!({"value":expected})
         );
         count += 1;
@@ -291,11 +303,17 @@ async fn effect_rejections(base: String, writes: &AtomicUsize) -> usize {
                 .method_sym_for("types", "Sample", "sample_update");
             let direct = expression.replace("row.", "root.");
             let body = match context {
-            "projection" => format!("result = root.select(value=lambda row: {expression})\n        return root.{method}(count=result.value)"),
-            "record" => format!("result = {{'value': {direct}}}\n        return root.{method}(count=result.value)"),
-            _ => format!("return root.{method}(count={direct})"),
-        };
-            let source = format!("class FailClosed(Program):\n    def build(self):\n        root = {token}.get('000123')\n        {body}\n");
+                "projection" => format!(
+                    "result = root.select(value=lambda row: {expression})\n        return root.{method}(count=result.value)"
+                ),
+                "record" => format!(
+                    "result = {{'value': {direct}}}\n        return root.{method}(count=result.value)"
+                ),
+                _ => format!("return root.{method}(count={direct})"),
+            };
+            let source = format!(
+                "class FailClosed(Program):\n    def build(self):\n        root = {token}.get('000123')\n        {body}\n"
+            );
             let bundle = compile_python_program(&es, &source)
                 .await
                 .unwrap_or_else(|e| panic!("{source}\n{e}"));
@@ -339,6 +357,14 @@ async fn effect_rejections(base: String, writes: &AtomicUsize) -> usize {
 #[tokio::test]
 async fn outer_value_transfer_boundary() {
     assert_eq!(run().await, 99);
+}
+
+#[tokio::test]
+async fn outer_value_arithmetic_and_structures() {
+    let (base, _server, writes) = fixture().await;
+    assert_eq!(arithmetic(base.clone()).await, 9);
+    assert_eq!(mixed_structures(base).await, 6);
+    assert_eq!(writes.load(Ordering::SeqCst), 0);
 }
 
 #[tokio::test]

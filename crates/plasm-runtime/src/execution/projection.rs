@@ -220,7 +220,7 @@ mod tests {
     #[tokio::test]
     async fn projection_uses_exact_read_despite_other_complete_get_and_preserves_rows() {
         let cgs = plasm_core::loader::load_schema_dir(
-            &std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            &std::path::Path::new(crate::test_manifest_dir())
                 .join("../../fixtures/schemas/entity_projection_matrix"),
         )
         .unwrap();

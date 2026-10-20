@@ -5,7 +5,7 @@ use plasm_core::TeachingExposureSession;
 use std::path::PathBuf;
 
 pub(super) fn test_session() -> ExecuteSession {
-    let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let root = PathBuf::from(crate::test_manifest_dir());
     let cgs = Arc::new(
         load_schema(&root.join("tests/fixtures/execute_tiny")).expect("load execute_tiny"),
     );
@@ -33,7 +33,7 @@ pub(super) fn test_session() -> ExecuteSession {
 }
 
 pub(super) fn duplicate_product_create_session() -> ExecuteSession {
-    let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let root = PathBuf::from(crate::test_manifest_dir());
     let cgs_base = load_schema(&root.join("tests/fixtures/scoped_create_tiny"))
         .expect("load scoped_create_tiny");
     let cgs_acme = Arc::new({
@@ -80,7 +80,7 @@ pub(super) fn duplicate_product_create_session() -> ExecuteSession {
 }
 
 pub(super) fn federated_langmatrix_item_session() -> Option<ExecuteSession> {
-    let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let root = PathBuf::from(crate::test_manifest_dir());
     let matrix_dir = root.join("../../fixtures/schemas/plasm_language_matrix");
     let mut cgs_a = load_schema(&matrix_dir).ok()?;
     cgs_a.bind_registry_entry_id("langmatrix_a");
@@ -122,7 +122,7 @@ pub(super) fn federated_langmatrix_item_team_session() -> Option<ExecuteSession>
 }
 
 pub(super) fn language_matrix_session() -> ExecuteSession {
-    let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let root = PathBuf::from(crate::test_manifest_dir());
     let dir = root.join("../../fixtures/schemas/plasm_language_matrix");
     let cgs = Arc::new(load_schema(&dir).expect("load plasm_language_matrix"));
     let mut ctxs = indexmap::IndexMap::new();
@@ -150,7 +150,7 @@ pub(super) fn language_matrix_session() -> ExecuteSession {
 }
 
 pub(super) fn matrix_views_session() -> ExecuteSession {
-    let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let root = PathBuf::from(crate::test_manifest_dir());
     let cgs = Arc::new(
         load_schema(&root.join("../../fixtures/schemas/plasm_language_matrix_views"))
             .expect("load plasm_language_matrix_views"),

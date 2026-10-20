@@ -177,7 +177,7 @@ mod tests {
     #[test]
     fn support_packet_contains_only_available_fixture_capabilities() {
         let mut cgs = plasm_core::load_schema(
-            &std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            &std::path::Path::new(crate::test_manifest_dir())
                 .join("../../fixtures/schemas/prerequisite_matrix"),
         )
         .unwrap();

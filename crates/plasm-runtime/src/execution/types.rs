@@ -78,8 +78,10 @@ pub struct ExecutionResult {
     /// Presentation/acquisition continuation metadata; never a completeness proof.
     pub has_more: bool,
     /// Host-only continuation payload for opaque LLM paging (`page(pg#)`); never serialized on wire.
+    /// Keep the large query/template snapshot out of every result, including non-paged
+    /// mutator results carried through nested async execution frames.
     #[serde(skip)]
-    pub pagination_resume: Option<QueryPaginationResumeData>,
+    pub pagination_resume: Option<Box<QueryPaginationResumeData>>,
     /// When set, MCP/HTTP layers may surface a one-line `page(handle)` hint after truncated lists.
     #[serde(skip)]
     pub paging_handle: Option<plasm_core::PagingHandle>,

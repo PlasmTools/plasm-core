@@ -63,6 +63,8 @@ pub enum EmbeddingAcquisitionError {
     CacheSerialization(#[source] serde_json::Error),
     #[error("embedding acquisition did not produce every requested vector")]
     IncompleteAcquisition,
+    #[error("embedding cache is missing document {key}; run explicit embedding preparation first")]
+    MissingCachedDocument { key: String },
 }
 
 const BATCH_SIZE: usize = 32;
@@ -196,6 +198,44 @@ pub struct EmbeddedDocuments {
     pub requests: usize,
 }
 
+/// Consume immutable, content-addressed inputs without credentials, writes or network access.
+pub fn load_cached_documents(
+    documents: Vec<CapabilityDocument>,
+    cache_dir: &Path,
+) -> Result<EmbeddedDocuments> {
+    let profile = EmbeddingProfile::default();
+    let capabilities = documents
+        .into_iter()
+        .map(|document| {
+            let (key, vector) = cached_document(&document, cache_dir, &profile)?;
+            Ok(EmbeddedCapability {
+                document,
+                embedding: vector
+                    .ok_or(EmbeddingAcquisitionError::MissingCachedDocument { key })?,
+            })
+        })
+        .collect::<Result<Vec<_>>>()?;
+    Ok(EmbeddedDocuments {
+        reused_documents: capabilities.len(),
+        capabilities,
+        embedded_documents: 0,
+        requests: 0,
+    })
+}
+
+fn cached_document(
+    document: &CapabilityDocument,
+    cache_dir: &Path,
+    profile: &EmbeddingProfile,
+) -> Result<(String, Option<Vec<f32>>)> {
+    if plasm_core::catalog_discovery::content_hash(document.text.as_bytes()) != document.text_hash {
+        return Err(EmbeddingAcquisitionError::DocumentHashMismatch);
+    }
+    let key = embedding_cache_key(document, profile);
+    let vector = read_cached_vector(&cache_dir.join(format!("{key}.json")), &key, profile)?;
+    Ok((key, vector))
+}
+
 /// Fully cached publications require no credentials or network access.
 pub async fn embed_documents(
     documents: Vec<CapabilityDocument>,
@@ -304,14 +344,8 @@ where
     let mut missing: BTreeMap<String, Vec<usize>> = BTreeMap::new();
     let mut reused_documents = 0;
     for (index, document) in documents.iter().enumerate() {
-        if plasm_core::catalog_discovery::content_hash(document.text.as_bytes())
-            != document.text_hash
-        {
-            return Err(EmbeddingAcquisitionError::DocumentHashMismatch);
-        }
-        let key = embedding_cache_key(document, &profile);
-        let path = cache_dir.join(format!("{key}.json"));
-        match read_cached_vector(&path, &key, &profile)? {
+        let (key, cached) = cached_document(document, cache_dir, &profile)?;
+        match cached {
             Some(vector) => {
                 vectors[index] = Some(vector);
                 reused_documents += 1;
@@ -397,6 +431,53 @@ pub fn atomic_write(path: &Path, bytes: &[u8]) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn cached_document_miss_does_not_create_or_repair_inputs() {
+        let root = tempfile::tempdir().unwrap();
+        let cache = root.path().join("absent");
+        let result = load_cached_documents(vec![document("read items")], &cache);
+        assert!(matches!(
+            result,
+            Err(EmbeddingAcquisitionError::MissingCachedDocument { .. })
+        ));
+        assert!(!cache.exists());
+    }
+
+    #[test]
+    fn cached_documents_require_valid_content_addressed_vectors() {
+        let cache = tempfile::tempdir().unwrap();
+        let doc = document("read items");
+        let profile = EmbeddingProfile::default();
+        let key = embedding_cache_key(&doc, &profile);
+        let path = cache.path().join(format!("{key}.json"));
+        let vector = vec![0.125; profile.dimensions];
+        let bytes = serde_json::to_vec(&CachedEmbedding {
+            key,
+            profile,
+            vector: vector.clone(),
+        })
+        .unwrap();
+        std::fs::write(&path, &bytes).unwrap();
+        let loaded = load_cached_documents(vec![doc.clone()], cache.path()).unwrap();
+        assert_eq!(loaded.capabilities[0].embedding, vector);
+        assert_eq!(
+            (
+                loaded.reused_documents,
+                loaded.embedded_documents,
+                loaded.requests
+            ),
+            (1, 0, 0)
+        );
+        assert_eq!(std::fs::read_dir(cache.path()).unwrap().count(), 1);
+        assert_eq!(std::fs::read(&path).unwrap(), bytes);
+        std::fs::write(&path, b"invalid JSON").unwrap();
+        assert!(matches!(
+            load_cached_documents(vec![doc], cache.path()),
+            Err(EmbeddingAcquisitionError::InvalidCacheJson(_))
+        ));
+        assert_eq!(std::fs::read(&path).unwrap(), b"invalid JSON");
+    }
 
     #[test]
     fn response_model_identity_accepts_only_the_configured_openai_model() {

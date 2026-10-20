@@ -13,7 +13,9 @@ use appliance_boot_support::{
 };
 
 fn bin_path() -> std::path::PathBuf {
-    env!("CARGO_BIN_EXE_plasm-server").into()
+    std::env::var_os("CARGO_BIN_EXE_plasm-server")
+        .expect("test runner must supply the built plasm-server binary")
+        .into()
 }
 
 fn spawn_headless_appliance() -> (u16, tempfile::TempDir, std::path::PathBuf, Child) {

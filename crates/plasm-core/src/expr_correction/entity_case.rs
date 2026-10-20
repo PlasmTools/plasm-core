@@ -90,7 +90,8 @@ mod tests {
 
     #[test]
     fn normalize_entity_case_unique_match() {
-        let dir = std::path::Path::new("../../fixtures/schemas/petstore");
+        let dir = &std::path::Path::new(crate::test_manifest_dir())
+            .join("../../fixtures/schemas/petstore");
         if !dir.exists() {
             return;
         }

@@ -710,7 +710,7 @@ mod tests {
     }
 
     fn matrix() -> crate::CGS {
-        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        let path = std::path::Path::new(crate::test_manifest_dir())
             .join("../../fixtures/schemas/plasm_language_matrix");
         crate::loader::load_schema_dir(&path).expect("matrix")
     }
@@ -869,19 +869,19 @@ mod tests {
     }
 
     fn date_identity_cgs() -> crate::CGS {
-        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        let path = std::path::Path::new(crate::test_manifest_dir())
             .join("../../fixtures/schemas/date_identity");
         crate::loader::load_schema_dir(&path).expect("date_identity fixture")
     }
 
     fn digit_id_identity_cgs() -> crate::CGS {
-        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        let path = std::path::Path::new(crate::test_manifest_dir())
             .join("../../fixtures/schemas/digit_id_identity");
         crate::loader::load_schema_dir(&path).expect("digit_id_identity fixture")
     }
 
     fn entity_ref_as_identity_cgs_unvalidated() -> crate::CGS {
-        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        let path = std::path::Path::new(crate::test_manifest_dir())
             .join("../../fixtures/schemas/entity_ref_as_identity");
         crate::loader::load_schema_dir_unvalidated(&path).expect("entity_ref_as_identity fixture")
     }

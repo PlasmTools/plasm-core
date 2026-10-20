@@ -11,7 +11,7 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 fn homograph_matrix_session() -> ExecuteSession {
-    let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let root = PathBuf::from(crate::test_manifest_dir());
     let cgs = Arc::new(
         plasm_core::loader::load_schema_dir(
             &root.join("../../fixtures/schemas/plasm_language_matrix"),
@@ -110,7 +110,7 @@ fn matrix_homograph_projection_resolves_entity_scoped_p_symbols() {
 }
 
 fn langitem_create_query_session() -> ExecuteSession {
-    let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let root = PathBuf::from(crate::test_manifest_dir());
     let cgs = Arc::new(
         plasm_core::loader::load_schema_dir(
             &root.join("../../fixtures/schemas/plasm_language_matrix"),
@@ -288,7 +288,7 @@ created"#,
 }
 
 fn compound_branch_mutator_session() -> ExecuteSession {
-    let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let root = PathBuf::from(crate::test_manifest_dir());
     let cgs = Arc::new(
         plasm_core::loader::load_schema_dir(
             &root.join("../../fixtures/schemas/plasm_language_matrix"),
@@ -457,7 +457,7 @@ updated"#,
 }
 
 fn langitem_query_update_tags_session() -> ExecuteSession {
-    let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let root = PathBuf::from(crate::test_manifest_dir());
     let cgs = Arc::new(
         plasm_core::loader::load_schema_dir(
             &root.join("../../fixtures/schemas/plasm_language_matrix"),

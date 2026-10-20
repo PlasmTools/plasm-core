@@ -443,8 +443,8 @@ mod tests {
     use plasm_core::schema::{ViewDefinition, ViewNodeSpec};
 
     fn workflow_matrix_catalog() -> FlowCatalogView {
-        let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-            .join("../../../fixtures/schemas/workflow_matrix");
+        let dir = std::path::Path::new(crate::test_manifest_dir())
+            .join("../../fixtures/schemas/workflow_matrix");
         let cgs = load_schema_dir_unvalidated(&dir).expect("workflow_matrix");
         FlowCatalogView::from_cgs("wf", &cgs)
     }

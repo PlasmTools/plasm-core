@@ -307,7 +307,7 @@ fn materialized_result_use_allows_plural_rows_for_column_node_input_holes() {
         &template,
         &env,
         &plasm_core::loader::load_schema_dir(
-            &std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            &std::path::Path::new(crate::test_manifest_dir())
                 .join("../../fixtures/schemas/plasm_language_matrix"),
         )
         .unwrap(),
@@ -460,7 +460,7 @@ fn typed_fanout_delete_binds_numeric_identity_and_input() {
         &template,
         &env,
         &plasm_core::loader::load_schema_dir(
-            &std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            &std::path::Path::new(crate::test_manifest_dir())
                 .join("../../fixtures/schemas/plasm_language_matrix"),
         )
         .unwrap(),

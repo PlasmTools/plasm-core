@@ -204,7 +204,7 @@ pub(super) async fn run_boundary(typed_output: bool) -> usize {
             };
             assert_eq!(run.return_steps.len(), 2);
             assert_eq!(
-                serde_json::to_value(&run.return_steps[0].result.entities()[0].fields).unwrap(),
+                super::value_fields(&run.return_steps[0].result.entities()[0]),
                 if typed_output {
                     json!({"value":a})
                 } else {
@@ -213,7 +213,7 @@ pub(super) async fn run_boundary(typed_output: bool) -> usize {
                 "{field}/{reverse}"
             );
             assert_eq!(
-                serde_json::to_value(&run.return_steps[1].result.entities()[0].fields).unwrap(),
+                super::value_fields(&run.return_steps[1].result.entities()[0]),
                 if typed_output {
                     json!({"value":a})
                 } else {
@@ -309,7 +309,7 @@ async fn temporal_ordering_contract_end_to_end() {
         .unwrap();
         assert_eq!(run.return_steps[0].result.entities().len(), 1);
         assert_eq!(
-            serde_json::to_value(&run.return_steps[0].result.entities()[0].fields).unwrap(),
+            super::value_fields(&run.return_steps[0].result.entities()[0]),
             json!({"value":true})
         );
     }
@@ -380,7 +380,7 @@ async fn temporal_equivalence_contract_end_to_end() {
             .await
             .unwrap();
             assert_eq!(
-                serde_json::to_value(&run.return_steps[0].result.entities()[0].fields).unwrap(),
+                super::value_fields(&run.return_steps[0].result.entities()[0]),
                 json!({"n":1}),
                 "{source}"
             );

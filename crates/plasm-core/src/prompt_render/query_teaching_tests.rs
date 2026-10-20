@@ -22,7 +22,7 @@ fn expr_starts_with_entity_sym(expr: &str, entity_sym: &str) -> bool {
 }
 
 fn matrix_fixture_dir() -> std::path::PathBuf {
-    std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+    std::path::Path::new(crate::test_manifest_dir())
         .join("../../fixtures/schemas/plasm_prompt_matrix")
 }
 
@@ -150,7 +150,7 @@ fn prompt_matrix_teaching_optional_legend_is_compact() {
 
 #[test]
 fn langitem_ping_zero_arity_invoke_omits_optional_meaning() {
-    let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+    let dir = std::path::Path::new(crate::test_manifest_dir())
         .join("../../fixtures/schemas/plasm_language_matrix");
     let mut cgs = load_schema_dir(&dir).expect("plasm_language_matrix");
     cgs.bind_registry_entry_id("langmatrix");
@@ -401,7 +401,7 @@ fn prompt_matrix_full_tsv_size_within_baseline() {
 
 #[test]
 fn seeded_langitem_teaching_includes_primary_query_row() {
-    let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+    let dir = std::path::Path::new(crate::test_manifest_dir())
         .join("../../fixtures/schemas/plasm_language_matrix");
     let mut cgs = load_schema_dir(&dir).expect("plasm_language_matrix");
     cgs.bind_registry_entry_id("langmatrix");
@@ -581,7 +581,7 @@ fn langitem_search_scoped_query_validates_with_homograph_p() {
     };
     use crate::symbol_tuning::{symbol_map_for_prompt, FocusSpec};
 
-    let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+    let dir = std::path::Path::new(crate::test_manifest_dir())
         .join("../../fixtures/schemas/plasm_language_matrix");
     let mut cgs = load_schema_dir(&dir).expect("plasm_language_matrix");
     cgs.bind_registry_entry_id("langmatrix");

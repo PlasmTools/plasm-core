@@ -84,9 +84,11 @@ async fn decode_rpc_response(response: reqwest::Response) -> serde_json::Value {
         );
         let event = body
             .lines()
-            .find_map(|line| line.strip_prefix("data:"))
+            .filter_map(|line| line.strip_prefix("data:"))
+            // Streamable HTTP can prime the stream with an empty data event.
+            .find(|data| !data.trim().is_empty())
             .expect("SSE RPC data event");
-        serde_json::from_str(event.trim()).unwrap()
+        serde_json::from_str(event.trim()).expect("SSE RPC JSON payload")
     }
 }
 use std::collections::{HashMap, HashSet};
@@ -150,7 +152,7 @@ pub(crate) async fn oauth_test_postgres_url() -> Option<(Option<ContainerDrop>, 
 }
 
 fn dnd5e_registry() -> Arc<CgsRegistry> {
-    let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../apis/dnd5e");
+    let dir = Path::new(&std::env::var("CARGO_MANIFEST_DIR").expect("test runner must set CARGO_MANIFEST_DIR")).join("../../apis/dnd5e");
     let cgs = Arc::new(load_schema(&dir).expect("dnd5e schema"));
     Arc::new(CgsRegistry::from_pairs(vec![(
         "dnd5e".into(),

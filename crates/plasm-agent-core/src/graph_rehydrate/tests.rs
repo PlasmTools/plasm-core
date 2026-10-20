@@ -190,7 +190,7 @@ async fn matrix_row_identity_upgrades_to_graph_parent() {
 
     use crate::test_support::graph_fixtures::{test_execute_session, SpillHostFixture};
 
-    let dir = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+    let dir = std::path::PathBuf::from(crate::test_manifest_dir())
         .join("../../fixtures/schemas/plasm_language_matrix");
     let cgs = Arc::new(load_schema_dir(&dir).expect("plasm_language_matrix"));
     let sess = test_execute_session(cgs.clone(), "project_relate_matrix");
@@ -286,7 +286,7 @@ async fn row_identity_graph_miss_omits_thin_projected_fallback() {
 
     use crate::test_support::graph_fixtures::{test_execute_session, SpillHostFixture};
 
-    let dir = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+    let dir = std::path::PathBuf::from(crate::test_manifest_dir())
         .join("../../fixtures/schemas/plasm_language_matrix");
     let cgs = Arc::new(load_schema_dir(&dir).expect("plasm_language_matrix"));
     let sess = test_execute_session(cgs.clone(), "project_relate_miss");

@@ -50,7 +50,7 @@ async fn spotify_shelves_reject_unsupported_filters_before_dispatch() {
     let url = format!("http://{}", listener.local_addr().unwrap());
     let server = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
     let cgs = plasm_core::load_schema_dir(
-        &std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../apis/appworld/spotify"),
+        &std::path::Path::new(plasm_e2e::test_manifest_dir()).join("../../apis/appworld/spotify"),
     )
     .unwrap();
     let compiled = Arc::new(plasm_compile::compile_cgs_capability_templates(&cgs).unwrap());
@@ -167,7 +167,7 @@ async fn phone_message_variant_contracts_dispatch_only_supported_parameters() {
     let url = format!("http://{}", listener.local_addr().unwrap());
     let server = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
     let cgs = plasm_core::load_schema_dir(
-        &std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../apis/appworld/phone"),
+        &std::path::Path::new(plasm_e2e::test_manifest_dir()).join("../../apis/appworld/phone"),
     )
     .unwrap();
     let catalog = plasm_compile::compile_cgs_capability_templates(&cgs).unwrap();
@@ -264,7 +264,7 @@ async fn todoist_assignment_survives_query_and_get_wire_shapes() {
         axum::serve(listener, app).await.unwrap();
     });
     let cgs = plasm_core::load_schema_dir(
-        &std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../apis/appworld/todoist"),
+        &std::path::Path::new(plasm_e2e::test_manifest_dir()).join("../../apis/appworld/todoist"),
     )
     .unwrap();
     let compiled = Arc::new(plasm_compile::compile_cgs_capability_templates(&cgs).unwrap());
@@ -335,7 +335,7 @@ async fn gmail_message_preserves_sender_recipients_and_attachment_identity() {
         axum::serve(listener, app).await.unwrap();
     });
     let cgs = plasm_core::load_schema_dir(
-        &std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../apis/appworld/gmail"),
+        &std::path::Path::new(plasm_e2e::test_manifest_dir()).join("../../apis/appworld/gmail"),
     )
     .unwrap();
     let compiled = Arc::new(plasm_compile::compile_cgs_capability_templates(&cgs).unwrap());
@@ -407,7 +407,7 @@ async fn amazon_order_lines_keep_purchase_identity_and_product_reference() {
         axum::serve(listener, app).await.unwrap();
     });
     let cgs = plasm_core::load_schema_dir(
-        &std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../apis/appworld/amazon"),
+        &std::path::Path::new(plasm_e2e::test_manifest_dir()).join("../../apis/appworld/amazon"),
     )
     .unwrap();
     let compiled = Arc::new(plasm_compile::compile_cgs_capability_templates(&cgs).unwrap());
@@ -451,7 +451,7 @@ async fn amazon_order_lines_keep_purchase_identity_and_product_reference() {
             row.fields["ordered_quantity"].to_value(),
             Value::Integer(id)
         );
-        assert_eq!(row.fields["product"].to_value(), Value::String("9".into()));
+        assert_eq!(row.fields["product"].to_value(), Value::Integer(9));
         refs.push(row.reference.clone());
     }
     assert_ne!(refs[0], refs[1]);
@@ -475,7 +475,7 @@ async fn gmail_typed_schedule_encodes_only_at_transport_boundary() {
         axum::serve(listener, app).await.unwrap();
     });
     let cgs = plasm_core::load_schema_dir(
-        &std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../apis/appworld/gmail"),
+        &std::path::Path::new(plasm_e2e::test_manifest_dir()).join("../../apis/appworld/gmail"),
     )
     .unwrap();
     let compiled = Arc::new(plasm_compile::compile_cgs_capability_templates(&cgs).unwrap());
@@ -546,7 +546,7 @@ async fn pinned_backend_catalog_contracts() {
     let mut checked = 0;
     for case in manifest.cases {
         let cgs = plasm_core::load_schema_dir(
-            &std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            &std::path::Path::new(plasm_e2e::test_manifest_dir())
                 .join("../../apis/appworld")
                 .join(&case.app),
         )
@@ -655,7 +655,7 @@ async fn amazon_cart_preserves_request_identity_across_totals_and_codec() {
         axum::serve(listener, app).await.unwrap();
     });
     let source = plasm_core::load_schema_dir(
-        &std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../apis/appworld/amazon"),
+        &std::path::Path::new(plasm_e2e::test_manifest_dir()).join("../../apis/appworld/amazon"),
     )
     .unwrap();
     let cgs = serde_json::from_slice(&serde_json::to_vec(&source).unwrap()).unwrap();
@@ -711,7 +711,7 @@ async fn amazon_cart_preserves_request_identity_across_totals_and_codec() {
 fn gmail_and_amazon_deployment_requirements_are_closed() {
     use plasm_core::prerequisites::{prerequisite_closure, CapabilityRef, DeploymentBindings};
     use std::collections::{BTreeMap, BTreeSet};
-    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../apis/appworld");
+    let root = std::path::Path::new(plasm_e2e::test_manifest_dir()).join("../../apis/appworld");
     let mut schemas = BTreeMap::new();
     for entry in std::fs::read_dir(&root).unwrap() {
         let path = entry.unwrap().path();
@@ -771,7 +771,7 @@ async fn spotify_song_release_date_is_preserved_and_invalid_wire_values_fail() {
             axum::serve(listener, app).await.unwrap();
         });
         let cgs = plasm_core::load_schema_dir(
-            &std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../apis/appworld/spotify"),
+            &std::path::Path::new(plasm_e2e::test_manifest_dir()).join("../../apis/appworld/spotify"),
         )
         .unwrap();
         let compiled = Arc::new(plasm_compile::compile_cgs_capability_templates(&cgs).unwrap());

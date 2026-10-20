@@ -187,7 +187,7 @@ mod tests {
             "../../fixtures/schemas/plasm_prompt_matrix",
             "../../fixtures/schemas/overshow_tools",
         ] {
-            let p = Path::new(dir);
+            let p = &Path::new(crate::test_manifest_dir()).join(dir);
             let name = p.file_name().and_then(|s| s.to_str()).unwrap_or(dir);
             let cgs = load_schema_dir(p).unwrap_or_else(|e| panic!("{name}: load: {e}"));
             validate_cgs_expression_surface(&cgs)
@@ -197,7 +197,8 @@ mod tests {
 
     #[test]
     fn language_matrix_teaching_bundle_covers_all_capabilities() {
-        let p = Path::new("../../fixtures/schemas/plasm_language_matrix");
+        let p = &std::path::Path::new(crate::test_manifest_dir())
+            .join("../../fixtures/schemas/plasm_language_matrix");
         let cgs = load_schema_dir(p).expect("plasm_language_matrix");
         let missing = uncovered_capabilities(&cgs);
         for (cap, ent) in &missing {
@@ -214,7 +215,7 @@ mod tests {
             "../../fixtures/schemas/plasm_prompt_matrix",
             "../../fixtures/schemas/overshow_tools",
         ] {
-            let p = Path::new(dir);
+            let p = &Path::new(crate::test_manifest_dir()).join(dir);
             let cgs = load_schema_dir(p).expect(dir);
             validate_cgs_expression_surface(&cgs).unwrap_or_else(|e| {
                 panic!(
@@ -227,7 +228,8 @@ mod tests {
 
     #[test]
     fn overshow_tools_teaching_bundle_covers_all_capabilities() {
-        let p = Path::new("../../fixtures/schemas/overshow_tools");
+        let p = &std::path::Path::new(crate::test_manifest_dir())
+            .join("../../fixtures/schemas/overshow_tools");
         if !p.exists() {
             return;
         }
@@ -241,7 +243,8 @@ mod tests {
 
     #[test]
     fn python_teaching_covers_secondary_get_without_native_alias() {
-        let p = Path::new("../../fixtures/schemas/overshow_tools");
+        let p = &std::path::Path::new(crate::test_manifest_dir())
+            .join("../../fixtures/schemas/overshow_tools");
         if !p.exists() {
             return;
         }
@@ -262,7 +265,8 @@ mod tests {
 
     #[test]
     fn prompt_matrix_teaching_bundle_covers_all_capabilities() {
-        let p = Path::new("../../fixtures/schemas/plasm_prompt_matrix");
+        let p = &std::path::Path::new(crate::test_manifest_dir())
+            .join("../../fixtures/schemas/plasm_prompt_matrix");
         let cgs = load_schema_dir(p).expect("plasm_prompt_matrix");
         let missing = uncovered_capabilities(&cgs);
         assert!(
@@ -279,7 +283,8 @@ mod tests {
     /// unobtainability.
     #[test]
     fn validated_input_update_is_teachable_and_covered() {
-        let p = Path::new("../../fixtures/schemas/capability_with_input");
+        let p = &std::path::Path::new(crate::test_manifest_dir())
+            .join("../../fixtures/schemas/capability_with_input");
         if !p.exists() {
             return;
         }
@@ -297,7 +302,8 @@ mod tests {
     /// Packed plugins set [`CGS::entry_id`] to the directory name; exposure keys must stay aligned.
     #[test]
     fn language_matrix_expression_surface_validate_with_packed_entry_id() {
-        let p = Path::new("../../fixtures/schemas/plasm_language_matrix");
+        let p = &std::path::Path::new(crate::test_manifest_dir())
+            .join("../../fixtures/schemas/plasm_language_matrix");
         let mut cgs = load_schema_dir(p).expect("plasm_language_matrix");
         cgs.bind_registry_entry_id("langmatrix");
         validate_cgs_expression_surface(&cgs).unwrap_or_else(|e| {

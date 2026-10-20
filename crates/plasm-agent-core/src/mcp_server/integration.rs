@@ -30,7 +30,7 @@ use plasm_runtime::{ExecutionConfig, ExecutionEngine, ExecutionMode};
 use uuid::Uuid;
 
 fn matrix_fixture_dir() -> PathBuf {
-    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../fixtures/schemas/plasm_language_matrix")
+    PathBuf::from(crate::test_manifest_dir()).join("../../fixtures/schemas/plasm_language_matrix")
 }
 
 fn matrix_federated_host() -> PlasmHostState {
@@ -48,7 +48,7 @@ fn ensure_test_http_no_system_proxy() {
 fn matrix_federated_host_with_base(base_url: Option<&str>) -> PlasmHostState {
     ensure_test_http_no_system_proxy();
     let cgs_a = Arc::new(load_schema_dir(&matrix_fixture_dir()).expect("plasm_language_matrix"));
-    let views_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+    let views_dir = PathBuf::from(crate::test_manifest_dir())
         .join("../../fixtures/schemas/plasm_language_matrix_views");
     let cgs_b = Arc::new(load_schema_dir(&views_dir).expect("plasm_language_matrix_views"));
     let reg = CgsRegistry::from_pairs(vec![

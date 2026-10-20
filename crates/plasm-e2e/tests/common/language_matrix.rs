@@ -20,6 +20,20 @@ pub const MATRIX_FED_A: &str = "langmatrix_a";
 /// Federated secondary stamp (same fixture CGS, distinct registry id).
 pub const MATRIX_FED_B: &str = "langmatrix_b";
 
+/// A write requires MCP review even when clean reads can execute in `plasm`.
+#[allow(dead_code)]
+pub fn reviewed_update_program() -> String {
+    let cgs = load_language_matrix_cgs();
+    let exposure = TeachingExposureSession::new(&cgs, MATRIX_ENTRY_ID, &["LangItem"]);
+    let method = exposure.to_symbol_map().method_sym_for(
+        MATRIX_ENTRY_ID,
+        "LangItem",
+        "langitem_update",
+    );
+    assert!(method.starts_with('m'), "fixture update must be exposed");
+    format!("class UpdateItem(Program):\n    def build(self):\n        return e1.get(\"i1\").{method}(title=\"Reviewed\", score=10, owner=\"alice\").aggregate(n=agg.count())\n")
+}
+
 /// Clone a fixture [`CGS`] and stamp registry `entry_id` for federated parser/layer tests.
 pub fn cgs_with_registry_entry_id(cgs: &plasm_core::CGS, entry_id: &str) -> plasm_core::CGS {
     let mut out = cgs.clone();
@@ -77,7 +91,7 @@ pub fn matrix_federated_auth_session_session(cgs: Arc<plasm_core::CGS>) -> Execu
 
 #[allow(dead_code)] // Shared fixture helper; not every integration binary uses it.
 pub fn language_matrix_schema_dir() -> PathBuf {
-    let crate_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let crate_root = PathBuf::from(plasm_e2e::test_manifest_dir());
     let candidates = [
         crate_root.join("../../fixtures/schemas/plasm_language_matrix"),
         crate_root.join("fixtures/schemas/plasm_language_matrix"),

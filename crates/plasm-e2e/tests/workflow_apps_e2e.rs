@@ -1,5 +1,8 @@
 //! Dual-surface E2E: workflow HTTP routes + plan archive on dry-run (agent channel stays compact).
 
+// Nested async host futures require deeper compile-time layout evaluation.
+#![recursion_limit = "256"]
+
 #[path = "common/hermit_workflow_matrix.rs"]
 mod hermit_workflow_matrix;
 
@@ -21,6 +24,13 @@ use tokio::sync::OnceCell;
 use workflow_matrix::{
     load_workflow_matrix_cgs, workflow_federated_host_state, CATALOG_A, CATALOG_B,
 };
+
+fn reviewed_create_method() -> String {
+    let cgs = load_workflow_matrix_cgs();
+    plasm_core::TeachingExposureSession::new(&cgs, CATALOG_A, &["WorkItem"])
+        .to_symbol_map()
+        .method_sym_for(CATALOG_A, "WorkItem", "workitem_create_idempotent")
+}
 
 async fn spawn_workflow_server() -> (String, String, tokio::task::JoinHandle<()>) {
     let hermit = hermit_workflow_matrix::workflow_matrix_hermit_base_url()
@@ -148,7 +158,7 @@ async fn http_read_plan_json(client: &reqwest::Client, base: &str, body: &Value)
     let path = body
         .pointer("/structuredContent/ui/plan_http_path")
         .and_then(Value::as_str)
-        .expect("Apps plan_http_path");
+        .unwrap_or_else(|| panic!("Apps plan_http_path missing: {body}"));
     let resp = client
         .get(format!("{base}{path}"))
         .header("accept", "application/json")
@@ -412,7 +422,7 @@ async fn workflow_apps_e2e_async() {
         "plasm",
         json!({
             "logical_session_ref": ls,
-            "program": "class ParallelReads(Program):\n    def build(self):\n        a = e1.query().take(1)\n        b = e2.query().take(1)\n        return a\n"
+            "program": format!("class ReviewedWork(Program):\n    def build(self):\n        a = e1.{}(title=\"Reviewed workflow\")\n        b = e2.query().take(1)\n        return a, b\n", reviewed_create_method())
         }),
         3,
     )
@@ -453,10 +463,23 @@ async fn workflow_apps_e2e_async() {
         5,
     )
     .await;
-    assert_plan_ux_from_mcp_tool(&client, &base, &mcp_session, &dry_wf, 11).await;
-    assert_comp_human_ops_from_mcp_plan_archive(&client, &base, &mcp_session, &dry_wf, 12).await;
-    assert_eq!(receipt_token(&dry_wf, "logical_session_ref"), ls_wf);
-    assert!(receipt_token(&dry_wf, "run_ref").starts_with("pc"));
+    // This read-only workflow is executed by the fused clean-read path.
+    // The mutating program above independently checks both archive transports.
+    assert_agent_mcp_tool_compact(&dry_wf, "run_explorer");
+    assert!(
+        dry_wf.pointer("/structuredContent/ui/steps")
+            .and_then(Value::as_array)
+            .is_some_and(|steps| !steps.is_empty()),
+        "read-only workflow must deliver run steps: {dry_wf}"
+    );
+    let workflow_artifact_prefix = format!("plasm://session/{ls_wf}/run/");
+    assert!(
+        dry_wf.pointer("/_meta/plasm/steps/0/artifact_uri")
+            .and_then(Value::as_str)
+            .is_some_and(|uri| uri.starts_with(&workflow_artifact_prefix)),
+        "workflow result artifact must belong to its logical session: {dry_wf}"
+    );
+    assert!(dry_wf.pointer("/_meta/plasm/run_ref").is_none());
 
     let plan_shell = client
         .get(format!("{base}/v1/plan/ui"))
@@ -673,7 +696,7 @@ async fn workflow_apps_e2e_async() {
         "plasm",
         json!({
             "logical_session_ref": ls,
-            "program": "class WideRows(Program):\n    @compute\n    def wide(self, row: Row) -> str:\n        return row.title + \"w\" * 20000\n    def build(self):\n        items = e1.query().take(5).select(\"id\", \"title\")\n        return items.map(lambda row: {\"wide\": self.wide(row)}, max_parents=5)\n",
+            "program": format!("class WideRows(Program):\n    @compute\n    def wide(self, row: Row) -> str:\n        return row.title + \"w\" * 20000\n    def build(self):\n        items = e1.{}(title=\"Wide workflow\").select(\"id\", \"title\")\n        return items.map(lambda row: {{\"wide\": self.wide(row)}}, max_parents=5)\n", reviewed_create_method()),
         }),
         10,
     )
