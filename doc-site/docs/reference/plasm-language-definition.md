@@ -20,7 +20,7 @@ Its law blocks are parsed directly by the matrix. Finite evidence covers observe
 row embedding; general constructor/type/effect products remain explicit obligations.
 
 The compact teaching card is
-[`python-plasm-dag.txt`](../../../crates/plasm-core/src/prompt_render/assets/python-plasm-dag.txt).
+[`python-plasm-dag.txt`](https://github.com/PlasmTools/plasm-core/blob/main/crates/plasm-core/src/prompt_render/assets/python-plasm-dag.txt).
 It teaches supported idioms and complete examples. Domain declarations come from
 CGS and incremental session exposure; their reference notation is not executable
 Python.
@@ -169,7 +169,7 @@ The original rowset, effect, coverage and identity laws remain in force.
 `plasm_language_matrix` compiles Python programs against abstract semantic
 fixtures and checks planning and live behavior directly. Historical source is
 not a comparison oracle. See the
-[semantic coverage ledger](../../../crates/plasm-e2e/tests/plasm_language_matrix/PYTHON-COVERAGE.md).
+[semantic coverage ledger](https://github.com/PlasmTools/plasm-core/blob/main/crates/plasm-e2e/tests/plasm_language_matrix/PYTHON-COVERAGE.md).
 The original obligations and additional scoped composition laws have separate
 coverage totals; both are required before claiming complete scoped semantics.
 
