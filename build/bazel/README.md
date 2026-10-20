@@ -139,6 +139,14 @@ a declared cross toolchain; that target-platform gate remains open.
 
 ## Catalog inputs
 
+For the released catalog set, run `bash scripts/ci/prepare-catalog-inputs.sh`
+before building archives or catalog images. It downloads the versioned
+`catalog-embedding-inputs-v0.5.5.tgz` release asset, verifies its pinned SHA-256,
+and materializes the declared JSON inputs. The archive is cached outside the
+checkout under `~/.cache/plasm-build-inputs` (override with
+`PLASM_BUILD_INPUT_CACHE`). This uses the GitHub CLI; access to a draft release
+requires repository authentication. No embedding API is called.
+
 `plasm-pack-catalogs` now consumes existing embedding cache entries by default.
 Missing or corrupt vectors fail without network access or repairs to the input
 cache. `--prepare-embeddings` explicitly acquires missing vectors and exits before
