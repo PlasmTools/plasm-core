@@ -60,7 +60,9 @@ exports_files([
 
 filegroup(
     name = "embedding_inputs",
-    srcs = glob(["build/catalog-embeddings/**/*.json"]),
+    # A clean checkout can load and test the graph without packaging catalogs.
+    # The packer validates required vectors when the catalog target is built.
+    srcs = glob(["build/catalog-embeddings/**/*.json"], allow_empty = True),
     visibility = ["//visibility:public"],
 )
 
