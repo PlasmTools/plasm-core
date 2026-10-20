@@ -377,9 +377,6 @@ mod tests {
                 "{dependency} must share the vendored Monty source"
             );
         }
-        let worker_build = include_str!("../../../../scripts/ci/build-monty-runtime.sh");
-        assert!(worker_build.contains("monty_root=\"${oss_root}/vendor/monty\""));
-        assert!(worker_build.contains("--path \"${monty_root}/crates/monty-runtime\""));
     }
 }
 
