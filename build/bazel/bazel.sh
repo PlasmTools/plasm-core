@@ -1,6 +1,10 @@
 #!/usr/bin/env bash
 # Canonical native launcher shared by the standalone core and SaaS modules.
 set -euo pipefail
+# Cargo-oriented compiler wrappers on CI hosts are not C compiler executables.
+# Let Bazel discover its native C/C++ toolchain; explicit Bazel toolchain settings
+# remain the way to select cross compilation.
+unset CC CXX
 workspace="$(pwd -P)"
 while [[ ! -f "$workspace/MODULE.bazel" ]]; do
   [[ "$workspace" != / ]] || { echo 'Run within a Bazel module.' >&2; exit 2; }
