@@ -67,6 +67,7 @@ nav:
   - Home: index.md
   - Concepts: concepts.md
   - Start here: getting-started.md
+  - Build & test: reference/build-and-test.md
   - Run the appliance:
       - Quick start: appliance/quickstart.md
       - Control station (TUI): appliance/tui.md

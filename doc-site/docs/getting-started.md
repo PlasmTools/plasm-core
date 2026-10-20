@@ -17,7 +17,7 @@ Full walkthrough: [Appliance quick start](appliance/quickstart.md).
 
 ## Track B — From source (catalog authors)
 
-**Prerequisites:** Rust (`cargo`), repo cloned with `apis/` populated.
+**Prerequisites:** Rust (`cargo`), repo cloned with `apis/` populated. Core contributors running CI-parity builds and the full test graph should read [Build and test](reference/build-and-test.md) (Bazel + nextest).
 
 ### Step 1 — Validate a catalog
 
@@ -72,4 +72,5 @@ MCP Streamable HTTP is on the same host at **`/mcp`** (see [Appliance quick star
 | Credentials, OAuth vs PAT | [MCP & credentials](appliance/onboarding.md) |
 | Mental model | [Concepts](concepts.md) |
 | Author catalogs | [Catalog authoring](authoring/index.md) |
+| Build / test the compiler | [Build and test](reference/build-and-test.md) |
 | Optional incoming JWT | [Incoming auth](reference/plasm-mcp-incoming-auth.md) |

@@ -52,7 +52,7 @@ Canonical keystrokes and wizard behavior live in [`tui.rs`](https://github.com/P
 
 ### TUI appliance CI (`appliance_headless_boot` + PTY quit smoke)
 
-CI runs two gates via `bash scripts/appliance-tui-pty-tests.sh` (CircleCI `appliance_tui_pty`):
+CI runs two gates via `bash scripts/appliance-tui-pty-tests.sh` (CircleCI `appliance_tui_pty`). The broader Rust graph is exercised through Bazel nextest (`bash build/bazel/bazel.sh test //:nextest`); see [Build and test](build-and-test.md).
 
 1. **Headless smoke** (`plasm-server --no-tui`, or serve with non-TTY stdout/stdin): embedded Postgres + HTTP listener milestones in `PLASM_APPLIANCE_DIAG_LOG` — fast, no PTY.
 2. **PTY quit smoke** (`plasm-server-pty-tests`, [`testty`](https://crates.io/crates/testty)): spawn release `plasm-server` in a PTY, `wait_for_stable_frame`, `wait_for_text("q: quit")`, press `q`, assert exit 0. Tab/OAuth/keys strings are covered by **`TestBackend`** unit tests in `plasm-server/src/tui/mod.rs` (see `tests/tui_feature_inventory.md`).

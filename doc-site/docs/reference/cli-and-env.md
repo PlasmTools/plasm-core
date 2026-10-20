@@ -8,6 +8,8 @@
 
 **Practical takeaway:** This page is an **index**—single source of truth remains **`AGENTS.md`** on the branch you ship.
 
+Contributor builds (Bazel, nextest, release export): [Build and test](build-and-test.md).
+
 ---
 
 ## Release binaries
@@ -20,6 +22,15 @@
 | **`plasm`** | Remote HTTP terminal client | [Remote terminal](plasm-cgs-remote-terminal.md) |
 | **`plasm-cgs`** | One-shot compile + HTTP from dev checkout | [Start here](../getting-started.md) |
 | **`plasm-repl`** | Interactive REPL against a backend | [Start here](../getting-started.md) |
+
+---
+
+## Bazel launcher (contributors)
+
+| Variable | Role |
+|----------|------|
+| `PLASM_BAZEL_CACHE` | Shared Bazel action cache directory (see [Build and test](build-and-test.md)) |
+| `CARGO_BAZEL_REPIN` | Set to `workspace` when repinning crate-universe after manifest changes |
 
 ---
 
