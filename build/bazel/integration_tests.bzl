@@ -5,7 +5,7 @@ load(":native_test.bzl", rust_test = "rust_test_with_monty")
 
 def rust_integration_tests(tests, deps, compile_data = [], data = [], crate_features = [], runtime_tools = {}, cargo_deps = None):
     """Declare one libtest executable per Cargo integration target."""
-    support_sources = native.glob(["tests/**/*.rs"], exclude = tests.values())
+    support_sources = native.glob(["tests/**/*.rs"], exclude = tests.values(), allow_empty = True)
     for name, source in tests.items():
         rust_test(
             name = name + "_tests",
