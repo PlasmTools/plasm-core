@@ -26,6 +26,19 @@ read spec/docs -> design graph -> author domain.yaml -> author mappings.yaml -> 
 
 Do not add scripts or generator crates that mechanically emit canonical `domain.yaml` or `mappings.yaml` from a spec.
 
+## Build and test
+
+**Bazel (CI parity, nextest, release exports):** [`build/bazel/README.md`](build/bazel/README.md).
+Smoke: `bash build/bazel/bazel.sh test //crates/plasm-trace-wire:all`.
+Quality: `bash build/bazel/quality.sh --jobs=4`.
+Full registered suites: `bash build/bazel/bazel.sh test //:nextest --test_arg=--profile=ci`.
+
+**Cargo (fast local iteration):** `cargo test --workspace --exclude plasm-trace-sink --no-fail-fast` for overlay-free smoke; `bash scripts/ci/rust-quality.sh` for fmt + clippy when not using Bazel quality.
+
+**Internal design notes** (MCP cutover, transport): [`docs/README.md`](docs/README.md).
+
+Public contributor overview: [`doc-site/docs/reference/building-from-source.md`](doc-site/docs/reference/building-from-source.md).
+
 ## Validation Commands
 
 Use these commands as appropriate:

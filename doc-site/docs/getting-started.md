@@ -17,7 +17,7 @@ Full walkthrough: [Appliance quick start](appliance/quickstart.md).
 
 ## Track B — From source (catalog authors)
 
-**Prerequisites:** Rust (`cargo`), repo cloned with `apis/` populated.
+**Prerequisites:** Rust (`cargo`), repo cloned with `apis/` populated. For the same Bazel graph CI uses (nextest, release exports), see [Building from source](reference/building-from-source.md).
 
 ### Step 1 — Validate a catalog
 
