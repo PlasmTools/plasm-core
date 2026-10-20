@@ -111,6 +111,22 @@ a presentation page must not truncate it. Fixed backend page coordinates remain 
 A singleton proof permits scalar field extraction; plural traversal uses
 `flat_map`. A projected id-shaped object does not acquire receiver authority.
 
+### Nominal entity unions
+
+When a capability returns more than one entity variant, the served declaration is
+a closed sum (`Rows[eA | eB]`). Rows carry the decoder-selected variant but do
+not grant variant-specific receiver authority until narrowed. Call
+`.of_type(eA)` with an **exposed** entity symbol from that union before fields,
+relations, mutations, or captures that require a single variant. Narrowing selects
+original occurrences and preserves identity and coverage; constructing a
+dictionary cannot substitute for narrowing.
+
+Catalog CGS rules, decoder cases, and admitted capability kinds are in
+[Closed nominal entity outputs](../authoring/reference.md#closed-nominal-entity-outputs).
+Constructor law BC-03: [Row constructors](python-row-constructors.md). Matrix
+coverage: `entity_union_matrix` in
+[`PYTHON-COVERAGE.md`](https://github.com/PlasmTools/plasm-core/blob/main/crates/plasm-e2e/tests/plasm_language_matrix/PYTHON-COVERAGE.md).
+
 Scoped record fields may embed a bound rowset (`{"items": rows}`) as a complete
 observed array. The binding is captured explicitly; absence is retained and no
 receiver authority is granted to the embedded values.
@@ -130,6 +146,13 @@ and upstream checker, subject to explicit Plasm boundary policy. The current
 implementation uses upstream admission. Compute returns preserve primitive,
 nominal `vN`, record, array and union contracts; validation occurs before dependent
 effects. The outer class is never instantiated in the worker.
+
+Within one plan execution, identical compute nodes may reuse a retained static
+preparation keyed by the full compute contract. Preparations do not persist across
+executions, exported plans, or global session state; per-occurrence validation,
+Monty worker checkout, and cancellation budgets are unchanged. Normative rules:
+[Execution-scoped static preparation](python-compute-contract.md#execution-scoped-static-preparation)
+in the compute contract.
 Python multiline, raw and formatted string forms replace tagged heredocs and
 source-level Jinja rendering. A formatting expression becomes a reviewed render
 node through its declared compute dependency.

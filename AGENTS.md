@@ -26,6 +26,20 @@ read spec/docs -> design graph -> author domain.yaml -> author mappings.yaml -> 
 
 Do not add scripts or generator crates that mechanically emit canonical `domain.yaml` or `mappings.yaml` from a spec.
 
+## Build and test (Rust / CI)
+
+CI and release packaging use the **pinned Bazel graph** (`MODULE.bazel`, crate-universe). Deep reference: [`build/bazel/README.md`](build/bazel/README.md). User-facing summary: [`doc-site/docs/reference/build-and-test.md`](doc-site/docs/reference/build-and-test.md).
+
+```bash
+bash build/bazel/quality.sh --jobs=4
+bash build/bazel/bazel.sh test //:nextest --test_arg=--profile=ci
+bash build/bazel/export.sh //:release_archives /path/to/artifacts --config=release
+```
+
+Use **`bash build/bazel/bazel.sh`** (not a host `bazel` on PATH). `PLASM_BAZEL_CACHE` overrides the shared disk cache. After intentional `Cargo.toml` / workspace changes, repin with `CARGO_BAZEL_REPIN=workspace` (see `build/bazel/README.md`).
+
+**Cargo** remains appropriate for fast catalog and appliance loops (`cargo run -p plasm-cli`, `plasm-repl`, `plasm-server`). Do not treat ad-hoc `cargo test --workspace` as a substitute for the declared Bazel nextest targets when validating compiler or runtime changes.
+
 ## Validation Commands
 
 Use these commands as appropriate:
@@ -86,6 +100,6 @@ Durable, non-obvious notes for working in this OSS subtree on a Cursor Cloud VM.
 - **Generated `baml_client`**: `crates/plasm-eval/baml_client`, `crates/plasm-semantic-seed/baml_client`, and `crates/plasm-discovery-eval/baml_client` are **gitignored** and produced by `baml-cli generate` (v0.220.0) from the repo root. Default **library** builds of `plasm-eval` / `plasm-repl` / `plasm-semantic-seed` do not require them (`baml` / `llm-rerank` are opt-in). **`plasm-server` defaults include `semantic-auto-seed`**, so appliance source builds still need `plasm-semantic-seed/baml_client` unless you pass `--no-default-features`. Re-run `baml-cli generate` after editing anything under `baml_src/`.
 - **`plasm-trace-sink` (SaaS ops binary)**: durable Iceberg ingest for the execution-trace lane (`PLASM_TRACE_SINK_URL`); not OTEL and not a Cargo dep of the appliance. Often fails to build in this OSS subtree (floating `datafusion_iceberg` vs workspace `datafusion` pin). Build/lint/test with `--exclude plasm-trace-sink`.
 - **Schema overlay fixtures** live in this tree at `fixtures/schemas/*_overlay/` (not the parent monorepo). `plasm-core` / `plasm-runtime` lib tests `include_str!` them via `CARGO_MANIFEST_DIR/../../fixtures/schemas/`. `workflow_matrix` still lives only in the private super-repo, so some `plasm-e2e` tests that probe parent paths will skip or fail here. `plasm-agent-core`'s `cross_pod_operations` test overflows the type-layout recursion limit on current rustc. Overlay-free smoke: `cargo test --workspace --exclude plasm-trace-sink --no-fail-fast` (network/live tests self-ignore).
-- **Lint**: `scripts/ci/rust-quality.sh` runs `cargo fmt --all -- --check` + `cargo clippy --workspace --all-targets -- -D warnings`. Under this OSS subtree/newer clippy it will trip on the items above; `cargo clippy --workspace --exclude plasm-trace-sink` (lib/bins) is clean apart from one newer style lint in `plasm-runtime/src/view_template.rs`.
+- **Lint / tests (CI parity)**: `bash build/bazel/quality.sh` and `bash build/bazel/bazel.sh test //:nextest --test_arg=--profile=ci`. Legacy `scripts/ci/rust-quality.sh` (cargo fmt + clippy) may still be useful locally; the Bazel graph is what release CI exercises.
 - **Running live queries**: `plasm-cgs` (package `plasm-cli`) does schema validation/round-trips; after BAML generation, the live REPL is `cargo run -p plasm-repl --features baml -- --schema apis/<x> --backend <url>` (load a complete Python `Program` subclass with `:load`, then use `:plan` and `:run`; use the served entity Get signature). Debug builds can **stack-overflow** on large recursive catalogs (e.g. `pokeapi`) because debug stack frames are larger — use a small flat catalog (`xkcd`, backend `https://xkcd.com`) or build `--release` for those.
 - **Appliance**: `cargo run -p plasm-server -- --no-tui --schema fixtures/schemas/capability_with_input` boots headless, **auto-starts an embedded Postgres** (`pg-embed`), and serves HTTP+MCP on `127.0.0.1:3000` (`/v1/health`, `/v1/registry`, `/execute`). Pass a split catalog directory (`domain.yaml` + `mappings.yaml`) or a packaged plugin dir.
