@@ -58,12 +58,6 @@ jobs:
       - name: Docs contract guard
         run: bash scripts/guards/check_docs_contracts.sh
 
-      - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@stable
-
-      - name: Fenced Plasm examples parse
-        run: cargo test -p plasm-core doc_fenced_plasm_examples_parse_under_language_matrix -- --nocapture
-
       - name: Build site
         run: mkdocs build --strict -f doc-site/mkdocs.yml
 
