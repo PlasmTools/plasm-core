@@ -1,6 +1,7 @@
 //! CGS catalog helpers and diagnostic formatting.
 
 use super::super::prelude::*;
+use super::super::types::DagNode;
 use thiserror::Error;
 
 #[derive(Debug, Error)]
@@ -144,27 +145,68 @@ pub(in crate::plasm_dag) fn capability_input_param_wires(
     cap.input_fields().map(|f| f.name.clone()).collect()
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct EffectResultFieldContext {
+    pub binding: String,
+    pub expression: String,
+    pub capability: String,
+    pub operation: String,
+    pub available_fields: Vec<String>,
+}
+
+impl std::fmt::Display for EffectResultFieldContext {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "operation `{}` on binding `{}` (producer `{}`, capability `{}`). \
+             Available result fields: {:?}. Capability inputs do not become returned fields. \
+             If an identity was returned, use it with an advertised read capability to obtain \
+             additional entity fields; do not repeat the mutation.",
+            self.operation, self.binding, self.expression, self.capability, self.available_fields
+        )
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum RowContractFieldError {
+    #[error("`{field}` is not a row field available in this effect result. {context}")]
+    UnavailableEffectResultField {
+        field: String,
+        context: Box<EffectResultFieldContext>,
+    },
     #[error("`{field}` is a query/capability input on this fetch, not a row field. Use wire field names from the language card for row postfix (`.filter`, `[field,…]`).")]
     CapabilityInputNotRowField { field: String },
     #[error("`{field}` is not a row field on this binding's rows. Use wire field names from the language-card left column for this binding.")]
     MissingRowField { field: String },
 }
 
-#[allow(clippy::too_many_arguments)]
 pub(in crate::plasm_dag) fn row_contract_field_error(
-    session: &ExecuteSession,
-    symbol_map_cross_cache: Option<&SymbolMapCrossRequestCache>,
-    _qe: &QualifiedEntityKey,
+    qe: &QualifiedEntityKey,
     cap: Option<&CapabilitySchema>,
-    _path: &FieldPath,
     wire: &str,
-    _allowed_cols: &[String],
-    _op_label: &str,
+    allowed_cols: &[String],
+    op_label: &str,
+    surface: &DagNode,
 ) -> RowContractFieldError {
-    let _ = (session, symbol_map_cross_cache);
     if let Some(cap) = cap {
+        if matches!(
+            cap.kind,
+            plasm_core::schema::CapabilityKind::Create
+                | plasm_core::schema::CapabilityKind::Update
+                | plasm_core::schema::CapabilityKind::Delete
+                | plasm_core::schema::CapabilityKind::Action
+        ) {
+            return RowContractFieldError::UnavailableEffectResultField {
+                field: wire.to_owned(),
+                context: Box::new(EffectResultFieldContext {
+                    binding: surface.id.clone(),
+                    expression: surface.expr.clone(),
+                    capability: format!("{}/{}", qe.entry_id, cap.name),
+                    operation: op_label.to_owned(),
+                    available_fields: allowed_cols.to_vec(),
+                }),
+            };
+        }
         let inputs = capability_input_param_wires(cap);
         if inputs.contains(wire) {
             return RowContractFieldError::CapabilityInputNotRowField {

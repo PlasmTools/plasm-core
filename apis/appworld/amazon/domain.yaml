@@ -1,4 +1,4 @@
-version: 22
+version: 23
 entry_id: amazon
 auth:
   scheme: none
@@ -1411,7 +1411,7 @@ capabilities:
       description: Moves this product from wish list to cart.
   cart_add_product:
     receiver: {kind: entity, entity: Product}
-    description: Add a product to the cart.
+    description: Add the requested quantity of this product to the cart, increasing any existing quantity. When clear_cart_first is true, remove all existing cart lines before adding this product.
     kind: action
     entity: Product
     payload:
@@ -1429,7 +1429,7 @@ capabilities:
           required: false
     output:
       type: side_effect
-      description: Adds this product to the cart.
+      description: Adds the requested quantity to this product's cart line; clear_cart_first removes every existing cart line first.
   cart_update_quantity:
     receiver: {kind: entity, entity: Product}
     description: Update quantity of a product already in the cart.
@@ -1464,7 +1464,7 @@ capabilities:
       type: side_effect
       description: Removes this product from the cart.
   cart_clear:
-    description: Clear the entire cart.
+    description: Remove every product line from the cart, including its quantity and gift wrapping.
     kind: action
     entity: Cart
     payload:
@@ -1476,7 +1476,7 @@ capabilities:
           required: true
     output:
       type: side_effect
-      description: Empties the shopping cart.
+      description: Deletes all cart lines. Does not place an order or move products to the wish list.
   cart_apply_promo:
     description: Apply a promo code to the cart.
     kind: action
@@ -1600,7 +1600,13 @@ capabilities:
     - payment_card_digits
     - created_at
   order_place:
-    description: Place an order from the current cart.
+    description: >-
+      Purchase all products and quantities currently in the cart using the selected
+      saved payment card and shipping address. Charges the card for the total
+      including tax, delivery and gift wrapping after discounts; reduces product
+      inventory; creates the order; clears every cart line and the cart promo code;
+      and sends an order confirmation email with a receipt. Does not select a
+      subset of cart lines.
     kind: create
     entity: Order
     payload:

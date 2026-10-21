@@ -205,7 +205,7 @@ pub(in crate::plasm_dag) fn validate_compute_paths_for_allowed_set(
         } else if allowed.contains(&segs) {
             continue;
         }
-        let cols: Vec<String> = allowed.iter().filter_map(|s| s.first().cloned()).collect();
+        let cols: Vec<String> = allowed.iter().map(|segments| segments.join(".")).collect();
         let wire = path.dotted();
         let wire_for_input = if segs.len() == 1 {
             segs[0].as_str()
@@ -213,16 +213,7 @@ pub(in crate::plasm_dag) fn validate_compute_paths_for_allowed_set(
             wire.as_str()
         };
         return Err(SchemaPathValidationError::RowContract(
-            row_contract_field_error(
-                session,
-                symbol_map_cross_cache,
-                qe,
-                cap,
-                path,
-                wire_for_input,
-                &cols,
-                op_label,
-            ),
+            row_contract_field_error(qe, cap, wire_for_input, &cols, op_label, surface_node),
         ));
     }
     Ok(())
