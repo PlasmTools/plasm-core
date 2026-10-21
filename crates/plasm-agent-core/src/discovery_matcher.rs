@@ -4,6 +4,7 @@ mod chat;
 use crate::discovery_store::RetrievalReceipt;
 use crate::intent_provenance::IntentProvenance;
 pub(crate) use chat::ENDPOINT as RELEVANCE_ENDPOINT;
+use futures_util::{stream::FuturesUnordered, StreamExt};
 use plasm_core::{catalog_discovery::content_hash, prerequisites::CapabilityRef};
 use serde::{Deserialize, Serialize};
 #[cfg(test)]
@@ -54,6 +55,8 @@ pub const RELEVANCE_MODEL: &str = "openai/gpt-6-luna";
 // A wire-size packing target for economical requests, NOT a provider context guarantee.
 // Provider rejections drive further typed partitioning, including below this target.
 const TARGET_PAGE_BYTES: usize = 16_000;
+/// Bounds work admitted by one discovery turn, including split pages.
+const ROUTE_CONCURRENCY: usize = 4;
 const CRITERIA: [(&str, &str); 3] = [
     (
         "relevant",
@@ -194,19 +197,23 @@ impl DecisionCodec for RelevanceCodec {
 }
 #[derive(Serialize)]
 struct QuestionSet<'a> {
+    context: SharedContext<'a>,
     questions: BTreeMap<String, DirectQuestion<'a>>,
 }
 #[derive(Serialize)]
 struct DirectQuestion<'a> {
-    criteria: BTreeMap<&'static str, &'static str>,
     instructions: DirectEvidence<'a>,
 }
 #[derive(Serialize)]
-struct DirectEvidence<'a> {
+struct SharedContext<'a> {
+    criteria: BTreeMap<&'static str, &'static str>,
     current_intent: &'a str,
     intent_turns: Vec<&'a str>,
     intent_interpretation: &'static str,
     rule: &'static str,
+}
+#[derive(Serialize)]
+struct DirectEvidence<'a> {
     capability: DirectCard<'a>,
     collection_meaning: &'a str,
 }
@@ -233,12 +240,7 @@ fn issue_batch(
         wire_questions.insert(
             key,
             DirectQuestion {
-                criteria: CRITERIA.into_iter().collect(),
                 instructions: DirectEvidence {
-                    current_intent: intent.current(),
-                    intent_turns: intent.turns().collect(),
-                    intent_interpretation: QUESTION_FORMAT,
-                    rule: RUBRIC,
                     capability: DirectCard {
                         reference: &q.reference,
                         entity: &q.entity,
@@ -250,6 +252,13 @@ fn issue_batch(
         );
     }
     let content = serde_json::to_string(&QuestionSet {
+        context: SharedContext {
+            criteria: CRITERIA.into_iter().collect(),
+            current_intent: intent.current(),
+            intent_turns: intent.turns().collect(),
+            intent_interpretation: QUESTION_FORMAT,
+            rule: RUBRIC,
+        },
         questions: wire_questions,
     })
     .map_err(crate::decision_codec::DecisionCodecError::from)
@@ -257,7 +266,7 @@ fn issue_batch(
     let body = RelevanceCodec::encode(&chat::request(model, content, bindings.keys()))
         .map_err(DiscoveryMatcherError::Encode)?;
     Ok(IssuedBatch {
-        cache_key: content_hash(format!("chat-direct-relevance-v1\\n{body}").as_bytes()),
+        cache_key: content_hash(format!("chat-direct-relevance-v2\\n{body}").as_bytes()),
         body,
         model: model.into(),
         bindings,
@@ -304,10 +313,27 @@ where
     F: FnMut(IssuedBatch) -> Fut,
     Fut: std::future::Future<Output = Result<String, DecisionProviderError>>,
 {
-    let mut pages = SelectionPages::new(issue_batches(model, intent, retrieval)?);
-    while let Some(issued) = pages.current().cloned() {
-        match decide(issued).await {
-            Ok(raw) => pages.accept(&raw)?,
+    let mut pending: std::collections::VecDeque<_> =
+        issue_batches(model, intent, retrieval)?.into();
+    let mut running = FuturesUnordered::new();
+    let mut accepted = Vec::new();
+    let mut answers = Vec::new();
+    loop {
+        while running.len() < ROUTE_CONCURRENCY {
+            let Some(issued) = pending.pop_front() else {
+                break;
+            };
+            let response = decide(issued.clone());
+            running.push(async move { (issued, response.await) });
+        }
+        let Some((issued, result)) = running.next().await else {
+            break;
+        };
+        match result {
+            Ok(raw) => {
+                answers.extend(decode_batch(&issued, &raw)?);
+                accepted.push(issued);
+            }
             Err(error)
                 if error
                     .downcast_ref::<crate::decision_transport::DecisionTransportError>()
@@ -318,12 +344,14 @@ where
                         )
                     }) =>
             {
-                pages.split_current(intent)?;
+                let [left, right] = repartition(&issued, intent)?;
+                pending.push_front(right);
+                pending.push_front(left);
             }
             Err(error) => return Err(DiscoveryMatcherError::Provider(error)),
         }
     }
-    pages.finish(retrieval)
+    finish_selection(answers, retrieval, &accepted)
 }
 impl SelectionPages {
     pub fn new(batches: Vec<IssuedBatch>) -> Self {
@@ -453,6 +481,7 @@ pub fn finish_selection(
 
 #[cfg(test)]
 mod tests {
+    mod scheduling;
     use super::*;
     use proptest::prelude::*;
     fn fixture() -> (IntentProvenance, RetrievalReceipt) {
@@ -683,7 +712,7 @@ mod tests {
             .await
             .is_err()
         );
-        assert_eq!(calls, 2);
+        assert!(calls <= ROUTE_CONCURRENCY + 1);
         retrieval.candidates.push(template);
         assert!(issue_batches(RELEVANCE_MODEL, &intent, &retrieval).is_err());
     }
@@ -717,8 +746,8 @@ mod tests {
             let (_, retrieval) = fixture();
             let batches = issue_batches(RELEVANCE_MODEL, &provenance, &retrieval).unwrap();
             let content = question_content(&batches[0]);
-            prop_assert_eq!(&content["questions"]["q0"]["instructions"]["intent_turns"], &json!(turns));
-            prop_assert_eq!(&content["questions"]["q0"]["instructions"]["current_intent"], &json!(provenance.current()));
+            prop_assert_eq!(&content["context"]["intent_turns"], &json!(turns));
+            prop_assert_eq!(&content["context"]["current_intent"], &json!(provenance.current()));
         }
     }
 
@@ -759,15 +788,15 @@ mod tests {
                     evidence["collection_meaning"],
                     json!(target.document.collection.meaning)
                 );
-                assert_eq!(evidence["current_intent"], "First");
+                assert_eq!(content["context"]["current_intent"], "First");
                 assert_eq!(
-                    evidence["intent_turns"],
+                    content["context"]["intent_turns"],
                     json!(["First", "First", "Revised", "First"])
                 );
-                assert_eq!(evidence["rule"], RUBRIC);
-                assert_eq!(evidence["intent_interpretation"], QUESTION_FORMAT);
+                assert_eq!(content["context"]["rule"], RUBRIC);
+                assert_eq!(content["context"]["intent_interpretation"], QUESTION_FORMAT);
                 for (label, meaning) in CRITERIA {
-                    assert_eq!(question["criteria"][label], meaning);
+                    assert_eq!(content["context"]["criteria"][label], meaning);
                 }
             }
         }

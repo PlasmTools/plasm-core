@@ -213,6 +213,8 @@ pub struct DiscoverySessionPin {
 #[derive(Clone)]
 pub struct DiscoveryStore {
     pool: DiscoveryDatabase,
+    // Store clones (including short-lived Node route services) share cache fills.
+    pub(crate) pending_decisions: std::sync::Arc<crate::discovery_scheduling::DecisionLocks>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -343,7 +345,10 @@ impl DiscoveryStore {
 
     pub async fn connect(url: &str) -> Result<Self> {
         let pool = DiscoveryDatabase::connect(url).await?;
-        Ok(Self { pool })
+        Ok(Self {
+            pool,
+            pending_decisions: Default::default(),
+        })
     }
 
     /// Install the discovery schema explicitly; startup checks extension availability separately.

@@ -36,7 +36,7 @@ pub(super) fn request<'a>(
     Request {
         model,
         messages: [
-            Message { role: "system", content: "Answer each supplied choice question. Return only JSON matching the supplied output schema.".into() },
+            Message { role: "system", content: "Answer each supplied choice question using the shared context and criteria together with that question's complete evidence. Return only JSON matching the supplied output schema.".into() },
             Message { role: "user", content },
         ],
         reasoning: Reasoning { effort: "high" },

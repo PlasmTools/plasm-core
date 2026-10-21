@@ -166,6 +166,7 @@ pub struct CatalogInfo {
 #[derive(Debug, Clone, serde::Serialize)]
 pub struct TeachingExposureResult {
     pub prompt: String,
+    pub declarations_changed: bool,
     pub delta_refs: Vec<String>,
 }
 
@@ -580,6 +581,7 @@ impl AgentEngine {
             session.domain_revision += 1;
         }
         let mut prompt = self.render_teaching_delta(&touched)?;
+        let declarations_changed = !prompt.is_empty();
         let catalogs = self
             .catalogs
             .iter()
@@ -597,6 +599,7 @@ impl AgentEngine {
         }
         Ok(TeachingExposureResult {
             prompt,
+            declarations_changed,
             delta_refs: touched
                 .iter()
                 .map(|e| format!("{}:{}", e.entry_id, e.entity))
@@ -1895,6 +1898,14 @@ mod tests {
             route("product_list").business
         );
         let initial_entities = engine.exposure.as_ref().unwrap().entities.clone();
+        let repeated = engine
+            .expose_routing("list again", &route("product_list"))
+            .unwrap();
+        assert!(!repeated.declarations_changed);
+        assert!(
+            !repeated.delta_refs.is_empty(),
+            "touched entities are not new declarations"
+        );
         let dry = engine
             .dry_run("class Read(Program):\n    def build(self):\n        return e1.query()\n")
             .await
@@ -1911,6 +1922,7 @@ mod tests {
         let extension = engine
             .expose_routing("fetch category", &route("category_get"))
             .unwrap();
+        assert!(extension.declarations_changed);
         assert!(!extension
             .prompt
             .contains(plasm_core::prompt_render::python::LANGUAGE));
@@ -1938,6 +1950,7 @@ mod tests {
             .expose_routing("continue using existing capabilities", &empty)
             .unwrap();
         assert!(unchanged.delta_refs.is_empty());
+        assert!(!unchanged.declarations_changed);
         assert_eq!(engine.exposed_capabilities(), refs);
         assert_eq!(engine.exposure.as_ref().unwrap().entities, before_empty);
         assert_eq!(refs.len(), 2);
@@ -1957,6 +1970,17 @@ mod tests {
             .unwrap()
             .message
             .contains("validated"));
+        let same_entity = engine
+            .expose_routing("search products", &route("product_search"))
+            .unwrap();
+        assert!(
+            same_entity.declarations_changed,
+            "new method on existing entity is an addition"
+        );
+        let repeated = engine
+            .expose_routing("search again", &route("product_search"))
+            .unwrap();
+        assert!(!repeated.declarations_changed);
     }
 
     #[test]

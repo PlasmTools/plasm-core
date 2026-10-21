@@ -58,6 +58,7 @@ export interface JsSeed {
 }
 
 export interface JsTeachingResult {
+  declarationsChanged: boolean
   prompt: string
   deltaRefs: Array<string>
 }

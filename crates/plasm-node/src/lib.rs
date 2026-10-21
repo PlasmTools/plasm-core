@@ -48,6 +48,7 @@ pub struct JsSeed {
 #[napi(object)]
 pub struct JsTeachingResult {
     pub prompt: String,
+    pub declarations_changed: bool,
     pub delta_refs: Vec<String>,
 }
 
@@ -418,6 +419,7 @@ impl PlasmEngine {
             .map_err(map_err)?;
         Ok(JsTeachingResult {
             prompt: result.prompt,
+            declarations_changed: result.declarations_changed,
             delta_refs: result.delta_refs,
         })
     }

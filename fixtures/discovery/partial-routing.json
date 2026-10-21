@@ -76,6 +76,7 @@
   },
   "teaching": {
     "prompt": "e1 Record",
+    "declarations_changed": true,
     "delta_refs": [
       "matrix:Record"
     ]

@@ -310,7 +310,7 @@ export class AgentRuntime {
           ...(recoveryMarkdown ? [] : routingExplanationLines(routing.matching)),
         ].filter(Boolean).join("\n\n");
       }
-      if (!teaching || (!teaching.prompt.trim() && (!existing || teaching.delta_refs.length > 0))) {
+      if (!teaching || (!teaching.prompt.trim() && (!existing || teaching.declarations_changed))) {
         throw new Error("Routing is missing its prerequisite closure or canonical teaching");
       }
       // Keep exact capability and prerequisite distinctions as returned by Rust.
@@ -336,7 +336,10 @@ export class AgentRuntime {
         registry_generation: session.registryGeneration, routing: JSON.stringify(routing),
         trace_id: activeTraceId() ?? span.spanContext().traceId,
       });
-      const teachingMarkdown = formatPlasmContextMarkdown(session.logicalSessionRef, teaching.prompt, false);
+      const teachingMarkdown = formatPlasmContextMarkdown(
+        session.logicalSessionRef, teaching.prompt,
+        !existing ? "initial" : teaching.declarations_changed ? "extended" : "unchanged",
+      );
       return [routing.intent_analysis, supportMarkdown, teachingMarkdown, recoveryMarkdown].filter(Boolean).join("\n\n");
     });
   }

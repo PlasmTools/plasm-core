@@ -1,5 +1,6 @@
 //! Direct, bounded capability discovery: deterministic recall followed by Luna relevance matching.
 
+use crate::discovery_scheduling as scheduling;
 use plasm_core::prerequisites::{
     prerequisite_closure, CapabilityRef, PrerequisiteClosure, PrerequisiteError,
 };
@@ -196,6 +197,9 @@ impl DiscoveryService {
             provenance,
             &retrieval,
             |issued| async move {
+                // Serialize identical requests within this service, then recheck the
+                // durable cache. Failures are never cached; cancellation releases ownership.
+                let _same_request = self.store.pending_decisions.claim(issued.cache_key()).await;
                 if let Some(raw) = self
                     .store
                     .cached_selector_envelope(issued.cache_key())
@@ -207,7 +211,7 @@ impl DiscoveryService {
                     .model_response(
                         matcher::RELEVANCE_ENDPOINT,
                         issued.body(),
-                        "chat-direct-capability-relevance-v1",
+                        "chat-direct-capability-relevance-v2",
                     )
                     .await?;
                 matcher::decode_batch(&issued, &raw)?;
@@ -301,6 +305,7 @@ impl DiscoveryService {
         body: &str,
         contract: &str,
     ) -> std::result::Result<String, crate::decision_transport::DecisionTransportError> {
+        let _permit = scheduling::provider_permit().await;
         crate::decision_transport::request_decision(
             &self.client,
             endpoint,

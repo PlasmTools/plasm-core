@@ -14,6 +14,7 @@ export async function checkSessionExtension(observe: (intent: string) => Promise
   const routed: IntentProvenance[] = [];
   let insufficient = false;
   let malformedTeaching = false;
+  let guidanceOnly = false;
   const provenanceBySession = new Map<string, IntentProvenance>();
   const unused = async (): Promise<never> => { throw new Error("unexpected engine operation"); };
   const engine: PlasmEngine = {
@@ -44,11 +45,14 @@ export async function checkSessionExtension(observe: (intent: string) => Promise
           recovery: insufficient ? {candidates:[{reference:{catalog:"matrix",capability:"read"},choice:"unrelated"}],available_catalogs:[],guidance:"No relevant capability in this bounded packet."}:null,
           closure: insufficient ? (sessionId ? { business: [], input_sources: [], prerequisites: [], acquisitions: [], edges: [] } : null) : { business: [{ catalog: "matrix", capability: "read" }], input_sources: [], prerequisites: [], acquisitions: [], edges: [] },
         },
-        teaching: insufficient ? (sessionId ? { prompt: "", delta_refs: [] } : null) : { prompt: "e1\tRecord", delta_refs: ["matrix:Record"] },
+        teaching: insufficient ? (sessionId ? { prompt: "", declarations_changed: false, delta_refs: [] } : null) : { prompt: "e1\tRecord", declarations_changed: true, delta_refs: ["matrix:Record"] },
       });
       if (malformedTeaching) {
-        packet.teaching = { prompt: "", delta_refs: ["matrix:Record"] };
+        packet.teaching = { prompt: "", declarations_changed: true, delta_refs: ["matrix:Record"] };
         return packet;
+      }
+      if (guidanceOnly) {
+        packet.teaching = { prompt: "Bind credential from the existing source.", declarations_changed: false, delta_refs: ["matrix:Record"] };
       }
       const previous = provenanceBySession.get(pin);
       if (previous) {
@@ -150,6 +154,14 @@ export async function checkSessionExtension(observe: (intent: string) => Promise
       intent: "Same new workflow",
     })));
     assert.notEqual(newWorkflows[0]!.match(/l_[A-Za-z0-9_-]{22}/)?.[0], newWorkflows[1]!.match(/l_[A-Za-z0-9_-]{22}/)?.[0]);
+    guidanceOnly = true;
+    const repeated = await runtime.plasmContext({ ...duplicateRequest, intent: "Use existing declarations" });
+    assert.match(repeated, /No new declarations/);
+    assert.match(repeated, /Bind credential from the existing source/);
+    assert.doesNotMatch(repeated, /Additional declarations/);
+    guidanceOnly = false;
+    const added = await runtime.plasmContext({ ...duplicateRequest, intent: "Find a new operation" });
+    assert.match(added, /Additional declarations/);
     malformedTeaching = true;
     await assert.rejects(() => runtime.plasmContext({ intent: "Malformed initial teaching" }), /canonical teaching/);
     const beforeMalformed = await runtime.sessionManager.getByLogicalRef(ref);
