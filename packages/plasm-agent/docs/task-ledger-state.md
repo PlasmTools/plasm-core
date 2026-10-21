@@ -15,9 +15,17 @@ No new schema or production mechanism is required to represent restoration:
 - `remaining_work` holds restoration and verification obligations.
 - `completed_effects` holds model interpretations of completed work.
 
-The store is instance-local memory, not durable checkpoint storage. It survives
-tool calls and follow-up turns on the same agent. `resetConversation` clears it;
-a new agent instance starts empty, even with the same `agentRoot`.
+When enabled, the store checkpoints accepted records to `agentRoot/task-ledger.json`
+(or explicit `taskLedgerPath`). AppWorld supplies its task workspace path. Use one
+writer and one workflow per checkpoint; this is not a shared multi-agent store.
+Writes validate the record, flush a mode-0600 temporary file, and atomically rename
+it before acknowledging or updating memory. A new instance loads the versioned
+record before any model request. Corrupt or unsupported records fail with a typed
+load error; they are never silently replaced with empty state. `resetConversation`
+explicitly persists an empty record. Failed writes leave accepted memory unchanged.
+The bounded 4 KiB checkpoint uses synchronous file operations at the write boundary.
+Loading a ledger restores model-authored working state only: it does not resume a
+conversation, restore execution authorizations, or replay any operation.
 
 ## Deterministic evidence
 
@@ -30,7 +38,9 @@ Assertions inspect the fresh state message in every subsequent provider request,
 not merely the historical write. The original observation, preservation scope
 and remaining obligation survive. The failed operation executes once. The
 rejected replacement leaves state unchanged. Existing tests cover conversation
-reset and the disabled configuration; the added test covers a new instance.
+reset and the disabled configuration. Restart tests cover obligation and completed
+effect retention, fresh model-request visibility, no effect replay, file permissions,
+failed atomic replacement, durable reset and corrupt-checkpoint rejection.
 
 ## Limits
 

@@ -59,6 +59,8 @@ export interface PlasmAgentConfig extends AgentRuntimeConfig {
    * (`PLASM_EVAL_TASK_LEDGER=1` on the TS eval host). Product default unset.
    */
   includeTaskLedger?: boolean;
+  /** One workflow-owned checkpoint. Defaults to agentRoot/task-ledger.json. */
+  taskLedgerPath?: string;
 }
 
 export interface AgentGenerateOptions {
@@ -141,7 +143,7 @@ export class PlasmAgent {
   private readonly getAuthoringContext?: () => AuthoringContext;
   private readonly includeEvalTerminals: boolean;
   private readonly includeTaskLedger: boolean;
-  private readonly taskLedgerStore = new TaskLedgerStore();
+  private readonly taskLedgerStore: TaskLedgerStore;
   private readonly agentName: string;
   private conversation: ModelMessage[] = [];
 
@@ -172,6 +174,9 @@ export class PlasmAgent {
     this.getAuthoringContext = config.getAuthoringContext;
     this.includeEvalTerminals = config.includeEvalTerminals === true;
     this.includeTaskLedger = config.includeTaskLedger === true;
+    this.taskLedgerStore = new TaskLedgerStore(this.includeTaskLedger
+      ? config.taskLedgerPath ?? path.join(config.agentRoot, "task-ledger.json")
+      : undefined);
   }
 
   /** Last accepted model write, or `null` when the experiment flag is off. */

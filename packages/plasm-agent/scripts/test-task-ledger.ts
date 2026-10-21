@@ -5,9 +5,10 @@
  * unchanged when the experiment flag is off.
  */
 import assert from "node:assert/strict";
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp, rm, readFile, writeFile, mkdir, stat } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
+import { spawnSync } from "node:child_process";
 import { asSchema, tool, type ToolSet } from "ai";
 import { z } from "zod";
 import { MockLanguageModelV3 } from "ai/test";
@@ -489,9 +490,37 @@ try {
     agentRoot: obligationRoot, model, engine, hostTransport: null,
     archiveEnabled: false, telemetry: false, includeTaskLedger: true,
   });
-  assert.deepEqual(independent.taskLedger, emptyTaskLedger(), "ledger is instance-local, not restart persistence");
+  assert.deepEqual(independent.taskLedger, obligation, "restart loads the accepted obligation and completed effects");
+  independent.runtime.hasOpenWorkflow = () => true;
+  await independent.generate("RESUME", { wrapTools: wrap });
+  assert.equal(executions, 1, "loading a checkpoint must never replay effects");
+  assert.ok(JSON.stringify(model.doStreamCalls.at(-1)?.prompt.at(-1)).includes(obligation.remaining_work[0]!));
+  const checkpoint = path.join(obligationRoot, "task-ledger.json");
+  assert.equal((await stat(checkpoint)).mode & 0o777, 0o600);
+  const saved = await readFile(checkpoint, "utf8");
+  const restarted = spawnSync(process.execPath, ["--import", "tsx", "--input-type=module", "--eval",
+    `import { TaskLedgerStore } from ${JSON.stringify(new URL("../src/tools/task-ledger.ts", import.meta.url).href)};
+     process.stdout.write(JSON.stringify(new TaskLedgerStore(process.argv[1]).record));`, checkpoint], { encoding: "utf8" });
+  assert.equal(restarted.status, 0, restarted.stderr);
+  assert.deepEqual(JSON.parse(restarted.stdout), obligation, "separate process recovers accepted state");
+  const validStore = new TaskLedgerStore(checkpoint);
+  assert.throws(() => validStore.replace({ ...obligation, remaining_work: ["x".repeat(5000)] }), /Task ledger write failed/);
+  assert.equal(await readFile(checkpoint, "utf8"), saved, "invalid replacement preserves the last good file byte-for-byte");
+  // A failed atomic rename must not replace the accepted in-memory record.
+  const durable = new TaskLedgerStore(checkpoint);
+  await rm(checkpoint);
+  await mkdir(checkpoint);
+  assert.throws(() => durable.clear(), /Task ledger write failed/);
+  assert.deepEqual(durable.record, obligation);
+  await rm(checkpoint, { recursive: true });
+  await writeFile(checkpoint, saved);
+  assert.deepEqual(new TaskLedgerStore(checkpoint).record, obligation);
+  durable.clear();
+  assert.deepEqual(new TaskLedgerStore(checkpoint).record, emptyTaskLedger(), "reset is durable");
+  await writeFile(checkpoint, "{broken");
+  assert.throws(() => new TaskLedgerStore(checkpoint), /Task ledger load failed/, "corruption must not silently erase obligations");
 } finally {
   await rm(obligationRoot, { recursive: true, force: true });
 }
 
-console.log("PASS: task ledger retains authored obligations across errors, rejected writes and turns; reset and instance boundaries explicit");
+console.log("PASS: ledger survives process restart, rejected writes and turns; no effects replayed; reset durable; corruption explicit");

@@ -1,4 +1,7 @@
 import { tool, type ToolSet } from "ai";
+import { readFileSync, mkdirSync, openSync, writeFileSync, fsyncSync, closeSync, renameSync, rmSync } from "node:fs";
+import path from "node:path";
+import { randomUUID } from "node:crypto";
 import { z } from "zod";
 
 import { toolInput } from "./tool-input.js";
@@ -110,20 +113,63 @@ export function parseTaskLedgerRecord(input: unknown): ParseTaskLedgerResult {
 }
 
 /** Host store: persist model writes only. Never invent obligations or judge correctness. */
+export class TaskLedgerPersistenceError extends Error {
+  constructor(readonly operation: "load" | "write", cause: unknown) {
+    super(`Task ledger ${operation} failed; no empty-state recovery or effect replay performed`, { cause });
+    this.name = "TaskLedgerPersistenceError";
+  }
+}
+
 export class TaskLedgerStore {
   private current: TaskLedgerRecord = emptyTaskLedger();
+
+  constructor(private readonly file?: string) {
+    if (!file) return;
+    let text: string;
+    try { text = readFileSync(file, "utf8"); }
+    catch (error) {
+      if (error instanceof Error && "code" in error && error.code === "ENOENT") return;
+      throw new TaskLedgerPersistenceError("load", error);
+    }
+    try {
+      const envelope = z.object({ version: z.literal(1), record: taskLedgerRecordSchema }).strict().parse(JSON.parse(text));
+      const parsed = parseTaskLedgerRecord(envelope.record);
+      if (!parsed.ok) throw new Error(parsed.error);
+      this.current = parsed.record;
+    } catch (error) { throw new TaskLedgerPersistenceError("load", error); }
+  }
 
   get record(): TaskLedgerRecord {
     return structuredClone(this.current);
   }
 
   replace(record: TaskLedgerRecord): TaskLedgerRecord {
-    this.current = structuredClone(record);
+    const parsed = parseTaskLedgerRecord(record);
+    if (!parsed.ok) throw new TaskLedgerPersistenceError("write", new Error(parsed.error));
+    if (this.file) {
+      const temporary = `${this.file}.${randomUUID()}.tmp`;
+      try {
+        mkdirSync(path.dirname(this.file), { recursive: true });
+        const fd = openSync(temporary, "wx", 0o600);
+        try {
+          writeFileSync(fd, JSON.stringify({ version: 1, record: parsed.record }));
+          fsyncSync(fd);
+        } finally { closeSync(fd); }
+        renameSync(temporary, this.file);
+      } catch (error) {
+        try { rmSync(temporary, { force: true }); }
+        catch (cleanupError) {
+          throw new TaskLedgerPersistenceError("write", new AggregateError([error, cleanupError], "Checkpoint write and temporary cleanup failed"));
+        }
+        throw new TaskLedgerPersistenceError("write", error);
+      }
+    }
+    this.current = parsed.record;
     return this.record;
   }
 
   clear(): void {
-    this.current = emptyTaskLedger();
+    this.replace(emptyTaskLedger());
   }
 }
 
