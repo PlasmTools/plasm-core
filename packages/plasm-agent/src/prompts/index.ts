@@ -133,6 +133,7 @@ export const TASK_LEDGER_LITURGY = [
   "An alternative action is authorized only when the user’s stated condition is met. A failed preferred action is not that condition.",
   "",
   "Each decision sees a host echo of your last accepted write as model-authored state — not host law and not a completion contract. Revise the record when evidence changes. Completion still follows the contract above — the ledger is not a terminal.",
+  "Keep preservation constraints in scope, tool-cited original state in observed_facts, and unfinished restoration or verification in remaining_work. A temporary change does not discharge its restoration obligation. Before ending the task, check remaining_work against observed results; record verified completion or report what remains unresolved. Preserve outstanding obligations when replacing the record.",
 ].join("\n");
 
 /**

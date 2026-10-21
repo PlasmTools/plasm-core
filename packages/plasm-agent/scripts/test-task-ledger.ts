@@ -8,7 +8,8 @@ import assert from "node:assert/strict";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import type { ToolSet } from "ai";
+import { tool, type ToolSet } from "ai";
+import { z } from "zod";
 import { MockLanguageModelV3 } from "ai/test";
 import {
   EVAL_TERMINAL_COMPLETION,
@@ -245,21 +246,27 @@ function mockProseStop() {
   });
 }
 
-function mockLedgerThenStop(record: typeof authored) {
+function mockLedgerThenStop(
+  record: typeof authored,
+  intermediateCalls: { toolName: string; input: unknown }[] = [],
+) {
   let count = 0;
   return new MockLanguageModelV3({
     doStream: async () => {
       const index = count++;
-      const write = index === 0;
+      const call = index === 0
+        ? { toolName: TASK_LEDGER_TOOL_NAME, input: { action: "write", record } }
+        : intermediateCalls[index - 1];
+      const hasCall = call !== undefined;
       return {
         stream: new ReadableStream({
           start(controller) {
-            if (write) {
+            if (hasCall) {
               controller.enqueue({
                 type: "tool-call",
-                toolCallId: "ledger-0",
-                toolName: TASK_LEDGER_TOOL_NAME,
-                input: JSON.stringify({ action: "write", record }),
+                toolCallId: `ledger-${index}`,
+                toolName: call.toolName,
+                input: JSON.stringify(call.input),
               });
             } else {
               controller.enqueue({ type: "text-start", id: "text" });
@@ -268,7 +275,7 @@ function mockLedgerThenStop(record: typeof authored) {
             }
             controller.enqueue({
               type: "finish",
-              finishReason: { unified: write ? "tool-calls" : "stop", raw: undefined },
+              finishReason: { unified: hasCall ? "tool-calls" : "stop", raw: undefined },
               usage: {
                 inputTokens: { total: 10, noCache: 10, cacheRead: 0, cacheWrite: 0 },
                 outputTokens: { total: 2, text: 2, reasoning: 0 },
@@ -400,4 +407,71 @@ try {
   await rm(persistRoot, { recursive: true, force: true });
 }
 
-console.log("PASS: task ledger persists model fields; host invents nothing; flag-off loop unchanged");
+const obligationRoot = await mkdtemp(path.join(tmpdir(), "plasm-obligation-"));
+try {
+  const obligation = {
+    ...authored,
+    requested_outcomes: ["publish the requested revision"],
+    scope: "Preserve unrelated resource R's original location and properties.",
+    alternative_conditions: [],
+    observed_facts: [{
+      kind: "fact" as const,
+      text: "Resource R originally occupied slot A with mode quiet.",
+      evidence_ref: "pr" + "c".repeat(64),
+    }],
+    interpretations: [],
+    unresolved_questions: [],
+    remaining_work: ["Restore R to slot A with mode quiet and verify the observed result."],
+  };
+  const model = mockLedgerThenStop(obligation, [
+    { toolName: "temporary_operation", input: {} },
+    { toolName: TASK_LEDGER_TOOL_NAME, input: {
+      action: "write",
+      record: { ...obligation, remaining_work: ["x".repeat(1500), "y".repeat(1500), "z".repeat(1500)] },
+    } },
+    { toolName: TASK_LEDGER_TOOL_NAME, input: { action: "read" } },
+  ]);
+  const agent = new PlasmAgent({
+    agentRoot: obligationRoot, model, engine, hostTransport: null,
+    archiveEnabled: false, telemetry: false, includeTaskLedger: true,
+  });
+  agent.runtime.hasOpenWorkflow = () => true;
+  let executions = 0;
+  const wrap = (tools: ToolSet): ToolSet => ({
+    [TASK_LEDGER_TOOL_NAME]: tools[TASK_LEDGER_TOOL_NAME]!,
+    temporary_operation: tool({
+      inputSchema: z.object({}),
+      execute: async (): Promise<string> => {
+        executions += 1;
+        throw new Error("abstract operation failed after a temporary change");
+      },
+    }),
+  });
+  const result = await agent.generate("ABSTRACT_WORKFLOW", { wrapTools: wrap });
+  assert.equal(executions, 1, "a failure must not automatically replay an effect");
+  assert.deepEqual(agent.taskLedger, obligation);
+  const audit = JSON.stringify(result.messages);
+  assert.match(audit, /abstract operation failed/);
+  assert.match(audit, /aggregate budget/);
+  for (const call of model.doStreamCalls.slice(1)) {
+    // Inspect the fresh state echo, not an old ledger write buried in history.
+    assert.equal(call.prompt.at(-1)?.role, "user");
+    const echo = JSON.stringify(call.prompt.at(-1));
+    assert.match(echo, /Model-authored task ledger/);
+    assert.ok(echo.includes(obligation.scope));
+    assert.ok(echo.includes(obligation.observed_facts[0]!.text));
+    assert.ok(echo.includes(obligation.remaining_work[0]!));
+  }
+  await agent.generate("FOLLOW_UP", { wrapTools: wrap });
+  assert.deepEqual(agent.taskLedger, obligation, "ending a turn does not discharge remaining work");
+  assert.ok(JSON.stringify(model.doStreamCalls.at(-1)?.prompt.at(-1)).includes(obligation.remaining_work[0]!));
+  const independent = new PlasmAgent({
+    agentRoot: obligationRoot, model, engine, hostTransport: null,
+    archiveEnabled: false, telemetry: false, includeTaskLedger: true,
+  });
+  assert.deepEqual(independent.taskLedger, emptyTaskLedger(), "ledger is instance-local, not restart persistence");
+} finally {
+  await rm(obligationRoot, { recursive: true, force: true });
+}
+
+console.log("PASS: task ledger retains authored obligations across errors, rejected writes and turns; reset and instance boundaries explicit");
