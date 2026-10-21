@@ -2687,53 +2687,58 @@ async fn python_nominal_boolean_refinement_selects_only_matching_effects() {
     let base = format!("http://{}", listener.local_addr().unwrap());
     let server = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
     for (predicate, expected) in [
-        ("r.active is True", "yes"),
-        ("r.active is not False", "yes"),
-        ("r.active is False", "no"),
-        ("r.active is not True", "no"),
-        ("r.active", "yes"),
+        ("r.active is True", Some("yes")),
+        ("r.active is not False", Some("yes")),
+        ("r.active is False", Some("no")),
+        ("r.active is not True", Some("no")),
+        ("r.active", Some("yes")),
+        ("False", None),
     ] {
         for body in [
             format!("selected = E.query().where(lambda r: {predicate})\nreturn selected.flat_map(lambda r: r.PING())"),
             format!("return E.query().flat_map(lambda r: r.PING() if {predicate} else None)"),
+            format!("return E.query().flat_map(lambda r: [r.PING()] if {predicate} else None)"),
+            format!("return E.query().flat_map(lambda r: [r.PING()] if {predicate} else [])"),
+            format!("enabled = E.get('yes').active\nreturn E.query().flat_map(lambda r: [r.PING()] if enabled is True and {predicate} else [])"),
+            format!("class ConditionalEffects(Program):\n    @compute\n    def ready(self, items: list[Row]) -> int:\n        return 1 if len(items) == 2 else 0\n    def build(self):\n        items = E.query()\n        enabled = self.ready(items)\n        return items.flat_map(lambda r: [r.PING()] if enabled == 1 and {predicate} else [])"),
         ] {
-        writes.lock().unwrap().clear();
-        let case = Case {
-            id: "nominal_boolean_effects",
-            python: "",
-            existing: None,
-            expect_live_error: None,
-        };
-        let (es, host) = parity_context(&case, &base);
+            writes.lock().unwrap().clear();
+            let case = Case {
+                id: "nominal_boolean_effects",
+                python: "",
+                existing: None,
+                expect_live_error: None,
+            };
+            let (es, host) = parity_context(&case, &base);
 
-        let bundle = compile_fixture(&es, &body)
+            let bundle = compile_fixture(&es, &body)
+                .await
+                .unwrap_or_else(|e| panic!("{body}: {e}"));
+            let dry = evaluate_plasm_comp_dry(&es, &bundle).unwrap();
+            assert!(
+                writes.lock().unwrap().is_empty(),
+                "planning dispatched an effect"
+            );
+            Box::pin(run_plasm_comp(
+                &es,
+                &host,
+                &es.prompt_hash,
+                "nominal-boolean-effects",
+                &bundle,
+                true,
+                None,
+                None,
+                Some(dry),
+                None,
+            ))
             .await
-            .unwrap_or_else(|e| panic!("{predicate}: {e}"));
-        let dry = evaluate_plasm_comp_dry(&es, &bundle).unwrap();
-        assert!(
-            writes.lock().unwrap().is_empty(),
-            "planning dispatched an effect"
-        );
-        Box::pin(run_plasm_comp(
-            &es,
-            &host,
-            &es.prompt_hash,
-            "nominal-boolean-effects",
-            &bundle,
-            true,
-            None,
-            None,
-            Some(dry),
-            None,
-        ))
-        .await
-        .unwrap();
-        assert_eq!(
-            *writes.lock().unwrap(),
-            vec![expected.to_string()],
-            "{predicate}"
-        );
-    }
+            .unwrap();
+            assert_eq!(
+                *writes.lock().unwrap(),
+                expected.into_iter().map(str::to_owned).collect::<Vec<_>>(),
+                "{body}"
+            );
+        }
     }
     server.abort();
 }

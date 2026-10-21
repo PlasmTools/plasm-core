@@ -152,10 +152,11 @@ impl Lower<'_> {
                     )?;
                     sequence.observe(&node.source);
                 }
-                if sequence == EffectSequence::Effects {
+                if matches!(sequence, EffectSequence::Empty | EffectSequence::Effects) {
                     // Actions are already in the scope ledger. The list itself
                     // is neither a rowset nor another acknowledgement; returning
-                    // it contributes no data rows.
+                    // it contributes no data rows. The empty sequence is the
+                    // identity: it records no effects and contributes no rows.
                     let none = *ruff_python_parser::parse_expression("None")
                         .map_err(PythonLoweringError::parse_error)?
                         .into_syntax()
