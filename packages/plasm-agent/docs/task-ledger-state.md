@@ -54,7 +54,11 @@ Evidence syntax is declared in the registered JSON Schema: a bare `pr` plus
 64 lowercase hexadecimal digits, `pc` or `pg` plus digits, a nonempty
 whitespace-free `plasm://` URI, or a supported Plasm tool name. Labels and
 surrounding whitespace are rejected. Admission and teaching share the same
-regex; validation feedback preserves the regex issue category and registered
+portable regex. Host admission also requires the match to equal the complete
+input, rejecting JavaScript's special final-line-terminator `$` match. Provider
+schemas contain no lookaround; abstract tests compare admission against the prior
+absolute-end grammar across reference kinds and trailing line terminators.
+Validation feedback preserves the regex issue category and registered
 pattern/description without copying rejected argument values into instructions.
 The abstract SDK recovery test verifies rejection, an admitted replacement
 executing once, retained obligations and immutable rejected-call audit data.

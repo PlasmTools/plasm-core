@@ -31,6 +31,7 @@ import {
   parseTaskLedgerRecord,
   renderTaskLedgerState,
   taskLedgerRecordBytes,
+  taskLedgerRecordSchema,
 } from "../src/tools/task-ledger.js";
 import { PlasmAgent } from "../src/runtime/plasm-agent.js";
 import type { PlasmEngine } from "../src/engine/napi-binding.js";
@@ -124,6 +125,7 @@ function patterns(value: unknown): string[] {
 const advertisedPatterns = [...new Set(patterns(asSchema(ledgerTools.task_ledger!.inputSchema).jsonSchema))];
 assert.equal(advertisedPatterns.length, 1, "every evidence field shares one advertised grammar");
 const advertised = new RegExp(advertisedPatterns[0]!);
+assert.doesNotMatch(advertised.source, /\(\?(?:[=!]|<[=!])/, "provider pattern must not contain lookaround");
 for (const [ref, accepted] of [
   ["pr" + "a".repeat(64), true], ["pc0", true], ["pg12", true],
   ["plasm://execute/x/y/run/pr" + "b".repeat(64), true],
@@ -133,10 +135,28 @@ for (const [ref, accepted] of [
   [" pc1 ", false], ["pc1\n", false], ["p 1", false], ["pg-1", false], ["plasm://", false],
 ] as const) {
   assert.equal(isKnownEvidenceRef(ref), accepted, ref);
-  assert.equal(advertised.test(ref), accepted, `advertised contract: ${ref}`);
+  assert.equal(advertised.exec(ref)?.[0] === ref, accepted, `full-match grammar: ${ref}`);
+}
+// Exact host admission must preserve the old absolute-end grammar, including
+// every JS final-line-terminator case; the provider receives only portable syntax.
+const previous = /^(?:pr[a-f0-9]{64}|p[cg]\d+|plasm:\/\/\S+|plasm|plasm_run|plasm_context|plasm_failure)(?![\s\S])/;
+for (const valid of ["pr" + "f".repeat(64), "pc12", "pg0", "plasm", "plasm_run", "plasm_context", "plasm_failure", "plasm://abstract/record"]) {
+  for (const suffix of ["", "\n", "\r", "\r\n", "\u2028", "\u2029", " ", "\t", "\nextra"]) {
+    const candidate = valid + suffix;
+    assert.equal(isKnownEvidenceRef(candidate), previous.test(candidate), JSON.stringify(candidate));
+    assert.equal(parseTaskLedgerRecord({ ...authored, observed_facts: [{kind: "fact", text: "abstract evidence", evidence_ref: candidate}] }).ok,
+      previous.test(candidate), "record admission retains exact validation");
+  }
 }
 
 const parsed = parseTaskLedgerRecord(authored);
+const trailingLine = taskLedgerRecordSchema.safeParse({ ...authored,
+  observed_facts: [{kind: "fact", text: "abstract evidence", evidence_ref: "pc1\n"}] });
+assert.equal(trailingLine.success, false);
+if (!trailingLine.success) {
+  assert.ok(trailingLine.error.issues.some(issue => issue.code === "invalid_string" && issue.validation === "regex"),
+    "full-match rejection retains typed regex repair diagnostics");
+}
 assert.equal(parsed.ok, true);
 if (!parsed.ok) throw new Error("expected parse ok");
 const persisted = store.replace(parsed.record);

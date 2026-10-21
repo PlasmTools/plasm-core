@@ -13,12 +13,19 @@ export const TASK_LEDGER_MAX_BYTES = 4096;
 
 const TEXT = z.string().min(1).max(2000);
 const OPTIONAL_TEXT = z.string().max(4000);
-// One grammar drives admission and the advertised JSON Schema pattern.
-const EVIDENCE_REF_PATTERN = /^(?:pr[a-f0-9]{64}|p[cg]\d+|plasm:\/\/\S+|plasm|plasm_run|plasm_context|plasm_failure)(?![\s\S])/;
+// Portable provider grammar: no lookaround. Host admission additionally requires
+// the entire match because JavaScript's $ can precede a final line terminator.
+const EVIDENCE_REF_PATTERN = /^(?:pr[a-f0-9]{64}|p[cg]\d+|plasm:\/\/\S+|plasm|plasm_run|plasm_context|plasm_failure)$/;
 const EVIDENCE_REF_DESCRIPTION =
   "Copy a bare reference: pr followed by exactly 64 lowercase hex digits, pc followed by digits (review), pg followed by digits (page), a plasm:// URI, or plasm/plasm_run/plasm_context/plasm_failure. No labels or surrounding whitespace. Syntax is checked, not existence or truth.";
 const evidenceRefSchema = z.string().min(1).max(500)
   .regex(EVIDENCE_REF_PATTERN, EVIDENCE_REF_DESCRIPTION)
+  .superRefine((value, context) => {
+    if (EVIDENCE_REF_PATTERN.exec(value)?.[0] !== value) {
+      context.addIssue({ code: "invalid_string", validation: "regex",
+        message: EVIDENCE_REF_DESCRIPTION });
+    }
+  })
   .describe(EVIDENCE_REF_DESCRIPTION);
 
 /**
