@@ -13,6 +13,7 @@ import {
 
 import { successfulEvalTerminalInStep } from "../tools/format.js";
 import { transientProviderFailure } from "./provider-failure.js";
+import { withProviderCompletion } from "./provider-completion.js";
 import { ToolCallRecovery, type ToolCallRecoveryEvent } from "./tool-call-recovery.js";
 import { ensureOtelIntegration } from "../instrumentation.js";
 import {
@@ -86,7 +87,9 @@ export interface EveToolLoopOptions {
   onStepFinish?: (step: AgentStepEvent) => void | Promise<void>;
   modelOptions?: EveToolLoopModelOptions;
   /**
-   * Optional wall-clock ceiling for one model generation. An aborted generation
+   * Optional wall-clock ceiling for one provider generation, ending at the
+   * SDK model-call end event. Tool execution is outside this deadline.
+   * An aborted generation
    * without a started tool execution uses the normal provider-recovery path.
    * If execution has started, the loop stops instead of risking replay of a
    * side effect whose response was lost with the provider stream.
@@ -517,6 +520,13 @@ export async function runEveToolLoop(
           // Transport retries precede any tool execution. Failed generations
           // additionally consume the existing step/provider-failure budgets.
           maxRetries: 2,
+          prepareStep: ({ model }) => ({ model: withProviderCompletion(model) }),
+          // The SDK step also awaits tools. End the generation deadline at
+          // the terminated provider boundary, not step completion or tool start
+          // (a provider may still be streaming other calls at that point).
+          onLanguageModelCallEnd: () => {
+            if (timeoutHandle !== undefined) clearTimeout(timeoutHandle);
+          },
           onToolExecutionStart: () => {
             toolExecutionStarted = true;
           },
@@ -569,7 +579,7 @@ export async function runEveToolLoop(
         } catch (error: unknown) {
           const failure = providerStreamError ?? error;
           const transient = transientProviderFailure(failure);
-          if (!generationTimedOut && (toolExecutionStarted || !transient)) {
+          if (toolExecutionStarted || (!generationTimedOut && !transient)) {
             // Keep payment/auth errors and uncertain post-execution failures
             // fatal. An empty SDK response cannot reconstruct executed effects.
             throw failure;
