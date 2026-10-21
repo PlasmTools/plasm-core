@@ -28,12 +28,53 @@ async fn map_body_plan_displays_its_typed_write_per_source_row() {
         .await
         .expect("compile");
     let dry = super::super::super::evaluate_plasm_comp_dry(&es, &bundle).expect("dry plan");
-    let text = super::super::super::render_plasm_plan_dry_text(&dry, None);
+    let text = super::super::super::render_plasm_plan_dry_text_for_session(&dry, None, Some(&es));
     assert!(
-        text.contains("for each row in rows: action matrix.Counter → action matrix.Counter"),
+        text.contains("for each row in rows: action Counter.advance(id=$) — Advances the counter by one. → action Counter.advance(id=$) — Advances the counter by one."),
         "{text}"
     );
     assert!(!text.contains("effects: value"), "{text}");
+}
+
+#[tokio::test]
+async fn nested_review_distinguishes_capabilities_arguments_and_effects() {
+    let es = session();
+    let symbols = es.teaching_exposure.as_ref().unwrap().to_symbol_map();
+    let wire = symbols.entity_sym_for("matrix", "Wire");
+    let counter = symbols.entity_sym_for("matrix", "Counter");
+    let advance = symbols.method_sym_for("matrix", "Counter", "advance");
+    let apply = symbols.method_sym_for("matrix", "Counter", "apply_item");
+    for (body, expected) in [
+        (
+            format!("{counter}.{advance}(id=\"alpha\")"),
+            vec!["advance", "id=alpha", "Advances the counter by one."],
+        ),
+        (
+            format!("{counter}.get(\"alpha\").{apply}(item=\"beta\")"),
+            vec![
+                "apply-item",
+                "Counter(alpha)",
+                "item=beta",
+                "Applies one source item to this counter.",
+            ],
+        ),
+        (
+            format!("[{counter}.{advance}(id=\"alpha\"), {counter}.{advance}(id=\"beta\")]"),
+            vec!["id=alpha", "id=beta", " → "],
+        ),
+    ] {
+        let program = format!("class Review(Program):\n    def build(self):\n        rows = {wire}.query()\n        effects = rows.flat_map(lambda row: {body})\n        return effects\n");
+        let bundle = crate::plasm_compile::compile_python_program(&es, &program)
+            .await
+            .expect("compile");
+        let dry = super::super::super::evaluate_plasm_comp_dry(&es, &bundle).expect("dry plan");
+        let text = super::super::super::render_plasm_plan_dry_text_for_session(&dry, None, Some(&es));
+        for fragment in expected {
+            assert!(text.contains(fragment), "missing {fragment}: {text}");
+        }
+        assert!(!text.contains("action matrix.Counter"), "{text}");
+        assert!(!text.contains("\"op\":"), "review must be text: {text}");
+    }
 }
 struct FanoutTransport {
     rows: usize,

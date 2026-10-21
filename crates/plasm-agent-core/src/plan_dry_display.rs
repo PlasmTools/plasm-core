@@ -212,7 +212,8 @@ pub enum PlanDryOp {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PlanDryEffect {
     pub kind: PlanNodeKind,
-    pub entity: String,
+    pub expression: String,
+    pub description: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -235,7 +236,7 @@ fn render_selection_effects(selections: &[PlanDrySelection]) -> String {
     )
 }
 
-fn map_body_effects(plan: &ValidatedPlan) -> Vec<PlanDryEffect> {
+fn map_body_effects(plan: &ValidatedPlan, es: Option<&ExecuteSession>) -> Vec<PlanDryEffect> {
     let mut effects = Vec::new();
     enum Work<'a> {
         Plan(&'a ValidatedPlan),
@@ -257,20 +258,23 @@ fn map_body_effects(plan: &ValidatedPlan) -> Vec<PlanDryEffect> {
             }
         };
         if let ValidatedPlanNode::Surface(surface) = node {
-            if matches!(
-                surface.effect_class,
-                EffectClass::Write | EffectClass::SideEffect
-            ) {
-                let entity = surface
-                    .qualified_entity
-                    .as_ref()
-                    .map(|key| format!("{}.{}", key.entry_id, key.entity))
-                    .unwrap_or_else(|| "resource".to_owned());
-                effects.push(PlanDryEffect {
-                    kind: surface.kind,
-                    entity,
-                });
-            }
+            // Keep receiver/input reads: their values feed the `$` holes in
+            // subsequent calls. Omitting them would hide literal identities.
+            effects.push(PlanDryEffect {
+                kind: surface.kind,
+                expression: surface_compact_expr(surface, es),
+                description: if matches!(
+                    surface.effect_class,
+                    EffectClass::Write | EffectClass::SideEffect
+                ) {
+                    effect_description(
+                        crate::plan_flow_capability::surface_capability_key(surface),
+                        es,
+                    )
+                } else {
+                    String::new()
+                },
+            });
         }
         if let ValidatedPlanNode::ForEach(fanout) = node {
             if matches!(
@@ -280,7 +284,24 @@ fn map_body_effects(plan: &ValidatedPlan) -> Vec<PlanDryEffect> {
                 let target = &fanout.effect_template.qualified_entity;
                 effects.push(PlanDryEffect {
                     kind: fanout.effect_template.kind,
-                    entity: format!("{}.{} per child row", target.entry_id, target.entity),
+                    expression: format!(
+                        "{} per child row",
+                        crate::plan_dry_compact::compact_agent_surface_expr(&effect_template_body(
+                            &fanout.effect_template,
+                            es
+                        ))
+                    ),
+                    description: effect_description(
+                        Some(crate::plan_flow::QualifiedCapabilityKey::from_parts(
+                            target.entry_id.as_str(),
+                            target.entity.as_str(),
+                            &crate::plan_flow_capability::resolved_mutation_capability_name(
+                                Some(&fanout.effect_template.ir_template.expr),
+                                fanout.effect_template.kind,
+                            ),
+                        )),
+                        es,
+                    ),
                 });
             }
         }
@@ -292,13 +313,48 @@ fn map_body_effects(plan: &ValidatedPlan) -> Vec<PlanDryEffect> {
 fn render_map_body(source: &str, effects: &[PlanDryEffect]) -> String {
     let actions = effects
         .iter()
-        .map(|effect| format!("{} {}", render_kind(effect.kind), effect.entity))
+        .map(|effect| {
+            let mut text = format!("{} {}", render_kind(effect.kind), effect.expression);
+            if !effect.description.is_empty() {
+                let _ = write!(text, " — {}", effect.description);
+            }
+            text
+        })
         .collect::<Vec<_>>();
     if actions.is_empty() {
         format!("for each row in {source}")
     } else {
         format!("for each row in {source}: {}", actions.join(" → "))
     }
+}
+
+fn effect_description(
+    key: Option<crate::plan_flow::QualifiedCapabilityKey>,
+    es: Option<&ExecuteSession>,
+) -> String {
+    let Some((key, es)) = key.zip(es) else {
+        return String::new();
+    };
+    let Some(context) = es.contexts_by_entry.get(key.entry_id.as_str()) else {
+        return String::new();
+    };
+    let Some(cap) = context.cgs.capabilities.get(&key.capability) else {
+        return String::new();
+    };
+    let mut descriptions = vec![cap.description.as_str()];
+    if let Some(output) = &cap.output_schema {
+        if let plasm_core::OutputType::SideEffect { description } = &output.output_type {
+            descriptions.push(description);
+        }
+    }
+    let mut normalized = Vec::new();
+    for description in descriptions {
+        let text = description.split_whitespace().collect::<Vec<_>>().join(" ");
+        if !text.is_empty() && !normalized.contains(&text) {
+            normalized.push(text);
+        }
+    }
+    normalized.join("; ")
 }
 
 pub fn build_plan_dry_compact_view(
@@ -671,7 +727,7 @@ fn compact_op_from_node(
     match node {
         ValidatedPlanNode::MapBody(map) => PlanDryOp::MapBody {
             source: map_display_id(map.body.parent.source.as_str(), display_map),
-            effects: map_body_effects(&map.plan),
+            effects: map_body_effects(&map.plan, es),
         },
         ValidatedPlanNode::Capture(_) => PlanDryOp::Data {
             summary: crate::plasm_plan_run::render_node_operation(node),
