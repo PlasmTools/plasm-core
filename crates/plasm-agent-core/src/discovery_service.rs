@@ -211,7 +211,7 @@ impl DiscoveryService {
                     .model_response(
                         matcher::RELEVANCE_ENDPOINT,
                         issued.body(),
-                        "chat-direct-capability-relevance-v2",
+                        "chat-direct-capability-relevance-v3",
                     )
                     .await?;
                 matcher::decode_batch(&issued, &raw)?;

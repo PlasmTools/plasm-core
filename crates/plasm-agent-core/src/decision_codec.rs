@@ -16,7 +16,7 @@ pub enum DecisionResponseError {
     UnexpectedModel,
     #[error("decision response came from an unexpected provider")]
     UnexpectedProvider,
-    #[error("decision response has missing or extra answers")]
+    #[error("decision response has missing, extra or duplicate answers")]
     AnswerSetMismatch,
     #[error("decision answer has an unexpected question type")]
     UnexpectedQuestionType,

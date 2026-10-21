@@ -197,7 +197,6 @@ impl DecisionCodec for RelevanceCodec {
 }
 #[derive(Serialize)]
 struct QuestionSet<'a> {
-    context: SharedContext<'a>,
     questions: BTreeMap<String, DirectQuestion<'a>>,
 }
 #[derive(Serialize)]
@@ -205,12 +204,17 @@ struct DirectQuestion<'a> {
     instructions: DirectEvidence<'a>,
 }
 #[derive(Serialize)]
-struct SharedContext<'a> {
+struct SharedRules {
     criteria: BTreeMap<&'static str, &'static str>,
-    current_intent: &'a str,
-    intent_turns: Vec<&'a str>,
     intent_interpretation: &'static str,
     rule: &'static str,
+}
+// Serialize directly into message text: canonical outer JSON must not reorder
+// current_intent ahead of the reusable, chronological ancestry.
+#[derive(Serialize)]
+struct IntentContext<'a> {
+    intent_turns: Vec<&'a str>,
+    current_intent: &'a str,
 }
 #[derive(Serialize)]
 struct DirectEvidence<'a> {
@@ -251,27 +255,33 @@ fn issue_batch(
             },
         );
     }
-    let content = serde_json::to_string(&QuestionSet {
-        context: SharedContext {
-            criteria: CRITERIA.into_iter().collect(),
-            current_intent: intent.current(),
-            intent_turns: intent.turns().collect(),
-            intent_interpretation: QUESTION_FORMAT,
-            rule: RUBRIC,
-        },
+    let rules = encode_content(&SharedRules {
+        criteria: CRITERIA.into_iter().collect(),
+        intent_interpretation: QUESTION_FORMAT,
+        rule: RUBRIC,
+    })?;
+    let intent_context = encode_content(&IntentContext {
+        intent_turns: intent.turns().collect(),
+        current_intent: intent.current(),
+    })?;
+    let content = encode_content(&QuestionSet {
         questions: wire_questions,
-    })
-    .map_err(crate::decision_codec::DecisionCodecError::from)
-    .map_err(DiscoveryMatcherError::Encode)?;
-    let body = RelevanceCodec::encode(&chat::request(model, content, bindings.keys()))
+    })?;
+    let body = RelevanceCodec::encode(&chat::request(model, rules, intent_context, content))
         .map_err(DiscoveryMatcherError::Encode)?;
     Ok(IssuedBatch {
-        cache_key: content_hash(format!("chat-direct-relevance-v2\\n{body}").as_bytes()),
+        cache_key: content_hash(format!("chat-direct-relevance-v3\\n{body}").as_bytes()),
         body,
         model: model.into(),
         bindings,
         questions: questions.to_vec(),
     })
+}
+
+fn encode_content(value: &impl Serialize) -> Result<String, DiscoveryMatcherError> {
+    serde_json::to_string(value)
+        .map_err(crate::decision_codec::DecisionCodecError::from)
+        .map_err(DiscoveryMatcherError::Encode)
 }
 
 /// Split complete semantic questions. No descriptions are truncated or sliced.
@@ -481,6 +491,7 @@ pub fn finish_selection(
 
 #[cfg(test)]
 mod tests {
+    mod prefix;
     mod scheduling;
     use super::*;
     use proptest::prelude::*;
@@ -495,11 +506,11 @@ mod tests {
         )
     }
     fn response(batch: &IssuedBatch, choices: &[MatchChoice]) -> String {
-        let answers: BTreeMap<_, _> = batch
+        let answers: Vec<_> = batch
             .bindings
             .keys()
             .zip(choices)
-            .map(|(key, choice)| (key, json!({"choice":choice})))
+            .map(|(key, choice)| json!({"key":key,"choice":choice}))
             .collect();
         completion(json!({"answers": answers}).to_string())
     }
@@ -508,7 +519,15 @@ mod tests {
     }
     fn question_content(batch: &IssuedBatch) -> serde_json::Value {
         let body: serde_json::Value = serde_json::from_str(batch.body()).unwrap();
-        serde_json::from_str(body["messages"][1]["content"].as_str().unwrap()).unwrap()
+        let mut context: serde_json::Map<String, serde_json::Value> =
+            serde_json::from_str(body["messages"][1]["content"].as_str().unwrap()).unwrap();
+        let intent: serde_json::Map<String, serde_json::Value> =
+            serde_json::from_str(body["messages"][2]["content"].as_str().unwrap()).unwrap();
+        context.extend(intent);
+        let mut questions: serde_json::Value =
+            serde_json::from_str(body["messages"][3]["content"].as_str().unwrap()).unwrap();
+        questions["context"] = json!(context);
+        questions
     }
 
     #[test]
@@ -807,13 +826,13 @@ mod tests {
         let (intent, retrieval) = fixture();
         let batches = issue_batches(RELEVANCE_MODEL, &intent, &retrieval).unwrap();
         for content in [
-            r#"{"answers":{}}"#,
-            r#"{"answers":{"foreign":{"choice":"relevant"}}}"#,
-            r#"{"answers":{"q0":{"choice":"relevant"},"q0":{"choice":"unrelated"}}}"#,
-            r#"{"answers":{"q0":{"choice":"relevant","choice":"unrelated"}}}"#,
-            r#"{"answers":{"q0":{"choice":"relevant","confidence":1}}}"#,
-            r#"{"answers":{"q0":{"choice":"required_source"}}}"#,
-            r#"{"answers":{"q0":{"choice":"relevant"}},"extra":true}"#,
+            r#"{"answers":[]}"#,
+            r#"{"answers":[{"key":"foreign","choice":"relevant"}]}"#,
+            r#"{"answers":[{"key":"q0","choice":"relevant"},{"key":"q0","choice":"unrelated"}]}"#,
+            r#"{"answers":[{"key":"q0","choice":"relevant","choice":"unrelated"}]}"#,
+            r#"{"answers":[{"key":"q0","choice":"relevant","confidence":1}]}"#,
+            r#"{"answers":[{"key":"q0","choice":"required_source"}]}"#,
+            r#"{"answers":[{"key":"q0","choice":"relevant"}],"extra":true}"#,
             "not json",
         ] {
             assert!(
@@ -902,7 +921,7 @@ mod tests {
                     assert_eq!(headers["authorization"], "Bearer test-only");
                     assert_eq!(headers["content-type"], "application/json");
                     let request: serde_json::Value = serde_json::from_str(&body).unwrap();
-                    let content: serde_json::Value = serde_json::from_str(request["messages"][1]["content"].as_str().unwrap()).unwrap();
+                    let content: serde_json::Value = serde_json::from_str(request["messages"][3]["content"].as_str().unwrap()).unwrap();
                     seen.lock().unwrap().push(body);
                     if content["questions"].as_object().unwrap().len() > 1 {
                         (axum::http::StatusCode::BAD_REQUEST,
