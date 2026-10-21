@@ -33,7 +33,11 @@ Wire names:
 - **MCP:** `_meta.plasm.run_ref` / tool arg **`run_ref`**
 - **HTTP:** query or JSON body **`plan_commit_ref`**
 
-The same program therefore yields the same `pcN` acceptance on MCP and HTTP even when call counters or summary metadata differ. MCP stores the reviewed comp under `pcN`; `plasm_run` consumes that token via **`run_ref`** rather than re-accepting a program echo.
+The same semantic program yields the same content digest, but each fresh review mints a new `pcN` authorization. MCP stores the reviewed comp under `pcN`; `plasm_run` consumes that token via **`run_ref`** rather than re-accepting a program echo.
+
+Each authorization permits one dispatch. Its typed lifecycle is `Ready → Running → Succeeded | Failed | Indeterminate`. A duplicate call dispatches nothing, including after partial failure or cancellation. Inspect the prior outcome before deciding whether to obtain a fresh review for a deliberate repeat. This is authorization consumption, not automatic retry or exactly-once vendor execution. Direct executions without a reviewed token and paging continuations are separate requests.
+
+Claims are atomic within the session and, when Redis is configured, across replicas. Store errors fail closed before dispatch. A missing terminal update leaves the durable claim consumed as Running; rehydrated in-flight local claims become Indeterminate. Authorization identity and state are required in persisted plan records: old descriptors without them are not admitted.
 
 Tokens expire after **10 minutes** (`PLAN_COMMIT_TTL`). Re-run plan dry-run after expiry or program change.
 

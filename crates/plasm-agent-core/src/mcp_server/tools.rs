@@ -71,7 +71,7 @@ pub(crate) fn plasm_tools(artifact_access: ArtifactAccessMode, ui_apps_enabled: 
     plasm_run_props.insert(
             "run_ref".into(),
             json_schema_string_type(
-                "Token for `plasm_run`: `pcN` from `plasm`, or the page handle from a \"more pages\" line. (`page(...)` is HTTP-execute program syntax, not an MCP value.)",
+                "Token for `plasm_run`: single-use `pcN` from `plasm`, or the page handle from a \"more pages\" line. A started plan cannot be executed again with the same token, including after failure. Inspect its outcome; a deliberate repeat requires a fresh plan review. (`page(...)` is HTTP-execute program syntax, not an MCP value.)",
             ),
         );
 

@@ -157,6 +157,7 @@ impl From<PersistedSessionReuseKey> for SessionReuseKey {
 
 #[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
 pub struct PersistedPlanCommitRecord {
+    pub authorization: crate::plan_authorization::AuthorizationSnapshot,
     pub commit_ref: String,
     pub commit_id_hex: String,
     #[serde(default)]

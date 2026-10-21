@@ -13,6 +13,34 @@ pub struct RedisBackend {
 }
 
 impl RedisBackend {
+    /// Atomically consume an authorization across replicas. Never a best-effort cache write.
+    pub(crate) async fn claim_plan_authorization(
+        &self,
+        key: &str,
+        ttl: u64,
+    ) -> redis::RedisResult<Option<String>> {
+        let mut conn = self.conn.clone();
+        redis::cmd("EVAL")
+            .arg("local old = redis.call('GET', KEYS[1]); if old then return old end; redis.call('SET', KEYS[1], ARGV[1], 'EX', ARGV[2]); return nil")
+            .arg(1).arg(key).arg("\"running\"").arg(ttl)
+            .query_async(&mut conn).await
+    }
+
+    pub(crate) async fn finish_plan_authorization(
+        &self,
+        key: &str,
+        state: &str,
+        ttl: u64,
+    ) -> redis::RedisResult<()> {
+        let mut conn = self.conn.clone();
+        redis::cmd("SET")
+            .arg(key)
+            .arg(state)
+            .arg("EX")
+            .arg(ttl)
+            .query_async(&mut conn)
+            .await
+    }
     pub async fn connect(redis_url: &str, ttl: Duration) -> redis::RedisResult<Self> {
         let client = redis::Client::open(redis_url)?;
         let conn = ConnectionManager::new(client).await?;

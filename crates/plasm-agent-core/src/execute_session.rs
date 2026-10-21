@@ -1748,6 +1748,7 @@ impl ExecuteSession {
                 }
             };
             records.push(PersistedPlanCommitRecord {
+                authorization: record.authorization.snapshot(),
                 commit_ref: record.commit_ref.as_str().to_string(),
                 commit_id_hex: record.commit_id.to_string(),
                 domain_revision: record.domain_revision,
@@ -1819,11 +1820,16 @@ impl ExecuteSession {
                 );
                 continue;
             };
+            if map.contains_key(&commit_ref) {
+                // A stale descriptor must not reset an in-process execution claim.
+                continue;
+            }
             map.insert(
                 commit_ref.clone(),
                 match crate::operation::PlanCommitRecord::rehydrated_from_persisted(
                     self,
                     crate::operation::RehydratedPlanCommit {
+                        authorization: persisted.authorization.clone(),
                         commit_ref,
                         commit_id: PlanCommitId::from_canonical_bytes(arr),
                         domain_revision: persisted.domain_revision,

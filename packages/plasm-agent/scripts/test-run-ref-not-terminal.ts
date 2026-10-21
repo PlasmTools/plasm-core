@@ -16,6 +16,12 @@ import {
 import { toolInput } from "../src/tools/tool-input.js";
 import type { ModelMessage } from "ai";
 import { z } from "zod";
+import { buildPlasmRunToolDescription } from "../src/prompts/index.js";
+
+const runDescription = buildPlasmRunToolDescription();
+assert.match(runDescription, /Each reviewed commit authorizes one execution/);
+assert.match(runDescription, /deliberate repeat requires a fresh plan review/);
+assert.doesNotMatch(runDescription, /reissuing that same run_ref/);
 
 const dry = formatPlasmDryRunMarkdown("plan review · 1w", "pc0");
 assert.deepEqual(runRefsInText(dry), ["pc0"]);

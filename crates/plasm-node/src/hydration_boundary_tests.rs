@@ -154,6 +154,33 @@ async fn run_native_hydration() {
         .await
         .unwrap();
     assert!(result.ok, "{}", result.message);
+    let calls_after_success = transport.calls.lock().unwrap().len();
+    let duplicate = engine
+        .run_plan_live(&dry.plan_commit_ref, transport.clone())
+        .await
+        .unwrap();
+    assert!(!duplicate.ok);
+    assert!(duplicate
+        .failure_json
+        .as_deref()
+        .unwrap()
+        .contains("plan_authorization_consumed"));
+    assert_eq!(
+        transport.calls.lock().unwrap().len(),
+        calls_after_success,
+        "duplicate must dispatch nothing"
+    );
+    let fresh = engine.dry_run(&mapped_program).await.unwrap();
+    assert_ne!(fresh.plan_commit_ref, dry.plan_commit_ref);
+    let repeated = engine
+        .run_plan_live(&fresh.plan_commit_ref, transport.clone())
+        .await
+        .unwrap();
+    assert!(repeated.ok, "{}", repeated.message);
+    assert!(
+        transport.calls.lock().unwrap().len() > calls_after_success,
+        "fresh authorization executes again"
+    );
     let envelope: serde_json::Value =
         serde_json::from_str(result.rows_json.as_deref().unwrap()).unwrap();
     assert_eq!(
@@ -218,6 +245,18 @@ async fn run_native_hydration() {
                 !result.ok,
                 "incomplete input must not produce a compute result"
             );
+            let calls_after_failure = transport.calls.lock().unwrap().len();
+            let duplicate = engine
+                .run_plan_live(&dry.plan_commit_ref, transport.clone())
+                .await
+                .unwrap();
+            assert!(!duplicate.ok);
+            assert!(
+                duplicate.message.contains("Failed"),
+                "{}",
+                duplicate.message
+            );
+            assert_eq!(transport.calls.lock().unwrap().len(), calls_after_failure);
             let failure: plasm_runtime::ExecutionFailure = serde_json::from_str(
                 result
                     .failure_json

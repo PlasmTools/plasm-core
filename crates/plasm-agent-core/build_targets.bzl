@@ -55,7 +55,7 @@ def build_targets():
             _COMMON,
             crate_name = "plasm_agent_core",
             compile_data = _COMMON["compile_data"] + ["Cargo.toml", "//:vendor/README.md", "//:scripts/ci/build-monty-runtime.sh", "//:test_fixtures", "//:agent_prompt_assets"],
-            data = ["Cargo.toml", "//:test_fixtures", "//:agent_prompt_assets"] + native.glob(["src/**/*.snap", "src/**/*.rs", "tests/support/**", "migrations/**"], allow_empty = True),
+            data = ["Cargo.toml", ":test_fixtures", "//:test_fixtures", "//:agent_prompt_assets"] + native.glob(["src/**/*.snap", "src/**/*.rs", "tests/support/**", "migrations/**"], allow_empty = True),
             env = {"INSTA_WORKSPACE_ROOT": "."},
             proc_macro_deps = _COMMON["proc_macro_deps"] + all_crate_deps(proc_macro_dev = True),
             deps = _COMMON["deps"] + ["//crates/plasm-otel:plasm_otel_testing"] + all_crate_deps(normal_dev = True),

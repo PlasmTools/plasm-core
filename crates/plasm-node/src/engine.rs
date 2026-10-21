@@ -795,7 +795,7 @@ impl AgentEngine {
             ));
         }
         let es = self.ensure_execute_session()?;
-        let (bundle, dry) = match ExecutableRunTarget::parse(trimmed) {
+        let (bundle, dry, authorization) = match ExecutableRunTarget::parse(trimmed) {
             Ok(ExecutableRunTarget::Commit(commit_ref)) => {
                 let committed = match resolve_committed_plan(&es, &commit_ref) {
                     Ok(committed) => committed,
@@ -807,7 +807,7 @@ impl AgentEngine {
                     Ok(dry) => dry,
                     Err(error) => return Ok(RunPlanResult::failure(error.into())),
                 };
-                (bundle, dry)
+                (bundle, dry, Some(commit_ref))
             }
             Ok(ExecutableRunTarget::Page(handle)) => {
                 let bundle = match plasm_agent_core::mcp_server::compile_page_continuation(
@@ -820,7 +820,7 @@ impl AgentEngine {
                     Ok(dry) => dry,
                     Err(error) => return Ok(RunPlanResult::failure(error.into())),
                 };
-                (bundle, dry)
+                (bundle, dry, None)
             }
             Err(_) => {
                 return Ok(RunPlanResult::reference_rejection(
@@ -831,21 +831,26 @@ impl AgentEngine {
         };
 
         let host = self.build_host_state(transport)?;
-        let live_result = Box::pin(run_plasm_comp(
+        let live_result = plasm_agent_core::plan_authorization::execute_authorized(
             &es,
             &host,
-            AGENT_PROMPT_HASH,
-            &self.session_id,
-            &bundle,
-            true,
-            None,
-            None,
-            Some(dry),
-            Some(plasm_agent_core::McpResultTransportPolicy {
-                artifact_access: plasm_agent_core::ArtifactAccessMode::DagCompute,
-                ..Default::default()
-            }),
-        ))
+            authorization.as_ref(),
+            Box::pin(run_plasm_comp(
+                &es,
+                &host,
+                AGENT_PROMPT_HASH,
+                &self.session_id,
+                &bundle,
+                true,
+                None,
+                None,
+                Some(dry),
+                Some(plasm_agent_core::McpResultTransportPolicy {
+                    artifact_access: plasm_agent_core::ArtifactAccessMode::DagCompute,
+                    ..Default::default()
+                }),
+            )),
+        )
         .await;
         let live = match live_result {
             Ok(live) => live,

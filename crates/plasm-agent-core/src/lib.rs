@@ -112,6 +112,7 @@ mod operation_progress_sse;
 pub mod oss_local_state;
 pub mod outbound_secret_provider;
 pub mod output;
+pub mod plan_authorization;
 pub mod plan_commit_store;
 mod plan_dry_compact;
 mod plan_dry_display;

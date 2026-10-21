@@ -2,10 +2,10 @@
 
 Call only after `plasm` returns a run_ref for a mutation or review gate, or to continue paging. Clean read-only `plasm` calls already execute; do not execute them again.
 
-The commit identifies the reviewed DAG. If it is missing, expired or mismatched, submit the program to `plasm` again. Preserve the logical session and selection criteria.
+Each reviewed commit authorizes one execution. Once started, that run_ref cannot dispatch again. A deliberate repeat requires a fresh plan review and its new run_ref. If a reference is missing, expired or mismatched, submit the program to `plasm` again. Preserve the logical session and selection criteria.
 
 Return only needed results: select and aggregate rowsets, and use typed @compute for rendering and processing inside the DAG. TSV is a result format. A preview may omit rows or fields; it does not establish absence or collection completeness. Inspect coverage and follow a returned continuation with the same logical_session_ref.
 
-A failed or cancelled run may have completed writes. Inspect operation outcomes before issuing further effects; do not blindly replay a program. A transient `session materialization changed during concurrent execute` permits reissuing that same run_ref once.
+A failed or cancelled run may have completed writes. Inspect operation outcomes before issuing further effects; do not blindly replay a program. A rejected duplicate dispatches nothing new and does not undo the earlier execution.
 
 Failure evidence belongs to one execution. A new program may perform reads or writes in the same logical session; it does not resume or roll back an earlier execution. Service diagnostics inform the agent but do not determine effect status.

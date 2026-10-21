@@ -81,6 +81,7 @@ pub(crate) fn plan_execute_cancel_signal() -> Option<CancelSignal> {
 /// Persisted plan commit payload before flow re-verify on rehydrate.
 #[derive(Debug, Clone)]
 pub struct RehydratedPlanCommit {
+    pub authorization: crate::plan_authorization::AuthorizationSnapshot,
     pub commit_ref: PlanCommitRef,
     pub commit_id: PlanCommitId,
     pub domain_revision: u32,
@@ -412,6 +413,7 @@ impl PlanCommitDryCache {
 
 #[derive(Debug, Clone)]
 pub struct PlanCommitRecord {
+    pub authorization: crate::plan_authorization::PlanAuthorization,
     pub commit_ref: PlanCommitRef,
     pub commit_id: PlanCommitId,
     /// Pinned [`ExecuteSession::domain_revision`] at dry-run registration (CEP-13 stale `pcN` guard).
@@ -448,6 +450,7 @@ impl PlanCommitRecord {
         let flow = dry.admit_for_commit()?;
         let policy_revision = flow.policy_revision.unwrap_or_default();
         Ok(Self {
+            authorization: Default::default(),
             commit_ref,
             commit_id,
             domain_revision,
@@ -467,6 +470,7 @@ impl PlanCommitRecord {
         input: RehydratedPlanCommit,
     ) -> Result<Self, PlanCommitRehydrateError> {
         let RehydratedPlanCommit {
+            authorization,
             commit_ref,
             commit_id,
             domain_revision,
@@ -508,6 +512,7 @@ impl PlanCommitRecord {
             });
         }
         Ok(Self {
+            authorization: crate::plan_authorization::PlanAuthorization::restore(authorization),
             commit_ref,
             commit_id,
             domain_revision,
@@ -530,6 +535,7 @@ impl PlanCommitRecord {
         verdict: PlanDryVerdict,
     ) -> Self {
         Self {
+            authorization: Default::default(),
             commit_ref,
             commit_id,
             domain_revision: 0,
@@ -943,23 +949,29 @@ pub fn spawn_async_plan_run(
     let scope_for_run = scope.clone();
     let es_run = Arc::clone(&es);
     let st_run = Arc::clone(&st);
+    let authorization = accept.plan_commit_ref.clone();
     tokio::spawn(async move {
         // Write-conflict retry lives at the branch level (`run_with_write_conflict_retry`), which
         // re-forks only the contended line before any commit is visible. Re-running the whole
         // plan here would re-issue already-committed mutating lines, so the plan executes once.
         let pool = st_run.live_plan_pool();
-        let result = run_plasm_comp_on_pool(
-            pool.as_ref(),
-            es_run,
-            st_run,
-            prompt_hash,
-            session_id,
-            bundle,
-            scope_for_run,
-            plan_hooks,
-            mcp_result_policy,
-            telemetry,
-            dry,
+        let result = crate::plan_authorization::execute_authorized(
+            &es,
+            &st,
+            authorization.as_ref(),
+            run_plasm_comp_on_pool(
+                pool.as_ref(),
+                es_run,
+                st_run,
+                prompt_hash,
+                session_id,
+                bundle,
+                scope_for_run,
+                plan_hooks,
+                mcp_result_policy,
+                telemetry,
+                dry,
+            ),
         )
         .await;
         ticker_cancel.cancel();
