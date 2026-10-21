@@ -6,6 +6,12 @@ const issueSchema = z.object({
   code: z.string(),
   path: z.array(z.union([z.string(), z.number()])),
   expected: z.string().optional(),
+  validation: z.union([
+    z.string(),
+    z.object({ includes: z.string(), position: z.number().optional() }),
+    z.object({ startsWith: z.string() }),
+    z.object({ endsWith: z.string() }),
+  ]).optional(),
   keys: z.array(z.string()).optional(),
   minimum: z.number().optional(),
   maximum: z.number().optional(),

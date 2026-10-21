@@ -1,7 +1,6 @@
 import { tool, type ToolSet } from "ai";
 import { z } from "zod";
 
-import { runIdFromArtifactRef } from "./artifact-contract.js";
 import { toolInput } from "./tool-input.js";
 
 export const TASK_LEDGER_TOOL_NAME = "task_ledger";
@@ -11,33 +10,21 @@ export const TASK_LEDGER_MAX_BYTES = 4096;
 
 const TEXT = z.string().min(1).max(2000);
 const OPTIONAL_TEXT = z.string().max(4000);
-const EVIDENCE_REF = z.string().min(1).max(500);
-
-const KNOWN_EVIDENCE_TOOLS = new Set([
-  "plasm",
-  "plasm_run",
-  "plasm_context",
-]);
-
-const RUN_REF_RE = /^pc\d+$/;
+// One grammar drives admission and the advertised JSON Schema pattern.
+const EVIDENCE_REF_PATTERN = /^(?:pr[a-f0-9]{64}|p[cg]\d+|plasm:\/\/\S+|plasm|plasm_run|plasm_context|plasm_failure)(?![\s\S])/;
+const EVIDENCE_REF_DESCRIPTION =
+  "Copy a bare reference: pr followed by exactly 64 lowercase hex digits, pc followed by digits (review), pg followed by digits (page), a plasm:// URI, or plasm/plasm_run/plasm_context/plasm_failure. No labels or surrounding whitespace. Syntax is checked, not existence or truth.";
+const evidenceRefSchema = z.string().min(1).max(500)
+  .regex(EVIDENCE_REF_PATTERN, EVIDENCE_REF_DESCRIPTION)
+  .describe(EVIDENCE_REF_DESCRIPTION);
 
 /**
- * Host checks that a citation *exists* as a known tool-result shape.
+ * Host checks citation syntax only, not existence or provenance.
  * It does not treat the citation as proof of the model's reading.
  */
 export function isKnownEvidenceRef(raw: string): boolean {
-  const trimmed = raw.trim();
-  if (!trimmed) return false;
-  if (runIdFromArtifactRef(trimmed)) return true;
-  if (trimmed.startsWith("plasm://") && trimmed.length > "plasm://".length) return true;
-  if (RUN_REF_RE.test(trimmed)) return true;
-  return KNOWN_EVIDENCE_TOOLS.has(trimmed);
+  return evidenceRefSchema.safeParse(raw).success;
 }
-
-const evidenceRefSchema = EVIDENCE_REF.refine(isKnownEvidenceRef, {
-  message:
-    "evidence_ref must cite a known tool-result shape (run_id, plasm://, run_ref, or tool name)",
-});
 
 const factClaimSchema = z.object({
   kind: z.literal("fact"),
@@ -169,7 +156,7 @@ export const TASK_LEDGER_TOOL_DESCRIPTION =
   `The host rejects writes over ${TASK_LEDGER_MAX_BYTES} bytes (JSON). ` +
   "The host stores what you send. It does not invent outcomes or remaining work, " +
   "and it does not decide that an alternative is authorized or that the instruction is satisfied. " +
-  "`observed_facts` require `evidence_ref` citing a run_id, plasm:// URI, run_ref, or tool name. " +
+  "`observed_facts` require `evidence_ref`. " + EVIDENCE_REF_DESCRIPTION + " " +
   "The host checks that the citation is a known shape; it does not treat it as proof. " +
   "`interpretations` and `completed_effects.satisfaction` are your readings. " +
   "A failed preferred action is not the user condition for an alternative. " +

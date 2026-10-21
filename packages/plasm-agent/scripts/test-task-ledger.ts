@@ -8,7 +8,7 @@ import assert from "node:assert/strict";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { tool, type ToolSet } from "ai";
+import { asSchema, tool, type ToolSet } from "ai";
 import { z } from "zod";
 import { MockLanguageModelV3 } from "ai/test";
 import {
@@ -114,6 +114,26 @@ const store = new TaskLedgerStore();
 assert.deepEqual(store.record, emptyTaskLedger());
 const ledgerTools = createHarnessTools({ includeTaskLedger: true, taskLedgerStore: store });
 assert.equal(TASK_LEDGER_TOOL_NAME in ledgerTools, true);
+
+function patterns(value: unknown): string[] {
+  if (value === null || typeof value !== "object") return [];
+  return Object.entries(value).flatMap(([key, child]) =>
+    key === "pattern" && typeof child === "string" ? [child] : patterns(child));
+}
+const advertisedPatterns = [...new Set(patterns(asSchema(ledgerTools.task_ledger!.inputSchema).jsonSchema))];
+assert.equal(advertisedPatterns.length, 1, "every evidence field shares one advertised grammar");
+const advertised = new RegExp(advertisedPatterns[0]!);
+for (const [ref, accepted] of [
+  ["pr" + "a".repeat(64), true], ["pc0", true], ["pg12", true],
+  ["plasm://execute/x/y/run/pr" + "b".repeat(64), true],
+  ["plasm", true], ["plasm_run", true], ["plasm_context", true], ["plasm_failure", true],
+  ["pr" + "a".repeat(63), false], ["pr" + "a".repeat(65), false],
+  ["pr" + "G".repeat(64), false], ["run_ref pg1", false], ["run_id pr" + "a".repeat(64), false],
+  [" pc1 ", false], ["pc1\n", false], ["p 1", false], ["pg-1", false], ["plasm://", false],
+] as const) {
+  assert.equal(isKnownEvidenceRef(ref), accepted, ref);
+  assert.equal(advertised.test(ref), accepted, `advertised contract: ${ref}`);
+}
 
 const parsed = parseTaskLedgerRecord(authored);
 assert.equal(parsed.ok, true);

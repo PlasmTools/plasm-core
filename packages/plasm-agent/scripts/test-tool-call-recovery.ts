@@ -8,6 +8,46 @@ import { createEvalTerminalTools } from "../src/tools/harness-tools.js";
 import { runEveToolLoop } from "../src/telemetry/eve-tool-loop.js";
 import { ToolCallRecovery } from "../src/telemetry/tool-call-recovery.js";
 import { toolValidationFeedback } from "../src/telemetry/tool-validation-feedback.js";
+import { createTaskLedgerTool, TaskLedgerStore, emptyTaskLedger } from "../src/tools/task-ledger.js";
+
+// Evidence grammar must be provider-visible and recoverable without echoing rejected bytes.
+{
+  const store = new TaskLedgerStore();
+  const record = { ...emptyTaskLedger(), remaining_work: ["Restore resource R and verify its original mode."],
+    observed_facts: [{ kind: "fact" as const, text: "R originally had mode quiet.", evidence_ref: "pr" + "a".repeat(63) }] };
+  let requests = 0;
+  let writes = 0;
+  const model = new MockLanguageModelV3({ doStream: async request => {
+    const index = requests++;
+    if (index === 1) {
+      const prompt = JSON.stringify(request.prompt);
+      assert.match(prompt, /invalid_string/);
+      assert.match(prompt, /regex/);
+      assert.match(prompt, /pattern/);
+      assert.match(prompt, /64/);
+      assert.ok(!prompt.includes(record.observed_facts[0]!.evidence_ref));
+      assert.deepEqual(store.record, emptyTaskLedger(), "rejected record executes nothing");
+    }
+    if (index === 2) assert.deepEqual(store.record.remaining_work, record.remaining_work);
+    const input = index === 0 ? { action: "write", record } : index === 1
+      ? { action: "write", record: { ...record, observed_facts: [{ ...record.observed_facts[0], evidence_ref: "pg1" }] } } : {};
+    return { stream: new ReadableStream({ start(controller) {
+      controller.enqueue({ type: "tool-call", toolCallId: `evidence-${index}`, toolName: index < 2 ? "task_ledger" : "complete_task", input: JSON.stringify(input) });
+      controller.enqueue({ type: "finish", finishReason: { unified: "tool-calls", raw: undefined }, usage: { inputTokens: { total: 8, noCache: 8, cacheRead: 0, cacheWrite: 0 }, outputTokens: { total: 2, text: 2, reasoning: 0 } } });
+      controller.close();
+    } }) };
+  } });
+  const ledger = createTaskLedgerTool(store);
+  const execute = ledger.task_ledger!.execute!;
+  ledger.task_ledger!.execute = async (input, options) => { writes++; return execute(input, options); };
+  const result = await runEveToolLoop({ model, system: "Abstract evidence recovery", messages: [{ role: "user", content: "Retain outstanding work" }],
+    tools: { ...ledger, ...createEvalTerminalTools() }, maxSteps: 4, agentName: "evidence-repair", telemetry: { isEnabled: false } });
+  assert.equal(result.stopReason, "completed");
+  assert.equal(writes, 1, "admitted replacement executes once");
+  assert.equal(requests, 3);
+  assert.deepEqual(result.toolCallRecovery[0]?.calls[0]?.input, { action: "write", record }, "audit preserves rejected arguments");
+  assert.equal(store.record.observed_facts[0]?.evidence_ref, "pg1");
+}
 
 for (const input of [{}, {answer: 4}, {answer: ""}]) {
   const schema = z.object({answer: z.string().min(1)}).strict();

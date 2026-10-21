@@ -40,6 +40,15 @@ whole-record replacement, restore state, or interpret verification correctly.
 Evidence references are checked for syntax, not resolved as proof. The ledger
 does not gate successful terminal calls or discharge obligations automatically.
 
+Evidence syntax is declared in the registered JSON Schema: a bare `pr` plus
+64 lowercase hexadecimal digits, `pc` or `pg` plus digits, a nonempty
+whitespace-free `plasm://` URI, or a supported Plasm tool name. Labels and
+surrounding whitespace are rejected. Admission and teaching share the same
+regex; validation feedback preserves the regex issue category and registered
+pattern/description without copying rejected argument values into instructions.
+The abstract SDK recovery test verifies rejection, an admitted replacement
+executing once, retained obligations and immutable rejected-call audit data.
+
 The installed-source AppWorld instruction proof uses the same harness options
 as `run-task.ts`. A scripted model writes an abstract restoration obligation and
 then calls `complete_task`. The proof checks the exact fresh ledger message in
