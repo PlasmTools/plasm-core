@@ -40,13 +40,6 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
         let decision = retained.matching.matches.last_mut().unwrap();
         decision.choice = MatchChoice::Uncertain;
-        decision.probabilities = [
-            ("relevant".into(), 0.0),
-            ("unrelated".into(), 0.0),
-            ("uncertain".into(), 1.0),
-        ]
-        .into();
-        decision.confidence = 1.0;
         retained.closure.as_mut().unwrap().business =
             retained.matching.selected(&retained.retrieval);
         packet["routing"] = serde_json::to_value(retained)?;

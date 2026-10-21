@@ -1,4 +1,4 @@
-//! Direct, bounded capability discovery: deterministic recall followed by Jev matching.
+//! Direct, bounded capability discovery: deterministic recall followed by Luna relevance matching.
 
 use plasm_core::prerequisites::{
     prerequisite_closure, CapabilityRef, PrerequisiteClosure, PrerequisiteError,
@@ -95,7 +95,7 @@ impl DiscoveryService {
                 .build()
                 .unwrap(),
             api_key: "no-provider-calls-permitted".into(),
-            match_model: matcher::JEV_MODEL.into(),
+            match_model: matcher::RELEVANCE_MODEL.into(),
             rejection_dir: None,
         }
     }
@@ -115,7 +115,7 @@ impl DiscoveryService {
                 .build()?,
             api_key,
             match_model: std::env::var("PLASM_DISCOVERY_CAPABILITY_MATCH_MODEL")
-                .unwrap_or_else(|_| matcher::JEV_MODEL.into()),
+                .unwrap_or_else(|_| matcher::RELEVANCE_MODEL.into()),
         })
     }
 
@@ -163,7 +163,7 @@ impl DiscoveryService {
         Ok(receipt)
     }
 
-    /// Deterministic retrieval bounds the candidate universe; Jev independently
+    /// Deterministic retrieval bounds the candidate universe; Luna independently
     /// judges relevance over typed candidates. Selection never certifies task completion.
     pub async fn route(
         &self,
@@ -204,7 +204,11 @@ impl DiscoveryService {
                     return Ok(raw);
                 }
                 let raw = self
-                    .jev_response(issued.body(), "jev-capability-relevance-v2")
+                    .model_response(
+                        matcher::RELEVANCE_ENDPOINT,
+                        issued.body(),
+                        "chat-direct-capability-relevance-v1",
+                    )
                     .await?;
                 matcher::decode_batch(&issued, &raw)?;
                 self.store
@@ -238,8 +242,12 @@ impl DiscoveryService {
                     .cloned(),
             );
         }
-        let issued =
-            crate::discovery_support::issue(&self.match_model, provenance, &available, &catalogs)?;
+        let issued = crate::discovery_support::issue(
+            crate::discovery_support::SUPPORT_MODEL,
+            provenance,
+            &available,
+            &catalogs,
+        )?;
         let raw = if let Some(raw) = self
             .store
             .cached_selector_envelope(&issued.cache_key)
@@ -248,7 +256,11 @@ impl DiscoveryService {
             raw
         } else {
             let raw = self
-                .jev_response(&issued.body, "jev-environment-support-v1")
+                .model_response(
+                    "https://openrouter.ai/api/alpha/decisions",
+                    &issued.body,
+                    "jev-environment-support-v1",
+                )
                 .await?;
             crate::discovery_support::decode(&issued, &raw)?;
             self.store
@@ -283,14 +295,15 @@ impl DiscoveryService {
         })
     }
 
-    async fn jev_response(
+    async fn model_response(
         &self,
+        endpoint: &str,
         body: &str,
         contract: &str,
     ) -> std::result::Result<String, crate::decision_transport::DecisionTransportError> {
         crate::decision_transport::request_decision(
             &self.client,
-            "https://openrouter.ai/api/alpha/decisions",
+            endpoint,
             &self.api_key,
             body,
             crate::decision_transport::DecisionRetryPolicy::default(),
@@ -315,7 +328,7 @@ fn save_rejection(
     use std::io::Write;
 
     std::fs::create_dir_all(directory)?;
-    let path = directory.join(format!("jev-rejection-{}.json", uuid::Uuid::new_v4()));
+    let path = directory.join(format!("discovery-decision-{}.json", uuid::Uuid::new_v4()));
     let mut options = std::fs::OpenOptions::new();
     options.write(true).create_new(true);
     #[cfg(unix)]

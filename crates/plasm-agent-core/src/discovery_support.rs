@@ -1,4 +1,5 @@
-//! Environment-level support is independent of capability relevance and execution.
+//! Independent advisory judgment of whole-environment support.
+pub const SUPPORT_MODEL: &str = "typesafe/jev-1.13";
 use plasm_core::{
     catalog_discovery::{capability_documents, CapabilityDocument},
     prerequisites::CapabilityRef,
@@ -56,7 +57,7 @@ pub struct EnvironmentSupport {
 impl EnvironmentSupport {
     pub fn guidance(&self) -> &'static str {
         match self.choice {
-            SupportChoice::Established => "The supplied operation contracts establish capability-level support for the current intent. This is not a guarantee of matching data, successful execution or permission.",
+            SupportChoice::Established => "The support classifier assessed the supplied operation contracts as sufficient for the current intent. This is an advisory model judgment, not a verified executable plan or a guarantee of matching data, successful execution or permission. Check that the exposed operations cover the requested effects; extend the same logical_session_ref for unresolved needs.",
             SupportChoice::NotEstablished => "The supplied operation contracts do not establish a plan for the current intent. Relevant capabilities remain available. Inspect their inputs and outputs, then extend the same logical_session_ref for unresolved needs. This does not mean the task is impossible or that a capability is absent from the catalog.",
             SupportChoice::Undetermined => "Support for the current intent remains undetermined from the supplied contracts. Relevant capabilities remain available. Inspect the evidence and extend the same logical_session_ref for unresolved needs; do not treat this as proof of impossibility.",
         }
@@ -235,6 +236,14 @@ mod tests {
         }
         .guidance()
         .contains("does not mean the task is impossible"));
+        let guidance = EnvironmentSupport {
+            choice: SupportChoice::Established,
+            request_hash: String::new(),
+        }
+        .guidance();
+        assert!(guidance.contains("advisory model judgment"));
+        assert!(guidance.contains("not a verified executable plan"));
+        assert!(guidance.contains("extend the same logical_session_ref"));
     }
     #[test]
     fn support_decode_preserves_negative_and_uncertain() {

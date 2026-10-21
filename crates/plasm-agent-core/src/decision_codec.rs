@@ -6,6 +6,10 @@ use thiserror::Error;
 
 #[derive(Debug, Error)]
 pub enum DecisionResponseError {
+    #[error(
+        "decision completion was refused, truncated, missing, or not a single assistant answer"
+    )]
+    InvalidCompletion,
     #[error("malformed decision response envelope")]
     MalformedEnvelope(#[source] serde_json::Error),
     #[error("decision response resolved to an unexpected model")]
@@ -55,12 +59,10 @@ struct ChoiceAnswer {
     probabilities: BTreeMap<String, f64>,
 }
 
-/// Validated provider choice; probabilities are normalized after accepting only
-/// bounded provider rounding drift. Interpretation belongs to the caller.
+/// Validated provider choice. Auxiliary scores are validated, but only the choice
+/// participates in the advisory support judgment; raw provider evidence is retained.
 pub(crate) struct ValidatedChoice {
     pub choice: String,
-    pub confidence: f64,
-    pub probabilities: BTreeMap<String, f64>,
 }
 
 /// Decode the shared Jev protocol against the issued question and choice sets.
@@ -127,12 +129,6 @@ pub(crate) fn decode_jev_choices<'a>(
                 question,
                 ValidatedChoice {
                     choice: answer.choice,
-                    confidence: answer.confidence,
-                    probabilities: answer
-                        .probabilities
-                        .into_iter()
-                        .map(|(key, probability)| (key, probability / total))
-                        .collect(),
                 },
             ))
         })
@@ -202,15 +198,12 @@ mod tests {
     }
 
     #[test]
-    fn accepts_model_revision_and_normalizes_only_rounding_drift() {
+    fn accepts_model_revision_and_bounded_rounding_drift() {
         let mut input = envelope();
         input["usage"] = json!({"total_tokens": 20});
         let output = decode(&input.to_string()).unwrap();
         let answer = &output["q"];
         assert_eq!(answer.choice, "yes");
-        assert_eq!(answer.confidence, 0.8);
-        assert!((answer.probabilities.values().sum::<f64>() - 1.0).abs() < 1e-12);
-        assert!((answer.probabilities["yes"] - 2.0 / 3.0).abs() < 1e-12);
     }
 
     #[test]

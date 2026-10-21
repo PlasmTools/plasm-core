@@ -28,7 +28,7 @@ export async function checkSessionExtension(observe: (intent: string) => Promise
       await observe(intent);
       routed.push(provenance);
       const pin = sessionId ?? randomUUID();
-      const matches=[{capability_id:"matrix:read",choice:insufficient?"unrelated":"relevant",probabilities:{relevant:insufficient?0:1,unrelated:insufficient?1:0,uncertain:0},confidence:1}];
+      const matches=[{capability_id:"matrix:read",choice:insufficient?"unrelated":"relevant"}];
       const packet = routingPacketSchema.parse({
         routing: {
           environment_support: {choice: insufficient ? "not_established" : "undetermined", request_hash: "abstract"},
@@ -41,7 +41,7 @@ export async function checkSessionExtension(observe: (intent: string) => Promise
             }]
           },
           matching: {matches},
-          recovery: insufficient ? {candidates:[{reference:{catalog:"matrix",capability:"read"},choice:"unrelated",relevance_probability:0}],available_catalogs:[],guidance:"No relevant capability in this bounded packet."}:null,
+          recovery: insufficient ? {candidates:[{reference:{catalog:"matrix",capability:"read"},choice:"unrelated"}],available_catalogs:[],guidance:"No relevant capability in this bounded packet."}:null,
           closure: insufficient ? (sessionId ? { business: [], input_sources: [], prerequisites: [], acquisitions: [], edges: [] } : null) : { business: [{ catalog: "matrix", capability: "read" }], input_sources: [], prerequisites: [], acquisitions: [], edges: [] },
         },
         teaching: insufficient ? (sessionId ? { prompt: "", delta_refs: [] } : null) : { prompt: "e1\tRecord", delta_refs: ["matrix:Record"] },

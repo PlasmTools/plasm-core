@@ -1,7 +1,7 @@
 //! Offline adapter to the integrated support request/decoder; no provider IO.
 use anyhow::Result;
 use plasm_agent_core::{
-    discovery_matcher::JEV_MODEL, discovery_support, intent_provenance::IntentProvenance,
+    discovery_support, discovery_support::SUPPORT_MODEL, intent_provenance::IntentProvenance,
 };
 use plasm_core::prerequisites::CapabilityRef;
 use serde::Deserialize;
@@ -32,7 +32,7 @@ fn main() -> Result<()> {
         .collect();
     let intent = IntentProvenance::from_turns([input.intent])?;
     let issued = discovery_support::issue(
-        JEV_MODEL,
+        SUPPORT_MODEL,
         &intent,
         &available,
         &BTreeMap::from([(catalog, cgs)]),

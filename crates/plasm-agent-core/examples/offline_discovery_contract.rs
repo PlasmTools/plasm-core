@@ -1,7 +1,7 @@
 //! Offline experiment bridge to the production relevance codec. No network access.
 use anyhow::{ensure, Result};
 use plasm_agent_core::{
-    discovery_matcher::{issue_batches, SelectionPages, JEV_MODEL},
+    discovery_matcher::{issue_batches, SelectionPages, RELEVANCE_MODEL},
     discovery_store::RetrievalReceipt,
     intent_provenance::IntentProvenance,
 };
@@ -17,7 +17,7 @@ struct Input {
 fn main() -> Result<()> {
     let input: Input = serde_json::from_reader(std::io::stdin())?;
     let provenance = IntentProvenance::from_turns([input.intent])?;
-    let batches = issue_batches(JEV_MODEL, &provenance, &input.retrieval)?;
+    let batches = issue_batches(RELEVANCE_MODEL, &provenance, &input.retrieval)?;
     if let Some(responses) = input.responses {
         ensure!(responses.len() == batches.len(), "page count mismatch");
         let mut pages = SelectionPages::new(batches);

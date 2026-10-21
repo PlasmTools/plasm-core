@@ -1007,7 +1007,7 @@ mod tests {
         let provenance =
             crate::intent_provenance::IntentProvenance::from_turns([intent.into()]).unwrap();
         let batches = crate::discovery_matcher::issue_batches(
-            crate::discovery_matcher::JEV_MODEL,
+            crate::discovery_matcher::RELEVANCE_MODEL,
             &provenance,
             &retrieval,
         )
@@ -1020,7 +1020,9 @@ mod tests {
             .collect();
         for batch in batches {
             let body: serde_json::Value = serde_json::from_str(batch.body()).unwrap();
-            let answers: BTreeMap<_, _> = body["questions"]
+            let content: serde_json::Value =
+                serde_json::from_str(body["messages"][1]["content"].as_str().unwrap()).unwrap();
+            let answers: BTreeMap<_, _> = content["questions"]
                 .as_object()
                 .unwrap()
                 .keys()
@@ -1028,13 +1030,12 @@ mod tests {
                     (
                         key.clone(),
                         serde_json::json!({
-                            "type":"choice","choice":"relevant","confidence":1.0,
-                            "probabilities":{"relevant":1.0,"unrelated":0.0,"uncertain":0.0}
+                            "choice":"relevant"
                         }),
                     )
                 })
                 .collect();
-            let raw=serde_json::json!({"model":crate::discovery_matcher::JEV_MODEL,"provider":"TypeSafe","answers":answers}).to_string();
+            let raw=serde_json::json!({"model":crate::discovery_matcher::RELEVANCE_MODEL,"choices":[{"finish_reason":"stop","message":{"role":"assistant","content":serde_json::json!({"answers":answers}).to_string()}}]}).to_string();
             store
                 .store_selector_envelope(batch.cache_key(), &raw)
                 .await
@@ -1064,14 +1065,14 @@ mod tests {
             .cloned()
             .collect();
         let support = crate::discovery_support::issue(
-            crate::discovery_matcher::JEV_MODEL,
+            crate::discovery_support::SUPPORT_MODEL,
             &provenance,
             &available,
             &catalogs,
         )
         .unwrap();
         let support_raw = serde_json::json!({
-            "model":crate::discovery_matcher::JEV_MODEL,"provider":"TypeSafe",
+            "model":crate::discovery_support::SUPPORT_MODEL,"provider":"TypeSafe",
             "answers":{"support":{"type":"choice","choice":"established","confidence":1.0,
                 "probabilities":{"established":1.0,"not_established":0.0,"undetermined":0.0}}}
         })

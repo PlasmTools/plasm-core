@@ -27,8 +27,6 @@ for (const mixed of [false, true]) {
   }
   const decision = retained.routing.matching.matches.at(-1)!;
   decision.choice = "uncertain";
-  decision.probabilities = {relevant:0, unrelated:0, uncertain:1};
-  decision.confidence = 1;
   assert.deepEqual(decodeRoutingPacket(JSON.stringify(retained)), retained);
   assert.deepEqual(routingExplanationLines(retained.routing.matching), []);
   const excluded = structuredClone(retained);
@@ -64,15 +62,14 @@ for (const corrupt of [
  (p:typeof packet)=>{p.routing.matching.matches.push(p.routing.matching.matches[0]!);},
  (p:typeof packet)=>{p.routing.matching.matches[0]!.capability_id="unknown";},
  (p:typeof packet)=>{p.routing.matching.matches=[];},
- (p:typeof packet)=>{p.routing.matching.matches[0]!.probabilities={relevant:1};},
+
  (p:typeof packet)=>{p.routing.authorization.capabilities.matrix=[];},
  (p:typeof packet)=>{p.routing.closure!.business=[];},
 ]) { const changed=structuredClone(packet);corrupt(changed);assert.equal(routingPacketSchema.safeParse(changed).success,false); }
 const missing=structuredClone(packet);
 missing.routing.matching.matches[0]!.choice="unrelated";
-missing.routing.matching.matches[0]!.probabilities={relevant:0,unrelated:1,uncertain:0};
 missing.routing.closure=null;missing.teaching=null;
-missing.routing.recovery={candidates:[{reference:missing.routing.retrieval.candidates[0]!.reference,choice:"unrelated",relevance_probability:0}],available_catalogs:[],guidance:"No relevant capabilities in this bounded packet."};
+missing.routing.recovery={candidates:[{reference:missing.routing.retrieval.candidates[0]!.reference,choice:"unrelated"}],available_catalogs:[],guidance:"No relevant capabilities in this bounded packet."};
 assert.ok(routingPacketSchema.safeParse(missing).success);
 missing.routing.matching.matches[0]!.capability_id="unknown";
 assert.equal(routingPacketSchema.safeParse(missing).success,false,"malformed diagnostics fail validation without throwing");
@@ -90,7 +87,6 @@ bounded.routing.retrieval.candidates = Array.from({length:128}, (_, i) => ({
 }));
 bounded.routing.matching.matches = bounded.routing.retrieval.candidates.map(c => ({
   capability_id:c.id, choice:"relevant" as const,
-  probabilities:{relevant:1,unrelated:0,uncertain:0},confidence:1,
 }));
 bounded.routing.closure!.business = bounded.routing.retrieval.candidates.map(c => c.reference);
 assert.deepEqual(routingPacketSchema.parse(JSON.parse(JSON.stringify(bounded))),bounded);
@@ -100,6 +96,11 @@ bounded.routing.retrieval.candidates.push({...first,id:"overflow"});
 assert.equal(routingPacketSchema.safeParse(bounded).success,false,"union cannot exceed128");
 
 assert.match(routingSupportMarkdown(packet.routing)!, /undetermined/);
+const positiveSupport = routingSupportMarkdown({...packet.routing,
+  environment_support: {choice: "established", request_hash: "abstract-test"}})!;
+assert.match(positiveSupport, /advisory model judgment/);
+assert.match(positiveSupport, /not a verified executable plan/);
+assert.match(positiveSupport, /extend the same logical_session_ref/);
 for (const support of [
   {choice: "impossible", request_hash: "x"},
   {choice: "undetermined", request_hash: 3},
@@ -115,3 +116,5 @@ if (process.env.PLASM_ROUTING_CONTRACT) {
   }
   console.log("PASS: actual Rust receipt serialization and all support advisories");
 }
+
+assert.equal(routingPacketSchema.safeParse({...packet, routing: {...packet.routing, matching: {matches: [{...packet.routing.matching.matches[0], probabilities: {relevant:1}, confidence:1}]}}}).success, false, "invented confidence is not admitted");

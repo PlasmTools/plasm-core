@@ -19,12 +19,7 @@ export const prerequisiteClosureSchema = z.object({
 const match = z.object({
   capability_id: z.string().min(1),
   choice: z.enum(["relevant", "unrelated", "uncertain"]),
-  probabilities: z.record(z.string(), z.number()), confidence: z.number().min(0).max(1),
 }).strict();
-
-const probabilityChoices = {
-  capability: ["relevant", "unrelated", "uncertain"],
-} as const;
 
 function capabilityKey(value: z.infer<typeof capability>): string {
   return `${value.catalog}\0${value.capability}`;
@@ -34,26 +29,6 @@ function sameSet(left: Iterable<string>, right: Iterable<string>): boolean {
   const a = new Set(left);
   const b = new Set(right);
   return a.size === b.size && [...a].every((value) => b.has(value));
-}
-
-function validateProbabilities(
-  probabilities: Record<string, number>,
-  choices: readonly string[],
-  ctx: z.RefinementCtx,
-  path: Array<string | number>,
-): void {
-  if (!sameSet(Object.keys(probabilities), choices)) {
-    ctx.addIssue({ code: "custom", path, message: "probability keys do not match choices" });
-    return;
-  }
-  const values = choices.map((choice) => probabilities[choice] ?? Number.NaN);
-  if (values.some((value) => !Number.isFinite(value) || value < 0 || value > 1)) {
-    ctx.addIssue({ code: "custom", path, message: "probabilities must be finite values in [0, 1]" });
-  }
-  const total = values.reduce((sum, value) => sum + value, 0);
-  if (Math.abs(total - 1) > 0.01) {
-    ctx.addIssue({ code: "custom", path, message: "probabilities must sum to one" });
-  }
 }
 
 export const environmentSupportSchema = z.object({
@@ -80,7 +55,7 @@ const routingSchema = z.object({
   }).strict(),
   closure: prerequisiteClosureSchema.nullable(),
   recovery: z.object({
-    candidates: z.array(z.object({ reference: capability, choice: z.enum(["relevant", "unrelated", "uncertain"]), relevance_probability: z.number().min(0).max(1) }).strict()),
+    candidates: z.array(z.object({ reference: capability, choice: z.enum(["relevant", "unrelated", "uncertain"]) }).strict()),
     available_catalogs: z.array(z.object({
       entry_id: z.string().min(1),
       description: z.string().min(1),
@@ -99,7 +74,6 @@ const routingSchema = z.object({
     || !sameSet(matches.map(m => m.capability_id), candidates.keys())) {
     ctx.addIssue({code:"custom",path:["matching"],message:"relevance decisions must cover each candidate exactly once"});
   }
-  matches.forEach((m,i) => validateProbabilities(m.probabilities, probabilityChoices.capability, ctx, ["matching","matches",i,"probabilities"]));
   if (!sameSet(selected, routing.closure?.business.map(capabilityKey) ?? [])
     || (routing.closure?.input_sources.length ?? 0) !== 0) {
     ctx.addIssue({code:"custom",path:["closure"],message:"closure must retain exactly the current relevant and uncertain capabilities"});
@@ -108,8 +82,8 @@ const routingSchema = z.object({
     ctx.addIssue({code:"custom",path:["recovery"],message:"empty-selection diagnostic contradicts relevance decisions"});
   }
   if (routing.recovery) {
-    const expected = matches.flatMap(m => { const c = candidates.get(m.capability_id); return c ? [JSON.stringify([capabilityKey(c.reference),m.choice,m.probabilities.relevant])] : []; });
-    const actual = routing.recovery.candidates.map(c => JSON.stringify([capabilityKey(c.reference),c.choice,c.relevance_probability]));
+    const expected = matches.flatMap(m => { const c = candidates.get(m.capability_id); return c ? [JSON.stringify([capabilityKey(c.reference),m.choice])] : []; });
+    const actual = routing.recovery.candidates.map(c => JSON.stringify([capabilityKey(c.reference),c.choice]));
     if (!sameSet(expected,actual)) ctx.addIssue({code:"custom",path:["recovery"],message:"diagnostics contradict relevance decisions"});
   }
   const permitted = (ref: z.infer<typeof capability>): boolean => routing.authorization.catalogs.includes(ref.catalog)
@@ -154,7 +128,7 @@ export function routingExplanationLines(matching: RoutingPacket["routing"]["matc
 export function routingRecoveryMarkdown(routing: RoutingPacket["routing"]): string | null {
   const recovery=routing.recovery;
   if (!recovery) return null;
-  return [recovery.guidance,...[...recovery.candidates].sort((a,b)=>b.relevance_probability-a.relevance_probability).slice(0,3).map(c=>`- \`${c.reference.catalog}/${c.reference.capability}\`: ${c.choice} (relevance ${c.relevance_probability.toFixed(2)})`),...recovery.available_catalogs.map(c=>`- \`${c.entry_id}\`: ${c.description}`)].join("\n\n");
+  return [recovery.guidance,...[...recovery.candidates].sort((a,b)=>capabilityKey(a.reference).localeCompare(capabilityKey(b.reference))).slice(0,3).map(c=>`- \`${c.reference.catalog}/${c.reference.capability}\`: ${c.choice}`),...recovery.available_catalogs.map(c=>`- \`${c.entry_id}\`: ${c.description}`)].join("\n\n");
 }
 
 /** Advisory capability evidence; it never grants execution or recovery authority. */
@@ -162,7 +136,7 @@ export function routingSupportMarkdown(routing: RoutingPacket["routing"]): strin
   const support = routing.environment_support;
   if (!support) return null;
   const guidance: Record<z.infer<typeof environmentSupportSchema>["choice"], string> = {
-    established: "The supplied operation contracts establish capability-level support for the current intent. This is not a guarantee of matching data, successful execution or permission.",
+    established: "The support classifier assessed the supplied operation contracts as sufficient for the current intent. This is an advisory model judgment, not a verified executable plan or a guarantee of matching data, successful execution or permission. Check that the exposed operations cover the requested effects; extend the same logical_session_ref for unresolved needs.",
     not_established: "The supplied operation contracts do not establish a plan for the current intent. Relevant capabilities remain available. Inspect their inputs and outputs, then extend the same logical_session_ref for unresolved needs. This does not mean the task is impossible or that a capability is absent from the catalog.",
     undetermined: "Support for the current intent remains undetermined from the supplied contracts. Relevant capabilities remain available. Inspect the evidence and extend the same logical_session_ref for unresolved needs; do not treat this as proof of impossibility.",
   };

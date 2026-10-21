@@ -10,7 +10,6 @@ pub const RECOVERY_GUIDANCE:&str="No relevant capability was selected from this 
 pub struct CandidateJudgment {
     pub reference: CapabilityRef,
     pub choice: MatchChoice,
-    pub relevance_probability: f64,
 }
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(deny_unknown_fields)]
@@ -49,7 +48,6 @@ impl DiscoveryRecovery {
                         .reference
                         .clone(),
                     choice: m.choice.clone(),
-                    relevance_probability: m.probabilities["relevant"],
                 })
                 .collect(),
             available_catalogs: catalogs
@@ -62,16 +60,12 @@ impl DiscoveryRecovery {
     }
     pub fn render_unmatched_markdown(&self) -> String {
         let mut candidates: Vec<_> = self.candidates.iter().collect();
-        candidates.sort_by(|a, b| {
-            b.relevance_probability
-                .total_cmp(&a.relevance_probability)
-                .then(a.reference.cmp(&b.reference))
-        });
+        candidates.sort_by(|a, b| a.reference.cmp(&b.reference));
         let mut lines = vec![self.guidance.clone()];
         for c in candidates.into_iter().take(3) {
             lines.push(format!(
-                "- `{}/{}`: {:?} (relevance {:.2})",
-                c.reference.catalog, c.reference.capability, c.choice, c.relevance_probability
+                "- `{}/{}`: {:?}",
+                c.reference.catalog, c.reference.capability, c.choice
             ));
         }
         lines.join("\n\n")

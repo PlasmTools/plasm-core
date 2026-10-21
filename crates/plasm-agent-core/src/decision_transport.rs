@@ -84,10 +84,28 @@ fn context_limit(status: u16, raw: &str) -> bool {
     struct RouterDetail {
         code: u16,
         message: String,
+        metadata: Option<RouterMetadata>,
+    }
+    #[derive(Deserialize)]
+    struct RouterMetadata {
+        error_type: Option<String>,
     }
     fn provider(raw: &str) -> bool {
         serde_json::from_str::<ProviderError>(raw)
             .is_ok_and(|e| e.detail.error_type == "max_tokens_exceeded")
+    }
+    // OpenRouter chat errors use error.metadata.error_type, including errors
+    // delivered after HTTP 200 was committed. Never classify message prose.
+    // https://openrouter.ai/docs/api_reference/errors-and-debugging
+    if matches!(status, 200 | 400)
+        && serde_json::from_str::<RouterError>(raw).is_ok_and(|e| {
+            e.error.code == 400
+                && e.error.metadata.is_some_and(|metadata| {
+                    metadata.error_type.as_deref() == Some("context_length_exceeded")
+                })
+        })
+    {
+        return true;
     }
     status == 400
         && (provider(raw)
@@ -149,16 +167,16 @@ pub(crate) async fn request_decision(
                                 http_status: status.as_u16(),
                                 raw_response: raw.clone(),
                             })?;
-                            if status.is_success() {
-                                return Ok(raw);
-                            }
                             if context_limit(status.as_u16(), &raw) {
                                 return Err(DecisionTransportError::ContextLimit);
+                            }
+                            if status.is_success() {
+                                return Ok(raw);
                             }
                             (
                                 transient(status.as_u16()),
                                 delay,
-                                format!("Jev Decisions HTTP {status}"),
+                                format!("Decision provider HTTP {status}"),
                                 DecisionTransportError::ProviderRejected { status },
                             )
                         }
@@ -300,6 +318,14 @@ mod tests {
             assert!(!context_limit(400, raw));
         }
         assert!(!context_limit(500, &routed));
+        let chat = r#"{"error":{"code":400,"message":"request too long","metadata":{"error_type":"context_length_exceeded"}}}"#;
+        assert!(context_limit(400, chat));
+        assert!(context_limit(200, chat));
+        assert!(!context_limit(500, chat));
+        assert!(!context_limit(
+            400,
+            &chat.replace("context_length_exceeded", "invalid_request")
+        ));
     }
 
     #[test]

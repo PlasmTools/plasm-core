@@ -65,7 +65,7 @@ fn discovery_model_from_env() -> String {
     std::env::var("PLASM_DISCOVERY_CAPABILITY_MATCH_MODEL")
         .ok()
         .filter(|s| !s.trim().is_empty())
-        .unwrap_or_else(|| "typesafe/jev-1.13".into())
+        .unwrap_or_else(|| plasm_agent_core::discovery_matcher::RELEVANCE_MODEL.into())
 }
 
 fn bootstrap_root() -> Option<PathBuf> {

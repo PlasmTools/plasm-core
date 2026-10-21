@@ -109,16 +109,23 @@ pub async fn seed_model_boundary(
     let allowed = DiscoveryAuthorization::catalogs(BTreeSet::from(["matrix".into()]));
     let retrieval = store.retrieve(generation, intent, &allowed).await.unwrap();
     let provenance = IntentProvenance::from_turns(turns.iter().map(|s| (*s).to_owned())).unwrap();
-    let model = plasm_agent_core::discovery_matcher::JEV_MODEL;
+    let model = plasm_agent_core::discovery_matcher::RELEVANCE_MODEL;
     for batch in
         plasm_agent_core::discovery_matcher::issue_batches(model, &provenance, &retrieval).unwrap()
     {
         let body: Value = serde_json::from_str(batch.body()).unwrap();
-        let answers: BTreeMap<_,_> = body["questions"].as_object().unwrap().keys().map(|key| (key.clone(),json!({"type":"choice","choice":"relevant","confidence":1.0,"probabilities":{"relevant":1.0,"unrelated":0.0,"uncertain":0.0}}))).collect();
+        let content: Value =
+            serde_json::from_str(body["messages"][1]["content"].as_str().unwrap()).unwrap();
+        let answers: BTreeMap<_, _> = content["questions"]
+            .as_object()
+            .unwrap()
+            .keys()
+            .map(|key| (key.clone(), json!({"choice":"relevant"})))
+            .collect();
         store
             .store_selector_envelope(
                 batch.cache_key(),
-                &json!({"model":model,"provider":"TypeSafe","answers":answers}).to_string(),
+                &json!({"model":model,"choices":[{"finish_reason":"stop","message":{"role":"assistant","content":json!({"answers":answers}).to_string()}}]}).to_string(),
             )
             .await
             .unwrap();
@@ -131,6 +138,7 @@ pub async fn seed_model_boundary(
             capability: cap.to_string(),
         })
         .collect();
+    let model = plasm_agent_core::discovery_support::SUPPORT_MODEL;
     let support = plasm_agent_core::discovery_support::issue(
         model,
         &provenance,

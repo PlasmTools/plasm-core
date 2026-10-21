@@ -52,13 +52,7 @@
       "matches": [
         {
           "capability_id": "matrix/record_read",
-          "choice": "relevant",
-          "probabilities": {
-            "relevant": 1,
-            "unrelated": 0,
-            "uncertain": 0
-          },
-          "confidence": 1
+          "choice": "relevant"
         }
       ]
     },
