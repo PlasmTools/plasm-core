@@ -488,6 +488,53 @@ fn compact_card_groups_identical_cgs_comments_with_explicit_owners() {
 }
 
 #[test]
+fn language_card_preserves_distinct_effect_contracts_and_owners() {
+    let cgs = fixture();
+    let mut exposure = TeachingExposureSession::new(&cgs, "fixture", &["Item"]);
+    let symbols = exposure.to_symbol_map();
+    let owner = symbols.entity_sym_for("fixture", "Item");
+    let wave = prepare_python_teaching_wave(&exposure, &PythonTeachingState::default()).unwrap();
+    for name in ["item_touch", "item_publish"] {
+        let cap = &cgs.capabilities[name];
+        let OutputType::SideEffect { description } =
+            &cap.output_schema.as_ref().unwrap().output_type
+        else {
+            panic!("fixture must declare an effect");
+        };
+        let method = symbols.method_sym_for("fixture", "Item", name);
+        for annotation in [cap.description.as_str(), description.as_str()] {
+            assert_eq!(wave.declarations.matches(annotation).count(), 1);
+            let signature = wave
+                .declarations
+                .lines()
+                .skip_while(|line| !line.contains(annotation))
+                .find(|line| !line.trim().starts_with('#'))
+                .unwrap();
+            assert!(
+                signature.contains(&format!("{owner}.{method}")),
+                "{signature}"
+            );
+        }
+    }
+    exposure.expose_entities(
+        &[&cgs],
+        std::sync::Arc::new(cgs.clone()),
+        "fixture",
+        &["Tag"],
+    );
+    let extension = prepare_python_teaching_wave(&exposure, &wave.next_state).unwrap();
+    for name in ["item_touch", "item_publish"] {
+        let description = &cgs.capabilities[name].description;
+        assert!(!extension.declarations.contains(description));
+        assert!(extension
+            .next_state
+            .declarations
+            .values()
+            .any(|body| body.contains(description)));
+    }
+}
+
+#[test]
 fn compact_card_omits_internal_provides_metadata() {
     let mut cgs = fixture();
     cgs.capabilities.get_mut("item_query").unwrap().provides = vec!["id".into()];
