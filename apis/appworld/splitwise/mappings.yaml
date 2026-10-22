@@ -1143,7 +1143,6 @@ group_balance_get:
   query:
     type: object
     fields:
-    - [email, {type: if, condition: {type: exists, var: email}, then_expr: {type: var, name: email}, else_expr: {type: const, value: null}}]
     - [group_id, {type: var, name: group_id}]
   response:
     response_preprocess:

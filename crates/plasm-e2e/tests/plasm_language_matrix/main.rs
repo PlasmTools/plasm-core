@@ -129,6 +129,7 @@ mod aggregate_registry;
 mod outer_values;
 mod primitive_reductions;
 mod typed_returns;
+mod scoped_observation;
 
 // Compare native values, retaining money metadata without the field-storage
 // encoding's unsigned integer tags or a presentation layer's synthetic identity.

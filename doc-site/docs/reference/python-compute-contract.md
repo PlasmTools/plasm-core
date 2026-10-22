@@ -386,6 +386,13 @@ authority. Teaching retains `Value[eN]` as its canonical explicit spelling.
 Witnesses: `row_entity_annotation_matches_value_contract_recursively` and
 `python_row_entity_annotation_runs_without_granting_authority`.
 
+Materialized record boundary declarations are read-only structural protocols,
+matching inference declarations. A row whose fields have been narrowed may be
+returned under the wider entity record contract. This does not supply unobserved
+fields, admit a null row, permit field assignment, or weaken mutable container
+invariance. `narrowed_entity_row_return_matrix` covers these admission boundaries;
+the recursive value matrix retains missing versus observed-null runtime checks.
+
 ### Federated map record materialization
 
 A scoped map may return nested records and arrays whose value domains belong to

@@ -733,6 +733,16 @@ nullable unions and nested lists; unknown symbols remain rejected.
 Program through compilation and execution, and rejects relation traversal from
 its computed records. Canonical teaching remains unchanged.
 
+`narrowed_entity_row_return_matrix` accepts a row narrowed by a predicate under
+`Row`, `Row[eN]` and `Value[eN]` return annotations. It rejects missing required
+fields, a null row, wrong field types and assignment to materialized fields.
+`scoped_parent_reads_keep_distinct_complete_relations` exercises twenty concurrent
+reads: identical complete observations and distinct identities coexist. Its
+corrected whole-parent case retains both members in every returned complete
+relation. The runtime test `membership_evidence_conflicts_on_divergent_exhaustive_occurrences`
+deterministically verifies divergent concurrent complete memberships; retry
+exhaustion is schedule-dependent and is not required by the integration matrix.
+
 ### Scoped callback laws
 
 The [callback contract](../../../../doc-site/docs/reference/python-callback-contract.md)

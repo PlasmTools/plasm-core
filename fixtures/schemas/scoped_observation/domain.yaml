@@ -1,0 +1,55 @@
+version: 1
+http_backend: http://127.0.0.1:9
+auth: {scheme: none}
+entities:
+  WholeCollection:
+    id_field: collection_id
+    implicit_request_identity: true
+    fields:
+      collection_id: {required: true, value_ref: identifier}
+    relations:
+      members:
+        target: Member
+        cardinality: many
+        materialize:
+          kind: from_parent_get
+          collection_coverage: complete
+          path: [{key: members}, {wildcard: true}]
+  Collection:
+    id_field: collection_id
+    implicit_request_identity: true
+    fields:
+      collection_id: {required: true, value_ref: identifier}
+    relations:
+      members:
+        target: Member
+        cardinality: many
+        materialize:
+          kind: from_parent_get
+          collection_coverage: complete
+          path: [{key: members}, {wildcard: true}]
+  Member:
+    abstract: true
+    id_field: id
+    fields:
+      id: {required: true, value_ref: identifier}
+capabilities:
+  whole_collection_get:
+    kind: get
+    entity: WholeCollection
+    scope:
+    - {name: collection_id, value_ref: identifier, required: true}
+    provides: [collection_id]
+  collection_get:
+    kind: get
+    entity: Collection
+    scope:
+    - {name: collection_id, value_ref: identifier, required: true}
+    arguments:
+      input_type:
+        type: object
+        fields:
+        - {name: member, value_ref: identifier, required: false}
+    provides: [collection_id]
+values:
+  identifier: {type: string}

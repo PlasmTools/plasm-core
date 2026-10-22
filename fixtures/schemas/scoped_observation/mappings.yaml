@@ -1,0 +1,12 @@
+whole_collection_get:
+  method: GET
+  path: [{type: literal, value: collections}, {type: var, name: collection_id}]
+  response: single
+collection_get:
+  method: GET
+  path: [{type: literal, value: collections}, {type: var, name: collection_id}]
+  query:
+    type: object
+    fields:
+    - [member, {type: var, name: member}]
+  response: single
