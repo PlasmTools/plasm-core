@@ -38,11 +38,11 @@ for (;;) {
 }
 const all = pages.join("\n");
 assert.match(pages[0]!, /status 422: Already set/);
-assert.match(pages[0]!, /upstream_rejection/);
-assert.match(all, /not an exhaustive list of unattempted work/);
+assert.ok(!all.includes("upstream_rejection") && !all.includes("reconcile_effects"));
+assert.match(all, /unattempted work is not listed/);
 assert.equal((all.match(/— completed —/g) ?? []).length, 75);
-for (let i = 0; i < 75; i++) assert.ok(all.includes(`occurrence [${i}] — Item:${i % 5} 漢字`));
-assert.ok(all.includes("Primary failure input occurrence [75]: Item:failed"));
+for (let i = 0; i < 75; i++) assert.ok(all.includes(`item path [${i}] — Item:${i % 5} 漢字`));
+assert.ok(all.includes("Failed input: Item:failed; item path [75]"));
 assert.ok(all.includes("at first_write") && all.includes("at second_write"));
 for (const hidden of ["__py72", "private-pin", "catalog_digest"]) assert.ok(!all.includes(hidden));
 assert.equal(executions, 1, "reading evidence cannot repeat backend work");
@@ -52,7 +52,16 @@ const lookupRef = readFailure.record({...failure, effects: [], input_occurrence:
 const lookupDetails = readFailure.read(lookupRef, 0);
 assert.match(lookupDetails, /Execution stopped/);
 assert.match(lookupDetails, /Lookup rejected: account does not exist/);
-assert.match(lookupDetails, /not an exhaustive list of unattempted work/);
+assert.match(lookupDetails, /unattempted work is not listed/);
+for (const status of ["unresolved", "response_received"] as const) {
+  const record = executionFailureSchema.parse({...failure, effects: [], input_occurrence: undefined,
+    effects_unresolved: true, dispatches: [{operation: {entry_id: "matrix", capability: "write"}, request_fingerprint: "opaque", status}]});
+  const details = readFailure.read(readFailure.record(record), 0);
+  assert.match(details, /does not establish whether state changed/);
+  assert.match(details, /Check the resulting state before retrying/);
+  assert.match(details, /do not count it as another completed operation/);
+  assert.ok(!details.includes("occurrence []") && !details.includes("effect receipt"));
+}
 await assert.rejects(async () => createPlasmTools({...runtime}).plasm_failure!.execute!({failure_ref: ref, offset: 0}, options), /unknown or expired/);
 await assert.rejects(async () => tools.plasm_failure!.execute!({failure_ref: ref, offset: 10000}, options), /outside/);
 console.log("PASS: all partial results are accessible across turns, scoped to runtime, without backend calls or internal metadata");

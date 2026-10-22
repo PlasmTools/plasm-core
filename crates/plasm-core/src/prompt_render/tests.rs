@@ -2138,7 +2138,7 @@ fn python_reference_includes_composition_contract() {
         "immutable DAG",
         "Return rowsets; tuples=results",
         "None",
-        "completed/unknown receipts",
+        "Unknown outcomes are not evidence that nothing happened",
     ] {
         assert!(
             reference.contains(required),
@@ -2311,8 +2311,7 @@ fn plasm_tool_teaches_semantic_operation_receivers() {
         "float(value) is not a null check",
         "filtering rows into a separate list does not narrow their declared fields",
         "Raise on missing required data",
-        "completed/unknown receipts",
-        "New programs: in-session, no resume/rollback",
+        "Unknown outcomes are not evidence that nothing happened",
     ] {
         assert!(card.contains(law), "missing receiver law: {law}");
     }
@@ -2950,7 +2949,7 @@ fn return_projection_teaching_includes_every_authored_field() {
 fn static_grammar_includes_symbols_only_rule() {
     let tool = super::PLASM_TOOL_DESCRIPTION;
     let reference = include_str!("assets/python-plasm-dag.txt");
-    assert!(tool.contains("wire names"));
+    assert!(reference.contains("wire names"));
     assert!(reference.contains("session-local/append-only"));
     assert!(reference.contains("Declarations: eN/mN/rN/vN"));
     assert!(reference.contains("Literal-ID for/one-clause comprehensions"));

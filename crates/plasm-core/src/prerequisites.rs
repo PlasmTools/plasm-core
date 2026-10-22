@@ -2365,7 +2365,10 @@ mod tests {
             symbols.as_ref(),
         )
         .unwrap();
-        assert!(guidance.contains("scoped_access"));
+        assert!(!guidance.contains("scoped_access"));
+        assert!(!guidance.contains("Declared prerequisites"));
+        assert!(!guidance.contains("Acquisition "));
+        assert!(!guidance.contains("Payload."));
         assert!(
             guidance.contains(".m"),
             "action acquisitions use taught e#.m# not e# / m#:\n{guidance}"
@@ -2432,10 +2435,7 @@ mod tests {
             "{}",
             wave.declarations
         );
-        assert!(
-            guidance.contains(".get(...) Selection.credential"),
-            "{guidance}"
-        );
+        assert!(guidance.contains(".get(...) credential"), "{guidance}");
         assert!(!guidance.contains("not a call argument"), "{guidance}");
     }
 
@@ -2787,7 +2787,7 @@ mod tests {
     }
 
     #[test]
-    fn collection_provider_teaches_row_selection_before_field_binding() {
+    fn collection_cardinality_is_taught_only_by_signature() {
         let mut cgs = fixture();
         cgs.capabilities
             .get_mut("acquire")
@@ -2832,7 +2832,61 @@ mod tests {
             exposure.to_symbol_map().as_ref(),
         )
         .unwrap();
-        assert!(guidance.contains("select or fan out a row"), "{guidance}");
+        assert!(!guidance.contains("select or fan out a row"), "{guidance}");
+        let wave = crate::prompt_render::python::prepare_python_teaching_wave(
+            &exposure,
+            &crate::prompt_render::python::PythonTeachingState::default(),
+        )
+        .unwrap();
+        assert!(wave.declarations.contains("Rows["), "{}", wave.declarations);
+        assert!(guidance.contains(" -> "), "{guidance}");
+    }
+
+    #[test]
+    fn signatures_only_sources_need_no_binding_section() {
+        let mut cgs = fixture();
+        cgs.prerequisites.requirements.clear();
+        let catalogs = BTreeMap::from([("matrix".into(), &cgs)]);
+        let source = CapabilityRef {
+            catalog: "matrix".into(),
+            capability: "read".into(),
+        };
+        let closure = prerequisite_closure_with_selected_sources(
+            &catalogs,
+            &DeploymentBindings { bindings: vec![] },
+            &[CapabilityRef {
+                catalog: "matrix".into(),
+                capability: "operate".into(),
+            }],
+            std::slice::from_ref(&source),
+            &BTreeSet::from(["matrix".into()]),
+            |_| true,
+        )
+        .unwrap();
+        assert_eq!(closure.input_sources, vec![source]);
+        assert!(closure.edges.is_empty());
+        let exposure = crate::TeachingExposureSession::new(
+            &cgs,
+            "matrix",
+            &["BusinessRecord", "ProviderResult"],
+        );
+        let wave = crate::prompt_render::python::prepare_python_teaching_wave(
+            &exposure,
+            &crate::prompt_render::python::PythonTeachingState::default(),
+        )
+        .unwrap();
+        assert!(
+            wave.declarations.contains(".query("),
+            "{}",
+            wave.declarations
+        );
+        assert!(crate::prompt_render::render_prerequisite_bindings(
+            &closure,
+            &catalogs,
+            exposure.to_symbol_map().as_ref(),
+        )
+        .unwrap()
+        .is_empty());
     }
 
     #[test]
@@ -2952,13 +3006,10 @@ mod tests {
             .lines()
             .find(|line| line.starts_with(&format!("{}.", label(&source_acq.id))))
             .unwrap();
-        assert!(local.contains("Payload.access_token"), "{guidance}");
-        assert!(!local.contains("Payload.source_access_token"), "{guidance}");
-        assert!(
-            foreign.contains("Payload.source_access_token"),
-            "{guidance}"
-        );
-        assert!(!foreign.contains("Payload.access_token"), "{guidance}");
+        assert!(local.contains(" access_token"), "{guidance}");
+        assert!(!local.contains(" source_access_token"), "{guidance}");
+        assert!(foreign.contains(" source_access_token"), "{guidance}");
+        assert!(!foreign.contains(" access_token"), "{guidance}");
         assert!(!guidance.contains(&consumer_acq.id));
         assert!(!guidance.contains(&source_acq.id));
     }

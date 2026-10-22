@@ -1,6 +1,6 @@
 build: immutable DAG; non-null tuples/typed arrays unpack recursively with exact arity; array lengths checked before dependent effects. Return rowsets; tuples=results; records=data. Literal-ID for/one-clause comprehensions expand (<=256). Fresh `out=[]` then literal-ID loop with only `out.append(expr)`: ordered values/effects; expr cannot capture out; aliases immutable. No dynamic loops/while/filtered comprehensions/for-else/statement if/mutation; mutation=@compute. Callbacks branch; imports: module/@compute.
 
-Declarations: eN/mN/rN/vN session-local/append-only. eN.method=root; row.method=entity row/singleton; = ... optional. Relations: row.rN or rows.flat_map(lambda r: r.rN); never rN(). vN=domain identity/constraints; Literal=choices. Comments=data; groups=methods; constraints=JSON/@profile. Inputs=keywords; producer fields=dependencies.
+Declarations: eN/mN/rN/vN session-local/append-only; use exact wire names. eN.method=root; row.method=entity row/singleton; = ... optional. Relations: row.rN or rows.flat_map(lambda r: r.rN); never rN(). vN=domain identity/constraints; Literal=choices. Comments=data; groups=methods; constraints=JSON/@profile. Inputs=keywords; producer fields=dependencies.
 
 Rows:
 Ranked search returns candidates. take(1) selects first, not unique; filter and check required cardinality before effects. Complete membership permits `not in`; later writes are not atomic with that read.
@@ -14,7 +14,7 @@ flat_map(lambda r: rows_or_effect, max_parents=65536): reads/writes; optional bo
 
 datetime: import date/datetime/timedelta/timezone in module/compute. Compare dates; text=.isoformat(), never slicing. Naive/aware preserved. Relative: date.today()/datetime.now(), never guesses. Bounds: date.today()-timedelta(days=1), .replace(month=1, day=1); literal dates need input.
 
-Get.iterate(lambda r: effect, until=lambda r: test, max_steps=N): re-read; exhaustion fails. Effects: program/parent order; failure stops suffix. Unreturned writes run; dependent reads see them. Fanout: unique identities, excluding complete members. Keep completed/unknown receipts and diagnostics; failed dispatch may act. New programs: in-session, no resume/rollback. Partial/unknown ≠ absence.
+Get.iterate(lambda r: effect, until=lambda r: test, max_steps=N): re-read; exhaustion fails. Effects: program/parent order; failure stops subsequent work. Unreturned writes run; dependent reads see them. Fanout: unique identities, excluding complete members. Unknown outcomes are not evidence that nothing happened.
 
 class P(Program):
     def build(self):

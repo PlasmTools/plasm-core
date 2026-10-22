@@ -14,26 +14,32 @@ export class FailureResults {
   record(failure: ExecutionFailure): string {
     const ref = `failure_${randomUUID()}`;
     const lines: string[] = [
-      `Execution stopped (${failure.code}; cause=${failure.cause}; recovery=${failure.recovery}).`,
-      `Recorded diagnostic: ${JSON.stringify(failure.diagnostic)}`,
+      `Execution stopped: ${failure.diagnostic}`,
     ];
     if (failure.input_occurrence) {
       const input = failure.input_occurrence;
-      lines.push(`Primary failure input occurrence [${input.occurrence_path.join("/")}]${sourceScope(input.scope_path)}: ${input.source_identity ?? "identity unavailable"}`);
+      lines.push(`Failed input${sourceScope(input.scope_path)}: ${input.source_identity ?? "identity unavailable"}; item path [${input.occurrence_path.join("/")}] (zero-based nested iteration indices).`);
     }
     for (const effect of failure.effects) {
-      lines.push(`${effect.entry_id}/${effect.capability}: ${effect.completed} completed; ${effect.failed} failed. A failed invocation does not establish absence of an effect.`);
+      lines.push(`${effect.entry_id}/${effect.capability}: ${effect.completed} completed; ${effect.failed} failed.${effect.failed ? " Failed calls may still have changed state." : ""}`);
       for (const occurrence of effect.occurrences) {
-        lines.push(`${effect.entry_id}/${effect.capability} — ${occurrence.status} — occurrence [${occurrence.occurrence_path.join("/")}] — ${occurrence.source_identity ?? "identity unavailable"}${sourceScope(occurrence.scope_path)}`);
+        lines.push(`${effect.entry_id}/${effect.capability} — ${occurrence.status} — item path [${occurrence.occurrence_path.join("/")}] — ${occurrence.source_identity ?? "identity unavailable"}${sourceScope(occurrence.scope_path)}`);
       }
     }
     for (const dispatch of failure.dispatches) {
       const origin = dispatch.resolved_effect?.origin;
-      const coordinate = origin ? ` at occurrence [${origin.occurrence_path.join("/")}]` : "";
-      lines.push(`${dispatch.operation.entry_id}/${dispatch.operation.capability}${coordinate}: ${dispatch.status === "unresolved" ? "request sent; no response received; effect unknown" : "response received; this dispatch is not an additional effect receipt"}`);
+      const coordinate = origin?.occurrence_path.length ? ` at item path [${origin.occurrence_path.join("/")}]` : "";
+      lines.push(`${dispatch.operation.entry_id}/${dispatch.operation.capability}${coordinate}: ${dispatch.status === "unresolved" ? "request sent; no response recorded" : "response received"}. This request record does not establish whether state changed; do not count it as another completed operation.`);
     }
-    if (failure.effects_unresolved) lines.push("Some effects have unresolved outcomes.");
-    lines.push("Only recorded attempts are listed. This is not an exhaustive list of unattempted work. Earlier successful operations were not rolled back.");
+    if (failure.effects_unresolved) lines.push("Some state changes remain unknown. Check the resulting state before retrying them.");
+    const next: Record<ExecutionFailure["recovery"], string> = {
+      repair_program: "Correct the program before trying again.",
+      obtain_authorization: "Obtain the required authorization before trying again.",
+      reconcile_effects: "Check completed and unknown changes before further writes.",
+      stop: "Stop execution and resolve the reported blocker before continuing.",
+    };
+    lines.push(next[failure.recovery]);
+    lines.push("Only recorded attempts are listed; unattempted work is not listed. Earlier completed changes were not undone.");
     this.records.set(ref, lines);
     // Bound per-runtime storage. Eviction is explicit to readers, never a live retry.
     if (this.records.size > 128) this.records.delete(this.records.keys().next().value!);

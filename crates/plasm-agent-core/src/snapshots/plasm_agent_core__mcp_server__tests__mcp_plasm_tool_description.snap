@@ -4,20 +4,18 @@ expression: "plasm_core::prompt_render::PLASM_MCP_TOOL_DESCRIPTION"
 ---
 **Plasm** — `logical_session_ref` + `program`. Policy-clean reads without fetch-all or fanout risk execute inline; mutations/review gates return `run_ref`. Inspect requirements, then call `plasm_run` with the ref, not the program.
 
-Compose workflows in one Program: bind producer results to dependent reads, relations, computation and effects; return requested outputs. Compute in the DAG instead of copying values between calls. Split when new evidence requires a decision or correction.
+Compose dependent reads, computation and effects in one Program; split when new evidence requires a decision or correction.
 
-`program` is Python source text, not JSON data. Submit exactly one class derived from Program with build(self), immutable bindings and explicit return. The static Python reference follows; incremental declarations arrive through plasm_context. Do not copy declarations, instantiate the class or call build. Imports require Monty's pure Python profile.
+`program`: Python source, not JSON. Submit one Program subclass with build(self) and explicit return. Do not copy declarations, instantiate it or call build. Session declarations arrive through plasm_context; the language reference follows.
 
-Use taught e#/m#/r# symbols and exact wire names. Catalog arguments are named; Get also accepts its single identity positionally. The DAG is deferred and typed; @compute processes materialized values in bounded Monty. Parse/type/plan rejections return needs_fix and a correction: preserve selection criteria and repair in the same logical session. Only Python is accepted; failed Python is never retried as another language.
+needs_fix: preserve selection criteria and repair the Python in the same logical session. Extend discovery only for missing capabilities.
 
-Inspect coverage and outcomes. Failed/cancelled runs may have completed writes; inspect evidence before further effects. Extend context for missing capabilities; never open a new session for syntax repair.
-
-Failure evidence belongs to one execution. New programs may read/write in-session, but do not resume or roll back earlier executions. Service diagnostics do not determine effect status.
+Failed/cancelled runs may have completed writes. Check recorded outcomes before further writes; an error response does not prove no change occurred. New programs do not resume or undo earlier runs.
 
 
 build: immutable DAG; non-null tuples/typed arrays unpack recursively with exact arity; array lengths checked before dependent effects. Return rowsets; tuples=results; records=data. Literal-ID for/one-clause comprehensions expand (<=256). Fresh `out=[]` then literal-ID loop with only `out.append(expr)`: ordered values/effects; expr cannot capture out; aliases immutable. No dynamic loops/while/filtered comprehensions/for-else/statement if/mutation; mutation=@compute. Callbacks branch; imports: module/@compute.
 
-Declarations: eN/mN/rN/vN session-local/append-only. eN.method=root; row.method=entity row/singleton; = ... optional. Relations: row.rN or rows.flat_map(lambda r: r.rN); never rN(). vN=domain identity/constraints; Literal=choices. Comments=data; groups=methods; constraints=JSON/@profile. Inputs=keywords; producer fields=dependencies.
+Declarations: eN/mN/rN/vN session-local/append-only; use exact wire names. eN.method=root; row.method=entity row/singleton; = ... optional. Relations: row.rN or rows.flat_map(lambda r: r.rN); never rN(). vN=domain identity/constraints; Literal=choices. Comments=data; groups=methods; constraints=JSON/@profile. Inputs=keywords; producer fields=dependencies.
 
 Rows:
 Ranked search returns candidates. take(1) selects first, not unique; filter and check required cardinality before effects. Complete membership permits `not in`; later writes are not atomic with that read.
@@ -31,7 +29,7 @@ flat_map(lambda r: rows_or_effect, max_parents=65536): reads/writes; optional bo
 
 datetime: import date/datetime/timedelta/timezone in module/compute. Compare dates; text=.isoformat(), never slicing. Naive/aware preserved. Relative: date.today()/datetime.now(), never guesses. Bounds: date.today()-timedelta(days=1), .replace(month=1, day=1); literal dates need input.
 
-Get.iterate(lambda r: effect, until=lambda r: test, max_steps=N): re-read; exhaustion fails. Effects: program/parent order; failure stops suffix. Unreturned writes run; dependent reads see them. Fanout: unique identities, excluding complete members. Keep completed/unknown receipts and diagnostics; failed dispatch may act. New programs: in-session, no resume/rollback. Partial/unknown ≠ absence.
+Get.iterate(lambda r: effect, until=lambda r: test, max_steps=N): re-read; exhaustion fails. Effects: program/parent order; failure stops subsequent work. Unreturned writes run; dependent reads see them. Fanout: unique identities, excluding complete members. Unknown outcomes are not evidence that nothing happened.
 
 class P(Program):
     def build(self):

@@ -1,11 +1,9 @@
 **Plasm** — `logical_session_ref` + `program`. Policy-clean reads without fetch-all or fanout risk execute inline; mutations/review gates return `run_ref`. Inspect requirements, then call `plasm_run` with the ref, not the program.
 
-Compose workflows in one Program: bind producer results to dependent reads, relations, computation and effects; return requested outputs. Compute in the DAG instead of copying values between calls. Split when new evidence requires a decision or correction.
+Compose dependent reads, computation and effects in one Program; split when new evidence requires a decision or correction.
 
-`program` is Python source text, not JSON data. Submit exactly one class derived from Program with build(self), immutable bindings and explicit return. The static Python reference follows; incremental declarations arrive through plasm_context. Do not copy declarations, instantiate the class or call build. Imports require Monty's pure Python profile.
+`program`: Python source, not JSON. Submit one Program subclass with build(self) and explicit return. Do not copy declarations, instantiate it or call build. Session declarations arrive through plasm_context; the language reference follows.
 
-Use taught e#/m#/r# symbols and exact wire names. Catalog arguments are named; Get also accepts its single identity positionally. The DAG is deferred and typed; @compute processes materialized values in bounded Monty. Parse/type/plan rejections return needs_fix and a correction: preserve selection criteria and repair in the same logical session. Only Python is accepted; failed Python is never retried as another language.
+needs_fix: preserve selection criteria and repair the Python in the same logical session. Extend discovery only for missing capabilities.
 
-Inspect coverage and outcomes. Failed/cancelled runs may have completed writes; inspect evidence before further effects. Extend context for missing capabilities; never open a new session for syntax repair.
-
-Failure evidence belongs to one execution. New programs may read/write in-session, but do not resume or roll back earlier executions. Service diagnostics do not determine effect status.
+Failed/cancelled runs may have completed writes. Check recorded outcomes before further writes; an error response does not prove no change occurred. New programs do not resume or undo earlier runs.

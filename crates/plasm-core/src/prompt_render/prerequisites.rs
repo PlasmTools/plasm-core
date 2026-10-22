@@ -42,7 +42,9 @@ pub fn render_prerequisite_bindings(
     catalogs: &BTreeMap<String, &CGS>,
     symbols: &dyn SymbolRender,
 ) -> Result<String, PrerequisiteBindingRenderError> {
-    if closure.edges.is_empty() && closure.input_sources.is_empty() {
+    // Input-source capabilities and collection cardinality are already taught by
+    // ordinary signatures. Only bindings add information beyond those signatures.
+    if closure.edges.is_empty() {
         return Ok(String::new());
     }
     let renderer = BindingRenderer {
@@ -50,17 +52,7 @@ pub fn render_prerequisite_bindings(
         symbols,
         closure,
     };
-    let mut lines = vec![
-        "Declared prerequisites".into(),
-        "Local labels below name acquisitions, not supplied variables. Call the declared methods and bind their outputs; these calls undergo normal review/run.".into(),
-    ];
-    if !closure.input_sources.is_empty() {
-        lines.push("Possible input sources".into());
-        lines.push("Before an operation requiring an entity identity, inspect the listed source capabilities. Use an existing entity when it satisfies the request; otherwise a listed create capability may establish one. This is a state-dependent choice, not approval to create.".into());
-        for source in &closure.input_sources {
-            lines.push(format!("  {}", renderer.capability(source)?));
-        }
-    }
+    let mut lines = vec!["Input bindings (call results, not supplied values):".into()];
     for acquisition in &closure.acquisitions {
         let provider = catalogs
             .get(&acquisition.provider_catalog)
@@ -71,18 +63,12 @@ pub fn render_prerequisite_bindings(
             })?;
         let filled_get = renderer.filled_get_identity_acquisition(acquisition, provider)?;
         lines.push(format!(
-            "Acquisition {}: {}",
+            "{} = {}",
             renderer.label(&acquisition.id)?,
             filled_get
                 .clone()
                 .map_or_else(|| renderer.capability(&acquisition.capability), Ok)?
         ));
-        if renderer.acquisition_returns_collection(&acquisition.capability)? {
-            lines.push(
-                "  This acquisition returns candidate rows; select or fan out a row before binding its fields."
-                    .into(),
-            );
-        }
         for (port, argument) in &acquisition.arguments {
             let input = provider.inputs.get(port).ok_or_else(|| {
                 PrerequisiteBindingRenderError::MissingProviderInput {
@@ -115,11 +101,7 @@ pub fn render_prerequisite_bindings(
                 renderer.label(&edge.provider_instance)?,
                 renderer.output(&edge.provider, field)?
             );
-            let mut target = format!(
-                "{} [{}]",
-                renderer.input(&edge.consumer, &binding.input)?,
-                edge.requirement.id
-            );
+            let mut target = renderer.input(&edge.consumer, &binding.input)?;
             if let Some(instance) = &edge.consumer_instance {
                 target = format!("{}: {target}", renderer.label(instance)?);
             }
@@ -187,19 +169,6 @@ impl BindingRenderer<'_> {
             &method,
             self.catalogs.get(&reference.catalog).copied(),
             &self.identity_wire(&reference.catalog, cap),
-        ))
-    }
-
-    fn acquisition_returns_collection(
-        &self,
-        reference: &CapabilityRef,
-    ) -> Result<bool, PrerequisiteBindingRenderError> {
-        Ok(matches!(
-            self.schema(reference)?
-                .output_schema
-                .as_ref()
-                .map(|output| &output.output_type),
-            Some(crate::schema::OutputType::Collection { .. })
         ))
     }
 
@@ -314,9 +283,8 @@ impl BindingRenderer<'_> {
         let mut path = vec![param];
         path.extend(tail.iter().cloned());
         Ok(format!(
-            "{} {:?}.{}",
+            "{} {}",
             self.capability(reference)?,
-            input.lane,
             path.join(".")
         ))
     }
