@@ -26,6 +26,7 @@ import {
   TASK_LEDGER_STATE_HEADER,
   TASK_LEDGER_TOOL_NAME,
   TaskLedgerStore,
+  type TaskLedgerRecord,
   emptyTaskLedger,
   isKnownEvidenceRef,
   parseTaskLedgerRecord,
@@ -290,7 +291,7 @@ function mockProseStop() {
 }
 
 function mockLedgerThenStop(
-  record: typeof authored,
+  record: TaskLedgerRecord,
   intermediateCalls: { toolName: string; input: unknown }[] = [],
 ) {
   let count = 0;
