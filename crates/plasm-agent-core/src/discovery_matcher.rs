@@ -585,6 +585,50 @@ mod tests {
     }
 
     #[test]
+    fn artifact_composition_evidence_survives_pages_and_ordering() {
+        let contracts = [
+            "Export a text file containing sample identifiers and wavelengths. Returns a path, not contents. Creates a file and increments a counter; requires a credential.",
+            "Read text contents at a supplied file path. Requires a credential; does not modify files.",
+            "Erase a supplied file; returns no contents.",
+            "Read unrelated furniture records.",
+        ];
+        for size in [8, 64, 128] {
+            let (intent, mut retrieval) = fixture();
+            let original = retrieval.candidates[0].clone();
+            retrieval.candidates = (0..size)
+                .map(|i| {
+                    let mut c = original.clone();
+                    c.id = format!("artifact{i}");
+                    c.reference.capability = format!("operation{i}");
+                    c.document.operation.contract = contracts[i % contracts.len()].into();
+                    c
+                })
+                .collect();
+            let forward = issue_batches(RELEVANCE_MODEL, &intent, &retrieval).unwrap();
+            retrieval.candidates.reverse();
+            let reverse = issue_batches(RELEVANCE_MODEL, &intent, &retrieval).unwrap();
+            assert_eq!(
+                forward.iter().map(|b| b.body()).collect::<Vec<_>>(),
+                reverse.iter().map(|b| b.body()).collect::<Vec<_>>()
+            );
+            for page in forward {
+                let body: serde_json::Value = serde_json::from_str(page.body()).unwrap();
+                let evidence = body["state"]["capabilities"].as_object().unwrap();
+                assert_eq!(evidence.len(), size);
+                for contract in contracts {
+                    assert_eq!(
+                        evidence
+                            .values()
+                            .filter(|v| v["capability"]["operation"]["contract"] == contract)
+                            .count(),
+                        size / contracts.len()
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
     fn uncertainty_preserves_exposure_without_rewriting_judgments() {
         let (intent, mut retrieval) = fixture();
         let original = retrieval.candidates[0].clone();

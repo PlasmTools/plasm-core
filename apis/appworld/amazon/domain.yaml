@@ -1,4 +1,4 @@
-version: 23
+version: 24
 entry_id: amazon
 auth:
   scheme: none
@@ -1627,7 +1627,13 @@ capabilities:
     - order_id
   order_receipt_download:
     receiver: {kind: entity, entity: Order}
-    description: Download an order receipt to a file-system path.
+    description: >-
+      Save a text receipt for the order in the account file system and return its
+      file path, not its contents. The receipt contains the order ID and date,
+      product names, purchased quantities, line prices, fees and total payment.
+      File content is available through the file system. Creates a file (or
+      replaces it when overwrite is enabled) and increments the order's receipt
+      download count.
     kind: action
     entity: Order
     payload:

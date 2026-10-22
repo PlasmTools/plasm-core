@@ -342,6 +342,45 @@ mod tests {
     }
 
     #[test]
+    fn artifact_information_and_effects_survive_contract_projection() {
+        for information in [
+            "The text file contains sample identifiers and measured wavelengths.",
+            "The text file contains component identifiers and calibration coefficients.",
+            "The text file contains segment identifiers and measured durations.",
+        ] {
+            let mut cgs = role_fixture();
+            let old = capability_documents(&cgs).unwrap();
+            let description = format!(
+                "Save a text file and return its path, not its contents. {information} \
+                 Creates a file and increments an export counter. Requires a credential."
+            );
+            cgs.capabilities
+                .get_mut("record_create")
+                .unwrap()
+                .description = description.clone();
+            cgs.capabilities.get_mut("record_get").unwrap().description =
+                "Read the text contents at a supplied file path; does not create files.".into();
+            let docs = capability_documents(&cgs).unwrap();
+            let exported = docs
+                .iter()
+                .find(|d| d.capability == "record_create")
+                .unwrap();
+            let previous = old
+                .iter()
+                .find(|d| d.capability == "record_create")
+                .unwrap();
+            assert!(exported.operation.contract.contains(&description));
+            assert_ne!(exported.text_hash, previous.text_hash);
+            let decoded: CapabilityDocument =
+                serde_json::from_slice(&serde_json::to_vec(exported).unwrap()).unwrap();
+            assert_eq!(&decoded, exported);
+            let reader = docs.iter().find(|d| d.capability == "record_get").unwrap();
+            assert!(reader.operation.contract.contains("Read the text contents"));
+            assert!(!reader.operation.contract.contains(information));
+        }
+    }
+
+    #[test]
     fn operation_restrictions_survive_projection_and_old_documents_are_rejected() {
         let mut cgs = role_fixture();
         cgs.capabilities
