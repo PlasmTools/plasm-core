@@ -130,7 +130,7 @@ export const TASK_LEDGER_LITURGY = [
   "",
   "Write `observed_facts` only for tool-cited observations (`kind` is `fact`). Every fact requires `evidence_ref` citing a run_id, plasm:// URI, run_ref, or tool name. The host checks that the citation is a known shape; it does not treat the citation as proof. Write `interpretations` separately (`kind` is `interpretation`). `completed_effects.satisfaction` is always an interpretation.",
   "",
-  "An alternative action is authorized only when the user’s stated condition is met. A failed preferred action is not that condition.",
+  "Different means may achieve the same authorized outcome if they respect the user's constraints and preserve unrelated state. If the user makes an alternative conditional, establish that condition before taking it; do not substitute failure of one attempt for a different stated condition. Uncertain authorization remains unresolved; do not expand scope.",
   "",
   "Each decision sees a host echo of your last accepted write as model-authored state — not host law and not a completion contract. Revise the record when evidence changes. Completion still follows the contract above — the ledger is not a terminal.",
   "Keep preservation constraints in scope, tool-cited original state in observed_facts, and unfinished restoration or verification in remaining_work. A temporary change does not discharge its restoration obligation. Before ending the task, check remaining_work against observed results; record verified completion or report what remains unresolved. Preserve outstanding obligations when replacing the record.",
