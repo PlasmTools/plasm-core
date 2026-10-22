@@ -76,8 +76,11 @@ impl TopKHeap {
         if let Some(field) = self.spec.sort_key.first() {
             crate::row_predicate::require_entity_field_available(&entity, field)?;
         }
-        let key = entity_field_path_value(&entity, &self.spec.sort_key)
-            .ok_or(crate::RuntimeError::TopKFieldUnobserved)?;
+        let key = entity_field_path_value(&entity, &self.spec.sort_key).ok_or_else(|| {
+            crate::RuntimeError::TopKFieldUnobserved {
+                field: self.spec.sort_key.join("."),
+            }
+        })?;
         let ordering = self.contract.ordering()?;
         ordering.validate(&key)?;
         if !key.is_null() {

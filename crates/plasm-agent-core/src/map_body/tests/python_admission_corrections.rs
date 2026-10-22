@@ -2,6 +2,47 @@ use super::support::*;
 use super::*;
 use crate::plasm_compile::compile_python_program;
 
+#[test]
+fn compute_source_budget_attributes_the_authored_method_without_changing_limit() {
+    on_runtime(async {
+        let (es, _, calls) = fixture(2);
+        for (name, decorator, padding, payload) in [
+            ("first", "    @compute\n", 0, "x".repeat(4300)),
+            ("second", "    @compute\n", 30, "é".repeat(2200)),
+            ("helper", "", 20, "é".repeat(2200)),
+        ] {
+            let source = format!("{}class P(Program):\n    @compute\n    def small(self, value: int) -> int:\n        return value\n\n{decorator}    def {name}(self, value: int) -> int:\n        unused = '{payload}'\n        return value\n\n    def build(self):\n        return self.{name}(1)\n", "\n".repeat(padding));
+            let error = compile_python_program(&es, &source).await.unwrap_err();
+            let failure: plasm_runtime::ExecutionFailure = error.into();
+            let diagnostic = failure.diagnostic();
+            assert!(
+                diagnostic.contains(&format!("compute `{name}`")),
+                "{diagnostic}"
+            );
+            assert!(diagnostic.contains("limit is 4096 bytes"), "{diagnostic}");
+            assert!(diagnostic.contains("authored declaration"));
+            assert!(diagnostic.contains("generated line padding"));
+            let evidence = failure.program_rejection.as_ref().unwrap();
+            let declaration_start = if decorator.is_empty() {
+                source.find(&format!("def {name}("))
+            } else {
+                source.find(&format!("@compute\n    def {name}("))
+            };
+            assert_eq!(evidence.span_offset, declaration_start);
+            let declaration_end = source.find("\n\n    def build").unwrap();
+            assert!(
+                diagnostic.contains(&format!(
+                    "authored declaration is {} UTF-8 bytes",
+                    declaration_end - declaration_start.unwrap()
+                )),
+                "{diagnostic}"
+            );
+            assert!(failure.effects.is_empty());
+        }
+        assert!(calls.lock().unwrap().is_empty());
+    });
+}
+
 fn source_cause(
     error: &crate::compilation_error::CompilationError,
 ) -> &crate::program_rejection::PythonSourceError {

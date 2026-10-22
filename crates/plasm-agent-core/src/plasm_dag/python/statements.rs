@@ -121,7 +121,7 @@ impl Lower<'_> {
                 unreachable!()
             };
             let id = self.fresh();
-            let checked = self.text_compute_source(target, call, code, &id)?;
+            let checked = self.text_compute_source(target, call, code, None, &id)?;
             let mut acquired = Vec::with_capacity(leaves.len());
             for (index, label) in leaves.into_iter().enumerate() {
                 let parsed = ruff_python_parser::parse_expression(&format!("{checked}[{index}]"))

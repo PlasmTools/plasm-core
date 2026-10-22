@@ -52,7 +52,7 @@ mod tests {
             &[row!({"flag":true,"b":"[1]"})],
             &super::super::fixture_contract(&rows)
         )
-        .unwrap_err(), plasm_core::RowComputeError::MissingField { field } if field == "a"));
+        .unwrap_err(), plasm_core::RowComputeError::Input { index: 0, source } if matches!(&*source, plasm_core::RowComputeError::MissingField { field } if field == "a")));
     }
 
     #[test]

@@ -587,7 +587,7 @@ impl From<crate::RuntimeError> for ExecutionFailure {
             | PaginationPageLimit { .. }
             | LiveAbsolutePaginationRequired
             | Ordering(_)
-            | TopKFieldUnobserved
+            | TopKFieldUnobserved { .. }
             | TopKSequenceOverflow
             | TopKFieldEmpty
             | FieldUnknown { .. }

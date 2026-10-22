@@ -40,8 +40,12 @@ pub(crate) enum ComputeEvaluationError {
     Union(#[from] plasm_core::row_contract::RowUnionError),
     #[error("filter binding failed: {0}")]
     FilterBinding(#[from] FilterBindingError),
-    #[error(transparent)]
-    RowCompute(#[from] plasm_core::RowComputeError),
+    #[error("input producer `{input}`: {error}")]
+    RowCompute {
+        input: String,
+        #[source]
+        error: plasm_core::RowComputeError,
+    },
     #[error(transparent)]
     Render(#[from] RenderComputeError),
     #[error("render compute output schema has no fields")]
@@ -242,7 +246,12 @@ pub(crate) fn eval_compute_from_rows(
         });
     }
     let op = bind_filter_op(&compute.op, cross_binding_rows)?;
-    match eval_compute_ops(std::slice::from_ref(&op), rows, input_contract)? {
+    match eval_compute_ops(std::slice::from_ref(&op), rows, input_contract).map_err(|error| {
+        ComputeEvaluationError::RowCompute {
+            input: compute.source.clone(),
+            error,
+        }
+    })? {
         ComputeEvalOutcome::Rows(plasm_core::CollectedFrame {
             rows, occurrences, ..
         }) => Ok(ComputedRows { rows, occurrences }),
@@ -751,6 +760,47 @@ mod scalar_operand_tests {
     use super::*;
     use crate::fixture_row as json;
     use crate::plasm_plan::{FieldPath, PlanPredicate, PlanPredicateOp, PlanValue};
+
+    #[test]
+    fn missing_observation_names_the_actual_input_producer_only() {
+        use plasm_core::value_contract::ValueContract;
+        let mut field = ValueContract::scalar(plasm_core::FieldType::String);
+        field.nullable = true;
+        let contract = ValueContract::record(
+            BTreeMap::from([("detail".into(), field)]),
+            Default::default(),
+        );
+        for producer in ["observe_brief", "observe_full"] {
+            let compute = ComputeTemplate {
+                source: producer.into(),
+                op: ComputeOp::Sort {
+                    key: FieldPath::from_dotted("detail").unwrap(),
+                    descending: false,
+                },
+                schema: plasm_core::plasm_monad::SyntheticResultSchema {
+                    entity: Some("Record".into()),
+                    fields: vec![],
+                    optional_fields: Default::default(),
+                },
+                page_size: None,
+                collection_alias: None,
+            };
+            let error = eval_compute_from_rows(&compute, &[json!({})], &BTreeMap::new(), &contract)
+                .unwrap_err();
+            assert!(
+                matches!(&error, ComputeEvaluationError::RowCompute { input, error: plasm_core::RowComputeError::Input { index: 0, .. } } if input == producer)
+            );
+            assert!(error.to_string().contains(producer));
+            assert!(!error.to_string().contains("Record"));
+            assert!(eval_compute_from_rows(
+                &compute,
+                &[json!({"detail":null})],
+                &BTreeMap::new(),
+                &contract
+            )
+            .is_ok());
+        }
+    }
 
     #[test]
     fn branch_merge_requires_exactly_one_value_without_deduplication() {

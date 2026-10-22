@@ -24,7 +24,7 @@ impl Lower<'_> {
                 )
             })?
             .clone();
-        self.text_compute_source(site, call, code, id)
+        self.text_compute_source(site, call, code, Some(method), id)
     }
 
     pub(super) fn text_compute_source(
@@ -32,6 +32,7 @@ impl Lower<'_> {
         site: &PyExpr,
         call: &ExprCall,
         code: String,
+        authored_method: Option<&str>,
         id: &str,
     ) -> Result<String, PythonLoweringError> {
         let parsed = ruff_python_parser::parse_module(&code).map_err(|error| {
@@ -261,6 +262,9 @@ impl Lower<'_> {
         normalized.parameters.kwonlyargs.clear();
         let code = admission::method_source(&self.imports.source, &code, &def, normalized)?;
         self.emit_python_compute_ports(source, &code, id, selection_sources, packet)
+            .map_err(|error| {
+                locate_compute_error(self.program_source, authored_method, site, error)
+            })
     }
 
     pub(super) fn emit_python_compute(
@@ -344,6 +348,77 @@ impl Lower<'_> {
                 collection_alias: None,
             },
         })
+    }
+}
+
+/// Coordinates belong to the submitted Program, never the normalized checker source.
+fn locate_compute_error(
+    source: &str,
+    method: Option<&str>,
+    site: &PyExpr,
+    error: PythonLoweringError,
+) -> PythonLoweringError {
+    if !matches!(
+        &error,
+        PythonLoweringError::Compute(crate::program_rejection::PythonComputeRejection::Typed(
+            crate::program_rejection::PythonComputeError::SourceBudgetExceeded { .. }
+        ))
+    ) {
+        return error;
+    }
+    let Some(method) = method else {
+        return error.with_span((site.start().to_u32(), site.end().to_u32()));
+    };
+    let Ok(module) = ruff_python_parser::parse_module(source) else {
+        return error;
+    };
+    let declaration = module.suite().iter().find_map(|statement| {
+        let Stmt::ClassDef(class) = statement else {
+            return None;
+        };
+        class.body.iter().find_map(|statement| match statement {
+            Stmt::FunctionDef(def) if def.name.as_str() == method => Some(def),
+            _ => None,
+        })
+    });
+    let Some(def) = declaration else {
+        // Generated computations have a known authored use site, but no
+        // authored function whose size or name we can truthfully report.
+        return error.with_span((site.start().to_u32(), site.end().to_u32()));
+    };
+    error
+        .with_context(
+            crate::program_rejection::PythonLoweringContext::ComputeSource {
+                function: method.to_owned(),
+                authored_bytes: def.end().to_usize() - def.start().to_usize(),
+            },
+        )
+        .with_span((def.start().to_u32(), def.end().to_u32()))
+}
+
+#[cfg(test)]
+mod attribution_tests {
+    use super::*;
+
+    #[test]
+    fn generated_compute_does_not_borrow_an_authored_namesake() {
+        let program = "class P(Program):\n    def checked_unpack(self):\n        return 1\n";
+        let parsed = ruff_python_parser::parse_expression("(first, second)").unwrap();
+        let error =
+            PythonLoweringError::from(crate::program_rejection::PythonComputeRejection::from(
+                crate::program_rejection::PythonComputeError::SourceBudgetExceeded {
+                    actual_bytes: 5000,
+                    limit_bytes: 4096,
+                },
+            ));
+        let error = locate_compute_error(program, None, &parsed.syntax().body, error);
+        assert_eq!(error.span_offset(), Some(0));
+        assert!(matches!(
+            &error,
+            PythonLoweringError::Located { context: None, .. }
+        ));
+        assert!(!error.to_string().contains("authored declaration"));
+        assert!(!error.to_string().contains("checked_unpack"));
     }
 }
 

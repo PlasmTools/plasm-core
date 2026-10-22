@@ -123,7 +123,7 @@ fn apply_node(
                                 plasm_core::RowComputeError::MembershipComparison
                             }
                             PredicateEvaluationError::MissingField { field } => {
-                                plasm_core::RowComputeError::MissingField { field }
+                                r.missing_field(&field)
                             }
                         })
                 })
@@ -141,11 +141,7 @@ fn apply_node(
             let ordering = plasm_core::value_order::Orderable::ordering(&contract)?;
             let name = key.dotted();
             for row in &state.rows {
-                let value =
-                    row.get(&name)
-                        .ok_or_else(|| plasm_core::RowComputeError::MissingField {
-                            field: name.clone(),
-                        })?;
+                let value = row.get(&name).ok_or_else(|| row.missing_field(&name))?;
                 ordering.validate(value)?;
             }
             let mut error = None;
@@ -187,11 +183,9 @@ fn apply_node(
                     let mut out = Row(Default::default(), row.1);
                     for (name, path) in &spec.fields {
                         let source = path.dotted();
-                        let cell = row.cell(&source).ok_or_else(|| {
-                            plasm_core::RowComputeError::MissingField {
-                                field: source.clone(),
-                            }
-                        })?;
+                        let cell = row
+                            .cell(&source)
+                            .ok_or_else(|| row.missing_field(&source))?;
                         out.0.insert(name.as_str().into(), cell);
                     }
                     Ok(out)
@@ -204,11 +198,7 @@ fn apply_node(
                     .iter()
                     .map(|column| {
                         let cell = match &column.expr {
-                            WithExpr::Field(path) => row.cell(&path.dotted()).ok_or_else(|| {
-                                plasm_core::RowComputeError::MissingField {
-                                    field: path.dotted(),
-                                }
-                            })?,
+                            WithExpr::Field(path) => row.cell(&path.dotted()).ok_or_else(|| row.missing_field(&path.dotted()))?,
                             expr => Cell::computed(
                                 super::expression::evaluate(expr, now, &mut |path| {
                                     Ok(row.require(&path.dotted())?.clone())
@@ -1097,7 +1087,7 @@ mod presence_tests {
         assert!(matches!(evaluate_fixture(
             std::slice::from_ref(&op),
             &[row!({"id":1}), row!({"id":2,"score":null})]
-        ).unwrap_err(), plasm_core::RowComputeError::MissingField { field } if field == "score"));
+        ).unwrap_err(), plasm_core::RowComputeError::Input { index: 0, source } if matches!(&*source, plasm_core::RowComputeError::MissingField { field } if field == "score")));
         assert!(
             evaluate_fixture(std::slice::from_ref(&op), &[row!({"id":2,"score":null})]).is_ok()
         );
@@ -1112,5 +1102,87 @@ mod presence_tests {
             &[row!({"id":1,"score":3}), row!({"id":2})]
         )
         .is_ok());
+    }
+
+    #[test]
+    fn missing_field_matrix_reports_original_row_and_nested_path() {
+        for (path, present, absent) in [
+            ("score", row!({"score":null}), row!({})),
+            (
+                "payload.score",
+                row!({"payload":{"score":null}}),
+                row!({"payload":{}}),
+            ),
+        ] {
+            let field = FieldPath::from_dotted(path).unwrap();
+            for op in [
+                ComputeOp::Sort {
+                    key: field.clone(),
+                    descending: false,
+                },
+                ComputeOp::Project {
+                    fields: [(
+                        plasm_core::OutputName::new("result").unwrap(),
+                        field.clone(),
+                    )]
+                    .into(),
+                },
+                ComputeOp::Aggregate {
+                    aggregates: vec![plasm_core::AggregateSpec {
+                        name: plasm_core::OutputName::new("result").unwrap(),
+                        function: plasm_core::AggregateFunction::First,
+                        field: Some(field),
+                    }],
+                },
+            ] {
+                // First reduction selects the absent first row; other operators
+                // also encounter it. Null in the second row is observed.
+                let error = eval_compute_ops(
+                    std::slice::from_ref(&op),
+                    &[absent.clone(), present.clone()],
+                    &super::super::fixture_contract(std::slice::from_ref(&present)),
+                )
+                .unwrap_err();
+                assert!(
+                    error.to_string().contains("not null"),
+                    "{path}: {op:?}: {error:?}"
+                );
+                assert!(
+                    matches!(error, plasm_core::RowComputeError::Input { index: 0, source } if matches!(&*source, plasm_core::RowComputeError::MissingField { field } if field == path))
+                );
+                assert!(evaluate_fixture(
+                    std::slice::from_ref(&op),
+                    std::slice::from_ref(&present)
+                )
+                .is_ok());
+            }
+        }
+    }
+
+    #[test]
+    fn missing_field_after_reorder_retains_original_not_current_index() {
+        let rows = [
+            row!({"rank":2,"score":null}),
+            row!({"rank":1}),
+            row!({"rank":3,"score":null}),
+        ];
+        let ops = [
+            ComputeOp::Sort {
+                key: FieldPath::from_dotted("rank").unwrap(),
+                descending: false,
+            },
+            ComputeOp::Limit { count: 1 },
+            ComputeOp::Project {
+                fields: [(
+                    plasm_core::OutputName::new("result").unwrap(),
+                    FieldPath::from_dotted("score").unwrap(),
+                )]
+                .into(),
+            },
+        ];
+        let error = evaluate_fixture(&ops, &rows).unwrap_err();
+        assert!(
+            matches!(error, plasm_core::RowComputeError::Input { index: 1, source } if matches!(&*source, plasm_core::RowComputeError::MissingField { field } if field == "score"))
+        );
     }
 }

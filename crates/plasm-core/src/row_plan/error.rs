@@ -15,8 +15,14 @@ pub enum RowComputeError {
     ArithmeticContract(#[from] crate::value_arithmetic::ArithmeticContractError),
     #[error(transparent)]
     Correspondence(#[from] RowCorrespondenceError),
-    #[error("field `{field}` is unobserved (not null)")]
+    #[error("field `{field}` is unobserved, not null. Inspect the input producer's result; select the variant that exposes this field or obtain the missing observation before reading it. Do not substitute null for missing data.")]
     MissingField { field: String },
+    #[error("input row {index} (zero-based): {source}")]
+    Input {
+        index: usize,
+        #[source]
+        source: Box<RowComputeError>,
+    },
     #[error("row count exceeds the supported integer range")]
     RowCountOverflow,
     #[error("money sum requires a money contract")]
@@ -67,6 +73,19 @@ pub enum RowComputeError {
     Scan(#[from] ScanError),
     #[error(transparent)]
     Fusion(#[from] FusionError),
+}
+
+impl RowComputeError {
+    /// Retain known input correspondence; derived rows need not have one.
+    pub fn at_input(self, index: Option<usize>) -> Self {
+        match index {
+            Some(index) => Self::Input {
+                index,
+                source: Box::new(self),
+            },
+            None => self,
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Error)]

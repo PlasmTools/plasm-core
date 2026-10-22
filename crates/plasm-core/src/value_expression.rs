@@ -16,7 +16,7 @@ pub enum ValueEvaluationError<E: std::fmt::Debug + 'static> {
     Resolve(E),
     #[error("field access requires a record value")]
     FieldRequiresRecord,
-    #[error("field `{field}` is unobserved (not null)")]
+    #[error("field `{field}` is unobserved, not null. Inspect the input producer's result; select a variant exposing this field or obtain the missing observation. Do not substitute null for missing data.")]
     FieldUnobserved { field: String },
     #[error(transparent)]
     Arithmetic(#[from] ArithmeticError),

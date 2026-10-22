@@ -49,7 +49,7 @@ pub fn step_error_from_runtime(err: &RuntimeError, cgs: &CGS) -> StepError {
         | RuntimeError::PaginationPageLimit { .. }
         | RuntimeError::LiveAbsolutePaginationRequired
         | RuntimeError::Ordering(_)
-        | RuntimeError::TopKFieldUnobserved
+        | RuntimeError::TopKFieldUnobserved { .. }
         | RuntimeError::TopKSequenceOverflow
         | RuntimeError::TopKFieldEmpty
         | RuntimeError::FieldUnknown { .. }

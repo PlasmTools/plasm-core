@@ -303,8 +303,8 @@ pub enum RuntimeError {
     },
     #[error("ordering contract failed: {0}")]
     Ordering(#[from] plasm_core::value_order::OrderingError),
-    #[error("top-k sort field is unobserved (not null)")]
-    TopKFieldUnobserved,
+    #[error("top-k sort field `{field}` is unobserved, not null. Inspect the producer result; select rows exposing this field or obtain the missing observation before sorting.")]
+    TopKFieldUnobserved { field: String },
     #[error("top-k sequence overflow")]
     TopKSequenceOverflow,
     #[error("empty top-k field")]
