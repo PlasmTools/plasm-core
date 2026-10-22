@@ -51,6 +51,15 @@ impl TryFrom<WireProvenance> for IntentProvenance {
 }
 
 impl IntentProvenance {
+    /// Original requested outcome, without interpreting later revisions.
+    pub fn original(&self) -> &str {
+        &self
+            .nodes
+            .first()
+            .expect("validated nonempty provenance")
+            .intent
+    }
+
     pub fn turns(&self) -> impl Iterator<Item = &str> {
         self.nodes.iter().map(|node| node.intent.as_str())
     }
@@ -106,6 +115,7 @@ mod tests {
             let altered = IntentProvenance::from_turns(["Different ancestry".into(), "Next need".into()]).unwrap();
             prop_assert!(!altered.is_continuation_of(&chain));
             prop_assert_eq!(decoded.current(), turns.last().unwrap());
+            prop_assert_eq!(decoded.original(), turns.first().unwrap());
         }
     }
 

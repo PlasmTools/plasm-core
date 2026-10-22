@@ -74,8 +74,8 @@ const CRITERIA: [(&str, &str); 3] = [
         "The documented output, effect or information is insufficiently specified to establish contribution.",
     ),
 ];
-const QUESTION_FORMAT: &str = "The current_intent is the current discovery need. Read intent_turns in order for references and constraints; explicit revisions in later turns supersede earlier goals. Judge contribution to the current need, not to every historical goal.";
-const RUBRIC: &str = "Judge whether the documented output or effect supplies part of the requested outcome or information needed for it. Judge contribution, not whether this operation can execute now or complete the workflow alone. Keep input, scope and side-effect constraints intact; relevance does not establish a valid or authorized workflow.";
+const QUESTION_FORMAT: &str = "Judge contribution to the ongoing outcome or discovery need, honoring explicit goal replacements, cancellations and restrictions in turn order.";
+const RUBRIC: &str = "Judge whether the documented output or effect could contribute to the ongoing outcome or discovery need, directly or through available operations. Contribution need not be necessary now; unknown readiness does not establish either a blocker or a ready resource. Honor explicit restrictions and goal revisions. Relevance is not permission to execute.";
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, PartialOrd, Ord)]
 #[serde(rename_all = "snake_case")]
 pub enum MatchChoice {
@@ -224,10 +224,12 @@ impl DecisionCodec for RelevanceCodec {
 #[derive(Serialize)]
 struct SharedEvidence<'a> {
     intent_turns: Vec<&'a str>,
-    current_intent: &'a str,
     intent_interpretation: &'static str,
     rule: &'static str,
     capabilities: OrderedCapabilities<'a>,
+    discovery_need: &'a str,
+    // The original turn, not a host-inferred effective goal. History carries revisions.
+    outcome: &'a str,
 }
 
 struct OrderedCapabilities<'a>(Vec<(String, DirectEvidence<'a>)>);
@@ -306,10 +308,11 @@ fn issue_batch(
     }
     let state = SharedEvidence {
         intent_turns: intent.turns().collect(),
-        current_intent: intent.current(),
         intent_interpretation: QUESTION_FORMAT,
         rule: RUBRIC,
         capabilities,
+        discovery_need: intent.current(),
+        outcome: intent.original(),
     };
     let body = RelevanceCodec::encode(&decisions::Request {
         model,
@@ -534,6 +537,7 @@ pub fn finish_selection(
 
 #[cfg(test)]
 mod tests {
+    mod intent_scope;
     mod prefix;
     mod scheduling;
     use super::*;
@@ -624,6 +628,71 @@ mod tests {
                         size / contracts.len()
                     );
                 }
+            }
+        }
+    }
+
+    #[test]
+    fn conditional_contribution_preserves_contracts_and_unknown_readiness() {
+        for size in [8, 64, 128] {
+            let (intent, mut retrieval) = fixture();
+            let original = retrieval.candidates[0].clone();
+            let contracts = [
+                "Enable the reader for a named store. Requires a supplied credential; also changes its access state.",
+                "Read records from a store whose reader is enabled.",
+                "Disable the reader for a named store.",
+                "Read unrelated maintenance records.",
+            ];
+            retrieval.candidates = (0..size)
+                .map(|i| {
+                    let mut candidate = original.clone();
+                    candidate.id = format!("candidate{i}");
+                    candidate.reference.capability = format!("operation{i}");
+                    candidate.document.operation.contract = contracts[i % contracts.len()].into();
+                    candidate
+                })
+                .collect();
+            let batches = issue_batches(RELEVANCE_MODEL, &intent, &retrieval).unwrap();
+            for batch in &batches {
+                let body: serde_json::Value = serde_json::from_str(batch.body()).unwrap();
+                assert_eq!(body["state"]["discovery_need"], intent.current());
+                assert_eq!(body["state"]["rule"], RUBRIC);
+                assert!(RUBRIC.contains(
+                    "unknown readiness does not establish either a blocker or a ready resource"
+                ));
+                assert!(RUBRIC.contains("Relevance is not permission to execute"));
+                let evidence = body["state"]["capabilities"].as_object().unwrap();
+                assert_eq!(evidence.len(), size);
+                for card in evidence.values() {
+                    let capability = &card["capability"];
+                    let name = capability["reference"]["capability"].as_str().unwrap();
+                    let i: usize = name.strip_prefix("operation").unwrap().parse().unwrap();
+                    assert_eq!(
+                        capability["operation"]["contract"],
+                        contracts[i % contracts.len()]
+                    );
+                }
+            }
+            // The host does not override a classifier verdict or infer readiness.
+            for choice in [
+                MatchChoice::Relevant,
+                MatchChoice::Uncertain,
+                MatchChoice::Unrelated,
+            ] {
+                let mut pages = SelectionPages::new(batches.clone());
+                while let Some(batch) = pages.current() {
+                    let raw = response(batch, &vec![choice.clone(); batch.bindings.len()]);
+                    pages.accept(&raw).unwrap();
+                }
+                let receipt = pages.finish(&retrieval).unwrap();
+                assert_eq!(
+                    receipt.selected(&retrieval).len(),
+                    if choice == MatchChoice::Unrelated {
+                        0
+                    } else {
+                        size
+                    }
+                );
             }
         }
     }
@@ -872,7 +941,8 @@ mod tests {
             let batches = issue_batches(RELEVANCE_MODEL, &provenance, &retrieval).unwrap();
             let content = question_content(&batches[0]);
             prop_assert_eq!(&content["context"]["intent_turns"], &json!(turns));
-            prop_assert_eq!(&content["context"]["current_intent"], &json!(provenance.current()));
+            prop_assert_eq!(&content["context"]["discovery_need"], &json!(provenance.current()));
+            prop_assert_eq!(&content["context"]["outcome"], &json!(turns.first().unwrap()));
         }
     }
 
@@ -913,7 +983,8 @@ mod tests {
                     evidence["collection_meaning"],
                     json!(target.document.collection.meaning)
                 );
-                assert_eq!(content["context"]["current_intent"], "First");
+                assert_eq!(content["context"]["discovery_need"], "First");
+                assert_eq!(content["context"]["outcome"], "First");
                 assert_eq!(
                     content["context"]["intent_turns"],
                     json!(["First", "First", "Revised", "First"])
@@ -998,6 +1069,11 @@ mod tests {
     async fn decisions_http_boundary_repartitions_and_preserves_uncertain_exposure() {
         use std::sync::{Arc, Mutex};
         let (intent, mut retrieval) = fixture();
+        let intent = intent
+            .derived("Cancel the original outcome; inspect existing definitions only.".into())
+            .unwrap()
+            .derived("Find readable definitions; do not register anything.".into())
+            .unwrap();
         let mut other = retrieval.candidates[0].clone();
         other.id = "second".into();
         other.reference.capability = "second".into();
@@ -1061,6 +1137,16 @@ mod tests {
         server.abort();
         assert_eq!(seen.lock().unwrap().len(), 3);
         assert_eq!(seen.lock().unwrap()[0], expected_body);
+        for body in seen.lock().unwrap().iter() {
+            let request: serde_json::Value = serde_json::from_str(body).unwrap();
+            assert_eq!(request["state"]["outcome"], intent.original());
+            assert_eq!(request["state"]["discovery_need"], intent.current());
+            assert_eq!(
+                request["state"]["intent_turns"],
+                json!(intent.turns().collect::<Vec<_>>())
+            );
+            assert!(request["state"].get("current_intent").is_none());
+        }
         assert_eq!(receipt.matches[0].choice, MatchChoice::Uncertain);
         assert_eq!(
             receipt.selected(&retrieval),
