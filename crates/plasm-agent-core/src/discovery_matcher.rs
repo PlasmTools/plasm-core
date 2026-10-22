@@ -56,8 +56,8 @@ pub enum DiscoveryMatcherError {
 pub const RELEVANCE_MODEL: &str = "typesafe/jev-1.13";
 // Packing target for the subjects judged on a page, excluding shared evidence.
 // Shared evidence is bounded by retrieval and never dropped during partitioning.
-const TARGET_PAGE_BYTES: usize = 16_000;
-const MAX_PAGE_QUESTIONS: usize = 32;
+const TARGET_PAGE_BYTES: usize = 64_000;
+const MAX_PAGE_QUESTIONS: usize = 128;
 /// Bounds work admitted by one discovery turn, including split pages.
 const ROUTE_CONCURRENCY: usize = 4;
 const CRITERIA: [(&str, &str); 3] = [
@@ -216,7 +216,7 @@ impl DecisionCodec for RelevanceCodec {
     fn encode(
         request: &Self::Request<'_>,
     ) -> Result<String, crate::decision_codec::DecisionCodecError> {
-        // Preserve the deliberate page-local map order at the wire boundary.
+        // Preserve the fixed evidence map order at the wire boundary.
         // The generic codec's Value roundtrip sorts maps and would erase it.
         Ok(serde_json::to_string(request)?)
     }
@@ -265,7 +265,6 @@ fn issue_batch(
     }
     let mut wire_questions = BTreeMap::new();
     let mut bindings = BTreeMap::new();
-    let subjects: BTreeSet<_> = questions.iter().map(|q| &q.id).collect();
     let mut capabilities = Vec::new();
     for (i, q) in evidence.iter().enumerate() {
         let card = DirectEvidence {
@@ -283,26 +282,21 @@ fn issue_batch(
         let bytes = serde_json::to_vec(&canonical)
             .map_err(crate::decision_codec::DecisionCodecError::from)
             .map_err(DiscoveryMatcherError::Encode)?;
-        capabilities.push((
-            !subjects.contains(&q.id),
-            content_hash(&bytes),
-            format!("c{i}"),
-            card,
-        ));
+        capabilities.push((content_hash(&bytes), format!("c{i}"), card));
     }
-    capabilities.sort_by(|a, b| (&a.0, &a.1, &a.2).cmp(&(&b.0, &b.1, &b.2)));
+    capabilities.sort_by(|a, b| (&a.0, &a.1).cmp(&(&b.0, &b.1)));
     let capabilities = OrderedCapabilities(
         capabilities
             .into_iter()
-            .map(|(_, _, key, card)| (key, card))
+            .map(|(_, key, card)| (key, card))
             .collect(),
     );
-    for (i, q) in questions.iter().enumerate() {
-        let key = format!("q{i}");
+    for q in questions {
         let index = evidence
             .iter()
             .position(|card| card.id == q.id)
             .ok_or(DiscoveryMatcherError::MissingAnswer)?;
+        let key = format!("q{index}");
         bindings.insert(key.clone(), q.id.clone());
         wire_questions.insert(key, decisions::Question {
             kind: "choice",
@@ -324,7 +318,7 @@ fn issue_batch(
     })
     .map_err(DiscoveryMatcherError::Encode)?;
     Ok(IssuedBatch {
-        cache_key: content_hash(format!("jev-shared-contribution-v5\\n{body}").as_bytes()),
+        cache_key: content_hash(format!("jev-shared-contribution-v6\\n{body}").as_bytes()),
         body,
         model: model.into(),
         bindings,
@@ -781,6 +775,8 @@ mod tests {
         assert_eq!(accepted.len(), 128);
         assert!(calls <= 255);
         assert_eq!(receipt.selected(&retrieval).len(), 128);
+        // Exercise failure after admitting multiple pages even with larger packing.
+        let (_, mut retrieval) = scheduling::many_cards(4);
         let mut calls = 0;
         assert!(
             judge_candidates(RELEVANCE_MODEL, &intent, &retrieval, |batch| {
@@ -798,7 +794,7 @@ mod tests {
             .is_err()
         );
         assert!(calls <= ROUTE_CONCURRENCY + 1);
-        retrieval.candidates.push(template);
+        retrieval.candidates.resize(129, template);
         assert!(issue_batches(RELEVANCE_MODEL, &intent, &retrieval).is_err());
     }
 
@@ -958,10 +954,6 @@ mod tests {
     async fn decisions_http_boundary_repartitions_and_preserves_uncertain_exposure() {
         use std::sync::{Arc, Mutex};
         let (intent, mut retrieval) = fixture();
-        let batch = issue_batches(RELEVANCE_MODEL, &intent, &retrieval)
-            .unwrap()
-            .remove(0);
-        let raw = response(&batch, &[MatchChoice::Uncertain]);
         let mut other = retrieval.candidates[0].clone();
         other.id = "second".into();
         other.reference.capability = "second".into();
@@ -975,7 +967,6 @@ mod tests {
             "/api/alpha/decisions",
             axum::routing::post(move |headers: axum::http::HeaderMap, body: String| {
                 let seen = captured.clone();
-                let raw = raw.clone();
                 async move {
                     assert_eq!(headers["authorization"], "Bearer test-only");
                     assert_eq!(headers["content-type"], "application/json");
@@ -986,6 +977,10 @@ mod tests {
                         (axum::http::StatusCode::BAD_REQUEST,
                             json!({"error":{"code":400,"message":"context rejected","metadata":{"error_type":"context_length_exceeded"}}}).to_string())
                     } else {
+                        let answers: BTreeMap<_, _> = content["questions"].as_object().unwrap().keys()
+                            .map(|key| (key, json!({"type":"choice","choice":"uncertain","confidence":1.0,
+                                "probabilities":{"relevant":0.0,"uncertain":1.0,"unrelated":0.0}}))).collect();
+                        let raw = json!({"model":RELEVANCE_MODEL,"provider":"TypeSafe","answers":answers}).to_string();
                         (axum::http::StatusCode::OK, raw)
                     }
                 }

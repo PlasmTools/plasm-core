@@ -59,23 +59,23 @@ allowed choices, confidence and probability vectors. Only the choice enters the
 routing receipt; probability metadata does not introduce a selection threshold.
 No partial selection is committed. Final receipt order is independent of response order.
 
-Within shared evidence, each page's subjects precede the remaining capabilities.
-Each group is ordered by SHA256 of canonical complete evidence JSON, with stable
-wire identity breaking ties. References and page membership do not change. The
+Shared evidence is ordered by SHA256 of canonical complete evidence JSON, with stable
+wire identity breaking ties, independently of each page's subjects. The
 serializer preserves this map order directly; an intermediate JSON map must not
-sort it away. Split pages recompute the order for their own subjects while retaining
-every contract. Incoming retrieval permutation does not change request bytes.
+sort it away. Every page, including split pages, retains byte-identical shared
+state and every complete contract. Question identities remain stable across splits.
+Incoming retrieval permutation does not change request bytes.
 This removes incidental ordering differences, not model response variability.
 Relevant and uncertain capabilities are both retained; no confidence threshold,
 extra classification request or precision-only rejection is introduced.
 
-Complete request bytes and framing version `jev-shared-contribution-v5` determine
+Complete request bytes and framing version `jev-shared-contribution-v6` determine
 cache identity. Changing any shared contract invalidates every page that uses it.
 There is no chat schema, generated reasoning, prefix padding, or automatic fallback.
 
 | Boundary | Limit / behavior |
 | --- | --- |
-| Page packing | At most32 questions; 16,000 serialized subject-evidence bytes target, excluding common state; not a token/context guarantee |
+| Page packing | At most 128 questions; 64,000 serialized subject-evidence bytes target, excluding common state; not a token/context guarantee |
 | One discovery route | At most 4 admitted page futures, including split work |
 | One process | At most 8 provider requests, shared by relevance and advisory support |
 | Queue admission | FIFO semaphore; no fleet-wide or strict per-tenant fairness claim |

@@ -1,27 +1,129 @@
 use super::*;
 
+// Compare the actual wire substring, not Value equality (which ignores map order).
+fn wire_state(batch: &IssuedBatch) -> &str {
+    batch
+        .body()
+        .split_once(",\"state\":")
+        .unwrap()
+        .1
+        .split_once(",\"questions\":")
+        .unwrap()
+        .0
+}
+
+#[test]
+fn fixed_state_and_question_identity_survive_all_page_sizes() {
+    let (intent, mut retrieval) = fixture();
+    let template = retrieval.candidates[0].clone();
+    retrieval.candidates = (0..128)
+        .map(|i| {
+            let mut c = template.clone();
+            c.id = format!("candidate-{i:03}");
+            c.reference.capability = format!("action-{i:03}");
+            c.document.collection.meaning = "Abstract observations and transformations.".into();
+            c.document.operation.contract =
+                format!("Action {i}: requires prepared input; preserves other records.");
+            c
+        })
+        .collect();
+    let issued = issue_batches(RELEVANCE_MODEL, &intent, &retrieval).unwrap();
+    assert_eq!(
+        issued.len(),
+        1,
+        "ordinary 128-candidate evidence fits one page"
+    );
+    let parent = &issued[0];
+    assert_eq!(parent.bindings.len(), 128);
+    let original: serde_json::Value = serde_json::from_str(parent.body()).unwrap();
+    for limit in [128, 64, 32, 1] {
+        let mut pending = issued.clone();
+        let mut leaves = Vec::new();
+        while let Some(page) = pending.pop() {
+            assert_eq!(wire_state(&page), wire_state(parent));
+            assert_canonical_wire_order(&page);
+            let body: serde_json::Value = serde_json::from_str(page.body()).unwrap();
+            for key in page.bindings.keys() {
+                assert_eq!(page.bindings[key], parent.bindings[key]);
+                assert_eq!(body["questions"][key], original["questions"][key]);
+            }
+            if page.bindings.len() > limit {
+                pending.extend(repartition(&page, &intent).unwrap());
+            } else {
+                leaves.push(page);
+            }
+        }
+        let mut seen = BTreeSet::new();
+        let mut answers = Vec::new();
+        for page in &leaves {
+            let choices: Vec<_> = page
+                .bindings
+                .values()
+                .map(|id| {
+                    assert!(seen.insert(id.clone()));
+                    match id
+                        .trim_start_matches("candidate-")
+                        .parse::<usize>()
+                        .unwrap()
+                        % 3
+                    {
+                        0 => MatchChoice::Relevant,
+                        1 => MatchChoice::Uncertain,
+                        _ => MatchChoice::Unrelated,
+                    }
+                })
+                .collect();
+            answers.extend(decode_batch(page, &response(page, &choices)).unwrap());
+        }
+        assert_eq!(seen.len(), 128);
+        let receipt = finish_selection(answers, &retrieval, &leaves).unwrap();
+        let expected: Vec<_> = retrieval
+            .candidates
+            .iter()
+            .enumerate()
+            .filter(|(i, _)| i % 3 != 2)
+            .map(|(_, c)| c.reference.clone())
+            .collect();
+        assert_eq!(receipt.selected(&retrieval), expected);
+    }
+}
+
+#[test]
+fn byte_packing_preserves_identical_state_and_complete_contracts() {
+    let (intent, retrieval) = scheduling::many_cards(4);
+    let pages = issue_batches(RELEVANCE_MODEL, &intent, &retrieval).unwrap();
+    assert_eq!(pages.len(), 4);
+    for page in &pages {
+        assert_eq!(wire_state(page), wire_state(&pages[0]));
+        let body: serde_json::Value = serde_json::from_str(page.body()).unwrap();
+        assert_eq!(body["state"]["rule"], RUBRIC);
+        for (i, candidate) in retrieval.candidates.iter().enumerate() {
+            assert_eq!(
+                body["state"]["capabilities"][format!("c{i}")]["capability"]["operation"]
+                    ["contract"],
+                candidate.document.operation.contract
+            );
+        }
+    }
+}
+
 fn assert_canonical_wire_order(batch: &IssuedBatch) {
     let body: serde_json::Value = serde_json::from_str(batch.body()).unwrap();
-    let subjects: BTreeSet<_> = batch.questions.iter().map(|q| &q.id).collect();
     let mut expected: Vec<_> = batch
         .evidence
         .iter()
         .enumerate()
-        .map(|(i, q)| {
+        .map(|(i, _)| {
             let key = format!("c{i}");
             let mut card = body["state"]["capabilities"][&key].clone();
             card.sort_all_objects();
-            (
-                !subjects.contains(&q.id),
-                content_hash(&serde_json::to_vec(&card).unwrap()),
-                key,
-            )
+            (content_hash(&serde_json::to_vec(&card).unwrap()), key)
         })
         .collect();
     expected.sort();
     let positions: Vec<_> = expected
         .iter()
-        .map(|(_, _, key)| batch.body().find(&format!("\"{key}\":")).unwrap())
+        .map(|(_, key)| batch.body().find(&format!("\"{key}\":")).unwrap())
         .collect();
     assert!(
         positions.windows(2).all(|pair| pair[0] < pair[1]),

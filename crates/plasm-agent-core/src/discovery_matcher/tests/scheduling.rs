@@ -107,7 +107,9 @@ pub(super) fn many_cards(count: usize) -> (IntentProvenance, RetrievalReceipt) {
             c.id = format!("candidate{i}");
             c.reference.capability = format!("read{i}");
             // Each complete contract occupies its own page.
-            c.document.operation.contract = "Complete abstract effect constraint. ".repeat(260);
+            let contract = "Complete abstract effect constraint. ";
+            c.document.operation.contract =
+                contract.repeat(TARGET_PAGE_BYTES / (2 * contract.len()) + 1);
             c
         })
         .collect();
