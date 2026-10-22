@@ -1,4 +1,4 @@
-version: 25
+version: 26
 entry_id: splitwise
 auth:
   scheme: none
@@ -470,7 +470,7 @@ entities:
         description: Email of the person who wrote this comment.
   Notification:
     id_field: notification_id
-    description: Inbox notification for the authenticated Splitwise user.
+    description: Inbox notification for the authenticated Splitwise user. Payload identifiers vary by event type; an omitted identifier is unobserved, not null. Common notification fields do not guarantee related-record identifiers.
     discovery:
       names:
       - notification
@@ -495,27 +495,27 @@ entities:
       payment_comment_id:
         required: false
         value_ref: notification_payment_comment_id_ref
-        description: PaymentComment referenced by this notification, when applicable.
+        description: PaymentComment identifier only when included in this event's payload; absent on other event variants, not null.
         path: [data, payment_comment_id]
       payment_id:
         required: false
         value_ref: notification_payment_id_ref
-        description: Payment referenced by this notification, when applicable.
+        description: Payment identifier only when included in this event's payload; expense events do not supply it. Absence is not null.
         path: [data, payment_id]
       expense_comment_id:
         required: false
         value_ref: notification_expense_comment_id_ref
-        description: ExpenseComment referenced by this notification, when applicable.
+        description: ExpenseComment identifier only when included in this event's payload; absent on other event variants, not null.
         path: [data, expense_comment_id]
       expense_id:
         required: false
         value_ref: notification_expense_id_ref
-        description: Expense referenced by this notification, when applicable.
+        description: Expense identifier only when included in this event's payload; payment events do not supply it. Absence is not null.
         path: [data, expense_id]
       group_id:
         required: false
         value_ref: notification_group_id_ref
-        description: Group referenced by this notification, when applicable.
+        description: Group identifier only when explicitly included in the payload. An expense or payment notification does not imply that group_id is present; absence is not null.
         path: [data, group_id]
       notification_id:
         required: true
@@ -1153,7 +1153,7 @@ capabilities:
       type: side_effect
       description: Issues a new invitation code for the group.
   expense_query:
-    description: List expenses — with group_id for a group, or ungrouped when omitted.
+    description: List expenses in which the authenticated user is a payer or debtor — with group_id for a group, or ungrouped when omitted. Creating an expense or belonging to its group alone does not include it in this list; an empty list does not establish that the group has no expenses.
     kind: query
     entity: Expense
     selection:
@@ -1208,7 +1208,7 @@ capabilities:
       value_ref: nv_group_ref
       required: false
   expense_get:
-    description: Show one expense.
+    description: Show one expense by ID. Access permits its creator, payer, debtor or a member of its group, including records absent from the authenticated user's expense list.
     kind: get
     entity: Expense
     arguments:
@@ -1758,7 +1758,7 @@ capabilities:
           value_ref: nv_access_token
           required: true
   notification_query:
-    description: List Splitwise inbox notifications.
+    description: List Splitwise inbox notifications. Only common notification fields are guaranteed; nested payload identifiers vary by event type. Restrict reads to event shapes that supply the identifier. Testing an unobserved field against None does not make it observed.
     kind: query
     entity: Notification
     selection:

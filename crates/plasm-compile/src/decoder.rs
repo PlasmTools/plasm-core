@@ -1475,4 +1475,40 @@ mod temporal_response_contract_tests {
         let rows = decode_entities_with_cgs(&decoder, &json!({"id":"000123"}), Some(&cgs)).unwrap();
         assert!(!rows[0].fields.contains_key("local_timestamp"));
     }
+
+    #[test]
+    fn optional_nested_field_preserves_unobserved_null_and_observed_values() {
+        let cgs = plasm_core::load_schema(
+            &std::path::Path::new(crate::test_manifest_dir())
+                .join("../../fixtures/schemas/python_value_contract"),
+        )
+        .unwrap();
+        let decoder = EntityDecoder::new("Sample", PathExpr::empty()).with_fields(vec![
+            FieldDecoder::new("id", PathExpr::from_slice(&["id"])),
+            FieldDecoder::new(
+                "local_timestamp",
+                PathExpr::from_slice(&["payload", "timestamp"]),
+            ),
+        ]);
+        // Different event shapes may omit the parent or the leaf. Neither is
+        // evidence of a null value; only an explicit null observes null.
+        for body in [
+            json!({"id":"000123"}),
+            json!({"id":"000123", "payload":{}}),
+            json!({"id":"000123", "payload":{"other":42}}),
+            json!({"id":"000123", "payload":null}),
+        ] {
+            let rows = decode_entities_with_cgs(&decoder, &body, Some(&cgs)).unwrap();
+            assert_eq!(rows.len(), 1);
+            assert!(rows[0].fields.contains_key("id"));
+            assert!(!rows[0].fields.contains_key("local_timestamp"), "{body}");
+        }
+        for value in [json!(null), json!("2023-01-02T03:04:05")] {
+            let body = json!({"id":"000123", "payload":{"timestamp":value}});
+            let rows = decode_entities_with_cgs(&decoder, &body, Some(&cgs)).unwrap();
+            assert_eq!(rows[0].fields["local_timestamp"].is_null(), value.is_null());
+        }
+        let invalid = json!({"id":"000123", "payload":{"timestamp":"not-a-date"}});
+        assert!(decode_entities_with_cgs(&decoder, &invalid, Some(&cgs)).is_err());
+    }
 }

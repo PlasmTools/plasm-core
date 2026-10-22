@@ -82,6 +82,49 @@ fn fixture() -> CGS {
 }
 
 #[test]
+fn python_card_retains_read_visibility_and_variant_presence_contracts() {
+    let mut cgs = fixture();
+    let query_contract = "List records where the principal participates; creation alone does not confer list visibility.";
+    let get_contract = "Read a record by identity when its creator or participant; list absence does not imply nonexistence.";
+    let field_contract = "Payload title only for titled events; omission is unobserved, not null.";
+    cgs.capabilities.get_mut("item_query").unwrap().description = query_contract.into();
+    cgs.capabilities.get_mut("item_get").unwrap().description = get_contract.into();
+    let field = cgs
+        .entities
+        .get_mut("Item")
+        .unwrap()
+        .fields
+        .get_mut("title")
+        .unwrap();
+    field.required = false;
+    field.description = field_contract.into();
+    let mut exposure = TeachingExposureSession::new(&cgs, "fixture", &["Item"]);
+    let initial = prepare_python_teaching_wave(&exposure, &PythonTeachingState::default()).unwrap();
+    for contract in [query_contract, get_contract, field_contract] {
+        assert!(
+            initial.declarations.contains(contract),
+            "missing {contract}: {}",
+            initial.declarations
+        );
+    }
+    exposure.expose_entities(
+        &[&cgs],
+        std::sync::Arc::new(cgs.clone()),
+        "fixture",
+        &["Tag"],
+    );
+    let extension = prepare_python_teaching_wave(&exposure, &initial.next_state).unwrap();
+    for contract in [query_contract, get_contract, field_contract] {
+        assert!(!extension.declarations.contains(contract));
+        assert!(extension
+            .next_state
+            .declarations
+            .values()
+            .any(|body| body.contains(contract)));
+    }
+}
+
+#[test]
 fn python_card_initial_extension_and_retry() {
     let cgs = fixture();
     let mut exposure = TeachingExposureSession::new(&cgs, "fixture", &["Item"]);

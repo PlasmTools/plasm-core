@@ -1,4 +1,4 @@
-version: 18
+version: 19
 entry_id: todoist
 auth:
   scheme: none
@@ -483,7 +483,7 @@ entities:
         value_ref: nv_project_id
   Notification:
     id_field: notification_id
-    description: Inbox notification for the authenticated Todoist user.
+    description: Inbox notification for the authenticated Todoist user. Payload identifiers vary by event type; an omitted identifier is unobserved, not null. Common notification fields do not guarantee related-record identifiers.
     discovery:
       names:
       - notification
@@ -513,17 +513,17 @@ entities:
       task_comment_id:
         required: false
         value_ref: notification_task_comment_id_ref
-        description: TaskComment referenced by this notification, when applicable.
+        description: TaskComment identifier only when included in this event's payload; absent on other event variants, not null.
         path: [data, task_comment_id]
       task_id:
         required: false
         value_ref: notification_task_id_ref
-        description: Task referenced by this notification, when applicable.
+        description: Task identifier only when included in this event's payload; collaborator events do not supply it. Absence is not null.
         path: [data, task_id]
       project_id:
         required: false
         value_ref: notification_project_id_ref
-        description: Project referenced by this notification, when applicable.
+        description: Project identifier only when explicitly included in this event's payload; not guaranteed by the common notification fields. Absence is not null.
         path: [data, project_id]
       notification_id:
         required: true
@@ -1643,7 +1643,7 @@ capabilities:
           value_ref: nv_access_token
           required: true
   notification_query:
-    description: List Todoist inbox notifications.
+    description: List Todoist inbox notifications. Only common notification fields are guaranteed; nested payload identifiers vary by event type. Restrict reads to event shapes that supply the identifier. Testing an unobserved field against None does not make it observed.
     kind: query
     entity: Notification
     selection:
