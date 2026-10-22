@@ -251,10 +251,6 @@ export function createTaskLedgerTool(store: TaskLedgerStore): ToolSet {
         const current = store.record;
         const obligations = new Map(current.obligations.map((item) => [item.id, item]));
         for (const item of update.data.obligations ?? []) {
-          const previous = obligations.get(item.id);
-          if (previous && previous.task !== item.task) {
-            return `**task_ledger** write rejected: obligation ${item.id} identifies different work; use a new ID. Host store unchanged.`;
-          }
           obligations.set(item.id, item);
         }
         const parsed = parseTaskLedgerRecord({ ...current, ...supplied,

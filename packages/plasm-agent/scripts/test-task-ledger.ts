@@ -567,15 +567,31 @@ try {
       { id: 1, task, status: "pending" },
       { id: 2, task: "Inspect another resource", status: "pending" },
     ] });
+    for (const status of ["pending", "deferred"] as const) {
+      const refined = status === "pending"
+        ? { id: 1, task: `${task}; verify the original configuration.`, status }
+        : { id: 1, task: `${task}; verify the original configuration.`, status, reason: "Await the observed prerequisite" };
+      assert.equal(await writeUpdate({ obligations: [refined], unresolved_questions: ["Which observation confirms restoration?"] }),
+        "Host stored your write. Omitted fields retained.");
+      assert.deepEqual(updateStore.record.obligations, [refined, { id: 2, task: "Inspect another resource", status: "pending" }],
+        "wording refinement updates the same ID without dropping other pending work");
+      assert.deepEqual(updateStore.record.unresolved_questions, ["Which observation confirms restoration?"],
+        "refinement does not reject accompanying fields");
+      assert.deepEqual(new TaskLedgerStore(checkpoint).record, updateStore.record, "refinements survive restart");
+      assert.ok(renderTaskLedgerState(updateStore.record).includes(refined.task), "fresh snapshot exposes refined wording");
+      const retained = updateStore.record;
+      await writeUpdate({ obligations: [] });
+      assert.deepEqual(updateStore.record, retained, "empty update cannot discharge refined work");
+      const before = await readFile(checkpoint, "utf8");
+      await assert.rejects(writeUpdate({ obligations: [{ ...refined, task: "x".repeat(5000) }] }), /at most 2000/);
+      assert.equal(await readFile(checkpoint, "utf8"), before, "invalid refinement cannot damage accepted state");
+    }
     await writeUpdate({ obligations: [{ id: 1, task, status: "deferred", reason: "Await the observed prerequisite" }] });
     await writeUpdate({ obligations: [{ id: 2, task: "Inspect another resource", status: "resolved", evidence_ref: "plasm_run" }] });
     assert.equal(updateStore.record.obligations[0]?.status, "deferred");
     assert.equal(updateStore.record.obligations[1]?.status, "resolved");
     assert.deepEqual(new TaskLedgerStore(checkpoint).record, updateStore.record);
     assert.match(renderTaskLedgerState(updateStore.record), /"status":"deferred"/);
-    const before = await readFile(checkpoint, "utf8");
-    assert.match(String(await writeUpdate({ obligations: [{ id: 1, task: "Different work", status: "pending" }] })), /different work/);
-    assert.equal(await readFile(checkpoint, "utf8"), before);
     for (const entry of [
       { id: 1, task, status: "deferred" },
       { id: 1, task, status: "resolved" },
