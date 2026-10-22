@@ -9,8 +9,11 @@ pub enum PythonComputeError {
     Selection(#[from] crate::python_compute::selection::SelectionContractError),
     #[error(transparent)]
     Inference(#[from] Box<crate::python_compute::inference::InferenceError>),
-    #[error("compute source budget exceeded")]
-    SourceBudgetExceeded,
+    #[error("compute source is {actual_bytes} bytes; limit is {limit_bytes} bytes. Reduce the function source: pass data as inputs instead of embedding it, or split the computation into smaller typed functions.")]
+    SourceBudgetExceeded {
+        actual_bytes: usize,
+        limit_bytes: usize,
+    },
     #[error("expected one compute function")]
     FunctionCount,
     #[error("expected a synchronous @compute function")]

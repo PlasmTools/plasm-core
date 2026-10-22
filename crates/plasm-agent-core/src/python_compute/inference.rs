@@ -64,6 +64,9 @@ impl std::fmt::Display for InferenceDiagnostics {
                 write!(f, "\n  Compute source: ")?;
                 self.write_semantic_text(f, excerpt)?;
             }
+            if let Some(help) = super::diagnostics::help(&entry.diagnostic.code) {
+                write!(f, "\n  help: {help}")?;
+            }
         }
         Ok(())
     }
@@ -71,6 +74,22 @@ impl std::fmt::Display for InferenceDiagnostics {
 impl std::error::Error for InferenceDiagnostics {}
 
 impl InferenceDiagnostics {
+    fn with_declarations(self, declarations: &declarations::Declarations) -> Self {
+        let mut result = self.with_stubs(&declarations.source);
+        result.type_labels.extend(
+            declarations
+                .contracts
+                .iter()
+                .map(|(name, contract)| (name.clone(), contract.to_string())),
+        );
+        result
+    }
+    fn with_stubs(mut self, stubs: &str) -> Self {
+        let mut labels = super::diagnostics::labels(stubs);
+        labels.extend(self.type_labels);
+        self.type_labels = labels;
+        self
+    }
     pub(crate) fn rejection_detail(
         &self,
         kind: Option<UnmaterializableNode>,
@@ -83,30 +102,22 @@ impl InferenceDiagnostics {
                 .map(|entry| ComputeInferenceDiagnostic {
                     code: entry.diagnostic.code.clone(),
                     unmaterializable_type: kind,
-                    message: entry.diagnostic.message.clone(),
+                    message: super::diagnostics::semantic_text(
+                        &entry.diagnostic.message,
+                        &self.type_labels,
+                    ),
                     compute_line: entry.location.map(|p| p.0),
                     compute_column: entry.location.map(|p| p.1),
-                    source_excerpt: entry.excerpt.clone(),
+                    source_excerpt: entry
+                        .excerpt
+                        .as_ref()
+                        .map(|text| super::diagnostics::semantic_text(text, &self.type_labels)),
                 })
                 .collect(),
         }
     }
     fn write_semantic_text(&self, f: &mut std::fmt::Formatter<'_>, text: &str) -> std::fmt::Result {
-        for part in text.split_inclusive(|c: char| !c.is_alphanumeric() && c != '_') {
-            let end = part
-                .trim_end_matches(|c: char| !c.is_alphanumeric() && c != '_')
-                .len();
-            let (word, punctuation) = part.split_at(end);
-            write!(
-                f,
-                "{}{punctuation}",
-                self.type_labels
-                    .get(word)
-                    .map(String::as_str)
-                    .unwrap_or(word)
-            )?;
-        }
-        Ok(())
+        f.write_str(&super::diagnostics::semantic_text(text, &self.type_labels))
     }
 }
 
@@ -531,7 +542,8 @@ pub(super) fn check_annotated_body(
             }
             AnalysisOutcome::Rejected(errors) => {
                 return Err(InferenceError::Diagnostics {
-                    diagnostics: body_diagnostics(errors, &source, Some(&evidence)),
+                    diagnostics: body_diagnostics(errors, &source, Some(&evidence))
+                        .with_stubs(&stubs),
                 });
             }
             AnalysisOutcome::Inferred(_) => {}
@@ -539,14 +551,14 @@ pub(super) fn check_annotated_body(
     }
     let result = monty_analysis::analyze(&AnalysisRequest {
         source: source.clone(),
-        stubs: Some(stubs),
+        stubs: Some(stubs.clone()),
         targets: vec![],
         limits: AnalysisLimits::default(),
     })?;
     match result.outcome {
         AnalysisOutcome::Inferred(_) => Ok(()),
         AnalysisOutcome::Rejected(errors) => Err(InferenceError::Diagnostics {
-            diagnostics: body_diagnostics(errors, &source, None),
+            diagnostics: body_diagnostics(errors, &source, None).with_stubs(&stubs),
         }),
     }
 }
@@ -678,7 +690,7 @@ pub(super) fn annotation_with_imports(
             decoder.decode(*root).map(Some)
         }
         AnalysisOutcome::Rejected(errors) => Err(InferenceError::Diagnostics {
-            diagnostics: errors.into(),
+            diagnostics: InferenceDiagnostics::from(errors).with_declarations(&declarations),
         }),
     }
 }
@@ -1070,7 +1082,7 @@ pub(crate) fn branch_contracts(
         AnalysisOutcome::Inferred(graph) => graph,
         AnalysisOutcome::Rejected(errors) => {
             return Err(InferenceError::Diagnostics {
-                diagnostics: errors.into(),
+                diagnostics: InferenceDiagnostics::from(errors).with_declarations(&declarations),
             });
         }
     };

@@ -65,9 +65,10 @@ pub(crate) fn render_analysis_diagnostics(
     source: &str,
     stubs: &str,
 ) -> String {
+    let labels = super::diagnostics::labels(stubs);
     diagnostics
         .iter()
-        .map(|error| format_diagnostic(error, source, stubs))
+        .map(|error| format_diagnostic(error, source, stubs, &labels))
         .collect::<Vec<_>>()
         .join("\n")
 }
@@ -76,6 +77,7 @@ fn format_diagnostic(
     error: &monty_analysis::AnalysisDiagnostic,
     source: &str,
     stubs: &str,
+    labels: &std::collections::BTreeMap<String, String>,
 ) -> String {
     let mapped = match error.source.as_deref() {
         Some("/analysis.py") => Some(("plasm_compute.py", source)),
@@ -97,7 +99,11 @@ fn format_diagnostic(
                 .map(|name| format!("{name}: "))
                 .unwrap_or_default()
         });
-    format!("{location}{}: {}", error.code, error.message)
+    let message = super::diagnostics::semantic_text(&error.message, labels);
+    let help = super::diagnostics::help(&error.code)
+        .map(|text| format!("\n  help: {text}"))
+        .unwrap_or_default();
+    format!("{location}{}: {message}{help}", error.code)
 }
 
 #[cfg(test)]

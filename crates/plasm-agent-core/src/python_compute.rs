@@ -1,4 +1,5 @@
 mod admission;
+mod diagnostics;
 pub(crate) use admission::render_analysis_diagnostics;
 #[cfg(test)]
 mod analysis_tests;
@@ -519,7 +520,11 @@ impl PreparedCompute {
         mode: ComputeInputMode,
     ) -> Result<Self, PythonComputeRejection> {
         if source.len() > 4096 {
-            return Err(PythonComputeError::SourceBudgetExceeded.into());
+            return Err(PythonComputeError::SourceBudgetExceeded {
+                actual_bytes: source.len(),
+                limit_bytes: 4096,
+            }
+            .into());
         }
         let ast =
             ruff_python_parser::parse_module(source).map_err(PythonComputeRejection::Parse)?;
