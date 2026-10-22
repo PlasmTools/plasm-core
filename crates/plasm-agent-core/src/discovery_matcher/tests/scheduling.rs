@@ -98,7 +98,7 @@ fn all_four_page_completion_permutations_preserve_mixed_choices() {
     assert_eq!(permutations, 24);
 }
 
-fn many_cards(count: usize) -> (IntentProvenance, RetrievalReceipt) {
+pub(super) fn many_cards(count: usize) -> (IntentProvenance, RetrievalReceipt) {
     let (intent, mut retrieval) = fixture();
     let template = retrieval.candidates[0].clone();
     retrieval.candidates = (0..count)

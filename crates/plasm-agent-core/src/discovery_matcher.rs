@@ -1,9 +1,9 @@
 //! One semantic relevance judgment over authorized candidates and typed evidence.
 use crate::decision_codec::DecisionCodec;
-mod chat;
+mod decisions;
 use crate::discovery_store::RetrievalReceipt;
 use crate::intent_provenance::IntentProvenance;
-pub(crate) use chat::ENDPOINT as RELEVANCE_ENDPOINT;
+pub(crate) use decisions::ENDPOINT as RELEVANCE_ENDPOINT;
 use futures_util::{stream::FuturesUnordered, StreamExt};
 use plasm_core::{catalog_discovery::content_hash, prerequisites::CapabilityRef};
 use serde::{Deserialize, Serialize};
@@ -18,6 +18,8 @@ type DecisionProviderError = Box<dyn std::error::Error + Send + Sync + 'static>;
 pub enum DiscoveryMatcherError {
     #[error("relevance model is required")]
     MissingModel,
+    #[error("capability relevance requires a typesafe/jev-* decision model")]
+    UnsupportedModel,
     #[error("judgment candidate bound exceeded")]
     CandidateBoundExceeded,
     #[error("duplicate discovery candidate id")]
@@ -28,7 +30,7 @@ pub enum DiscoveryMatcherError {
     EmptyBatch,
     #[error("issued relevance page has no pending page")]
     NoPendingPage,
-    #[error("relevance page rejected because an item is indivisible ({bytes} bytes); reduce its catalog description or supply a model with sufficient context; no selection was committed")]
+    #[error("relevance page rejected with one question and indivisible shared evidence ({bytes} bytes); supply a decision model with sufficient context; no evidence was removed and no selection was committed")]
     IndivisibleItem { bytes: usize },
     #[error("relevance request serialization failed")]
     Encode(#[source] crate::decision_codec::DecisionCodecError),
@@ -51,28 +53,29 @@ pub enum DiscoveryMatcherError {
     #[error("provider decision failed")]
     Provider(#[source] DecisionProviderError),
 }
-pub const RELEVANCE_MODEL: &str = "openai/gpt-6-luna";
-// A wire-size packing target for economical requests, NOT a provider context guarantee.
-// Provider rejections drive further typed partitioning, including below this target.
+pub const RELEVANCE_MODEL: &str = "typesafe/jev-1.13";
+// Packing target for the subjects judged on a page, excluding shared evidence.
+// Shared evidence is bounded by retrieval and never dropped during partitioning.
 const TARGET_PAGE_BYTES: usize = 16_000;
+const MAX_PAGE_QUESTIONS: usize = 32;
 /// Bounds work admitted by one discovery turn, including split pages.
 const ROUTE_CONCURRENCY: usize = 4;
 const CRITERIA: [(&str, &str); 3] = [
     (
         "relevant",
-        "The documented operation or information can contribute to the current need.",
+        "The documented output, effect or information contributes to the requested outcome, potentially through other operations.",
     ),
     (
         "unrelated",
-        "The documented operation or information does not contribute to the current need.",
+        "The documented output, effect or information serves a different outcome or the reverse transformation.",
     ),
     (
         "uncertain",
-        "The supplied evidence does not establish relevance or unrelatedness.",
+        "The documented output, effect or information is insufficiently specified to establish contribution.",
     ),
 ];
 const QUESTION_FORMAT: &str = "The current_intent is the current discovery need. Read intent_turns in order for references and constraints; explicit revisions in later turns supersede earlier goals. Judge contribution to the current need, not to every historical goal.";
-const RUBRIC: &str = "Classify contribution to the current intent, not applicability or permission to execute. A capability need not complete the task alone. Its documented scope, prerequisites and side effects remain constraints for composition; relevance does not establish that a valid workflow exists. Apply this question's criteria.";
+const RUBRIC: &str = "Judge whether the documented output or effect supplies part of the requested outcome or information needed for it. Judge contribution, not whether this operation can execute now or complete the workflow alone. Keep input, scope and side-effect constraints intact; relevance does not establish a valid or authorized workflow.";
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, PartialOrd, Ord)]
 #[serde(rename_all = "snake_case")]
 pub enum MatchChoice {
@@ -117,6 +120,7 @@ pub struct IssuedBatch {
     model: String,
     bindings: BTreeMap<String, String>,
     questions: Vec<Question>,
+    evidence: std::sync::Arc<Vec<Question>>,
 }
 impl IssuedBatch {
     pub fn body(&self) -> &str {
@@ -128,7 +132,7 @@ impl IssuedBatch {
 }
 /// An issued question owns its exact semantic document and local result identity.
 /// Graph witnesses remain in the routing receipt, not the relevance wire contract.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize)]
 struct Question {
     id: String,
     reference: CapabilityRef,
@@ -144,6 +148,9 @@ pub fn issue_batches(
 ) -> Result<Vec<IssuedBatch>, DiscoveryMatcherError> {
     if model.trim().is_empty() {
         return Err(DiscoveryMatcherError::MissingModel);
+    }
+    if !model.starts_with("typesafe/jev-") {
+        return Err(DiscoveryMatcherError::UnsupportedModel);
     }
     if retrieval.candidates.len() > crate::discovery_store::CANDIDATE_LIMIT {
         return Err(DiscoveryMatcherError::CandidateBoundExceeded);
@@ -168,53 +175,72 @@ pub fn issue_batches(
     {
         return Err(DiscoveryMatcherError::DuplicateCapabilityReference);
     }
+    let evidence: std::sync::Arc<Vec<Question>> = std::sync::Arc::new(
+        candidates
+            .iter()
+            .map(|candidate| Question {
+                id: candidate.id.clone(),
+                reference: candidate.reference.clone(),
+                entity: candidate.document.entity.clone(),
+                operation: candidate.document.operation.clone(),
+                collection: candidate.document.collection.clone(),
+            })
+            .collect(),
+    );
     let mut batches = Vec::new();
     let mut pending = Vec::new();
-    for candidate in candidates {
-        pending.push(Question {
-            id: candidate.id.clone(),
-            reference: candidate.reference.clone(),
-            entity: candidate.document.entity.clone(),
-            operation: candidate.document.operation.clone(),
-            collection: candidate.document.collection.clone(),
-        });
-        if pending.len() > 1 && issue_batch(model, intent, &pending)?.body.len() > TARGET_PAGE_BYTES
+    for question in evidence.iter() {
+        pending.push(question.clone());
+        let subject_bytes = serde_json::to_vec(&pending)
+            .map_err(crate::decision_codec::DecisionCodecError::from)
+            .map_err(DiscoveryMatcherError::Encode)?
+            .len();
+        if pending.len() > 1
+            && (pending.len() > MAX_PAGE_QUESTIONS || subject_bytes > TARGET_PAGE_BYTES)
         {
             let last = pending.pop().ok_or(DiscoveryMatcherError::EmptyBatch)?;
-            batches.push(issue_batch(model, intent, &pending)?);
+            batches.push(issue_batch(model, intent, &pending, &evidence)?);
             pending = vec![last];
         }
     }
     if !pending.is_empty() {
-        batches.push(issue_batch(model, intent, &pending)?);
+        batches.push(issue_batch(model, intent, &pending, &evidence)?);
     }
     Ok(batches)
 }
 
 struct RelevanceCodec;
 impl DecisionCodec for RelevanceCodec {
-    type Request<'a> = chat::Request<'a>;
+    type Request<'a> = decisions::Request<'a>;
+
+    fn encode(
+        request: &Self::Request<'_>,
+    ) -> Result<String, crate::decision_codec::DecisionCodecError> {
+        // Preserve the deliberate page-local map order at the wire boundary.
+        // The generic codec's Value roundtrip sorts maps and would erase it.
+        Ok(serde_json::to_string(request)?)
+    }
 }
 #[derive(Serialize)]
-struct QuestionSet<'a> {
-    questions: BTreeMap<String, DirectQuestion<'a>>,
-}
-#[derive(Serialize)]
-struct DirectQuestion<'a> {
-    instructions: DirectEvidence<'a>,
-}
-#[derive(Serialize)]
-struct SharedRules {
-    criteria: BTreeMap<&'static str, &'static str>,
-    intent_interpretation: &'static str,
-    rule: &'static str,
-}
-// Serialize directly into message text: canonical outer JSON must not reorder
-// current_intent ahead of the reusable, chronological ancestry.
-#[derive(Serialize)]
-struct IntentContext<'a> {
+struct SharedEvidence<'a> {
     intent_turns: Vec<&'a str>,
     current_intent: &'a str,
+    intent_interpretation: &'static str,
+    rule: &'static str,
+    capabilities: OrderedCapabilities<'a>,
+}
+
+struct OrderedCapabilities<'a>(Vec<(String, DirectEvidence<'a>)>);
+
+impl Serialize for OrderedCapabilities<'_> {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        use serde::ser::SerializeMap;
+        let mut map = serializer.serialize_map(Some(self.0.len()))?;
+        for (key, evidence) in &self.0 {
+            map.serialize_entry(key, evidence)?;
+        }
+        map.end()
+    }
 }
 #[derive(Serialize)]
 struct DirectEvidence<'a> {
@@ -232,56 +258,79 @@ fn issue_batch(
     model: &str,
     intent: &IntentProvenance,
     questions: &[Question],
+    evidence: &std::sync::Arc<Vec<Question>>,
 ) -> Result<IssuedBatch, DiscoveryMatcherError> {
     if questions.is_empty() {
         return Err(DiscoveryMatcherError::EmptyBatch);
     }
     let mut wire_questions = BTreeMap::new();
     let mut bindings = BTreeMap::new();
+    let subjects: BTreeSet<_> = questions.iter().map(|q| &q.id).collect();
+    let mut capabilities = Vec::new();
+    for (i, q) in evidence.iter().enumerate() {
+        let card = DirectEvidence {
+            capability: DirectCard {
+                reference: &q.reference,
+                entity: &q.entity,
+                operation: &q.operation,
+            },
+            collection_meaning: &q.collection.meaning,
+        };
+        let mut canonical = serde_json::to_value(&card)
+            .map_err(crate::decision_codec::DecisionCodecError::from)
+            .map_err(DiscoveryMatcherError::Encode)?;
+        canonical.sort_all_objects();
+        let bytes = serde_json::to_vec(&canonical)
+            .map_err(crate::decision_codec::DecisionCodecError::from)
+            .map_err(DiscoveryMatcherError::Encode)?;
+        capabilities.push((
+            !subjects.contains(&q.id),
+            content_hash(&bytes),
+            format!("c{i}"),
+            card,
+        ));
+    }
+    capabilities.sort_by(|a, b| (&a.0, &a.1, &a.2).cmp(&(&b.0, &b.1, &b.2)));
+    let capabilities = OrderedCapabilities(
+        capabilities
+            .into_iter()
+            .map(|(_, _, key, card)| (key, card))
+            .collect(),
+    );
     for (i, q) in questions.iter().enumerate() {
         let key = format!("q{i}");
+        let index = evidence
+            .iter()
+            .position(|card| card.id == q.id)
+            .ok_or(DiscoveryMatcherError::MissingAnswer)?;
         bindings.insert(key.clone(), q.id.clone());
-        wire_questions.insert(
-            key,
-            DirectQuestion {
-                instructions: DirectEvidence {
-                    capability: DirectCard {
-                        reference: &q.reference,
-                        entity: &q.entity,
-                        operation: &q.operation,
-                    },
-                    collection_meaning: &q.collection.meaning,
-                },
-            },
-        );
+        wire_questions.insert(key, decisions::Question {
+            kind: "choice",
+            instructions: format!("Using the shared intent and rule, classify the contribution of `capabilities.c{index}`. Other entries in `capabilities` are available composition evidence, not an execution plan."),
+            criteria: CRITERIA.into_iter().collect(),
+        });
     }
-    let rules = encode_content(&SharedRules {
-        criteria: CRITERIA.into_iter().collect(),
-        intent_interpretation: QUESTION_FORMAT,
-        rule: RUBRIC,
-    })?;
-    let intent_context = encode_content(&IntentContext {
+    let state = SharedEvidence {
         intent_turns: intent.turns().collect(),
         current_intent: intent.current(),
-    })?;
-    let content = encode_content(&QuestionSet {
+        intent_interpretation: QUESTION_FORMAT,
+        rule: RUBRIC,
+        capabilities,
+    };
+    let body = RelevanceCodec::encode(&decisions::Request {
+        model,
+        state: &state,
         questions: wire_questions,
-    })?;
-    let body = RelevanceCodec::encode(&chat::request(model, rules, intent_context, content))
-        .map_err(DiscoveryMatcherError::Encode)?;
+    })
+    .map_err(DiscoveryMatcherError::Encode)?;
     Ok(IssuedBatch {
-        cache_key: content_hash(format!("chat-direct-relevance-v3\\n{body}").as_bytes()),
+        cache_key: content_hash(format!("jev-shared-contribution-v5\\n{body}").as_bytes()),
         body,
         model: model.into(),
         bindings,
         questions: questions.to_vec(),
+        evidence: evidence.clone(),
     })
-}
-
-fn encode_content(value: &impl Serialize) -> Result<String, DiscoveryMatcherError> {
-    serde_json::to_string(value)
-        .map_err(crate::decision_codec::DecisionCodecError::from)
-        .map_err(DiscoveryMatcherError::Encode)
 }
 
 /// Split complete semantic questions. No descriptions are truncated or sliced.
@@ -296,8 +345,8 @@ pub fn repartition(
     }
     let (left, right) = batch.questions.split_at(batch.questions.len() / 2);
     Ok([
-        issue_batch(&batch.model, intent, left)?,
-        issue_batch(&batch.model, intent, right)?,
+        issue_batch(&batch.model, intent, left, &batch.evidence)?,
+        issue_batch(&batch.model, intent, right, &batch.evidence)?,
     ])
 }
 
@@ -429,7 +478,7 @@ pub fn decode_batch(
     issued: &IssuedBatch,
     raw: &str,
 ) -> Result<Vec<SelectionAnswer>, DiscoveryMatcherError> {
-    let mut answers = chat::decode(&issued.model, issued.bindings.keys(), raw)?;
+    let mut answers = decisions::decode(&issued.model, issued.bindings.keys(), raw)?;
     let mut matches = Vec::new();
     for (question, capability_id) in &issued.bindings {
         let answer = answers
@@ -506,28 +555,39 @@ mod tests {
         )
     }
     fn response(batch: &IssuedBatch, choices: &[MatchChoice]) -> String {
-        let answers: Vec<_> = batch
+        let answers: BTreeMap<_, _> = batch
             .bindings
             .keys()
             .zip(choices)
-            .map(|(key, choice)| json!({"key":key,"choice":choice}))
+            .map(|(key, choice)| {
+                (
+                    key,
+                    json!({"type":"choice","choice":choice,"confidence":1.0,
+                "probabilities":{"relevant":if *choice == MatchChoice::Relevant {1.0}else{0.0},
+                "uncertain":if *choice == MatchChoice::Uncertain {1.0}else{0.0},
+                "unrelated":if *choice == MatchChoice::Unrelated {1.0}else{0.0}}}),
+                )
+            })
             .collect();
-        completion(json!({"answers": answers}).to_string())
+        json!({"model":RELEVANCE_MODEL,"provider":"TypeSafe","answers":answers}).to_string()
     }
-    fn completion(content: String) -> String {
-        json!({"model": RELEVANCE_MODEL, "choices":[{"finish_reason":"stop","message":{"role":"assistant","content":content}}]}).to_string()
-    }
+    // Resolve references for semantic assertions; dedicated wire tests verify compactness.
     fn question_content(batch: &IssuedBatch) -> serde_json::Value {
         let body: serde_json::Value = serde_json::from_str(batch.body()).unwrap();
-        let mut context: serde_json::Map<String, serde_json::Value> =
-            serde_json::from_str(body["messages"][1]["content"].as_str().unwrap()).unwrap();
-        let intent: serde_json::Map<String, serde_json::Value> =
-            serde_json::from_str(body["messages"][2]["content"].as_str().unwrap()).unwrap();
-        context.extend(intent);
-        let mut questions: serde_json::Value =
-            serde_json::from_str(body["messages"][3]["content"].as_str().unwrap()).unwrap();
-        questions["context"] = json!(context);
-        questions
+        let questions: BTreeMap<_, _> = batch
+            .bindings
+            .iter()
+            .map(|(key, id)| {
+                let index = batch.evidence.iter().position(|q| &q.id == id).unwrap();
+                (
+                    key,
+                    json!({"instructions":body["state"]["capabilities"][format!("c{index}")]}),
+                )
+            })
+            .collect();
+        let mut context = body["state"].clone();
+        context["criteria"] = json!(CRITERIA.into_iter().collect::<BTreeMap<_, _>>());
+        json!({"questions":questions,"context":context})
     }
 
     #[test]
@@ -592,7 +652,13 @@ mod tests {
             let decoded:CapabilityMatchReceipt=serde_json::from_str(&serde_json::to_string(&receipt).unwrap()).unwrap();
             prop_assert_eq!(&receipt,&decoded);
             prop_assert_eq!(receipt.selected(&wire).len(),mask.iter().filter(|&&m|m!=0).count());
-            for batch in batches {prop_assert!(batch.body.len()<=TARGET_PAGE_BYTES);}
+            for batch in batches {
+                prop_assert!(batch.questions.len() <= MAX_PAGE_QUESTIONS);
+                prop_assert_eq!(batch.evidence.len(), wire.candidates.len());
+                if batch.questions.len() > 1 {
+                    prop_assert!(serde_json::to_vec(&batch.questions).unwrap().len() <= TARGET_PAGE_BYTES);
+                }
+            }
         }
     }
     proptest! {
@@ -785,10 +851,10 @@ mod tests {
         for batch in issue_batches(RELEVANCE_MODEL, &intent, &retrieval).unwrap() {
             let body: serde_json::Value = serde_json::from_str(batch.body()).unwrap();
             assert_eq!(body["model"], RELEVANCE_MODEL);
-            assert_eq!(body["reasoning"]["effort"], "high");
-            assert_eq!(body["max_tokens"], 16384);
+            assert!(body.get("reasoning").is_none());
+            assert!(body.get("max_tokens").is_none());
             assert!(body.get("temperature").is_none());
-            assert_eq!(body["response_format"]["json_schema"]["strict"], true);
+            assert!(body.get("messages").is_none());
             let content = question_content(&batch);
             assert!(content.get("state").is_none());
             for (key, question) in content["questions"].as_object().unwrap() {
@@ -825,21 +891,27 @@ mod tests {
     fn strict_choices_reject_missing_foreign_duplicate_and_extra_fields() {
         let (intent, retrieval) = fixture();
         let batches = issue_batches(RELEVANCE_MODEL, &intent, &retrieval).unwrap();
-        for content in [
-            r#"{"answers":[]}"#,
-            r#"{"answers":[{"key":"foreign","choice":"relevant"}]}"#,
-            r#"{"answers":[{"key":"q0","choice":"relevant"},{"key":"q0","choice":"unrelated"}]}"#,
-            r#"{"answers":[{"key":"q0","choice":"relevant","choice":"unrelated"}]}"#,
-            r#"{"answers":[{"key":"q0","choice":"relevant","confidence":1}]}"#,
-            r#"{"answers":[{"key":"q0","choice":"required_source"}]}"#,
-            r#"{"answers":[{"key":"q0","choice":"relevant"}],"extra":true}"#,
-            "not json",
-        ] {
-            assert!(
-                decode_batch(&batches[0], &completion(content.into())).is_err(),
-                "{content}"
-            );
+        let valid: serde_json::Value =
+            serde_json::from_str(&response(&batches[0], &[MatchChoice::Relevant])).unwrap();
+        let mut invalids = vec![];
+        let mut missing = valid.clone();
+        missing["answers"] = json!({});
+        invalids.push(missing);
+        let mut foreign = valid.clone();
+        foreign["answers"]["foreign"] = valid["answers"]["q0"].clone();
+        invalids.push(foreign);
+        let mut extra = valid.clone();
+        extra["answers"]["q0"]["unexpected"] = json!(true);
+        invalids.push(extra);
+        for invalid in invalids {
+            assert!(decode_batch(&batches[0], &invalid.to_string()).is_err());
         }
+        let answer = valid["answers"]["q0"].to_string();
+        let duplicate = format!(
+            r#"{{"model":"{RELEVANCE_MODEL}","provider":"TypeSafe","answers":{{"q0":{answer},"q0":{answer}}}}}"#
+        );
+        assert!(decode_batch(&batches[0], &duplicate).is_err());
+        assert!(decode_batch(&batches[0], "not json").is_err());
         assert!(finish_selection(vec![], &retrieval, &batches).is_err());
         let mut answers = decode_batch(
             &batches[0],
@@ -851,7 +923,7 @@ mod tests {
     }
 
     #[test]
-    fn completion_refusal_truncation_tool_calls_and_model_mismatch_fail_closed() {
+    fn native_envelope_and_choices_fail_closed() {
         let (intent, retrieval) = fixture();
         let batch = issue_batches(RELEVANCE_MODEL, &intent, &retrieval)
             .unwrap()
@@ -860,10 +932,12 @@ mod tests {
             serde_json::from_str(&response(&batch, &[MatchChoice::Relevant])).unwrap();
         for (pointer, value) in [
             ("/model", json!("different/model")),
-            ("/choices", json!([])),
-            ("/choices/0/finish_reason", json!("length")),
-            ("/choices/0/message/role", json!("user")),
-            ("/choices/0/message/content", json!(null)),
+            ("/provider", json!("different/provider")),
+            ("/answers/q0/type", json!("score")),
+            ("/answers/q0/choice", json!("unsupported")),
+            ("/answers/q0/confidence", json!(2.0)),
+            ("/answers/q0/probabilities/relevant", json!(-1.0)),
+            ("/answers", json!({})),
         ] {
             let mut invalid = raw.clone();
             *invalid.pointer_mut(pointer).unwrap() = value;
@@ -872,31 +946,16 @@ mod tests {
                 "{pointer}"
             );
         }
-        for (key, value) in [("refusal", json!("No")), ("tool_calls", json!([{}]))] {
-            let mut invalid = raw.clone();
-            invalid["choices"][0]["message"][key] = value;
-            assert!(decode_batch(&batch, &invalid.to_string()).is_err());
-        }
-        let mut multiple = raw.clone();
-        multiple["choices"]
-            .as_array_mut()
-            .unwrap()
-            .push(raw["choices"][0].clone());
-        assert!(decode_batch(&batch, &multiple.to_string()).is_err());
-        let mut errored = raw.clone();
-        errored["error"] = json!({"code":500,"message":"provider error"});
-        assert!(decode_batch(&batch, &errored.to_string()).is_err());
         let mut dated = raw;
         dated["model"] = json!(format!("{RELEVANCE_MODEL}-20261021"));
-        dated["usage"] = json!({"total_tokens":42});
         let answer = decode_batch(&batch, &dated.to_string()).unwrap();
         let receipt = serde_json::to_value(&answer[0].matched).unwrap();
-        assert!(receipt.get("probabilities").is_none());
         assert!(receipt.get("confidence").is_none());
+        assert!(receipt.get("probabilities").is_none());
     }
 
     #[tokio::test]
-    async fn chat_http_boundary_repartitions_and_preserves_uncertain_exposure() {
+    async fn decisions_http_boundary_repartitions_and_preserves_uncertain_exposure() {
         use std::sync::{Arc, Mutex};
         let (intent, mut retrieval) = fixture();
         let batch = issue_batches(RELEVANCE_MODEL, &intent, &retrieval)
@@ -913,7 +972,7 @@ mod tests {
         let seen = Arc::new(Mutex::new(Vec::new()));
         let captured = seen.clone();
         let router = axum::Router::new().route(
-            "/api/v1/chat/completions",
+            "/api/alpha/decisions",
             axum::routing::post(move |headers: axum::http::HeaderMap, body: String| {
                 let seen = captured.clone();
                 let raw = raw.clone();
@@ -921,7 +980,7 @@ mod tests {
                     assert_eq!(headers["authorization"], "Bearer test-only");
                     assert_eq!(headers["content-type"], "application/json");
                     let request: serde_json::Value = serde_json::from_str(&body).unwrap();
-                    let content: serde_json::Value = serde_json::from_str(request["messages"][3]["content"].as_str().unwrap()).unwrap();
+                    let content = &request;
                     seen.lock().unwrap().push(body);
                     if content["questions"].as_object().unwrap().len() > 1 {
                         (axum::http::StatusCode::BAD_REQUEST,
@@ -934,10 +993,10 @@ mod tests {
         );
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let endpoint = format!(
-            "http://{}/api/v1/chat/completions",
+            "http://{}/api/alpha/decisions",
             listener.local_addr().unwrap()
         );
-        assert!(RELEVANCE_ENDPOINT.ends_with("/api/v1/chat/completions"));
+        assert!(RELEVANCE_ENDPOINT.ends_with("/api/alpha/decisions"));
         let server = tokio::spawn(async move {
             axum::serve(listener, router).await.unwrap();
         });

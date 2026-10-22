@@ -6,10 +6,6 @@ use thiserror::Error;
 
 #[derive(Debug, Error)]
 pub enum DecisionResponseError {
-    #[error(
-        "decision completion was refused, truncated, missing, or not a single assistant answer"
-    )]
-    InvalidCompletion,
     #[error("malformed decision response envelope")]
     MalformedEnvelope(#[source] serde_json::Error),
     #[error("decision response resolved to an unexpected model")]

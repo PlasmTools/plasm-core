@@ -4,72 +4,83 @@ Retrieval is unchanged: up to 64 lexical and 64 vector candidates, deduplicated
 to at most 128. Authorization is applied before classification. Already exposed
 capabilities are still classified against the current intent and full intent ancestry.
 
-The classifier messages are ordered as follows: a fixed system instruction,
-shared rules, intent ancestry followed by current intent, then page-specific
-questions. Each of the three data sections is a separate user message, with no
-padding. Illustrative message contents follow:
+Capability relevance uses the native JEV Decisions API, default model
+`typesafe/jev-1.13`. `PLASM_DISCOVERY_CAPABILITY_MATCH_MODEL` must identify
+a `typesafe/jev-*` decision model; former chat-model overrides fail explicitly.
+Advisory environment support remains a separate judgment.
+
+Each request contains shared evidence and independent questions:
 
 ```json
 {
-  "criteria": {"relevant": "...", "unrelated": "...", "uncertain": "..."},
-  "intent_interpretation": "<complete interpretation rule>",
-  "rule": "<complete contribution rubric>"
-}
-```
-
-```json
-{
-  "intent_turns": ["Inspect selected records"],
-  "current_intent": "Inspect selected records"
-}
-```
-
-```json
-{
+  "model": "typesafe/jev-1.13",
+  "state": {
+    "intent_turns": ["Inspect selected records"],
+    "current_intent": "Inspect selected records",
+    "intent_interpretation": "<complete interpretation rule>",
+    "rule": "<complete contribution rubric>",
+    "capabilities": {
+      "c0": {
+        "capability": {
+          "reference": {"catalog": "matrix", "capability": "inspect"},
+          "entity": "Record",
+          "operation": "<complete structured operation evidence>"
+        },
+        "collection_meaning": "<complete collection meaning>"
+      }
+    }
+  },
   "questions": {
-    "q0": {"instructions": {
-      "capability": {"reference": {"catalog": "matrix", "capability": "inspect"},
-        "entity": "Record", "operation": "<complete typed operation evidence>"},
-      "collection_meaning": "<complete collection meaning>"
-    }}
+    "q0": {
+      "type": "choice",
+      "instructions": "Classify capabilities.c0 using the shared intent and rule.",
+      "criteria": {"relevant": "...", "uncertain": "...", "unrelated": "..."}
+    }
   }
 }
 ```
 
-The real operation field is the unchanged structured operation evidence, not a
-summary string. Context and criteria occur once per page. Contracts, input scope,
-prerequisites and effect descriptions are not truncated. The strict response is:
+The illustration abbreviates instruction text. The real operation field retains
+the full typed evidence, including input, scope, prerequisites and effects.
+Each complete contract occurs once per request in shared state. Each question
+explicitly references its subject there; it does not depend on sibling questions
+being visible. Criteria are per-question as required by the native API.
+All pages of a discovery turn retain the same bounded retrieved evidence set,
+including during context-driven subdivision. A prerequisite on another page
+therefore remains visible. This does not recover evidence absent from retrieval.
 
-```json
-{"answers":[{"key":"q0","choice":"relevant"}]}
-```
+The rubric judges documented output, effect or information contributing to the
+requested outcome. Relevance does not certify current applicability, permission,
+or the existence of a valid workflow. Underspecified contribution remains uncertain.
 
-Every issued key must occur exactly once; choices are `relevant`, `unrelated`,
-or `uncertain`. Missing, foreign, duplicate or malformed answers fail selection.
-The provider schema is identical for every page size and intent: it declares an
-array of strict objects with required string `key` and enumerated `choice` fields.
-The host enforces the exact issued key set and rejects duplicates before admitting
-any result. Array position does not identify a candidate. The former answer-map
-shape is rejected. No partial selection is committed. Final receipt order does
-not depend on response order.
+Native responses contain a keyed `answers` map. The shared typed decoder validates
+model/provider identity, exact question coverage, duplicate keys, choice types,
+allowed choices, confidence and probability vectors. Only the choice enters the
+routing receipt; probability metadata does not introduce a selection threshold.
+No partial selection is committed. Final receipt order is independent of response order.
 
-Stable rules precede changing intent; chronological ancestry precedes the current
-need. Message text preserves this order even though the outer request object is
-canonically serialized. Complete request bytes and framing version v3 determine
-the decision-cache key, so old-format responses cannot satisfy new requests.
-Separate messages expose reusable prefix boundaries without serial warm-up calls
-or explicit provider cache options. Provider cache minimums, routing and cold
-parallel requests still govern actual hits: these structural tests do not prove
-cache reuse or lower cost. No irrelevant content is added to reach a cache minimum.
+Within shared evidence, each page's subjects precede the remaining capabilities.
+Each group is ordered by SHA256 of canonical complete evidence JSON, with stable
+wire identity breaking ties. References and page membership do not change. The
+serializer preserves this map order directly; an intermediate JSON map must not
+sort it away. Split pages recompute the order for their own subjects while retaining
+every contract. Incoming retrieval permutation does not change request bytes.
+This removes incidental ordering differences, not model response variability.
+Relevant and uncertain capabilities are both retained; no confidence threshold,
+extra classification request or precision-only rejection is introduced.
+
+Complete request bytes and framing version `jev-shared-contribution-v5` determine
+cache identity. Changing any shared contract invalidates every page that uses it.
+There is no chat schema, generated reasoning, prefix padding, or automatic fallback.
 
 | Boundary | Limit / behavior |
 | --- | --- |
-| Page packing | 16,000 serialized request bytes target, not a token/context guarantee |
+| Page packing | At most32 questions; 16,000 serialized subject-evidence bytes target, excluding common state; not a token/context guarantee |
 | One discovery route | At most 4 admitted page futures, including split work |
 | One process | At most 8 provider requests, shared by relevance and advisory support |
 | Queue admission | FIFO semaphore; no fleet-wide or strict per-tenant fairness claim |
-| Context rejection | Split only the rejected page into complete questions; never repeat successful pages |
-| Indivisible contract | Preserve it intact; fail explicitly if the provider rejects it |
+| Context rejection | Split only rejected questions; preserve the complete shared state; never repeat successful pages |
+| Indivisible contract | A singleton question plus shared evidence is indivisible; fail explicitly if rejected |
 | Cancellation / error | Drop pending route futures and release permits/claims; no success receipt |
 | Cache fill | Exact request keys coalesce across services sharing a cloned discovery store |
 
@@ -84,6 +95,5 @@ prerequisite guidance. Discovery never refreshes account data; programs use expo
 reads to observe data. This feedback does not certify task completion or applicability.
 
 Abstract tests cover coverage, splitting, parallel admission, cancellation, shared
-permits/cache fills, lossless evidence and same-entity teaching extensions. They do
-not establish model-output equivalence under the compact framing or retrieval recall
-under catalogue growth. No live evaluation is part of this change.
+permits/cache fills, lossless evidence and same-entity teaching extensions. Isolated model probes measure the compact framing separately; deterministic tests
+do not establish semantic accuracy or retrieval recall under catalogue growth.
