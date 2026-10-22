@@ -1,0 +1,43 @@
+version: 1
+entry_id: resource_registration
+auth: {scheme: none}
+http_backend: http://fixture.invalid
+values:
+  source_id: {type: string, description: Identity in the source collection; not a registration handle}
+  definition: {type: string, description: Resource definition supplied for registration}
+  handle: {type: string, description: Handle assigned by this destination after registration}
+  readiness: {type: boolean, description: Observed readiness at this destination; not permission to act}
+entities:
+  ResourceSource:
+    id_field: source_id
+    description: Definitions available for registration; presence here does not establish destination registration or readiness.
+    fields:
+      source_id: {value_ref: source_id, required: true}
+      definition: {value_ref: definition, required: true}
+  RegisteredResource:
+    id_field: handle
+    description: Resource registered at this destination; registration alone does not establish current readiness or authority.
+    fields:
+      handle: {value_ref: handle, required: true}
+      ready: {value_ref: readiness, required: false}
+capabilities:
+  source_query:
+    kind: query
+    entity: ResourceSource
+    description: Read available resource definitions without registering or activating them.
+    provides: [source_id, definition]
+  register_resource:
+    kind: create
+    entity: RegisteredResource
+    description: Register the supplied definition at this destination and return its handle. Does not establish readiness or permission to use it.
+    payload:
+      input_type:
+        type: object
+        fields:
+        - {name: definition, value_ref: definition, required: true}
+    provides: [handle]
+  inspect_resource:
+    kind: get
+    entity: RegisteredResource
+    description: Observe current readiness for the registered resource; absence of an observation is not a negative observation.
+    provides: [handle, ready]

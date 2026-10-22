@@ -39,7 +39,7 @@ const validLedger = {
   record: {
     ...emptyTaskLedger(),
     requested_outcomes: ["settle matching debts"],
-    remaining_work: ["complete_task"],
+    obligations: [{ id: 1, task: "complete_task", status: "pending" as const }],
   },
 };
 

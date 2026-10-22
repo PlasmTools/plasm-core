@@ -216,6 +216,60 @@ pub fn capability_documents(
 mod tests {
     use super::*;
 
+    #[test]
+    fn resource_source_registration_and_readiness_remain_distinct() {
+        let fixture = std::path::Path::new(crate::test_manifest_dir())
+            .join("../../fixtures/schemas/resource_registration");
+        for definition in [
+            "Routing definition",
+            "Calibration profile",
+            "Rendering preset",
+        ] {
+            let mut cgs = crate::load_schema(&fixture).expect("abstract registration fixture");
+            cgs.values.get_mut("definition").unwrap().description = definition.into();
+            let docs = capability_documents(&cgs).unwrap();
+            let source = docs
+                .iter()
+                .find(|d| d.capability == "source_query")
+                .unwrap();
+            let register = docs
+                .iter()
+                .find(|d| d.capability == "register_resource")
+                .unwrap();
+            let inspect = docs
+                .iter()
+                .find(|d| d.capability == "inspect_resource")
+                .unwrap();
+            assert_ne!(source.entity, register.entity);
+            assert!(source.operation.contract.contains(definition));
+            assert!(register.operation.contract.contains(definition));
+            assert!(register
+                .operation
+                .contract
+                .contains("Does not establish readiness or permission"));
+            assert!(!register.operation.contract.contains("Observed readiness"));
+            assert!(inspect.operation.contract.contains("Observed readiness"));
+            assert!(source
+                .collection
+                .meaning
+                .contains("does not establish destination registration"));
+            assert!(register
+                .collection
+                .meaning
+                .contains("registration alone does not establish"));
+            assert_eq!(
+                cgs.capabilities["register_resource"].provides,
+                vec!["handle"]
+            );
+            assert!(!cgs.entities["RegisteredResource"].fields["ready"].required);
+            for doc in docs {
+                let roundtrip: CapabilityDocument =
+                    serde_json::from_slice(&serde_json::to_vec(&doc).unwrap()).unwrap();
+                assert_eq!(doc, roundtrip);
+            }
+        }
+    }
+
     fn role_fixture() -> crate::CGS {
         let mut cgs = crate::load_schema(
             &std::path::Path::new(crate::test_manifest_dir())

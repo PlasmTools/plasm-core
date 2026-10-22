@@ -32,6 +32,8 @@ import {
   renderTaskLedgerState,
   taskLedgerRecordBytes,
   taskLedgerRecordSchema,
+  taskLedgerInputSchema,
+  createTaskLedgerTool,
 } from "../src/tools/task-ledger.js";
 import { PlasmAgent } from "../src/runtime/plasm-agent.js";
 import type { PlasmEngine } from "../src/engine/napi-binding.js";
@@ -69,7 +71,7 @@ const authored = {
   ],
   unresolved_questions: ["whether the user named a fallback"],
   completed_effects: [],
-  remaining_work: ["satisfy the original delivery condition"],
+  obligations: [{ id: 1, task: "satisfy the original delivery condition", status: "pending" as const }],
 };
 
 const product = buildDefaultSystemLiturgy();
@@ -195,7 +197,7 @@ assert.match(renderTaskLedgerState(cited.record), /does not treat citations as p
 
 const oversized = parseTaskLedgerRecord({
   ...emptyTaskLedger(),
-  remaining_work: ["x".repeat(1500), "y".repeat(1500), "z".repeat(1500)],
+  obligations: ["x", "y", "z"].map((x, i) => ({ id: i + 1, task: x.repeat(1500), status: "pending" })),
 });
 assert.equal(oversized.ok, false, "aggregate budget rejects oversized replace");
 if (oversized.ok) throw new Error("expected oversized reject");
@@ -207,13 +209,13 @@ assert.equal(compact.ok, true);
 if (!compact.ok) throw new Error("expected compact parse ok");
 store.replace(compact.record);
 for (const remaining of ["still the original condition", "one more compact revise"]) {
-  compact = parseTaskLedgerRecord({ ...authored, remaining_work: [remaining] });
+  compact = parseTaskLedgerRecord({ ...authored, obligations: [{ id: 1, task: remaining, status: "pending" }] });
   assert.equal(compact.ok, true, "repeated compact updates succeed");
   if (!compact.ok) throw new Error("expected compact revise");
   assert.ok(taskLedgerRecordBytes(compact.record) <= TASK_LEDGER_MAX_BYTES);
   store.replace(compact.record);
 }
-assert.deepEqual(store.record.remaining_work, ["one more compact revise"]);
+assert.equal(store.record.obligations[0]?.task, "one more compact revise");
 store.replace(authored);
 
 const mixed = parseTaskLedgerRecord({
@@ -231,13 +233,13 @@ const sparse = parseTaskLedgerRecord({
   interpretations: [],
   unresolved_questions: [],
   completed_effects: [],
-  remaining_work: [],
+  obligations: [],
 });
 assert.equal(sparse.ok, true);
 if (!sparse.ok) throw new Error("expected sparse parse ok");
 store.replace(sparse.record);
 assert.deepEqual(
-  store.record.remaining_work,
+  store.record.obligations,
   [],
   "host does not invent remaining-work obligations",
 );
@@ -388,6 +390,11 @@ try {
 
   const step0 = JSON.stringify(freshnessModel.doStreamCalls[0]?.prompt);
   const step1 = JSON.stringify(freshnessModel.doStreamCalls[1]?.prompt);
+  const priorPrefix = freshnessModel.doStreamCalls[0]!.prompt.slice(0, -1);
+  assert.deepEqual(freshnessModel.doStreamCalls[1]!.prompt.slice(0, priorPrefix.length), priorPrefix,
+    "changing ledger snapshot leaves the entire preceding request prefix identical");
+  assert.deepEqual(freshnessModel.doStreamCalls[0]!.tools, freshnessModel.doStreamCalls[1]!.tools,
+    "ledger updates do not mutate provider tool schemas");
   assert.match(step0, /Model-authored task ledger/);
   assert.equal(
     step0.includes("deliver the named item"),
@@ -462,13 +469,16 @@ try {
     }],
     interpretations: [],
     unresolved_questions: [],
-    remaining_work: ["Restore R to slot A with mode quiet and verify the observed result."],
+    obligations: [{ id: 1, task: "Restore R to slot A with mode quiet and verify the observed result.", status: "deferred" as const, reason: "Await reconciliation before restoration." }],
   };
   const model = mockLedgerThenStop(obligation, [
     { toolName: "temporary_operation", input: {} },
     { toolName: TASK_LEDGER_TOOL_NAME, input: {
+      action: "write", record: { interpretations: [] },
+    } },
+    { toolName: TASK_LEDGER_TOOL_NAME, input: {
       action: "write",
-      record: { ...obligation, remaining_work: ["x".repeat(1500), "y".repeat(1500), "z".repeat(1500)] },
+      record: { ...obligation, obligations: ["x", "y", "z"].map((x, i) => ({ id: i + 2, task: x.repeat(1500), status: "pending" })) },
     } },
     { toolName: TASK_LEDGER_TOOL_NAME, input: { action: "read" } },
   ]);
@@ -501,11 +511,13 @@ try {
     assert.match(echo, /Model-authored task ledger/);
     assert.ok(echo.includes(obligation.scope));
     assert.ok(echo.includes(obligation.observed_facts[0]!.text));
-    assert.ok(echo.includes(obligation.remaining_work[0]!));
+    assert.ok(echo.includes(obligation.obligations[0]!.task));
+    assert.ok(echo.includes("deferred"));
+    assert.ok(echo.includes(obligation.obligations[0]!.reason));
   }
   await agent.generate("FOLLOW_UP", { wrapTools: wrap });
   assert.deepEqual(agent.taskLedger, obligation, "ending a turn does not discharge remaining work");
-  assert.ok(JSON.stringify(model.doStreamCalls.at(-1)?.prompt.at(-1)).includes(obligation.remaining_work[0]!));
+  assert.ok(JSON.stringify(model.doStreamCalls.at(-1)?.prompt.at(-1)).includes(obligation.obligations[0]!.task));
   const independent = new PlasmAgent({
     agentRoot: obligationRoot, model, engine, hostTransport: null,
     archiveEnabled: false, telemetry: false, includeTaskLedger: true,
@@ -514,9 +526,73 @@ try {
   independent.runtime.hasOpenWorkflow = () => true;
   await independent.generate("RESUME", { wrapTools: wrap });
   assert.equal(executions, 1, "loading a checkpoint must never replay effects");
-  assert.ok(JSON.stringify(model.doStreamCalls.at(-1)?.prompt.at(-1)).includes(obligation.remaining_work[0]!));
+  assert.ok(JSON.stringify(model.doStreamCalls.at(-1)?.prompt.at(-1)).includes(obligation.obligations[0]!.task));
   const checkpoint = path.join(obligationRoot, "task-ledger.json");
   assert.equal((await stat(checkpoint)).mode & 0o777, 0o600);
+  const updateStore = new TaskLedgerStore(checkpoint);
+  const updateTool = createTaskLedgerTool(updateStore)[TASK_LEDGER_TOOL_NAME]!;
+  const writeUpdate = async (record: unknown) => {
+    const input = taskLedgerInputSchema.parse({ action: "write", record });
+    return updateTool.execute!(input, { toolCallId: "abstract-update", messages: [], context: {} });
+  };
+  const acknowledgement = await writeUpdate({ completed_effects: [{ effect: "Published revision", satisfaction: "interpretation" }] });
+  assert.equal(acknowledgement, "Host stored your write. Omitted fields retained.");
+  assert.deepEqual(updateStore.record.obligations, obligation.obligations);
+  assert.deepEqual(updateStore.record.observed_facts, obligation.observed_facts);
+  assert.deepEqual(new TaskLedgerStore(checkpoint).record, updateStore.record, "merged updates survive restart");
+  const snapshot = renderTaskLedgerState(updateStore.record);
+  assert.deepEqual(JSON.parse(snapshot.split("```json\n")[1]!.split("\n```")[0]!), updateStore.record,
+    "compact snapshot preserves every field and evidence reference without truncation");
+  const acceptedBytes = await readFile(checkpoint, "utf8");
+  for (const invalid of [{ obligations: null }, { invented: [] }, { observed_facts: [{ kind: "fact", text: "X", evidence_ref: "bad" }] }]) {
+    assert.equal(taskLedgerInputSchema.safeParse({ action: "write", record: invalid }).success, false);
+    assert.equal(await readFile(checkpoint, "utf8"), acceptedBytes);
+  }
+  assert.match(String(await writeUpdate({ interpretations: [
+    { kind: "interpretation", text: "x".repeat(1900) },
+    { kind: "interpretation", text: "y".repeat(1900) },
+  ] })), /aggregate budget/);
+  assert.equal(await readFile(checkpoint, "utf8"), acceptedBytes, "merged budget rejection preserves checkpoint");
+  await writeUpdate({});
+  assert.equal(await readFile(checkpoint, "utf8"), acceptedBytes, "empty update preserves state");
+  await writeUpdate({ obligations: [], scope: "" });
+  assert.deepEqual(updateStore.record.obligations, obligation.obligations);
+  assert.equal(updateStore.record.scope, "");
+  assert.deepEqual(updateStore.record.observed_facts, obligation.observed_facts);
+  // Each update concerns one commitment; omission is never resolution.
+  for (const task of ["Restore a routing definition", "Verify a calibration", "Release a temporary reservation"]) {
+    updateStore.replace(emptyTaskLedger());
+    await writeUpdate({ obligations: [
+      { id: 1, task, status: "pending" },
+      { id: 2, task: "Inspect another resource", status: "pending" },
+    ] });
+    await writeUpdate({ obligations: [{ id: 1, task, status: "deferred", reason: "Await the observed prerequisite" }] });
+    await writeUpdate({ obligations: [{ id: 2, task: "Inspect another resource", status: "resolved", evidence_ref: "plasm_run" }] });
+    assert.equal(updateStore.record.obligations[0]?.status, "deferred");
+    assert.equal(updateStore.record.obligations[1]?.status, "resolved");
+    assert.deepEqual(new TaskLedgerStore(checkpoint).record, updateStore.record);
+    assert.match(renderTaskLedgerState(updateStore.record), /"status":"deferred"/);
+    const before = await readFile(checkpoint, "utf8");
+    assert.match(String(await writeUpdate({ obligations: [{ id: 1, task: "Different work", status: "pending" }] })), /different work/);
+    assert.equal(await readFile(checkpoint, "utf8"), before);
+    for (const entry of [
+      { id: 1, task, status: "deferred" },
+      { id: 1, task, status: "resolved" },
+      { id: 1, task, status: "resolved", evidence_ref: "invented reference" },
+      { id: 1, task, status: "cancelled" },
+    ]) assert.equal(taskLedgerInputSchema.safeParse({ action: "write", record: { obligations: [entry] } }).success, false);
+    assert.equal(taskLedgerInputSchema.safeParse({ action: "write", record: { obligations: [
+      { id: 1, task, status: "pending" }, { id: 1, task, status: "resolved", evidence_ref: "plasm_run" },
+    ] } }).success, false);
+    await writeUpdate({ obligations: [{ id: 1, task, status: "resolved", evidence_ref: "plasm_run" }] });
+    assert.equal(updateStore.record.obligations[0]?.status, "resolved");
+    assert.deepEqual(updateStore.record.completed_effects, [], "resolving an obligation does not fabricate an effect");
+    await writeUpdate({ obligations: [{ id: 1, task, status: "pending" }] });
+    assert.equal(updateStore.record.obligations[0]?.status, "pending", "a mistaken resolution can be explicitly reopened");
+    await writeUpdate({ obligations: [{ id: 1, task, status: "cancelled", reason: "The user withdrew this outcome" }] });
+    assert.equal(updateStore.record.obligations[0]?.status, "cancelled", "withdrawal is not completion");
+  }
+  updateStore.replace(obligation); // restore fixture for existing persistence-failure matrix
   const saved = await readFile(checkpoint, "utf8");
   const restarted = spawnSync(process.execPath, ["--import", "tsx", "--input-type=module", "--eval",
     `import { TaskLedgerStore } from ${JSON.stringify(new URL("../src/tools/task-ledger.ts", import.meta.url).href)};
@@ -524,7 +600,7 @@ try {
   assert.equal(restarted.status, 0, restarted.stderr);
   assert.deepEqual(JSON.parse(restarted.stdout), obligation, "separate process recovers accepted state");
   const validStore = new TaskLedgerStore(checkpoint);
-  assert.throws(() => validStore.replace({ ...obligation, remaining_work: ["x".repeat(5000)] }), /Task ledger write failed/);
+  assert.throws(() => validStore.replace({ ...obligation, obligations: [{ id: 1, task: "x".repeat(5000), status: "pending" }] }), /Task ledger write failed/);
   assert.equal(await readFile(checkpoint, "utf8"), saved, "invalid replacement preserves the last good file byte-for-byte");
   // A failed atomic rename must not replace the accepted in-memory record.
   const durable = new TaskLedgerStore(checkpoint);
@@ -537,6 +613,10 @@ try {
   assert.deepEqual(new TaskLedgerStore(checkpoint).record, obligation);
   durable.clear();
   assert.deepEqual(new TaskLedgerStore(checkpoint).record, emptyTaskLedger(), "reset is durable");
+  const oldCheckpoint = JSON.stringify({ ...JSON.parse(saved), version: 1 });
+  await writeFile(checkpoint, oldCheckpoint);
+  assert.throws(() => new TaskLedgerStore(checkpoint), /Task ledger load failed/, "old formats must not silently erase obligations");
+  assert.equal(await readFile(checkpoint, "utf8"), oldCheckpoint, "rejected checkpoints remain intact");
   await writeFile(checkpoint, "{broken");
   assert.throws(() => new TaskLedgerStore(checkpoint), /Task ledger load failed/, "corruption must not silently erase obligations");
 } finally {

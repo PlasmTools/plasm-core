@@ -1964,3 +1964,23 @@ The assertion runs before field decoding, identity validation and cache publicat
 A mismatch is a response-contract failure; it never relabels the record, retries the
 operation or treats the response as absence. Exact Get request-key correspondence
 continues to apply after the assertion.
+## Informal resource ontology
+
+Use existing entities, value domains, capability descriptions and declared outputs
+to distinguish a source of resource details from a resource registered at a
+particular destination. These are contextual roles, not new CGS kinds: a record
+usable by one service may still require registration by another.
+
+- Give source identities and destination handles separate semantic slots. Share
+  a value domain for transferred data only when its meaning actually agrees.
+- Describe a registration capability's input, destination effect and returned
+  handle. Registration is not evidence of current readiness or permission.
+- Describe the fields that establish these distinctions. Generic primitive types
+  alone do not explain an output's domain meaning to discovery.
+- Model readiness through declared observations. Missing evidence, an explicit
+  null, and an observed negative value remain distinct; none implies authority.
+- Keep workflow obligations out of catalogue resource state. Deferral is open
+  work, resolution is an explicit claim, and cancellation is not completion.
+
+Abstract reference: `fixtures/schemas/resource_registration`; no new annotation,
+workflow recipe or global resource taxonomy is required.

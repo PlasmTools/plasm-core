@@ -65,6 +65,19 @@ const completedEffectSchema = z.object({
   note: OPTIONAL_TEXT.optional(),
 });
 
+const workIdentity = { id: z.number().int().positive(), task: TEXT };
+export const taskObligationSchema = z.discriminatedUnion("status", [
+  z.object({ ...workIdentity, status: z.literal("pending") }).strict(),
+  z.object({ ...workIdentity, status: z.literal("deferred"), reason: TEXT }).strict(),
+  z.object({ ...workIdentity, status: z.literal("resolved"), evidence_ref: evidenceRefSchema }).strict(),
+  z.object({ ...workIdentity, status: z.literal("cancelled"), reason: TEXT }).strict(),
+]);
+const obligationsSchema = z.array(taskObligationSchema).max(32).superRefine((items, context) => {
+  if (new Set(items.map((item) => item.id)).size !== items.length) {
+    context.addIssue({ code: "custom", message: "obligation IDs must be unique" });
+  }
+});
+
 export const taskLedgerRecordSchema = z.object({
   requested_outcomes: z.array(TEXT).max(32),
   scope: OPTIONAL_TEXT,
@@ -73,15 +86,16 @@ export const taskLedgerRecordSchema = z.object({
   interpretations: z.array(interpretationClaimSchema).max(64),
   unresolved_questions: z.array(TEXT).max(32),
   completed_effects: z.array(completedEffectSchema).max(64),
-  remaining_work: z.array(TEXT).max(32),
-});
+  obligations: obligationsSchema,
+}).strict();
 
 export type TaskLedgerRecord = z.infer<typeof taskLedgerRecordSchema>;
+export const taskLedgerUpdateSchema = taskLedgerRecordSchema.partial();
 
 export const taskLedgerInputSchema = z.object({
   action: z.enum(["read", "write"]),
-  record: taskLedgerRecordSchema.optional(),
-});
+  record: taskLedgerUpdateSchema.optional(),
+}).strict();
 
 export function emptyTaskLedger(): TaskLedgerRecord {
   return {
@@ -92,7 +106,7 @@ export function emptyTaskLedger(): TaskLedgerRecord {
     interpretations: [],
     unresolved_questions: [],
     completed_effects: [],
-    remaining_work: [],
+    obligations: [],
   };
 }
 
@@ -139,7 +153,7 @@ export class TaskLedgerStore {
       throw new TaskLedgerPersistenceError("load", error);
     }
     try {
-      const envelope = z.object({ version: z.literal(1), record: taskLedgerRecordSchema }).strict().parse(JSON.parse(text));
+      const envelope = z.object({ version: z.literal(2), record: taskLedgerRecordSchema }).strict().parse(JSON.parse(text));
       const parsed = parseTaskLedgerRecord(envelope.record);
       if (!parsed.ok) throw new Error(parsed.error);
       this.current = parsed.record;
@@ -159,7 +173,7 @@ export class TaskLedgerStore {
         mkdirSync(path.dirname(this.file), { recursive: true });
         const fd = openSync(temporary, "wx", 0o600);
         try {
-          writeFileSync(fd, JSON.stringify({ version: 1, record: parsed.record }));
+          writeFileSync(fd, JSON.stringify({ version: 2, record: parsed.record }));
           fsyncSync(fd);
         } finally { closeSync(fd); }
         renameSync(temporary, this.file);
@@ -187,26 +201,26 @@ export function renderTaskLedgerState(record: TaskLedgerRecord): string {
   return [
     TASK_LEDGER_STATE_HEADER,
     "",
-    "Host echo of your last accepted `task_ledger` write. This is model-authored state, not host law and not a completion contract. No fields were added. The host does not treat citations as proof.",
+    "Model-authored state, not host law. The host does not treat citations as proof.",
     "",
     "```json",
-    JSON.stringify(record, null, 2),
+    JSON.stringify(record),
     "```",
   ].join("\n");
 }
 
 function formatLedgerToolResult(action: "read" | "write", record: TaskLedgerRecord): string {
-  const verb =
-    action === "write" ? "Host stored your write. No fields were added." : "Host echo. No fields were added.";
-  return `${verb}\n\n\`\`\`json\n${JSON.stringify(record, null, 2)}\n\`\`\``;
+  return action === "write"
+    ? "Host stored your write. Omitted fields retained."
+    : renderTaskLedgerState(record);
 }
 
 export const TASK_LEDGER_TOOL_DESCRIPTION =
   "Host-stored compact record for this instruction: requested outcomes and scope, " +
   "conditions that authorize alternatives, observed facts, interpretations, " +
-  "completed effects with evidence refs, unresolved questions, and remaining work. " +
-  "`write` replaces the whole record; `read` echoes it. " +
-  `The host rejects writes over ${TASK_LEDGER_MAX_BYTES} bytes (JSON). ` +
+  "completed effects with evidence refs, unresolved questions, and obligations. " +
+  "`write` updates supplied fields. Obligations upsert by stable ID; omitted IDs remain unchanged, including when [] is supplied. Deferred work remains open; resolved is a model claim with an evidence reference, not host verification. Cancellation requires a reason. Other arrays replace that field; [] clears them. `read` returns the current record. " +
+  `The merged record must fit ${TASK_LEDGER_MAX_BYTES} bytes (JSON). Invalid updates change nothing. ` +
   "The host stores what you send. It does not invent outcomes or remaining work, " +
   "and it does not decide that an alternative is authorized or that the instruction is satisfied. " +
   "`observed_facts` require `evidence_ref`. " + EVIDENCE_REF_DESCRIPTION + " " +
@@ -227,7 +241,24 @@ export function createTaskLedgerTool(store: TaskLedgerStore): ToolSet {
         if (input.record === undefined) {
           return "**task_ledger** write rejected: record is required for write. Host store unchanged.";
         }
-        const parsed = parseTaskLedgerRecord(input.record);
+        const update = taskLedgerUpdateSchema.safeParse(input.record);
+        if (!update.success) {
+          return `**task_ledger** write rejected: ${update.error.message}\nHost store unchanged.`;
+        }
+        // JSON cannot carry undefined. Do not let a direct host caller erase an
+        // omitted field using undefined either; null still fails the schema.
+        const supplied = Object.fromEntries(Object.entries(update.data).filter(([, value]) => value !== undefined));
+        const current = store.record;
+        const obligations = new Map(current.obligations.map((item) => [item.id, item]));
+        for (const item of update.data.obligations ?? []) {
+          const previous = obligations.get(item.id);
+          if (previous && previous.task !== item.task) {
+            return `**task_ledger** write rejected: obligation ${item.id} identifies different work; use a new ID. Host store unchanged.`;
+          }
+          obligations.set(item.id, item);
+        }
+        const parsed = parseTaskLedgerRecord({ ...current, ...supplied,
+          obligations: [...obligations.values()].sort((a, b) => a.id - b.id) });
         if (!parsed.ok) {
           return `**task_ledger** write rejected: ${parsed.error}\nHost store unchanged.`;
         }

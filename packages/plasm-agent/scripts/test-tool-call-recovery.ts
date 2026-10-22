@@ -13,7 +13,7 @@ import { createTaskLedgerTool, TaskLedgerStore, emptyTaskLedger } from "../src/t
 // Evidence grammar must be provider-visible and recoverable without echoing rejected bytes.
 {
   const store = new TaskLedgerStore();
-  const record = { ...emptyTaskLedger(), remaining_work: ["Restore resource R and verify its original mode."],
+  const record = { ...emptyTaskLedger(), obligations: [{ id: 1, task: "Restore resource R and verify its original mode.", status: "pending" as const }],
     observed_facts: [{ kind: "fact" as const, text: "R originally had mode quiet.", evidence_ref: "pr" + "a".repeat(63) }] };
   let requests = 0;
   let writes = 0;
@@ -28,7 +28,7 @@ import { createTaskLedgerTool, TaskLedgerStore, emptyTaskLedger } from "../src/t
       assert.ok(!prompt.includes(record.observed_facts[0]!.evidence_ref));
       assert.deepEqual(store.record, emptyTaskLedger(), "rejected record executes nothing");
     }
-    if (index === 2) assert.deepEqual(store.record.remaining_work, record.remaining_work);
+    if (index === 2) assert.deepEqual(store.record.obligations, record.obligations);
     const input = index === 0 ? { action: "write", record } : index === 1
       ? { action: "write", record: { ...record, observed_facts: [{ ...record.observed_facts[0], evidence_ref: "pg1" }] } } : {};
     return { stream: new ReadableStream({ start(controller) {
