@@ -32,7 +32,6 @@ export async function checkSessionExtension(observe: (intent: string) => Promise
       const matches=[{capability_id:"matrix:read",choice:insufficient?"unrelated":"relevant"}];
       const packet = routingPacketSchema.parse({
         routing: {
-          environment_support: {choice: insufficient ? "not_established" : "undetermined", request_hash: "abstract"},
           intent_provenance: provenance, intent, pin_id: pin,
           authorization: { catalogs: ["matrix"], capabilities: {} },
           retrieval: {
@@ -67,7 +66,7 @@ export async function checkSessionExtension(observe: (intent: string) => Promise
     const partialRuntime = new AgentRuntime({ agentRoot: root, engine, archive: null, hostTransport: null });
     const partiallyOpened = await partialRuntime.plasmContext({ intent: "Read selected records then publish them",  });
     assert.ok(partiallyOpened.includes("e1\tRecord"));
-    assert.match(partiallyOpened, /Support for the current intent remains undetermined/);
+    assert.doesNotMatch(partiallyOpened, /support classifier|support.*undetermined|establish a plan/i);
     const partialRef = partiallyOpened.match(/l_[A-Za-z0-9_-]{22}/)?.[0];
     assert.ok(partialRef);
     const beforePartial = await partialRuntime.sessionManager.getByLogicalRef(partialRef);
@@ -76,7 +75,7 @@ export async function checkSessionExtension(observe: (intent: string) => Promise
     insufficient = true;
     const unresolved = await partialRuntime.plasmContext({ intent: "Find a related record",  sessionMode: "extend", logicalSessionRef: partialRef });
     assert.ok(unresolved.includes("No relevant capability"));
-    assert.match(unresolved, /This does not mean the task is impossible/);
+    assert.doesNotMatch(unresolved, /establish a plan|support classifier/i);
     const afterEmpty = await partialRuntime.sessionManager.getByLogicalRef(partialRef);
     assert.equal(afterEmpty?.teachingPrompt, beforePartial.teachingPrompt);
     assert.deepEqual(afterEmpty?.waves, beforePartial.waves, "empty deltas do not invent teaching waves");
@@ -110,7 +109,7 @@ export async function checkSessionExtension(observe: (intent: string) => Promise
     insufficient = true;
     const missingIntent = "  Resolve only the selected records.  ";
     const missing = await runtime.plasmContext({ intent: missingIntent,  });
-    assert.match(missing, /This does not mean the task is impossible/);
+    assert.match(missing, /No relevant capability in this bounded packet/);
     const missingRef = missing.match(/l_[A-Za-z0-9_-]{22}/)?.[0];
     assert.ok(missingRef, "insufficient new discovery retains its session reference");
     insufficient = false;

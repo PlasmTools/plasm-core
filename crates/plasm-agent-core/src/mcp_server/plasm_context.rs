@@ -434,10 +434,6 @@ impl PlasmMcpHandler {
             text.push_str("\n\n");
             text.push_str(&recovery.render_unmatched_markdown());
         }
-        if let Some(support) = &route.environment_support {
-            text.push_str("\n\n");
-            text.push_str(support.guidance());
-        }
         text = format!("{}\n\n{text}", route.intent_analysis);
         for wave in &out.waves {
             if wave.teaching_prompt_chars_added > 0 {

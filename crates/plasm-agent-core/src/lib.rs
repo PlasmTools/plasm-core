@@ -30,7 +30,6 @@ pub mod discovery_recovery;
 mod discovery_scheduling;
 pub mod discovery_service;
 pub mod discovery_store;
-pub mod discovery_support;
 pub mod dispatch;
 pub mod domain_revision;
 pub mod dotenv_safe;

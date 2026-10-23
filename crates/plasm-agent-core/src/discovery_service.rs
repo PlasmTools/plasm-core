@@ -37,8 +37,6 @@ pub enum DiscoveryServiceError {
     #[error(transparent)]
     Matcher(#[from] matcher::DiscoveryMatcherError),
     #[error(transparent)]
-    Support(#[from] crate::discovery_support::DiscoverySupportError),
-    #[error(transparent)]
     DecisionTransport(#[from] crate::decision_transport::DecisionTransportError),
     #[error(transparent)]
     DecisionRecord(#[from] crate::decision_transport::DecisionRecordError),
@@ -53,8 +51,6 @@ pub enum DiscoveryServiceError {
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct RoutingReceipt {
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub environment_support: Option<crate::discovery_support::EnvironmentSupport>,
     pub intent_provenance: crate::intent_provenance::IntentProvenance,
     pub authorization: DiscoveryAuthorization,
     #[serde(default)]
@@ -164,7 +160,7 @@ impl DiscoveryService {
         Ok(receipt)
     }
 
-    /// Deterministic retrieval bounds the candidate universe; Luna independently
+    /// Deterministic retrieval bounds the candidate universe; contribution judgment independently
     /// judges relevance over typed candidates. Selection never certifies task completion.
     pub async fn route(
         &self,
@@ -207,13 +203,7 @@ impl DiscoveryService {
                 {
                     return Ok(raw);
                 }
-                let raw = self
-                    .model_response(
-                        matcher::RELEVANCE_ENDPOINT,
-                        issued.body(),
-                        "jev-shared-contribution-v5",
-                    )
-                    .await?;
+                let raw = self.contribution_response(issued.body()).await?;
                 matcher::decode_batch(&issued, &raw)?;
                 self.store
                     .store_selector_envelope(issued.cache_key(), &raw)
@@ -235,44 +225,6 @@ impl DiscoveryService {
             None
         };
         validate_closure_authorization(closure.as_ref(), allowed)?;
-        let mut available: std::collections::BTreeSet<_> = exposed.iter().cloned().collect();
-        if let Some(closure) = &closure {
-            available.extend(
-                closure
-                    .business
-                    .iter()
-                    .chain(&closure.prerequisites)
-                    .chain(&closure.input_sources)
-                    .cloned(),
-            );
-        }
-        let issued = crate::discovery_support::issue(
-            crate::discovery_support::SUPPORT_MODEL,
-            provenance,
-            &available,
-            &catalogs,
-        )?;
-        let raw = if let Some(raw) = self
-            .store
-            .cached_selector_envelope(&issued.cache_key)
-            .await?
-        {
-            raw
-        } else {
-            let raw = self
-                .model_response(
-                    "https://openrouter.ai/api/alpha/decisions",
-                    &issued.body,
-                    "jev-environment-support-v1",
-                )
-                .await?;
-            crate::discovery_support::decode(&issued, &raw)?;
-            self.store
-                .store_selector_envelope(&issued.cache_key, &raw)
-                .await?;
-            raw
-        };
-        let environment_support = crate::discovery_support::decode(&issued, &raw)?;
         let recovery = if business.is_empty() {
             Some(DiscoveryRecovery::from_unmatched(
                 &matching,
@@ -284,7 +236,6 @@ impl DiscoveryService {
             None
         };
         Ok(RoutingReceipt {
-            environment_support: Some(environment_support),
             intent_provenance: provenance.clone(),
             authorization: allowed.clone(),
             intent_analysis:
@@ -299,23 +250,21 @@ impl DiscoveryService {
         })
     }
 
-    async fn model_response(
+    async fn contribution_response(
         &self,
-        endpoint: &str,
         body: &str,
-        contract: &str,
     ) -> std::result::Result<String, crate::decision_transport::DecisionTransportError> {
         let _permit = scheduling::provider_permit().await;
         crate::decision_transport::request_decision(
             &self.client,
-            endpoint,
+            matcher::RELEVANCE_ENDPOINT,
             &self.api_key,
             body,
             crate::decision_transport::DecisionRetryPolicy::default(),
             |attempt| {
                 if let Some(directory) = &self.rejection_dir {
                     let mut record = serde_json::to_value(attempt)?;
-                    record["contract"] = contract.into();
+                    record["contract"] = "jev-shared-contribution-v5".into();
                     record["request_body"] = body.into();
                     save_rejection(directory, &record)?;
                 }
@@ -369,6 +318,45 @@ fn validate_closure_authorization(
 mod tests {
     use super::*;
     use std::collections::BTreeSet;
+
+    #[test]
+    fn contribution_receipt_preserves_contracts_and_rejects_support_authority() {
+        let packet: serde_json::Value = serde_json::from_str(include_str!(
+            "../../../fixtures/discovery/partial-routing.json"
+        ))
+        .unwrap();
+        let original = packet["routing"].clone();
+        let receipt: RoutingReceipt = serde_json::from_value(original.clone()).unwrap();
+        let wire = serde_json::to_value(&receipt).unwrap();
+        assert_eq!(wire["retrieval"], original["retrieval"]);
+        assert_eq!(wire["closure"], original["closure"]);
+        assert_eq!(wire["authorization"], original["authorization"]);
+        assert!(wire.get("environment_support").is_none());
+        for injected in [
+            serde_json::Value::Null,
+            serde_json::json!({"choice": "established", "request_hash": "abstract"}),
+        ] {
+            let mut invalid = wire.clone();
+            invalid["environment_support"] = injected;
+            assert!(serde_json::from_value::<RoutingReceipt>(invalid).is_err());
+        }
+        for lane in ["business", "input_sources", "prerequisites"] {
+            let mut closure: PrerequisiteClosure =
+                serde_json::from_value(wire["closure"].clone()).unwrap();
+            let denied = CapabilityRef {
+                catalog: "denied".into(),
+                capability: "write".into(),
+            };
+            match lane {
+                "business" => closure.business.push(denied),
+                "input_sources" => closure.input_sources.push(denied),
+                _ => closure.prerequisites.push(denied),
+            }
+            assert!(
+                validate_closure_authorization(Some(&closure), &receipt.authorization).is_err()
+            );
+        }
+    }
 
     #[test]
     fn unauthorized_declared_prerequisite_blocks_exposure() {

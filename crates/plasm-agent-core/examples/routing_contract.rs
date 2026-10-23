@@ -1,31 +1,15 @@
 //! Provider-free wire contract: serialize the same receipt type used by NAPI.
 use plasm_agent_core::discovery_matcher::MatchChoice;
 use plasm_agent_core::discovery_service::RoutingReceipt;
-use plasm_agent_core::discovery_support::{EnvironmentSupport, SupportChoice};
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut packet: serde_json::Value = serde_json::from_str(include_str!(
         "../../../fixtures/discovery/partial-routing.json"
     ))?;
-    let mut receipt: RoutingReceipt = serde_json::from_value(packet["routing"].take())?;
+    let receipt: RoutingReceipt = serde_json::from_value(packet["routing"].take())?;
     let mut cases = Vec::new();
-    for choice in [
-        SupportChoice::Established,
-        SupportChoice::NotEstablished,
-        SupportChoice::Undetermined,
-    ] {
-        let support = EnvironmentSupport {
-            choice,
-            request_hash: "abstract-request".into(),
-        };
-        let guidance = support.guidance();
-        receipt.environment_support = Some(support);
-        packet["routing"] = serde_json::to_value(&receipt)?;
-        cases.push(serde_json::json!({"packet": packet, "guidance": guidance}));
-    }
-    receipt.environment_support = None;
     packet["routing"] = serde_json::to_value(&receipt)?;
-    cases.push(serde_json::json!({"packet": packet, "guidance": null}));
+    cases.push(serde_json::json!({"packet": packet}));
     // Exercise the producer's actual selection policy before serializing for TS.
     for mixed in [false, true] {
         let mut retained: RoutingReceipt = serde_json::from_value(serde_json::to_value(&receipt)?)?;
@@ -43,7 +27,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         retained.closure.as_mut().unwrap().business =
             retained.matching.selected(&retained.retrieval);
         packet["routing"] = serde_json::to_value(retained)?;
-        cases.push(serde_json::json!({"packet": packet, "guidance": null}));
+        cases.push(serde_json::json!({"packet": packet}));
     }
     println!("{}", serde_json::to_string(&cases)?);
     Ok(())

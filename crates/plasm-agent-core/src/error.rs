@@ -174,7 +174,6 @@ mod footprint_tests {
         assert!(std::mem::size_of::<crate::catalog_data::CatalogLoadError>() < 128);
         assert!(std::mem::size_of::<crate::catalog_runtime::CatalogRuntimeError>() < 128);
         assert!(std::mem::size_of::<crate::discovery_store::DiscoveryStoreError>() < 128);
-        assert!(std::mem::size_of::<crate::discovery_support::DiscoverySupportError>() < 128);
         assert!(std::mem::size_of::<crate::discovery_service::DiscoveryServiceError>() < 128);
         assert!(std::mem::size_of::<crate::execute_pipeline::DispatchError>() < 128);
     }

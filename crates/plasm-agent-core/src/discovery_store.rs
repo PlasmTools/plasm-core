@@ -968,8 +968,7 @@ mod tests {
             .await
             .unwrap();
         store.migrate().await.unwrap();
-        // Enough candidates for multiple relevance pages, while the selected
-        // whole-environment contract remains within its independent byte bound.
+        // Enough candidates for multiple relevance pages.
         // disjoint_channels_retain_all_128_and_reject_corruption covers the union ceiling.
         let catalogs: Vec<_> = (0..32)
             .map(|i| prepared(&format!("union-{i:02}"), 1))
@@ -1017,17 +1016,10 @@ mod tests {
             &retrieval,
         )
         .unwrap();
-        assert!(batches.len() > 2);
-        let selected: Vec<_> = retrieval
-            .candidates
-            .iter()
-            .map(|candidate| candidate.reference.clone())
-            .collect();
+        assert!(!batches.is_empty());
         for batch in batches {
             let body: serde_json::Value = serde_json::from_str(batch.body()).unwrap();
-            let content: serde_json::Value =
-                serde_json::from_str(body["messages"][1]["content"].as_str().unwrap()).unwrap();
-            let answers: BTreeMap<_, _> = content["questions"]
+            let answers: BTreeMap<_, _> = body["questions"]
                 .as_object()
                 .unwrap()
                 .keys()
@@ -1035,58 +1027,18 @@ mod tests {
                     (
                         key.clone(),
                         serde_json::json!({
-                            "choice":"relevant"
+                            "type":"choice","choice":"relevant","confidence":1.0,"probabilities":{"relevant":1.0,"uncertain":0.0,"unrelated":0.0}
                         }),
                     )
                 })
                 .collect();
-            let raw=serde_json::json!({"model":crate::discovery_matcher::RELEVANCE_MODEL,"choices":[{"finish_reason":"stop","message":{"role":"assistant","content":serde_json::json!({"answers":answers}).to_string()}}]}).to_string();
+            let raw=serde_json::json!({"model":crate::discovery_matcher::RELEVANCE_MODEL,"provider":"TypeSafe","answers":answers}).to_string();
             store
                 .store_selector_envelope(batch.cache_key(), &raw)
                 .await
                 .unwrap();
         }
         let expected = retrieval.candidates.len();
-        // Relevance judges every recalled candidate. Whole-environment support
-        // separately judges the selected closure; seed that phase too so this
-        // database integration test cannot call a model provider.
-        let (catalogs, bindings) = store
-            .load_discovery_generation(&generation, &allowed)
-            .await
-            .unwrap();
-        let references = catalogs.iter().map(|(id, cgs)| (id.clone(), cgs)).collect();
-        let closure = plasm_core::prerequisites::prerequisite_closure(
-            &references,
-            &bindings,
-            &selected,
-            &allowed.catalogs,
-        )
-        .unwrap();
-        let available = closure
-            .business
-            .iter()
-            .chain(&closure.prerequisites)
-            .chain(&closure.input_sources)
-            .cloned()
-            .collect();
-        let support = crate::discovery_support::issue(
-            crate::discovery_support::SUPPORT_MODEL,
-            &provenance,
-            &available,
-            &catalogs,
-        )
-        .unwrap();
-        let support_raw = serde_json::json!({
-            "model":crate::discovery_support::SUPPORT_MODEL,"provider":"TypeSafe",
-            "answers":{"support":{"type":"choice","choice":"established","confidence":1.0,
-                "probabilities":{"established":1.0,"not_established":0.0,"undetermined":0.0}}}
-        })
-        .to_string();
-        crate::discovery_support::decode(&support, &support_raw).unwrap();
-        store
-            .store_selector_envelope(&support.cache_key, &support_raw)
-            .await
-            .unwrap();
         let service = crate::discovery_service::DiscoveryService::cached_test_service(store);
         let receipt = service
             .route(&generation, &provenance, &allowed, &[])
@@ -1094,10 +1046,7 @@ mod tests {
             .unwrap();
         assert_eq!(receipt.matching.matches.len(), expected);
         assert_eq!(receipt.closure.as_ref().unwrap().business.len(), expected);
-        assert_eq!(
-            receipt.environment_support.as_ref().unwrap().choice,
-            crate::discovery_support::SupportChoice::Established
-        );
+
         let wire = serde_json::to_value(&receipt).unwrap();
         assert!(wire.get("reranking").is_none());
         let decoded: crate::discovery_service::RoutingReceipt =

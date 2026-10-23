@@ -68,11 +68,7 @@
       "acquisitions": [],
       "edges": []
     },
-    "recovery": null,
-    "environment_support": {
-      "choice": "undetermined",
-      "request_hash": "abstract-request"
-    }
+    "recovery": null
   },
   "teaching": {
     "prompt": "e1 Record",

@@ -10,7 +10,7 @@ use plasm_core::{
         EmbeddingProfile, DISCOVERY_RENDERER_VERSION,
     },
     catalog_il::{CatalogManifest, CatalogSetManifest},
-    prerequisites::{CapabilityRef, DeploymentBindings},
+    prerequisites::DeploymentBindings,
     CGS,
 };
 use serde_json::{json, Value};
@@ -90,12 +90,7 @@ pub fn pack(path: &Path, mut cgs: CGS) -> CGS {
     cgs
 }
 
-pub async fn seed_model_boundary(
-    store: &DiscoveryStore,
-    generation: &str,
-    cgs: &CGS,
-    turns: &[&str],
-) {
+pub async fn seed_model_boundary(store: &DiscoveryStore, generation: &str, turns: &[&str]) {
     let url = std::env::var("PLASM_DISCOVERY_DATABASE_URL").expect("isolated test database");
     let pool = sqlx::PgPool::connect(&url).await.unwrap();
     let intent = *turns.last().unwrap();
@@ -114,45 +109,18 @@ pub async fn seed_model_boundary(
         plasm_agent_core::discovery_matcher::issue_batches(model, &provenance, &retrieval).unwrap()
     {
         let body: Value = serde_json::from_str(batch.body()).unwrap();
-        let content: Value =
-            serde_json::from_str(body["messages"][1]["content"].as_str().unwrap()).unwrap();
-        let answers: BTreeMap<_, _> = content["questions"]
+        let answers: BTreeMap<_, _> = body["questions"]
             .as_object()
             .unwrap()
             .keys()
-            .map(|key| (key.clone(), json!({"choice":"relevant"})))
+            .map(|key| (key.clone(), json!({"type":"choice","choice":"relevant","confidence":1.0,"probabilities":{"relevant":1.0,"uncertain":0.0,"unrelated":0.0}})))
             .collect();
         store
             .store_selector_envelope(
                 batch.cache_key(),
-                &json!({"model":model,"choices":[{"finish_reason":"stop","message":{"role":"assistant","content":json!({"answers":answers}).to_string()}}]}).to_string(),
+                &json!({"model":model,"provider":"TypeSafe","answers":answers}).to_string(),
             )
             .await
             .unwrap();
     }
-    let available: BTreeSet<_> = cgs
-        .capabilities
-        .keys()
-        .map(|cap| CapabilityRef {
-            catalog: "matrix".into(),
-            capability: cap.to_string(),
-        })
-        .collect();
-    let model = plasm_agent_core::discovery_support::SUPPORT_MODEL;
-    let support = plasm_agent_core::discovery_support::issue(
-        model,
-        &provenance,
-        &available,
-        &BTreeMap::from([("matrix".into(), cgs.clone())]),
-    )
-    .unwrap();
-    let body: Value = serde_json::from_str(&support.body).unwrap();
-    let answers: BTreeMap<_,_> = body["questions"].as_object().unwrap().keys().map(|key| (key.clone(),json!({"type":"choice","choice":"established","confidence":1.0,"probabilities":{"established":1.0,"not_established":0.0,"undetermined":0.0}}))).collect();
-    store
-        .store_selector_envelope(
-            &support.cache_key,
-            &json!({"model":model,"provider":"TypeSafe","answers":answers}).to_string(),
-        )
-        .await
-        .unwrap();
 }

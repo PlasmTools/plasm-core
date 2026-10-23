@@ -1,6 +1,6 @@
 import { DrainingLifecycle } from "./lifecycle.js";
 import { AgentExecutionFailure, executionFailureSchema, type ExecutionFailure } from "./execution-failure.js";
-import { routingExplanationLines, routingRecoveryMarkdown, routingSupportMarkdown } from "../engine/routing.js";
+import { routingExplanationLines, routingRecoveryMarkdown } from "../engine/routing.js";
 import path from "node:path";
 import { createHash, randomUUID } from "node:crypto";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
@@ -296,7 +296,6 @@ export class AgentRuntime {
       await this.sessionManager.update(session);
       this.workflowSession = session;
       const recoveryMarkdown = routingRecoveryMarkdown(routing);
-      const supportMarkdown = routingSupportMarkdown(routing);
       if (!routing.closure) {
         await this.recordToolTrace("tool", "plasm_context", started, {
           intent, session_mode: mode, routing: JSON.stringify(routing),
@@ -304,7 +303,6 @@ export class AgentRuntime {
         });
         return [
           routing.intent_analysis,
-          supportMarkdown,
           recoveryMarkdown ?? "**plasm_context:** no relevant capabilities selected",
           `**logical_session_ref:** \`${session.logicalSessionRef}\``,
           ...(recoveryMarkdown ? [] : routingExplanationLines(routing.matching)),
@@ -340,7 +338,7 @@ export class AgentRuntime {
         session.logicalSessionRef, teaching.prompt,
         !existing ? "initial" : teaching.declarations_changed ? "extended" : "unchanged",
       );
-      return [routing.intent_analysis, supportMarkdown, teachingMarkdown, recoveryMarkdown].filter(Boolean).join("\n\n");
+      return [routing.intent_analysis, teachingMarkdown, recoveryMarkdown].filter(Boolean).join("\n\n");
     });
   }
 

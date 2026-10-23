@@ -250,11 +250,10 @@ async fn intent_discovery_python_inline_read_and_extension_over_mcp() {
         Arc::new(plasm_agent_core::live_plan_run_worker::LivePlanRunPool::new());
     let generation = host.catalog.activate_discovery().await.unwrap();
     let store = host.catalog.discovery_store().await.unwrap();
-    discovery::seed_model_boundary(store, &generation, &cgs, &["Observe items"]).await;
+    discovery::seed_model_boundary(store, &generation, &["Observe items"]).await;
     discovery::seed_model_boundary(
         store,
         &generation,
-        &cgs,
         &["Observe items", "Inspect available item operations"],
     )
     .await;

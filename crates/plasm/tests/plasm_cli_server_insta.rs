@@ -15,7 +15,6 @@ use std::{
 
 fn routing(intent: String) -> RoutingReceipt {
     RoutingReceipt {
-        environment_support: None,
         intent_provenance: IntentProvenance::from_turns([intent.clone()]).unwrap(),
         authorization: DiscoveryAuthorization::catalogs(["matrix".into()].into()),
         intent_analysis: String::new(),
