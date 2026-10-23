@@ -1,4 +1,4 @@
-version: 25
+version: 26
 entry_id: amazon
 auth:
   scheme: none
@@ -847,7 +847,7 @@ capabilities:
           required: true
     provides: [product_id, rating, num_product_reviews]
   product_last_purchase_get:
-    description: Read the most recent purchase of a product or its size and color variations.
+    description: Read the most recent purchase of a product or its size and color variations. If none was purchased, the service rejects the read with HTTP 422; it does not return an empty rowset or null. This read can therefore stop a program when no matching purchase exists.
     kind: get
     entity: LastPurchase
     arguments:

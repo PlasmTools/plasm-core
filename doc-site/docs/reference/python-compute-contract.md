@@ -869,6 +869,7 @@ parser or type checker:
 | `python_compute/returns.rs` | Translate catalog-owned annotation references into upstream declarations |
 | `python_compute.rs`, `multiple.rs` | Validate normalized materialization ports and checker-produced value contracts |
 | `python_program_diagnostic.rs` | Ruff parser recovery for an explicitly unexecuted, untyped prefix sketch; bounded source excerpt and Unicode-aware line/column caret on syntax rejection |
+| `callback_flow.rs` / `PythonProgramError::CallbackBranchKindMismatch` | Mixed row/action branches remain rejected. The diagnostic directs an action/no-action branch to `None`, preserving its condition, or filtering before dispatch. `python_mixed_branch_diagnostic_repair_preserves_action_guard` checks both branch orders and both guard outcomes against abstract transport calls. No admission or execution-policy change. |
 | `program_diagnostic.rs` / TS `tool-call-recovery.ts` | Native parse failures retain `program_syntax` through the host. JSON/schema and syntax repair have at most two subsequent generations within the existing turn budget; type/planning/service failures retain their own recovery semantics. Original calls remain in audit history; failed call/result pairs are omitted from normal assistant replay. Argument repair receives structured validator facts and the registered schema, not rejected values or raw SDK error messages. No source rewriting or prefix execution. |
 | AST templates in expression/callback lowering | Construct dependency substitutions; upstream checking still admits resulting Python |
 

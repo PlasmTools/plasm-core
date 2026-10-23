@@ -693,7 +693,7 @@ pub enum PythonProgramError {
     ValueExpressionWriteAuthority,
     #[error("membership requires an explicit one-column rowset")]
     MembershipNeedsOneColumn,
-    #[error("callback branches cannot mix rows and acknowledgements")]
+    #[error("callback branches mix rows with an action acknowledgement (EffectAck).\nhelp: For an action/no-action guard, return None instead of [] on the no-action branch, or filter rows before the action. Keep the action inside the guard.")]
     CallbackBranchKindMismatch,
     #[error("callback branches must return the same record fields")]
     CallbackBranchFieldMismatch,

@@ -125,6 +125,30 @@ fn python_card_retains_read_visibility_and_variant_presence_contracts() {
 }
 
 #[test]
+fn python_card_retains_read_absence_contract_without_changing_result_type() {
+    let mut cgs = fixture();
+    let contract = "Read the latest record. If none exists, the service rejects the read with HTTP 422; it does not return an empty rowset or null. This read can stop a program.";
+    cgs.capabilities.get_mut("item_get").unwrap().description = contract.into();
+    let mut exposure = TeachingExposureSession::new(&cgs, "fixture", &["Item"]);
+    let initial = prepare_python_teaching_wave(&exposure, &PythonTeachingState::default()).unwrap();
+    assert!(initial.declarations.contains(contract));
+    assert!(initial.declarations.contains("-> Singleton[e1]"));
+    exposure.expose_entities(
+        &[&cgs],
+        std::sync::Arc::new(cgs.clone()),
+        "fixture",
+        &["Tag"],
+    );
+    let extension = prepare_python_teaching_wave(&exposure, &initial.next_state).unwrap();
+    assert!(!extension.declarations.contains(contract));
+    assert!(extension
+        .next_state
+        .declarations
+        .values()
+        .any(|body| body.contains(contract)));
+}
+
+#[test]
 fn python_card_initial_extension_and_retry() {
     let cgs = fixture();
     let mut exposure = TeachingExposureSession::new(&cgs, "fixture", &["Item"]);
