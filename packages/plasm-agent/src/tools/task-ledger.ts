@@ -67,6 +67,7 @@ const completedEffectSchema = z.object({
 });
 
 const workIdentity = { id: z.number().int().positive(), task: TEXT,
+  original_task: TEXT.optional(),
   verification: obligationVerificationSchema.optional() };
 export const taskObligationSchema = z.discriminatedUnion("status", [
   z.object({ ...workIdentity, status: z.literal("pending") }).strict(),
@@ -92,7 +93,20 @@ export const taskLedgerRecordSchema = z.object({
 }).strict();
 
 export type TaskLedgerRecord = z.infer<typeof taskLedgerRecordSchema>;
-export const taskLedgerUpdateSchema = taskLedgerRecordSchema.partial();
+// Original wording is retained provenance, never a model-writable field.
+const obligationUpdateSchema = z.discriminatedUnion("status", [
+  taskObligationSchema.options[0].omit({ original_task: true }),
+  taskObligationSchema.options[1].omit({ original_task: true }),
+  taskObligationSchema.options[2].omit({ original_task: true }),
+  taskObligationSchema.options[3].omit({ original_task: true }),
+]);
+export const taskLedgerUpdateSchema = taskLedgerRecordSchema.partial().extend({
+  obligations: z.array(obligationUpdateSchema).max(32).superRefine((items, context) => {
+    if (new Set(items.map(item => item.id)).size !== items.length) {
+      context.addIssue({ code: "custom", message: "obligation IDs must be unique" });
+    }
+  }).optional(),
+});
 
 export const taskLedgerInputSchema = z.object({
   action: z.enum(["read", "write"]),
@@ -284,7 +298,10 @@ export function createTaskLedgerTool(store: TaskLedgerStore, evidence?: Obligati
             if (checked.current) evidenceWitnesses.push(checked.current);
           }
           const { verification: _suppliedVerification, ...work } = item;
-          obligations.set(item.id, verification ? { ...work, verification } : work);
+          const original = previous?.original_task ??
+            (previous && previous.task !== item.task ? previous.task : undefined);
+          const retained = original === undefined ? work : { ...work, original_task: original };
+          obligations.set(item.id, verification ? { ...retained, verification } : retained);
         }
         const parsed = parseTaskLedgerRecord({ ...current, ...supplied,
           obligations: [...obligations.values()].sort((a, b) => a.id - b.id) });

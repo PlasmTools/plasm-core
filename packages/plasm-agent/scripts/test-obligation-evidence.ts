@@ -75,7 +75,12 @@ try {
     assert.match(String(await write({ obligations: [{ id: 1, task: "Intermediate isolation", status: "pending",
       verification: { ...verification, binding: "isolate" } }] })), /cannot change/);
     await write({ obligations: [{ id: 1, task: `${task}; refined wording`, status: "deferred", reason: "Await observation" }] });
+    assert.equal(store.record.obligations[0]?.original_task, task);
     assert.deepEqual(store.record.obligations[0]?.verification, verification);
+    await write({ obligations: [{ id: 1, task: `${task} only if the primary operation fails`, status: "pending" }] });
+    assert.equal(store.record.obligations[0]?.original_task, task, "conditional wording cannot overwrite original work");
+    assert.match(String(await write({ obligations: [{ id: 1, task, status: "resolved", evidence_ref: runId }] })), /did not return boolean true/);
+    assert.equal(store.record.obligations[0]?.status, "pending", "refinement does not weaken resolution evidence");
     const fresh = { ...verification, plan_commit_ref: "pc2" };
     await archive.writePlanArchive({ ...plan, plan_commit_ref: "pc2" });
     assert.equal(sameObligationPredicate(verification, fresh, plan, { ...plan, plan_commit_ref: "pc2", program: "changed predicate" }), false);

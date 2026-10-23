@@ -164,6 +164,14 @@ impl Lower<'_> {
         let flatten = mode == ScopeMode::Rows;
         let contract = super::super::binding_contract(&self.state, &source)
             .ok_or(PythonLoweringInvariantError::MapSourceContractMissing)?;
+        if contract.result_shape == ResultShape::SideEffectAck {
+            return Err(at(
+                e,
+                PythonSourceError::AcknowledgementRowReceiver {
+                    binding: source.clone(),
+                },
+            ));
+        }
         let owner = super::super::schema_validate::resolve_qualified_entity_for_dag_source(
             &self.state,
             &[],

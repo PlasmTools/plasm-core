@@ -574,12 +574,14 @@ try {
         : { id: 1, task: `${task}; verify the original configuration.`, status, reason: "Await the observed prerequisite" };
       assert.equal(await writeUpdate({ obligations: [refined], unresolved_questions: ["Which observation confirms restoration?"] }),
         "Host stored your write. Omitted fields retained.");
-      assert.deepEqual(updateStore.record.obligations, [refined, { id: 2, task: "Inspect another resource", status: "pending" }],
+      assert.deepEqual(updateStore.record.obligations, [{ ...refined, original_task: task }, { id: 2, task: "Inspect another resource", status: "pending" }],
         "wording refinement updates the same ID without dropping other pending work");
       assert.deepEqual(updateStore.record.unresolved_questions, ["Which observation confirms restoration?"],
         "refinement does not reject accompanying fields");
       assert.deepEqual(new TaskLedgerStore(checkpoint).record, updateStore.record, "refinements survive restart");
       assert.ok(renderTaskLedgerState(updateStore.record).includes(refined.task), "fresh snapshot exposes refined wording");
+      assert.ok(renderTaskLedgerState(updateStore.record).includes(`\"original_task\":${JSON.stringify(task)}`),
+        "legitimate refinement retains the original commitment alongside current wording");
       const retained = updateStore.record;
       await writeUpdate({ obligations: [] });
       assert.deepEqual(updateStore.record, retained, "empty update cannot discharge refined work");
@@ -607,6 +609,24 @@ try {
     assert.deepEqual(updateStore.record.completed_effects, [], "resolving an obligation does not fabricate an effect");
     await writeUpdate({ obligations: [{ id: 1, task, status: "pending" }] });
     assert.equal(updateStore.record.obligations[0]?.status, "pending", "a mistaken resolution can be explicitly reopened");
+    const weakened = `${task} only if the main operation fails`;
+    await writeUpdate({ obligations: [{ id: 1, task: weakened, status: "pending" }] });
+    const snapshot = renderTaskLedgerState(new TaskLedgerStore(checkpoint).record);
+    assert.ok(snapshot.includes(`\"original_task\":${JSON.stringify(task)}`), "conditional rewrite cannot erase unconditional original work");
+    assert.ok(snapshot.includes(weakened), "host does not judge or block arbitrary wording refinements");
+    const resumed = new PlasmAgent({
+      agentRoot: obligationRoot, model, engine, hostTransport: null,
+      archiveEnabled: false, telemetry: false, includeTaskLedger: true,
+    });
+    resumed.runtime.hasOpenWorkflow = () => true;
+    await resumed.generate("CHECK_PENDING_WORK", { wrapTools: wrap });
+    const fresh = JSON.stringify(model.doStreamCalls.at(-1)?.prompt.at(-1));
+    assert.ok(fresh.includes("original_task") && fresh.includes(task) && fresh.includes(weakened),
+      "the fresh provider request exposes original and refined work after restart");
+    assert.equal(executions, 1, "refinement and restart do not replay effects");
+    assert.equal(taskLedgerInputSchema.safeParse({ action: "write", record: { obligations: [
+      { id: 1, task: weakened, original_task: "Forged original", status: "pending" },
+    ] } }).success, false, "original wording is host-owned provenance, not writable input");
     await writeUpdate({ obligations: [{ id: 1, task, status: "cancelled", reason: "The user withdrew this outcome" }] });
     assert.equal(updateStore.record.obligations[0]?.status, "cancelled", "withdrawal is not completion");
   }

@@ -15,6 +15,16 @@ The existing record separates preservation from intermediate work:
 - `obligations` holds stable-ID pending, deferred, resolved or cancelled work.
 - `completed_effects` holds model interpretations of completed work.
 
+On the first same-ID wording refinement, the store retains `original_task`
+alongside the current `task`. Later refinements cannot overwrite this original
+wording; the input schema rejects attempts to supply that host-owned field.
+It survives checkpoints and appears in the ordinary fresh state snapshot.
+There is one bounded original, not an accumulating history. Legitimate refinements
+and explicit cancellations remain available; the host does not classify prose
+as equivalent or weaker. This prevents silent loss of the original commitment,
+not a model choosing to ignore it. Verification predicates and resolution checks
+remain unchanged, including when a refinement adds a condition.
+
 When enabled, the store checkpoints accepted records to `agentRoot/task-ledger.json`
 (or explicit `taskLedgerPath`). AppWorld supplies its task workspace path. Use one
 writer and one workflow per checkpoint; this is not a shared multi-agent store.

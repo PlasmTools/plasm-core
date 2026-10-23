@@ -242,6 +242,8 @@ pub enum ReceiverIdentityOrigin {
 
 #[derive(Debug, Clone, thiserror::Error)]
 pub enum PythonSourceError {
+    #[error("`{binding}` is an action acknowledgement (EffectAck), not rows.\nhelp: Put subsequent actions and verification reads in source order in the same callback (or build), preserving the original guard. Do not chain row operations from this acknowledgement.")]
+    AcknowledgementRowReceiver { binding: String },
     #[error("recorded requires one literal run reference and no other arguments")]
     RecordedOutputReference,
     #[error("bind recorded output in build before capturing it in a callback")]
