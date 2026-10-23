@@ -9,12 +9,13 @@ use crate::typed_invoke::InvokeInputPayload;
 use crate::value::Value;
 
 use super::predicates::{render_predicate_wire, split_search_predicate};
-use super::values::{render_identity_slot, render_surface_value};
+use super::values::{render_identity_slot_named, render_surface_value_named};
 
 pub(crate) struct RenderCtx<'a> {
     pub cgs: &'a CGS,
     pub fed: Option<&'a FederationDispatch>,
     pub fallback_cgs: &'a CGS,
+    pub names: &'a std::collections::HashMap<String, String>,
 }
 
 impl<'a> RenderCtx<'a> {
@@ -58,7 +59,7 @@ impl<'a> RenderCtx<'a> {
             }
             Expr::Wait(w) => format!("wait({})", w.handle),
             Expr::Cancel(c) => format!("cancel({})", c.handle),
-            Expr::TeachingValue { value } => render_surface_value(value),
+            Expr::TeachingValue { value } => render_surface_value_named(value, self.names),
         }
     }
 
@@ -73,7 +74,7 @@ impl<'a> RenderCtx<'a> {
         if let Some(pred) = &q.predicate {
             return format!(
                 "{head}{{{}}}",
-                render_predicate_wire(pred, entity, entry_id, None, None)
+                render_predicate_wire(pred, entity, entry_id, None, None, self.names)
             );
         }
         head
@@ -108,14 +109,21 @@ impl<'a> RenderCtx<'a> {
         let mut text = String::new();
         let mut filters = Vec::new();
         if let Some(pred) = &q.predicate {
-            split_search_predicate(pred, q_field, &mut text, &mut filters);
+            split_search_predicate(pred, q_field, &mut text, &mut filters, self.names);
         }
         let mut out = format!("{head}~{text}");
         if !filters.is_empty() {
             let inner = filters
                 .iter()
                 .map(|p| {
-                    render_predicate_wire(p, q.entity.as_str(), entry_id, Some(cap_name), None)
+                    render_predicate_wire(
+                        p,
+                        q.entity.as_str(),
+                        entry_id,
+                        Some(cap_name),
+                        None,
+                        self.names,
+                    )
                 })
                 .collect::<Vec<_>>()
                 .join(",");
@@ -135,7 +143,7 @@ impl<'a> RenderCtx<'a> {
                     // Pathless singleton Get — teach/display as the seat, never `Entity()`.
                     head.to_string()
                 } else {
-                    format!("{head}({})", render_identity_slot(slot))
+                    format!("{head}({})", render_identity_slot_named(slot, self.names))
                 }
             }
             EntityKey::Compound(parts) => {
@@ -145,15 +153,15 @@ impl<'a> RenderCtx<'a> {
                     ent.key_vars
                         .iter()
                         .filter_map(|k| {
-                            parts
-                                .get(k.as_str())
-                                .map(|v| format!("{k}={}", render_identity_slot(v)))
+                            parts.get(k.as_str()).map(|v| {
+                                format!("{k}={}", render_identity_slot_named(v, self.names))
+                            })
                         })
                         .collect()
                 } else {
                     parts
                         .iter()
-                        .map(|(k, v)| format!("{k}={}", render_identity_slot(v)))
+                        .map(|(k, v)| format!("{k}={}", render_identity_slot_named(v, self.names)))
                         .collect()
                 };
                 format!("{head}({})", kv.join(", "))
@@ -262,7 +270,7 @@ impl<'a> RenderCtx<'a> {
                 let parts: Vec<String> = map
                     .iter()
                     .filter(|(k, _)| !path_vars.contains(k))
-                    .map(|(k, v)| format!("{k}={}", render_surface_value(v)))
+                    .map(|(k, v)| format!("{k}={}", render_surface_value_named(v, self.names)))
                     .collect();
                 if parts.is_empty() {
                     "()".to_string()
@@ -270,7 +278,7 @@ impl<'a> RenderCtx<'a> {
                     format!("({})", parts.join(", "))
                 }
             }
-            other => format!("({})", render_surface_value(&other)),
+            other => format!("({})", render_surface_value_named(&other, self.names)),
         }
     }
 }
@@ -281,10 +289,21 @@ pub(crate) fn render_expr_wire(
     fed: Option<&FederationDispatch>,
     fallback: &CGS,
 ) -> String {
+    render_expr_wire_named(expr, cgs, fed, fallback, &std::collections::HashMap::new())
+}
+
+pub(crate) fn render_expr_wire_named(
+    expr: &Expr,
+    cgs: &CGS,
+    fed: Option<&FederationDispatch>,
+    fallback: &CGS,
+    names: &std::collections::HashMap<String, String>,
+) -> String {
     let ctx = RenderCtx {
         cgs,
         fed,
         fallback_cgs: fallback,
+        names,
     };
     ctx.render_expr(expr)
 }

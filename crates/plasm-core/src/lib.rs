@@ -350,8 +350,8 @@ pub mod relation_materialize;
 pub mod view_embed_proof;
 pub use capability_input::validate_capability_invocation_input;
 pub use expr_surface_render::{
-    render_expr_surface, render_expr_surface_federated, wire_surface_from_teaching_line,
-    wire_surface_from_teaching_session_line,
+    render_expr_surface, render_expr_surface_federated, render_expr_surface_named,
+    wire_surface_from_teaching_line, wire_surface_from_teaching_session_line,
 };
 pub use money::{
     json_amount_to_value, CrossCurrencyError, MoneyDecodeSpec, MoneyError, MoneyValue,

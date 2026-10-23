@@ -31,12 +31,13 @@ async fn map_body_plan_displays_its_typed_write_per_source_row() {
     let text = super::super::super::render_plasm_plan_dry_text_for_session(&dry, None, Some(&es));
     assert!(text.contains("for each row in rows:"), "{text}");
     assert_eq!(
-        text.matches("action Counter.advance(id=$) — Advances the counter by one.")
+        text.matches("action Counter.advance(id=capture_1.id) — Advances the counter by one.")
             .count(),
         2,
         "{text}"
     );
     assert!(!text.contains("effects: value"), "{text}");
+    assert!(text.contains("capture_1: capture matrix.Wire"), "{text}");
 }
 
 #[tokio::test]

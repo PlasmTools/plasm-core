@@ -273,11 +273,16 @@ fn map_body_effects(plan: &ValidatedPlan, es: Option<&ExecuteSession>) -> Vec<Pl
         // conditional child action into an unconditional list of writes.
         if matches!(
             node,
-            ValidatedPlanNode::MapBody(_) | ValidatedPlanNode::Compute(_)
+            ValidatedPlanNode::MapBody(_)
+                | ValidatedPlanNode::Compute(_)
+                | ValidatedPlanNode::Derive(_)
+                | ValidatedPlanNode::Data(_)
+                | ValidatedPlanNode::Capture(_)
         ) {
             let op = compact_op_from_node(node, es, &labels);
             let expression = match op {
                 PlanDryOp::Python { .. } => "compute value".to_owned(),
+                PlanDryOp::Derive { summary, .. } | PlanDryOp::Data { summary } => summary,
                 _ => render_plan_dry_op(&op),
             };
             effects.push(PlanDryEffect {
@@ -296,7 +301,7 @@ fn map_body_effects(plan: &ValidatedPlan, es: Option<&ExecuteSession>) -> Vec<Pl
                 binding: map_display_id(node.id().as_str(), &labels),
                 uses: step_upstream_labels(node, &labels),
                 kind: surface.kind,
-                expression: surface_compact_expr(surface, es),
+                expression: surface_compact_expr(surface, es, &labels),
                 description: if matches!(
                     surface.effect_class,
                     EffectClass::Write | EffectClass::SideEffect
@@ -324,7 +329,8 @@ fn map_body_effects(plan: &ValidatedPlan, es: Option<&ExecuteSession>) -> Vec<Pl
                         "{} per child row",
                         crate::plan_dry_compact::compact_agent_surface_expr(&effect_template_body(
                             &fanout.effect_template,
-                            es
+                            es,
+                            &labels
                         ))
                     ),
                     description: effect_description(
@@ -510,58 +516,14 @@ pub fn render_plan_dry_compact_text(
         let _ = writeln!(out, "warn: {warn}");
     }
     let _ = writeln!(out);
-    let hidden = view
-        .steps
-        .iter()
-        .filter(|step| {
-            step.synthetic
-                && step.id != view.return_label
-                && matches!(step.op, PlanDryOp::Data { .. } | PlanDryOp::Derive { .. })
-        })
-        .map(|step| step.id.as_str())
-        .collect::<std::collections::HashSet<_>>();
-    let by_id = view
-        .steps
-        .iter()
-        .map(|step| (step.id.as_str(), step))
-        .collect::<HashMap<_, _>>();
-    fn visible_dependency(
-        id: &str,
-        hidden: &std::collections::HashSet<&str>,
-        by_id: &HashMap<&str, &PlanDryStep>,
-        seen: &mut std::collections::HashSet<String>,
-        result: &mut Vec<String>,
-    ) {
-        let mut pending = vec![id];
-        while let Some(id) = pending.pop() {
-            if !seen.insert(id.to_owned()) {
-                continue;
-            }
-            if hidden.contains(id) {
-                if let Some(step) = by_id.get(id) {
-                    pending.extend(step.uses.iter().rev().map(String::as_str));
-                }
-            } else {
-                result.push(id.to_owned());
-            }
-        }
-    }
-    let shown = view
-        .steps
-        .iter()
-        .filter(|step| !hidden.contains(step.id.as_str()));
-    for step in shown {
+    for step in &view.steps {
         let op = match &step.op {
-            PlanDryOp::Derive { .. } => "compute value".to_owned(),
-            PlanDryOp::Data { .. } => "value".to_owned(),
+            PlanDryOp::Derive { summary, .. } => summary.clone(),
+            PlanDryOp::Data { summary } => summary.clone(),
             PlanDryOp::Python { .. } => "compute value".to_owned(),
             other => render_plan_dry_op(other),
         };
-        let mut uses = Vec::new();
-        let mut seen = std::collections::HashSet::new();
-        for dependency in &step.uses {
-            visible_dependency(dependency, &hidden, &by_id, &mut seen, &mut uses);
-        }
+        let uses = &step.uses;
         if uses.is_empty() {
             let _ = writeln!(out, "{}: {op}", step.id);
         } else {
@@ -788,12 +750,12 @@ fn compact_op_from_node(
             source: map_display_id(map.body.parent.source.as_str(), display_map),
             effects: map_body_effects(&map.plan, es),
         },
-        ValidatedPlanNode::Capture(_) => PlanDryOp::Data {
-            summary: crate::plasm_plan_run::render_node_operation(node),
+        ValidatedPlanNode::Capture(n) => PlanDryOp::Data {
+            summary: format!("{}.{}", n.entity.entry_id, n.entity.entity),
         },
         ValidatedPlanNode::Surface(s) => PlanDryOp::Surface {
             kind: s.kind,
-            expr: surface_compact_expr(s, es),
+            expr: surface_compact_expr(s, es, display_map),
             selections: surface_selection_effects(s, es),
             description: if matches!(s.effect_class, EffectClass::Write | EffectClass::SideEffect) {
                 effect_description(crate::plan_flow_capability::surface_capability_key(s), es)
@@ -807,7 +769,17 @@ fn compact_op_from_node(
         ValidatedPlanNode::Derive(n) => PlanDryOp::Derive {
             source: map_display_id(n.source.as_str(), display_map),
             binding: n.item_binding.as_str().to_string(),
-            summary: plan_value_summary(&n.value),
+            summary: match &n.value {
+                PlanValue::BindingSymbol { binding, path }
+                    if binding == n.item_binding.as_str() =>
+                {
+                    std::iter::once(map_display_id(n.source.as_str(), display_map))
+                        .chain(path.iter().cloned())
+                        .collect::<Vec<_>>()
+                        .join(".")
+                }
+                _ => plan_value_summary(&n.value),
+            },
         },
         ValidatedPlanNode::Compute(n) => compact_op_from_compute(&n.compute, display_map),
         ValidatedPlanNode::RelationTraversal(n) => PlanDryOp::Relation {
@@ -825,12 +797,12 @@ fn compact_op_from_node(
         ValidatedPlanNode::ForEach(n) => PlanDryOp::ForEach {
             source: map_display_id(n.source.as_str(), display_map),
             binding: n.item_binding.as_str().to_string(),
-            body: described_effect_template_body(&n.effect_template, es),
+            body: described_effect_template_body(&n.effect_template, es, display_map),
         },
         ValidatedPlanNode::IterateUntil(n) => PlanDryOp::IterateUntil {
             source: map_display_id(n.source.as_str(), display_map),
             binding: n.item_binding.as_str().to_string(),
-            body: described_effect_template_body(&n.effect_template, es),
+            body: described_effect_template_body(&n.effect_template, es, display_map),
             take: n.take,
         },
     }
@@ -900,7 +872,11 @@ fn compact_op_from_compute(
     }
 }
 
-fn surface_compact_expr(surface: &ValidatedSurfaceNode, es: Option<&ExecuteSession>) -> String {
+fn surface_compact_expr(
+    surface: &ValidatedSurfaceNode,
+    es: Option<&ExecuteSession>,
+    names: &HashMap<String, String>,
+) -> String {
     if es.is_none() {
         if let Some(ir) = &surface.ir {
             let mut summary = crate::expr_display::expr_display(&ir.expr);
@@ -913,12 +889,11 @@ fn surface_compact_expr(surface: &ValidatedSurfaceNode, es: Option<&ExecuteSessi
     let raw = surface
         .ir
         .as_ref()
-        .map(|ir| render_plan_expr_ir_for_session(ir, es))
+        .map(|ir| render_executable_expr_named(&ir.expr, ir.projection.as_deref(), es, names))
         .or_else(|| {
-            surface
-                .ir_template
-                .as_ref()
-                .map(|tmpl| render_plan_expr_template_for_session(tmpl, es))
+            surface.ir_template.as_ref().map(|tmpl| {
+                render_executable_expr_named(&tmpl.expr, tmpl.projection.as_deref(), es, names)
+            })
         })
         .unwrap_or_else(|| "<typed Plasm IR>".to_string());
     crate::plan_dry_compact::compact_agent_surface_expr(&raw)
@@ -992,9 +967,10 @@ fn render_plan_expr_ir_for_session(
 
 /// Canonical wire-surface renderer for typed [`Expr`] in an execute session (dry plan, artifacts).
 /// Compact IL summaries ([`crate::expr_display::expr_display_resolved`]) are a separate hint surface.
-pub(crate) fn render_expr_wire_for_execute_session(
+fn render_expr_wire_named(
     expr: &plasm_core::Expr,
     es: Option<&ExecuteSession>,
+    names: &HashMap<String, String>,
 ) -> String {
     match es {
         None => serde_json::to_string(expr).expect("typed expression serializes to JSON"),
@@ -1005,10 +981,15 @@ pub(crate) fn render_expr_wire_for_execute_session(
                         es.contexts_by_entry.clone(),
                         exposure,
                     );
-                    return plasm_core::render_expr_surface_federated(expr, &fed, es.cgs.as_ref());
+                    return plasm_core::render_expr_surface_named(
+                        expr,
+                        es.cgs.as_ref(),
+                        Some(&fed),
+                        names,
+                    );
                 }
             }
-            plasm_core::render_expr_surface(expr, es.cgs.as_ref())
+            plasm_core::render_expr_surface_named(expr, es.cgs.as_ref(), None, names)
         }
     }
 }
@@ -1019,7 +1000,16 @@ pub(crate) fn render_executable_expr(
     projection: Option<&[String]>,
     es: Option<&ExecuteSession>,
 ) -> String {
-    let mut rendered = render_expr_wire_for_execute_session(expr, es);
+    render_executable_expr_named(expr, projection, es, &HashMap::new())
+}
+
+fn render_executable_expr_named(
+    expr: &plasm_core::Expr,
+    projection: Option<&[String]>,
+    es: Option<&ExecuteSession>,
+    names: &HashMap<String, String>,
+) -> String {
+    let mut rendered = render_expr_wire_named(expr, es, names);
     if let Some(fields) = projection {
         rendered.push('[');
         rendered.push_str(&fields.join(","));
@@ -1040,13 +1030,23 @@ fn render_plan_expr_template(template: &ValidatedPlanExprTemplate) -> String {
     render_plan_expr_template_for_session(template, None)
 }
 
-fn effect_template_body(template: &ValidatedEffectTemplate, es: Option<&ExecuteSession>) -> String {
-    render_plan_expr_template_for_session(&template.ir_template, es)
+fn effect_template_body(
+    template: &ValidatedEffectTemplate,
+    es: Option<&ExecuteSession>,
+    names: &HashMap<String, String>,
+) -> String {
+    render_executable_expr_named(
+        &template.ir_template.expr,
+        template.ir_template.projection.as_deref(),
+        es,
+        names,
+    )
 }
 
 fn described_effect_template_body(
     template: &ValidatedEffectTemplate,
     es: Option<&ExecuteSession>,
+    names: &HashMap<String, String>,
 ) -> String {
     let target = &template.qualified_entity;
     let key = crate::plan_flow::QualifiedCapabilityKey::from_parts(
@@ -1058,7 +1058,7 @@ fn described_effect_template_body(
         ),
     );
     with_effect_description(
-        effect_template_body(template, es),
+        effect_template_body(template, es, names),
         &effect_description(Some(key), es),
     )
 }
@@ -1521,6 +1521,86 @@ mod tests {
         assert!(rendered.contains("query ranks candidates; may retain nonmatches"));
         assert!(rendered.contains("status filters rows"));
         assert!(!rendered.contains("query filters rows"));
+    }
+
+    #[test]
+    fn review_composition_keeps_symbolic_arguments_in_top_and_nested_templates() {
+        let dir = std::path::Path::new(crate::test_manifest_dir())
+            .join("../../fixtures/schemas/plasm_language_matrix");
+        let mut schema = plasm_core::load_schema_dir(&dir).unwrap();
+        schema.bind_registry_entry_id("matrix");
+        let cgs = Arc::new(schema);
+        let contexts = indexmap::IndexMap::from([(
+            "matrix".into(),
+            Arc::new(CgsContext::entry("matrix", cgs.clone())),
+        )]);
+        let es = ExecuteSession::new(
+            "ph".into(),
+            "p".into(),
+            cgs.clone(),
+            contexts,
+            "matrix".into(),
+            String::new(),
+            String::new(),
+            None,
+            vec!["LangItem".into()],
+            Some(TeachingExposureSession::new(&cgs, "matrix", &["LangItem"])),
+            None,
+            cgs.catalog_cgs_hash_hex(),
+            None,
+        );
+        let names = HashMap::from([("__py1".into(), "read_2".into())]);
+        for reference in [
+            plasm_core::PlasmInputRef::node_output("__py1", vec!["title".into()]),
+            plasm_core::PlasmInputRef::node_output("acquired", vec!["title".into()]),
+            plasm_core::PlasmInputRef::node_output("verified", vec!["title".into()]),
+            plasm_core::PlasmInputRef::row_binding("_", vec!["title".into()]),
+        ] {
+            let mut expr = plasm_core::expr_parser::parse("LangItem.create(title=seed)", &cgs)
+                .unwrap()
+                .expr;
+            let plasm_core::Expr::Create(create) = &mut expr else {
+                panic!("create fixture")
+            };
+            create.input = plasm_core::Value::Object(indexmap::IndexMap::from([(
+                "title".into(),
+                plasm_core::Value::PlasmInputRef(reference.clone()),
+            )]))
+            .into();
+            let expected = match reference {
+                plasm_core::PlasmInputRef::NodeInput { node, .. } => {
+                    format!("title={}.title", names.get(&node).unwrap_or(&node))
+                }
+                plasm_core::PlasmInputRef::RowBinding { .. } => "title=_.title".into(),
+            };
+            let template = ValidatedPlanExprTemplate {
+                expr,
+                projection: None,
+                input_bindings: vec![],
+            };
+            let top = render_executable_expr_named(&template.expr, None, Some(&es), &names);
+            let nested = render_map_body(
+                "verified_rows",
+                &[PlanDryEffect {
+                    binding: "created".into(),
+                    uses: vec!["verification".into()],
+                    kind: PlanNodeKind::Create,
+                    expression: render_executable_expr_named(
+                        &template.expr,
+                        None,
+                        Some(&es),
+                        &names,
+                    ),
+                    description: "Creates a new item; other items remain unchanged.".into(),
+                }],
+            );
+            assert!(top.contains(&expected), "{top}");
+            assert!(nested.contains(&expected), "{nested}");
+            assert!(nested.contains("verified_rows"));
+            assert!(nested.contains("← verification"));
+            assert!(nested.contains("other items remain unchanged"));
+            assert!(!top.contains("title=$"));
+        }
     }
 
     #[test]
