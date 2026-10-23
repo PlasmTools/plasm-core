@@ -68,9 +68,9 @@ fn prompt_matrix_entity_union_teaches_variants_and_lawful_narrowing() {
     assert!(!wave.declarations.contains("private_wire_marker"));
     let language = wave.language.unwrap();
     assert!(language.contains("rows.of_type(eN)"));
-    assert!(language.contains("target must be a declared"));
-    assert!(language.contains("retains their recorded identity"));
-    assert!(language.contains("computed dictionaries cannot be narrowed into entities"));
+    assert!(language.contains("select a declared variant before its fields/relations/actions"));
+    assert!(language.contains("preserves original identity"));
+    assert!(language.contains("never turns computed records into entities"));
 }
 
 fn fixture() -> CGS {
