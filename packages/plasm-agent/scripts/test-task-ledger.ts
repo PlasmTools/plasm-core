@@ -123,7 +123,8 @@ assert.equal(TASK_LEDGER_TOOL_NAME in ledgerTools, true);
 function patterns(value: unknown): string[] {
   if (value === null || typeof value !== "object") return [];
   return Object.entries(value).flatMap(([key, child]) =>
-    key === "pattern" && typeof child === "string" ? [child] : patterns(child));
+    key === "evidence_ref" && child !== null && typeof child === "object" && "pattern" in child && typeof child.pattern === "string"
+      ? [child.pattern] : patterns(child));
 }
 const advertisedPatterns = [...new Set(patterns(asSchema(ledgerTools.task_ledger!.inputSchema).jsonSchema))];
 assert.equal(advertisedPatterns.length, 1, "every evidence field shares one advertised grammar");
@@ -589,7 +590,7 @@ try {
     await writeUpdate({ obligations: [{ id: 1, task, status: "deferred", reason: "Await the observed prerequisite" }] });
     await writeUpdate({ obligations: [{ id: 2, task: "Inspect another resource", status: "resolved", evidence_ref: "plasm_run" }] });
     assert.equal(updateStore.record.obligations[0]?.status, "deferred");
-    assert.equal(updateStore.record.obligations[1]?.status, "resolved");
+    assert.equal(updateStore.record.obligations[1]?.status, "pending", "a tool name is not observed verification");
     assert.deepEqual(new TaskLedgerStore(checkpoint).record, updateStore.record);
     assert.match(renderTaskLedgerState(updateStore.record), /"status":"deferred"/);
     for (const entry of [
@@ -602,7 +603,7 @@ try {
       { id: 1, task, status: "pending" }, { id: 1, task, status: "resolved", evidence_ref: "plasm_run" },
     ] } }).success, false);
     await writeUpdate({ obligations: [{ id: 1, task, status: "resolved", evidence_ref: "plasm_run" }] });
-    assert.equal(updateStore.record.obligations[0]?.status, "resolved");
+    assert.equal(updateStore.record.obligations[0]?.status, "deferred", "unsupported resolution retains pending work");
     assert.deepEqual(updateStore.record.completed_effects, [], "resolving an obligation does not fabricate an effect");
     await writeUpdate({ obligations: [{ id: 1, task, status: "pending" }] });
     assert.equal(updateStore.record.obligations[0]?.status, "pending", "a mistaken resolution can be explicitly reopened");

@@ -5,6 +5,7 @@ import { randomUUID } from "node:crypto";
 import { z } from "zod";
 
 import { toolInput } from "./tool-input.js";
+import { obligationVerificationSchema, evidenceCheckMessage, type ObligationEvidence } from "./obligation-evidence.js";
 
 export const TASK_LEDGER_TOOL_NAME = "task_ledger";
 
@@ -65,7 +66,8 @@ const completedEffectSchema = z.object({
   note: OPTIONAL_TEXT.optional(),
 });
 
-const workIdentity = { id: z.number().int().positive(), task: TEXT };
+const workIdentity = { id: z.number().int().positive(), task: TEXT,
+  verification: obligationVerificationSchema.optional() };
 export const taskObligationSchema = z.discriminatedUnion("status", [
   z.object({ ...workIdentity, status: z.literal("pending") }).strict(),
   z.object({ ...workIdentity, status: z.literal("deferred"), reason: TEXT }).strict(),
@@ -123,6 +125,9 @@ export function parseTaskLedgerRecord(input: unknown): ParseTaskLedgerResult {
   if (!parsed.success) {
     return { ok: false, error: parsed.error.issues.map((issue) => issue.message).join("; ") };
   }
+  if (parsed.data.obligations.some(item => item.status === "resolved" && !item.verification)) {
+    return { ok: false, error: "resolved obligations require a retained verification binding" };
+  }
   const bytes = taskLedgerRecordBytes(parsed.data);
   if (bytes > TASK_LEDGER_MAX_BYTES) {
     return {
@@ -153,7 +158,7 @@ export class TaskLedgerStore {
       throw new TaskLedgerPersistenceError("load", error);
     }
     try {
-      const envelope = z.object({ version: z.literal(2), record: taskLedgerRecordSchema }).strict().parse(JSON.parse(text));
+      const envelope = z.object({ version: z.literal(3), record: taskLedgerRecordSchema }).strict().parse(JSON.parse(text));
       const parsed = parseTaskLedgerRecord(envelope.record);
       if (!parsed.ok) throw new Error(parsed.error);
       this.current = parsed.record;
@@ -173,7 +178,7 @@ export class TaskLedgerStore {
         mkdirSync(path.dirname(this.file), { recursive: true });
         const fd = openSync(temporary, "wx", 0o600);
         try {
-          writeFileSync(fd, JSON.stringify({ version: 2, record: parsed.record }));
+          writeFileSync(fd, JSON.stringify({ version: 3, record: parsed.record }));
           fsyncSync(fd);
         } finally { closeSync(fd); }
         renameSync(temporary, this.file);
@@ -219,7 +224,7 @@ export const TASK_LEDGER_TOOL_DESCRIPTION =
   "Host-stored compact record for this instruction: requested outcomes and scope, " +
   "conditions that authorize alternatives, observed facts, interpretations, " +
   "completed effects with evidence refs, unresolved questions, and obligations. " +
-  "`write` updates supplied fields. Obligations upsert by stable ID; omitted IDs remain unchanged, including when [] is supplied. Deferred work remains open; resolved is a model claim with an evidence reference, not host verification. Cancellation requires a reason. Other arrays replace that field; [] clears them. `read` returns the current record. " +
+  "`write` updates supplied fields. Obligations upsert by stable ID; omitted IDs remain unchanged, including when [] is supplied. Deferred work remains open. Resolution requires the previously bound verification computation to return true in the cited artifact. Cancellation requires a reason. Other arrays replace that field; [] clears them. `read` returns the current record. " +
   `The merged record must fit ${TASK_LEDGER_MAX_BYTES} bytes (JSON). Invalid updates change nothing. ` +
   "The host stores what you send. It does not invent outcomes or remaining work, " +
   "and it does not decide that an alternative is authorized or that the instruction is satisfied. " +
@@ -229,7 +234,7 @@ export const TASK_LEDGER_TOOL_DESCRIPTION =
   "A failed preferred action is not the user condition for an alternative. " +
   "Not a terminal.";
 
-export function createTaskLedgerTool(store: TaskLedgerStore): ToolSet {
+export function createTaskLedgerTool(store: TaskLedgerStore, evidence?: ObligationEvidence): ToolSet {
   return {
     [TASK_LEDGER_TOOL_NAME]: tool({
       description: TASK_LEDGER_TOOL_DESCRIPTION,
@@ -249,14 +254,40 @@ export function createTaskLedgerTool(store: TaskLedgerStore): ToolSet {
         // omitted field using undefined either; null still fails the schema.
         const supplied = Object.fromEntries(Object.entries(update.data).filter(([, value]) => value !== undefined));
         const current = store.record;
+        const evidenceWitnesses: Array<() => boolean> = [];
         const obligations = new Map(current.obligations.map((item) => [item.id, item]));
         for (const item of update.data.obligations ?? []) {
-          obligations.set(item.id, item);
+          const previous = obligations.get(item.id);
+          const verification = item.verification ?? previous?.verification;
+          const reject = (reason: string) => `**task_ledger** write rejected: obligation ${item.id}: ${reason}. Host store unchanged.`;
+          if (previous?.verification && item.verification && JSON.stringify(previous.verification) !== JSON.stringify(item.verification)) {
+            if (!await evidence?.samePredicate?.(previous.verification, item.verification)) {
+              return reject("verification predicate cannot change; fresh review must preserve its computation, binding and field");
+            }
+          }
+          if (item.verification && !previous?.verification) {
+            const checked = await evidence?.check(item.verification);
+            if (!checked?.ok) return reject(evidenceCheckMessage(checked?.code ?? "unavailable"));
+          }
+          if (item.status === "resolved") {
+            if (!previous?.verification) return reject("bind a reviewed verification computation while the obligation is open");
+            if (!/^pr[a-f0-9]{64}$/.test(item.evidence_ref)) return reject("resolution requires a run artifact reference");
+            const checked = await evidence?.check(verification!, item.evidence_ref);
+            if (!checked?.ok) return reject(evidenceCheckMessage(checked?.code ?? "unavailable"));
+            if (checked.current) evidenceWitnesses.push(checked.current);
+          }
+          obligations.set(item.id, verification ? { ...item, verification } : item);
         }
         const parsed = parseTaskLedgerRecord({ ...current, ...supplied,
           obligations: [...obligations.values()].sort((a, b) => a.id - b.id) });
         if (!parsed.ok) {
           return `**task_ledger** write rejected: ${parsed.error}\nHost store unchanged.`;
+        }
+        if (JSON.stringify(store.record) !== JSON.stringify(current)) {
+          return "**task_ledger** write rejected: ledger changed during evidence lookup; read and retry the update. Host store unchanged.";
+        }
+        if (evidenceWitnesses.some(current => !current())) {
+          return `**task_ledger** write rejected: ${evidenceCheckMessage("stale_observation")}. Host store unchanged.`;
         }
         return formatLedgerToolResult("write", store.replace(parsed.record));
       },

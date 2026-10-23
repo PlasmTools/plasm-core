@@ -6,6 +6,7 @@ import type { SubagentRegistry } from "../authoring/subagent-loader.js";
 import { COMPLETE_TASK_TOOL_NAME, SUBMIT_ANSWER_TOOL_NAME } from "./format.js";
 import { createTaskLedgerTool, type TaskLedgerStore } from "./task-ledger.js";
 import { toolInput } from "./tool-input.js";
+import type { ObligationEvidence } from "./obligation-evidence.js";
 
 const readSkillInputSchema = z.object({
   name: z.string().min(1).describe("Skill name from the index"),
@@ -132,6 +133,7 @@ export function createHarnessTools(options: {
    */
   includeTaskLedger?: boolean;
   taskLedgerStore?: TaskLedgerStore;
+  obligationEvidence?: ObligationEvidence;
 }): ToolSet {
   const tools: ToolSet = {};
   const skillByName = new Map((options.skills ?? []).map((s) => [s.name, s]));
@@ -184,7 +186,7 @@ export function createHarnessTools(options: {
     if (!options.taskLedgerStore) {
       throw new Error("includeTaskLedger requires taskLedgerStore");
     }
-    Object.assign(tools, createTaskLedgerTool(options.taskLedgerStore));
+    Object.assign(tools, createTaskLedgerTool(options.taskLedgerStore, options.obligationEvidence));
   }
 
   return tools;

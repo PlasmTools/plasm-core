@@ -254,6 +254,10 @@ export class PlasmAgent {
         : undefined,
       includeTaskLedger: this.includeTaskLedger,
       taskLedgerStore: this.includeTaskLedger ? this.taskLedgerStore : undefined,
+      obligationEvidence: {
+        check: (verification, runId) => this.runtime.checkObligation(verification, runId),
+        samePredicate: (previous, next) => this.runtime.sameObligationPredicate(previous, next),
+      },
     });
     let tools = {
       ...plasmTools,

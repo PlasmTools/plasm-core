@@ -38,6 +38,7 @@ export interface PlanArchiveSnapshot {
 }
 
 export interface RunSnapshot {
+  observation_revision?: string;
   native_snapshot?: unknown;
   run_id: string;
   plan_commit_ref: string;

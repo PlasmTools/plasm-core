@@ -62,6 +62,10 @@ export class LocalArchiveStore {
     return this.runs.getRun(runId, logicalSessionRef);
   }
 
+  async getPlan(planCommitRef: string, logicalSessionRef: string) {
+    return this.runs.getPlan(planCommitRef, logicalSessionRef);
+  }
+
   async listTraces(tenantId: string, limit?: number): Promise<TraceSummary[]> {
     return this.traces.listTraces(tenantId, limit);
   }

@@ -1393,6 +1393,49 @@ mod tests {
         )
     }
 
+    #[tokio::test]
+    async fn obligation_verifier_native_artifact_contract() {
+        let (mut engine, info) = tiny_engine();
+        engine
+            .expose_seeds(
+                "verify observed resources",
+                &[CapabilitySeed {
+                    entry_id: info.entry_id,
+                    entity: "Product".into(),
+                }],
+            )
+            .unwrap();
+        let dry = engine.dry_run("class Verify(Program):\n    @compute\n    def check(self, rows: list[Row]) -> bool:\n        return len(rows) == 1\n    def build(self):\n        observed = e1.query()\n        verified = self.check(observed)\n        return verified\n").await.unwrap();
+        assert!(dry.failure_json.is_none(), "{}", dry.summary);
+        let result = engine
+            .run_plan_live(&dry.plan_commit_ref, Arc::new(MockProductListTransport))
+            .await
+            .unwrap();
+        assert!(result.ok, "{}", result.message);
+        let repeated = engine
+            .run_plan_live(&dry.plan_commit_ref, Arc::new(MockProductListTransport))
+            .await
+            .unwrap();
+        assert!(!repeated.ok, "consumed authorization must not execute again");
+        let fresh = engine.dry_run("class Verify(Program):\n    @compute\n    def check(self, rows: list[Row]) -> bool:\n        return len(rows) == 1\n    def build(self):\n        observed = e1.query()\n        verified = self.check(observed)\n        return verified\n").await.unwrap();
+        assert_ne!(dry.plan_commit_ref, fresh.plan_commit_ref);
+        assert_eq!(dry.comp_json, fresh.comp_json);
+        let observed_again = engine
+            .run_plan_live(&fresh.plan_commit_ref, Arc::new(MockProductListTransport))
+            .await
+            .unwrap();
+        assert!(observed_again.ok, "{}", observed_again.message);
+        let fixture = serde_json::json!({
+            "comp": dry.comp_json,
+            "artifacts": serde_json::from_str::<serde_json::Value>(result.artifacts_json.as_ref().unwrap()).unwrap(),
+            "meta": serde_json::from_str::<serde_json::Value>(result.meta_json.as_ref().unwrap()).unwrap(),
+        });
+        if let Some(path) = std::env::var_os("PLASM_OBLIGATION_FIXTURE_OUT") {
+            std::fs::write(path, serde_json::to_vec_pretty(&fixture).unwrap()).unwrap();
+        }
+        engine.python_pool.close().await;
+    }
+
     fn return_projection_engine() -> (AgentEngine, CatalogInfo) {
         let dir =
             PathBuf::from(std::env::var("CARGO_MANIFEST_DIR").expect("test manifest directory"))

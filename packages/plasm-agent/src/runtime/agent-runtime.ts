@@ -35,6 +35,7 @@ import type { AgentWorkflowWorldDefinition } from "../define-agent.js";
 import { createAgentStateStore } from "../state/define-state.js";
 import { DiscoveryQueue } from "./discovery-queue.js";
 import { formatRecordedOutputs, runOutputArtifactSchema } from "../tools/recorded-outputs.js";
+import { checkObligationEvidence, sameObligationPredicate, type ObligationVerification, type EvidenceCheck } from "../tools/obligation-evidence.js";
 
 export type AgentArchiveStore = LocalArchiveStore | ProdArchiveStore;
 
@@ -138,6 +139,69 @@ function parseRowsJson(rowsJson?: string): unknown[] | undefined {
 }
 
 export class AgentRuntime {
+  private readonly observingRuns = new Map<string, Set<string>>();
+  private readonly observationWrites = new Map<string, Promise<void>>();
+
+  private async persistObservation(session: AgentSessionState): Promise<void> {
+    const prior = this.observationWrites.get(session.logicalSessionRef) ?? Promise.resolve();
+    const write = prior.then(() => this.sessionManager.update(session));
+    this.observationWrites.set(session.logicalSessionRef, write);
+    try { await write; }
+    finally {
+      if (this.observationWrites.get(session.logicalSessionRef) === write) this.observationWrites.delete(session.logicalSessionRef);
+    }
+  }
+
+  private async beginObservation(session: AgentSessionState): Promise<string> {
+    const ref = randomUUID();
+    const active = this.observingRuns.get(session.logicalSessionRef) ?? new Set<string>();
+    active.add(ref);
+    this.observingRuns.set(session.logicalSessionRef, active);
+    session.observationRevision = ref;
+    await this.persistObservation(session);
+    return ref;
+  }
+
+  private async endObservation(sessionRef: string, ref: string): Promise<string | undefined> {
+    const session = await this.requireSessionByRef(sessionRef);
+    const active = this.observingRuns.get(sessionRef);
+    const exclusive = active?.size === 1 && active.has(ref) && session.observationRevision === ref;
+    active?.delete(ref);
+    if (!active?.size) this.observingRuns.delete(sessionRef);
+    // Every attempted execution invalidates older evidence, including partial failures.
+    const completedRevision = randomUUID();
+    session.observationRevision = completedRevision;
+    await this.persistObservation(session);
+    return exclusive ? completedRevision : undefined;
+  }
+
+  async sameObligationPredicate(previous: ObligationVerification, next: ObligationVerification): Promise<boolean> {
+    await this.requireSessionByRef(previous.logical_session_ref);
+    if (!this.archive || previous.logical_session_ref !== next.logical_session_ref) return false;
+    const [before, after] = await Promise.all([
+      this.archive.getPlan(previous.plan_commit_ref, previous.logical_session_ref),
+      this.archive.getPlan(next.plan_commit_ref, next.logical_session_ref),
+    ]);
+    return sameObligationPredicate(previous, next, before, after);
+  }
+
+  async checkObligation(verification: ObligationVerification, runId?: string): Promise<EvidenceCheck> {
+    await this.requireSessionByRef(verification.logical_session_ref);
+    if (!this.archive) return { ok: false, code: "unavailable" };
+    const plan = await this.archive.getPlan(verification.plan_commit_ref, verification.logical_session_ref);
+    const run = runId === undefined ? undefined : await this.archive.getRun(runId, verification.logical_session_ref);
+    if (run && run.run_id !== runId) return { ok: false, code: "wrong_plan" };
+    let stillCurrent: (() => boolean) | undefined;
+    if (run) {
+      const current = await this.requireSessionByRef(verification.logical_session_ref);
+      const revision = run.observation_revision;
+      stillCurrent = () => revision !== undefined && revision === current.observationRevision &&
+        !this.observingRuns.has(verification.logical_session_ref);
+      if (!stillCurrent()) return { ok: false, code: "stale_observation" };
+    }
+    const checked = checkObligationEvidence(verification, plan, run);
+    return checked.ok && stillCurrent ? { ok: true, current: stillCurrent } : checked;
+  }
   private readonly lifecycle = new DrainingLifecycle();
 
   /** Stop new admissions, drain accepted work and close the owned engine. */
@@ -454,62 +518,71 @@ export class AgentRuntime {
         if (this.hostTransport && !this.engine.runPlanLive) {
           throw new Error("Engine does not support reviewed live execution");
         }
-        const result = this.hostTransport
-          ? await this.engine.runPlanLive!(input.runRef, this.hostTransport, session.logicalSessionId)
-          : await this.engine.runPlan(input.runRef, session.logicalSessionId);
-        if (result.failureJson) {
-          const failure = executionFailureSchema.parse(JSON.parse(result.failureJson));
-          throw new AgentExecutionFailure(failure, result.message);
-        }
-        const runMeta = parseRunMeta(result.metaJson);
-        const requestFingerprints = collectRequestFingerprints(runMeta);
-        const artifacts = result.ok
-          ? z.array(runOutputArtifactSchema)
-            .parse(JSON.parse(result.artifactsJson ?? "null"))
-          : [];
-        for (const artifact of artifacts) {
-          if (this.archive) {
-            await this.archive.writeRunSnapshot({
-              run_id: artifact.run_id, plan_commit_ref: input.runRef,
-              logical_session_ref: session.logicalSessionRef, intent: session.intent,
-              ok: result.ok, message: result.message,
-              native_snapshot: artifact.snapshot,
-              _meta: { plasm: { steps: runMeta?.steps ?? [], request_fingerprints: requestFingerprints } },
-              archived_at: new Date().toISOString(),
-            });
+        const observation = await this.beginObservation(session);
+        let observationEnded = false;
+        try {
+          const result = this.hostTransport
+            ? await this.engine.runPlanLive!(input.runRef, this.hostTransport, session.logicalSessionId)
+            : await this.engine.runPlan(input.runRef, session.logicalSessionId);
+          if (result.failureJson) {
+            const failure = executionFailureSchema.parse(JSON.parse(result.failureJson));
+            throw new AgentExecutionFailure(failure, result.message);
           }
-          await this.materializeRunArtefact(artifact.run_id, artifact.snapshot, session.logicalSessionRef);
+          const runMeta = parseRunMeta(result.metaJson);
+          const requestFingerprints = collectRequestFingerprints(runMeta);
+          const artifacts = result.ok
+            ? z.array(runOutputArtifactSchema)
+              .parse(JSON.parse(result.artifactsJson ?? "null"))
+            : [];
+          const observationRevision = await this.endObservation(session.logicalSessionRef, observation);
+          observationEnded = true;
+          for (const artifact of artifacts) {
+            if (this.archive) {
+              await this.archive.writeRunSnapshot({
+                run_id: artifact.run_id, plan_commit_ref: input.runRef,
+                logical_session_ref: session.logicalSessionRef, intent: session.intent,
+                ok: result.ok, message: result.message,
+                observation_revision: observationRevision,
+                native_snapshot: artifact.snapshot,
+                _meta: { plasm: { steps: runMeta?.steps ?? [], request_fingerprints: requestFingerprints } },
+                archived_at: new Date().toISOString(),
+              });
+            }
+            await this.materializeRunArtefact(artifact.run_id, artifact.snapshot, session.logicalSessionRef);
+          }
+          const runId = artifacts[0]?.run_id;
+          await this.recordToolTrace("plasm", "plasm.live_run", started, {
+            intent: session.intent,
+            logical_session_ref: session.logicalSessionRef,
+            plan_commit_ref: input.runRef,
+            run_id: runId,
+            catalog_cgs_hash: catalogCgsHash,
+            ok: result.ok,
+            trace_id: activeTraceId() ?? span.spanContext().traceId,
+          });
+
+          await this.emitHook("run:complete", {
+            intent: session.intent,
+            planCommitRef: input.runRef,
+            runRef: input.runRef,
+            runId,
+            ok: result.ok,
+            logicalSessionRef: session.logicalSessionRef,
+          });
+
+          if (result.ok) {
+            const commit = session.planCommits.find((c) => c.ref === input.runRef);
+            this.committedWriteOps += commit?.writeCount ?? 0;
+          }
+
+          const markdown = formatPlasmRunMarkdown(
+            result.message,
+            result.ok,
+          );
+          return markdown + formatRecordedOutputs(artifacts);
+        } finally {
+          if (!observationEnded) await this.endObservation(session.logicalSessionRef, observation);
         }
-        const runId = artifacts[0]?.run_id;
-        await this.recordToolTrace("plasm", "plasm.live_run", started, {
-          intent: session.intent,
-          logical_session_ref: session.logicalSessionRef,
-          plan_commit_ref: input.runRef,
-          run_id: runId,
-          catalog_cgs_hash: catalogCgsHash,
-          ok: result.ok,
-          trace_id: activeTraceId() ?? span.spanContext().traceId,
-        });
-
-        await this.emitHook("run:complete", {
-          intent: session.intent,
-          planCommitRef: input.runRef,
-          runRef: input.runRef,
-          runId,
-          ok: result.ok,
-          logicalSessionRef: session.logicalSessionRef,
-        });
-
-        if (result.ok) {
-          const commit = session.planCommits.find((c) => c.ref === input.runRef);
-          this.committedWriteOps += commit?.writeCount ?? 0;
-        }
-
-        const markdown = formatPlasmRunMarkdown(
-          result.message,
-          result.ok,
-        );
-        return markdown + formatRecordedOutputs(artifacts);
       },
     );
   }

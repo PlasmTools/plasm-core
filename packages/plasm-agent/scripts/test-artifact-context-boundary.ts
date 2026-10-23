@@ -12,7 +12,7 @@ import { sessionCases } from "./test-session-contract.js";
 const root = await mkdtemp(path.join(tmpdir(), "plasm-artifact-context-"));
 const unused = async (): Promise<never> => { throw new Error("unexpected engine call"); };
 const runId = `pr${"a".repeat(64)}`;
-const session = [...sessionCases(1)][0]!;
+const session = { ...[...sessionCases(1)][0]!, tenantScope: "test" };
 const message = "Native Plasm response: snapshot available.";
 let snapshot: unknown;
 let executions = 0;
@@ -28,7 +28,7 @@ const engine: PlasmEngine = {
 };
 try {
   const archive = new LocalArchiveStore(path.join(root, "archive"));
-  const runtime = new AgentRuntime({ agentRoot: root, engine, archive, hostTransport: null,
+  const runtime = new AgentRuntime({ agentRoot: root, tenantScope: session.tenantScope, engine, archive, hostTransport: null,
     artefactWorkspaceRoot: path.join(root, "work") });
   // Install a typed session fixture without exercising unrelated discovery.
   Reflect.set(runtime, "workflowSession", session);

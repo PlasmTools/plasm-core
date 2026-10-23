@@ -8,11 +8,11 @@ It exposes `task_ledger` and appends the latest accepted record as a separately
 labelled model-authored state message before each generation. The record is not
 inserted into system instructions.
 
-No new schema or production mechanism is required to represent restoration:
+The existing record separates preservation from intermediate work:
 
 - `scope` holds the model's preservation constraints.
 - `observed_facts` holds original-state observations and evidence references.
-- `remaining_work` holds restoration and verification obligations.
+- `obligations` holds stable-ID pending, deferred, resolved or cancelled work.
 - `completed_effects` holds model interpretations of completed work.
 
 When enabled, the store checkpoints accepted records to `agentRoot/task-ledger.json`
@@ -44,11 +44,11 @@ failed atomic replacement, durable reset and corrupt-checkpoint rejection.
 
 ## Limits
 
-This proves retention of an accepted model-authored obligation. It does not
-prove that a model will record every obligation, retain it in a later accepted
-whole-record replacement, restore state, or interpret verification correctly.
-Evidence references are checked for syntax, not resolved as proof. The ledger
-does not gate successful terminal calls or discharge obligations automatically.
+This proves retention of accepted model-authored obligations. It does not prove
+that the model records every obligation or restores state. General fact and
+effect references remain syntax-checked claims. Obligation resolution has the
+separate artifact check below. The ledger does not gate terminal calls or
+discharge obligations automatically.
 
 Evidence syntax is declared in the registered JSON Schema: a bare `pr` plus
 64 lowercase hexadecimal digits, `pc` or `pg` plus digits, a nonempty
@@ -71,7 +71,41 @@ guidance is present, and verifies that terminal execution leaves the record
 intact. This deliberately proves visibility, not enforcement: the scripted model
 can still claim completion with outstanding work.
 
-The ledger guidance uses existing fields for preservation constraints, original
-observations and unfinished restoration or verification. No domain-specific
-procedure, new schema, execution budget or completion gate was introduced.
-The product default remains off. No model evaluation was run.
+## Bound verification
+
+An open obligation may bind `verification` to an existing review using
+`logical_session_ref`, `plan_commit_ref`, `binding` and `field`. This identifies
+a model-authored compute predicate, not another natural-language assertion.
+The predicate persists when omitted and cannot change with wording refinements.
+A fresh review reference is admitted only when both archived plans have identical
+program, computation, catalogue, workflow, producer binding and field. This permits
+fresh observation after a consumed authorization without substituting the predicate.
+Resolution cites a `pr` artifact from that review and workflow. Archive receipts
+must identify the selected producer and a complete single computed row whose
+named field is exactly boolean `true`. Missing, null and false are distinct.
+
+The current boundary accepts straight-line read-only verification plans. The
+computation must have a value-input path to an observed read; ordering edges,
+constants and historical outputs alone are insufficient. Historical outputs may
+still supply an original-state baseline alongside a read. Writes, nested plans
+and unknown node forms are rejected rather than inferred. Checks read existing
+archives only; they never execute, replay, or fetch provider data.
+
+The model remains responsible for the predicate's meaning. A declared read
+dependency does not prove that Python uses that input correctly, and a result
+describes its observation time, not all future state. No natural-language
+preservation predicate is inferred, and later writes do not automatically reopen
+resolved obligations. Explicit cancellation remains distinct from resolution.
+Verification needs available plan/run archives and an active workflow session.
+Every execution attempt advances the durable workflow observation revision.
+Resolution rejects evidence preceding or overlapping another execution, including
+failed attempts. All revision witnesses are rechecked together before accepting
+the ledger update. This is resolution-time freshness, not a completion gate.
+
+Ledger checkpoints are now version 3. Older checkpoints fail explicitly; no
+unverified historical resolution is silently promoted. Abstract tests cover
+bound predicates, atomic rejection, concurrent updates, and restart retention:
+`node scripts/run-plasm-cli.mjs scripts/test-obligation-evidence.ts`.
+No system instructions, catalogue recipes, budgets, dependencies or evaluation
+runs changed. The tool description replaces its old resolution claim to match
+the stricter contract; the product default remains off.

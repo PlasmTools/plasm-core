@@ -125,6 +125,11 @@ export class ProdArchiveStore {
     return this.local.getRun(runId, logicalSessionRef);
   }
 
+  async getPlan(planCommitRef: string, logicalSessionRef: string): Promise<PlanArchiveSnapshot | null> {
+    const plan = await this.getJson<PlanArchiveSnapshot>(blobKey("plan", sessionArchiveKey(planCommitRef, logicalSessionRef)));
+    return plan ?? this.local.getPlan(planCommitRef, logicalSessionRef);
+  }
+
   async listArchives(limit = 50) {
     const [plans, runs] = await Promise.all([this.listPlans(limit), this.listRuns(limit)]);
     return { plans, runs, paths: this.local.paths };
