@@ -5,6 +5,101 @@ use crate::plasm_compile::compile_python_program;
 use proptest::prelude::*;
 
 #[test]
+fn result_headings_preserve_projection_producers_without_claiming_identity() {
+    on_runtime(async {
+        for count in [0, 1, 3] {
+            let (es, host, calls) = fixture(count);
+            let item = es
+                .teaching_exposure
+                .as_ref()
+                .unwrap()
+                .to_symbol_map()
+                .entity_sym_for("fixture", "Item");
+            let program = format!("class Sources(Program):\n    def build(self):\n        available = {item}.query()\n        saved = {item}.query()\n        return available.select(\"title\"), saved.select(\"title\")\n");
+            let bundle = compile_python_program(&es, &program).await.unwrap();
+            assert!(calls.lock().unwrap().is_empty());
+            let run = execute(&es, &host, &bundle).await.unwrap();
+            let markdown = run.run_markdown.as_ref().unwrap();
+            assert_eq!(run.return_steps.len(), 2);
+            for (step, binding) in run.return_steps.iter().zip(["available", "saved"]) {
+                assert_eq!(
+                    step.source_heading.as_deref(),
+                    Some(format!("projection from {binding}: fixture::Item").as_str())
+                );
+                assert!(
+                    markdown.contains(&format!("projection from {binding}: fixture::Item")),
+                    "{markdown}"
+                );
+                assert_eq!(step.result.count(), count);
+                assert_eq!(
+                    step.result.collection.row_materialization(),
+                    plasm_runtime::execution::RowMaterialization::Computed
+                );
+            }
+        }
+    });
+}
+
+#[test]
+fn result_headings_keep_named_projections_and_do_not_type_arbitrary_computations() {
+    on_runtime(async {
+        let (es, host, _) = fixture(1);
+        let item = es
+            .teaching_exposure
+            .as_ref()
+            .unwrap()
+            .to_symbol_map()
+            .entity_sym_for("fixture", "Item");
+        for (expression, expected) in [
+            ("available", Some("available: fixture::Item")),
+            (
+                "available.select(\"title\")",
+                Some("named — projection from available: fixture::Item"),
+            ),
+            (
+                "available.take(1).select(\"title\")",
+                Some("named — projection from available: fixture::Item"),
+            ),
+            (
+                "available.where(lambda row: row.id == \"i0\").take(1).select(\"title\")",
+                None,
+            ),
+            (
+                "available.map(lambda row: {'copied': row.title}, max_parents=1)",
+                None,
+            ),
+        ] {
+            let program = format!("class Source(Program):\n    def build(self):\n        available = {item}.query()\n        named = {expression}\n        return named\n");
+            let bundle = compile_python_program(&es, &program).await.unwrap();
+            let run = execute(&es, &host, &bundle).await.unwrap();
+            assert_eq!(run.return_steps[0].source_heading.as_deref(), expected);
+        }
+    });
+}
+
+#[test]
+fn result_headings_distinguish_source_types_with_identical_projected_fields() {
+    on_runtime(async {
+        let (es, host, _) = fixture(2);
+        let symbols = es.teaching_exposure.as_ref().unwrap().to_symbol_map();
+        let item = symbols.entity_sym_for("fixture", "Item");
+        let tag = symbols.entity_sym_for("fixture", "Tag");
+        let program = format!("class Sources(Program):\n    def build(self):\n        parents = {item}.query()\n        children = {tag}.query(item_id=\"i1\")\n        return parents.select(\"id\"), children.select(\"id\")\n");
+        let bundle = compile_python_program(&es, &program).await.unwrap();
+        let run = execute(&es, &host, &bundle).await.unwrap();
+        let markdown = run.run_markdown.unwrap();
+        assert!(
+            markdown.contains("projection from parents: fixture::Item"),
+            "{markdown}"
+        );
+        assert!(
+            markdown.contains("projection from children: fixture::Tag"),
+            "{markdown}"
+        );
+    });
+}
+
+#[test]
 fn typed_program_excerpts_recover_previewed_unicode_without_repeating_reads() {
     on_runtime(async {
         let (es, host, calls) = fixture(1);

@@ -85,6 +85,7 @@ fn plasm_plan_publication_renders_named_output_owner() {
         None,
         None,
         &[PublishedResultStep {
+            source_heading: None,
             name: Some("sorted".to_string()),
             node_id: Some("p1".to_string()),
             entry_id: Some("pokemon".to_string()),

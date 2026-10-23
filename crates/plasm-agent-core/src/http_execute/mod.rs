@@ -108,6 +108,8 @@ pub struct ExecuteRunToolOutput {
 
 #[derive(Debug, Clone)]
 pub struct PublishedResultStep {
+    /// Presentation provenance only; does not confer catalog identity on computed rows.
+    pub source_heading: Option<String>,
     pub name: Option<String>,
     pub node_id: Option<String>,
     pub entry_id: Option<String>,

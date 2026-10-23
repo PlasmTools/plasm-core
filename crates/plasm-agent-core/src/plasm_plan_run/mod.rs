@@ -56,6 +56,7 @@ mod executable_plan;
 mod materialize;
 mod materialize_prefer;
 mod orchestrator;
+mod result_heading;
 mod parse;
 mod plan_bounded_parallel;
 mod plan_fanout_parallel;

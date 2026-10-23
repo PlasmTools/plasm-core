@@ -585,6 +585,7 @@ mod tests {
             request_fingerprints: vec!["fp".into()],
         };
         let step = PublishedResultStep {
+            source_heading: None,
             name: None,
             node_id: None,
             entry_id: Some("default".into()),
@@ -830,6 +831,7 @@ mod tests {
             outcomes: Vec::new(),
         });
         let step = PublishedResultStep {
+            source_heading: None,
             name: Some("effects".into()),
             node_id: None,
             entry_id: Some("langmatrix".into()),
@@ -1003,6 +1005,7 @@ mod tests {
     #[test]
     fn publish_empty_query_has_no_operations_block() {
         let step = PublishedResultStep {
+            source_heading: None,
             name: Some("items".into()),
             node_id: None,
             entry_id: Some("langmatrix".into()),
@@ -1127,6 +1130,32 @@ mod tests {
             out.delivered_steps[0].result.coverage(),
             plasm_runtime::ResultCoverage::Complete
         );
+    }
+
+    #[test]
+    fn result_headings_distinguish_same_shaped_sources_and_survive_empty_pages() {
+        for rows in [0, 1, 25] {
+            let mut source = synthetic_published_result_step(rows, None);
+            source.source_heading = Some("projection from available: directory::Resource".into());
+            let mut saved = source.clone();
+            saved.source_heading = Some("projection from saved: workspace::Resource".into());
+            let out = publish_plasm_result_steps(None, None, &[source, saved]);
+            assert!(
+                out.markdown.contains(&format!(
+                    "### projection from available: directory::Resource ({rows} rows)"
+                )),
+                "{}",
+                out.markdown
+            );
+            assert!(
+                out.markdown.contains(&format!(
+                    "### projection from saved: workspace::Resource ({rows} rows)"
+                )),
+                "{}",
+                out.markdown
+            );
+            assert_eq!(out.delivered_steps.len(), 2);
+        }
     }
 
     /// Host page filled exactly (25 of 25) without a continuation driver → Unknown must still

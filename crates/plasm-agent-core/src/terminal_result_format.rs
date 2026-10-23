@@ -59,6 +59,7 @@ pub fn published_step_from_artifact_doc(
         .cloned()
         .unwrap_or_else(|| "result".to_string());
     Ok(PublishedResultStep {
+        source_heading: None,
         name: None,
         node_id: None,
         entry_id: Some(entry_id),

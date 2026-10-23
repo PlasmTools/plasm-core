@@ -611,6 +611,10 @@ pub(crate) async fn run_executable_plan_phased(
                 }
             }
             steps.push(PublishedResultStep {
+                source_heading: super::result_heading::result_heading(
+                    node_ref.as_str(),
+                    schema_nodes,
+                ),
                 name: return_names.get(i).cloned().flatten(),
                 node_id: Some(node_ref.as_str().to_string()),
                 entry_id: Some(mat.qualified_entity.entry_id.clone()),
@@ -647,6 +651,7 @@ pub(crate) async fn run_executable_plan_phased(
             receipt.pagination_resume = None;
             receipt.paging_handle = None;
             steps.push(PublishedResultStep {
+                source_heading: None,
                 name: None,
                 node_id: Some(node_ref.as_str().to_string()),
                 entry_id: Some(mat.qualified_entity.entry_id.clone()),

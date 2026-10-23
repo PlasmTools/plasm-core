@@ -69,10 +69,12 @@ impl PublishPlan {
                 in_band_report: observation.fidelity,
             };
             resolved.push(ResolvedStepPublish {
-                label: crate::mcp_run_markdown::return_label_for_step(
-                    step.name.as_deref(),
-                    step.node_id.as_deref(),
-                ),
+                label: step.source_heading.clone().unwrap_or_else(|| {
+                    crate::mcp_run_markdown::return_label_for_step(
+                        step.name.as_deref(),
+                        step.node_id.as_deref(),
+                    )
+                }),
                 row_count: observation.shown,
                 source_rows: step.result.count(),
                 delivery_range: step.result.collection.delivery_range(),
