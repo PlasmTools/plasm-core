@@ -293,8 +293,10 @@ impl ExecutionFailure {
         }
         if self.effects_unresolved || !self.dispatches.is_empty() {
             Some("Some dispatched effects have an unknown outcome. Reconcile them before retrying; this execution did not roll back.")
-        } else {
+        } else if self.effects.iter().any(|effect| effect.completed > 0) {
             Some("A prior effect completed. Check its receipt before retrying; this execution did not roll back.")
+        } else {
+            Some("Check the previous execution and resulting state before further writes; this failure does not establish its effects.")
         }
     }
     pub fn diagnostic(&self) -> &str {

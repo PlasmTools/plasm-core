@@ -2,7 +2,7 @@
 use std::sync::{Arc, Mutex};
 
 use plasm_core::PlanCommitRef;
-use plasm_runtime::{ExecutionFailure, FailureCause};
+use plasm_runtime::{ExecutionFailure, FailureCause, RecoveryDisposition};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
@@ -16,6 +16,17 @@ pub enum ExecutionState {
     Succeeded,
     Failed,
     Indeterminate,
+}
+
+impl ExecutionState {
+    fn consumed_guidance(self) -> &'static str {
+        match self {
+            Self::Succeeded => "Continue from the previous results. For current state, review a new read program. A deliberate repeat requires a fresh review.",
+            Self::Failed | Self::Indeterminate => "Check the previous failure and resulting state before planning recovery; completed effects may remain. Further execution requires a fresh review.",
+            Self::Running => "Follow the existing execution's status; do not start another execution to check it.",
+            Self::Ready => "Check the execution authorization state before continuing; no execution was authorized by this call.",
+        }
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -102,7 +113,7 @@ impl Drop for ExecutionClaim {
 
 #[derive(Debug, thiserror::Error)]
 pub enum AuthorizationError {
-    #[error("authorization `{commit_ref}` is {state:?}; this call dispatched nothing. Inspect the previous execution. Only a fresh reviewed plan authorizes a deliberate repeat")]
+    #[error("authorization `{commit_ref}` is {state:?}; this call dispatched nothing. {}", state.consumed_guidance())]
     Consumed {
         commit_ref: PlanCommitRef,
         state: ExecutionState,
@@ -117,11 +128,15 @@ impl From<AuthorizationError> for ExecutionFailure {
     fn from(error: AuthorizationError) -> Self {
         let (cause, code) = match &error {
             AuthorizationError::Consumed { .. } => {
-                (FailureCause::Program, "plan_authorization_consumed")
+                (FailureCause::Authorization, "plan_authorization_consumed")
             }
             _ => (FailureCause::Runtime, "plan_authorization_store"),
         };
-        ExecutionFailure::new(cause, code, error.to_string())
+        let mut failure = ExecutionFailure::new(cause, code, error.to_string());
+        if matches!(error, AuthorizationError::Consumed { .. }) {
+            failure.recovery = RecoveryDisposition::ReconcileEffects;
+        }
+        failure
     }
 }
 
@@ -197,6 +212,46 @@ pub async fn execute_authorized<T>(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn consumed_authorization_recovery_matrix() {
+        for (state, guidance) in [
+            (ExecutionState::Running, "existing execution's status"),
+            (
+                ExecutionState::Succeeded,
+                "Continue from the previous results",
+            ),
+            (ExecutionState::Failed, "completed effects may remain"),
+            (
+                ExecutionState::Indeterminate,
+                "completed effects may remain",
+            ),
+        ] {
+            let failure: ExecutionFailure = AuthorizationError::Consumed {
+                commit_ref: PlanCommitRef::mint(7),
+                state,
+            }
+            .into();
+            assert_eq!(failure.cause, FailureCause::Authorization);
+            assert_eq!(failure.recovery, RecoveryDisposition::ReconcileEffects);
+            assert_eq!(failure.code, "plan_authorization_consumed");
+            assert!(failure.effects.is_empty());
+            assert!(failure.dispatches.is_empty());
+            assert!(failure
+                .recovery_instructions()
+                .unwrap()
+                .contains("does not establish its effects"));
+            let rendered = crate::agent_presentation::render_failure(&failure).into_string();
+            assert!(rendered.contains("`pc7`"));
+            assert!(rendered.contains("this call dispatched nothing"));
+            assert!(rendered.contains(guidance));
+            assert!(!rendered.contains("Revise the program"));
+            assert!(!rendered.contains("Obtain authorization"));
+        }
+        let ordinary =
+            ExecutionFailure::new(FailureCause::Program, "invalid_program", "Invalid program");
+        assert_eq!(ordinary.recovery, RecoveryDisposition::RepairProgram);
+    }
 
     #[test]
     fn authorization_lifecycle_matrix() {

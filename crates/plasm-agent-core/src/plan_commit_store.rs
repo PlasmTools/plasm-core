@@ -559,8 +559,34 @@ mod tests {
                 Ok(())
             })
             .await;
-            assert!(duplicate.is_err());
+            let rejected = duplicate.unwrap_err();
+            assert_eq!(rejected.code, "plan_authorization_consumed");
+            assert_eq!(
+                rejected.recovery,
+                plasm_runtime::RecoveryDisposition::ReconcileEffects
+            );
             assert_eq!(effects.load(Ordering::SeqCst), before + 1);
+            // A new review of the same semantic plan grants a new single-use authorization.
+            let fresh = es.mint_plan_commit_ref();
+            es.register_plan_commit(PlanCommitRecord::for_tests(
+                fresh.clone(),
+                PlanCommitId::from_canonical_bytes([0; 32]),
+                minimal_artifact(),
+                PlanDryVerdict::Ok,
+            ));
+            execute_authorized(&es, &host, Some(&fresh), async {
+                effects.fetch_add(1, Ordering::SeqCst);
+                Ok(())
+            })
+            .await
+            .unwrap();
+            let repeat = execute_authorized(&es, &host, Some(&fresh), async {
+                effects.fetch_add(1, Ordering::SeqCst);
+                Ok(())
+            })
+            .await;
+            assert!(repeat.is_err());
+            assert_eq!(effects.load(Ordering::SeqCst), before + 2);
         }
         let reference = es.mint_plan_commit_ref();
         es.register_plan_commit(PlanCommitRecord::for_tests(
