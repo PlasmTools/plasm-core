@@ -12,7 +12,7 @@ for (const asset of ["initialize_workflow.txt", "plasm_context_tool.txt", "plasm
   );
 }
 for (const text of [card]) {
-  for (const required of ["Program", "build(self)", "explicit return", "incremental domain declarations", "same logical session", "completed writes"])
+  for (const required of ["Program", "build(self)", "explicit return", "Session declarations", "same logical session", "completed writes", "self.recorded("])
     assert.ok(text.includes(required), `Missing Python protocol instruction: ${required}`);
   for (const retired of ["rows =>", "<<TAG", "e#(<id>)", "| where"])
     assert.ok(!text.includes(retired), `Retired syntax leaked: ${retired}`);
