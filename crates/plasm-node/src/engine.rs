@@ -888,6 +888,7 @@ impl AgentEngine {
                     .ok_or(AgentEngineError::RunArtifactMissing)?;
                 artifacts.push(serde_json::json!({
                     "run_id": artifact.run_id,
+                    "producer_binding": artifact.node_id,
                     "snapshot": serde_json::from_slice::<serde_json::Value>(&payload.bytes)?,
                 }));
             }
@@ -1762,7 +1763,7 @@ mod tests {
             )
             .expect("expose");
         let dry = engine
-            .dry_run("class Read(Program):\n    def build(self):\n        return e1.query()\n")
+            .dry_run("class Read(Program):\n    def build(self):\n        observed = e1.query()\n        return observed\n")
             .await
             .expect("dry run");
         let transport = Arc::new(MockProductListTransport);
@@ -1790,7 +1791,11 @@ mod tests {
             let run_id = artifact["run_id"].as_str().expect("native run id");
             assert!(plasm_agent_core::run_artifacts::RunArtifactId::from_wire(run_id).is_some());
             assert!(artifact["snapshot"].is_object());
+            assert!(artifact["producer_binding"].is_string());
         }
+        assert!(artifacts
+            .iter()
+            .any(|artifact| artifact["producer_binding"] == "observed"));
     }
 
     struct RecordingItemTransport(std::sync::Mutex<Vec<String>>);

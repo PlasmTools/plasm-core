@@ -30,7 +30,7 @@ try {
       entered.resolve();
       await release.promise;
       return { ok: true, message: "completed", artifactsJson: JSON.stringify([
-        { run_id: `pr${"a".repeat(64)}`, snapshot: { entities: [{ id: 1 }] } },
+        { run_id: `pr${"a".repeat(64)}`, producer_binding: "observed", snapshot: { entities: [{ id: 1 }] } },
       ]) };
     },
   };

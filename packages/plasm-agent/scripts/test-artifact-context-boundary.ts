@@ -15,12 +15,16 @@ const runId = `pr${"a".repeat(64)}`;
 const session = [...sessionCases(1)][0]!;
 const message = "Native Plasm response: snapshot available.";
 let snapshot: unknown;
+let executions = 0;
 const engine: PlasmEngine = {
   close: async () => {},
   loadCatalog: unused, activateDiscovery: unused, routeIntent: unused,
   synthesizeTeaching: unused, dryRun: unused, run: unused, introspectCatalog: unused,
-  runPlan: async () => ({ ok: true, message, rowsJson: JSON.stringify(snapshot),
-    artifactsJson: JSON.stringify([{ run_id: runId, snapshot }]) }),
+  runPlan: async () => {
+    executions++;
+    return { ok: true, message, rowsJson: JSON.stringify(snapshot),
+      artifactsJson: JSON.stringify([{ run_id: runId, producer_binding: "observed", snapshot }]) };
+  },
 };
 try {
   const archive = new LocalArchiveStore(path.join(root, "archive"));
@@ -42,6 +46,15 @@ try {
     assert.deepEqual(JSON.parse(await readFile(path.join(root, "work", file), "utf8")), snapshot);
     assert.deepEqual((await archive.getRun(runId, session.logicalSessionRef))?.native_snapshot, snapshot);
   }
+  snapshot = {entry_id: "matrix", entity: "Resource", row_materialization: "Catalog",
+    entities: [{completeness: "complete", fields: {token: "ARTIFACT_ONLY_secret", optional: null}},
+      {completeness: "complete", fields: {token: "ARTIFACT_ONLY_other"}}]};
+  const labelled = await runtime.plasmRun({logicalSessionRef: session.logicalSessionRef, runRef: "pc1"});
+  assert.match(labelled, /observed: matrix::Resource\[\]/);
+  assert.match(labelled, /optional \(some rows\), token/);
+  assert.ok(!labelled.includes("ARTIFACT_ONLY_") && !labelled.includes("**run_id:**"));
+  assert.deepEqual((await archive.getRun(runId, session.logicalSessionRef))?.native_snapshot, snapshot);
+  assert.equal(executions, 5, "labelling outputs never replays or fetches a producer");
   assert.deepEqual(Object.keys(createPlasmTools(runtime)).sort(), ["plasm", "plasm_context", "plasm_failure", "plasm_run"]);
   for (const prompt of [buildDefaultSystemLiturgy(), buildDefaultSystemLiturgy({includeEvalTerminals: true})]) {
     assert.match(prompt, /@compute/);

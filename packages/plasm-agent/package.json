@@ -47,6 +47,7 @@
     "test:context-exposure": "node scripts/run-plasm-cli.mjs scripts/test-context-exposure.ts",
     "test:native-failure-contract": "node scripts/run-plasm-cli.mjs scripts/test-native-failure-contract.ts",
     "test:lifecycle": "node scripts/run-plasm-cli.mjs scripts/test-lifecycle.ts",
+    "test:recorded-output-labels": "node scripts/run-plasm-cli.mjs scripts/test-recorded-output-labels.ts",
     "typecheck": "tsc --noEmit",
     "plasm-agent": "node scripts/run-plasm-cli.mjs",
     "build:engine": "npm run build --prefix ../plasm-engine",

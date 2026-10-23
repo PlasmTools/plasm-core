@@ -34,6 +34,7 @@ import type { HookRunner } from "../authoring/hook-runner.js";
 import type { AgentWorkflowWorldDefinition } from "../define-agent.js";
 import { createAgentStateStore } from "../state/define-state.js";
 import { DiscoveryQueue } from "./discovery-queue.js";
+import { formatRecordedOutputs, runOutputArtifactSchema } from "../tools/recorded-outputs.js";
 
 export type AgentArchiveStore = LocalArchiveStore | ProdArchiveStore;
 
@@ -463,7 +464,7 @@ export class AgentRuntime {
         const runMeta = parseRunMeta(result.metaJson);
         const requestFingerprints = collectRequestFingerprints(runMeta);
         const artifacts = result.ok
-          ? z.array(z.object({ run_id: z.string().regex(/^pr[a-f0-9]{64}$/), snapshot: z.unknown() }))
+          ? z.array(runOutputArtifactSchema)
             .parse(JSON.parse(result.artifactsJson ?? "null"))
           : [];
         for (const artifact of artifacts) {
@@ -507,10 +508,8 @@ export class AgentRuntime {
         const markdown = formatPlasmRunMarkdown(
           result.message,
           result.ok,
-          runId,
         );
-        return markdown + artifacts.slice(1).map(artifact =>
-          `\n\n**run_id:** \`${artifact.run_id}\``).join("");
+        return markdown + formatRecordedOutputs(artifacts);
       },
     );
   }
