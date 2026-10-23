@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { createPlasmTools } from "../src/tools/plasm-tools.js";
-import { AgentExecutionFailure, executionFailureSchema, plasmModelOutput } from "../src/runtime/execution-failure.js";
+import { AgentExecutionFailure, executionFailureSchema, failureObservationSchema, plasmModelOutput } from "../src/runtime/execution-failure.js";
 import { FailureResults } from "../src/tools/failure-results.js";
 
 const failure = executionFailureSchema.parse({
@@ -26,8 +26,9 @@ assert.match(visible, /status 422: Already set/);
 assert.match(visible, /75 completed/);
 const ref = visible.match(/failure_[0-9a-f-]{36}/)?.[0];
 assert.ok(ref, "model receives a usable retrieval reference");
-const pages: string[] = [];
-let offset = 0;
+assert.match(visible, /Recorded failure details \(1–40/);
+const pages: string[] = [visible];
+let offset = Number(visible.match(/and offset=(\d+)/)![1]);
 for (;;) {
   // Rebuilding tools between turns must not orphan the evidence.
   const page = String(await createPlasmTools(runtime).plasm_failure!.execute!({failure_ref: ref, offset}, options));
@@ -46,6 +47,48 @@ assert.ok(all.includes("Failed input: Item:failed; item path [75]"));
 assert.ok(all.includes("at first_write") && all.includes("at second_write"));
 for (const hidden of ["__py72", "private-pin", "catalog_digest"]) assert.ok(!all.includes(hidden));
 assert.equal(executions, 1, "reading evidence cannot repeat backend work");
+
+// The same boundary delivers complete small failures for discovery, review and
+// execution. No follow-up read is necessary to learn the recovery or effects.
+for (const recovery of ["repair_program", "obtain_authorization", "reconcile_effects", "stop"] as const) {
+  const small = executionFailureSchema.parse({...failure,
+    cause: recovery === "repair_program" ? "program" : recovery === "obtain_authorization" ? "authorization" : "upstream",
+    recovery, effects: recovery === "reconcile_effects" ? [{entry_id: "matrix", capability: "stage", completed: 1, failed: 0, occurrences: []}] : [], input_occurrence: undefined,
+    effects_unresolved: recovery === "reconcile_effects",
+    dispatches: recovery === "reconcile_effects" ? [{operation: {entry_id: "matrix", capability: "change"}, request_fingerprint: "opaque", status: "unresolved"}] : [],
+  });
+  for (const name of ["plasm_context", "plasm", "plasm_run"] as const) {
+    let calls = 0;
+    let recorded = 0;
+    const fail = async () => { calls++; throw new AgentExecutionFailure(small, "Matrix operation stopped."); };
+    const matrixTools = createPlasmTools({plasmContext: fail, plasm: fail, plasmRun: fail,
+      recordExecutionFailure: async (_name, evidence) => { recorded++; assert.deepEqual(evidence, small); },
+    });
+    const args = name === "plasm_context" ? {session_mode: "new", intent: "Observe abstract records"}
+      : name === "plasm" ? {logical_session_ref: "l_AAAAAAAAQACAAAAAAAAAAQ", program: "abstract program"}
+      : {logical_session_ref: "l_AAAAAAAAQACAAAAAAAAAAQ", run_ref: "pc0"};
+    const result = failureObservationSchema.parse(await matrixTools[name]!.execute!(args, options));
+    assert.deepEqual(result.failure, small, "presentation does not change typed recovery authority");
+    const text = plasmModelOutput({output: result}).value;
+    assert.match(text, /End of recorded failure details/);
+    assert.doesNotMatch(text, /call plasm_failure/);
+    assert.match(text, /Earlier completed changes were not undone/);
+    if (small.effects_unresolved) {
+      assert.match(text, /matrix\/stage: 1 completed; 0 failed/);
+      assert.match(text, /Some state changes remain unknown/);
+      assert.match(text, /do not count it as another completed operation/);
+    }
+    assert.equal(calls, 1);
+    assert.equal(recorded, 1);
+  }
+}
+const successTools = createPlasmTools({plasmContext: async () => "declarations",
+  plasm: async () => "review pc0", plasmRun: async () => "observed rows",
+  recordExecutionFailure: async () => { assert.fail("success recorded as failure"); },
+});
+assert.equal(await successTools.plasm_context!.execute!({session_mode: "new", intent: "Read records"}, options), "declarations");
+assert.equal(await successTools.plasm!.execute!({logical_session_ref: "l_AAAAAAAAQACAAAAAAAAAAQ", program: "abstract"}, options), "review pc0");
+assert.equal(await successTools.plasm_run!.execute!({logical_session_ref: "l_AAAAAAAAQACAAAAAAAAAAQ", run_ref: "pc0"}, options), "observed rows");
 const readFailure = new FailureResults();
 const lookupRef = readFailure.record({...failure, effects: [], input_occurrence: undefined,
   diagnostic: "Lookup rejected: account does not exist"});

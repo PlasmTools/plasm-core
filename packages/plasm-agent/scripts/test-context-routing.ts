@@ -56,7 +56,8 @@ const failedContext = failureObservationSchema.parse(await failingTools.plasm_co
 ));
 assert.equal(failedContext.failure.code, "discovery_response_contract");
 assert.match(failedContext.summary, /not valid JSON/);
-assert.match(failedContext.summary, /plasm_failure/);
+assert.match(failedContext.summary, /End of recorded failure details/);
+assert.doesNotMatch(failedContext.summary, /call plasm_failure/);
 assert.equal(failedContext.failure.effects_unresolved, false);
 for (const corrupt of [
  (p:typeof packet)=>{p.routing.matching.matches.push(p.routing.matching.matches[0]!);},

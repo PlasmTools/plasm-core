@@ -53,7 +53,9 @@ export function createPlasmTools(
       const observation = failureObservation(error);
       await runtime.recordExecutionFailure(name, observation.failure);
       const ref = failures.record(observation.failure);
-      return {...observation, summary: `${observation.summary}\nFull recorded outcomes: call plasm_failure with failure_ref="${ref}" (offset defaults to 0). This only reads recorded evidence.`};
+      // Deliver evidence already held by the host in the failing call itself.
+      // The existing bounded page supplies a continuation only when needed.
+      return {...observation, summary: `${observation.summary}\n${failures.read(ref, 0)}`};
     }
   }
 
