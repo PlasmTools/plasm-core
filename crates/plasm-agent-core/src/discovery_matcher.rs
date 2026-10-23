@@ -74,8 +74,7 @@ const CRITERIA: [(&str, &str); 3] = [
         "The documented output, effect or information is insufficiently specified to establish contribution.",
     ),
 ];
-const QUESTION_FORMAT: &str = "Judge contribution to the ongoing outcome or discovery need, honoring explicit goal replacements, cancellations and restrictions in turn order.";
-const RUBRIC: &str = "Judge whether the documented output or effect could contribute to the ongoing outcome or discovery need, directly or through available operations. Contribution need not be necessary now; unknown readiness does not establish either a blocker or a ready resource. Honor explicit restrictions and goal revisions. Relevance is not permission to execute.";
+const RUBRIC: &str = "Could the documented information, output or effect help achieve the requested outcome, directly or through available capabilities?";
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, PartialOrd, Ord)]
 #[serde(rename_all = "snake_case")]
 pub enum MatchChoice {
@@ -224,7 +223,6 @@ impl DecisionCodec for RelevanceCodec {
 #[derive(Serialize)]
 struct SharedEvidence<'a> {
     intent_turns: Vec<&'a str>,
-    intent_interpretation: &'static str,
     rule: &'static str,
     capabilities: OrderedCapabilities<'a>,
     discovery_need: &'a str,
@@ -308,7 +306,6 @@ fn issue_batch(
     }
     let state = SharedEvidence {
         intent_turns: intent.turns().collect(),
-        intent_interpretation: QUESTION_FORMAT,
         rule: RUBRIC,
         capabilities,
         discovery_need: intent.current(),
@@ -657,10 +654,7 @@ mod tests {
                 let body: serde_json::Value = serde_json::from_str(batch.body()).unwrap();
                 assert_eq!(body["state"]["discovery_need"], intent.current());
                 assert_eq!(body["state"]["rule"], RUBRIC);
-                assert!(RUBRIC.contains(
-                    "unknown readiness does not establish either a blocker or a ready resource"
-                ));
-                assert!(RUBRIC.contains("Relevance is not permission to execute"));
+                assert!(body["state"].get("intent_interpretation").is_none());
                 let evidence = body["state"]["capabilities"].as_object().unwrap();
                 assert_eq!(evidence.len(), size);
                 for card in evidence.values() {
@@ -990,7 +984,7 @@ mod tests {
                     json!(["First", "First", "Revised", "First"])
                 );
                 assert_eq!(content["context"]["rule"], RUBRIC);
-                assert_eq!(content["context"]["intent_interpretation"], QUESTION_FORMAT);
+                assert!(content["context"].get("intent_interpretation").is_none());
                 for (label, meaning) in CRITERIA {
                     assert_eq!(content["context"]["criteria"][label], meaning);
                 }

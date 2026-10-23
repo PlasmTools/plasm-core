@@ -1,4 +1,0 @@
-{
-  "intent_interpretation": "Judge contribution to the ongoing outcome or discovery need, honoring explicit goal replacements, cancellations and restrictions in turn order.",
-  "rule": "Judge whether the documented output or effect could contribute to the ongoing outcome or discovery need, directly or through available operations. Contribution need not be necessary now; unknown readiness does not establish either a blocker or a ready resource. Honor explicit restrictions and goal revisions. Relevance is not permission to execute."
-}
