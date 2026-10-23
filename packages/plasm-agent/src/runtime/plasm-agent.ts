@@ -326,21 +326,22 @@ export class PlasmAgent {
       await this.hookRunner.emit("agent:step", this.getAuthoringContext(), { toolsUsed });
     };
 
+    const maxSteps = options.maxSteps ?? this.maxSteps;
     const result = await runEveToolLoop({
       model,
       system,
       tools: () => tools,
       prepareMessages: this.includeTaskLedger
-        ? (history) => [
+        ? (history, { stepIndex }) => [
             ...history,
             {
               role: "user" as const,
-              content: renderTaskLedgerState(this.taskLedgerStore.record),
+              content: `Generation budget: ${maxSteps - stepIndex}/${maxSteps} remaining (including this call).\n\n${renderTaskLedgerState(this.taskLedgerStore.record)}`,
             },
           ]
         : undefined,
       messages,
-      maxSteps: options.maxSteps ?? this.maxSteps,
+      maxSteps,
       generationTimeoutMs: options.generationTimeoutMs,
       maxConsecutiveProviderFailures: options.maxConsecutiveProviderFailures,
       agentName: this.agentName,

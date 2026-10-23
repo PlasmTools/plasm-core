@@ -336,6 +336,53 @@ function mockLedgerThenStop(
 
 const root = await mkdtemp(path.join(tmpdir(), "plasm-ledger-"));
 try {
+  // Budget is host execution state, not a model-authored obligation. Exercise
+  // repeated discovery and a rejected operation through the real request loop.
+  for (const limit of [3, 5]) {
+    const scripted = mockLedgerThenStop(authored, [
+      ...Array.from({ length: limit - 2 }, () => ({ toolName: "discover", input: {} })),
+      { toolName: "observe_cleanup", input: {} },
+    ]);
+    let discoveries = 0;
+    let observations = 0;
+    const agent = new PlasmAgent({
+      agentRoot: root, model: scripted, engine, hostTransport: null,
+      archiveEnabled: false, telemetry: false, includeTaskLedger: true,
+      taskLedgerPath: path.join(root, `budget-${limit}.json`), maxSteps: 9,
+    });
+    agent.runtime.hasOpenWorkflow = () => true;
+    const result = await agent.generate("ABSTRACT_WORKFLOW", {
+      maxSteps: limit,
+      wrapTools: tools => ({
+        [TASK_LEDGER_TOOL_NAME]: tools[TASK_LEDGER_TOOL_NAME]!,
+        discover: tool({ inputSchema: z.object({}), execute: async () => {
+          discoveries++;
+          if (discoveries === 1) throw new Error("abstract unavailable lookup");
+          return "No new declarations.";
+        } }),
+        observe_cleanup: tool({ inputSchema: z.object({}), execute: async () => {
+          observations++;
+          return "observed unchanged state";
+        } }),
+      }),
+    });
+    assert.equal(scripted.doStreamCalls.length, limit, "override is the actual generation limit");
+    assert.equal(discoveries, limit - 2, "discovery remains available after a failed or empty lookup");
+    assert.equal(observations, 1, "the final generation can still observe cleanup");
+    for (const [index, request] of scripted.doStreamCalls.entries()) {
+      assert.match(JSON.stringify(request.prompt.at(-1)),
+        new RegExp(`Generation budget: ${limit - index}/${limit} remaining \\(including this call\\)`),
+        "each request sees its true remaining budget, including rejected tool calls");
+      if (index > 0) {
+        const snapshot = JSON.stringify(request.prompt.at(-1));
+        assert.ok(snapshot.includes(authored.requested_outcomes[0]!));
+        assert.ok(snapshot.includes(authored.obligations[0]!.task), "pending work accompanies the shrinking budget");
+      }
+    }
+    assert.ok(!JSON.stringify(result.messages).includes("Generation budget:"), "budget snapshots do not accumulate in history");
+    assert.deepEqual(agent.taskLedger, authored, "budget metadata does not rewrite pending work");
+  }
+
   const controlModel = mockProseStop();
   const control = new PlasmAgent({
     agentRoot: root,
@@ -358,6 +405,8 @@ try {
     },
   });
   assert.equal(control.taskLedger, null);
+  assert.ok(!JSON.stringify(controlModel.doStreamCalls[0]?.prompt).includes("Generation budget:"),
+    "ledger-disabled agents keep their existing request shape");
   assert.equal(
     JSON.stringify(controlModel.doStreamCalls[0]?.prompt).includes("Model-authored task ledger"),
     false,

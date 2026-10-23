@@ -126,3 +126,19 @@ bound predicates, atomic rejection, concurrent updates, and restart retention:
 No system instructions, catalogue recipes, budgets, dependencies or evaluation
 runs changed. The tool description replaces its old resolution claim to match
 the stricter contract; the product default remains off.
+
+## Remaining generation budget
+
+When the ledger is enabled, its existing transient per-generation message starts
+with the host's remaining generation count, including the current request, and
+the configured limit. The count comes from the tool loop's existing step index
+and honours a per-call maxSteps override. It is not stored in the model-authored
+record or appended to conversation history; system instructions and tool schemas
+remain stable. Ledger-disabled agents retain their existing request shape.
+
+This exposes the actual finite resource alongside pending work. It does not
+reserve cleanup steps, suppress discovery, extend the budget, execute effects,
+or infer that a changed discovery need is redundant. Abstract request-loop tests
+cover repeated and failed discovery, a final observation, retained obligations,
+prefix stability and unchanged limits. They prove visibility, not that a model
+will stop rediscovering or complete restoration.
