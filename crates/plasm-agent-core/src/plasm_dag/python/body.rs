@@ -343,6 +343,7 @@ impl Lower<'_> {
             static_expansions: self.static_expansions,
             spans: BTreeMap::new(),
             compute_origins: self.compute_origins.clone(),
+            recorded_outputs: BTreeMap::new(),
             frame,
             static_sequences: self.static_sequences.clone(),
         };

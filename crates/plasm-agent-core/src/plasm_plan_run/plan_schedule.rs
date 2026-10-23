@@ -118,6 +118,7 @@ mod tests {
 
     fn pure_payload() -> PlasmStepPayload {
         PlasmStepPayload::Pure(PurePayload {
+            recorded_output: None,
             data: plasm_core::PlasmDataValue::Literal {
                 value: plasm_core::operand_binding::ResolvedValue::null(),
             },

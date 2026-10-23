@@ -16,6 +16,7 @@ mod backend;
 mod backend_fs;
 mod backend_memory;
 mod backend_object_store;
+mod completed_output;
 mod evidence_sidecar;
 mod gc;
 mod keys;
@@ -31,6 +32,7 @@ pub use persist::{
     PersistExecuteRunInput,
 };
 pub use types::*;
+pub use completed_output::{CompletedOutput, CompletedOutputError};
 
 use backend::RunArtifactBackend;
 use backend_fs::FsRunArtifactBackend;

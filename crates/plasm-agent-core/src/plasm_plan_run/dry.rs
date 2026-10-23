@@ -820,6 +820,7 @@ pub(crate) fn dry_stage_result(index: usize, n: &ValidatedPlanNode) -> serde_jso
             "depends_on": node_ids_json(n.depends_on()),
             "uses_result": n.uses_result(),
             "data": data.data,
+            "recorded_output": data.recorded_output,
             "simulation": {
                 "kind": "static_data",
                 "execution": "materializes static Plan data through the phased Plan runner"

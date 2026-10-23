@@ -103,6 +103,11 @@ pub(in crate::plasm_dag) fn resolve_immediate_compute_schema(
         .find(|n| n.id == source_id)
         .or_else(|| state.get(source_id))?;
     match &node.source {
+        DagNodeSource::Data(PlanValue::Literal { value }) => {
+            let contract =
+                plasm_core::value_contract::ValueContract::literal(value.value()).ok()?;
+            SyntheticResultSchema::for_result(&contract).ok()
+        }
         DagNodeSource::Compute { schema, .. } | DagNodeSource::MapBody { schema, .. } => {
             Some(schema.clone())
         }

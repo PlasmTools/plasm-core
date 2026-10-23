@@ -58,14 +58,16 @@ pub trait CapturePort {
 mod tests {
     #[test]
     fn prior_capture_wire_version_is_rejected() {
-        let mut comp = super::super::empty_comp(None);
-        comp.version = 2;
-        assert!(matches!(
-            comp.validate(),
-            Err(super::super::PlasmCompValidationError::UnsupportedVersion {
-                expected: 3,
-                actual: 2
-            })
-        ));
+        for prior in [2, 3] {
+            let mut comp = super::super::empty_comp(None);
+            comp.version = prior;
+            assert!(matches!(
+                comp.validate(),
+                Err(super::super::PlasmCompValidationError::UnsupportedVersion {
+                    expected: super::super::PLASM_COMP_WIRE_VERSION,
+                    actual
+                }) if actual == prior
+            ));
+        }
     }
 }

@@ -246,6 +246,27 @@ CSV case alone cannot establish completion.
 
 ## Implementation ledger
 
+### Recorded completed outputs
+
+`self.recorded("pr…")` in `Program.build` imports an available, complete
+catalogue output from the current session's artifact working set. Admission pins
+the observed structural records into the plan; it never replays the producer.
+The records retain observed fields and flow evidence, not live entity identity.
+Missing fields remain missing, and ordinary get/query operations remain fresh.
+New effects still require review and execution authorization. `provides` remains
+solely a hydration mechanism.
+
+Reuse rejects incomplete collections, unavailable artifacts, and absent producer
+flow evidence. Computed outputs without catalogue provenance are unsupported.
+This implementation does not resolve evicted artifacts from durable storage.
+Producer flow is attached to the specific hot artifact resource index; explicit
+empty evidence differs from missing evidence. Plan wire version 4 retains that
+evidence through serialization. Bind recorded data before callbacks.
+
+Witnesses: `recorded_output_restore_never_replays_effects_or_satisfies_fresh_reads`,
+`recorded_output_keeps_catalog_labels_and_historical_provenance`, and
+`forbidden_untrusted_to_outbound_sink_denies_mutation`.
+
 ### Numeric inference and rejection evidence
 
 Numeric operator declarations must describe Monty's actual result carriers, including

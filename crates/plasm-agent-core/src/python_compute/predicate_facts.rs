@@ -458,6 +458,7 @@ mod tests {
         comp.steps.insert(
             "source".into(),
             PlasmStepPayload::Pure(plasm_core::plasm_monad::PurePayload {
+                recorded_output: None,
                 data: PlasmDataValue::Object {
                     fields: Default::default(),
                 },

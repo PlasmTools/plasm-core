@@ -124,6 +124,7 @@ mod tests {
         steps.insert(
             "x".into(),
             PlasmStepPayload::Pure(PurePayload {
+                recorded_output: None,
                 data: PlasmDataValue::Literal {
                     value: plasm_core::operand_binding::ResolvedValue::from_wire(
                         serde_json::json!("hi"),

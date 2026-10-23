@@ -242,6 +242,14 @@ pub enum ReceiverIdentityOrigin {
 
 #[derive(Debug, Clone, thiserror::Error)]
 pub enum PythonSourceError {
+    #[error("recorded requires one literal run reference and no other arguments")]
+    RecordedOutputReference,
+    #[error("bind recorded output in build before capturing it in a callback")]
+    RecordedOutputScope,
+    #[error("{0}")]
+    RecordedOutput(#[source] std::sync::Arc<crate::run_artifacts::CompletedOutputError>),
+    #[error("only catalog row outputs are reusable; this output has no retained catalog contract")]
+    RecordedOutputContract,
     #[error("of_type requires an exposed entity symbol from the source's declared entity union")]
     EntityNarrowingTarget,
     #[error("of_type requires catalog union rows with retained identity; constructed values cannot confer entity authority")]

@@ -15,7 +15,13 @@ pub fn render_node_operation(node: &ValidatedPlanNode) -> String {
             format!("capture {}.{}", n.entity.entry_id, n.entity.entity)
         }
         ValidatedPlanNode::Surface(n) => render_surface_operation(n),
-        ValidatedPlanNode::Data(n) => format!("data {}", render_plan_value(&n.data)),
+        ValidatedPlanNode::Data(n) => match &n.recorded_output {
+            Some(origin) => format!(
+                "recorded output {} (historical; no producer execution)",
+                origin.run_id
+            ),
+            None => format!("data {}", render_plan_value(&n.data)),
+        },
         ValidatedPlanNode::Derive(n) => render_derive_template(n),
         ValidatedPlanNode::Compute(n) => render_compute_template(&n.compute),
         ValidatedPlanNode::RelationTraversal(n) => {

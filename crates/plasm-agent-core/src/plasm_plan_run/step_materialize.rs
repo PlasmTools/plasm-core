@@ -234,6 +234,13 @@ pub(crate) async fn materialize_executable_plan_step(
             return Err(failure);
         }
     };
+    if let (Some(artifact), Some(facts)) = (&mat.artifact, ctx.flow.node_facts.get(&qualified_step))
+    {
+        ctx.es
+            .core
+            .record_output_flow(artifact, facts.row_join())
+            .await;
+    }
     occurrence.record_result(
         mat.result.count(),
         mat.artifact.as_ref().map(|a| a.plasm_uri.clone()),

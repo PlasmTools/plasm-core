@@ -166,6 +166,14 @@ impl<'a> Root<'a> {
                     def
                 }
             };
+            if def.name.as_str() == "recorded" {
+                return Err(at(
+                    def,
+                    PythonSourceError::DuplicateProgramMethod {
+                        method: "recorded".into(),
+                    },
+                ));
+            }
             if def.decorator_list.is_empty() {
                 let mut helper = def.clone();
                 let receiver = if !helper.parameters.posonlyargs.is_empty() {

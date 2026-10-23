@@ -4,6 +4,37 @@ use crate::plan_flow_policy::{FlowPolicy, ForbiddenFlowRule, OperatorDisposition
 use crate::plasm_plan::parse_and_validate_plan_json;
 
 #[test]
+fn recorded_output_keeps_catalog_labels_and_historical_provenance() {
+    for label in ["credential", "untrusted"] {
+        let mut catalog = FlowCatalogView::default();
+        let class = DataClassName::new(label).unwrap();
+        catalog.capability_output_labels.insert(
+            QualifiedCapabilityKey::from_parts("matrix", "Acquisition", "acquire"),
+            BTreeSet::from([class.clone()]),
+        );
+        let plan = serde_json::json!({
+            "version": 1, "kind": "program",
+            "nodes": [{
+                "id": "prior", "kind": "data", "effect_class": "artifact_read", "result_shape": "list",
+                "data": {"kind": "literal", "value": [{"value": "recorded"}]},
+                "recorded_output": {"run_id": "recorded-reference", "entry_id": "matrix", "entity": "Acquisition", "labels": [], "provenance": []}
+            }],
+            "return": {"kind": "node", "node": "prior"}
+        });
+        let validated = parse_and_validate_plan_json(&plan).unwrap();
+        let checked = verify_plan_flow(
+            validated.artifact(),
+            &["prior".into()],
+            &catalog,
+            &FlowPolicySnapshot::Inactive,
+        );
+        let facts = &checked.analysis.node_facts["prior"].residual;
+        assert_eq!(facts.labels, BTreeSet::from([class]));
+        assert!(facts.provenance.contains("recorded-reference"));
+    }
+}
+
+#[test]
 fn flow_catalog_view_defaults_to_empty_sets() {
     let view = FlowCatalogView::default();
     let key = QualifiedCapabilityKey::from_parts("entry", "Entity", "action");
@@ -99,6 +130,25 @@ fn forbidden_untrusted_to_outbound_sink_denies_mutation() {
     let checked = verify_plan_flow(validated.artifact(), &topo, &catalog, &snapshot);
     assert!(matches!(checked.analysis.verdict, FlowVerdict::Denied));
     assert_eq!(checked.analysis.violations.len(), 1);
+    // An otherwise unlabelled action inherits its input's label. Recording
+    // that output must not launder it before a later, separately reviewed sink.
+    let inherited = checked.analysis.node_facts["send"].row_join();
+    assert!(inherited
+        .labels
+        .contains(&DataClassName::new("untrusted").unwrap()));
+    let mut reused_plan = plan.clone();
+    reused_plan["nodes"][0] = serde_json::json!({
+        "id": "messages", "kind": "data", "effect_class": "artifact_read", "result_shape": "list",
+        "data": {"kind": "literal", "value": [{"body": "historical"}]},
+        "recorded_output": {
+            "run_id": "recorded-reference", "entry_id": "flow", "entity": "UnlabelledResult",
+            "labels": inherited.labels, "provenance": inherited.provenance
+        }
+    });
+    let imported = parse_and_validate_plan_json(&reused_plan).unwrap();
+    let imported = verify_plan_flow(imported.artifact(), &topo, &catalog, &snapshot);
+    assert!(matches!(imported.analysis.verdict, FlowVerdict::Denied));
+    assert_eq!(imported.analysis.violations.len(), 1);
     assert!(checked.admit().is_err());
 }
 

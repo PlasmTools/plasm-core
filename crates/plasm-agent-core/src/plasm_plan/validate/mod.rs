@@ -844,6 +844,7 @@ fn validated_node_from_raw(
             }))
         }
         PlanNodeKind::Data => Ok(ValidatedPlanNode::Data(ValidatedDataNode {
+            recorded_output: node.recorded_output.clone(),
             id,
             effect_class: node.effect_class,
             result_shape: node.result_shape,

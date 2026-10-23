@@ -35,8 +35,20 @@ pub struct InvokePayload {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct PurePayload {
     pub data: PlasmDataValue,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub recorded_output: Option<RecordedOutputOrigin>,
     pub effect_class: EffectClass,
     pub result_shape: ResultShape,
+}
+
+/// Historical data provenance, never authority to execute the producing plan.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RecordedOutputOrigin {
+    pub run_id: String,
+    pub entry_id: String,
+    pub entity: String,
+    pub labels: std::collections::BTreeSet<crate::DataClassName>,
+    pub provenance: std::collections::BTreeSet<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]

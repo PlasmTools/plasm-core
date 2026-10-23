@@ -183,6 +183,7 @@ impl RunArtifactHotCache {
             seq,
             epoch,
             payload,
+            flow: None,
         });
         let add_bytes = item.payload.bytes.len();
         if let Some(prev) = self.by_resource_index.insert(resource_index, run_id) {
@@ -355,6 +356,8 @@ pub struct SessionRunArtifact {
     pub seq: DeltaSeq,
     pub epoch: GraphEpoch,
     pub payload: ArtifactPayload,
+    /// Verified producer flow; absent artifacts cannot be imported as data.
+    pub(crate) flow: Option<crate::plan_flow::FlowFacts>,
 }
 
 /// In-memory run index row (`GET /execute/.../runs` hot cache; evicted runs may still exist in [`RunArtifactStore`]).
@@ -517,6 +520,21 @@ impl SessionCore {
         g.run_artifacts.get(run_id)
     }
 
+    pub(crate) async fn record_output_flow(
+        &self,
+        artifact: &crate::run_artifacts::RunArtifactHandle,
+        flow: crate::plan_flow::FlowFacts,
+    ) {
+        let mut state = self.state.lock().await;
+        if let Some(stored) = state.run_artifacts.map.get_mut(&artifact.run_id) {
+            // A later observation may share the plan digest; never attach its
+            // predecessor's proof to that replacement.
+            if stored.resource_index == artifact.resource_index {
+                Arc::make_mut(stored).flow = Some(flow);
+            }
+        }
+    }
+
     pub async fn get_run_artifact_by_resource_index(
         &self,
         resource_index: u64,
@@ -591,6 +609,8 @@ pub struct ExecuteSession {
     pub graph_cache: Arc<MutexGraphCacheSession>,
     /// Unified in-session graph/artifact state.
     pub core: Arc<SessionCore>,
+    /// Admission-only view of recorded outputs; never inserted into the read cache.
+    pub(crate) recorded_outputs: Arc<HashMap<String, Arc<SessionRunArtifact>>>,
     /// Next `plasm://r/{n}` index for this execute session (1-based after first mint).
     run_resource_next: Arc<AtomicU64>,
     /// Opaque `pg#` handles → query or synthetic pagination resume snapshots for [`plasm_core::Expr::Page`].
@@ -627,6 +647,16 @@ impl ExecuteSession {
     pub(crate) async fn preflight_snapshot(&self) -> Self {
         let materialization = self.graph_cache.snapshot().await;
         let mut snapshot = self.clone();
+        let artifacts = self.core.state.lock().await;
+        snapshot.recorded_outputs = Arc::new(
+            artifacts
+                .run_artifacts
+                .map
+                .iter()
+                .map(|(id, artifact)| (id.to_wire(), artifact.clone()))
+                .collect(),
+        );
+        drop(artifacts);
         snapshot.graph_cache =
             Arc::new(MutexGraphCacheSession::new_materialization(materialization));
         snapshot
@@ -730,6 +760,7 @@ impl ExecuteSession {
             context_intent,
             graph_cache: core.graph_cache(),
             core,
+            recorded_outputs: Default::default(),
             run_resource_next: Arc::new(AtomicU64::new(0)),
             paging_resume_by_handle: Arc::new(StdMutex::new(HashMap::new())),
             paging_handle_next: Arc::new(AtomicU64::new(0)),

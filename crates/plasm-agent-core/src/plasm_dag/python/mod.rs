@@ -20,6 +20,7 @@ mod membership;
 pub(crate) mod projection;
 pub(crate) mod quantifiers;
 mod reads;
+mod recorded;
 pub(crate) mod reductions;
 mod refinements;
 pub(crate) mod relation_operations;
@@ -64,6 +65,7 @@ fn lower_python_program(
         static_sequences: BTreeMap::new(),
         spans: BTreeMap::new(),
         compute_origins: BTreeMap::new(),
+        recorded_outputs: BTreeMap::new(),
     };
     // Upstream lexical scope includes declarations after return. Reserved host
     // bindings cannot be shadowed even by an unreachable local assignment.
@@ -180,6 +182,11 @@ fn lower_python_program(
     super::plan_serialize::stamp_plan_uses_result_qualified_entities(&mut plan)?;
     let validated = crate::plasm_plan::validate_plan_artifact(&plan)?;
     let mut artifact = crate::plasm_comp_wire::plasm_comp_from_validated(&validated);
+    for (id, origin) in lower.recorded_outputs {
+        if let Some(PlasmStepPayload::Pure(node)) = artifact.comp.steps.get_mut(&id) {
+            node.recorded_output = Some(origin);
+        }
+    }
     crate::plan_session_provisions::seal(es, validated.nodes(), &mut artifact.comp.bind)?;
     artifact
         .comp
@@ -274,6 +281,7 @@ struct Lower<'a> {
     static_expansions: usize,
     spans: BTreeMap<String, serde_json::Value>,
     compute_origins: BTreeMap<String, crate::program_rejection::ReceiverIdentityOrigin>,
+    recorded_outputs: BTreeMap<String, RecordedOutputOrigin>,
 }
 impl Lower<'_> {
     fn expression_placement(&self, expression: &PyExpr) -> ExpressionPlacement {
@@ -401,6 +409,9 @@ impl Lower<'_> {
             }
         }
         if name(&attr.value) == Some("self") {
+            if attr.attr.as_str() == "recorded" {
+                return self.recorded(e, call, &id);
+            }
             if self.helpers.contains_key(attr.attr.as_str()) {
                 return self.helper_call(e, call, attr.attr.as_str(), &id);
             }

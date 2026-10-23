@@ -16,6 +16,7 @@ impl DagNodeSource {
     fn emit_plan_node(&self, node: &DagNode) -> PlanNode {
         // This is an untrusted structural plan node. Admission owns checked construction.
         let mut out = PlanNode {
+            recorded_output: None,
             until_scope: None,
             step_scope: None,
             id: node.id.clone(),

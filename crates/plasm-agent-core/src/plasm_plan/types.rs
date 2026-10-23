@@ -457,6 +457,7 @@ pub struct ValidatedSurfaceNode {
 
 #[derive(Debug, Clone)]
 pub struct ValidatedDataNode {
+    pub(crate) recorded_output: Option<plasm_core::plasm_monad::RecordedOutputOrigin>,
     pub(crate) id: PlanNodeId,
     pub(crate) effect_class: EffectClass,
     pub(crate) result_shape: ResultShape,
@@ -806,6 +807,8 @@ impl fmt::Display for PlanNodeKind {
 /// One typed node in the Plan DAG.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct PlanNode {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub recorded_output: Option<plasm_core::plasm_monad::RecordedOutputOrigin>,
     pub id: String,
     pub kind: PlanNodeKind,
     #[serde(default, skip_serializing_if = "Option::is_none")]
