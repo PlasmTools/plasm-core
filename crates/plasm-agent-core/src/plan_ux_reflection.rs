@@ -543,6 +543,7 @@ mod tests {
             kind: PlanNodeKind::Query,
             expr: "e1.identifier".into(),
             selections: vec![],
+            description: String::new(),
         };
         let rendered = crate::plan_dry_display::human_ux_summary_for_op(&op);
         assert!(rendered.contains("Read"));

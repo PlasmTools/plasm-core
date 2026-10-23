@@ -29,8 +29,11 @@ async fn map_body_plan_displays_its_typed_write_per_source_row() {
         .expect("compile");
     let dry = super::super::super::evaluate_plasm_comp_dry(&es, &bundle).expect("dry plan");
     let text = super::super::super::render_plasm_plan_dry_text_for_session(&dry, None, Some(&es));
-    assert!(
-        text.contains("for each row in rows: action Counter.advance(id=$) — Advances the counter by one. → action Counter.advance(id=$) — Advances the counter by one."),
+    assert!(text.contains("for each row in rows:"), "{text}");
+    assert_eq!(
+        text.matches("action Counter.advance(id=$) — Advances the counter by one.")
+            .count(),
+        2,
         "{text}"
     );
     assert!(!text.contains("effects: value"), "{text}");
@@ -75,6 +78,106 @@ async fn nested_review_distinguishes_capabilities_arguments_and_effects() {
         }
         assert!(!text.contains("action matrix.Counter"), "{text}");
         assert!(!text.contains("\"op\":"), "review must be text: {text}");
+    }
+}
+
+#[tokio::test]
+async fn review_preserves_effects_and_verification_dependencies() {
+    let es = session();
+    let symbols = es.teaching_exposure.as_ref().unwrap().to_symbol_map();
+    let wire = symbols.entity_sym_for("matrix", "Wire");
+    let counter = symbols.entity_sym_for("matrix", "Counter");
+    let advance = symbols.method_sym_for("matrix", "Counter", "advance");
+    let apply = symbols.method_sym_for("matrix", "Counter", "apply_item");
+    for (call, description) in [
+        (
+            format!("{counter}.{advance}(id=\"target\")"),
+            "Advances the counter by one.",
+        ),
+        (
+            format!("original.{apply}(item=\"checked\")"),
+            "Applies one source item to this counter.",
+        ),
+    ] {
+        for gated in [false, true] {
+            let invocation = if gated {
+                format!("gate.flat_map(lambda _: {call})")
+            } else {
+                call.clone()
+            };
+            let program = format!("class Review(Program):\n    @compute\n    def verify(self, row: Value[{wire}]) -> list[bool]:\n        if row.value != 0:\n            raise ValueError(\"unexpected state\")\n        return [True]\n    def build(self):\n        original = {counter}.get(\"target\")\n        observed = {wire}.get(\"evidence\")\n        gate = self.verify(observed)\n        changed = {invocation}\n        return changed\n");
+            let bundle = crate::plasm_compile::compile_python_program(&es, &program)
+                .await
+                .unwrap();
+            let dry = super::super::super::evaluate_plasm_comp_dry(&es, &bundle).unwrap();
+            let text =
+                super::super::super::render_plasm_plan_dry_text_for_session(&dry, None, Some(&es));
+            assert_eq!(text.matches(description).count(), 1, "{text}");
+            assert!(text.contains("gate: compute value ← observed"), "{text}");
+            let changed = text.lines().find(|l| l.starts_with("changed:")).unwrap();
+            assert_eq!(
+                changed.contains("gate"),
+                gated,
+                "an unrelated check must not become a dependency: {text}"
+            );
+            assert!(!text.contains("\"op\":"), "{text}");
+        }
+    }
+}
+
+#[tokio::test]
+async fn nested_review_retains_inner_verification_scope() {
+    let es = session();
+    let symbols = es.teaching_exposure.as_ref().unwrap().to_symbol_map();
+    let wire = symbols.entity_sym_for("matrix", "Wire");
+    let counter = symbols.entity_sym_for("matrix", "Counter");
+    let advance = symbols.method_sym_for("matrix", "Counter", "advance");
+    let program = format!("class Nested(Program):\n    @compute\n    def verify(self, row: Value[{wire}]) -> list[bool]:\n        if row.value != 0:\n            raise ValueError(\"unexpected state\")\n        return [True]\n    def build(self):\n        rows = {wire}.query()\n        changed = rows.flat_map(lambda row: self.verify(row).flat_map(lambda _: {counter}.{advance}(id=\"target\")))\n        return changed\n");
+    let bundle = crate::plasm_compile::compile_python_program(&es, &program)
+        .await
+        .unwrap();
+    let dry = super::super::super::evaluate_plasm_comp_dry(&es, &bundle).unwrap();
+    let text = super::super::super::render_plasm_plan_dry_text_for_session(&dry, None, Some(&es));
+    assert!(text.contains("compute value"), "{text}");
+    assert_eq!(text.matches("for each row in").count(), 2, "{text}");
+    assert_eq!(
+        text.matches("Advances the counter by one.").count(),
+        1,
+        "{text}"
+    );
+    assert!(!text.contains("__py"), "{text}");
+}
+
+#[tokio::test]
+async fn nested_review_names_scalar_verification_dependencies() {
+    let es = session();
+    let symbols = es.teaching_exposure.as_ref().unwrap().to_symbol_map();
+    let wire = symbols.entity_sym_for("matrix", "Wire");
+    let counter = symbols.entity_sym_for("matrix", "Counter");
+    let advance = symbols.method_sym_for("matrix", "Counter", "advance");
+    for dependent in [false, true] {
+        let argument = if dependent {
+            "self.verify(row)"
+        } else {
+            "row.id"
+        };
+        let program = format!("class Nested(Program):\n    @compute\n    def verify(self, row: Value[{wire}]) -> str:\n        if row.value != 0:\n            raise ValueError(\"unexpected state\")\n        return row.id\n    def build(self):\n        rows = {wire}.query()\n        changed = rows.flat_map(lambda row: {counter}.{advance}(id={argument}))\n        return changed\n");
+        let bundle = crate::plasm_compile::compile_python_program(&es, &program)
+            .await
+            .unwrap();
+        let dry = super::super::super::evaluate_plasm_comp_dry(&es, &bundle).unwrap();
+        let text =
+            super::super::super::render_plasm_plan_dry_text_for_session(&dry, None, Some(&es));
+        let effect = text
+            .split("action Counter.advance")
+            .nth(1)
+            .unwrap()
+            .split(']')
+            .next()
+            .unwrap();
+        assert_eq!(effect.contains("compute_"), dependent, "{text}");
+        assert_eq!(text.contains("compute value"), dependent, "{text}");
+        assert!(!text.contains("__py"), "{text}");
     }
 }
 struct FanoutTransport {

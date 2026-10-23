@@ -1,4 +1,4 @@
-version: 24
+version: 25
 entry_id: amazon
 auth:
   scheme: none
@@ -528,7 +528,7 @@ entities:
         description: Actual delivery time, when delivered.
   Address:
     id_field: address_id
-    description: Shipping address on the account.
+    description: Shipping address registered on this account. Its address_id selects it for delivery; a profile address supplies details but is not an account address_id.
     discovery:
       names:
       - address
@@ -558,7 +558,7 @@ entities:
         value_ref: nv_int
   PaymentCard:
     id_field: payment_card_id
-    description: Saved payment card.
+    description: Payment card registered on this account. Its payment_card_id selects it for payment; registration and an unexpired date do not establish sufficient funds.
     fields:
       payment_card_id:
         required: true
@@ -1671,7 +1671,7 @@ capabilities:
     - country
     - zip_code
   address_create:
-    description: Add a shipping address.
+    description: Register shipping address details on this account and return its address_id. Other address fields are not returned by this operation.
     kind: create
     entity: Address
     payload:
@@ -1779,7 +1779,7 @@ capabilities:
     - expiry_month
     - cvv_number
   payment_card_create:
-    description: Add a saved payment card.
+    description: Register card details on this account and return its payment_card_id for payments. Does not charge the card or establish sufficient funds; other card fields are not returned by this operation.
     kind: create
     entity: PaymentCard
     payload:

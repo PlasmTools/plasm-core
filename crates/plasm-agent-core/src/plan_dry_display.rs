@@ -146,6 +146,7 @@ pub enum PlanDryOp {
         kind: PlanNodeKind,
         expr: String,
         selections: Vec<PlanDrySelection>,
+        description: String,
     },
     Project {
         fields: Vec<String>,
@@ -211,6 +212,8 @@ pub enum PlanDryOp {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PlanDryEffect {
+    pub binding: String,
+    pub uses: Vec<String>,
     pub kind: PlanNodeKind,
     pub expression: String,
     pub description: String,
@@ -240,27 +243,58 @@ fn map_body_effects(plan: &ValidatedPlan, es: Option<&ExecuteSession>) -> Vec<Pl
     let mut effects = Vec::new();
     enum Work<'a> {
         Plan(&'a ValidatedPlan),
-        Node(&'a ValidatedPlanNode),
+        Node(
+            &'a ValidatedPlanNode,
+            std::sync::Arc<HashMap<String, String>>,
+        ),
     }
     let mut pending = vec![Work::Plan(plan)];
     while let Some(work) = pending.pop() {
-        let node = match work {
-            Work::Node(node) => node,
+        let (node, labels) = match work {
+            Work::Node(node, labels) => (node, labels),
             Work::Plan(plan) => {
+                let order = plan
+                    .topological_order()
+                    .iter()
+                    .map(|id| id.as_str().to_owned())
+                    .collect::<Vec<_>>();
+                let labels = std::sync::Arc::new(build_plan_node_display_map(plan.nodes(), &order));
                 let by_id: std::collections::HashMap<_, _> =
                     plan.nodes().iter().map(|node| (node.id(), node)).collect();
                 for id in plan.topological_order().iter().rev() {
                     if let Some(&node) = by_id.get(id) {
-                        pending.push(Work::Node(node));
+                        pending.push(Work::Node(node, labels.clone()));
                     }
                 }
                 continue;
             }
         };
+        // Retain compute gates and their row scope rather than flattening a
+        // conditional child action into an unconditional list of writes.
+        if matches!(
+            node,
+            ValidatedPlanNode::MapBody(_) | ValidatedPlanNode::Compute(_)
+        ) {
+            let op = compact_op_from_node(node, es, &labels);
+            let expression = match op {
+                PlanDryOp::Python { .. } => "compute value".to_owned(),
+                _ => render_plan_dry_op(&op),
+            };
+            effects.push(PlanDryEffect {
+                binding: map_display_id(node.id().as_str(), &labels),
+                uses: step_upstream_labels(node, &labels),
+                kind: node.kind(),
+                expression,
+                description: String::new(),
+            });
+            continue;
+        }
         if let ValidatedPlanNode::Surface(surface) = node {
             // Keep receiver/input reads: their values feed the `$` holes in
             // subsequent calls. Omitting them would hide literal identities.
             effects.push(PlanDryEffect {
+                binding: map_display_id(node.id().as_str(), &labels),
+                uses: step_upstream_labels(node, &labels),
                 kind: surface.kind,
                 expression: surface_compact_expr(surface, es),
                 description: if matches!(
@@ -283,6 +317,8 @@ fn map_body_effects(plan: &ValidatedPlan, es: Option<&ExecuteSession>) -> Vec<Pl
             ) {
                 let target = &fanout.effect_template.qualified_entity;
                 effects.push(PlanDryEffect {
+                    binding: map_display_id(node.id().as_str(), &labels),
+                    uses: step_upstream_labels(node, &labels),
                     kind: fanout.effect_template.kind,
                     expression: format!(
                         "{} per child row",
@@ -314,11 +350,19 @@ fn render_map_body(source: &str, effects: &[PlanDryEffect]) -> String {
     let actions = effects
         .iter()
         .map(|effect| {
-            let mut text = format!("{} {}", render_kind(effect.kind), effect.expression);
-            if !effect.description.is_empty() {
-                let _ = write!(text, " — {}", effect.description);
+            let operation = with_effect_description(
+                if matches!(effect.kind, PlanNodeKind::Compute | PlanNodeKind::MapBody) {
+                    effect.expression.clone()
+                } else {
+                    format!("{} {}", render_kind(effect.kind), effect.expression)
+                },
+                &effect.description,
+            );
+            let mut text = format!("{}: {operation}", effect.binding);
+            if !effect.uses.is_empty() {
+                let _ = write!(text, " ← {}", effect.uses.join(", "));
             }
-            text
+            format!("[{text}]")
         })
         .collect::<Vec<_>>();
     if actions.is_empty() {
@@ -326,6 +370,13 @@ fn render_map_body(source: &str, effects: &[PlanDryEffect]) -> String {
     } else {
         format!("for each row in {source}: {}", actions.join(" → "))
     }
+}
+
+fn with_effect_description(mut text: String, description: &str) -> String {
+    if !description.is_empty() {
+        let _ = write!(text, " — {description}");
+    }
+    text
 }
 
 fn effect_description(
@@ -365,7 +416,7 @@ pub fn build_plan_dry_compact_view(
     es: Option<&ExecuteSession>,
     flow_verdict_override: Option<PlanDryVerdict>,
 ) -> PlanDryCompactView {
-    let display_map = build_plan_node_display_map(plan, topological_order);
+    let display_map = build_plan_node_display_map(&plan.nodes, topological_order);
     let return_unbounded = return_roots_include_unbounded_list_surface(plan);
     let flow_verdict = flow_verdict_override.or_else(|| {
         graph_summary
@@ -465,10 +516,7 @@ pub fn render_plan_dry_compact_text(
         .filter(|step| {
             step.synthetic
                 && step.id != view.return_label
-                && matches!(
-                    step.op,
-                    PlanDryOp::Data { .. } | PlanDryOp::Derive { .. } | PlanDryOp::Python { .. }
-                )
+                && matches!(step.op, PlanDryOp::Data { .. } | PlanDryOp::Derive { .. })
         })
         .map(|step| step.id.as_str())
         .collect::<std::collections::HashSet<_>>();
@@ -599,16 +647,23 @@ pub(crate) fn human_ux_summary_for_op(op: &PlanDryOp) -> String {
             kind,
             expr,
             selections,
+            description,
         } => match kind {
             PlanNodeKind::Search => {
                 format!("Search · {expr}{}", render_selection_effects(selections))
             }
             PlanNodeKind::Get => format!("Get · {expr}"),
             PlanNodeKind::Query => format!("Read · {expr}{}", render_selection_effects(selections)),
-            PlanNodeKind::Create => format!("Create · {expr}"),
-            PlanNodeKind::Update => format!("Update · {expr}"),
-            PlanNodeKind::Delete => format!("Delete · {expr}"),
-            PlanNodeKind::Action => format!("Write · {expr}"),
+            PlanNodeKind::Create => {
+                with_effect_description(format!("Create · {expr}"), description)
+            }
+            PlanNodeKind::Update => {
+                with_effect_description(format!("Update · {expr}"), description)
+            }
+            PlanNodeKind::Delete => {
+                with_effect_description(format!("Delete · {expr}"), description)
+            }
+            PlanNodeKind::Action => with_effect_description(format!("Write · {expr}"), description),
             _ => format!("{} · {expr}", render_kind(*kind)),
         },
         PlanDryOp::Sort { key, descending } => {
@@ -661,10 +716,14 @@ pub(crate) fn render_plan_dry_op(op: &PlanDryOp) -> String {
             kind,
             expr,
             selections,
-        } => format!(
-            "{} {expr}{}",
-            render_kind(*kind),
-            render_selection_effects(selections)
+            description,
+        } => with_effect_description(
+            format!(
+                "{} {expr}{}",
+                render_kind(*kind),
+                render_selection_effects(selections)
+            ),
+            description,
         ),
         PlanDryOp::Project { fields } => format!("project {}", fields.join(", ")),
         PlanDryOp::Filter { predicates } => format!("filter {}", predicates.join(", ")),
@@ -736,6 +795,11 @@ fn compact_op_from_node(
             kind: s.kind,
             expr: surface_compact_expr(s, es),
             selections: surface_selection_effects(s, es),
+            description: if matches!(s.effect_class, EffectClass::Write | EffectClass::SideEffect) {
+                effect_description(crate::plan_flow_capability::surface_capability_key(s), es)
+            } else {
+                String::new()
+            },
         },
         ValidatedPlanNode::Data(n) => PlanDryOp::Data {
             summary: data_value_summary(&n.data),
@@ -761,12 +825,12 @@ fn compact_op_from_node(
         ValidatedPlanNode::ForEach(n) => PlanDryOp::ForEach {
             source: map_display_id(n.source.as_str(), display_map),
             binding: n.item_binding.as_str().to_string(),
-            body: effect_template_body(&n.effect_template, es),
+            body: described_effect_template_body(&n.effect_template, es),
         },
         ValidatedPlanNode::IterateUntil(n) => PlanDryOp::IterateUntil {
             source: map_display_id(n.source.as_str(), display_map),
             binding: n.item_binding.as_str().to_string(),
-            body: effect_template_body(&n.effect_template, es),
+            body: described_effect_template_body(&n.effect_template, es),
             take: n.take,
         },
     }
@@ -978,6 +1042,25 @@ fn render_plan_expr_template(template: &ValidatedPlanExprTemplate) -> String {
 
 fn effect_template_body(template: &ValidatedEffectTemplate, es: Option<&ExecuteSession>) -> String {
     render_plan_expr_template_for_session(&template.ir_template, es)
+}
+
+fn described_effect_template_body(
+    template: &ValidatedEffectTemplate,
+    es: Option<&ExecuteSession>,
+) -> String {
+    let target = &template.qualified_entity;
+    let key = crate::plan_flow::QualifiedCapabilityKey::from_parts(
+        target.entry_id.as_str(),
+        target.entity.as_str(),
+        &crate::plan_flow_capability::resolved_mutation_capability_name(
+            Some(&template.ir_template.expr),
+            template.kind,
+        ),
+    );
+    with_effect_description(
+        effect_template_body(template, es),
+        &effect_description(Some(key), es),
+    )
 }
 
 fn step_upstream_labels(
@@ -1306,24 +1389,23 @@ pub(crate) fn plan_node_display_map(
     plan: &Plan<ValidatedPlanState>,
     topological_order: &[String],
 ) -> HashMap<String, String> {
-    build_plan_node_display_map(plan, topological_order)
+    build_plan_node_display_map(&plan.nodes, topological_order)
 }
 
 fn build_plan_node_display_map(
-    plan: &Plan<ValidatedPlanState>,
+    nodes: &[ValidatedPlanNode],
     topological_order: &[String],
 ) -> HashMap<String, String> {
     let mut map = HashMap::new();
     let mut counters = SyntheticPlanLabelCounters::default();
     // Reserve every authored name up front, including names later in the plan.
-    let mut occupied: std::collections::HashSet<String> = plan
-        .nodes
+    let mut occupied: std::collections::HashSet<String> = nodes
         .iter()
         .filter(|node| !is_synthetic_plan_node_id(node.id().as_str()))
         .map(|node| node.id().as_str().to_owned())
         .collect();
     for id in topological_order {
-        let Some(node) = plan.nodes.iter().find(|n| n.id().as_str() == id) else {
+        let Some(node) = nodes.iter().find(|n| n.id().as_str() == id) else {
             continue;
         };
         let label = if is_synthetic_plan_node_id(id.as_str()) {
@@ -1350,10 +1432,80 @@ mod tests {
     use std::sync::Arc;
 
     #[test]
+    fn resource_lifecycle_teaching_retains_source_registration_and_unknown_readiness() {
+        let dir = std::path::Path::new(crate::test_manifest_dir())
+            .join("../../fixtures/schemas/resource_registration");
+        for definition in [
+            "Routing definition",
+            "Calibration profile",
+            "Rendering preset",
+        ] {
+            let mut cgs = plasm_core::load_schema_dir(&dir).unwrap();
+            cgs.values.get_mut("definition").unwrap().description = definition.into();
+            let encoded = serde_json::to_vec(&cgs).unwrap();
+            let cgs: plasm_core::CGS = serde_json::from_slice(&encoded).unwrap();
+            let exposure = TeachingExposureSession::new(
+                &cgs,
+                "resource_registration",
+                &["ResourceSource", "RegisteredResource"],
+            );
+            let text = plasm_core::prompt_render::python::prepare_python_teaching_wave(
+                &exposure,
+                &plasm_core::prompt_render::python::PythonTeachingState::default(),
+            )
+            .unwrap()
+            .declarations;
+            for fragment in [
+                definition,
+                "presence here does not establish destination registration",
+                "registration alone does not establish current readiness",
+                "Does not establish readiness or permission",
+                "Result fields available immediately: handle",
+            ] {
+                assert!(text.contains(fragment), "missing {fragment}: {text}");
+            }
+            assert_eq!(
+                cgs.capabilities["register_resource"].provides,
+                vec!["handle"]
+            );
+            assert!(!cgs.entities["RegisteredResource"].fields["ready"].required);
+        }
+    }
+
+    #[test]
+    fn effect_review_is_lossless_compact_and_does_not_invent_annotations() {
+        let description = "Registers a definition; leaves existing resources unchanged. Readiness remains unknown.";
+        for kind in [
+            PlanNodeKind::Create,
+            PlanNodeKind::Update,
+            PlanNodeKind::Delete,
+            PlanNodeKind::Action,
+        ] {
+            for description in [description, ""] {
+                let op = PlanDryOp::Surface {
+                    kind,
+                    expr: "Resource.change(value=sample)".into(),
+                    selections: vec![],
+                    description: description.into(),
+                };
+                for text in [render_plan_dry_op(&op), human_ux_summary_for_op(&op)] {
+                    assert!(text.contains("Resource.change(value=sample)"));
+                    assert_eq!(text.contains(" — "), !description.is_empty());
+                    if !description.is_empty() {
+                        assert!(text.ends_with(description), "{text}");
+                    }
+                    assert_eq!(text.lines().count(), 1);
+                }
+            }
+        }
+    }
+
+    #[test]
     fn plan_uses_the_catalogs_typed_selection_meaning() {
         let op = PlanDryOp::Surface {
             kind: PlanNodeKind::Query,
             expr: "e1.query(query=..., status=...)".into(),
+            description: String::new(),
             selections: vec![
                 PlanDrySelection {
                     name: "query".into(),

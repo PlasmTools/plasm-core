@@ -1,4 +1,4 @@
-version: 9
+version: 10
 entry_id: supervisor
 auth:
   scheme: none
@@ -50,7 +50,7 @@ entities:
         value_ref: nv_password
   Address:
     id_field: name
-    description: Named address belonging to the supervisor.
+    description: Named address details on the supervisor profile, usable as input to address registration. Not a service-local registered address or address ID.
     fields:
       name:
         required: true
@@ -72,7 +72,7 @@ entities:
         value_ref: nv_int
   PaymentCard:
     id_field: card_number
-    description: Payment card on the supervisor profile.
+    description: Payment card details on the supervisor profile, usable as input to card registration. Not a service-local saved card ID; presence and expiry do not establish sufficient funds.
     fields:
       owner_name:
         required: true

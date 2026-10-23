@@ -183,6 +183,13 @@ and a depth ceiling of 16. See [the scoped composition contract](python-scoped-c
 
 ### Compact teaching contract
 
+Plan reviews retain authored capability and side-effect descriptions for writes,
+including scoped writes. Compute nodes and their dependency edges remain visible;
+an independent read or check is not presented as verification of a later action.
+Nested row scopes are retained rather than flattened into unconditional actions.
+These are descriptions of the reviewed program, not new checks, rollback promises,
+or evidence that a pending obligation has been fulfilled.
+
 Agent-facing teaching is a semantic delta over Python, not a library header. Serve
 one compact card for DAG construction, rowset/cardinality laws, compute and effects;
 add exact typed domain signatures incrementally. Preserve domains, constraints,
