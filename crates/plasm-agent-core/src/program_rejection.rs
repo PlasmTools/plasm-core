@@ -229,6 +229,17 @@ pub enum PythonInputError {
     InvalidUnionDiscriminator,
 }
 
+/// Authored provenance only; never infer identity from a record's field names.
+#[derive(Debug, Clone, thiserror::Error)]
+pub enum ReceiverIdentityOrigin {
+    #[error("`{method}` called on line {line} has an explicit return annotation; its result carries values, not entity identity")]
+    AnnotatedCompute { method: String, line: usize },
+    #[error("`{method}` called on line {line} did not prove selection of unchanged input entity occurrences; its result carries values, not entity identity")]
+    InferredCompute { method: String, line: usize },
+    #[error("this expression has no proven entity identity")]
+    Unproven,
+}
+
 #[derive(Debug, Clone, thiserror::Error)]
 pub enum PythonSourceError {
     #[error("of_type requires an exposed entity symbol from the source's declared entity union")]
@@ -474,10 +485,13 @@ pub enum PythonSourceError {
     ExpectedRowsetExpression,
     #[error("Python source is invalid: dynamic calls are not admitted")]
     DynamicCall,
-    #[error(
-        "Python source is invalid: write receiver requires a proven singleton with entity identity"
-    )]
-    WriteReceiverNeedsIdentitySingleton,
+    #[error("cannot write through `{binding}`: {origin}. Keep the original entity receiver. For verification-dependent writes, return a one-row gate after verification succeeds (raise on failure), then use gate.flat_map(lambda _: original.method(...)). Do not bypass verification by writing directly through the original receiver.")]
+    WriteReceiverMissingIdentity {
+        binding: String,
+        origin: ReceiverIdentityOrigin,
+    },
+    #[error("cannot write through `{binding}`: entity identity is retained, but the receiver is not a proven singleton. Invoke the method per row with flat_map, or select one row before invoking it; retain any verification dependency.")]
+    WriteReceiverNeedsSingleton { binding: String },
     #[error("Python source is invalid: method is not a mutation or action")]
     ExpectedWriteMethod { method: String },
     #[error("Python source is invalid: unsupported rowset operation: `{operation}`")]

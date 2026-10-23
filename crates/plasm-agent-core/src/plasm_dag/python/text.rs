@@ -261,10 +261,32 @@ impl Lower<'_> {
         normalized.parameters.posonlyargs.clear();
         normalized.parameters.kwonlyargs.clear();
         let code = admission::method_source(&self.imports.source, &code, &def, normalized)?;
-        self.emit_python_compute_ports(source, &code, id, selection_sources, packet)
+        let result = self
+            .emit_python_compute_ports(source, &code, id, selection_sources, packet)
             .map_err(|error| {
                 locate_compute_error(self.program_source, authored_method, site, error)
-            })
+            })?;
+        if let Some(method) = authored_method {
+            use crate::program_rejection::ReceiverIdentityOrigin;
+            let line = self.program_source[..site.start().to_usize()]
+                .bytes()
+                .filter(|byte| *byte == b'\n')
+                .count()
+                + 1;
+            let origin = if def.returns.is_some() {
+                ReceiverIdentityOrigin::AnnotatedCompute {
+                    method: method.into(),
+                    line,
+                }
+            } else {
+                ReceiverIdentityOrigin::InferredCompute {
+                    method: method.into(),
+                    line,
+                }
+            };
+            self.compute_origins.insert(result.clone(), origin);
+        }
+        Ok(result)
     }
 
     pub(super) fn emit_python_compute(

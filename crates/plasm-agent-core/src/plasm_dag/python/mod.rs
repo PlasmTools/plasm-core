@@ -63,6 +63,7 @@ fn lower_python_program(
         frame: LexicalFrame::default(),
         static_sequences: BTreeMap::new(),
         spans: BTreeMap::new(),
+        compute_origins: BTreeMap::new(),
     };
     // Upstream lexical scope includes declarations after return. Reserved host
     // bindings cannot be shadowed even by an unreachable local assignment.
@@ -272,6 +273,7 @@ struct Lower<'a> {
     value_depth: usize,
     static_expansions: usize,
     spans: BTreeMap<String, serde_json::Value>,
+    compute_origins: BTreeMap<String, crate::program_rejection::ReceiverIdentityOrigin>,
 }
 impl Lower<'_> {
     fn expression_placement(&self, expression: &PyExpr) -> ExpressionPlacement {
@@ -414,12 +416,26 @@ impl Lower<'_> {
             let contract = super::binding_contract(&self.state, &source).ok_or(
                 crate::program_rejection::PythonLoweringInvariantError::ReceiverContractMissing,
             )?;
-            if !contract.supports_method_invoke()
-                || !contract.row_cardinality.permits_scalar_field_extract()
-            {
+            let binding = name(&attr.value)
+                .unwrap_or("receiver expression")
+                .to_owned();
+            if !contract.supports_method_invoke() {
                 return Err(at(
                     e,
-                    PythonSourceError::WriteReceiverNeedsIdentitySingleton,
+                    PythonSourceError::WriteReceiverMissingIdentity {
+                        binding,
+                        origin: self
+                            .compute_origins
+                            .get(&source)
+                            .cloned()
+                            .unwrap_or(crate::program_rejection::ReceiverIdentityOrigin::Unproven),
+                    },
+                ));
+            }
+            if !contract.row_cardinality.permits_scalar_field_extract() {
+                return Err(at(
+                    e,
+                    PythonSourceError::WriteReceiverNeedsSingleton { binding },
                 ));
             }
             let concrete = contract.concrete_entity().map_err(|error| at(e, error))?;

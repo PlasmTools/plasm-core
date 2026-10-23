@@ -300,6 +300,16 @@ identity witness is added to model-visible record fields. Result fingerprints
 include retained host identities. Explicit output annotations, mixed owners
 and nested output containers do not acquire authority through this rule.
 
+Receiver rejection distinguishes missing identity from unproven singleton
+cardinality. Named compute results report the authored receiver binding, compute
+method and call line, including aliases; explicit return annotations are
+distinguished from inferred outputs without occurrence-selection proof. Unknown
+provenance is not attributed to a producer. The suggested verification repair is
+a one-row compute gate followed by `flat_map` over the original entity receiver,
+so verification failure prevents the write rather than bypassing the dependency.
+Abstract witnesses: `receiver_identity_diagnostic_names_authored_binding_and_origin`
+and `receiver_identity_repair_preserves_verification_dependency`.
+
 Pure helpers containing Python calls, indexing or comprehensions use the same
 checked compute boundary as multi-statement pure helpers. Structural record
 construction and DAG-handle aliases retain DAG elaboration and their return shape.
