@@ -76,6 +76,13 @@ can still claim completion with outstanding work.
 An open obligation may bind `verification` to an existing review using
 `logical_session_ref`, `plan_commit_ref`, `binding` and `field`. This identifies
 a model-authored compute predicate, not another natural-language assertion.
+Recording pending or deferred work requires no verifier or archive lookup.
+If an optional, well-formed binding is unavailable or inadmissible, the host
+stores the open work while omitting that binding (or retaining its previous
+accepted binding). The acknowledgement names the obligation and the rejected
+binding, and states whether the old binding remains. The same ID can attach a
+valid binding later without recreating the work. Malformed updates and invalid
+resolutions still reject the whole update; no status is silently downgraded.
 The predicate persists when omitted and cannot change with wording refinements.
 A fresh review reference is admitted only when both archived plans have identical
 program, computation, catalogue, workflow, producer binding and field. This permits

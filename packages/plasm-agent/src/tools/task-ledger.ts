@@ -225,7 +225,7 @@ export const TASK_LEDGER_TOOL_DESCRIPTION =
   "conditions that authorize alternatives, observed facts, interpretations, " +
   "completed effects with evidence refs, unresolved questions, and obligations. " +
   "`write` updates supplied fields. Obligations upsert by stable ID; omitted IDs remain unchanged, including when [] is supplied. Deferred work remains open. Resolution requires the previously bound verification computation to return true in the cited artifact. Cancellation requires a reason. Other arrays replace that field; [] clears them. `read` returns the current record. " +
-  `The merged record must fit ${TASK_LEDGER_MAX_BYTES} bytes (JSON). Invalid updates change nothing. ` +
+  `The merged record must fit ${TASK_LEDGER_MAX_BYTES} bytes (JSON). Rejected bindings leave pending work stored; invalid resolutions change nothing. ` +
   "The host stores what you send. It does not invent outcomes or remaining work, " +
   "and it does not decide that an alternative is authorized or that the instruction is satisfied. " +
   "`observed_facts` require `evidence_ref`. " + EVIDENCE_REF_DESCRIPTION + " " +
@@ -255,19 +255,26 @@ export function createTaskLedgerTool(store: TaskLedgerStore, evidence?: Obligati
         const supplied = Object.fromEntries(Object.entries(update.data).filter(([, value]) => value !== undefined));
         const current = store.record;
         const evidenceWitnesses: Array<() => boolean> = [];
+        const bindingRejections: Array<{ id: number; reason: string; retained: boolean }> = [];
         const obligations = new Map(current.obligations.map((item) => [item.id, item]));
         for (const item of update.data.obligations ?? []) {
           const previous = obligations.get(item.id);
-          const verification = item.verification ?? previous?.verification;
+          let verification = item.verification ?? previous?.verification;
           const reject = (reason: string) => `**task_ledger** write rejected: obligation ${item.id}: ${reason}. Host store unchanged.`;
+          let bindingError: string | undefined;
           if (previous?.verification && item.verification && JSON.stringify(previous.verification) !== JSON.stringify(item.verification)) {
             if (!await evidence?.samePredicate?.(previous.verification, item.verification)) {
-              return reject("verification predicate cannot change; fresh review must preserve its computation, binding and field");
+              bindingError = "verification predicate cannot change; fresh review must preserve its computation, binding and field";
             }
           }
           if (item.verification && !previous?.verification) {
             const checked = await evidence?.check(item.verification);
-            if (!checked?.ok) return reject(evidenceCheckMessage(checked?.code ?? "unavailable"));
+            if (!checked?.ok) bindingError = evidenceCheckMessage(checked?.code ?? "unavailable");
+          }
+          if (bindingError) {
+            if (item.status !== "pending" && item.status !== "deferred") return reject(bindingError);
+            verification = previous?.verification;
+            bindingRejections.push({ id: item.id, reason: bindingError, retained: verification !== undefined });
           }
           if (item.status === "resolved") {
             if (!previous?.verification) return reject("bind a reviewed verification computation while the obligation is open");
@@ -276,7 +283,8 @@ export function createTaskLedgerTool(store: TaskLedgerStore, evidence?: Obligati
             if (!checked?.ok) return reject(evidenceCheckMessage(checked?.code ?? "unavailable"));
             if (checked.current) evidenceWitnesses.push(checked.current);
           }
-          obligations.set(item.id, verification ? { ...item, verification } : item);
+          const { verification: _suppliedVerification, ...work } = item;
+          obligations.set(item.id, verification ? { ...work, verification } : work);
         }
         const parsed = parseTaskLedgerRecord({ ...current, ...supplied,
           obligations: [...obligations.values()].sort((a, b) => a.id - b.id) });
@@ -289,7 +297,9 @@ export function createTaskLedgerTool(store: TaskLedgerStore, evidence?: Obligati
         if (evidenceWitnesses.some(current => !current())) {
           return `**task_ledger** write rejected: ${evidenceCheckMessage("stale_observation")}. Host store unchanged.`;
         }
-        return formatLedgerToolResult("write", store.replace(parsed.record));
+        const acknowledgement = formatLedgerToolResult("write", store.replace(parsed.record));
+        return acknowledgement + bindingRejections.map(({ id, reason, retained }) =>
+          `\nObligation ${id} saved open; verification binding rejected: ${reason}. ${retained ? "Previous binding retained." : "No binding stored."} Attach a valid reviewed binding to this same ID when available; do not resubmit the pending work.`).join("");
       },
     }),
   };

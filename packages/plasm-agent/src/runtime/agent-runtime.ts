@@ -176,7 +176,7 @@ export class AgentRuntime {
   }
 
   async sameObligationPredicate(previous: ObligationVerification, next: ObligationVerification): Promise<boolean> {
-    await this.requireSessionByRef(previous.logical_session_ref);
+    if (!await this.evidenceSession(previous.logical_session_ref)) return false;
     if (!this.archive || previous.logical_session_ref !== next.logical_session_ref) return false;
     const [before, after] = await Promise.all([
       this.archive.getPlan(previous.plan_commit_ref, previous.logical_session_ref),
@@ -186,14 +186,15 @@ export class AgentRuntime {
   }
 
   async checkObligation(verification: ObligationVerification, runId?: string): Promise<EvidenceCheck> {
-    await this.requireSessionByRef(verification.logical_session_ref);
+    if (!await this.evidenceSession(verification.logical_session_ref)) return { ok: false, code: "unavailable" };
     if (!this.archive) return { ok: false, code: "unavailable" };
     const plan = await this.archive.getPlan(verification.plan_commit_ref, verification.logical_session_ref);
     const run = runId === undefined ? undefined : await this.archive.getRun(runId, verification.logical_session_ref);
     if (run && run.run_id !== runId) return { ok: false, code: "wrong_plan" };
     let stillCurrent: (() => boolean) | undefined;
     if (run) {
-      const current = await this.requireSessionByRef(verification.logical_session_ref);
+      const current = await this.evidenceSession(verification.logical_session_ref);
+      if (!current) return { ok: false, code: "unavailable" };
       const revision = run.observation_revision;
       stillCurrent = () => revision !== undefined && revision === current.observationRevision &&
         !this.observingRuns.has(verification.logical_session_ref);
@@ -670,6 +671,15 @@ export class AgentRuntime {
       throw this.sessionInputFailure("invalid_logical_session_ref", "Expected a canonical logical_session_ref returned by plasm_context");
     }
     return parsed.data;
+  }
+
+  /** Missing/expired evidence is ordinary rejection; storage faults still propagate. */
+  private async evidenceSession(ref: string): Promise<AgentSessionState | null> {
+    const parsed = logicalSessionRefSchema.safeParse(ref);
+    if (!parsed.success) return null;
+    if (this.workflowSession?.logicalSessionRef === parsed.data) return this.workflowSession;
+    const session = await this.sessionManager.getByLogicalRef(parsed.data);
+    return session?.engineInstanceId === this.engineInstanceId ? session : null;
   }
 
   private async requireSessionByRef(ref: string): Promise<AgentSessionState> {
