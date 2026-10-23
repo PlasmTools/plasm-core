@@ -2584,6 +2584,95 @@ mod tests {
     }
 
     #[test]
+    fn receiver_bindings_do_not_invent_acquisitions_matrix() {
+        for read_kind in [
+            crate::CapabilityKind::Get,
+            crate::CapabilityKind::Query,
+            crate::CapabilityKind::Search,
+        ] {
+            for (kind, receiver, receiver_entity) in [
+                (crate::CapabilityKind::Update, None, Some("BusinessRecord")),
+                (crate::CapabilityKind::Create, None, None),
+                (
+                    crate::CapabilityKind::Update,
+                    Some(crate::CapabilityReceiver::None),
+                    None,
+                ),
+                (
+                    crate::CapabilityKind::Action,
+                    Some(crate::CapabilityReceiver::Entity {
+                        entity: "ProviderResult".into(),
+                    }),
+                    Some("ProviderResult"),
+                ),
+            ] {
+                let mut cgs = fixture();
+                cgs.capabilities.get_mut("acquire").unwrap().kind = read_kind;
+                let mut row_read = cgs.capabilities["read"].clone();
+                row_read.name = "receiver_read".into();
+                row_read.kind = read_kind;
+                cgs.capabilities.insert("receiver_read".into(), row_read);
+                let consumer = cgs.capabilities.get_mut("read").unwrap();
+                consumer.kind = kind;
+                consumer.inputs.receiver = receiver;
+                let catalogs = BTreeMap::from([("matrix".into(), &cgs)]);
+                let business = CapabilityRef {
+                    catalog: "matrix".into(),
+                    capability: "read".into(),
+                };
+                let closure = prerequisite_closure(
+                    &catalogs,
+                    &DeploymentBindings {
+                        bindings: vec![DeploymentBinding {
+                            consumer: business.clone(),
+                            requirement: "scoped_access".into(),
+                            provider_catalog: "matrix".into(),
+                            provider: "value_source".into(),
+                        }],
+                    },
+                    &[business],
+                    &BTreeSet::from(["matrix".into()]),
+                )
+                .unwrap();
+                let exposure = crate::TeachingExposureSession::new(
+                    &cgs,
+                    "matrix",
+                    &["BusinessRecord", "ProviderResult"],
+                );
+                let symbols = exposure.to_symbol_map();
+                let guidance = crate::prompt_render::render_prerequisite_bindings(
+                    &closure,
+                    &catalogs,
+                    symbols.as_ref(),
+                )
+                .unwrap();
+                let entity = symbols.entity_sym_for("matrix", "BusinessRecord");
+                let method = symbols.method_sym_for("matrix", "BusinessRecord", "read");
+                let target = if let Some(receiver_entity) = receiver_entity {
+                    let receiver_symbol = symbols.entity_sym_for("matrix", receiver_entity);
+                    format!("row.{method}(...) (row: {receiver_symbol}) credential")
+                } else {
+                    format!("{entity}.{method}(...) credential")
+                };
+                assert!(guidance.contains(&target), "{guidance}");
+                assert!(!guidance.contains(&format!("{entity}.get(")), "{guidance}");
+                let provider = symbols.entity_sym_for("matrix", "ProviderResult");
+                let acquisition = match read_kind {
+                    crate::CapabilityKind::Get => "get",
+                    crate::CapabilityKind::Query => "query",
+                    crate::CapabilityKind::Search => "search",
+                    _ => unreachable!(),
+                };
+                assert!(
+                    guidance.contains(&format!("a1 = {provider}.{acquisition}(")),
+                    "{guidance}"
+                );
+                assert!(guidance.contains("a1.value ->"), "{guidance}");
+            }
+        }
+    }
+
+    #[test]
     fn get_acquisition_teaches_parens_id_not_slash_method() {
         let mut cgs = fixture();
         cgs.capabilities.get_mut("acquire").unwrap().kind = crate::CapabilityKind::Get;

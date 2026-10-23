@@ -163,10 +163,15 @@ impl BindingRenderer<'_> {
                 reference: reference.clone(),
             });
         }
+        let receiver = cap.receiver_entity().map(|entity| {
+            self.symbols
+                .entity_sym_for(&reference.catalog, entity.as_str())
+        });
         Ok(taught_capability_seat(
             cap,
             &entity,
             &method,
+            receiver.as_deref(),
             self.catalogs.get(&reference.catalog).copied(),
             &self.identity_wire(&reference.catalog, cap),
         ))
@@ -353,6 +358,7 @@ fn taught_capability_seat(
     cap: &CapabilitySchema,
     entity: &str,
     method: &str,
+    receiver: Option<&str>,
     cgs: Option<&CGS>,
     id_wire: &str,
 ) -> String {
@@ -374,17 +380,12 @@ fn taught_capability_seat(
         }
         CapabilityKind::Query => format!("{entity}.query(...)"),
         CapabilityKind::Search => format!("{entity}.search(...)"),
-        _ if cap.requires_receiver() => format!(
-            "{}.{}(...)",
-            taught_get_identity_seat(
-                entity,
-                id_wire,
-                cgs.and_then(|g| g.get_entity(cap.domain.as_str())),
-                cgs
-            ),
-            method
-        ),
-        _ => format!("{entity}.{method}(...)"),
+        // A receiver contract identifies a row, not how it was acquired. In
+        // particular, query-only entities need not declare a Get at all.
+        _ => match receiver {
+            Some(receiver) => format!("row.{method}(...) (row: {receiver})"),
+            None => format!("{entity}.{method}(...)"),
+        },
     }
 }
 
