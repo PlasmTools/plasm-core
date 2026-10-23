@@ -1032,7 +1032,7 @@ mod tests {
                     )
                 })
                 .collect();
-            let raw=serde_json::json!({"model":crate::discovery_matcher::RELEVANCE_MODEL,"provider":"TypeSafe","answers":answers}).to_string();
+            let raw=serde_json::json!({"model":crate::discovery_matcher::RELEVANCE_MODEL,"provider":"OpenAI","answers":answers}).to_string();
             store
                 .store_selector_envelope(batch.cache_key(), &raw)
                 .await

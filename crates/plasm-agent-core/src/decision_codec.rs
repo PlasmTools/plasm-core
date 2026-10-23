@@ -56,14 +56,26 @@ struct ChoiceAnswer {
 }
 
 /// Validated provider choice. Auxiliary scores are validated, but only the choice
-/// participates in the advisory support judgment; raw provider evidence is retained.
+/// participates in contribution classification; raw provider evidence is retained.
 pub(crate) struct ValidatedChoice {
     pub choice: String,
 }
 
-/// Decode the shared Jev protocol against the issued question and choice sets.
+/// Match an issued model alias or its eight-digit dated revision.
+pub(crate) fn model_matches(issued: &str, resolved: &str) -> bool {
+    let is_date = |date: &str| date.len() == 8 && date.bytes().all(|byte| byte.is_ascii_digit());
+    resolved == issued
+        || (!issued
+            .rsplit_once('-')
+            .is_some_and(|(_, suffix)| is_date(suffix))
+            && resolved
+                .strip_prefix(issued)
+                .is_some_and(|suffix| suffix.strip_prefix('-').is_some_and(is_date)))
+}
+
+/// Decode Luna Decisions against the issued question and choice sets.
 /// Provider envelope metadata is allowed; answer fields and binding maps are strict.
-pub(crate) fn decode_jev_choices<'a>(
+pub(crate) fn decode_choices<'a>(
     model: &str,
     questions: impl IntoIterator<Item = &'a str>,
     choices: &[&str],
@@ -71,15 +83,10 @@ pub(crate) fn decode_jev_choices<'a>(
 ) -> Result<BTreeMap<String, ValidatedChoice>, DecisionResponseError> {
     let envelope: ChoiceEnvelope =
         serde_json::from_str(raw).map_err(DecisionResponseError::MalformedEnvelope)?;
-    if !(envelope.model == model
-        || envelope
-            .model
-            .strip_prefix(model)
-            .is_some_and(|suffix| suffix.starts_with('-')))
-    {
+    if !model_matches(model, &envelope.model) {
         return Err(DecisionResponseError::UnexpectedModel);
     }
-    if envelope.provider != "TypeSafe" {
+    if envelope.provider != "OpenAI" {
         return Err(DecisionResponseError::UnexpectedProvider);
     }
     let questions: BTreeSet<_> = questions.into_iter().collect();
@@ -178,8 +185,8 @@ mod tests {
 
     fn envelope() -> serde_json::Value {
         json!({
-            "model": "typesafe/jev-test-20261002",
-            "provider": "TypeSafe",
+            "model": "openai/gpt-6-luna-decisions-20261006",
+            "provider": "OpenAI",
             "answers": {"q": {
                 "type": "choice", "choice": "yes", "confidence": 0.8,
                 "probabilities": {"yes": 0.66, "no": 0.33}
@@ -190,7 +197,7 @@ mod tests {
     fn decode(
         raw: &str,
     ) -> std::result::Result<BTreeMap<String, ValidatedChoice>, DecisionResponseError> {
-        decode_jev_choices("typesafe/jev-test", ["q"], &["yes", "no"], raw)
+        decode_choices("openai/gpt-6-luna-decisions", ["q"], &["yes", "no"], raw)
     }
 
     #[test]
@@ -203,10 +210,28 @@ mod tests {
     }
 
     #[test]
+    fn pinned_revision_requires_exact_resolution() {
+        let alias = "openai/gpt-6-luna-decisions";
+        let pinned = "openai/gpt-6-luna-decisions-20261006";
+        assert!(model_matches(alias, pinned));
+        assert!(model_matches(pinned, pinned));
+        assert!(!model_matches(
+            pinned,
+            "openai/gpt-6-luna-decisions-20261007"
+        ));
+        assert!(!model_matches(
+            pinned,
+            "openai/gpt-6-luna-decisions-20261006-20261007"
+        ));
+    }
+
+    #[test]
     fn rejects_provider_binding_choice_and_probability_corruption() {
         for (pointer, value) in [
             ("/provider", json!("Other")),
-            ("/model", json!("typesafe/jev-test2")),
+            ("/model", json!("openai/gpt-6-luna-decisions2")),
+            ("/model", json!("openai/gpt-6-luna-decisions-other")),
+            ("/provider", json!("TypeSafe")),
             ("/answers", json!({})),
             ("/answers/q/type", json!("score")),
             ("/answers/q/choice", json!("maybe")),
@@ -235,7 +260,7 @@ mod tests {
     fn rejects_duplicate_answer_probability_and_struct_keys() {
         let answer = envelope()["answers"]["q"].to_string();
         let duplicate_answer = format!(
-            r#"{{"model":"typesafe/jev-test","provider":"TypeSafe","answers":{{"q":{answer},"q":{answer}}}}}"#
+            r#"{{"model":"openai/gpt-6-luna-decisions","provider":"OpenAI","answers":{{"q":{answer},"q":{answer}}}}}"#
         );
         assert!(decode(&duplicate_answer).is_err());
         let raw = envelope().to_string();
@@ -246,8 +271,8 @@ mod tests {
                 "\"confidence\":0.8,\"confidence\":0.8",
             ),
             raw.replace(
-                "\"provider\":\"TypeSafe\"",
-                "\"provider\":\"TypeSafe\",\"provider\":\"TypeSafe\"",
+                "\"provider\":\"OpenAI\"",
+                "\"provider\":\"OpenAI\",\"provider\":\"OpenAI\"",
             ),
         ] {
             assert_ne!(raw, duplicate);

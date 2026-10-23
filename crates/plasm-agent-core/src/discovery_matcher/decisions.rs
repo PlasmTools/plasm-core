@@ -1,6 +1,6 @@
-//! Native JEV relevance boundary: shared evidence, independently bound questions.
+//! Native Decisions relevance boundary: shared evidence, independently bound questions.
 use super::{MatchChoice, SharedEvidence};
-use crate::decision_codec::{decode_jev_choices, DecisionResponseError};
+use crate::decision_codec::{decode_choices, DecisionResponseError};
 use serde::Serialize;
 use std::collections::BTreeMap;
 
@@ -26,7 +26,7 @@ pub(super) fn decode<'a>(
     keys: impl Iterator<Item = &'a String>,
     raw: &str,
 ) -> Result<BTreeMap<String, MatchChoice>, DecisionResponseError> {
-    decode_jev_choices(
+    decode_choices(
         model,
         keys.map(String::as_str),
         &["relevant", "uncertain", "unrelated"],

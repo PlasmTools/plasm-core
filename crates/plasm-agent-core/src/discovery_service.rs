@@ -264,7 +264,7 @@ impl DiscoveryService {
             |attempt| {
                 if let Some(directory) = &self.rejection_dir {
                     let mut record = serde_json::to_value(attempt)?;
-                    record["contract"] = "jev-shared-contribution-v5".into();
+                    record["contract"] = "decisions-shared-contribution-v6".into();
                     record["request_body"] = body.into();
                     save_rejection(directory, &record)?;
                 }

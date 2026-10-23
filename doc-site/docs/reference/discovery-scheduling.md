@@ -4,20 +4,20 @@ Retrieval is unchanged: up to 64 lexical and 64 vector candidates, deduplicated
 to at most 128. Authorization is applied before classification. Already exposed
 capabilities are still classified against the current intent and full intent ancestry.
 
-Capability relevance uses the native JEV Decisions API, default model
-`typesafe/jev-1.13`. `PLASM_DISCOVERY_CAPABILITY_MATCH_MODEL` must identify
-a `typesafe/jev-*` decision model; former chat-model overrides fail explicitly.
-Advisory environment support remains a separate judgment.
+Capability relevance uses the native OpenRouter Decisions API, default model
+`openai/gpt-6-luna-decisions`. `PLASM_DISCOVERY_CAPABILITY_MATCH_MODEL` may pin
+an eight-digit dated revision of that model. JEV and chat-model overrides fail
+explicitly. There is no whole-environment support classifier.
 
 Each request contains shared evidence and independent questions:
 
 ```json
 {
-  "model": "typesafe/jev-1.13",
+  "model": "openai/gpt-6-luna-decisions",
   "state": {
     "intent_turns": ["Inspect selected records"],
-    "current_intent": "Inspect selected records",
-    "intent_interpretation": "<complete interpretation rule>",
+    "outcome": "Inspect selected records",
+    "discovery_need": "Inspect selected records",
     "rule": "<complete contribution rubric>",
     "capabilities": {
       "c0": {
@@ -69,7 +69,7 @@ This removes incidental ordering differences, not model response variability.
 Relevant and uncertain capabilities are both retained; no confidence threshold,
 extra classification request or precision-only rejection is introduced.
 
-Complete request bytes and framing version `jev-shared-contribution-v6` determine
+Complete request bytes and framing version `decisions-shared-contribution-v6` determine
 cache identity. Changing any shared contract invalidates every page that uses it.
 There is no chat schema, generated reasoning, prefix padding, or automatic fallback.
 
@@ -77,7 +77,7 @@ There is no chat schema, generated reasoning, prefix padding, or automatic fallb
 | --- | --- |
 | Page packing | At most 128 questions; 64,000 serialized subject-evidence bytes target, excluding common state; not a token/context guarantee |
 | One discovery route | At most 4 admitted page futures, including split work |
-| One process | At most 8 provider requests, shared by relevance and advisory support |
+| One process | At most 8 provider requests |
 | Queue admission | FIFO semaphore; no fleet-wide or strict per-tenant fairness claim |
 | Context rejection | Split only rejected questions; preserve the complete shared state; never repeat successful pages |
 | Indivisible contract | A singleton question plus shared evidence is indivisible; fail explicitly if rejected |

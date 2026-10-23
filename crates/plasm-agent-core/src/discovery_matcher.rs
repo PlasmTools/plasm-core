@@ -18,7 +18,7 @@ type DecisionProviderError = Box<dyn std::error::Error + Send + Sync + 'static>;
 pub enum DiscoveryMatcherError {
     #[error("relevance model is required")]
     MissingModel,
-    #[error("capability relevance requires a typesafe/jev-* decision model")]
+    #[error("capability relevance requires openai/gpt-6-luna-decisions or a dated revision")]
     UnsupportedModel,
     #[error("judgment candidate bound exceeded")]
     CandidateBoundExceeded,
@@ -53,7 +53,7 @@ pub enum DiscoveryMatcherError {
     #[error("provider decision failed")]
     Provider(#[source] DecisionProviderError),
 }
-pub const RELEVANCE_MODEL: &str = "typesafe/jev-1.13";
+pub const RELEVANCE_MODEL: &str = "openai/gpt-6-luna-decisions";
 // Packing target for the subjects judged on a page, excluding shared evidence.
 // Shared evidence is bounded by retrieval and never dropped during partitioning.
 const TARGET_PAGE_BYTES: usize = 64_000;
@@ -148,7 +148,7 @@ pub fn issue_batches(
     if model.trim().is_empty() {
         return Err(DiscoveryMatcherError::MissingModel);
     }
-    if !model.starts_with("typesafe/jev-") {
+    if !crate::decision_codec::model_matches(RELEVANCE_MODEL, model) {
         return Err(DiscoveryMatcherError::UnsupportedModel);
     }
     if retrieval.candidates.len() > crate::discovery_store::CANDIDATE_LIMIT {
@@ -318,7 +318,7 @@ fn issue_batch(
     })
     .map_err(DiscoveryMatcherError::Encode)?;
     Ok(IssuedBatch {
-        cache_key: content_hash(format!("jev-shared-contribution-v6\\n{body}").as_bytes()),
+        cache_key: content_hash(format!("decisions-shared-contribution-v6\\n{body}").as_bytes()),
         body,
         model: model.into(),
         bindings,
@@ -549,6 +549,42 @@ mod tests {
             serde_json::from_value(packet["routing"]["retrieval"].clone()).unwrap(),
         )
     }
+    #[test]
+    fn luna_decisions_cutover_binds_model_and_provider() {
+        let (intent, retrieval) = fixture();
+        assert_eq!(RELEVANCE_MODEL, "openai/gpt-6-luna-decisions");
+        for model in [
+            RELEVANCE_MODEL.to_owned(),
+            format!("{RELEVANCE_MODEL}-20261006"),
+        ] {
+            let batch = issue_batches(&model, &intent, &retrieval)
+                .unwrap()
+                .remove(0);
+            let request: serde_json::Value = serde_json::from_str(batch.body()).unwrap();
+            assert_eq!(request["model"], model);
+            let mut raw: serde_json::Value =
+                serde_json::from_str(&response(&batch, &[MatchChoice::Uncertain])).unwrap();
+            raw["model"] = json!(model);
+            let answers = decode_batch(&batch, &raw.to_string()).unwrap();
+            let receipt = finish_selection(answers, &retrieval, &[batch.clone()]).unwrap();
+            assert_eq!(
+                receipt.selected(&retrieval).len(),
+                retrieval.candidates.len()
+            );
+            raw["provider"] = json!("TypeSafe");
+            assert!(decode_batch(&batch, &raw.to_string()).is_err());
+        }
+        for unsupported in [
+            "typesafe/jev-1.13",
+            "openai/gpt-6-luna",
+            "openai/gpt-6-luna-decisions-other",
+        ] {
+            assert!(matches!(
+                issue_batches(unsupported, &intent, &retrieval),
+                Err(DiscoveryMatcherError::UnsupportedModel)
+            ));
+        }
+    }
     fn response(batch: &IssuedBatch, choices: &[MatchChoice]) -> String {
         let answers: BTreeMap<_, _> = batch
             .bindings
@@ -564,7 +600,7 @@ mod tests {
                 )
             })
             .collect();
-        json!({"model":RELEVANCE_MODEL,"provider":"TypeSafe","answers":answers}).to_string()
+        json!({"model":RELEVANCE_MODEL,"provider":"OpenAI","answers":answers}).to_string()
     }
     // Resolve references for semantic assertions; dedicated wire tests verify compactness.
     fn question_content(batch: &IssuedBatch) -> serde_json::Value {
@@ -1013,7 +1049,7 @@ mod tests {
         }
         let answer = valid["answers"]["q0"].to_string();
         let duplicate = format!(
-            r#"{{"model":"{RELEVANCE_MODEL}","provider":"TypeSafe","answers":{{"q0":{answer},"q0":{answer}}}}}"#
+            r#"{{"model":"{RELEVANCE_MODEL}","provider":"OpenAI","answers":{{"q0":{answer},"q0":{answer}}}}}"#
         );
         assert!(decode_batch(&batches[0], &duplicate).is_err());
         assert!(decode_batch(&batches[0], "not json").is_err());
@@ -1094,7 +1130,7 @@ mod tests {
                         let answers: BTreeMap<_, _> = content["questions"].as_object().unwrap().keys()
                             .map(|key| (key, json!({"type":"choice","choice":"uncertain","confidence":1.0,
                                 "probabilities":{"relevant":0.0,"uncertain":1.0,"unrelated":0.0}}))).collect();
-                        let raw = json!({"model":RELEVANCE_MODEL,"provider":"TypeSafe","answers":answers}).to_string();
+                        let raw = json!({"model":RELEVANCE_MODEL,"provider":"OpenAI","answers":answers}).to_string();
                         (axum::http::StatusCode::OK, raw)
                     }
                 }
