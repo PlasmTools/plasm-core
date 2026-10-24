@@ -43,6 +43,9 @@ impl Lower<'_> {
                     }
                     error => failed(error),
                 })?;
+        // Admission pins complete, materialized historical membership. Exactly
+        // one observed row is a scalar-extraction proof, not receiver authority.
+        let singleton = collection.count() == 1 && collection.resident_entities().len() == 1;
         let rows = collection
             .resident_entities()
             .iter()
@@ -71,7 +74,7 @@ impl Lower<'_> {
         self.insert(DagNode {
             id: id.into(),
             expr: String::new(),
-            singleton: false,
+            singleton,
             page_size: None,
             source: super::super::types::DagNodeSource::Data(PlanValue::Literal { value }),
         })

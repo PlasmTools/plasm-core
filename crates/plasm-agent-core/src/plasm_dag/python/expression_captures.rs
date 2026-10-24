@@ -303,6 +303,25 @@ impl Capture<'_, '_> {
             return Ok(false);
         }
         let placement = state.lower.expression_placement(expr);
+        if let PyExpr::Attribute(attr) = expr {
+            if let Some(binding) = name(&attr.value) {
+                if super::row_operations::RowOperation::parse(attr.attr.as_str()).is_none()
+                    && state
+                        .lower
+                        .state
+                        .get(state.lower.scoped_binding(binding))
+                        .is_some_and(|node| {
+                            state.lower.recorded_outputs.contains_key(&node.id) && !node.singleton
+                        })
+                {
+                    let error = PythonSourceError::RecordedOutputFieldNeedsSingleton {
+                        binding: monty::expression_source(&attr.value),
+                        field: attr.attr.to_string(),
+                    };
+                    return Err(at(expr, error));
+                }
+            }
+        }
         let field = matches!(expr, PyExpr::Attribute(attr) if state.lower.expression_owner(&attr.value).is_some())
             && placement != ExpressionPlacement::Host;
         let deferred = placement != ExpressionPlacement::PythonValue;

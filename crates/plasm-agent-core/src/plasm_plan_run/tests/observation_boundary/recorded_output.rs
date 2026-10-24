@@ -195,7 +195,7 @@ async fn check_recorded_output(direct: bool, restores: usize) {
             "restoration issues no requests"
         );
     }
-    let source = format!("class ChangeAndObserve(Program):\n    def build(self):\n        old = {expression}.take(1)\n        {counter}.{advance}(id=old[0].id)\n        return {reader}.get(\"one\")\n");
+    let source = format!("class ChangeAndObserve(Program):\n    def build(self):\n        old = {expression}\n        {counter}.{advance}(id=old.id)\n        return {reader}.get(old.id)\n");
     let bundle = crate::plasm_compile::compile_python_program(&es, &source)
         .await
         .unwrap();
@@ -245,7 +245,7 @@ async fn check_recorded_output(direct: bool, restores: usize) {
     let intermediate_id =
         crate::run_artifacts::RunArtifactId::from_wire(&intermediate.run_id).unwrap();
     assert!(es.recorded_output_reusable(intermediate_id).await);
-    let intermediate_source = format!("class Intermediate(Program):\n    def build(self):\n        return self.recorded(\"{}\")\n", intermediate.run_id);
+    let intermediate_source = format!("class Intermediate(Program):\n    @compute\n    def check(self, row: Row) -> int:\n        if row.value != 2:\n            raise ValueError(\"historical value changed\")\n        return row.value\n    def build(self):\n        saved = self.recorded(\"{}\")\n        return saved, self.check(saved)\n", intermediate.run_id);
     let intermediate_bundle =
         crate::plasm_compile::compile_python_program(&es, &intermediate_source)
             .await
@@ -348,7 +348,7 @@ async fn check_recorded_output(direct: bool, restores: usize) {
         )
         .await;
     es.core
-        .record_output_flow(artifact, captured_flow.unwrap())
+        .record_output_flow(artifact, captured_flow.clone().unwrap())
         .await;
     let rejected = crate::plasm_compile::compile_python_program(&es, &reuse_source)
         .await
@@ -358,6 +358,74 @@ async fn check_recorded_output(direct: bool, restores: usize) {
         rejected.to_string().contains("no retained flow evidence"),
         "an older observation cannot stamp its flow proof on a replacement"
     );
+    // Complete pinned membership, not the producer's name or a preview count,
+    // determines scalar access. Empty/plural imports remain valid rowsets.
+    for count in [0, 1, 2] {
+        use plasm_core::collection_codec::{CollectionCheckpoint, Observation, RecordingCodec};
+        let mut document = doc.clone();
+        let rows = (0..count)
+            .map(|_| doc.entities[0].clone())
+            .collect::<Vec<_>>();
+        let collection = plasm_runtime::execution::ExecutionCollection::observe_for(
+            &es.cgs,
+            &"recorded-cardinality-matrix",
+            0,
+            rows.clone(),
+            Observation::ExactOutput { decoded: count },
+        )
+        .unwrap();
+        document.entities = rows.into();
+        document.collection =
+            CollectionCheckpoint::capture(&RecordingCodec::new(), collection.membership()).unwrap();
+        let mut handle = artifact.clone();
+        handle.resource_index += 2000 + count as u64;
+        document.resource_index = Some(handle.resource_index);
+        let mut payload = es
+            .core
+            .get_run_artifact(artifact.run_id)
+            .await
+            .unwrap()
+            .payload
+            .clone();
+        payload.bytes = serde_json::to_vec(&document).unwrap().into();
+        es.core
+            .append_run_artifact(
+                artifact.run_id,
+                crate::execute_session::GraphEpoch(0),
+                handle.resource_index,
+                payload,
+            )
+            .await;
+        es.core
+            .record_output_flow(&handle, captured_flow.clone().unwrap())
+            .await;
+        assert!(
+            crate::plasm_compile::compile_python_program(&es, &reuse_source)
+                .await
+                .is_ok()
+        );
+        let use_field = format!("class Use(Program):\n    def build(self):\n        saved = {expression}\n        return {reader}.get(saved.id)\n");
+        let result = crate::plasm_compile::compile_python_program(&es, &use_field).await;
+        if count == 1 {
+            assert!(result.is_ok(), "{result:?}");
+        } else {
+            let message = result.unwrap_err().to_string();
+            assert!(message.contains("saved.id"), "{message}");
+            assert!(
+                message.contains("Select and verify the intended row"),
+                "{message}"
+            );
+            assert!(!message.contains("nullable or union"), "{message}");
+            let selected = use_field.replace("get(saved.id)", "get(saved.take(1).id)");
+            if count > 1 {
+                let selected = crate::plasm_compile::compile_python_program(&es, &selected).await;
+                assert!(
+                    selected.is_ok(),
+                    "explicit selection remains available: {selected:?}"
+                );
+            }
+        }
+    }
 }
 
 async fn check_output_rejections(

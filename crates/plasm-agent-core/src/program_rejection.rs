@@ -248,6 +248,8 @@ pub enum PythonSourceError {
     RecordedOutputReference,
     #[error("bind recorded output in build before capturing it in a callback")]
     RecordedOutputScope,
+    #[error("`{binding}.{field}` needs one recorded row; `{binding}` is a rowset.\nhelp: Select and verify the intended row before reading `{field}`, or map over the rows. Do not repeat the producer to repair this field access.")]
+    RecordedOutputFieldNeedsSingleton { binding: String, field: String },
     #[error("{0}")]
     RecordedOutput(#[source] std::sync::Arc<crate::run_artifacts::CompletedOutputError>),
     #[error("only catalog row outputs are reusable; this output has no retained catalog contract")]

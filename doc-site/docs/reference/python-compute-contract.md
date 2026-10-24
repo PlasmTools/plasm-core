@@ -256,6 +256,12 @@ Missing fields remain missing, and ordinary get/query operations remain fresh.
 New effects still require review and execution authorization. `provides` remains
 solely a hydration mechanism.
 
+Complete pinned membership of exactly one row permits direct field extraction
+from the recorded binding, including fields supplied to fresh reads and reviewed
+effects. Empty and plural outputs remain rowsets; direct field access reports the
+authored binding and requires selection or mapping, without replaying acquisition.
+This cardinality proof does not restore receiver identity or change stored rows.
+
 Reuse rejects incomplete collections, unavailable artifacts, and absent producer
 flow evidence. Computed outputs without catalogue provenance are unsupported.
 This implementation does not resolve evicted artifacts from durable storage.
