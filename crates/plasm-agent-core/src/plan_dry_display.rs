@@ -14,6 +14,32 @@ use crate::plasm_plan::{
 use plasm_core::SelectionEffect;
 use serde::{Deserialize, Serialize};
 
+mod projection;
+
+/// Size-comparison oracle for tests only: the former one-line-per-IR-node view.
+#[cfg(test)]
+pub(crate) fn unfolded_review_steps(
+    plan: &Plan<ValidatedPlanState>,
+    order: &[String],
+    es: Option<&ExecuteSession>,
+) -> Vec<PlanDryStep> {
+    let names = build_plan_node_display_map(&plan.nodes, order);
+    order
+        .iter()
+        .enumerate()
+        .filter_map(|(i, id)| {
+            let node = plan.nodes.iter().find(|n| n.id().as_str() == id)?;
+            Some(PlanDryStep {
+                ordinal: (i + 1).min(u8::MAX as usize) as u8,
+                id: map_display_id(id, &names),
+                synthetic: is_synthetic_plan_node_id(id),
+                op: compact_op_from_node(node, es, &names),
+                uses: step_upstream_labels(node, &names),
+            })
+        })
+        .collect()
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum PlanDryVerdict {
@@ -141,6 +167,7 @@ pub enum PlanDryOp {
     Python {
         entity: String,
         per_row: bool,
+        input: Option<String>,
     },
     Surface {
         kind: PlanNodeKind,
@@ -245,7 +272,7 @@ fn map_body_effects(plan: &ValidatedPlan, es: Option<&ExecuteSession>) -> Vec<Pl
         Plan(&'a ValidatedPlan),
         Node(
             &'a ValidatedPlanNode,
-            std::sync::Arc<HashMap<String, String>>,
+            std::sync::Arc<projection::Projection>,
         ),
     }
     let mut pending = vec![Work::Plan(plan)];
@@ -258,7 +285,11 @@ fn map_body_effects(plan: &ValidatedPlan, es: Option<&ExecuteSession>) -> Vec<Pl
                     .iter()
                     .map(|id| id.as_str().to_owned())
                     .collect::<Vec<_>>();
-                let labels = std::sync::Arc::new(build_plan_node_display_map(plan.nodes(), &order));
+                let labels = std::sync::Arc::new(projection::Projection::new(
+                    plan.nodes(),
+                    &order,
+                    &plan.artifact().metadata,
+                ));
                 let by_id: std::collections::HashMap<_, _> =
                     plan.nodes().iter().map(|node| (node.id(), node)).collect();
                 for id in plan.topological_order().iter().rev() {
@@ -269,6 +300,11 @@ fn map_body_effects(plan: &ValidatedPlan, es: Option<&ExecuteSession>) -> Vec<Pl
                 continue;
             }
         };
+        if labels.hidden.contains(node.id().as_str()) {
+            continue;
+        }
+        let projection = labels;
+        let labels = &projection.names;
         // Retain compute gates and their row scope rather than flattening a
         // conditional child action into an unconditional list of writes.
         if matches!(
@@ -279,15 +315,15 @@ fn map_body_effects(plan: &ValidatedPlan, es: Option<&ExecuteSession>) -> Vec<Pl
                 | ValidatedPlanNode::Data(_)
                 | ValidatedPlanNode::Capture(_)
         ) {
-            let op = compact_op_from_node(node, es, &labels);
+            let op = projection.op(node, es);
             let expression = match op {
-                PlanDryOp::Python { .. } => "compute value".to_owned(),
+                PlanDryOp::Python { input, .. } => compact_python(input.as_deref()),
                 PlanDryOp::Derive { summary, .. } | PlanDryOp::Data { summary } => summary,
                 _ => render_plan_dry_op(&op),
             };
             effects.push(PlanDryEffect {
                 binding: map_display_id(node.id().as_str(), &labels),
-                uses: step_upstream_labels(node, &labels),
+                uses: projection.uses(node),
                 kind: node.kind(),
                 expression,
                 description: String::new(),
@@ -299,7 +335,7 @@ fn map_body_effects(plan: &ValidatedPlan, es: Option<&ExecuteSession>) -> Vec<Pl
             // subsequent calls. Omitting them would hide literal identities.
             effects.push(PlanDryEffect {
                 binding: map_display_id(node.id().as_str(), &labels),
-                uses: step_upstream_labels(node, &labels),
+                uses: projection.uses(node),
                 kind: surface.kind,
                 expression: surface_compact_expr(surface, es, &labels),
                 description: if matches!(
@@ -323,7 +359,7 @@ fn map_body_effects(plan: &ValidatedPlan, es: Option<&ExecuteSession>) -> Vec<Pl
                 let target = &fanout.effect_template.qualified_entity;
                 effects.push(PlanDryEffect {
                     binding: map_display_id(node.id().as_str(), &labels),
-                    uses: step_upstream_labels(node, &labels),
+                    uses: projection.uses(node),
                     kind: fanout.effect_template.kind,
                     expression: format!(
                         "{} per child row",
@@ -422,7 +458,8 @@ pub fn build_plan_dry_compact_view(
     es: Option<&ExecuteSession>,
     flow_verdict_override: Option<PlanDryVerdict>,
 ) -> PlanDryCompactView {
-    let display_map = build_plan_node_display_map(&plan.nodes, topological_order);
+    let projection = projection::Projection::new(&plan.nodes, topological_order, &plan.metadata);
+    let display_map = &projection.names;
     let return_unbounded = return_roots_include_unbounded_list_surface(plan);
     let flow_verdict = flow_verdict_override.or_else(|| {
         graph_summary
@@ -463,12 +500,15 @@ pub fn build_plan_dry_compact_view(
         .enumerate()
         .filter_map(|(ordinal, id)| {
             let node = plan.nodes.iter().find(|n| n.id().as_str() == id)?;
+            if projection.hidden.contains(id) {
+                return None;
+            }
             let display_id = display_map
                 .get(id.as_str())
                 .cloned()
                 .unwrap_or_else(|| id.clone());
-            let op = compact_op_from_node(node, es, &display_map);
-            let uses = step_upstream_labels(node, &display_map);
+            let op = projection.op(node, es);
+            let uses = projection.uses(node);
             Some(PlanDryStep {
                 ordinal: (ordinal + 1).min(u8::MAX as usize) as u8,
                 id: display_id,
@@ -520,7 +560,7 @@ pub fn render_plan_dry_compact_text(
         let op = match &step.op {
             PlanDryOp::Derive { summary, .. } => summary.clone(),
             PlanDryOp::Data { summary } => summary.clone(),
-            PlanDryOp::Python { .. } => "compute value".to_owned(),
+            PlanDryOp::Python { input, .. } => compact_python(input.as_deref()),
             other => render_plan_dry_op(other),
         };
         let uses = &step.uses;
@@ -540,7 +580,9 @@ pub fn render_plan_dry_compact_text(
 pub(crate) fn human_ux_headline_for_op(op: &PlanDryOp) -> String {
     match op {
         PlanDryOp::MapBody { .. } => "For each row".into(),
-        PlanDryOp::Python { entity, per_row } => format!(
+        PlanDryOp::Python {
+            entity, per_row, ..
+        } => format!(
             "Python {} of {entity}",
             if *per_row {
                 "per-row rendering"
@@ -592,13 +634,21 @@ pub(crate) fn human_ux_headline_for_op(op: &PlanDryOp) -> String {
 pub(crate) fn human_ux_summary_for_op(op: &PlanDryOp) -> String {
     match op {
         PlanDryOp::MapBody { source, effects } => render_map_body(source, effects),
-        PlanDryOp::Python { entity, per_row } => format!(
-            "Python {} of {entity}",
+        PlanDryOp::Python {
+            entity,
+            per_row,
+            input,
+        } => format!(
+            "Python {} of {entity}{}",
             if *per_row {
                 "per-row rendering"
             } else {
                 "reduction"
-            }
+            },
+            input
+                .as_ref()
+                .map(|v| format!(" · input {v}"))
+                .unwrap_or_default()
         ),
         PlanDryOp::Filter { predicates } if !predicates.is_empty() => {
             format!("Where {}", predicates.join(", "))
@@ -666,13 +716,21 @@ pub(crate) fn human_ux_summary_for_op(op: &PlanDryOp) -> String {
 pub(crate) fn render_plan_dry_op(op: &PlanDryOp) -> String {
     match op {
         PlanDryOp::MapBody { source, effects } => render_map_body(source, effects),
-        PlanDryOp::Python { entity, per_row } => format!(
-            "{} {entity} -> str",
+        PlanDryOp::Python {
+            entity,
+            per_row,
+            input,
+        } => format!(
+            "{} {entity} -> str{}",
             if *per_row {
                 "python_map"
             } else {
                 "python_reduce"
-            }
+            },
+            input
+                .as_ref()
+                .map(|v| format!(" · input {v}"))
+                .unwrap_or_default()
         ),
         PlanDryOp::Surface {
             kind,
@@ -737,6 +795,13 @@ pub(crate) fn render_plan_dry_op(op: &PlanDryOp) -> String {
             binding,
             summary,
         } => format!("derive map {source} as {binding} → {summary}"),
+    }
+}
+
+fn compact_python(input: Option<&str>) -> String {
+    match input {
+        Some(input) => format!("compute value({input})"),
+        None => "compute value".to_owned(),
     }
 }
 
@@ -823,6 +888,7 @@ fn compact_op_from_compute(
             input_schema,
             ..
         } => PlanDryOp::Python {
+            input: None,
             entity: if input_schema.is_some() {
                 "Row".into()
             } else {
@@ -1111,14 +1177,12 @@ fn primary_return_label(
         ValidatedPlanReturn::Parallel { parallel } => {
             if parallel.len() == 1 {
                 map_display_id(parallel[0].as_str(), display_map)
-            } else if parallel.len() <= 3 {
+            } else {
                 let names: Vec<String> = parallel
                     .iter()
                     .map(|id| map_display_id(id.as_str(), display_map))
                     .collect();
                 format!("returns: {}", names.join(", "))
-            } else {
-                format!("returns({})", parallel.len())
             }
         }
     }

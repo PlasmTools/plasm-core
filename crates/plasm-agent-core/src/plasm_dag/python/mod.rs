@@ -196,11 +196,32 @@ fn lower_python_program(
         .comp
         .metadata
         .insert("python_source_spans".into(), serde_json::json!(lower.spans));
+    artifact.comp.metadata.insert(
+        "python_binding_names".into(),
+        serde_json::json!(review_binding_names(&lower.state)),
+    );
     // Declarations have no effects. Only emitted invocations require a sealed
     // input/output contract; text_compute_source checks each actual callsite.
     let bundle = PlasmCompBundle::new(artifact)?;
 
     Ok(bundle)
+}
+
+// Tuple destructuring can bind an authored name to a synthetic node. Keep
+// these lexical aliases as display metadata, never executable expressions.
+fn review_binding_names(state: &CompileState<'_>) -> BTreeMap<String, String> {
+    let mut names = BTreeMap::new();
+    let labels: BTreeMap<_, _> = state.labels.iter().collect();
+    for (label, index) in labels {
+        if !label.starts_with("__") {
+            if let Some(node) = state.nodes.get(*index) {
+                if node.id.starts_with("__") {
+                    names.entry(node.id.clone()).or_insert(label.clone());
+                }
+            }
+        }
+    }
+    names
 }
 
 pub(crate) fn compile_python_program_checked(

@@ -485,6 +485,10 @@ impl Lower<'_> {
         });
         body.metadata.clear();
         body.metadata.insert(
+            "python_binding_names".into(),
+            serde_json::json!(super::review_binding_names(&scoped.state)),
+        );
+        body.metadata.insert(
             "python_source_spans".into(),
             serde_json::json!(scoped.spans),
         );

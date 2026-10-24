@@ -370,3 +370,4 @@ fn python_source_cancellation_keeps_committed_writes_and_stops_later_effects() {
 mod fanout;
 mod iteration;
 mod recorded_output;
+mod compact_review;
