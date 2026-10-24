@@ -889,6 +889,7 @@ impl AgentEngine {
                 artifacts.push(serde_json::json!({
                     "run_id": artifact.run_id,
                     "producer_binding": artifact.node_id,
+                    "reusable": es.recorded_output_reusable(id).await,
                     "snapshot": serde_json::from_slice::<serde_json::Value>(&payload.bytes)?,
                 }));
             }
@@ -1327,6 +1328,7 @@ mod tests {
             EntityCompleteness::Complete,
         );
         let step = PublishedResultStep {
+            source_heading: None,
             name: None,
             node_id: None,
             entry_id: None,
@@ -1835,6 +1837,7 @@ mod tests {
             assert!(plasm_agent_core::run_artifacts::RunArtifactId::from_wire(run_id).is_some());
             assert!(artifact["snapshot"].is_object());
             assert!(artifact["producer_binding"].is_string());
+            assert_eq!(artifact["reusable"], true);
         }
         assert!(artifacts
             .iter()

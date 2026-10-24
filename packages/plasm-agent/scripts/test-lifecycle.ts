@@ -30,7 +30,7 @@ try {
       entered.resolve();
       await release.promise;
       return { ok: true, message: "completed", artifactsJson: JSON.stringify([
-        { run_id: `pr${"a".repeat(64)}`, producer_binding: "observed", snapshot: { entities: [{ id: 1 }] } },
+        { run_id: `pr${"a".repeat(64)}`, producer_binding: "observed", reusable: false, snapshot: { entities: [{ id: 1 }] } },
       ]) };
     },
   };
@@ -50,7 +50,7 @@ try {
   await inputRuntime.close();
   const archive = new LocalArchiveStore(path.join(root, "archive"));
   const runtime = new AgentRuntime({ agentRoot: root, engine, hostTransport: null, archive });
-  const session = [...sessionCases(1)][0]!;
+  const session = { ...[...sessionCases(1)][0]!, tenantScope: "local" };
   Reflect.set(runtime, "workflowSession", session);
   // Hold the host persistence tail, not only the engine promise.
   const write = archive.writeRunSnapshot.bind(archive);

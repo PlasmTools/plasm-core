@@ -1,8 +1,6 @@
 //! Historical values are admitted as data, never as executable producer graphs.
 use super::*;
-use crate::run_artifacts::{
-    parse_run_artifact_document_bytes, verify_payload_run_id, CompletedOutputError,
-};
+use crate::run_artifacts::CompletedOutputError;
 
 impl Lower<'_> {
     pub(super) fn recorded(
@@ -36,28 +34,15 @@ impl Lower<'_> {
             .flow
             .as_ref()
             .ok_or_else(|| failed(CompletedOutputError::MissingFlowEvidence))?;
-        verify_payload_run_id(&stored.payload, stored.run_id)
-            .map_err(|error| failed(error.into()))?;
-        let document = parse_run_artifact_document_bytes(&stored.payload.bytes)
-            .map_err(|error| failed(error.into()))?;
-        if document.prompt_hash != self.es.prompt_hash || document.principal != self.es.principal {
-            return Err(failed(CompletedOutputError::SessionMismatch));
-        }
-        let collection = document
-            .recorded_collection()
-            .map_err(|error| failed(error.into()))?;
-        if collection.coverage() != plasm_runtime::ResultCoverage::Complete {
-            return Err(failed(CompletedOutputError::Incomplete));
-        }
-        if collection.row_materialization() != plasm_runtime::execution::RowMaterialization::Catalog
-            || !self
-                .es
-                .contexts_by_entry
-                .get(&document.entry_id)
-                .is_some_and(|context| context.cgs.entities.contains_key(document.entity.as_str()))
-        {
-            return Err(at(site, PythonSourceError::RecordedOutputContract));
-        }
+        let (document, collection) =
+            self.es
+                .validate_recorded_output(stored)
+                .map_err(|error| match error {
+                    CompletedOutputError::Contract => {
+                        at(site, PythonSourceError::RecordedOutputContract)
+                    }
+                    error => failed(error),
+                })?;
         let rows = collection
             .resident_entities()
             .iter()

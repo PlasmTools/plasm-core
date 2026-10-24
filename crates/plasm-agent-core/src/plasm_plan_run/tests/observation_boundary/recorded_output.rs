@@ -105,6 +105,7 @@ async fn check_recorded_output(direct: bool, restores: usize) {
         .await
         .unwrap();
     let doc = crate::run_artifacts::parse_run_artifact_document_bytes(&payload.bytes).unwrap();
+    assert!(es.recorded_output_reusable(artifact.run_id).await);
     check_output_rejections(&es, &doc, artifact.run_id).await;
     let published = crate::http_execute::publish_plasm_result_steps(
         &es,
@@ -141,6 +142,7 @@ async fn check_recorded_output(direct: bool, restores: usize) {
         .as_str()
         .is_some_and(|text| text.contains("historical; no producer execution"))));
     let isolated = session();
+    assert!(!isolated.recorded_output_reusable(artifact.run_id).await);
     let unavailable = crate::plasm_compile::compile_python_program(&isolated, &reuse_source)
         .await
         .unwrap_err();
@@ -219,6 +221,52 @@ async fn check_recorded_output(direct: bool, restores: usize) {
     .unwrap();
     assert_eq!(
         value(&current.return_steps[0].result.collection),
+        Some(Value::Integer(2))
+    );
+    assert_eq!(
+        *events.lock().unwrap(),
+        [Event::Advance, Event::Advance, Event::Read(2)]
+    );
+    // The second acquisition is intermediate, not returned. Its receipt keeps
+    // the original artifact, which remains importable without replaying it.
+    let intermediate = current
+        .code_plan_run_artifacts
+        .iter()
+        .find(|item| {
+            item.run_id
+                != current.return_steps[0]
+                    .artifact
+                    .as_ref()
+                    .unwrap()
+                    .run_id
+                    .to_wire()
+        })
+        .expect("intermediate acquisition artifact exported");
+    let intermediate_id =
+        crate::run_artifacts::RunArtifactId::from_wire(&intermediate.run_id).unwrap();
+    assert!(es.recorded_output_reusable(intermediate_id).await);
+    let intermediate_source = format!("class Intermediate(Program):\n    def build(self):\n        return self.recorded(\"{}\")\n", intermediate.run_id);
+    let intermediate_bundle =
+        crate::plasm_compile::compile_python_program(&es, &intermediate_source)
+            .await
+            .unwrap();
+    let imported = super::super::super::orchestrator::run_plasm_comp_with_dispatch(
+        &es,
+        &host,
+        &es.prompt_hash,
+        "reuse",
+        &intermediate_bundle,
+        true,
+        None,
+        None,
+        Some(super::super::super::evaluate_plasm_comp_dry(&es, &intermediate_bundle).unwrap()),
+        None,
+        false,
+    )
+    .await
+    .unwrap();
+    assert_eq!(
+        value(&imported.return_steps[0].result.collection),
         Some(Value::Integer(2))
     );
     assert_eq!(
@@ -305,6 +353,7 @@ async fn check_recorded_output(direct: bool, restores: usize) {
     let rejected = crate::plasm_compile::compile_python_program(&es, &reuse_source)
         .await
         .unwrap_err();
+    assert!(!es.recorded_output_reusable(artifact.run_id).await);
     assert!(
         rejected.to_string().contains("no retained flow evidence"),
         "an older observation cannot stamp its flow proof on a replacement"
@@ -319,6 +368,54 @@ async fn check_output_rejections(
     use crate::run_artifacts::{CompletedOutputError, RunArtifactStore};
     use plasm_core::collection_codec::{CollectionCheckpoint, Observation, RecordingCodec};
     let store = RunArtifactStore::memory();
+    let stored = es.core.get_run_artifact(id).await.unwrap();
+    let validate = |document: &crate::run_artifacts::RunArtifactDocument| {
+        let mut candidate = stored.as_ref().clone();
+        candidate.payload.bytes = serde_json::to_vec(document).unwrap().into();
+        es.validate_recorded_output(&candidate)
+    };
+    assert!(validate(doc).is_ok());
+    let mut corrupt = stored.as_ref().clone();
+    corrupt.payload.bytes = b"{}".to_vec().into();
+    assert!(es.validate_recorded_output(&corrupt).is_err());
+    let mut computed = doc.clone();
+    computed.row_materialization = plasm_runtime::execution::RowMaterialization::Computed;
+    assert!(matches!(
+        validate(&computed),
+        Err(CompletedOutputError::Contract)
+    ));
+    let mut empty = doc.clone();
+    empty.entities = vec![].into();
+    let empty_collection = plasm_runtime::execution::ExecutionCollection::observe_for(
+        &es.cgs,
+        &"abstract-empty",
+        0,
+        vec![],
+        Observation::ExactOutput { decoded: 0 },
+    )
+    .unwrap();
+    empty.collection =
+        CollectionCheckpoint::capture(&RecordingCodec::new(), empty_collection.membership())
+            .unwrap();
+    assert!(
+        validate(&empty).is_ok(),
+        "complete empty catalog outputs are reusable"
+    );
+    let mut no_flow = stored.as_ref().clone();
+    no_flow.flow = None;
+    assert!(matches!(
+        es.validate_recorded_output(&no_flow),
+        Err(CompletedOutputError::MissingFlowEvidence)
+    ));
+    let mut foreign_principal = doc.clone();
+    foreign_principal.principal = Some("another-principal".into());
+    assert!(matches!(
+        validate(&foreign_principal),
+        Err(CompletedOutputError::SessionMismatch)
+    ));
+    let mut unknown_contract = doc.clone();
+    unknown_contract.entry_id = "unavailable-catalog".into();
+    assert!(validate(&unknown_contract).is_err());
     let mut foreign = doc.clone();
     foreign.session_id = "different-session".into();
     store
@@ -341,6 +438,10 @@ async fn check_output_rejections(
         let mut partial = doc.clone();
         partial.collection =
             CollectionCheckpoint::capture(&RecordingCodec::new(), collection.membership()).unwrap();
+        assert!(
+            matches!(validate(&partial), Err(CompletedOutputError::Incomplete)),
+            "complete resident rows do not make partial or unknown membership reusable"
+        );
         store
             .insert(&es.prompt_hash, "reuse", id, &partial)
             .await

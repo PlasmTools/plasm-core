@@ -2,6 +2,7 @@
   "artifacts": [
     {
       "producer_binding": "verified",
+      "reusable": false,
       "run_id": "pr5b9a8e97ef67efb4fafead6ec2c73e145e745b881d403727b9c3543c0536e2f8",
       "snapshot": {
         "collection": {

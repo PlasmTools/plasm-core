@@ -5,6 +5,7 @@ import { z } from "zod";
 export const runOutputArtifactSchema = z.object({
   run_id: z.string().regex(/^pr[a-f0-9]{64}$/),
   producer_binding: z.string().nullable(),
+  reusable: z.boolean(),
   snapshot: z.unknown(),
 });
 
@@ -36,7 +37,8 @@ export function formatRecordedOutputs(artifacts: readonly OutputArtifact[]): str
       text(field) + (count === output.entities.length ? "" : " (some rows)"));
     const kind = output.row_materialization === "Catalog" ? `${text(output.entry_id)}::${text(output.entity)}` : "computed output (not importable)";
     const complete = output.entities.every(row => row.completeness === "complete");
-    return `- \`${artifact.run_id}\` — ${binding}: ${kind}[]; ${output.entities.length} rows; observed fields: ${fields.join(", ") || "none"}${complete ? "" : "; incomplete rows"}`;
+    const reference = artifact.reusable ? `self.recorded("${artifact.run_id}")` : artifact.run_id;
+    return `- \`${reference}\` — ${binding}: ${kind}[]; ${output.entities.length} rows; observed fields: ${fields.join(", ") || "none"}${complete ? "" : "; incomplete rows"}`;
   });
   return "\n\n**Recorded outputs (historical):**\n" + lines.join("\n");
 }

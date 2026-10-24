@@ -17,10 +17,50 @@ pub enum CompletedOutputError {
     Incomplete,
     #[error("recorded output has no retained flow evidence; it cannot be reused")]
     MissingFlowEvidence,
+    #[error("recorded output must have a catalog row contract available in this session")]
+    Contract,
     #[error(transparent)]
     Artifact(#[from] RunArtifactError),
     #[error(transparent)]
     Collection(#[from] CollectionFault),
+}
+
+impl crate::execute_session::ExecuteSession {
+    /// Shared admission check for historical imports and their callable inventory.
+    pub(crate) fn validate_recorded_output(
+        &self,
+        stored: &crate::execute_session::SessionRunArtifact,
+    ) -> Result<(super::RunArtifactDocument, ExecutionCollection), CompletedOutputError> {
+        if stored.flow.is_none() {
+            return Err(CompletedOutputError::MissingFlowEvidence);
+        }
+        verify_payload_run_id(&stored.payload, stored.run_id)?;
+        let document = parse_run_artifact_document_bytes(&stored.payload.bytes)?;
+        if document.prompt_hash != self.prompt_hash || document.principal != self.principal {
+            return Err(CompletedOutputError::SessionMismatch);
+        }
+        let collection = document.recorded_collection()?;
+        if collection.coverage() != ResultCoverage::Complete {
+            return Err(CompletedOutputError::Incomplete);
+        }
+        if collection.row_materialization() != plasm_runtime::execution::RowMaterialization::Catalog
+            || !self
+                .contexts_by_entry
+                .get(&document.entry_id)
+                .is_some_and(|context| context.cgs.entities.contains_key(document.entity.as_str()))
+        {
+            return Err(CompletedOutputError::Contract);
+        }
+        Ok((document, collection))
+    }
+
+    /// Presentation eligibility; import admission always validates again.
+    pub async fn recorded_output_reusable(&self, id: RunArtifactId) -> bool {
+        match self.core.get_run_artifact(id).await {
+            Some(stored) => self.validate_recorded_output(&stored).is_ok(),
+            None => false,
+        }
+    }
 }
 
 /// Recorded data, not an executable producer or a claim about current state.

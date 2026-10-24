@@ -16,6 +16,7 @@ const session = { ...[...sessionCases(1)][0]!, tenantScope: "test" };
 const message = "Native Plasm response: snapshot available.";
 let snapshot: unknown;
 let executions = 0;
+let reusable = false;
 const engine: PlasmEngine = {
   close: async () => {},
   loadCatalog: unused, activateDiscovery: unused, routeIntent: unused,
@@ -23,7 +24,7 @@ const engine: PlasmEngine = {
   runPlan: async () => {
     executions++;
     return { ok: true, message, rowsJson: JSON.stringify(snapshot),
-      artifactsJson: JSON.stringify([{ run_id: runId, producer_binding: "observed", snapshot }]) };
+      artifactsJson: JSON.stringify([{ run_id: runId, producer_binding: "observed", reusable, snapshot }]) };
   },
 };
 try {
@@ -49,8 +50,10 @@ try {
   snapshot = {entry_id: "matrix", entity: "Resource", row_materialization: "Catalog",
     entities: [{completeness: "complete", fields: {token: "ARTIFACT_ONLY_secret", optional: null}},
       {completeness: "complete", fields: {token: "ARTIFACT_ONLY_other"}}]};
+  reusable = true;
   const labelled = await runtime.plasmRun({logicalSessionRef: session.logicalSessionRef, runRef: "pc1"});
   assert.match(labelled, /observed: matrix::Resource\[\]/);
+  assert.ok(labelled.includes(`self.recorded("${runId}")`), "callable intermediate output reaches the model-facing response");
   assert.match(labelled, /optional \(some rows\), token/);
   assert.ok(!labelled.includes("ARTIFACT_ONLY_") && !labelled.includes("**run_id:**"));
   assert.deepEqual((await archive.getRun(runId, session.logicalSessionRef))?.native_snapshot, snapshot);

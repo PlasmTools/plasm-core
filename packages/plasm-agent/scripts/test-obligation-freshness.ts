@@ -28,7 +28,7 @@ const engine: PlasmEngine = {
     await pause;
     if (fail) throw new Error("partial provider failure");
     return { ok: true, message: "observed", metaJson: JSON.stringify({ plasm: { steps: [{ run_id: id, node_id: "verify", artifact_complete: true }] } }),
-      artifactsJson: JSON.stringify([{ run_id: id, producer_binding: "verify", snapshot: {
+      artifactsJson: JSON.stringify([{ run_id: id, producer_binding: "verify", reusable: false, snapshot: {
         row_materialization: "Computed", entities: [{ completeness: "complete", fields: { value: true } }],
       } }]) };
   },
