@@ -106,10 +106,28 @@ async fn check_recorded_output(direct: bool, restores: usize) {
         .unwrap();
     let doc = crate::run_artifacts::parse_run_artifact_document_bytes(&payload.bytes).unwrap();
     check_output_rejections(&es, &doc, artifact.run_id).await;
-    let reuse_source = format!(
-        "class Reuse(Program):\n    def build(self):\n        return self.recorded(\"{}\")\n",
-        artifact.run_id.to_wire()
+    let published = crate::http_execute::publish_plasm_result_steps(
+        &es,
+        None,
+        None,
+        None,
+        &produced.return_steps,
+    )
+    .unwrap();
+    let expression = published
+        .markdown
+        .lines()
+        .find(|line| line.starts_with('#') && line.contains("`self.recorded("))
+        .expect("completed catalogue output heading supplies reuse expression")
+        .split('`')
+        .nth(1)
+        .unwrap();
+    assert_eq!(
+        expression,
+        format!("self.recorded(\"{}\")", artifact.run_id.to_wire())
     );
+    let reuse_source =
+        format!("class Reuse(Program):\n    def build(self):\n        return {expression}\n");
     let reuse = crate::plasm_compile::compile_python_program(&es, &reuse_source)
         .await
         .unwrap();
@@ -175,7 +193,7 @@ async fn check_recorded_output(direct: bool, restores: usize) {
             "restoration issues no requests"
         );
     }
-    let source = format!("class ChangeAndObserve(Program):\n    def build(self):\n        old = self.recorded(\"{}\").take(1)\n        {counter}.{advance}(id=old[0].id)\n        return {reader}.get(\"one\")\n", artifact.run_id.to_wire());
+    let source = format!("class ChangeAndObserve(Program):\n    def build(self):\n        old = {expression}.take(1)\n        {counter}.{advance}(id=old[0].id)\n        return {reader}.get(\"one\")\n");
     let bundle = crate::plasm_compile::compile_python_program(&es, &source)
         .await
         .unwrap();

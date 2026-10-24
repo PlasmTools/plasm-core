@@ -69,12 +69,7 @@ impl PublishPlan {
                 in_band_report: observation.fidelity,
             };
             resolved.push(ResolvedStepPublish {
-                label: step.source_heading.clone().unwrap_or_else(|| {
-                    crate::mcp_run_markdown::return_label_for_step(
-                        step.name.as_deref(),
-                        step.node_id.as_deref(),
-                    )
-                }),
+                label: result_label(source),
                 row_count: observation.shown,
                 source_rows: step.result.count(),
                 delivery_range: step.result.collection.delivery_range(),
@@ -103,6 +98,29 @@ impl PublishPlan {
             },
         ))
     }
+}
+
+fn result_label(step: &PublishedResultStep) -> String {
+    let mut label = step.source_heading.clone().unwrap_or_else(|| {
+        crate::mcp_run_markdown::return_label_for_step(
+            step.name.as_deref(),
+            step.node_id.as_deref(),
+        )
+    });
+    // Use source coverage, not the inline preview's delivery window. The
+    // expression imports the completed artifact, never its producer graph.
+    if step.result.coverage() == plasm_runtime::ResultCoverage::Complete
+        && step.result.collection.row_materialization()
+            == plasm_runtime::execution::RowMaterialization::Catalog
+    {
+        if let Some(artifact) = &step.artifact {
+            label.push_str(&format!(
+                " — `self.recorded(\"{}\")` (historical)",
+                artifact.run_id.to_wire()
+            ));
+        }
+    }
+    label
 }
 
 /// Allocate table text before publication registers any continuations. Preserve
