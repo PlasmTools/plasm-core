@@ -33,6 +33,8 @@ use serde::Serialize;
 
 #[path = "execute_session_operations.rs"]
 mod operations;
+#[path = "execute_session_recorded_outputs.rs"]
+mod recorded;
 
 /// A compiled catalog required by an execute session is not pinned in its inventory.
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
@@ -460,6 +462,7 @@ impl PagingContinuation for PagingResume {
 struct SessionCoreState {
     seq: DeltaSeq,
     run_artifacts: RunArtifactHotCache,
+    archived_outputs: HashMap<RunArtifactId, recorded::ArchivedOutput>,
 }
 
 /// Shared active-session materialization core: graph + run artifacts + monotonic sequence.
@@ -475,6 +478,7 @@ impl SessionCore {
             state: Mutex::new(SessionCoreState {
                 seq: DeltaSeq::default(),
                 run_artifacts: RunArtifactHotCache::new(run_artifact_hot_bounds()),
+                archived_outputs: HashMap::new(),
             }),
         }
     }
@@ -506,6 +510,8 @@ impl SessionCore {
     ) -> Arc<SessionRunArtifact> {
         let seq = self.alloc_delta_seq().await;
         let mut g = self.state.lock().await;
+        // A replacement receipt must acquire its own archive and flow evidence.
+        g.archived_outputs.remove(&run_id);
         let (item, evicted) = g
             .run_artifacts
             .insert(run_id, epoch, resource_index, seq, payload);
@@ -526,6 +532,11 @@ impl SessionCore {
         flow: crate::plan_flow::FlowFacts,
     ) {
         let mut state = self.state.lock().await;
+        if let Some(stored) = state.archived_outputs.get_mut(&artifact.run_id) {
+            if stored.resource_index == artifact.resource_index {
+                stored.flow = Some(flow.clone());
+            }
+        }
         if let Some(stored) = state.run_artifacts.map.get_mut(&artifact.run_id) {
             // A later observation may share the plan digest; never attach its
             // predecessor's proof to that replacement.
@@ -610,7 +621,7 @@ pub struct ExecuteSession {
     /// Unified in-session graph/artifact state.
     pub core: Arc<SessionCore>,
     /// Admission-only view of recorded outputs; never inserted into the read cache.
-    pub(crate) recorded_outputs: Arc<HashMap<String, Arc<SessionRunArtifact>>>,
+    pub(crate) recorded_outputs: Arc<recorded::RecordedOutputs>,
     /// Next `plasm://r/{n}` index for this execute session (1-based after first mint).
     run_resource_next: Arc<AtomicU64>,
     /// Opaque `pg#` handles → query or synthetic pagination resume snapshots for [`plasm_core::Expr::Page`].
@@ -653,7 +664,7 @@ impl ExecuteSession {
                 .run_artifacts
                 .map
                 .iter()
-                .map(|(id, artifact)| (id.to_wire(), artifact.clone()))
+                .map(|(id, artifact)| (id.to_wire(), Ok(artifact.clone())))
                 .collect(),
         );
         drop(artifacts);

@@ -29,7 +29,9 @@ impl Lower<'_> {
             .es
             .recorded_outputs
             .get(reference)
-            .ok_or_else(|| failed(CompletedOutputError::Unavailable))?;
+            .ok_or_else(|| failed(CompletedOutputError::Unavailable))?
+            .as_ref()
+            .map_err(|error| at(site, PythonSourceError::RecordedOutput(error.clone())))?;
         let flow = stored
             .flow
             .as_ref()

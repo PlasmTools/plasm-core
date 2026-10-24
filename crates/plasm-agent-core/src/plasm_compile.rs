@@ -119,7 +119,7 @@ pub async fn compile_python_program(
     session: &ExecuteSession,
     source: &str,
 ) -> Result<PlasmCompBundle, crate::compilation_error::CompilationError> {
-    let preflight = session.preflight_snapshot().await;
+    let preflight = session.recorded_output_snapshot(source).await;
     let bundle = crate::plasm_dag::compile_python_program_checked(&preflight, source)?;
     let admission = Box::pin(crate::python_compute::admit_bundle(&preflight, &bundle)).await;
     admission?;
@@ -134,7 +134,7 @@ pub async fn compile_program(
     _name: &str,
     source: &str,
 ) -> Result<PlasmCompBundle, crate::compilation_error::CompilationError> {
-    let preflight = session.preflight_snapshot().await;
+    let preflight = session.recorded_output_snapshot(source).await;
     let bundle = crate::python_program_diagnostic::compile(&preflight, source)?;
     Box::pin(crate::python_compute::admit_bundle(&preflight, &bundle)).await?;
     Ok(bundle)

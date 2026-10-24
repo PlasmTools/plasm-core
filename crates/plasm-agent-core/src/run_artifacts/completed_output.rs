@@ -56,9 +56,9 @@ impl crate::execute_session::ExecuteSession {
 
     /// Presentation eligibility; import admission always validates again.
     pub async fn recorded_output_reusable(&self, id: RunArtifactId) -> bool {
-        match self.core.get_run_artifact(id).await {
-            Some(stored) => self.validate_recorded_output(&stored).is_ok(),
-            None => false,
+        match self.core.resolve_recorded_output(id).await {
+            Ok(stored) => self.validate_recorded_output(&stored).is_ok(),
+            Err(_) => false,
         }
     }
 }

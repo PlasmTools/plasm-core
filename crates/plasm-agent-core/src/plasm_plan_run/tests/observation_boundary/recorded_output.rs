@@ -14,7 +14,9 @@ fn recorded_output_restore_never_replays_effects_or_satisfies_fresh_reads() {
                 .block_on(async {
                     for direct in [false, true] {
                         for restores in [1, 3] {
-                            check_recorded_output(direct, restores).await;
+                            for evicted in [false, true] {
+                                check_recorded_output(direct, restores, evicted).await;
+                            }
                         }
                     }
                 });
@@ -24,7 +26,7 @@ fn recorded_output_restore_never_replays_effects_or_satisfies_fresh_reads() {
         .unwrap();
 }
 
-async fn check_recorded_output(direct: bool, restores: usize) {
+async fn check_recorded_output(direct: bool, restores: usize, evicted: bool) {
     let es = session();
     let events = Arc::new(Mutex::new(Vec::new()));
     let host = crate::http::build_plasm_host_state(crate::http::PlasmHostBootstrap {
@@ -129,6 +131,12 @@ async fn check_recorded_output(direct: bool, restores: usize) {
     );
     let reuse_source =
         format!("class Reuse(Program):\n    def build(self):\n        return {expression}\n");
+    if evicted {
+        es.core.evict_recorded_payloads_for_test().await;
+        assert!(es.core.get_run_artifact(artifact.run_id).await.is_none());
+        assert!(es.recorded_output_reusable(artifact.run_id).await);
+        check_archived_rejections(&es, &host.run_artifacts, &doc, artifact.run_id).await;
+    }
     let reuse = crate::plasm_compile::compile_python_program(&es, &reuse_source)
         .await
         .unwrap();
@@ -244,6 +252,10 @@ async fn check_recorded_output(direct: bool, restores: usize) {
         .expect("intermediate acquisition artifact exported");
     let intermediate_id =
         crate::run_artifacts::RunArtifactId::from_wire(&intermediate.run_id).unwrap();
+    if evicted {
+        es.core.evict_recorded_payloads_for_test().await;
+        assert!(es.core.get_run_artifact(intermediate_id).await.is_none());
+    }
     assert!(es.recorded_output_reusable(intermediate_id).await);
     let intermediate_source = format!("class Intermediate(Program):\n    @compute\n    def check(self, row: Row) -> int:\n        if row.value != 2:\n            raise ValueError(\"historical value changed\")\n        return row.value\n    def build(self):\n        saved = self.recorded(\"{}\")\n        return saved, self.check(saved)\n", intermediate.run_id);
     let intermediate_bundle =
@@ -426,6 +438,107 @@ async fn check_recorded_output(direct: bool, restores: usize) {
             }
         }
     }
+}
+
+async fn check_archived_rejections(
+    es: &ExecuteSession,
+    store: &crate::run_artifacts::RunArtifactStore,
+    doc: &crate::run_artifacts::RunArtifactDocument,
+    id: crate::run_artifacts::RunArtifactId,
+) {
+    use crate::run_artifacts::CompletedOutputError;
+    use plasm_core::collection_codec::{CollectionCheckpoint, Observation, RecordingCodec};
+    let original = es.core.resolve_recorded_output(id).await.unwrap();
+    let mut no_flow = original.as_ref().clone();
+    no_flow.flow = None;
+    es.core
+        .retain_output_archive(&no_flow, store.clone(), &es.prompt_hash, "reuse")
+        .await;
+    let candidate = es.core.resolve_recorded_output(id).await.unwrap();
+    assert!(matches!(
+        es.validate_recorded_output(&candidate),
+        Err(CompletedOutputError::MissingFlowEvidence)
+    ));
+    es.core
+        .retain_output_archive(
+            &original,
+            crate::run_artifacts::RunArtifactStore::memory(),
+            &es.prompt_hash,
+            "reuse",
+        )
+        .await;
+    assert!(matches!(
+        es.core.resolve_recorded_output(id).await,
+        Err(CompletedOutputError::Unavailable)
+    ));
+    es.core
+        .retain_output_archive(&original, store.clone(), &es.prompt_hash, "reuse")
+        .await;
+    for case in 0..7 {
+        let mut document = doc.clone();
+        match case {
+            0 => document.session_id = "another-session".into(),
+            1 => document.resource_index = Some(doc.resource_index.unwrap() + 1),
+            2 => document.principal = Some("another-principal".into()),
+            3 => {
+                document.row_materialization =
+                    plasm_runtime::execution::RowMaterialization::Computed
+            }
+            4 => document.entry_id = "unknown-contract".into(),
+            _ => {
+                let observation = if case == 5 {
+                    Observation::MoreAvailable
+                } else {
+                    Observation::UnprovenPage
+                };
+                let collection = plasm_runtime::execution::ExecutionCollection::observe_for(
+                    &es.cgs,
+                    &"archived-partial",
+                    0,
+                    doc.entities.iter().cloned().collect(),
+                    observation,
+                )
+                .unwrap();
+                document.collection =
+                    CollectionCheckpoint::capture(&RecordingCodec::new(), collection.membership())
+                        .unwrap();
+            }
+        }
+        store
+            .insert(&es.prompt_hash, "reuse", id, &document)
+            .await
+            .unwrap();
+        let result = match es.core.resolve_recorded_output(id).await {
+            Ok(stored) => es.validate_recorded_output(&stored).map(|_| ()),
+            Err(error) => Err(error),
+        };
+        match case {
+            0 | 2 => assert!(matches!(result, Err(CompletedOutputError::SessionMismatch))),
+            1 => assert!(matches!(
+                result,
+                Err(CompletedOutputError::MissingFlowEvidence)
+            )),
+            3 | 4 => assert!(matches!(result, Err(CompletedOutputError::Contract))),
+            _ => assert!(matches!(result, Err(CompletedOutputError::Incomplete))),
+        }
+        assert!(!es.recorded_output_reusable(id).await);
+        let source = format!(
+            "class Import(Program):\n    def build(self):\n        return self.recorded(\"{}\")\n",
+            id.to_wire()
+        );
+        assert!(crate::plasm_compile::compile_python_program(es, &source)
+            .await
+            .is_err());
+        assert!(
+            es.core.get_run_artifact(id).await.is_none(),
+            "archive admission must not warm the observation cache"
+        );
+    }
+    store
+        .insert(&es.prompt_hash, "reuse", id, doc)
+        .await
+        .unwrap();
+    assert!(es.recorded_output_reusable(id).await);
 }
 
 async fn check_output_rejections(
