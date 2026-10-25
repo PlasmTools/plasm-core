@@ -41,6 +41,7 @@ fn main() -> Result<()> {
     if mode == "prepare" {
         let config: Config = read(baseline.join("config.json"))?;
         let mut catalogs = BTreeMap::new();
+        let mut schemas = BTreeMap::new();
         for case in config.cases {
             let mut docs = BTreeMap::new();
             for source in &case.sources {
@@ -54,6 +55,7 @@ fn main() -> Result<()> {
                     .map_err(anyhow::Error::msg)?;
                     let rendered = plasm_core::catalog_discovery::capability_documents(&cgs)
                         .map_err(anyhow::Error::msg)?;
+                    schemas.insert(manifest.entry_id.clone(), cgs);
                     catalogs.insert(source.clone(), (manifest.entry_id, rendered));
                 }
                 let (entry, rendered) = &catalogs[source];
@@ -84,10 +86,16 @@ fn main() -> Result<()> {
             std::fs::create_dir_all(&cell)?;
             save(cell.join("input.json"), &receipt)?;
             save(cell.join("changed.json"), &changed)?;
+            save(cell.join("catalogs.json"), &schemas)?;
+            let evidence = discovery_matcher::evidence::CatalogEvidence::from_catalogs(
+                &receipt.retrieval,
+                &schemas,
+            )?;
             let batches = discovery_matcher::issue_batches(
                 MODEL,
                 &receipt.intent_provenance,
                 &receipt.retrieval,
+                &evidence,
             )?;
             anyhow::ensure!(batches.len() <= 2, "page limit for {}", case.id);
             save(
@@ -99,10 +107,16 @@ fn main() -> Result<()> {
         let cell = out.join("cells").join(args.get(4).context("case id")?);
         let receipt: RoutingReceipt = read(cell.join("input.json"))?;
         let requests: Vec<String> = read(cell.join("requests.json"))?;
+        let schemas = read(cell.join("catalogs.json"))?;
+        let evidence = discovery_matcher::evidence::CatalogEvidence::from_catalogs(
+            &receipt.retrieval,
+            &schemas,
+        )?;
         let batches = discovery_matcher::issue_batches(
             MODEL,
             &receipt.intent_provenance,
             &receipt.retrieval,
+            &evidence,
         )?;
         anyhow::ensure!(
             requests

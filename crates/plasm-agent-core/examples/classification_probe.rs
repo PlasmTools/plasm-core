@@ -10,6 +10,7 @@ use std::io::{self, Read};
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct Input {
+    catalogs: std::collections::BTreeMap<String, plasm_core::CGS>,
     intent_turns: Vec<String>,
     candidates: Vec<RetrievedCapability>,
     responses: Option<Vec<String>>,
@@ -28,7 +29,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         vector_truncated: false,
         candidates: input.candidates,
     };
-    let batches = issue_batches(RELEVANCE_MODEL, &provenance, &receipt)?;
+    let evidence = plasm_agent_core::discovery_matcher::evidence::CatalogEvidence::from_catalogs(
+        &receipt,
+        &input.catalogs,
+    )?;
+    let batches = issue_batches(RELEVANCE_MODEL, &provenance, &receipt, &evidence)?;
     if let Some(responses) = input.responses {
         if responses.len() != batches.len() {
             return Err("response count differs from issued page count".into());

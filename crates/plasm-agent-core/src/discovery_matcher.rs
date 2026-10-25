@@ -1,9 +1,11 @@
 //! One semantic relevance judgment over authorized candidates and typed evidence.
 use crate::decision_codec::DecisionCodec;
 mod decisions;
+pub mod evidence;
 use crate::discovery_store::RetrievalReceipt;
 use crate::intent_provenance::IntentProvenance;
 pub(crate) use decisions::ENDPOINT as RELEVANCE_ENDPOINT;
+use evidence::{CapabilityEvidence, CatalogEvidence, Definitions, References};
 use futures_util::{stream::FuturesUnordered, StreamExt};
 use plasm_core::{catalog_discovery::content_hash, prerequisites::CapabilityRef};
 use serde::{Deserialize, Serialize};
@@ -16,6 +18,10 @@ type DecisionProviderError = Box<dyn std::error::Error + Send + Sync + 'static>;
 
 #[derive(Debug, Error)]
 pub enum DiscoveryMatcherError {
+    #[error("pinned catalogue evidence is missing for {0:?}")]
+    MissingCatalogueEvidence(CapabilityRef),
+    #[error("catalogue {catalog} is missing referenced definition {name}")]
+    MissingEvidenceDefinition { catalog: String, name: String },
     #[error("relevance model is required")]
     MissingModel,
     #[error("capability relevance requires openai/gpt-6-luna-decisions or a dated revision")]
@@ -120,6 +126,7 @@ pub struct IssuedBatch {
     bindings: BTreeMap<String, String>,
     questions: Vec<Question>,
     evidence: std::sync::Arc<Vec<Question>>,
+    definitions: std::sync::Arc<Definitions>,
 }
 impl IssuedBatch {
     pub fn body(&self) -> &str {
@@ -138,12 +145,15 @@ struct Question {
     entity: String,
     operation: plasm_core::catalog_discovery::OperationEvidence,
     collection: plasm_core::catalog_discovery::CollectionEvidence,
+    #[serde(skip)]
+    typed: CapabilityEvidence,
 }
 
 pub fn issue_batches(
     model: &str,
     intent: &IntentProvenance,
     retrieval: &RetrievalReceipt,
+    catalog_evidence: &CatalogEvidence,
 ) -> Result<Vec<IssuedBatch>, DiscoveryMatcherError> {
     if model.trim().is_empty() {
         return Err(DiscoveryMatcherError::MissingModel);
@@ -177,15 +187,27 @@ pub fn issue_batches(
     let evidence: std::sync::Arc<Vec<Question>> = std::sync::Arc::new(
         candidates
             .iter()
-            .map(|candidate| Question {
-                id: candidate.id.clone(),
-                reference: candidate.reference.clone(),
-                entity: candidate.document.entity.clone(),
-                operation: candidate.document.operation.clone(),
-                collection: candidate.document.collection.clone(),
+            .map(|candidate| {
+                Ok(Question {
+                    id: candidate.id.clone(),
+                    reference: candidate.reference.clone(),
+                    entity: candidate.document.entity.clone(),
+                    operation: candidate.document.operation.clone(),
+                    collection: candidate.document.collection.clone(),
+                    typed: catalog_evidence
+                        .capabilities
+                        .get(&candidate.reference)
+                        .ok_or_else(|| {
+                            DiscoveryMatcherError::MissingCatalogueEvidence(
+                                candidate.reference.clone(),
+                            )
+                        })?
+                        .clone(),
+                })
             })
-            .collect(),
+            .collect::<Result<_, DiscoveryMatcherError>>()?,
     );
+    let definitions = std::sync::Arc::new(catalog_evidence.definitions.clone());
     let mut batches = Vec::new();
     let mut pending = Vec::new();
     for question in evidence.iter() {
@@ -198,12 +220,24 @@ pub fn issue_batches(
             && (pending.len() > MAX_PAGE_QUESTIONS || subject_bytes > TARGET_PAGE_BYTES)
         {
             let last = pending.pop().ok_or(DiscoveryMatcherError::EmptyBatch)?;
-            batches.push(issue_batch(model, intent, &pending, &evidence)?);
+            batches.push(issue_batch(
+                model,
+                intent,
+                &pending,
+                &evidence,
+                &definitions,
+            )?);
             pending = vec![last];
         }
     }
     if !pending.is_empty() {
-        batches.push(issue_batch(model, intent, &pending, &evidence)?);
+        batches.push(issue_batch(
+            model,
+            intent,
+            &pending,
+            &evidence,
+            &definitions,
+        )?);
     }
     Ok(batches)
 }
@@ -228,6 +262,8 @@ struct SharedEvidence<'a> {
     discovery_need: &'a str,
     // The original turn, not a host-inferred effective goal. History carries revisions.
     outcome: &'a str,
+    types: &'a Definitions,
+    type_refs: BTreeMap<String, &'a References>,
 }
 
 struct OrderedCapabilities<'a>(Vec<(String, DirectEvidence<'a>)>);
@@ -246,6 +282,7 @@ impl Serialize for OrderedCapabilities<'_> {
 struct DirectEvidence<'a> {
     capability: DirectCard<'a>,
     collection_meaning: &'a str,
+    declaration: &'a evidence::Declaration,
 }
 #[derive(Serialize)]
 struct DirectCard<'a> {
@@ -259,6 +296,7 @@ fn issue_batch(
     intent: &IntentProvenance,
     questions: &[Question],
     evidence: &std::sync::Arc<Vec<Question>>,
+    definitions: &std::sync::Arc<Definitions>,
 ) -> Result<IssuedBatch, DiscoveryMatcherError> {
     if questions.is_empty() {
         return Err(DiscoveryMatcherError::EmptyBatch);
@@ -274,6 +312,7 @@ fn issue_batch(
                 operation: &q.operation,
             },
             collection_meaning: &q.collection.meaning,
+            declaration: &q.typed.declaration,
         };
         let mut canonical = serde_json::to_value(&card)
             .map_err(crate::decision_codec::DecisionCodecError::from)
@@ -310,6 +349,12 @@ fn issue_batch(
         capabilities,
         discovery_need: intent.current(),
         outcome: intent.original(),
+        types: definitions,
+        type_refs: evidence
+            .iter()
+            .enumerate()
+            .map(|(i, q)| (format!("c{i}"), &q.typed.references))
+            .collect(),
     };
     let body = RelevanceCodec::encode(&decisions::Request {
         model,
@@ -318,12 +363,13 @@ fn issue_batch(
     })
     .map_err(DiscoveryMatcherError::Encode)?;
     Ok(IssuedBatch {
-        cache_key: content_hash(format!("decisions-shared-contribution-v6\\n{body}").as_bytes()),
+        cache_key: content_hash(format!("decisions-indexed-contribution-v7\\n{body}").as_bytes()),
         body,
         model: model.into(),
         bindings,
         questions: questions.to_vec(),
         evidence: evidence.clone(),
+        definitions: definitions.clone(),
     })
 }
 
@@ -339,8 +385,20 @@ pub fn repartition(
     }
     let (left, right) = batch.questions.split_at(batch.questions.len() / 2);
     Ok([
-        issue_batch(&batch.model, intent, left, &batch.evidence)?,
-        issue_batch(&batch.model, intent, right, &batch.evidence)?,
+        issue_batch(
+            &batch.model,
+            intent,
+            left,
+            &batch.evidence,
+            &batch.definitions,
+        )?,
+        issue_batch(
+            &batch.model,
+            intent,
+            right,
+            &batch.evidence,
+            &batch.definitions,
+        )?,
     ])
 }
 
@@ -360,6 +418,7 @@ pub async fn judge_candidates<F, Fut>(
     model: &str,
     intent: &IntentProvenance,
     retrieval: &RetrievalReceipt,
+    catalog_evidence: &CatalogEvidence,
     mut decide: F,
 ) -> Result<CapabilityMatchReceipt, DiscoveryMatcherError>
 where
@@ -367,7 +426,7 @@ where
     Fut: std::future::Future<Output = Result<String, DecisionProviderError>>,
 {
     let mut pending: std::collections::VecDeque<_> =
-        issue_batches(model, intent, retrieval)?.into();
+        issue_batches(model, intent, retrieval, catalog_evidence)?.into();
     let mut running = FuturesUnordered::new();
     let mut accepted = Vec::new();
     let mut answers = Vec::new();
@@ -536,9 +595,41 @@ pub fn finish_selection(
 mod tests {
     mod intent_scope;
     mod prefix;
+    mod reference_index;
     mod scheduling;
     use super::*;
     use proptest::prelude::*;
+    fn issue_batches(
+        model: &str,
+        intent: &IntentProvenance,
+        retrieval: &RetrievalReceipt,
+    ) -> Result<Vec<IssuedBatch>, DiscoveryMatcherError> {
+        super::issue_batches(
+            model,
+            intent,
+            retrieval,
+            &CatalogEvidence::protocol_fixture(retrieval),
+        )
+    }
+    async fn judge_candidates<F, Fut>(
+        model: &str,
+        intent: &IntentProvenance,
+        retrieval: &RetrievalReceipt,
+        decide: F,
+    ) -> Result<CapabilityMatchReceipt, DiscoveryMatcherError>
+    where
+        F: FnMut(IssuedBatch) -> Fut,
+        Fut: std::future::Future<Output = Result<String, DecisionProviderError>>,
+    {
+        super::judge_candidates(
+            model,
+            intent,
+            retrieval,
+            &CatalogEvidence::protocol_fixture(retrieval),
+            decide,
+        )
+        .await
+    }
     fn fixture() -> (IntentProvenance, RetrievalReceipt) {
         let packet: serde_json::Value = serde_json::from_str(include_str!(
             "../../../fixtures/discovery/partial-routing.json"

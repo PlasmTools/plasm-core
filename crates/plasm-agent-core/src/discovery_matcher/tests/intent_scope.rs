@@ -98,7 +98,9 @@ fn outcome_and_need_preserve_revisions_constraints_and_unknown_state() {
                 assert!(state.get("intent_interpretation").is_none());
                 assert!(state.get("current_intent").is_none());
                 // No inferred effective goal or fabricated readiness is injected.
-                assert_eq!(state.as_object().unwrap().len(), 5);
+                assert_eq!(state.as_object().unwrap().len(), 7);
+                assert!(state["types"].is_object());
+                assert!(state["type_refs"].is_object());
                 let cards = state["capabilities"].as_object().unwrap();
                 assert_eq!(cards.len(), size);
                 for card in cards.values() {

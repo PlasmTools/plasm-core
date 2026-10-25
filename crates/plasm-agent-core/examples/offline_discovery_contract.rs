@@ -9,6 +9,7 @@ use serde::Deserialize;
 
 #[derive(Deserialize)]
 struct Input {
+    catalogs: std::collections::BTreeMap<String, plasm_core::CGS>,
     intent: String,
     retrieval: RetrievalReceipt,
     #[serde(default)]
@@ -17,7 +18,11 @@ struct Input {
 fn main() -> Result<()> {
     let input: Input = serde_json::from_reader(std::io::stdin())?;
     let provenance = IntentProvenance::from_turns([input.intent])?;
-    let batches = issue_batches(RELEVANCE_MODEL, &provenance, &input.retrieval)?;
+    let evidence = plasm_agent_core::discovery_matcher::evidence::CatalogEvidence::from_catalogs(
+        &input.retrieval,
+        &input.catalogs,
+    )?;
+    let batches = issue_batches(RELEVANCE_MODEL, &provenance, &input.retrieval, &evidence)?;
     if let Some(responses) = input.responses {
         ensure!(responses.len() == batches.len(), "page count mismatch");
         let mut pages = SelectionPages::new(batches);

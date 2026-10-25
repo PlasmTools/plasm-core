@@ -1010,10 +1010,19 @@ mod tests {
         assert!(retrieval.candidates.len() <= 128);
         let provenance =
             crate::intent_provenance::IntentProvenance::from_turns([intent.into()]).unwrap();
+        let (catalogs, _) = store
+            .load_discovery_generation(&generation, &allowed)
+            .await
+            .unwrap();
+        let evidence = crate::discovery_matcher::evidence::CatalogEvidence::from_catalogs(
+            &retrieval, &catalogs,
+        )
+        .unwrap();
         let batches = crate::discovery_matcher::issue_batches(
             crate::discovery_matcher::RELEVANCE_MODEL,
             &provenance,
             &retrieval,
+            &evidence,
         )
         .unwrap();
         assert!(!batches.is_empty());

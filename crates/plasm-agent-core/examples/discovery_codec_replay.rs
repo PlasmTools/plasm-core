@@ -30,10 +30,14 @@ fn main() -> Result<()> {
             .join("discovery-focus-question-20260923/J")
             .join(&case.id);
         let requests: Vec<Value> = read(dir.join("requests.json"))?;
+        let catalogs = read(root.join("catalogs.json"))?;
+        let evidence =
+            matcher::evidence::CatalogEvidence::from_catalogs(&receipt.retrieval, &catalogs)?;
         let issued = matcher::issue_batches(
             "typesafe/jev-1.13-20260917",
             &receipt.intent_provenance,
             &receipt.retrieval,
+            &evidence,
         )?;
         ensure!(issued.len() == requests.len(), "page count changed");
         let mut answers = Vec::new();

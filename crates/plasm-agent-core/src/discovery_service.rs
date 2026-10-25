@@ -188,10 +188,12 @@ impl DiscoveryService {
             return Err(DiscoveryServiceError::ExposedCapabilityMissing);
         }
         retrieval.validate(allowed)?;
+        let evidence = matcher::evidence::CatalogEvidence::from_catalogs(&retrieval, &catalogs)?;
         let matching = matcher::judge_candidates(
             &self.match_model,
             provenance,
             &retrieval,
+            &evidence,
             |issued| async move {
                 // Serialize identical requests within this service, then recheck the
                 // durable cache. Failures are never cached; cancellation releases ownership.
