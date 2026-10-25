@@ -105,8 +105,24 @@ pub async fn seed_model_boundary(store: &DiscoveryStore, generation: &str, turns
     let retrieval = store.retrieve(generation, intent, &allowed).await.unwrap();
     let provenance = IntentProvenance::from_turns(turns.iter().map(|s| (*s).to_owned())).unwrap();
     let model = plasm_agent_core::discovery_matcher::RELEVANCE_MODEL;
-    for batch in
-        plasm_agent_core::discovery_matcher::issue_batches(model, &provenance, &retrieval).unwrap()
+    let (catalogs, deployments) = store
+        .load_discovery_generation(generation, &allowed)
+        .await
+        .unwrap();
+    let evidence = plasm_agent_core::discovery_matcher::evidence::CatalogEvidence::from_catalogs(
+        &retrieval,
+        &catalogs,
+        &deployments,
+        &|r| allowed.permits(r),
+    )
+    .unwrap();
+    for batch in plasm_agent_core::discovery_matcher::issue_batches(
+        model,
+        &provenance,
+        &retrieval,
+        &evidence,
+    )
+    .unwrap()
     {
         let body: Value = serde_json::from_str(batch.body()).unwrap();
         let answers: BTreeMap<_, _> = body["questions"]

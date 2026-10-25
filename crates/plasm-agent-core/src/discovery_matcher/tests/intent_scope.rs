@@ -102,7 +102,7 @@ fn outcome_and_need_preserve_revisions_constraints_and_unknown_state() {
                 assert!(state["types"].is_object());
                 assert!(state["type_refs"].is_object());
                 let cards = state["capabilities"].as_object().unwrap();
-                assert_eq!(cards.len(), size);
+                assert_eq!(cards.len(), 1);
                 for card in cards.values() {
                     let capability = &card["capability"];
                     let name = capability["reference"]["capability"].as_str().unwrap();
@@ -150,7 +150,11 @@ fn contribution_selection_preserves_effect_limits_without_issuing_permission() {
         for batch in &batches {
             let body: serde_json::Value = serde_json::from_str(batch.body()).unwrap();
             assert_eq!(body["state"]["discovery_need"], constraint);
-            for candidate in &retrieval.candidates {
+            for candidate in retrieval
+                .candidates
+                .iter()
+                .filter(|candidate| batch.bindings.values().any(|id| id == &candidate.id))
+            {
                 let card = body["state"]["capabilities"]
                     .as_object()
                     .unwrap()

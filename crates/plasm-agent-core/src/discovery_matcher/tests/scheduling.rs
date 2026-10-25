@@ -150,7 +150,7 @@ async fn four_pages_progress_together_and_completion_order_does_not_change_recei
 }
 
 #[test]
-fn shared_context_is_lossless_and_not_repeated_per_candidate() {
+fn local_context_preserves_intent_and_rubric_once_per_request() {
     let (_, mut retrieval) = many_cards(8);
     for candidate in &mut retrieval.candidates {
         candidate.document.operation.contract =
@@ -163,19 +163,17 @@ fn shared_context_is_lossless_and_not_repeated_per_candidate() {
     ];
     let intent = IntentProvenance::from_turns(turns.map(str::to_owned)).unwrap();
     let batches = issue_batches(RELEVANCE_MODEL, &intent, &retrieval).unwrap();
-    assert_eq!(batches.len(), 1);
-    let content = question_content(&batches[0]);
-    assert_eq!(content["context"]["intent_turns"], json!(turns));
-    assert_eq!(content["context"]["rule"], RUBRIC);
-    for question in content["questions"].as_object().unwrap().values() {
-        assert!(question.get("criteria").is_none());
-        assert!(question["instructions"].get("intent_turns").is_none());
+    assert_eq!(batches.len(), 8);
+    for batch in batches {
+        let body: serde_json::Value = serde_json::from_str(batch.body()).unwrap();
+        assert_eq!(body["state"]["intent_turns"], json!(turns));
+        assert_eq!(body["state"]["rule"], RUBRIC);
+        let cards = body["state"]["capabilities"].as_object().unwrap();
+        assert_eq!(cards.len(), 1);
         assert_eq!(
-            question["instructions"]["capability"]["operation"]["contract"],
+            cards.values().next().unwrap()["capability"]["operation"]["contract"],
             "Affects the entire configured group; requires authorization."
         );
+        assert!(batch.body().len() <= TARGET_PAGE_BYTES);
     }
-    assert!(batches[0].body.len() <= TARGET_PAGE_BYTES);
-    let repeated_bytes = serde_json::to_vec(&content["context"]).unwrap().len() * 7;
-    assert!(repeated_bytes > 3000);
 }

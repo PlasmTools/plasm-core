@@ -35,7 +35,7 @@ pub enum DiscoveryServiceError {
     #[error(transparent)]
     Retrieval(#[from] crate::discovery_store::RetrievalValidationError),
     #[error(transparent)]
-    Matcher(#[from] matcher::DiscoveryMatcherError),
+    Matcher(Box<matcher::DiscoveryMatcherError>),
     #[error(transparent)]
     DecisionTransport(#[from] crate::decision_transport::DecisionTransportError),
     #[error(transparent)]
@@ -46,6 +46,12 @@ pub enum DiscoveryServiceError {
     Json(#[from] serde_json::Error),
     #[error("discovery diagnostic file operation failed")]
     Io(#[from] std::io::Error),
+}
+
+impl From<matcher::DiscoveryMatcherError> for DiscoveryServiceError {
+    fn from(error: matcher::DiscoveryMatcherError) -> Self {
+        Self::Matcher(Box::new(error))
+    }
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -188,7 +194,9 @@ impl DiscoveryService {
             return Err(DiscoveryServiceError::ExposedCapabilityMissing);
         }
         retrieval.validate(allowed)?;
-        let evidence = matcher::evidence::CatalogEvidence::from_catalogs(&retrieval, &catalogs)?;
+        let evidence = matcher::evidence::CatalogEvidence::from_catalogs(
+            &retrieval, &catalogs, &bindings, &|reference| allowed.permits(reference),
+        )?;
         let matching = matcher::judge_candidates(
             &self.match_model,
             provenance,

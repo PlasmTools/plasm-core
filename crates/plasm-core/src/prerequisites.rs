@@ -11,7 +11,7 @@
 //! child has no distinct foreign-provider seat. Unproven catalog identity omits
 //! the binding — it does not silently send the parent token.
 
-use crate::schema::{CapabilitySchema, InputFieldSchema, InputFieldWire, InputType};
+use crate::schema::{CapabilitySchema, InputFieldSchema, InputFieldWire, InputSchema, InputType};
 use crate::{CapabilityKind, FieldType, NamedValueSchema, CGS};
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet};
@@ -663,6 +663,60 @@ fn required_inputs(cap: &CapabilitySchema) -> Result<Vec<InputPath>, Prerequisit
     Ok(out)
 }
 
+/// Discovery evidence can name required registry-backed seats reached through
+/// required object fields. Other shapes remain in the capability contract, but
+/// do not establish a source binding: a union needs a branch and an array needs
+/// element/cardinality semantics. This is not prerequisite-provider admission.
+/// Synthetic derived-Get identity seats are not registry-backed arguments:
+/// `input_value_ref` also excludes them from source matching.
+fn projectable_source_inputs(cap: &CapabilitySchema) -> Vec<InputPath> {
+    fn collect(fields: &[InputFieldSchema], lane: InputLane, out: &mut Vec<InputPath>) {
+        let mut pending: Vec<_> = fields
+            .iter()
+            .rev()
+            .map(|field| (field, Vec::new()))
+            .collect();
+        while let Some((field, mut path)) = pending.pop() {
+            if !field.required || field.default.is_some() {
+                continue;
+            }
+            path.push(field.name.clone());
+            match &field.wire {
+                InputFieldWire::Registry(_) => out.push(InputPath {
+                    lane: lane.clone(),
+                    path,
+                }),
+                InputFieldWire::Inline(input) => {
+                    if let InputType::Object { fields, .. } = input.as_ref() {
+                        pending.extend(fields.iter().rev().map(|field| (field, path.clone())));
+                    }
+                }
+            }
+        }
+    }
+    let mut out = Vec::new();
+    for (lane, fields) in [
+        (InputLane::Scope, &cap.inputs.scope.0),
+        (InputLane::Selection, &cap.inputs.selection.0),
+        (InputLane::Controls, &cap.inputs.controls.0),
+    ] {
+        collect(fields, lane, &mut out);
+    }
+    for (lane, schema) in [
+        (InputLane::Arguments, &cap.inputs.arguments),
+        (InputLane::Payload, &cap.inputs.payload),
+    ] {
+        if let Some(InputSchema {
+            input_type: InputType::Object { fields, .. },
+            ..
+        }) = schema
+        {
+            collect(fields, lane, &mut out);
+        }
+    }
+    out
+}
+
 fn capability<'a>(cgs: &'a CGS, id: &str) -> Result<&'a CapabilitySchema, PrerequisiteError> {
     cgs.capabilities
         .get(id)
@@ -1079,7 +1133,7 @@ where
         let prerequisite_seats = consumer_cgs
             .prerequisites
             .acquired_inputs(&consumer.capability);
-        for input in required_inputs(consumer_cap)?
+        for input in projectable_source_inputs(consumer_cap)
             .into_iter()
             .filter(|input| !prerequisite_seats.contains(input))
         {
@@ -2220,6 +2274,182 @@ mod tests {
         assert!(!candidates
             .iter()
             .any(|candidate| candidate.provider.catalog == "source"));
+    }
+
+    #[test]
+    fn source_projection_preserves_derived_identity_exclusion() {
+        let mut cgs = fixture();
+        let cap = cgs.capabilities.get_mut("read").unwrap();
+        cap.derived = Some(crate::DerivedGetPlan {
+            get_capability: "read".into(),
+            source_query: "acquire".into(),
+            match_field: "value".into(),
+            identity_field: "id".into(),
+            projection: Default::default(),
+        });
+        let identity = InputPath {
+            lane: InputLane::Selection,
+            path: vec!["id".into()],
+        };
+        assert!(required_inputs(cap).unwrap().contains(&identity));
+        assert_eq!(input_value_ref(cap, &identity).unwrap(), None);
+        assert_eq!(
+            projectable_source_inputs(cap),
+            vec![InputPath {
+                lane: InputLane::Selection,
+                path: vec!["credential".into()],
+            }]
+        );
+    }
+
+    #[test]
+    fn source_projection_non_object_lanes_do_not_reject_other_typed_seats() {
+        let original = fixture();
+        let InputType::Object { fields, .. } = &original.capabilities["operate"]
+            .inputs
+            .payload
+            .as_ref()
+            .unwrap()
+            .input_type
+        else {
+            panic!("fixture payload object");
+        };
+        let field = fields[0].clone();
+        let shapes = [
+            InputType::Union {
+                variants: vec![crate::schema::InputVariantSchema {
+                    name: "branch".into(),
+                    description: None,
+                    constructor_symbol: None,
+                    fields: vec![field.clone()],
+                    wire: crate::schema::WireVariantDiscriminator {
+                        field: "kind".into(),
+                        value: "branch".into(),
+                    },
+                }],
+            },
+            InputType::Array {
+                element_type: Box::new(InputType::Object {
+                    fields: vec![field.clone()],
+                    additional_fields: false,
+                }),
+                min_length: Some(1),
+                max_length: Some(2),
+            },
+            InputType::Value {
+                field_type: FieldType::String,
+                allowed_values: None,
+            },
+        ];
+        for shape in shapes {
+            let mut cgs = original.clone();
+            let cap = cgs.capabilities.get_mut("operate").unwrap();
+            cap.inputs.controls.0 = vec![field.clone()];
+            cap.inputs.payload.as_mut().unwrap().input_type = shape.clone();
+            assert_eq!(
+                required_inputs(cap),
+                Err(PrerequisiteError::UnsupportedProviderInput),
+                "strict prerequisite-provider admission must not change"
+            );
+            let before = cap.inputs.clone();
+            let business = CapabilityRef {
+                catalog: "matrix".into(),
+                capability: "operate".into(),
+            };
+            let sources = project_input_source_candidates(
+                &BTreeMap::from([("matrix".into(), &cgs)]),
+                std::slice::from_ref(&business),
+                &|_| true,
+            )
+            .unwrap();
+            let arguments: Vec<_> = sources
+                .iter()
+                .flat_map(|source| &source.bindings)
+                .filter_map(|binding| match &binding.input {
+                    InputSourceTarget::Argument { input } => Some(input.clone()),
+                    InputSourceTarget::Receiver { .. } => None,
+                })
+                .collect();
+            assert!(
+                !arguments.is_empty(),
+                "faithful control seat remains discoverable"
+            );
+            assert!(arguments
+                .iter()
+                .all(|input| input.lane == InputLane::Controls && input.path == ["id"]));
+            assert_eq!(
+                cgs.capabilities["operate"].inputs, before,
+                "opaque contract remains unchanged"
+            );
+        }
+    }
+
+    #[test]
+    fn source_projection_keeps_required_nested_object_seats_without_expanding_opaque_shapes() {
+        let mut cgs = fixture();
+        let cap = cgs.capabilities.get_mut("operate").unwrap();
+        let InputType::Object { fields, .. } = &mut cap.inputs.payload.as_mut().unwrap().input_type
+        else {
+            panic!("fixture payload object");
+        };
+        let mut nested = fields[0].clone();
+        nested.name = "nested".into();
+        nested.wire = InputFieldWire::Inline(Box::new(InputType::Object {
+            fields: vec![fields[0].clone()],
+            additional_fields: false,
+        }));
+        let mut unknown = fields[0].clone();
+        unknown.name = "unknown".into();
+        unknown.wire = InputFieldWire::Inline(Box::new(InputType::Array {
+            element_type: Box::new(InputType::Object {
+                fields: vec![fields[0].clone()],
+                additional_fields: false,
+            }),
+            min_length: None,
+            max_length: None,
+        }));
+        let mut optional = nested.clone();
+        optional.name = "optional".into();
+        optional.required = false;
+        fields.extend([nested, unknown, optional]);
+        assert_eq!(
+            required_inputs(cap),
+            Err(PrerequisiteError::UnsupportedProviderInput)
+        );
+        assert_eq!(
+            projectable_source_inputs(cap),
+            vec![
+                InputPath {
+                    lane: InputLane::Payload,
+                    path: vec!["id".into()]
+                },
+                InputPath {
+                    lane: InputLane::Payload,
+                    path: vec!["nested".into(), "id".into()]
+                },
+            ]
+        );
+        let sources = project_input_source_candidates(
+            &BTreeMap::from([("matrix".into(), &cgs)]),
+            &[CapabilityRef {
+                catalog: "matrix".into(),
+                capability: "operate".into(),
+            }],
+            &|_| true,
+        )
+        .unwrap();
+        assert!(sources
+            .iter()
+            .flat_map(|source| &source.bindings)
+            .any(|binding| {
+                binding.input
+                    == InputSourceTarget::Argument {
+                        input: InputPath {
+                            lane: InputLane::Payload,
+                            path: vec!["nested".into(), "id".into()],
+                        },
+                    }
+            }));
     }
 
     #[test]

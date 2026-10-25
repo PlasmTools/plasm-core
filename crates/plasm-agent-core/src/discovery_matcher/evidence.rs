@@ -40,6 +40,7 @@ pub struct References {
 
 #[derive(Debug, Clone)]
 pub struct CapabilityEvidence {
+    pub entity: String,
     pub operation: plasm_core::catalog_discovery::OperationEvidence,
     pub declaration: Declaration,
     pub references: References,
@@ -49,10 +50,11 @@ pub struct CapabilityEvidence {
 pub struct CatalogEvidence {
     pub definitions: Definitions,
     pub capabilities: BTreeMap<CapabilityRef, CapabilityEvidence>,
+    pub(super) bindings: Vec<super::witnesses::Binding>,
 }
 
 // Escape separator and escape character so catalogue/name pairs cannot collide.
-fn key(catalog: &str, name: &str) -> String {
+pub(super) fn key(catalog: &str, name: &str) -> String {
     fn escape(s: &str) -> String {
         s.replace('%', "%25").replace('/', "%2F")
     }
@@ -158,15 +160,53 @@ fn missing(catalog: &str, name: &str) -> DiscoveryMatcherError {
 }
 
 impl CatalogEvidence {
-    /// Use only retrieved capabilities and their typed definitions from the authorized,
-    /// pinned generation. No inferred compatibility or acquisition executes here.
+    /// Project retrieved contracts and direct typed bindings from the pinned generation.
+    /// Declared prerequisite providers are evidence-only; no acquisition executes here.
     pub fn from_catalogs(
         retrieval: &RetrievalReceipt,
         catalogs: &BTreeMap<String, CGS>,
+        deployments: &plasm_core::prerequisites::DeploymentBindings,
+        permitted: &impl Fn(&CapabilityRef) -> bool,
     ) -> Result<Self> {
         let mut result = Self::default();
-        for candidate in &retrieval.candidates {
-            let reference = &candidate.reference;
+        let business: Vec<_> = retrieval
+            .candidates
+            .iter()
+            .map(|c| c.reference.clone())
+            .collect();
+        for reference in &business {
+            if !permitted(reference) {
+                return Err(DiscoveryMatcherError::UnauthorizedWitness(
+                    reference.clone(),
+                ));
+            }
+        }
+        let borrowed = catalogs.iter().map(|(id, cgs)| (id.clone(), cgs)).collect();
+        let retrieved: BTreeSet<_> = business.iter().cloned().collect();
+        let sources = plasm_core::prerequisites::project_input_source_candidates(
+            &borrowed,
+            &business,
+            &|r| retrieved.contains(r) && permitted(r),
+        )?;
+        let closure = plasm_core::prerequisites::prerequisite_closure(
+            &borrowed,
+            deployments,
+            &business,
+            &catalogs.keys().cloned().collect(),
+        )?;
+        result.bindings = super::witnesses::bindings(sources, &closure.edges)?;
+        let mut references = retrieved;
+        for binding in &result.bindings {
+            for endpoint in binding.endpoints() {
+                if !permitted(&endpoint.capability) {
+                    return Err(DiscoveryMatcherError::UnauthorizedWitness(
+                        endpoint.capability.clone(),
+                    ));
+                }
+                references.insert(endpoint.capability.clone());
+            }
+        }
+        for reference in &references {
             let cap = catalogs
                 .get(&reference.catalog)
                 .and_then(|cgs| cgs.capabilities.get(reference.capability.as_str()))
@@ -219,6 +259,7 @@ impl CatalogEvidence {
             result.capabilities.insert(
                 reference.clone(),
                 CapabilityEvidence {
+                    entity: cap.domain.to_string(),
                     operation: plasm_core::catalog_discovery::OperationEvidence {
                         kind: cap.kind,
                         receiver: cap.inputs.receiver.clone(),
@@ -253,6 +294,7 @@ impl CatalogEvidence {
         // Projection is tested separately against actual abstract CGS fixtures.
         Self {
             definitions: Definitions::default(),
+            bindings: vec![],
             capabilities: retrieval
                 .candidates
                 .iter()
@@ -260,6 +302,7 @@ impl CatalogEvidence {
                     (
                         c.reference.clone(),
                         CapabilityEvidence {
+                            entity: c.document.entity.clone(),
                             operation: c.document.operation.clone(),
                             declaration: Declaration {
                                 inputs: CapabilityInputs::default(),

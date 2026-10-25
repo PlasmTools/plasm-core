@@ -2,10 +2,11 @@
 use crate::decision_codec::DecisionCodec;
 mod decisions;
 pub mod evidence;
+mod witnesses;
 use crate::discovery_store::RetrievalReceipt;
 use crate::intent_provenance::IntentProvenance;
 pub(crate) use decisions::ENDPOINT as RELEVANCE_ENDPOINT;
-use evidence::{CapabilityEvidence, CatalogEvidence, Definitions, References};
+use evidence::CatalogEvidence;
 use futures_util::{stream::FuturesUnordered, StreamExt};
 use plasm_core::{catalog_discovery::content_hash, prerequisites::CapabilityRef};
 use serde::{Deserialize, Serialize};
@@ -24,6 +25,23 @@ pub enum DiscoveryMatcherError {
     MissingCatalogueEvidence(CapabilityRef),
     #[error("catalogue {catalog} is missing referenced definition {name}")]
     MissingEvidenceDefinition { catalog: String, name: String },
+    #[error("discovery binding projection failed")]
+    Witness(#[from] plasm_core::prerequisites::PrerequisiteError),
+    #[error("discovery witness references unauthorized capability {0}")]
+    UnauthorizedWitness(CapabilityRef),
+    #[error("discovery witness for {reference} has invalid {part}; no evidence was removed")]
+    InvalidWitness {
+        reference: CapabilityRef,
+        part: &'static str,
+    },
+    #[error("discovery scope for {reference} requires {capabilities}/{capability_limit} capabilities and {bytes}/{byte_limit} bytes; selection was not started; narrow the discovery need or catalogue bindings")]
+    ScopeLimit {
+        reference: CapabilityRef,
+        capabilities: usize,
+        capability_limit: usize,
+        bytes: usize,
+        byte_limit: usize,
+    },
     #[error("relevance model is required")]
     MissingModel,
     #[error("capability relevance requires openai/gpt-6-luna-decisions or a dated revision")]
@@ -38,7 +56,7 @@ pub enum DiscoveryMatcherError {
     EmptyBatch,
     #[error("issued relevance page has no pending page")]
     NoPendingPage,
-    #[error("relevance page rejected with one question and indivisible shared evidence ({bytes} bytes); supply a decision model with sufficient context; no evidence was removed and no selection was committed")]
+    #[error("provider rejected a bounded local discovery question ({bytes} bytes); its evidence cannot be split; no selection was committed")]
     IndivisibleItem { bytes: usize },
     #[error("relevance request serialization failed")]
     Encode(#[source] crate::decision_codec::DecisionCodecError),
@@ -62,11 +80,12 @@ pub enum DiscoveryMatcherError {
     Provider(#[source] DecisionProviderError),
 }
 pub const RELEVANCE_MODEL: &str = "openai/gpt-6-luna-decisions";
-// Packing target for the subjects judged on a page, excluding shared evidence.
-// Shared evidence is bounded by retrieval and never dropped during partitioning.
-const TARGET_PAGE_BYTES: usize = 64_000;
-const MAX_PAGE_QUESTIONS: usize = 128;
-/// Bounds work admitted by one discovery turn, including split pages.
+// Local requests include the complete target and direct compact witnesses.
+#[cfg(test)]
+const TARGET_PAGE_BYTES: usize = witnesses::MAX_BYTES;
+#[cfg(test)]
+const MAX_PAGE_QUESTIONS: usize = 1;
+/// Bounds work admitted by one discovery turn.
 const ROUTE_CONCURRENCY: usize = 4;
 const CRITERIA: [(&str, &str); 3] = [
     (
@@ -126,9 +145,10 @@ pub struct IssuedBatch {
     cache_key: String,
     model: String,
     bindings: BTreeMap<String, String>,
+    #[cfg(test)]
     questions: Vec<Question>,
+    #[cfg(test)]
     evidence: std::sync::Arc<Vec<Question>>,
-    definitions: std::sync::Arc<Definitions>,
 }
 impl IssuedBatch {
     pub fn body(&self) -> &str {
@@ -146,20 +166,6 @@ struct Question {
     reference: CapabilityRef,
     entity: String,
     operation: plasm_core::catalog_discovery::OperationEvidence,
-    #[serde(skip)]
-    typed: CapabilityEvidence,
-    #[serde(skip)]
-    subject_bytes: usize,
-}
-
-/// Keep the retrieval-subject packing measure independent of decision rendering.
-#[derive(Serialize)]
-struct PackingSubject<'a> {
-    id: &'a str,
-    reference: &'a CapabilityRef,
-    entity: &'a str,
-    operation: &'a plasm_core::catalog_discovery::OperationEvidence,
-    collection: &'a plasm_core::catalog_discovery::CollectionEvidence,
 }
 
 pub fn issue_batches(
@@ -212,53 +218,32 @@ pub fn issue_batches(
                     reference: candidate.reference.clone(),
                     entity: candidate.document.entity.clone(),
                     operation: typed.operation.clone(),
-                    typed: typed.clone(),
-                    subject_bytes: serde_json::to_vec(&PackingSubject {
-                        id: &candidate.id,
-                        reference: &candidate.reference,
-                        entity: &candidate.document.entity,
-                        operation: &candidate.document.operation,
-                        collection: &candidate.document.collection,
-                    })
-                    .map_err(crate::decision_codec::DecisionCodecError::from)
-                    .map_err(DiscoveryMatcherError::Encode)?
-                    .len(),
                 })
             })
             .collect::<Result<_, DiscoveryMatcherError>>()?,
     );
-    let definitions = std::sync::Arc::new(catalog_evidence.definitions.clone());
-    let mut batches = Vec::new();
-    let mut pending = Vec::new();
-    for question in evidence.iter() {
-        pending.push(question.clone());
-        let subject_bytes = 2
-            + pending.iter().map(|q| q.subject_bytes).sum::<usize>()
-            + pending.len().saturating_sub(1);
-        if pending.len() > 1
-            && (pending.len() > MAX_PAGE_QUESTIONS || subject_bytes > TARGET_PAGE_BYTES)
-        {
-            let last = pending.pop().ok_or(DiscoveryMatcherError::EmptyBatch)?;
-            batches.push(issue_batch(
+    // Validate every local packet before the caller can dispatch any provider work.
+    let ids: BTreeMap<_, _> = catalog_evidence
+        .capabilities
+        .keys()
+        .enumerate()
+        .map(|(i, reference)| (reference.clone(), format!("c{i}")))
+        .collect();
+    let definitions = witnesses::value(&catalog_evidence.definitions)?;
+    evidence
+        .iter()
+        .map(|question| {
+            issue_local_batch(
                 model,
                 intent,
-                &pending,
+                question,
                 &evidence,
+                catalog_evidence,
+                &ids,
                 &definitions,
-            )?);
-            pending = vec![last];
-        }
-    }
-    if !pending.is_empty() {
-        batches.push(issue_batch(
-            model,
-            intent,
-            &pending,
-            &evidence,
-            &definitions,
-        )?);
-    }
-    Ok(batches)
+            )
+        })
+        .collect()
 }
 
 struct RelevanceCodec;
@@ -277,160 +262,78 @@ impl DecisionCodec for RelevanceCodec {
 struct SharedEvidence<'a> {
     intent_turns: Vec<&'a str>,
     rule: &'static str,
-    capabilities: OrderedCapabilities<'a>,
+    capabilities: witnesses::OrderedCards,
     discovery_need: &'a str,
-    // The original turn, not a host-inferred effective goal. History carries revisions.
     outcome: &'a str,
-    types: &'a Definitions,
-    type_refs: BTreeMap<String, &'a References>,
+    types: witnesses::ProjectedDefinitions,
+    type_refs: serde_json::Value,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    bindings: Vec<serde_json::Value>,
 }
 
-struct OrderedCapabilities<'a>(Vec<(String, DirectEvidence<'a>)>);
-
-impl Serialize for OrderedCapabilities<'_> {
-    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
-        use serde::ser::SerializeMap;
-        let mut map = serializer.serialize_map(Some(self.0.len()))?;
-        for (key, evidence) in &self.0 {
-            map.serialize_entry(key, evidence)?;
-        }
-        map.end()
-    }
-}
-#[derive(Serialize)]
-struct DirectEvidence<'a> {
-    capability: DirectCard<'a>,
-    declaration: &'a evidence::Declaration,
-}
-#[derive(Serialize)]
-struct DirectCard<'a> {
-    reference: &'a CapabilityRef,
-    entity: &'a str,
-    operation: &'a plasm_core::catalog_discovery::OperationEvidence,
-}
-
-fn issue_batch(
+fn issue_local_batch(
     model: &str,
     intent: &IntentProvenance,
-    questions: &[Question],
-    evidence: &std::sync::Arc<Vec<Question>>,
-    definitions: &std::sync::Arc<Definitions>,
+    question: &Question,
+    _evidence: &std::sync::Arc<Vec<Question>>,
+    catalog: &CatalogEvidence,
+    ids: &BTreeMap<CapabilityRef, String>,
+    definitions: &serde_json::Value,
 ) -> Result<IssuedBatch, DiscoveryMatcherError> {
-    if questions.is_empty() {
-        return Err(DiscoveryMatcherError::EmptyBatch);
-    }
-    let mut wire_questions = BTreeMap::new();
-    let mut bindings = BTreeMap::new();
-    let mut capabilities = Vec::new();
-    for (i, q) in evidence.iter().enumerate() {
-        let card = DirectEvidence {
-            capability: DirectCard {
-                reference: &q.reference,
-                entity: &q.entity,
-                operation: &q.operation,
-            },
-            declaration: &q.typed.declaration,
-        };
-        let mut canonical = serde_json::to_value(&card)
-            .map_err(crate::decision_codec::DecisionCodecError::from)
-            .map_err(DiscoveryMatcherError::Encode)?;
-        canonical.sort_all_objects();
-        let bytes = serde_json::to_vec(&canonical)
-            .map_err(crate::decision_codec::DecisionCodecError::from)
-            .map_err(DiscoveryMatcherError::Encode)?;
-        capabilities.push((content_hash(&bytes), format!("c{i}"), card));
-    }
-    capabilities.sort_by(|a, b| (&a.0, &a.1).cmp(&(&b.0, &b.1)));
-    let capabilities = OrderedCapabilities(
-        capabilities
-            .into_iter()
-            .map(|(_, key, card)| (key, card))
-            .collect(),
-    );
-    for q in questions {
-        let index = evidence
-            .iter()
-            .position(|card| card.id == q.id)
-            .ok_or(DiscoveryMatcherError::MissingAnswer)?;
-        let key = format!("q{index}");
-        bindings.insert(key.clone(), q.id.clone());
-        wire_questions.insert(key, decisions::Question {
-            kind: "choice",
-            instructions: format!("Using the shared intent and rule, classify the contribution of `capabilities.c{index}`. Other entries in `capabilities` are available composition evidence, not an execution plan."),
-            criteria: CRITERIA.into_iter().collect(),
-        });
-    }
+    let scope = witnesses::project(&question.reference, catalog, ids, definitions)?;
+    let id = ids
+        .get(&question.reference)
+        .ok_or(DiscoveryMatcherError::MissingAnswer)?;
+    let key = format!("q{}", &id[1..]);
     let state = SharedEvidence {
         intent_turns: intent.turns().collect(),
         rule: RUBRIC,
-        capabilities,
+        capabilities: scope.cards,
         discovery_need: intent.current(),
         outcome: intent.original(),
-        types: definitions,
-        type_refs: evidence
-            .iter()
-            .enumerate()
-            .map(|(i, q)| (format!("c{i}"), &q.typed.references))
-            .collect(),
+        types: scope.types,
+        type_refs: scope.references,
+        bindings: scope.bindings,
     };
     let body = RelevanceCodec::encode(&decisions::Request {
         model,
         state: &state,
-        questions: wire_questions,
-    })
-    .map_err(DiscoveryMatcherError::Encode)?;
-    Ok(IssuedBatch {
-        cache_key: content_hash(format!("decisions-canonical-contracts-v9\\n{body}").as_bytes()),
-        body,
-        model: model.into(),
-        bindings,
-        questions: questions.to_vec(),
-        evidence: evidence.clone(),
-        definitions: definitions.clone(),
-    })
-}
-
-/// Split complete semantic questions. No descriptions are truncated or sliced.
-pub fn repartition(
-    batch: &IssuedBatch,
-    intent: &IntentProvenance,
-) -> Result<[IssuedBatch; 2], DiscoveryMatcherError> {
-    if batch.questions.len() <= 1 {
-        return Err(DiscoveryMatcherError::IndivisibleItem {
-            bytes: batch.body.len(),
+        questions: BTreeMap::from([(key.clone(), decisions::Question {
+            kind: "choice",
+            instructions: format!("Using the shared intent and rule, classify the contribution of `capabilities.{id}`. Other entries in `capabilities` are available composition evidence, not an execution plan."),
+            criteria: CRITERIA.into_iter().collect(),
+        })]),
+    }).map_err(DiscoveryMatcherError::Encode)?;
+    if scope.count > witnesses::MAX_CAPABILITIES || body.len() > witnesses::MAX_BYTES {
+        return Err(DiscoveryMatcherError::ScopeLimit {
+            reference: question.reference.clone(),
+            capabilities: scope.count,
+            capability_limit: witnesses::MAX_CAPABILITIES,
+            bytes: body.len(),
+            byte_limit: witnesses::MAX_BYTES,
         });
     }
-    let (left, right) = batch.questions.split_at(batch.questions.len() / 2);
-    Ok([
-        issue_batch(
-            &batch.model,
-            intent,
-            left,
-            &batch.evidence,
-            &batch.definitions,
-        )?,
-        issue_batch(
-            &batch.model,
-            intent,
-            right,
-            &batch.evidence,
-            &batch.definitions,
-        )?,
-    ])
+    Ok(IssuedBatch {
+        cache_key: content_hash(format!("decisions-compact-witnesses-v10\\n{body}").as_bytes()),
+        body,
+        model: model.into(),
+        bindings: BTreeMap::from([(key, question.id.clone())]),
+        #[cfg(test)]
+        questions: vec![question.clone()],
+        #[cfg(test)]
+        evidence: _evidence.clone(),
+    })
 }
 
-/// Owns selection progress: only successfully decoded leaves can complete a selection.
-/// A rejected page is replaced atomically by two complete, smaller units of work.
-/// With N candidates and P initial pages, binary splitting admits at most N
-/// successful leaves and 2*N-P page attempts. An indivisible rejection fails.
+/// Pending local questions and accepted judgments; no partial selection.
 pub struct SelectionPages {
     pending: std::collections::VecDeque<IssuedBatch>,
     accepted: Vec<IssuedBatch>,
     answers: Vec<SelectionAnswer>,
 }
 
-/// Execute the same exhaustive paging protocol for live and cached decisions.
-/// Only a context rejection can subdivide work; all other errors abort selection.
+/// Execute complete local questions for live and cached decisions.
+/// Any failed question aborts selection; evidence is never subdivided.
 pub async fn judge_candidates<F, Fut>(
     model: &str,
     intent: &IntentProvenance,
@@ -473,9 +376,9 @@ where
                         )
                     }) =>
             {
-                let [left, right] = repartition(&issued, intent)?;
-                pending.push_front(right);
-                pending.push_front(left);
+                return Err(DiscoveryMatcherError::IndivisibleItem {
+                    bytes: issued.body.len(),
+                });
             }
             Err(error) => return Err(DiscoveryMatcherError::Provider(error)),
         }
@@ -490,8 +393,7 @@ impl SelectionPages {
             answers: Vec::new(),
         }
     }
-    /// Total leaf pages, including completed ones. Repartitioning must account
-    /// for both halves before a host admits more provider work.
+    /// Total local questions, including completed ones.
     pub fn page_count(&self) -> usize {
         self.accepted.len() + self.pending.len()
     }
@@ -507,20 +409,6 @@ impl SelectionPages {
         self.answers.extend(answers);
         self.accepted
             .push(self.pending.pop_front().expect("validated pending page"));
-        Ok(())
-    }
-    pub fn split_current(
-        &mut self,
-        intent: &IntentProvenance,
-    ) -> Result<(), DiscoveryMatcherError> {
-        let batch = self
-            .pending
-            .front()
-            .ok_or(DiscoveryMatcherError::NoPendingPage)?;
-        let [left, right] = repartition(batch, intent)?;
-        self.pending.pop_front();
-        self.pending.push_front(right);
-        self.pending.push_front(left);
         Ok(())
     }
     pub fn finish(
@@ -610,6 +498,7 @@ pub fn finish_selection(
 
 #[cfg(test)]
 mod tests {
+    mod compact;
     mod intent_scope;
     mod prefix;
     mod reference_index;
@@ -756,19 +645,20 @@ mod tests {
                 forward.iter().map(|b| b.body()).collect::<Vec<_>>(),
                 reverse.iter().map(|b| b.body()).collect::<Vec<_>>()
             );
+            assert_eq!(forward.len(), size);
+            let mut counts = BTreeMap::new();
             for page in forward {
                 let body: serde_json::Value = serde_json::from_str(page.body()).unwrap();
                 let evidence = body["state"]["capabilities"].as_object().unwrap();
-                assert_eq!(evidence.len(), size);
-                for contract in contracts {
-                    assert_eq!(
-                        evidence
-                            .values()
-                            .filter(|v| v["capability"]["operation"]["contract"] == contract)
-                            .count(),
-                        size / contracts.len()
-                    );
-                }
+                assert_eq!(evidence.len(), 1);
+                let contract = evidence.values().next().unwrap()["capability"]["operation"]
+                    ["contract"]
+                    .as_str()
+                    .unwrap();
+                *counts.entry(contract.to_owned()).or_insert(0) += 1;
+            }
+            for contract in contracts {
+                assert_eq!(counts[contract], size / contracts.len());
             }
         }
     }
@@ -794,13 +684,14 @@ mod tests {
                 })
                 .collect();
             let batches = issue_batches(RELEVANCE_MODEL, &intent, &retrieval).unwrap();
+            assert_eq!(batches.len(), size);
             for batch in &batches {
                 let body: serde_json::Value = serde_json::from_str(batch.body()).unwrap();
                 assert_eq!(body["state"]["discovery_need"], intent.current());
                 assert_eq!(body["state"]["rule"], RUBRIC);
                 assert!(body["state"].get("intent_interpretation").is_none());
                 let evidence = body["state"]["capabilities"].as_object().unwrap();
-                assert_eq!(evidence.len(), size);
+                assert_eq!(evidence.len(), 1);
                 for card in evidence.values() {
                     let capability = &card["capability"];
                     let name = capability["reference"]["capability"].as_str().unwrap();
@@ -900,9 +791,7 @@ mod tests {
             for batch in batches {
                 prop_assert!(batch.questions.len() <= MAX_PAGE_QUESTIONS);
                 prop_assert_eq!(batch.evidence.len(), wire.candidates.len());
-                if batch.questions.len() > 1 {
-                    prop_assert!(serde_json::to_vec(&batch.questions).unwrap().len() <= TARGET_PAGE_BYTES);
-                }
+                prop_assert!(batch.body().len() <= TARGET_PAGE_BYTES);
             }
         }
     }
@@ -910,7 +799,6 @@ mod tests {
         #[test]
         fn provider_paging_preserves_all_questions_and_selection(
             mask in prop::collection::vec(0u8..3, 2..129),
-            provider_questions in 1usize..5,
         ) {
             let (intent, mut retrieval) = fixture();
             let original = retrieval.candidates[0].clone();
@@ -918,7 +806,7 @@ mod tests {
                 let mut c = original.clone(); c.id = format!("candidate{i}");
                 c.reference.capability = format!("read{i}"); c
             }).collect();
-            // This simulated provider rejects pages below our packing target too.
+            // Completion order does not alter the candidate judgment set.
             let batches = issue_batches(RELEVANCE_MODEL, &intent, &retrieval).unwrap();
             let mut pages = SelectionPages::new(batches);
             let mut seen = BTreeSet::new();
@@ -926,12 +814,6 @@ mod tests {
             while let Some(batch) = pages.current() {
                 requests += 1;
                 prop_assert!(requests <= 2 * mask.len());
-                if batch.questions.len() > provider_questions {
-                    let before = pages.page_count();
-                    pages.split_current(&intent).unwrap();
-                    prop_assert_eq!(pages.page_count(), before + 1);
-                    continue;
-                }
                 let choices: Vec<_> = batch.bindings.values().map(|id| {
                     assert!(seen.insert(id.clone()));
                     match mask[id.trim_start_matches("candidate").parse::<usize>().unwrap()] {
@@ -976,21 +858,9 @@ mod tests {
             Err(DiscoveryMatcherError::MissingModel)
         ));
 
-        let batch = issue_batches(RELEVANCE_MODEL, &intent, &retrieval)
-            .unwrap()
-            .remove(0);
-        assert!(matches!(
-            repartition(&batch, &intent),
-            Err(DiscoveryMatcherError::IndivisibleItem { .. })
-        ));
-
         let mut pages = SelectionPages::new(Vec::new());
         assert!(matches!(
             pages.accept("{}"),
-            Err(DiscoveryMatcherError::NoPendingPage)
-        ));
-        assert!(matches!(
-            pages.split_current(&intent),
             Err(DiscoveryMatcherError::NoPendingPage)
         ));
     }
@@ -1201,7 +1071,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn decisions_http_boundary_repartitions_and_preserves_uncertain_exposure() {
+    async fn decisions_http_boundary_preserves_local_questions_and_uncertain_exposure() {
         use std::sync::{Arc, Mutex};
         let (intent, mut retrieval) = fixture();
         let intent = intent
@@ -1270,7 +1140,7 @@ mod tests {
         .await
         .unwrap();
         server.abort();
-        assert_eq!(seen.lock().unwrap().len(), 3);
+        assert_eq!(seen.lock().unwrap().len(), 2);
         assert_eq!(seen.lock().unwrap()[0], expected_body);
         for body in seen.lock().unwrap().iter() {
             let request: serde_json::Value = serde_json::from_str(body).unwrap();
@@ -1341,13 +1211,9 @@ mod tests {
         let (intent, mut retrieval) = fixture();
         retrieval.candidates[0].document.operation.contract =
             "distinct capability meaning ".repeat(30_000);
-        let batches = issue_batches(RELEVANCE_MODEL, &intent, &retrieval).unwrap();
-        assert!(batches[0]
-            .body
-            .contains(&retrieval.candidates[0].document.operation.contract));
-        assert!(repartition(&batches[0], &intent)
-            .unwrap_err()
-            .to_string()
-            .contains("indivisible"));
+        assert!(matches!(
+            issue_batches(RELEVANCE_MODEL, &intent, &retrieval),
+            Err(DiscoveryMatcherError::ScopeLimit { .. })
+        ));
     }
 }

@@ -32,6 +32,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let evidence = plasm_agent_core::discovery_matcher::evidence::CatalogEvidence::from_catalogs(
         &receipt,
         &input.catalogs,
+        &Default::default(),
+        &|_| true,
     )?;
     let batches = issue_batches(RELEVANCE_MODEL, &provenance, &receipt, &evidence)?;
     if let Some(responses) = input.responses {

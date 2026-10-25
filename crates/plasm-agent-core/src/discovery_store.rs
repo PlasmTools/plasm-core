@@ -1015,7 +1015,7 @@ mod tests {
             .await
             .unwrap();
         let evidence = crate::discovery_matcher::evidence::CatalogEvidence::from_catalogs(
-            &retrieval, &catalogs,
+            &retrieval, &catalogs, &Default::default(), &|r| allowed.permits(r),
         )
         .unwrap();
         let batches = crate::discovery_matcher::issue_batches(

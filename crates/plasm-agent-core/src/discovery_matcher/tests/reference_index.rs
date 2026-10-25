@@ -1,7 +1,7 @@
 use super::*;
 use crate::discovery_store::RetrievedCapability;
 
-fn matrix() -> (BTreeMap<String, plasm_core::CGS>, RetrievalReceipt) {
+pub(super) fn matrix() -> (BTreeMap<String, plasm_core::CGS>, RetrievalReceipt) {
     let cgs = plasm_core::loader::load_schema_dir(
         &std::path::Path::new(crate::test_manifest_dir())
             .join("../../fixtures/schemas/discovery_reference_index"),
@@ -35,126 +35,107 @@ fn matrix() -> (BTreeMap<String, plasm_core::CGS>, RetrievalReceipt) {
 }
 
 #[test]
-fn canonical_rendering_preserves_retrieval_subject_page_boundaries() {
+fn canonical_rendering_uses_local_packets_not_retrieval_summary_sizes() {
     let (catalogs, mut retrieval) = matrix();
     for candidate in &mut retrieval.candidates {
         candidate.document.operation.contract = "retrieval evidence ".repeat(1200);
     }
-    let evidence = CatalogEvidence::from_catalogs(&retrieval, &catalogs).unwrap();
+    let evidence =
+        CatalogEvidence::from_catalogs(&retrieval, &catalogs, &Default::default(), &|_| true)
+            .unwrap();
     let intent = IntentProvenance::from_turns(["Process material.".into()]).unwrap();
     let batches =
         super::super::issue_batches(RELEVANCE_MODEL, &intent, &retrieval, &evidence).unwrap();
-    let mut candidates: Vec<_> = retrieval.candidates.iter().collect();
-    candidates.sort_by(|a, b| a.reference.cmp(&b.reference));
-    let mut expected = Vec::new();
-    let mut pending = Vec::new();
-    for c in candidates {
-        pending.push(
-            json!({"id":c.id,"reference":c.reference,"entity":c.document.entity,
-            "operation":c.document.operation,"collection":c.document.collection}),
+    assert_eq!(batches.len(), retrieval.candidates.len());
+    let issued_ids: BTreeSet<_> = batches
+        .iter()
+        .flat_map(|batch| batch.bindings.values().cloned())
+        .collect();
+    assert_eq!(
+        issued_ids,
+        retrieval.candidates.iter().map(|c| c.id.clone()).collect()
+    );
+    for batch in &batches {
+        assert_eq!(batch.bindings.len(), 1);
+        assert!(batch.body().len() <= witnesses::MAX_BYTES);
+        assert!(
+            !batch
+                .body()
+                .contains("retrieval evidence retrieval evidence")
         );
-        if pending.len() > 1 && serde_json::to_vec(&pending).unwrap().len() > TARGET_PAGE_BYTES {
-            let last = pending.pop().unwrap();
-            expected.push(pending);
-            pending = vec![last];
-        }
-    }
-    expected.push(pending);
-    assert!(expected.len() > 1);
-    assert_eq!(batches.len(), expected.len());
-    for (batch, subjects) in batches.iter().zip(expected) {
-        assert_eq!(
-            batch
-                .questions
-                .iter()
-                .map(|q| q.id.as_str())
-                .collect::<Vec<_>>(),
-            subjects
-                .iter()
-                .map(|s| s["id"].as_str().unwrap())
-                .collect::<Vec<_>>()
-        );
-        assert!(!batch
-            .body()
-            .contains("retrieval evidence retrieval evidence"));
     }
 }
 
 #[test]
 fn reference_index_preserves_composition_full_contracts_and_opaque_outputs() {
     let (catalogs, retrieval) = matrix();
-    let evidence = CatalogEvidence::from_catalogs(&retrieval, &catalogs).unwrap();
+    let evidence =
+        CatalogEvidence::from_catalogs(&retrieval, &catalogs, &Default::default(), &|_| true)
+            .unwrap();
     let intent =
         IntentProvenance::from_turns(["Process the source; preserve originals.".into()]).unwrap();
     let batches =
         super::super::issue_batches(RELEVANCE_MODEL, &intent, &retrieval, &evidence).unwrap();
-    let body: serde_json::Value = serde_json::from_str(batches[0].body()).unwrap();
-    let state = &body["state"];
-    assert!(state.get("context_whitespace").is_none());
-    assert_eq!(state["types"]["values"].as_object().unwrap().len(), 4);
-    assert_eq!(state["types"]["records"].as_object().unwrap().len(), 3);
-    let mut ids = BTreeMap::new();
-    for (id, card) in state["capabilities"].as_object().unwrap() {
-        assert!(card.get("types").is_none());
-        assert!(card.get("type_refs").is_none());
-        assert!(card.get("collection_meaning").is_none());
-        let name = card["capability"]["reference"]["capability"]
-            .as_str()
-            .unwrap();
-        ids.insert(name, id);
-        let candidate = retrieval
-            .candidates
-            .iter()
-            .find(|c| c.reference.capability == name)
-            .unwrap();
-        assert_eq!(
-            card["capability"]["operation"]["contract"],
-            catalogs["matrix"].capabilities[name].description
-        );
-        assert_ne!(
-            card["capability"]["operation"]["contract"],
-            candidate.document.operation.contract
-        );
-        for section in ["values", "records"] {
-            for name in state["type_refs"][id][section].as_array().unwrap() {
-                assert!(!state["types"][section][name.as_str().unwrap()].is_null());
+    let mut answers = Vec::new();
+    for batch in &batches {
+        let body: serde_json::Value = serde_json::from_str(batch.body()).unwrap();
+        let state = &body["state"];
+        assert!(state.get("context_whitespace").is_none());
+        assert!(state["capabilities"].as_object().unwrap().len() <= witnesses::MAX_CAPABILITIES);
+        for (id, card) in state["capabilities"].as_object().unwrap() {
+            assert!(card.get("types").is_none());
+            assert!(card.get("type_refs").is_none());
+            assert!(card.get("collection_meaning").is_none());
+            let name = card["capability"]["reference"]["capability"]
+                .as_str()
+                .unwrap();
+            let candidate = retrieval
+                .candidates
+                .iter()
+                .find(|c| c.reference.capability == name)
+                .unwrap();
+            assert_eq!(
+                card["capability"]["operation"]["contract"],
+                catalogs["matrix"].capabilities[name].description
+            );
+            assert_ne!(
+                card["capability"]["operation"]["contract"],
+                candidate.document.operation.contract
+            );
+            for section in ["values", "records"] {
+                for name in state["type_refs"][id][section].as_array().unwrap() {
+                    assert!(!state["types"][section][name.as_str().unwrap()].is_null());
+                }
             }
         }
+        let reference = &batch.questions[0].reference;
+        assert_eq!(
+            packet_declaration(&body, &reference.capability),
+            &serde_json::to_value(&evidence.capabilities[reference].declaration).unwrap()
+        );
+        answers.extend(decode_batch(batch, &response(batch, &[MatchChoice::Uncertain])).unwrap());
     }
-    let caps = &state["capabilities"];
+    let source = target_packet(&batches, "source_read");
     assert_eq!(
-        state["types"]["records"]["matrix/Source"]["description"],
+        source["state"]["types"]["records"]["matrix/Source"]["description"],
         catalogs["matrix"].entities["Source"].description
     );
+    let prepare = target_packet(&batches, "prepare");
     assert_eq!(
-        caps[ids["prepare"]]["declaration"]["arguments"]["input_type"]["fields"][0]["value_ref"],
+        packet_declaration(&prepare, "prepare")["arguments"]["input_type"]["fields"][0]["value_ref"],
         "source"
     );
+    let process = target_packet(&batches, "process");
     assert_eq!(
-        caps[ids["process"]]["declaration"]["arguments"]["input_type"]["fields"][0]["value_ref"],
+        packet_declaration(&process, "process")["arguments"]["input_type"]["fields"][0]["value_ref"],
         "prepared"
     );
-    assert_eq!(
-        caps[ids["opaque"]]["declaration"]["output"]["type"],
-        "side_effect"
-    );
-    assert!(caps[ids["opaque"]]["declaration"]["output"]
-        .get("entity_type")
-        .is_none());
-    assert_eq!(caps[ids["opaque"]]["declaration"]["provides"], json!([]));
-    for part in repartition(&batches[0], &intent).unwrap() {
-        let child: serde_json::Value = serde_json::from_str(part.body()).unwrap();
-        assert_eq!(state, &child["state"]);
-    }
-    let decoded = decode_batch(
-        &batches[0],
-        &response(
-            &batches[0],
-            &vec![MatchChoice::Uncertain; retrieval.candidates.len()],
-        ),
-    )
-    .unwrap();
-    let selected = finish_selection(decoded, &retrieval, &batches)
+    let opaque = target_packet(&batches, "opaque");
+    let declaration = packet_declaration(&opaque, "opaque");
+    assert_eq!(declaration["output"]["type"], "side_effect");
+    assert!(declaration["output"].get("entity_type").is_none());
+    assert_eq!(declaration["provides"], json!([]));
+    let selected = finish_selection(answers, &retrieval, &batches)
         .unwrap()
         .selected(&retrieval);
     assert_eq!(selected.len(), retrieval.candidates.len());
@@ -164,15 +145,22 @@ fn reference_index_preserves_composition_full_contracts_and_opaque_outputs() {
 fn canonical_packets_are_permutation_stable_and_replace_duplicate_prose() {
     let (catalogs, mut retrieval) = matrix();
     let intent = IntentProvenance::from_turns(["Process supplied material.".into()]).unwrap();
-    let evidence = CatalogEvidence::from_catalogs(&retrieval, &catalogs).unwrap();
+    let evidence =
+        CatalogEvidence::from_catalogs(&retrieval, &catalogs, &Default::default(), &|_| true)
+            .unwrap();
     let before =
         super::super::issue_batches(RELEVANCE_MODEL, &intent, &retrieval, &evidence).unwrap();
     retrieval.candidates.reverse();
-    let evidence = CatalogEvidence::from_catalogs(&retrieval, &catalogs).unwrap();
+    let evidence =
+        CatalogEvidence::from_catalogs(&retrieval, &catalogs, &Default::default(), &|_| true)
+            .unwrap();
     let after =
         super::super::issue_batches(RELEVANCE_MODEL, &intent, &retrieval, &evidence).unwrap();
-    assert_eq!(before[0].body(), after[0].body());
-    let current: serde_json::Value = serde_json::from_str(before[0].body()).unwrap();
+    assert_eq!(
+        before.iter().map(IssuedBatch::body).collect::<Vec<_>>(),
+        after.iter().map(IssuedBatch::body).collect::<Vec<_>>()
+    );
+    let current = target_packet(&before, "prepare");
     let mut previous = current.clone();
     for card in previous["state"]["capabilities"]
         .as_object_mut()
@@ -220,14 +208,38 @@ fn reference_index_is_catalogue_scoped_and_changes_cache_identity() {
     candidate.id = "foreign".into();
     candidate.reference.catalog = "other".into();
     retrieval.candidates.push(candidate);
-    let evidence = CatalogEvidence::from_catalogs(&retrieval, &catalogs).unwrap();
+    let evidence =
+        CatalogEvidence::from_catalogs(&retrieval, &catalogs, &Default::default(), &|_| true)
+            .unwrap();
     let intent = IntentProvenance::from_turns(["Process the source.".into()]).unwrap();
     let before =
         super::super::issue_batches(RELEVANCE_MODEL, &intent, &retrieval, &evidence).unwrap();
-    let body: serde_json::Value = serde_json::from_str(before[0].body()).unwrap();
+    let source_packet = |batches: &[IssuedBatch], catalog: &str| {
+        let batch = batches
+            .iter()
+            .find(|b| {
+                b.questions[0].reference.catalog == catalog
+                    && b.questions[0].reference.capability == "source_read"
+            })
+            .unwrap();
+        (
+            serde_json::from_str::<serde_json::Value>(batch.body()).unwrap(),
+            batch.cache_key().to_owned(),
+        )
+    };
+    let (body, before_key) = source_packet(&before, "matrix");
+    let (foreign, _) = source_packet(&before, "other");
     assert_ne!(
         body["state"]["types"]["values"]["matrix/source"],
-        body["state"]["types"]["values"]["other/source"]
+        foreign["state"]["types"]["values"]["other/source"]
+    );
+    assert_eq!(
+        body["state"]["types"]["values"]["matrix/source"]["description"],
+        catalogs["matrix"].values["source"].description
+    );
+    assert_eq!(
+        foreign["state"]["types"]["values"]["other/source"]["description"],
+        catalogs["other"].values["source"].description
     );
     catalogs
         .get_mut("matrix")
@@ -236,14 +248,18 @@ fn reference_index_is_catalogue_scoped_and_changes_cache_identity() {
         .get_mut("source")
         .unwrap()
         .description = "Revised authored definition.".into();
-    let revised = CatalogEvidence::from_catalogs(&retrieval, &catalogs).unwrap();
+    let revised =
+        CatalogEvidence::from_catalogs(&retrieval, &catalogs, &Default::default(), &|_| true)
+            .unwrap();
     let after =
         super::super::issue_batches(RELEVANCE_MODEL, &intent, &retrieval, &revised).unwrap();
-    assert_ne!(before[0].cache_key(), after[0].cache_key());
+    assert_ne!(before_key, source_packet(&after, "matrix").1);
     catalogs.remove("other");
     assert!(matches!(
-        CatalogEvidence::from_catalogs(&retrieval, &catalogs),
-        Err(DiscoveryMatcherError::MissingCatalogueEvidence(_))
+        CatalogEvidence::from_catalogs(&retrieval, &catalogs, &Default::default(), &|_| true),
+        Err(DiscoveryMatcherError::Witness(
+            plasm_core::prerequisites::PrerequisiteError::MissingConsumerCatalog
+        ))
     ));
 }
 
@@ -267,7 +283,9 @@ fn reference_index_retains_nested_input_variants_and_named_array_elements() {
     ]}});
     cgs.capabilities.get_mut("prepare").unwrap().inputs.payload =
         Some(serde_json::from_value(input.clone()).unwrap());
-    let evidence = CatalogEvidence::from_catalogs(&retrieval, &catalogs).unwrap();
+    let evidence =
+        CatalogEvidence::from_catalogs(&retrieval, &catalogs, &Default::default(), &|_| true)
+            .unwrap();
     let encoded = serde_json::to_value(&evidence.definitions).unwrap();
     assert_eq!(
         encoded["values"]["matrix/sources"]["array_items"]["value_ref"],
@@ -282,19 +300,34 @@ fn reference_index_retains_nested_input_variants_and_named_array_elements() {
     assert_eq!(declaration["payload"]["input_type"], input["input_type"]);
     assert!(declaration.get("input_sources").is_none());
     let references = serde_json::to_value(&cap.references).unwrap();
-    assert!(references["values"]
-        .as_array()
-        .unwrap()
-        .contains(&json!("matrix/sources")));
+    assert!(
+        references["values"]
+            .as_array()
+            .unwrap()
+            .contains(&json!("matrix/sources"))
+    );
+    let intent = IntentProvenance::from_turns(["Process supplied material.".into()]).unwrap();
+    let batches =
+        super::super::issue_batches(RELEVANCE_MODEL, &intent, &retrieval, &evidence).unwrap();
+    let packet = target_packet(&batches, "prepare");
+    assert_eq!(
+        packet_declaration(&packet, "prepare")["payload"]["input_type"],
+        input["input_type"]
+    );
+    assert_eq!(
+        packet["state"]["types"]["values"]["matrix/sources"]["array_items"]["value_ref"],
+        "source"
+    );
+    assert!(!packet["state"]["types"]["values"]["matrix/source"].is_null());
     catalogs
         .get_mut("matrix")
         .unwrap()
         .values
         .shift_remove("source");
-    assert!(matches!(
-        CatalogEvidence::from_catalogs(&retrieval, &catalogs),
-        Err(DiscoveryMatcherError::MissingEvidenceDefinition { .. })
-    ));
+    assert!(
+        CatalogEvidence::from_catalogs(&retrieval, &catalogs, &Default::default(), &|_| true)
+            .is_err()
+    );
 }
 
 #[test]
@@ -320,7 +353,19 @@ fn canonical_contract_keeps_acquired_inputs_and_names_the_exact_acquired_seat() 
         })
         .collect();
     let catalogs = BTreeMap::from([("prerequisite_matrix".into(), cgs)]);
-    let evidence = CatalogEvidence::from_catalogs(&retrieval, &catalogs).unwrap();
+    let deployments = plasm_core::prerequisites::DeploymentBindings {
+        bindings: vec![plasm_core::prerequisites::DeploymentBinding {
+            consumer: CapabilityRef {
+                catalog: "prerequisite_matrix".into(),
+                capability: "read".into(),
+            },
+            requirement: "scoped_access".into(),
+            provider_catalog: "prerequisite_matrix".into(),
+            provider: "value_source".into(),
+        }],
+    };
+    let evidence =
+        CatalogEvidence::from_catalogs(&retrieval, &catalogs, &deployments, &|_| true).unwrap();
     let key = CapabilityRef {
         catalog: "prerequisite_matrix".into(),
         capability: "read".into(),
@@ -397,18 +442,28 @@ fn reference_index_links_entity_inputs_without_inventing_an_output() {
             description: Some("Supplied resource".into()),
             examples: vec![json!("not contract evidence")],
         });
-        let evidence = CatalogEvidence::from_catalogs(&retrieval, &catalogs).unwrap();
+        let evidence =
+            CatalogEvidence::from_catalogs(&retrieval, &catalogs, &Default::default(), &|_| true)
+                .unwrap();
         let cap = evidence.capabilities.values().next().unwrap();
         let refs = serde_json::to_value(&cap.references).unwrap();
-        assert!(refs["records"]
-            .as_array()
-            .unwrap()
-            .contains(&json!("matrix/Source")));
+        assert!(
+            refs["records"]
+                .as_array()
+                .unwrap()
+                .contains(&json!("matrix/Source"))
+        );
         let definitions = serde_json::to_value(&evidence.definitions).unwrap();
         assert!(!definitions["records"]["matrix/Source"].is_null());
         let declaration = serde_json::to_value(&cap.declaration).unwrap();
         assert!(declaration.get("output").is_none());
         assert!(declaration["arguments"].get("examples").is_none());
+        let intent = IntentProvenance::from_turns(["Inspect the resource.".into()]).unwrap();
+        let batches =
+            super::super::issue_batches(RELEVANCE_MODEL, &intent, &retrieval, &evidence).unwrap();
+        let packet = target_packet(&batches, "opaque");
+        assert_eq!(packet_declaration(&packet, "opaque"), &declaration);
+        assert!(packet["state"].get("bindings").is_none());
     }
 }
 
@@ -431,11 +486,21 @@ fn canonical_packet(cgs: plasm_core::CGS, excluded: &[&str]) -> serde_json::Valu
         })
         .collect();
     let catalogs = BTreeMap::from([("matrix".into(), cgs)]);
-    let evidence = CatalogEvidence::from_catalogs(&retrieval, &catalogs).unwrap();
+    let evidence =
+        CatalogEvidence::from_catalogs(&retrieval, &catalogs, &Default::default(), &|_| true)
+            .unwrap();
     let intent = IntentProvenance::from_turns(["Process supplied resources.".into()]).unwrap();
     let batches =
         super::super::issue_batches(RELEVANCE_MODEL, &intent, &retrieval, &evidence).unwrap();
-    serde_json::from_str(batches[0].body()).unwrap()
+    target_packet(&batches, "prepare")
+}
+
+fn target_packet(batches: &[IssuedBatch], capability: &str) -> serde_json::Value {
+    let batch = batches
+        .iter()
+        .find(|b| b.questions[0].reference.capability == capability)
+        .unwrap();
+    serde_json::from_str(batch.body()).unwrap()
 }
 
 fn packet_declaration<'a>(
@@ -451,8 +516,7 @@ fn packet_declaration<'a>(
 }
 
 #[test]
-fn canonical_contract_evidence_grows_linearly_for_dense_compatible_reads() {
-    let mut sizes = Vec::new();
+fn dense_compatible_reads_fail_the_local_count_bound_without_truncation() {
     for count in [32, 128] {
         let mut cgs = matrix().0.remove("matrix").unwrap();
         let source = cgs.capabilities["source_read"].clone();
@@ -473,20 +537,31 @@ fn canonical_contract_evidence_grows_linearly_for_dense_compatible_reads() {
                 };
             cgs.capabilities.insert(name.into(), cap);
         }
-        let packet = canonical_packet(cgs, &[]);
-        let cards = packet["state"]["capabilities"].as_object().unwrap();
-        assert_eq!(cards.len(), count);
-        for card in cards.values() {
-            assert!(card["declaration"].get("input_sources").is_none());
-            assert_eq!(
-                card["declaration"]["arguments"]["input_type"]["fields"][0]["value_ref"],
-                "source"
-            );
-        }
-        sizes.push(serde_json::to_vec(&packet["state"]).unwrap().len());
+        let mut retrieval = matrix().1;
+        retrieval.candidates = plasm_core::catalog_discovery::capability_documents(&cgs)
+            .unwrap()
+            .into_iter()
+            .enumerate()
+            .map(|(i, document)| RetrievedCapability {
+                id: format!("candidate{i}"),
+                reference: CapabilityRef {
+                    catalog: "matrix".into(),
+                    capability: document.capability.clone(),
+                },
+                document,
+                admissions: BTreeSet::from(["lexical".into()]),
+            })
+            .collect();
+        let catalogs = BTreeMap::from([("matrix".into(), cgs)]);
+        let evidence =
+            CatalogEvidence::from_catalogs(&retrieval, &catalogs, &Default::default(), &|_| true)
+                .unwrap();
+        let intent = IntentProvenance::from_turns(["Read supplied material.".into()]).unwrap();
+        assert!(matches!(
+            super::super::issue_batches(RELEVANCE_MODEL, &intent, &retrieval, &evidence),
+            Err(DiscoveryMatcherError::ScopeLimit { capabilities, capability_limit: 8, .. }) if capabilities == count
+        ));
     }
-    // Four times the contracts must not produce the sixteenfold all-pairs expansion.
-    assert!(sizes[1] <= sizes[0] * 4 + 1024, "evidence sizes: {sizes:?}");
 }
 
 #[test]
@@ -507,4 +582,68 @@ fn canonical_packet_keeps_absent_variant_fields_separate_from_null_permission() 
         json!([])
     );
     assert!(declaration.get("input_sources").is_none());
+}
+
+#[test]
+fn nested_union_target_survives_local_projection_without_invented_branch_bindings() {
+    let (mut catalogs, retrieval) = matrix();
+    let input = json!({
+        "input_type": {"type":"object", "additional_fields":false, "fields":[{
+            "name":"choice", "required":true,
+            "input_type":{"type":"union","variants":[
+                {"name":"present", "description":"A supplied resource", "fields":[{
+                    "name":"bundle", "required":true,
+                    "input_type":{"type":"object","additional_fields":false,"fields":[
+                        {"name":"resource","value_ref":"source","required":true},
+                        {"name":"note","value_ref":"result","required":false}
+                    ]}
+                }], "wire":{"field":"mode","value":"present"}},
+                {"name":"absent", "description":"No resource in this branch", "fields":[],
+                 "wire":{"field":"mode","value":"absent"}}
+            ]}
+        }]},
+        "validation":{"allow_null":true},
+        "description":"The alternatives are part of the authored contract."
+    });
+    catalogs
+        .get_mut("matrix")
+        .unwrap()
+        .capabilities
+        .get_mut("prepare")
+        .unwrap()
+        .inputs
+        .payload = Some(serde_json::from_value(input.clone()).unwrap());
+    let evidence =
+        CatalogEvidence::from_catalogs(&retrieval, &catalogs, &Default::default(), &|_| true)
+            .unwrap();
+    let intent = IntentProvenance::from_turns(["Prepare supplied material.".into()]).unwrap();
+    let batches =
+        super::super::issue_batches(RELEVANCE_MODEL, &intent, &retrieval, &evidence).unwrap();
+    let target = target_packet(&batches, "prepare");
+    let declaration = packet_declaration(&target, "prepare");
+    assert_eq!(declaration["payload"]["input_type"], input["input_type"]);
+    assert_eq!(declaration["payload"]["validation"]["allow_null"], true);
+    assert_eq!(
+        declaration["payload"]["input_type"]["fields"][0]["input_type"]["variants"][1]["fields"],
+        json!([])
+    );
+    let source = target_packet(&batches, "source_read");
+    let prepare = source["state"]["capabilities"]
+        .as_object()
+        .unwrap()
+        .values()
+        .find(|card| card["capability"]["reference"]["capability"] == "prepare")
+        .unwrap();
+    let slots = prepare["slots"].as_array().unwrap();
+    assert_eq!(
+        slots.len(),
+        1,
+        "only the ordinary required argument has a projected source binding"
+    );
+    assert_eq!(
+        slots[0]["input"],
+        json!({"lane":"arguments","path":["resource"]})
+    );
+    assert!(prepare["declaration"].get("payload").is_none());
+    assert_eq!(prepare["declaration"]["output"], declaration["output"]);
 }

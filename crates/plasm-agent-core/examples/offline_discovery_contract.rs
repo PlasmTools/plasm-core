@@ -21,6 +21,8 @@ fn main() -> Result<()> {
     let evidence = plasm_agent_core::discovery_matcher::evidence::CatalogEvidence::from_catalogs(
         &input.retrieval,
         &input.catalogs,
+        &Default::default(),
+        &|_| true,
     )?;
     let batches = issue_batches(RELEVANCE_MODEL, &provenance, &input.retrieval, &evidence)?;
     if let Some(responses) = input.responses {

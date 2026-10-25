@@ -90,6 +90,8 @@ fn main() -> Result<()> {
             let evidence = discovery_matcher::evidence::CatalogEvidence::from_catalogs(
                 &receipt.retrieval,
                 &schemas,
+                &Default::default(),
+                &|_| true,
             )?;
             let batches = discovery_matcher::issue_batches(
                 MODEL,
@@ -111,6 +113,8 @@ fn main() -> Result<()> {
         let evidence = discovery_matcher::evidence::CatalogEvidence::from_catalogs(
             &receipt.retrieval,
             &schemas,
+            &Default::default(),
+            &|_| true,
         )?;
         let batches = discovery_matcher::issue_batches(
             MODEL,

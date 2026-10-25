@@ -31,8 +31,12 @@ fn main() -> Result<()> {
             .join(&case.id);
         let requests: Vec<Value> = read(dir.join("requests.json"))?;
         let catalogs = read(root.join("catalogs.json"))?;
-        let evidence =
-            matcher::evidence::CatalogEvidence::from_catalogs(&receipt.retrieval, &catalogs)?;
+        let evidence = matcher::evidence::CatalogEvidence::from_catalogs(
+            &receipt.retrieval,
+            &catalogs,
+            &Default::default(),
+            &|_| true,
+        )?;
         let issued = matcher::issue_batches(
             "typesafe/jev-1.13-20260917",
             &receipt.intent_provenance,
