@@ -35,6 +35,31 @@ fn outcome_and_need_preserve_revisions_constraints_and_unknown_state() {
             "Cancel processing.",
             "Resume processing; preserve existing definitions.",
         ],
+        vec!["Request a measurement appointment. Preserve the source records."],
+        vec![
+            "Calculate the aggregate. Only if calculation is unavailable, request manual measurement. Preserve the source records.",
+            "Calculation readiness is unknown.",
+        ],
+        vec![
+            "Calculate the aggregate. Only if calculation is unavailable, request manual measurement. Preserve the source records.",
+            "Calculation is unavailable with the observed inputs.",
+        ],
+        vec![
+            "Calculate the aggregate. Only if calculation is unavailable, request manual measurement. Preserve the source records.",
+            "Calculation is available with the observed inputs.",
+        ],
+        vec![
+            "Calculate the aggregate. If calculation is unavailable, request manual measurement; if measurement is also unavailable, report the missing inputs.",
+            "Inspect the available inputs.",
+        ],
+        vec![
+            "Calculate the aggregate. Only if calculation is unavailable, request manual measurement.",
+            "Cancel the measurement alternative; report missing inputs instead.",
+        ],
+        vec![
+            "Calculate the aggregate.",
+            "If calculation is unavailable, request manual measurement. Preserve the source records.",
+        ],
     ];
     for size in [1, 8, 64, 128] {
         let (_, mut retrieval) = fixture();
@@ -65,6 +90,11 @@ fn outcome_and_need_preserve_revisions_constraints_and_unknown_state() {
                 assert_eq!(state["discovery_need"], *turns.last().unwrap());
                 assert_eq!(state["intent_turns"], json!(turns));
                 assert_eq!(state["rule"], policy["rule"]);
+                // The live outcome is verbatim text, not the experimental
+                // structured outcome. Do not synthesize an empty alternatives
+                // field or extract/drop branches from the original history.
+                assert!(state["outcome"].is_string());
+                assert!(state.get("conditional_alternatives").is_none());
                 assert!(state.get("intent_interpretation").is_none());
                 assert!(state.get("current_intent").is_none());
                 // No inferred effective goal or fabricated readiness is injected.
