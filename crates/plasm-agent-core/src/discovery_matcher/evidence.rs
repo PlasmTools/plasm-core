@@ -3,7 +3,7 @@
 use super::DiscoveryMatcherError;
 use crate::discovery_store::RetrievalReceipt;
 use plasm_core::{
-    prerequisites::CapabilityRef,
+    prerequisites::{CapabilityRef, InputPath},
     schema::{
         CapabilityInputs, EntityDef, InputFieldSchema, InputFieldWire, InputType, NamedValueSchema,
         OutputSchema, OutputType,
@@ -20,6 +20,10 @@ pub struct Declaration {
     #[serde(skip_serializing_if = "Option::is_none")]
     output: Option<OutputSchema>,
     provides: Vec<String>,
+    #[serde(skip_serializing_if = "BTreeSet::is_empty")]
+    acquired_inputs: BTreeSet<InputPath>,
+    #[serde(skip_serializing_if = "BTreeSet::is_empty")]
+    relation_uses: BTreeSet<String>,
 }
 
 #[derive(Debug, Clone, Default, Serialize)]
@@ -36,6 +40,7 @@ pub struct References {
 
 #[derive(Debug, Clone)]
 pub struct CapabilityEvidence {
+    pub operation: plasm_core::catalog_discovery::OperationEvidence,
     pub declaration: Declaration,
     pub references: References,
 }
@@ -214,10 +219,26 @@ impl CatalogEvidence {
             result.capabilities.insert(
                 reference.clone(),
                 CapabilityEvidence {
+                    operation: plasm_core::catalog_discovery::OperationEvidence {
+                        kind: cap.kind,
+                        receiver: cap.inputs.receiver.clone(),
+                        contract: cap.description.clone(),
+                    },
                     declaration: Declaration {
                         inputs,
                         output: cap.output_schema.clone(),
                         provides: cap.provides.clone(),
+                        acquired_inputs: catalogs[catalog]
+                            .prerequisites
+                            .acquired_inputs(&reference.capability)
+                            .into_iter()
+                            .cloned()
+                            .collect(),
+                        relation_uses: plasm_core::catalog_discovery::capability_relation_uses(
+                            &catalogs[catalog],
+                            cap,
+                        )
+                        .map_err(DiscoveryMatcherError::CatalogueContext)?,
                     },
                     references: collector.references,
                 },
@@ -239,10 +260,13 @@ impl CatalogEvidence {
                     (
                         c.reference.clone(),
                         CapabilityEvidence {
+                            operation: c.document.operation.clone(),
                             declaration: Declaration {
                                 inputs: CapabilityInputs::default(),
                                 output: None,
                                 provides: vec![],
+                                acquired_inputs: BTreeSet::new(),
+                                relation_uses: BTreeSet::new(),
                             },
                             references: References::default(),
                         },

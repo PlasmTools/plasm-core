@@ -55,6 +55,27 @@ pub(super) struct RenderedMeaning {
     pub text: String,
 }
 
+/// Exact declared materializer uses, without restating input/output definitions.
+/// Shared by retrieval prose and the canonical decision projection.
+pub fn capability_relation_uses(
+    cgs: &crate::CGS,
+    cap: &CapabilitySchema,
+) -> Result<BTreeSet<String>, super::CatalogDiscoveryError> {
+    let entity = cgs.entities.get(&cap.domain).ok_or_else(|| {
+        super::CatalogDiscoveryError::CapabilityEntityMissing {
+            capability: cap.name.to_string(),
+            entity: cap.domain.to_string(),
+        }
+    })?;
+    Ok(SemanticView {
+        cgs,
+        capability: cap,
+        entity,
+        inputs: cap.inputs.clone(),
+    }
+    .relation_uses())
+}
+
 pub(super) fn render(
     cgs: &crate::CGS,
     cap: &CapabilitySchema,

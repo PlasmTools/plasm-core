@@ -18,6 +18,8 @@ type DecisionProviderError = Box<dyn std::error::Error + Send + Sync + 'static>;
 
 #[derive(Debug, Error)]
 pub enum DiscoveryMatcherError {
+    #[error("discovery catalogue context is invalid")]
+    CatalogueContext(#[source] plasm_core::catalog_discovery::CatalogDiscoveryError),
     #[error("pinned catalogue evidence is missing for {0:?}")]
     MissingCatalogueEvidence(CapabilityRef),
     #[error("catalogue {catalog} is missing referenced definition {name}")]
@@ -144,9 +146,20 @@ struct Question {
     reference: CapabilityRef,
     entity: String,
     operation: plasm_core::catalog_discovery::OperationEvidence,
-    collection: plasm_core::catalog_discovery::CollectionEvidence,
     #[serde(skip)]
     typed: CapabilityEvidence,
+    #[serde(skip)]
+    subject_bytes: usize,
+}
+
+/// Keep the retrieval-subject packing measure independent of decision rendering.
+#[derive(Serialize)]
+struct PackingSubject<'a> {
+    id: &'a str,
+    reference: &'a CapabilityRef,
+    entity: &'a str,
+    operation: &'a plasm_core::catalog_discovery::OperationEvidence,
+    collection: &'a plasm_core::catalog_discovery::CollectionEvidence,
 }
 
 pub fn issue_batches(
@@ -188,21 +201,28 @@ pub fn issue_batches(
         candidates
             .iter()
             .map(|candidate| {
+                let typed = catalog_evidence
+                    .capabilities
+                    .get(&candidate.reference)
+                    .ok_or_else(|| {
+                        DiscoveryMatcherError::MissingCatalogueEvidence(candidate.reference.clone())
+                    })?;
                 Ok(Question {
                     id: candidate.id.clone(),
                     reference: candidate.reference.clone(),
                     entity: candidate.document.entity.clone(),
-                    operation: candidate.document.operation.clone(),
-                    collection: candidate.document.collection.clone(),
-                    typed: catalog_evidence
-                        .capabilities
-                        .get(&candidate.reference)
-                        .ok_or_else(|| {
-                            DiscoveryMatcherError::MissingCatalogueEvidence(
-                                candidate.reference.clone(),
-                            )
-                        })?
-                        .clone(),
+                    operation: typed.operation.clone(),
+                    typed: typed.clone(),
+                    subject_bytes: serde_json::to_vec(&PackingSubject {
+                        id: &candidate.id,
+                        reference: &candidate.reference,
+                        entity: &candidate.document.entity,
+                        operation: &candidate.document.operation,
+                        collection: &candidate.document.collection,
+                    })
+                    .map_err(crate::decision_codec::DecisionCodecError::from)
+                    .map_err(DiscoveryMatcherError::Encode)?
+                    .len(),
                 })
             })
             .collect::<Result<_, DiscoveryMatcherError>>()?,
@@ -212,10 +232,9 @@ pub fn issue_batches(
     let mut pending = Vec::new();
     for question in evidence.iter() {
         pending.push(question.clone());
-        let subject_bytes = serde_json::to_vec(&pending)
-            .map_err(crate::decision_codec::DecisionCodecError::from)
-            .map_err(DiscoveryMatcherError::Encode)?
-            .len();
+        let subject_bytes = 2
+            + pending.iter().map(|q| q.subject_bytes).sum::<usize>()
+            + pending.len().saturating_sub(1);
         if pending.len() > 1
             && (pending.len() > MAX_PAGE_QUESTIONS || subject_bytes > TARGET_PAGE_BYTES)
         {
@@ -281,7 +300,6 @@ impl Serialize for OrderedCapabilities<'_> {
 #[derive(Serialize)]
 struct DirectEvidence<'a> {
     capability: DirectCard<'a>,
-    collection_meaning: &'a str,
     declaration: &'a evidence::Declaration,
 }
 #[derive(Serialize)]
@@ -311,7 +329,6 @@ fn issue_batch(
                 entity: &q.entity,
                 operation: &q.operation,
             },
-            collection_meaning: &q.collection.meaning,
             declaration: &q.typed.declaration,
         };
         let mut canonical = serde_json::to_value(&card)
@@ -363,7 +380,7 @@ fn issue_batch(
     })
     .map_err(DiscoveryMatcherError::Encode)?;
     Ok(IssuedBatch {
-        cache_key: content_hash(format!("decisions-indexed-contribution-v7\\n{body}").as_bytes()),
+        cache_key: content_hash(format!("decisions-canonical-contracts-v9\\n{body}").as_bytes()),
         body,
         model: model.into(),
         bindings,
@@ -1047,7 +1064,7 @@ mod tests {
             prop_assert_eq!(&before[0].body, &after[0].body);
             prop_assert_eq!(&before[0].cache_key, &after[0].cache_key);
             let packet = question_content(&after[0]);
-            prop_assert_eq!(&packet["questions"]["q0"]["instructions"]["collection_meaning"], &json!(meaning));
+            prop_assert!(packet["questions"]["q0"]["instructions"].get("collection_meaning").is_none());
             prop_assert_eq!(&packet["questions"]["q0"]["instructions"]["capability"]["operation"]["contract"], &json!(contract));
             prop_assert!(packet["questions"]["q0"]["instructions"]["capability"].get("projection").is_none());
         }
@@ -1100,10 +1117,7 @@ mod tests {
                     evidence["capability"]["operation"],
                     json!(target.document.operation)
                 );
-                assert_eq!(
-                    evidence["collection_meaning"],
-                    json!(target.document.collection.meaning)
-                );
+                assert!(evidence.get("collection_meaning").is_none());
                 assert_eq!(content["context"]["discovery_need"], "First");
                 assert_eq!(content["context"]["outcome"], "First");
                 assert_eq!(
