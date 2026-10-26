@@ -28,7 +28,7 @@ fn routing(intent: String) -> RoutingReceipt {
             lexical_truncated: false,
             vector_truncated: false,
         },
-        matching: CapabilityMatchReceipt { matches: vec![] },
+        matching: CapabilityMatchReceipt { matches: vec![], budget_retained: vec![] },
         closure: Some(PrerequisiteClosure {
             acquisitions: vec![],
             business: vec![CapabilityRef {

@@ -1,7 +1,7 @@
 //! Offline experiment bridge to the production relevance codec. No network access.
 use anyhow::{ensure, Result};
 use plasm_agent_core::{
-    discovery_matcher::{issue_batches, SelectionPages, RELEVANCE_MODEL},
+    discovery_matcher::{prepare_selection, SelectionPages, RELEVANCE_MODEL},
     discovery_store::RetrievalReceipt,
     intent_provenance::IntentProvenance,
 };
@@ -24,21 +24,28 @@ fn main() -> Result<()> {
         &Default::default(),
         &|_| true,
     )?;
-    let batches = issue_batches(RELEVANCE_MODEL, &provenance, &input.retrieval, &evidence)?;
+    let prepared = prepare_selection(RELEVANCE_MODEL, &provenance, &input.retrieval, &evidence)?;
     if let Some(responses) = input.responses {
-        ensure!(responses.len() == batches.len(), "page count mismatch");
-        let mut pages = SelectionPages::new(batches);
+        ensure!(
+            responses.len() == prepared.batches().len(),
+            "page count mismatch"
+        );
+        let mut pages = SelectionPages::from_prepared(prepared);
         for response in responses {
             pages.accept(&response)?;
         }
         let receipt = pages.finish(&input.retrieval)?;
         serde_json::to_writer(std::io::stdout(), &receipt)?;
     } else {
-        let bodies: Vec<serde_json::Value> = batches
+        let bodies: Vec<serde_json::Value> = prepared
+            .batches()
             .iter()
             .map(|batch| serde_json::from_str(batch.body()))
             .collect::<Result<_, _>>()?;
-        serde_json::to_writer(std::io::stdout(), &bodies)?;
+        serde_json::to_writer(
+            std::io::stdout(),
+            &serde_json::json!({"requests":bodies,"budget_retained":prepared.budget_retained()}),
+        )?;
     }
     Ok(())
 }

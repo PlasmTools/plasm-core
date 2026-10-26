@@ -93,13 +93,18 @@ fn main() -> Result<()> {
                 &Default::default(),
                 &|_| true,
             )?;
-            let batches = discovery_matcher::issue_batches(
+            let prepared = discovery_matcher::prepare_selection(
                 MODEL,
                 &receipt.intent_provenance,
                 &receipt.retrieval,
                 &evidence,
             )?;
+            let batches = prepared.batches();
             anyhow::ensure!(batches.len() <= 2, "page limit for {}", case.id);
+            save(
+                cell.join("budget-retained.json"),
+                &prepared.budget_retained(),
+            )?;
             save(
                 cell.join("requests.json"),
                 &batches.iter().map(|b| b.body()).collect::<Vec<_>>(),
@@ -116,12 +121,19 @@ fn main() -> Result<()> {
             &Default::default(),
             &|_| true,
         )?;
-        let batches = discovery_matcher::issue_batches(
+        let prepared = discovery_matcher::prepare_selection(
             MODEL,
             &receipt.intent_provenance,
             &receipt.retrieval,
             &evidence,
         )?;
+        let batches = prepared.batches();
+        let saved_budget: Vec<discovery_matcher::ScopeBudgetRetention> =
+            read(cell.join("budget-retained.json"))?;
+        anyhow::ensure!(
+            saved_budget == prepared.budget_retained(),
+            "budget outcomes changed"
+        );
         anyhow::ensure!(
             requests
                 == batches
@@ -130,14 +142,14 @@ fn main() -> Result<()> {
                     .collect::<Vec<_>>(),
             "packet changed"
         );
-        let mut answers = Vec::new();
-        for (index, batch) in batches.iter().enumerate() {
-            answers.extend(discovery_matcher::decode_batch(
-                batch,
-                &std::fs::read_to_string(cell.join(format!("response-{index}.json")))?,
-            )?);
+        let count = batches.len();
+        let mut pages = discovery_matcher::SelectionPages::from_prepared(prepared);
+        for index in 0..count {
+            pages.accept(&std::fs::read_to_string(
+                cell.join(format!("response-{index}.json")),
+            )?)?;
         }
-        let matching = discovery_matcher::finish_selection(answers, &receipt.retrieval, &batches)?;
+        let matching = pages.finish(&receipt.retrieval)?;
         save(cell.join("matching.json"), &matching)?;
         save(
             cell.join("selected.json"),

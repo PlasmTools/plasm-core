@@ -320,7 +320,24 @@ pub(super) fn project(
     let links: Vec<_> = evidence
         .bindings
         .iter()
-        .filter(|b| b.endpoints().iter().any(|e| &e.capability == target))
+        .filter(|b| match b {
+            // Closure supplies this acquisition when a selected consumer needs
+            // it. Its own judgment does not need every reverse dependency.
+            Binding::Prerequisite { to, .. } => &to.capability == target,
+            // The acquisition already declares its output identity. Keep the
+            // acquisition witness on its receiver consumer, not every method
+            // accepting that entity on the acquisition's own question.
+            Binding::InputSource {
+                from,
+                to:
+                    Endpoint {
+                        slot: Slot::Input(InputSourceTarget::Receiver { .. }),
+                        ..
+                    },
+                ..
+            } => &b.endpoints()[1].capability == target && &from.capability != target,
+            _ => b.endpoints().iter().any(|e| &e.capability == target),
+        })
         .collect();
     let mut endpoints: BTreeMap<CapabilityRef, Vec<&Slot>> =
         BTreeMap::from([(target.clone(), vec![])]);
@@ -432,6 +449,7 @@ pub(super) fn project(
         references[id] = json!({"values":names,"records":[]});
     }
     let mut bindings = Vec::new();
+    let mut memberships = BTreeMap::<String, (Value, u8)>::new();
     for link in links {
         let mut wire = value(link)?;
         for (key, endpoint) in ["from", "to"].into_iter().zip(link.endpoints()) {
@@ -439,8 +457,33 @@ pub(super) fn project(
                 .get(&endpoint.capability)
                 .ok_or_else(|| invalid(&endpoint.capability, "binding identity"))?);
         }
+        if matches!(link, Binding::Membership { .. }) {
+            // Only exact reciprocal membership endpoints coalesce. Argument
+            // flow and prerequisite directions are never interchangeable.
+            let reverse = encode(&wire["from"])? > encode(&wire["to"])?;
+            if reverse {
+                let from = wire["from"].take();
+                wire["from"] = wire["to"].take();
+                wire["to"] = from;
+            }
+            let direction = if reverse { 2 } else { 1 };
+            let entry = memberships.entry(encode(&wire)?).or_insert((wire, 0));
+            entry.1 |= direction;
+        } else {
+            bindings.push(wire);
+        }
+    }
+    for (mut wire, directions) in memberships.into_values() {
+        if directions == 3 {
+            wire["bidirectional"] = json!(true);
+        } else if directions == 2 {
+            let from = wire["from"].take();
+            wire["from"] = wire["to"].take();
+            wire["to"] = from;
+        }
         bindings.push(wire);
     }
+    compact_record_names(&mut types["records"]);
     cards.sort_by(|a, b| (&a.0, &a.1).cmp(&(&b.0, &b.1)));
     Ok(Scope {
         cards: OrderedCards(cards.into_iter().map(|(_, id, card)| (id, card)).collect()),
@@ -452,6 +495,28 @@ pub(super) fn project(
         bindings,
         count: endpoints.len(),
     })
+}
+
+/// A keyed field/relation already carries its name. Retain mismatches verbatim;
+/// never traverse defaults, examples or other authored business data.
+fn compact_record_names(records: &mut Value) {
+    let Some(records) = records.as_object_mut() else {
+        return;
+    };
+    for record in records.values_mut() {
+        for section in ["fields", "relations"] {
+            let Some(entries) = record.get_mut(section).and_then(Value::as_object_mut) else {
+                continue;
+            };
+            for (key, entry) in entries {
+                if entry.get("name").and_then(Value::as_str) == Some(key.as_str()) {
+                    if let Some(object) = entry.as_object_mut() {
+                        object.remove("name");
+                    }
+                }
+            }
+        }
+    }
 }
 fn collect_values(
     part: &Value,
@@ -507,6 +572,25 @@ fn collect_values(
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn record_name_compaction_preserves_authored_metadata_and_business_objects() {
+        let mut records = json!({"matrix/Item": {"name":"Item","fields": {
+            "optional": {"name":"optional","required":false,"default":null,"description":"Keep absence distinct.","value_ref":"text"},
+            "different": {"name":"authored_alias","required":true,"default":{"name":"different","fields":{"x":{"name":"x"}}}},
+            "absent": {"value_ref":"opaque"}
+        },"relations":{"children":{"name":"children","cardinality":"many","description":"Owned children","materialize":{"path":[{"key":"children"}],"collection_coverage":"complete"}}}}});
+        let original = records.clone();
+        compact_record_names(&mut records);
+        assert!(records["matrix/Item"]["fields"]["optional"]
+            .get("name")
+            .is_none());
+        assert!(records["matrix/Item"]["relations"]["children"]
+            .get("name")
+            .is_none());
+        records["matrix/Item"]["fields"]["optional"]["name"] = json!("optional");
+        records["matrix/Item"]["relations"]["children"]["name"] = json!("children");
+        assert_eq!(records, original);
+    }
     fn reference() -> CapabilityRef {
         CapabilityRef {
             catalog: "matrix".into(),

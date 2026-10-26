@@ -30,6 +30,28 @@ source projector supplies required non-prerequisite read-to-input/receiver
 relationships. It does not infer every optional-input or action-output composition.
 Peers of a neighboring capability are not traversed.
 
+Receiver acquisitions are shown on the consuming operation's question. The
+acquisition's own complete output already declares its entity identity; it does
+not import every method accepting that entity. A method is not its own receiver
+acquisition. Ordinary argument and membership links remain unchanged, including
+distinct compatible sources; dense genuine scopes remain subject to the same bounds.
+
+Exact reciprocal membership endpoints share one fact marked `bidirectional: true`.
+One-way membership and distinct fields or relations remain separate; this does not
+coalesce input flow or prerequisites. Keyed record fields and relations omit an
+internal `name` only when it equals their key. All other contract metadata stays
+verbatim, including requiredness, descriptions, defaults, nulls and materialization.
+
+Matching wire profiles (for example, email or telephone formatting) alone do not
+establish input or membership relationships. They remain in each target's full
+contract for classification and validation. Distinct named roles do not become
+bindings because their formats match. Membership requires an entity key and
+shared authored identity or exact entity reference. Shared authored value identities,
+typed entity references, receivers, relations and declared prerequisites still
+supply composition witnesses. This does not remove retrieved candidates or forbid
+programs from composing format-compatible values; it avoids presenting format
+compatibility as an inferred catalogue relationship.
+
 Declared prerequisites are resolved before classification to construct evidence,
 including evidence-only providers absent from retrieval. Every endpoint must pass
 the same capability-level authorization check. Supplemental providers do not
@@ -37,19 +59,36 @@ become business candidates or gain judgments. Missing deployment bindings, cycle
 or prerequisites without output bindings fail before provider work; they are not
 silently omitted. This is earlier failure than post-selection execution closure.
 Successful selection still runs normal prerequisite closure and execution admission.
+Prerequisite witnesses are directed toward the consuming capability: judging an
+acquisition does not pull in all consumers of that acquisition. Closure retains
+the acquisition whenever a selected consumer needs it. Ordinary business-data
+witnesses remain visible from both ends.
 
 ## Bounds and atomicity
 
 All local requests are constructed and checked before any provider call.
 Each complete UTF-8 request is limited to **16,000 bytes and eight capabilities**.
-If any scope exceeds either bound, `ScopeLimit` identifies the target, actual
-count/bytes and limits. The route does not dispatch partial work or return a
-partial selection. No truncation, arbitrary neighbor ranking, larger-context retry
-or whole-catalogue evidence substitution occurs.
+Valid scopes exceeding either bound are retained as **uncertain**, without a
+provider call. The receipt's typed `budget_retained` entries record candidate ID,
+capability reference, measured count/bytes and both limits. These are host budget
+outcomes, not model judgments, probabilities or provider usage. Fitting scopes
+still receive normal classification. No truncation, arbitrary neighbor ranking,
+larger-context retry or whole-catalogue evidence substitution occurs.
+
+`prepare_selection` validates every scope and separates fitting requests from
+budget outcomes. Live judging and sequential `SelectionPages::from_prepared`
+consume both. Public execution APIs carry the complete prepared selection rather
+than a request-only vector that could lose local outcomes. Invalid evidence and
+unauthorized bindings abort preparation before any
+dispatch; budget retention catches only the typed size/count admission outcome.
 
 A provider context rejection of a local question is indivisible and fails the
 route. Successful judgments are not replayed as part of subdivision. A complete
-selection requires one validated judgment for every original retrieved candidate.
+selection requires one validated judgment or explicit budget outcome for every
+original retrieved candidate. Missing answers, malformed responses and provider
+faults still abort; they never become budget uncertainty. Selection returns no
+partial receipt. Full declarations, authorization and prerequisite closure are
+unchanged for retained candidates.
 
 The unchanged rubric asks whether documented output, effect or information can
 contribute to the outcome. This does not certify readiness, permission or a valid
@@ -67,7 +106,8 @@ is reused while assembling the route's requests.
 
 Complete request bytes and framing version `decisions-compact-witnesses-v10`
 determine cache identity. Changed local evidence or intent invalidates that request.
-There is no prompt padding or automatic fallback.
+There is no prompt padding or provider-error fallback. Budget outcomes are
+recomputed from the current pinned evidence, not cached as provider responses.
 Capability IDs remain scoped to the complete candidate/evidence set. Adding or
 removing an earlier-sorted reference can renumber a local request and invalidate
 its cache key even when its semantic evidence is unchanged.

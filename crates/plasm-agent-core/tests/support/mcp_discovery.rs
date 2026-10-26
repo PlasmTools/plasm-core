@@ -116,14 +116,14 @@ pub async fn seed_model_boundary(store: &DiscoveryStore, generation: &str, turns
         &|r| allowed.permits(r),
     )
     .unwrap();
-    for batch in plasm_agent_core::discovery_matcher::issue_batches(
+    let prepared = plasm_agent_core::discovery_matcher::prepare_selection(
         model,
         &provenance,
         &retrieval,
         &evidence,
     )
-    .unwrap()
-    {
+    .unwrap();
+    for batch in prepared.batches() {
         let body: Value = serde_json::from_str(batch.body()).unwrap();
         let answers: BTreeMap<_, _> = body["questions"]
             .as_object()

@@ -119,6 +119,35 @@ pub struct CapabilityIntentMatch {
 #[serde(deny_unknown_fields)]
 pub struct CapabilityMatchReceipt {
     pub matches: Vec<CapabilityIntentMatch>,
+    /// Host budget outcomes, not provider judgments or probabilities.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub budget_retained: Vec<ScopeBudgetRetention>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct ScopeBudgetRetention {
+    pub capability_id: String,
+    pub reference: CapabilityRef,
+    pub capabilities: usize,
+    pub capability_limit: usize,
+    pub bytes: usize,
+    pub byte_limit: usize,
+}
+
+/// All scopes are validated before dispatch. Only fitting requests can reach a
+/// provider; valid oversized candidates are retained with host-owned evidence.
+pub struct PreparedSelection {
+    batches: Vec<IssuedBatch>,
+    budget_retained: Vec<ScopeBudgetRetention>,
+}
+impl PreparedSelection {
+    pub fn batches(&self) -> &[IssuedBatch] {
+        &self.batches
+    }
+    pub fn budget_retained(&self) -> &[ScopeBudgetRetention] {
+        &self.budget_retained
+    }
 }
 impl CapabilityMatchReceipt {
     /// Exposure preserves unresolved relevance. A judgment of uncertainty is not
@@ -168,12 +197,34 @@ struct Question {
     operation: plasm_core::catalog_discovery::OperationEvidence,
 }
 
-pub fn issue_batches(
+#[cfg(test)]
+pub(crate) fn issue_batches(
     model: &str,
     intent: &IntentProvenance,
     retrieval: &RetrievalReceipt,
     catalog_evidence: &CatalogEvidence,
 ) -> Result<Vec<IssuedBatch>, DiscoveryMatcherError> {
+    let prepared = prepare_selection(model, intent, retrieval, catalog_evidence)?;
+    // A strict request-only projection must not silently lose local outcomes.
+    // Execution paths consume PreparedSelection instead.
+    if let Some(budget) = prepared.budget_retained.first() {
+        return Err(DiscoveryMatcherError::ScopeLimit {
+            reference: budget.reference.clone(),
+            capabilities: budget.capabilities,
+            capability_limit: budget.capability_limit,
+            bytes: budget.bytes,
+            byte_limit: budget.byte_limit,
+        });
+    }
+    Ok(prepared.batches)
+}
+
+pub fn prepare_selection(
+    model: &str,
+    intent: &IntentProvenance,
+    retrieval: &RetrievalReceipt,
+    catalog_evidence: &CatalogEvidence,
+) -> Result<PreparedSelection, DiscoveryMatcherError> {
     if model.trim().is_empty() {
         return Err(DiscoveryMatcherError::MissingModel);
     }
@@ -230,20 +281,41 @@ pub fn issue_batches(
         .map(|(i, reference)| (reference.clone(), format!("c{i}")))
         .collect();
     let definitions = witnesses::value(&catalog_evidence.definitions)?;
-    evidence
-        .iter()
-        .map(|question| {
-            issue_local_batch(
-                model,
-                intent,
-                question,
-                &evidence,
-                catalog_evidence,
-                &ids,
-                &definitions,
-            )
-        })
-        .collect()
+    let mut prepared = PreparedSelection {
+        batches: Vec::new(),
+        budget_retained: Vec::new(),
+    };
+    for question in evidence.iter() {
+        match issue_local_batch(
+            model,
+            intent,
+            question,
+            &evidence,
+            catalog_evidence,
+            &ids,
+            &definitions,
+        ) {
+            Ok(batch) => prepared.batches.push(batch),
+            Err(DiscoveryMatcherError::ScopeLimit {
+                reference,
+                capabilities,
+                capability_limit,
+                bytes,
+                byte_limit,
+            }) => {
+                prepared.budget_retained.push(ScopeBudgetRetention {
+                    capability_id: question.id.clone(),
+                    reference,
+                    capabilities,
+                    capability_limit,
+                    bytes,
+                    byte_limit,
+                });
+            }
+            Err(error) => return Err(error),
+        }
+    }
+    Ok(prepared)
 }
 
 struct RelevanceCodec;
@@ -330,6 +402,7 @@ pub struct SelectionPages {
     pending: std::collections::VecDeque<IssuedBatch>,
     accepted: Vec<IssuedBatch>,
     answers: Vec<SelectionAnswer>,
+    budget_retained: Vec<ScopeBudgetRetention>,
 }
 
 /// Execute complete local questions for live and cached decisions.
@@ -345,8 +418,8 @@ where
     F: FnMut(IssuedBatch) -> Fut,
     Fut: std::future::Future<Output = Result<String, DecisionProviderError>>,
 {
-    let mut pending: std::collections::VecDeque<_> =
-        issue_batches(model, intent, retrieval, catalog_evidence)?.into();
+    let prepared = prepare_selection(model, intent, retrieval, catalog_evidence)?;
+    let mut pending: std::collections::VecDeque<_> = prepared.batches.into();
     let mut running = FuturesUnordered::new();
     let mut accepted = Vec::new();
     let mut answers = Vec::new();
@@ -383,14 +456,22 @@ where
             Err(error) => return Err(DiscoveryMatcherError::Provider(error)),
         }
     }
-    finish_selection(answers, retrieval, &accepted)
+    finish_prepared_selection(answers, retrieval, &accepted, prepared.budget_retained)
 }
 impl SelectionPages {
+    #[cfg(test)]
     pub fn new(batches: Vec<IssuedBatch>) -> Self {
+        Self::from_prepared(PreparedSelection {
+            batches,
+            budget_retained: Vec::new(),
+        })
+    }
+    pub fn from_prepared(prepared: PreparedSelection) -> Self {
         Self {
-            pending: batches.into(),
+            pending: prepared.batches.into(),
             accepted: Vec::new(),
             answers: Vec::new(),
+            budget_retained: prepared.budget_retained,
         }
     }
     /// Total local questions, including completed ones.
@@ -418,7 +499,12 @@ impl SelectionPages {
         if !self.pending.is_empty() {
             return Err(DiscoveryMatcherError::UnprocessedPages);
         }
-        finish_selection(self.answers, retrieval, &self.accepted)
+        finish_prepared_selection(
+            self.answers,
+            retrieval,
+            &self.accepted,
+            self.budget_retained,
+        )
     }
 }
 
@@ -455,10 +541,19 @@ pub fn decode_batch(
 
 /// Every candidate has exactly one complete question. Never fold conflicting
 /// judgments or combine questions from distinct intent revisions.
-pub fn finish_selection(
+#[cfg(test)]
+fn finish_selection(
     answers: Vec<SelectionAnswer>,
     retrieval: &RetrievalReceipt,
     issued: &[IssuedBatch],
+) -> Result<CapabilityMatchReceipt, DiscoveryMatcherError> {
+    finish_prepared_selection(answers, retrieval, issued, Vec::new())
+}
+fn finish_prepared_selection(
+    answers: Vec<SelectionAnswer>,
+    retrieval: &RetrievalReceipt,
+    issued: &[IssuedBatch],
+    budget_retained: Vec<ScopeBudgetRetention>,
 ) -> Result<CapabilityMatchReceipt, DiscoveryMatcherError> {
     let expected: BTreeSet<_> = issued
         .iter()
@@ -486,6 +581,27 @@ pub fn finish_selection(
     if actual != expected {
         return Err(DiscoveryMatcherError::AnswerSetMismatch);
     }
+    for budget in &budget_retained {
+        if !retrieval
+            .candidates
+            .iter()
+            .any(|c| c.id == budget.capability_id && c.reference == budget.reference)
+        {
+            return Err(DiscoveryMatcherError::CandidateCoverageMismatch);
+        }
+        if selected
+            .insert(
+                budget.capability_id.clone(),
+                CapabilityIntentMatch {
+                    capability_id: budget.capability_id.clone(),
+                    choice: MatchChoice::Uncertain,
+                },
+            )
+            .is_some()
+        {
+            return Err(DiscoveryMatcherError::MultipleJudgments);
+        }
+    }
     let selected_ids: BTreeSet<_> = selected.keys().collect();
     let candidate_ids: BTreeSet<_> = retrieval.candidates.iter().map(|c| &c.id).collect();
     if selected_ids != candidate_ids {
@@ -493,11 +609,14 @@ pub fn finish_selection(
     }
     Ok(CapabilityMatchReceipt {
         matches: selected.into_values().collect(),
+        budget_retained,
     })
 }
 
 #[cfg(test)]
 mod tests {
+    mod bounded_scopes;
+    mod budget_retention;
     mod compact;
     mod intent_scope;
     mod prefix;

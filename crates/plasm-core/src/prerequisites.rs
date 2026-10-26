@@ -1323,12 +1323,13 @@ where
                             && value.field_type.entity_ref_target() == Some(cap.domain.as_str())
                             && output_field == entity.id_field.as_str();
                         if references_identity
-                            || semantic_value_type_eq(
-                                value,
-                                other_value,
-                                source.catalog == *catalog
-                                    && field.kind.registry_key() == other.kind.registry_key(),
-                            )
+                            || (output_field == entity.id_field.as_str()
+                                && semantic_value_type_eq(
+                                    value,
+                                    other_value,
+                                    source.catalog == *catalog
+                                        && field.kind.registry_key() == other.kind.registry_key(),
+                                ))
                         {
                             evidence.entry(provider.clone()).or_default().insert(
                                 InputSourceMembership {
@@ -1484,11 +1485,11 @@ pub(crate) fn semantic_value_type_eq(
     {
         return false;
     }
-    // An interned unlabeled wire shape is not a nominal semantic domain, even
-    // within one catalog. Cross-catalog edges require a core profile (email,
-    // e164, temporal, enum, etc.), money, or an exact entity reference.
+    // Validation profiles constrain representation, not the role of a value.
+    // Two email/telephone/date fields do not by themselves declare a dataflow
+    // or membership relationship. Shared authored identities can establish
+    // membership against an entity key; profile equality alone cannot.
     (same_value_ref && left.has_authored_meaning() && right.has_authored_meaning())
-        || left.domain.profile.is_some()
         || matches!(
             left.domain.kernel,
             crate::value_domain::KernelKind::Money
@@ -1990,7 +1991,7 @@ mod tests {
     }
 
     #[test]
-    fn membership_projection_preserves_typed_identity_witnesses_across_wire() {
+    fn shared_contact_formats_do_not_establish_cross_catalog_membership() {
         for identity in [
             crate::value_domain::ProfileId::Email,
             crate::value_domain::ProfileId::E164,
@@ -2037,36 +2038,28 @@ mod tests {
                 &|_| true,
             )
             .unwrap();
-            let candidate = candidates
-                .iter()
-                .find(|c| c.provider.catalog == "directory" && c.provider.capability == "read")
-                .unwrap();
-            // Retrieval route does not decide whether a provider gets evidence.
+            assert!(candidates.iter().all(|c| c.provider.catalog != "directory"));
+            // Exposing both reads must not turn matching formats into a join.
             let with_provider = project_input_source_candidates(
                 &catalogs,
-                &[business.clone(), candidate.provider.clone()],
+                &[
+                    business.clone(),
+                    CapabilityRef {
+                        catalog: "source".into(),
+                        capability: "read".into(),
+                    },
+                    CapabilityRef {
+                        catalog: "directory".into(),
+                        capability: "read".into(),
+                    },
+                ],
                 &|_| true,
             )
             .unwrap();
-            let same = with_provider
+            assert!(with_provider
                 .iter()
-                .find(|c| c.provider == candidate.provider)
-                .unwrap();
-            assert_eq!(same.projection, candidate.projection);
-            assert!(candidate.bindings.iter().all(|b| same.bindings.contains(b)));
-            assert!(candidate
-                .membership
-                .iter()
-                .all(|m| same.membership.contains(m)));
-            assert!(candidate
-                .membership
-                .iter()
-                .any(|w| w.source.catalog == "source"
-                    && w.source_identity
-                        == RowIdentity::Field {
-                            field: "identity".into()
-                        }
-                    && w.provider_identity == RowIdentity::Field { field: "id".into() }));
+                .flat_map(|c| &c.membership)
+                .all(|m| m.source.catalog != "source"));
             assert_eq!(
                 serde_json::from_slice::<Vec<InputSourceCandidate>>(
                     &serde_json::to_vec(&candidates).unwrap()
@@ -2141,10 +2134,10 @@ mod tests {
             }
             let decoded: CGS = serde_json::from_slice(&serde_json::to_vec(&cgs).unwrap()).unwrap();
             proptest::prop_assert_eq!(before, project(&decoded));
-            // A semantic profile remains evidence without an English label.
+            // Format validation does not establish a resource relationship.
             let value = cgs.values.get_mut("text").unwrap();
             value.domain.profile = Some(crate::value_domain::ProfileId::Email);
-            proptest::prop_assert!(semantic_value_type_eq(value, value, false));
+            proptest::prop_assert!(!semantic_value_type_eq(value, value, false));
         }
 
         #[test]
@@ -2191,15 +2184,11 @@ mod tests {
     }
 
     #[test]
-    fn input_source_projection_uses_types_not_intent_vocabulary() {
+    fn input_source_projection_collects_shared_authored_values_not_wire_profiles() {
         let mut consumer = fixture();
         let mut source = fixture();
         consumer.bind_registry_entry_id("consumer");
         source.bind_registry_entry_id("source");
-        for cgs in [&mut consumer, &mut source] {
-            let value = cgs.values.get_mut("text").unwrap();
-            value.domain.profile = Some(crate::value_domain::ProfileId::Email);
-        }
         consumer.values.insert(
             "emails".into(),
             NamedValueSchema::from_domain(
@@ -2237,12 +2226,15 @@ mod tests {
         let candidates =
             project_input_source_candidates(&catalogs, std::slice::from_ref(&business), &|_| true)
                 .unwrap();
+        assert!(candidates
+            .iter()
+            .all(|candidate| candidate.provider.catalog != "source"));
         let source_read = candidates
             .iter()
             .find(|candidate| {
-                candidate.provider.catalog == "source" && candidate.provider.capability == "read"
+                candidate.provider.catalog == "consumer" && candidate.provider.capability == "read"
             })
-            .expect("profile-compatible read producer");
+            .expect("shared authored value read producer");
         assert!(source_read.bindings.iter().any(|binding| {
             binding.consumer == business
                 && binding.input
