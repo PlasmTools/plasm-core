@@ -41,6 +41,10 @@ export async function checkSessionExtension(observe: (intent: string) => Promise
             }]
           },
           matching: {matches},
+          search: {policy: "additive-connected-path-bm25f-rrf60-1-request-16000-bytes-v5",
+            exposed: [],
+            considered: [{catalog:"matrix",capability:"read"}], unexplored: [], deferred: [],
+            requests: 1, input_bytes: 1000, reported_input_tokens: 200, missing_usage: 0},
           recovery: insufficient ? {candidates:[{reference:{catalog:"matrix",capability:"read"},choice:"unrelated"}],available_catalogs:[],guidance:"No relevant capability in this bounded packet."}:null,
           closure: insufficient ? (sessionId ? { business: [], input_sources: [], prerequisites: [], acquisitions: [], edges: [] } : null) : { business: [{ catalog: "matrix", capability: "read" }], input_sources: [], prerequisites: [], acquisitions: [], edges: [] },
         },

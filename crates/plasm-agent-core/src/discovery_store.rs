@@ -215,6 +215,7 @@ pub struct DiscoveryStore {
     pool: DiscoveryDatabase,
     // Store clones (including short-lived Node route services) share cache fills.
     pub(crate) pending_decisions: std::sync::Arc<crate::discovery_scheduling::DecisionLocks>,
+    pub(crate) search_index: Arc<std::sync::Mutex<Option<(String, Arc<crate::discovery_matcher::catalogue_search::CatalogueSearch>)>>>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -348,6 +349,7 @@ impl DiscoveryStore {
         Ok(Self {
             pool,
             pending_decisions: Default::default(),
+            search_index: Default::default(),
         })
     }
 
@@ -669,6 +671,20 @@ impl DiscoveryStore {
         .bind(envelope)
         .execute(&mut *self.pool.acquire().await?)
         .await?;
+        Ok(())
+    }
+
+    /// Cross-process single admission. A failed or interrupted bounded search
+    /// cannot acquire a fresh budget by issuing the same request again.
+    pub async fn reserve_selector_search(&self, cache_key: &str) -> Result<bool> {
+        Ok(sqlx::query(
+            "INSERT INTO discovery_selector_cache (cache_key, envelope) VALUES ($1,'{\"started\":true}') ON CONFLICT (cache_key) DO NOTHING",
+        ).bind(cache_key).execute(&mut *self.pool.acquire().await?).await?.rows_affected() == 1)
+    }
+
+    pub async fn store_search_progress(&self, cache_key: &str, envelope: &str) -> Result<()> {
+        sqlx::query("INSERT INTO discovery_selector_cache (cache_key,envelope) VALUES ($1,$2) ON CONFLICT (cache_key) DO UPDATE SET envelope=EXCLUDED.envelope")
+            .bind(cache_key).bind(envelope).execute(&mut *self.pool.acquire().await?).await?;
         Ok(())
     }
 

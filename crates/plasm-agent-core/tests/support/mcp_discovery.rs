@@ -102,28 +102,18 @@ pub async fn seed_model_boundary(store: &DiscoveryStore, generation: &str, turns
         .bind(key).bind(serde_json::to_value(profile).unwrap()).bind(serde_json::to_string(&vector).unwrap()).execute(&pool).await.unwrap();
     pool.close().await;
     let allowed = DiscoveryAuthorization::catalogs(BTreeSet::from(["matrix".into()]));
-    let retrieval = store.retrieve(generation, intent, &allowed).await.unwrap();
     let provenance = IntentProvenance::from_turns(turns.iter().map(|s| (*s).to_owned())).unwrap();
     let model = plasm_agent_core::discovery_matcher::RELEVANCE_MODEL;
     let (catalogs, deployments) = store
         .load_discovery_generation(generation, &allowed)
         .await
         .unwrap();
-    let evidence = plasm_agent_core::discovery_matcher::evidence::CatalogEvidence::from_catalogs(
-        &retrieval,
-        &catalogs,
-        &deployments,
-        &|r| allowed.permits(r),
-    )
-    .unwrap();
-    let prepared = plasm_agent_core::discovery_matcher::prepare_selection(
-        model,
-        &provenance,
-        &retrieval,
-        &evidence,
-    )
-    .unwrap();
-    for batch in prepared.batches() {
+    plasm_agent_core::discovery_matcher::online::select(
+        plasm_agent_core::discovery_matcher::online::SearchContext {
+            model, intent: &provenance, generation, catalogs: &catalogs,
+            deployments: &deployments, allowed: &allowed,
+        },
+        |batch| async move {
         let body: Value = serde_json::from_str(batch.body()).unwrap();
         let answers: BTreeMap<_, _> = body["questions"]
             .as_object()
@@ -131,12 +121,14 @@ pub async fn seed_model_boundary(store: &DiscoveryStore, generation: &str, turns
             .keys()
             .map(|key| (key.clone(), json!({"type":"choice","choice":"relevant","confidence":1.0,"probabilities":{"relevant":1.0,"uncertain":0.0,"unrelated":0.0}})))
             .collect();
+        let raw = json!({"model":model,"provider":"OpenAI","answers":answers}).to_string();
         store
             .store_selector_envelope(
                 batch.cache_key(),
-                &json!({"model":model,"provider":"TypeSafe","answers":answers}).to_string(),
+                &raw,
             )
             .await
             .unwrap();
-    }
+        Ok(raw)
+    }).await.unwrap();
 }

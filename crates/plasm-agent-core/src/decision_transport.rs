@@ -11,14 +11,21 @@ pub enum DecisionTransportError {
     EmptyAttemptBudget,
     #[error("decision context limit rejected this page")]
     ContextLimit,
-    #[error("decision provider returned a non-retryable HTTP status {status}")]
-    ProviderRejected { status: reqwest::StatusCode },
+    #[error("decision provider returned HTTP {status}: {message}")]
+    ProviderRejected {
+        status: reqwest::StatusCode,
+        message: String,
+    },
     #[error("decision response body could not be read")]
     ResponseBody(#[source] reqwest::Error),
     #[error("decision transport failed")]
     Request(#[source] reqwest::Error),
-    #[error("decision transport exhausted retries")]
-    RetryExhausted,
+    #[error("decision transport exhausted {attempts} attempts: {source}")]
+    RetryExhausted {
+        attempts: usize,
+        #[source]
+        source: Box<DecisionTransportError>,
+    },
     #[error("decision retry deadline expired")]
     DeadlineExpired,
     #[error(transparent)]
@@ -122,6 +129,39 @@ fn transient(status: u16) -> bool {
     matches!(status, 408 | 425 | 429 | 500 | 502..=504 | 520..=524 | 529)
 }
 
+// Retain only the provider's structured message, never an arbitrary HTML body.
+fn provider_message(raw: &str) -> String {
+    #[derive(Deserialize)]
+    struct Envelope {
+        error: Detail,
+    }
+    #[derive(Deserialize)]
+    struct Detail {
+        message: String,
+    }
+    serde_json::from_str::<Envelope>(raw)
+        .ok()
+        .map(|e| {
+            e.error
+                .message
+                .chars()
+                .take(512)
+                .map(|c| if c.is_control() { ' ' } else { c })
+                .collect()
+        })
+        .unwrap_or_else(|| "no structured provider message; inspect the recorded response".into())
+}
+
+#[cfg(test)]
+#[test]
+fn provider_messages_are_structured_bounded_and_unicode_safe() {
+    let body = serde_json::json!({"error":{"message":"é\n".repeat(600)}}).to_string();
+    let message = provider_message(&body);
+    assert_eq!(message.chars().count(), 512);
+    assert!(!message.contains('\n'));
+    assert!(!provider_message("<html>unstructured body</html>").contains("<html>"));
+}
+
 fn retry_after(headers: &reqwest::header::HeaderMap) -> Option<Duration> {
     let value = headers.get(reqwest::header::RETRY_AFTER)?.to_str().ok()?;
     if let Ok(seconds) = value.parse::<u64>() {
@@ -177,7 +217,10 @@ pub(crate) async fn request_decision(
                                 transient(status.as_u16()),
                                 delay,
                                 format!("Decision provider HTTP {status}"),
-                                DecisionTransportError::ProviderRejected { status },
+                                DecisionTransportError::ProviderRejected {
+                                    status,
+                                    message: provider_message(&raw),
+                                },
                             )
                         }
                         Err(error) => {
@@ -208,8 +251,11 @@ pub(crate) async fn request_decision(
                 }
             };
             if !retry || attempt == policy.attempts {
-                return Err(if retry {
-                    DecisionTransportError::RetryExhausted
+                return Err(if retry && attempt > 1 {
+                    DecisionTransportError::RetryExhausted {
+                        attempts: attempt,
+                        source: Box::new(terminal_error),
+                    }
                 } else {
                     terminal_error
                 });
@@ -364,6 +410,49 @@ mod tests {
             assert_eq!(requests, vec!["exact request"; 2], "HTTP {status}");
             assert_eq!(attempts.len(), 2, "HTTP {status}");
         }
+    }
+
+    #[tokio::test]
+    async fn single_attempt_retains_provider_status_and_message_without_claiming_retries() {
+        let (result, requests, records) = exercise_body(
+            vec![500],
+            r#"{"error":{"message":"Abstract upstream failure","code":500}}"#,
+            DecisionRetryPolicy {
+                attempts: 1,
+                ..Default::default()
+            },
+        )
+        .await;
+        let error = result.unwrap_err();
+        assert_eq!(requests.len(), 1);
+        assert_eq!(records.len(), 1);
+        assert!(
+            matches!(error, DecisionTransportError::ProviderRejected { status, .. } if status.as_u16() == 500)
+        );
+        assert!(error.to_string().contains("Abstract upstream failure"));
+        assert!(!error.to_string().contains("retries"));
+    }
+
+    #[tokio::test]
+    async fn exhausted_attempts_retain_the_last_typed_cause() {
+        use std::error::Error;
+        let (result, requests, _) = exercise_body(
+            vec![503],
+            r#"{"error":{"message":"Abstract overloaded provider","code":503}}"#,
+            DecisionRetryPolicy {
+                attempts: 2,
+                backoff: Duration::ZERO,
+                ..Default::default()
+            },
+        )
+        .await;
+        let error = result.unwrap_err();
+        assert_eq!(requests.len(), 2);
+        let cause = error
+            .source()
+            .expect("provider cause must survive exhausted admission");
+        assert!(cause.to_string().contains("503"));
+        assert!(cause.to_string().contains("Abstract overloaded provider"));
     }
 
     #[tokio::test]

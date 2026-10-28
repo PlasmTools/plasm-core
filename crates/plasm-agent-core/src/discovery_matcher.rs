@@ -1,7 +1,13 @@
 //! One semantic relevance judgment over authorized candidates and typed evidence.
 use crate::decision_codec::DecisionCodec;
+pub(crate) mod catalogue_search;
 mod decisions;
 pub mod evidence;
+pub mod online;
+mod request_packing;
+mod search_budget;
+mod search_graph;
+mod search_rank;
 mod witnesses;
 use crate::discovery_store::RetrievalReceipt;
 use crate::intent_provenance::IntentProvenance;
@@ -19,6 +25,8 @@ type DecisionProviderError = Box<dyn std::error::Error + Send + Sync + 'static>;
 
 #[derive(Debug, Error)]
 pub enum DiscoveryMatcherError {
+    #[error("connected discovery questions must have identical model and intent context")]
+    InvalidConnectedContext,
     #[error("discovery catalogue context is invalid")]
     CatalogueContext(#[source] plasm_core::catalog_discovery::CatalogDiscoveryError),
     #[error("pinned catalogue evidence is missing for {0:?}")]
@@ -56,10 +64,14 @@ pub enum DiscoveryMatcherError {
     EmptyBatch,
     #[error("issued relevance page has no pending page")]
     NoPendingPage,
-    #[error("provider rejected a bounded local discovery question ({bytes} bytes); its evidence cannot be split; no selection was committed")]
+    #[error(
+        "provider rejected a bounded discovery packet ({bytes} bytes); no selection was committed"
+    )]
     IndivisibleItem { bytes: usize },
     #[error("relevance request serialization failed")]
     Encode(#[source] crate::decision_codec::DecisionCodecError),
+    #[error("issued discovery request could not be packed")]
+    Packing(#[source] serde_json::Error),
     #[error("decision response is invalid")]
     Response(#[from] crate::decision_codec::DecisionResponseError),
     #[error("validated relevance answer is missing its issued question")]
@@ -78,6 +90,8 @@ pub enum DiscoveryMatcherError {
     CandidateCoverageMismatch,
     #[error("provider decision failed")]
     Provider(#[source] DecisionProviderError),
+    #[error("discovery progress persistence failed")]
+    Checkpoint(#[source] DecisionProviderError),
 }
 pub const RELEVANCE_MODEL: &str = "openai/gpt-6-luna-decisions";
 // Local requests include the complete target and direct compact witnesses.
@@ -204,7 +218,7 @@ pub(crate) fn issue_batches(
     retrieval: &RetrievalReceipt,
     catalog_evidence: &CatalogEvidence,
 ) -> Result<Vec<IssuedBatch>, DiscoveryMatcherError> {
-    let prepared = prepare_selection(model, intent, retrieval, catalog_evidence)?;
+    let prepared = prepare_local_selection(model, intent, retrieval, catalog_evidence)?;
     // A strict request-only projection must not silently lose local outcomes.
     // Execution paths consume PreparedSelection instead.
     if let Some(budget) = prepared.budget_retained.first() {
@@ -220,6 +234,17 @@ pub(crate) fn issue_batches(
 }
 
 pub fn prepare_selection(
+    model: &str,
+    intent: &IntentProvenance,
+    retrieval: &RetrievalReceipt,
+    catalog_evidence: &CatalogEvidence,
+) -> Result<PreparedSelection, DiscoveryMatcherError> {
+    let mut prepared = prepare_local_selection(model, intent, retrieval, catalog_evidence)?;
+    prepared.batches = request_packing::pack(prepared.batches)?;
+    Ok(prepared)
+}
+
+fn prepare_local_selection(
     model: &str,
     intent: &IntentProvenance,
     retrieval: &RetrievalReceipt,
@@ -353,6 +378,29 @@ fn issue_local_batch(
     definitions: &serde_json::Value,
 ) -> Result<IssuedBatch, DiscoveryMatcherError> {
     let scope = witnesses::project(&question.reference, catalog, ids, definitions)?;
+    issue_projected_batch(model, intent, question, _evidence, ids, scope)
+}
+
+fn issue_projected_batch(
+    model: &str,
+    intent: &IntentProvenance,
+    question: &Question,
+    _evidence: &std::sync::Arc<Vec<Question>>,
+    ids: &BTreeMap<CapabilityRef, String>,
+    scope: witnesses::Scope,
+) -> Result<IssuedBatch, DiscoveryMatcherError> {
+    issue_scope(model, intent, question, _evidence, ids, scope, true)
+}
+
+fn issue_scope(
+    model: &str,
+    intent: &IntentProvenance,
+    question: &Question,
+    _evidence: &std::sync::Arc<Vec<Question>>,
+    ids: &BTreeMap<CapabilityRef, String>,
+    scope: witnesses::Scope,
+    admit_local: bool,
+) -> Result<IssuedBatch, DiscoveryMatcherError> {
     let id = ids
         .get(&question.reference)
         .ok_or(DiscoveryMatcherError::MissingAnswer)?;
@@ -376,7 +424,9 @@ fn issue_local_batch(
             criteria: CRITERIA.into_iter().collect(),
         })]),
     }).map_err(DiscoveryMatcherError::Encode)?;
-    if scope.count > witnesses::MAX_CAPABILITIES || body.len() > witnesses::MAX_BYTES {
+    if admit_local
+        && (scope.count > witnesses::MAX_CAPABILITIES || body.len() > witnesses::MAX_BYTES)
+    {
         return Err(DiscoveryMatcherError::ScopeLimit {
             reference: question.reference.clone(),
             capabilities: scope.count,
@@ -622,6 +672,7 @@ mod tests {
     mod prefix;
     mod reference_index;
     mod scheduling;
+    mod scoped_sharing;
     use super::*;
     use proptest::prelude::*;
     fn issue_batches(
@@ -1000,23 +1051,28 @@ mod tests {
         let mut accepted = BTreeSet::new();
         let receipt = judge_candidates(RELEVANCE_MODEL, &intent, &retrieval, |batch| {
             calls += 1;
-            let result: Result<String, DecisionProviderError> = if batch.questions.len() > 1 {
+            let result: Result<String, DecisionProviderError> = if batch.questions.len() > 4 {
                 Err(Box::new(
                     crate::decision_transport::DecisionTransportError::ContextLimit,
                 ))
             } else {
-                assert!(accepted.insert(batch.bindings.values().next().unwrap().clone()));
-                Ok(response(&batch, &[MatchChoice::Relevant]))
+                for candidate in batch.bindings.values() {
+                    assert!(accepted.insert(candidate.clone()));
+                }
+                Ok(response(
+                    &batch,
+                    &vec![MatchChoice::Relevant; batch.bindings.len()],
+                ))
             };
             std::future::ready(result)
         })
         .await
         .unwrap();
         assert_eq!(accepted.len(), 128);
-        assert!(calls <= 255);
+        assert!(calls <= 128);
         assert_eq!(receipt.selected(&retrieval).len(), 128);
         // Exercise failure after admitting multiple pages even with larger packing.
-        let (_, mut retrieval) = scheduling::many_cards(4);
+        let (_, mut retrieval) = scheduling::many_cards(8);
         let mut calls = 0;
         assert!(
             judge_candidates(RELEVANCE_MODEL, &intent, &retrieval, |batch| {
@@ -1202,9 +1258,11 @@ mod tests {
         other.id = "second".into();
         other.reference.capability = "second".into();
         retrieval.candidates.push(other);
-        let expected_body = issue_batches(RELEVANCE_MODEL, &intent, &retrieval).unwrap()[0]
-            .body
-            .clone();
+        let expected_body =
+            request_packing::pack(issue_batches(RELEVANCE_MODEL, &intent, &retrieval).unwrap())
+                .unwrap()[0]
+                .body
+                .clone();
         let seen = Arc::new(Mutex::new(Vec::new()));
         let captured = seen.clone();
         let router = axum::Router::new().route(
@@ -1217,7 +1275,7 @@ mod tests {
                     let request: serde_json::Value = serde_json::from_str(&body).unwrap();
                     let content = &request;
                     seen.lock().unwrap().push(body);
-                    if content["questions"].as_object().unwrap().len() > 1 {
+                    if content["questions"].as_object().unwrap().len() > 4 {
                         (axum::http::StatusCode::BAD_REQUEST,
                             json!({"error":{"code":400,"message":"context rejected","metadata":{"error_type":"context_length_exceeded"}}}).to_string())
                     } else {
@@ -1259,7 +1317,7 @@ mod tests {
         .await
         .unwrap();
         server.abort();
-        assert_eq!(seen.lock().unwrap().len(), 2);
+        assert_eq!(seen.lock().unwrap().len(), 1);
         assert_eq!(seen.lock().unwrap()[0], expected_body);
         for body in seen.lock().unwrap().iter() {
             let request: serde_json::Value = serde_json::from_str(body).unwrap();

@@ -16,6 +16,53 @@ pub use crate::discovery_recovery::{CatalogAppDescription, DiscoveryRecovery, RE
 
 type Result<T> = std::result::Result<T, DiscoveryServiceError>;
 
+fn search_key(
+    generation: &str,
+    provenance: &crate::intent_provenance::IntentProvenance,
+    allowed: &DiscoveryAuthorization,
+    model: &str,
+    exposed: &[CapabilityRef],
+) -> Result<String> {
+    Ok(plasm_core::catalog_discovery::content_hash(
+        &serde_json::to_vec(&(
+            matcher::online::SEARCH_POLICY,
+            generation,
+            provenance,
+            allowed,
+            model,
+            exposed.iter().collect::<std::collections::BTreeSet<_>>(),
+        ))?,
+    ))
+}
+
+#[cfg(test)]
+mod additive_identity_tests {
+    use super::*;
+    use std::collections::BTreeSet;
+
+    #[test]
+    fn search_identity_includes_canonical_exposure() {
+        let intent =
+            crate::intent_provenance::IntentProvenance::from_turns(["Inspect measurements".into()])
+                .unwrap();
+        let allowed = DiscoveryAuthorization::catalogs(BTreeSet::from(["matrix".into()]));
+        let a = CapabilityRef {
+            catalog: "matrix".into(),
+            capability: "read".into(),
+        };
+        let b = CapabilityRef {
+            catalog: "matrix".into(),
+            capability: "prepare".into(),
+        };
+        let key = |refs: &[CapabilityRef]| {
+            search_key("generation", &intent, &allowed, "model", refs).unwrap()
+        };
+        assert_ne!(key(&[]), key(std::slice::from_ref(&a)));
+        assert_ne!(key(std::slice::from_ref(&a)), key(&[a.clone(), b.clone()]));
+        assert_eq!(key(&[a.clone(), b.clone()]), key(&[b, a.clone(), a]));
+    }
+}
+
 #[derive(Debug, Error)]
 pub enum DiscoveryServiceError {
     #[error("OPENROUTER_API_KEY is required for capability discovery")]
@@ -28,6 +75,14 @@ pub enum DiscoveryServiceError {
     ExposedCapabilityMissing,
     #[error("declared prerequisite closure contains an unauthorized capability")]
     UnauthorizedClosure,
+    #[error(
+        "this discovery search was interrupted or failed; its spent work budget cannot be replayed"
+    )]
+    SearchAlreadyStarted,
+    #[error("discovery search was already admitted: {0}")]
+    SearchInterrupted(Box<matcher::online::SearchProgress>),
+    #[error("the discovery index cache is poisoned")]
+    SearchIndexPoisoned,
     #[error(transparent)]
     Store(#[from] crate::discovery_store::DiscoveryStoreError),
     #[error(transparent)]
@@ -65,6 +120,7 @@ pub struct RoutingReceipt {
     pub pin_id: String,
     pub retrieval: RetrievalReceipt,
     pub matching: CapabilityMatchReceipt,
+    pub search: matcher::online::SearchReceipt,
     pub closure: Option<PrerequisiteClosure>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub recovery: Option<DiscoveryRecovery>,
@@ -175,13 +231,40 @@ impl DiscoveryService {
         allowed: &DiscoveryAuthorization,
         exposed: &[CapabilityRef],
     ) -> Result<RoutingReceipt> {
+        if !exposed.iter().all(|reference| allowed.permits(reference)) {
+            return Err(DiscoveryServiceError::ExposedCapabilityUnauthorized);
+        }
+        let key = search_key(generation, provenance, allowed, &self.match_model, exposed)?;
+        let _same_search = self.store.pending_decisions.claim(&key).await;
+        if let Some(saved) = self.store.cached_selector_envelope(&key).await? {
+            let receipt: RoutingReceipt = serde_json::from_str(&saved)?;
+            if exposed
+                .iter()
+                .any(|reference| !receipt.search.exposed.contains(reference))
+            {
+                return Err(DiscoveryServiceError::ExposedCapabilityMissing);
+            }
+            return Ok(receipt);
+        }
+        let receipt = self
+            .route_uncached(generation, provenance, allowed, exposed)
+            .await?;
+        self.store
+            .store_selector_envelope(&key, &serde_json::to_string(&receipt)?)
+            .await?;
+        Ok(receipt)
+    }
+
+    async fn route_uncached(
+        &self,
+        generation: &str,
+        provenance: &crate::intent_provenance::IntentProvenance,
+        allowed: &DiscoveryAuthorization,
+        exposed: &[CapabilityRef],
+    ) -> Result<RoutingReceipt> {
         if !exposed.iter().all(|r| allowed.permits(r)) {
             return Err(DiscoveryServiceError::ExposedCapabilityUnauthorized);
         }
-        let retrieval = self
-            .store
-            .retrieve(generation, provenance.current(), allowed)
-            .await?;
         let (catalogs, bindings) = self
             .store
             .load_discovery_generation(generation, allowed)
@@ -193,15 +276,63 @@ impl DiscoveryService {
         }) {
             return Err(DiscoveryServiceError::ExposedCapabilityMissing);
         }
-        retrieval.validate(allowed)?;
-        let evidence = matcher::evidence::CatalogEvidence::from_catalogs(
-            &retrieval, &catalogs, &bindings, &|reference| allowed.permits(reference),
-        )?;
-        let matching = matcher::judge_candidates(
-            &self.match_model,
-            provenance,
-            &retrieval,
-            &evidence,
+        let index_key = plasm_core::catalog_discovery::content_hash(&serde_json::to_vec(&(
+            generation, allowed,
+        ))?);
+        let cached_index = self
+            .store
+            .search_index
+            .lock()
+            .map_err(|_| DiscoveryServiceError::SearchIndexPoisoned)?
+            .as_ref()
+            .filter(|(key, _)| *key == index_key)
+            .map(|(_, index)| index.clone());
+        let index = match cached_index {
+            Some(index) => index,
+            None => {
+                let index = std::sync::Arc::new(matcher::catalogue_search::CatalogueSearch::new(
+                    &catalogs, &bindings, allowed,
+                )?);
+                *self
+                    .store
+                    .search_index
+                    .lock()
+                    .map_err(|_| DiscoveryServiceError::SearchIndexPoisoned)? =
+                    Some((index_key, index.clone()));
+                index
+            }
+        };
+        let key = search_key(generation, provenance, allowed, &self.match_model, exposed)?;
+        // Validate the pinned catalogue and authorization before durable admission.
+        // Once admitted, interruption must not silently repeat provider work.
+        if !self
+            .store
+            .reserve_selector_search(&format!("{key}:started"))
+            .await?
+        {
+            if let Some(saved) = self
+                .store
+                .cached_selector_envelope(&format!("{key}:progress"))
+                .await?
+            {
+                return Err(DiscoveryServiceError::SearchInterrupted(Box::new(
+                    serde_json::from_str(&saved)?,
+                )));
+            }
+            return Err(DiscoveryServiceError::SearchAlreadyStarted);
+        }
+        let progress_key = format!("{key}:progress");
+        let (retrieval, matching, search) = matcher::online::select_indexed(
+            matcher::online::SearchContext {
+                model: &self.match_model,
+                intent: provenance,
+                generation,
+                catalogs: &catalogs,
+                deployments: &bindings,
+                allowed,
+                exposed,
+            },
+            &index,
             |issued| async move {
                 // Serialize identical requests within this service, then recheck the
                 // durable cache. Failures are never cached; cancellation releases ownership.
@@ -214,11 +345,25 @@ impl DiscoveryService {
                     return Ok(raw);
                 }
                 let raw = self.contribution_response(issued.body()).await?;
-                matcher::decode_batch(&issued, &raw)?;
+                matcher::decode_batch(&issued, &raw).map_err(|error| {
+                    matcher::online::ReceivedResponseFailure::new(&raw, Box::new(error))
+                })?;
                 self.store
                     .store_selector_envelope(issued.cache_key(), &raw)
-                    .await?;
+                    .await
+                    .map_err(|error| {
+                        matcher::online::ReceivedResponseFailure::new(&raw, Box::new(error))
+                    })?;
                 Ok(raw)
+            },
+            |progress| {
+                let key = &progress_key;
+                async move {
+                    self.store
+                        .store_search_progress(key, &serde_json::to_string(&progress)?)
+                        .await?;
+                    Ok(())
+                }
             },
         )
         .await?;
@@ -235,7 +380,8 @@ impl DiscoveryService {
             None
         };
         validate_closure_authorization(closure.as_ref(), allowed)?;
-        let recovery = if business.is_empty() {
+        // No additions to an existing surface is not an unmatched workflow.
+        let recovery = if business.is_empty() && exposed.is_empty() {
             Some(DiscoveryRecovery::from_unmatched(
                 &matching,
                 &retrieval,
@@ -249,12 +395,13 @@ impl DiscoveryService {
             intent_provenance: provenance.clone(),
             authorization: allowed.clone(),
             intent_analysis:
-                "**Capability relevance** (authorized bounded channel union and paged judgment; typed evidence; declared prerequisite closure):"
+                "**Capability contribution** (bounded online search; unvisited capabilities remain unexplored):"
                     .to_owned(),
             intent: provenance.current().to_owned(),
             pin_id: String::new(),
             retrieval,
             matching,
+            search,
             closure,
             recovery,
         })
@@ -270,7 +417,10 @@ impl DiscoveryService {
             matcher::RELEVANCE_ENDPOINT,
             &self.api_key,
             body,
-            crate::decision_transport::DecisionRetryPolicy::default(),
+            crate::decision_transport::DecisionRetryPolicy {
+                attempts: 1,
+                ..crate::decision_transport::DecisionRetryPolicy::default()
+            },
             |attempt| {
                 if let Some(directory) = &self.rejection_dir {
                     let mut record = serde_json::to_value(attempt)?;
@@ -328,6 +478,72 @@ fn validate_closure_authorization(
 mod tests {
     use super::*;
     use std::collections::BTreeSet;
+
+    #[test]
+    fn retain_retrieved_candidates_does_not_bypass_authorization() {
+        use sha2::{Digest, Sha256};
+        let packet: serde_json::Value = serde_json::from_str(include_str!(
+            "../../../fixtures/discovery/partial-routing.json"
+        ))
+        .unwrap();
+        let mut receipt: RoutingReceipt =
+            serde_json::from_value(packet["routing"].clone()).unwrap();
+        // The prose fixture uses placeholder digests; construct valid admission evidence.
+        for candidate in &mut receipt.retrieval.candidates {
+            candidate.document.text_hash =
+                hex::encode(Sha256::digest(candidate.document.text.as_bytes()));
+        }
+        let original = serde_json::to_value(&receipt.retrieval).unwrap();
+        receipt.retrieval.validate(&receipt.authorization).unwrap();
+        let all: Vec<_> = receipt
+            .retrieval
+            .candidates
+            .iter()
+            .map(|c| c.reference.clone())
+            .collect();
+        assert_eq!(all.len(), receipt.retrieval.candidates.len());
+        for reference in &all {
+            for deny_catalog in [false, true] {
+                let mut policy = receipt.authorization.clone();
+                if deny_catalog {
+                    policy.catalogs.remove(&reference.catalog);
+                } else {
+                    let retained = all
+                        .iter()
+                        .filter(|r| r.catalog == reference.catalog && *r != reference)
+                        .map(|r| r.capability.clone())
+                        .collect();
+                    policy
+                        .capabilities
+                        .insert(reference.catalog.clone(), retained);
+                }
+                assert!(matches!(
+                    receipt.retrieval.validate(&policy),
+                    Err(crate::discovery_store::RetrievalValidationError::UnauthorizedCandidate)
+                ));
+                for lane in [0, 1, 2] {
+                    let mut closure = PrerequisiteClosure {
+                        business: vec![],
+                        input_sources: vec![],
+                        prerequisites: vec![],
+                        acquisitions: vec![],
+                        edges: vec![],
+                    };
+                    match lane {
+                        0 => closure.business.push(reference.clone()),
+                        1 => closure.input_sources.push(reference.clone()),
+                        _ => closure.prerequisites.push(reference.clone()),
+                    }
+                    assert!(matches!(
+                        validate_closure_authorization(Some(&closure), &policy),
+                        Err(DiscoveryServiceError::UnauthorizedClosure)
+                    ));
+                }
+            }
+        }
+        // Candidate retention does not mutate the authenticated policy or contract evidence.
+        assert_eq!(serde_json::to_value(&receipt.retrieval).unwrap(), original);
+    }
 
     #[test]
     fn contribution_receipt_preserves_contracts_and_rejects_support_authority() {

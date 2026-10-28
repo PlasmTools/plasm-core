@@ -1,4 +1,5 @@
 //! Provider-free wire contract: serialize the same receipt type used by NAPI.
+use plasm_agent_core::discovery_matcher::online::{DeferredCandidate, DeferredReason};
 use plasm_agent_core::discovery_matcher::MatchChoice;
 use plasm_agent_core::discovery_service::RoutingReceipt;
 
@@ -17,6 +18,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             let mut candidate = retained.retrieval.candidates[0].clone();
             candidate.id = "matrix/record_inspect".into();
             candidate.reference.capability = "record_inspect".into();
+            retained
+                .search
+                .considered
+                .insert(candidate.reference.clone());
             retained.retrieval.candidates.push(candidate);
             let mut decision = retained.matching.matches[0].clone();
             decision.capability_id = "matrix/record_inspect".into();
@@ -24,6 +29,21 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
         let decision = retained.matching.matches.last_mut().unwrap();
         decision.choice = MatchChoice::Uncertain;
+        retained.closure.as_mut().unwrap().business =
+            retained.matching.selected(&retained.retrieval);
+        packet["routing"] = serde_json::to_value(retained)?;
+        cases.push(serde_json::json!({"packet": packet}));
+    }
+    // Budget-deferred candidates remain unexplored and are not declarations.
+    for reason in [DeferredReason::AcquisitionCycle, DeferredReason::InputBytes] {
+        let mut retained: RoutingReceipt = serde_json::from_value(serde_json::to_value(&receipt)?)?;
+        let mut reference = retained.retrieval.candidates[0].reference.clone();
+        reference.capability = "unexplored".into();
+        retained.search.unexplored.insert(reference.clone());
+        retained
+            .search
+            .deferred
+            .push(DeferredCandidate { reference, reason });
         retained.closure.as_mut().unwrap().business =
             retained.matching.selected(&retained.retrieval);
         packet["routing"] = serde_json::to_value(retained)?;

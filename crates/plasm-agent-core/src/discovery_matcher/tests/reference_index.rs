@@ -58,11 +58,9 @@ fn canonical_rendering_uses_local_packets_not_retrieval_summary_sizes() {
     for batch in &batches {
         assert_eq!(batch.bindings.len(), 1);
         assert!(batch.body().len() <= witnesses::MAX_BYTES);
-        assert!(
-            !batch
-                .body()
-                .contains("retrieval evidence retrieval evidence")
-        );
+        assert!(!batch
+            .body()
+            .contains("retrieval evidence retrieval evidence"));
     }
 }
 
@@ -122,12 +120,14 @@ fn reference_index_preserves_composition_full_contracts_and_opaque_outputs() {
     );
     let prepare = target_packet(&batches, "prepare");
     assert_eq!(
-        packet_declaration(&prepare, "prepare")["arguments"]["input_type"]["fields"][0]["value_ref"],
+        packet_declaration(&prepare, "prepare")["arguments"]["input_type"]["fields"][0]
+            ["value_ref"],
         "source"
     );
     let process = target_packet(&batches, "process");
     assert_eq!(
-        packet_declaration(&process, "process")["arguments"]["input_type"]["fields"][0]["value_ref"],
+        packet_declaration(&process, "process")["arguments"]["input_type"]["fields"][0]
+            ["value_ref"],
         "prepared"
     );
     let opaque = target_packet(&batches, "opaque");
@@ -300,12 +300,10 @@ fn reference_index_retains_nested_input_variants_and_named_array_elements() {
     assert_eq!(declaration["payload"]["input_type"], input["input_type"]);
     assert!(declaration.get("input_sources").is_none());
     let references = serde_json::to_value(&cap.references).unwrap();
-    assert!(
-        references["values"]
-            .as_array()
-            .unwrap()
-            .contains(&json!("matrix/sources"))
-    );
+    assert!(references["values"]
+        .as_array()
+        .unwrap()
+        .contains(&json!("matrix/sources")));
     let intent = IntentProvenance::from_turns(["Process supplied material.".into()]).unwrap();
     let batches =
         super::super::issue_batches(RELEVANCE_MODEL, &intent, &retrieval, &evidence).unwrap();
@@ -447,12 +445,10 @@ fn reference_index_links_entity_inputs_without_inventing_an_output() {
                 .unwrap();
         let cap = evidence.capabilities.values().next().unwrap();
         let refs = serde_json::to_value(&cap.references).unwrap();
-        assert!(
-            refs["records"]
-                .as_array()
-                .unwrap()
-                .contains(&json!("matrix/Source"))
-        );
+        assert!(refs["records"]
+            .as_array()
+            .unwrap()
+            .contains(&json!("matrix/Source")));
         let definitions = serde_json::to_value(&evidence.definitions).unwrap();
         assert!(!definitions["records"]["matrix/Source"].is_null());
         let declaration = serde_json::to_value(&cap.declaration).unwrap();

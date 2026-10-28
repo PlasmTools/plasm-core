@@ -21,6 +21,16 @@ const match = z.object({
   choice: z.enum(["relevant", "unrelated", "uncertain"]),
 }).strict();
 
+const scopeBudgetRetention = z.object({
+  capability_id: z.string().min(1),
+  reference: capability,
+  capabilities: z.number().int().nonnegative().safe(),
+  capability_limit: z.number().int().positive().safe(),
+  bytes: z.number().int().nonnegative().safe(),
+  byte_limit: z.number().int().positive().safe(),
+}).strict().refine(value => value.capabilities > value.capability_limit || value.bytes > value.byte_limit,
+  {message: "budget retention requires an exceeded scope limit"});
+
 function capabilityKey(value: z.infer<typeof capability>): string {
   return `${value.catalog}\0${value.capability}`;
 }
@@ -46,6 +56,21 @@ const routingSchema = z.object({
   }).passthrough(),
   matching: z.object({
     matches: z.array(match),
+    budget_retained: z.array(scopeBudgetRetention).max(0).optional(),
+  }).strict(),
+  search: z.object({
+    policy: z.literal("additive-connected-path-bm25f-rrf60-1-request-16000-bytes-v5"),
+    exposed: z.array(capability),
+    considered: z.array(capability),
+    unexplored: z.array(capability),
+    deferred: z.array(z.object({
+      reference: capability,
+      reason: z.enum(["requests", "input_bytes", "acquisition_cycle", "reported_input_tokens"]),
+    }).strict()),
+    requests: z.number().int().min(0).max(1),
+    input_bytes: z.number().int().min(0).max(16000),
+    reported_input_tokens: z.number().int().nonnegative().safe(),
+    missing_usage: z.number().int().min(0).max(1),
   }).strict(),
   closure: prerequisiteClosureSchema.nullable(),
   recovery: z.object({
@@ -59,6 +84,16 @@ const routingSchema = z.object({
 }).strict().superRefine((routing, ctx) => {
   const candidates = new Map(routing.retrieval.candidates.map(c => [c.id, c]));
   const matches = routing.matching.matches;
+  const budgetRetained = routing.matching.budget_retained ?? [];
+  if (new Set(budgetRetained.map(value => value.capability_id)).size !== budgetRetained.length
+    || budgetRetained.some(value => {
+      const candidate = candidates.get(value.capability_id);
+      return !candidate || capabilityKey(candidate.reference) !== capabilityKey(value.reference)
+        || !matches.some(match => match.capability_id === value.capability_id && match.choice === "uncertain");
+    })) {
+    ctx.addIssue({code: "custom", path: ["matching", "budget_retained"],
+      message: "budget outcomes must uniquely identify retained uncertain candidates"});
+  }
   const selected = matches.filter(m => m.choice !== "unrelated").flatMap(m => {
     const c = candidates.get(m.capability_id); return c ? [capabilityKey(c.reference)] : [];
   });
@@ -72,7 +107,7 @@ const routingSchema = z.object({
     || (routing.closure?.input_sources.length ?? 0) !== 0) {
     ctx.addIssue({code:"custom",path:["closure"],message:"closure must retain exactly the current relevant and uncertain capabilities"});
   }
-  if (Boolean(routing.recovery) !== (selected.length === 0)) {
+  if (Boolean(routing.recovery) !== (selected.length === 0 && routing.search.exposed.length === 0)) {
     ctx.addIssue({code:"custom",path:["recovery"],message:"empty-selection diagnostic contradicts relevance decisions"});
   }
   if (routing.recovery) {
@@ -83,7 +118,27 @@ const routingSchema = z.object({
   const permitted = (ref: z.infer<typeof capability>): boolean => routing.authorization.catalogs.includes(ref.catalog)
     && (routing.authorization.capabilities[ref.catalog]?.includes(ref.capability) ?? true);
   const closure = routing.closure;
+  const considered = new Set(routing.search.considered.map(capabilityKey));
+  const exposed = new Set(routing.search.exposed.map(capabilityKey));
+  const unexplored = new Set(routing.search.unexplored.map(capabilityKey));
+  if (considered.size !== routing.search.considered.length
+    || exposed.size !== routing.search.exposed.length
+    || routing.retrieval.candidates.some(candidate => exposed.has(capabilityKey(candidate.reference)))
+    || routing.search.unexplored.some(ref => exposed.has(capabilityKey(ref)))
+    || unexplored.size !== routing.search.unexplored.length
+    || routing.retrieval.candidates.some(candidate => unexplored.has(capabilityKey(candidate.reference)))
+    || (closure?.prerequisites.some(ref => unexplored.has(capabilityKey(ref))) ?? false)
+    || new Set(routing.search.deferred.map(item => capabilityKey(item.reference))).size !== routing.search.deferred.length
+    || routing.search.deferred.some(item => !unexplored.has(capabilityKey(item.reference))
+      && !(closure?.prerequisites.some(ref => capabilityKey(ref) === capabilityKey(item.reference)) ?? false))
+    || routing.retrieval.candidates.some(candidate => !considered.has(capabilityKey(candidate.reference)))
+    || routing.search.missing_usage > routing.search.requests
+    || (closure?.prerequisites.some(ref => !considered.has(capabilityKey(ref))) ?? false)) {
+    ctx.addIssue({code: "custom", path: ["search"], message: "bounded search accounting contradicts judged capabilities or required acquisitions"});
+  }
   if (routing.retrieval.candidates.some((candidate) => !permitted(candidate.reference))
+    || [...routing.search.exposed, ...routing.search.considered, ...routing.search.unexplored,
+      ...routing.search.deferred.map(item => item.reference)].some(ref => !permitted(ref))
     || (closure && [...closure.business, ...closure.input_sources, ...closure.prerequisites].some((ref) => !permitted(ref)))) {
     ctx.addIssue({ code: "custom", path: ["authorization"], message: "routing exposed an unauthorized capability" });
   }

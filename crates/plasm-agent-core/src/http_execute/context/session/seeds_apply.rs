@@ -640,6 +640,7 @@ mod sufficiency_tests {
                 vector_truncated: false,
             },
             matching: CapabilityMatchReceipt { matches: vec![], budget_retained: vec![] },
+            search: Default::default(),
 
             closure: Some(plasm_core::prerequisites::PrerequisiteClosure {
                 business: vec![],

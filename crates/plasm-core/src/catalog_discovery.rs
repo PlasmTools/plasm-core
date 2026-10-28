@@ -11,7 +11,7 @@ mod relation_use;
 mod retrieval_text;
 pub use input_projection::{InputProjectionError, InputProjectionFault};
 pub use retrieval_text::RetrievalTextError;
-pub use retrieval_text::capability_relation_uses;
+pub use retrieval_text::{capability_observation_meaning, capability_relation_uses};
 pub mod semantic_wire;
 pub mod structured;
 

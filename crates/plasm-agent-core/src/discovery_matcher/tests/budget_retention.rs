@@ -39,7 +39,14 @@ fn budget_outcomes_are_recomputed_when_evidence_changes() {
         .contract = "Performs an unspecified configured change.".into();
     let fresh = prepare_selection(RELEVANCE_MODEL, &intent(), &retrieval, &evidence).unwrap();
     assert!(fresh.budget_retained().is_empty());
-    assert_eq!(fresh.batches().len(), retrieval.candidates.len());
+    assert_eq!(
+        fresh
+            .batches()
+            .iter()
+            .map(|b| b.bindings.len())
+            .sum::<usize>(),
+        retrieval.candidates.len()
+    );
 }
 
 #[tokio::test]
@@ -92,14 +99,23 @@ async fn only_oversized_candidates_are_retained_without_dispatch_or_fake_judgmen
         |batch| {
             calls += 1;
             assert!(batch.body().len() <= witnesses::MAX_BYTES);
-            assert_ne!(batch.questions[0].reference.capability, "opaque");
-            let raw = response(&batch, &[MatchChoice::Unrelated]);
+            assert!(batch
+                .questions
+                .iter()
+                .all(|q| q.reference.capability != "opaque"));
+            let raw = response(&batch, &vec![MatchChoice::Unrelated; batch.bindings.len()]);
             async move { Ok(raw) }
         },
     )
     .await
     .unwrap();
-    assert_eq!(calls, retrieval.candidates.len() - 1);
+    assert_eq!(
+        calls,
+        prepare_selection(RELEVANCE_MODEL, &intent(), &retrieval, &evidence)
+            .unwrap()
+            .batches()
+            .len()
+    );
     assert_eq!(receipt.matches.len(), retrieval.candidates.len());
     assert_eq!(
         receipt
@@ -220,7 +236,7 @@ fn sequential_cached_path_preserves_budget_receipts_and_requires_all_answers() {
     ));
     let mut pages = SelectionPages::from_prepared(prepared);
     while let Some(batch) = pages.current() {
-        let raw = response(batch, &[MatchChoice::Uncertain]);
+        let raw = response(batch, &vec![MatchChoice::Uncertain; batch.bindings.len()]);
         pages.accept(&raw).unwrap();
     }
     let receipt = pages.finish(&retrieval).unwrap();

@@ -21,6 +21,7 @@ pub(super) struct Endpoint {
 #[derive(Debug, Clone, Serialize)]
 #[serde(untagged)]
 pub(super) enum Slot {
+    Entity { entity: String },
     Field { field: String },
     Input(InputSourceTarget),
     Identity { identity: RowIdentity },
@@ -28,6 +29,10 @@ pub(super) enum Slot {
 #[derive(Debug, Clone, Serialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub(super) enum Binding {
+    MayCreateResource {
+        from: Endpoint,
+        to: Endpoint,
+    },
     InputSource {
         from: Endpoint,
         to: Endpoint,
@@ -48,6 +53,7 @@ impl Binding {
     pub fn endpoints(&self) -> [&Endpoint; 2] {
         match self {
             Self::InputSource { from, to, .. }
+            | Self::MayCreateResource { from, to }
             | Self::Membership { from, to }
             | Self::Prerequisite { from, to, .. } => [from, to],
         }
@@ -284,13 +290,52 @@ fn input_slot(declaration: &Value, input: &InputPath, reference: &CapabilityRef)
     Ok(result)
 }
 
-#[derive(Serialize)]
+#[derive(Clone, Serialize, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
 pub(super) struct ProjectedDefinitions {
     // Preserve the established wire-section order independently of JSON map order.
-    values: Value,
-    records: Value,
+    #[serde(deserialize_with = "definition_map")]
+    pub(super) values: Value,
+    #[serde(deserialize_with = "definition_map")]
+    pub(super) records: Value,
 }
+fn definition_map<'de, D: serde::Deserializer<'de>>(
+    deserializer: D,
+) -> std::result::Result<Value, D::Error> {
+    let value = <Value as serde::Deserialize>::deserialize(deserializer)?;
+    if !value.is_object() {
+        return Err(serde::de::Error::custom(
+            "definition dictionary must be an object",
+        ));
+    }
+    Ok(value)
+}
+#[derive(Clone)]
 pub(super) struct OrderedCards(Vec<(String, Value)>);
+impl<'de> serde::Deserialize<'de> for OrderedCards {
+    fn deserialize<D: serde::Deserializer<'de>>(
+        deserializer: D,
+    ) -> std::result::Result<Self, D::Error> {
+        struct CardsVisitor;
+        impl<'de> serde::de::Visitor<'de> for CardsVisitor {
+            type Value = OrderedCards;
+            fn expecting(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+                formatter.write_str("ordered capability cards")
+            }
+            fn visit_map<M: serde::de::MapAccess<'de>>(
+                self,
+                mut map: M,
+            ) -> std::result::Result<Self::Value, M::Error> {
+                let mut cards = Vec::new();
+                while let Some(entry) = map.next_entry()? {
+                    cards.push(entry);
+                }
+                Ok(OrderedCards(cards))
+            }
+        }
+        deserializer.deserialize_map(CardsVisitor)
+    }
+}
 impl Serialize for OrderedCards {
     fn serialize<S: serde::Serializer>(
         &self,
@@ -339,6 +384,31 @@ pub(super) fn project(
             _ => b.endpoints().iter().any(|e| &e.capability == target),
         })
         .collect();
+    project_links(target, evidence, ids, definitions, links)
+}
+
+pub(super) fn project_path(
+    target: &CapabilityRef,
+    evidence: &CatalogEvidence,
+    ids: &BTreeMap<CapabilityRef, String>,
+    definitions: &Value,
+) -> Result<Scope> {
+    project_links(
+        target,
+        evidence,
+        ids,
+        definitions,
+        evidence.bindings.iter().collect(),
+    )
+}
+
+fn project_links(
+    target: &CapabilityRef,
+    evidence: &CatalogEvidence,
+    ids: &BTreeMap<CapabilityRef, String>,
+    definitions: &Value,
+    links: Vec<&Binding>,
+) -> Result<Scope> {
     let mut endpoints: BTreeMap<CapabilityRef, Vec<&Slot>> =
         BTreeMap::from([(target.clone(), vec![])]);
     for link in &links {
@@ -401,6 +471,7 @@ pub(super) fn project(
         let mut names = BTreeSet::new();
         for slot in slots {
             let part = match slot {
+                Slot::Entity { entity } => json!({"owning_entity":entity}),
                 Slot::Field { field } => {
                     json!({"output_field":required(&record["fields"],field,reference,"output field")?})
                 }

@@ -1,0 +1,343 @@
+//! Revision-local authorized facts. Nothing in this index is model evidence until selected.
+use super::{
+    evidence::CatalogEvidence,
+    search_graph::{Edge, Relationship, SearchGraph},
+    search_rank::{LexicalIndex, RankedDocument},
+    DiscoveryMatcherError,
+};
+use crate::discovery_store::{DiscoveryAuthorization, RetrievalReceipt, RetrievedCapability};
+use plasm_core::{
+    catalog_discovery::{capability_documents, capability_observation_meaning},
+    prerequisites::{
+        project_input_source_candidates, CapabilityRef, DeploymentBindings, InputSourceBinding,
+    },
+    schema::{
+        CapabilityKind, CapabilitySchema, InputFieldSchema, InputFieldWire, InputType, OutputType,
+    },
+    CGS,
+};
+use std::collections::{BTreeMap, BTreeSet};
+
+pub(crate) struct CatalogueSearch {
+    pub(super) candidates: BTreeMap<CapabilityRef, RetrievedCapability>,
+    pub(super) ranking: LexicalIndex<CapabilityRef>,
+    pub(super) graph: SearchGraph<CapabilityRef>,
+    pub(super) input_bindings: BTreeMap<String, InputSourceBinding>,
+}
+
+fn input_fields(fields: &[InputFieldSchema], cgs: &CGS, text: &mut Vec<String>) {
+    for field in fields {
+        text.extend(field.description.iter().cloned());
+        match &field.wire {
+            InputFieldWire::Registry(name) => {
+                if let Some(value) = cgs.values.get(name.as_str()) {
+                    text.push(value.description.clone());
+                }
+            }
+            InputFieldWire::Inline(input) => input_text(input, cgs, text),
+        }
+    }
+}
+
+fn input_text(input: &InputType, cgs: &CGS, text: &mut Vec<String>) {
+    match input {
+        InputType::None | InputType::Value { .. } => {}
+        InputType::Object { fields, .. } => input_fields(fields, cgs, text),
+        InputType::Array { element_type, .. } => input_text(element_type, cgs, text),
+        InputType::Union { variants } => {
+            for variant in variants {
+                input_fields(&variant.fields, cgs, text);
+            }
+        }
+    }
+}
+
+/// Ranking fields retain authored roles. The rendered operation contract also
+/// contains inputs, so indexing it here would count inputs twice at two weights.
+fn operation_meaning(cap: &CapabilitySchema) -> String {
+    let mut text = cap.description.clone();
+    if let Some(OutputType::SideEffect { description }) =
+        cap.output_schema.as_ref().map(|o| &o.output_type)
+    {
+        if description != &cap.description {
+            text.push('\n');
+            text.push_str(description);
+        }
+    }
+    text
+}
+
+impl CatalogueSearch {
+    pub fn new(
+        catalogs: &BTreeMap<String, CGS>,
+        _deployments: &DeploymentBindings,
+        allowed: &DiscoveryAuthorization,
+    ) -> Result<Self, DiscoveryMatcherError> {
+        let borrowed = catalogs
+            .iter()
+            .map(|(key, cgs)| (key.clone(), cgs))
+            .collect();
+        let mut candidates = BTreeMap::new();
+        let mut documents = Vec::new();
+        for (catalog, cgs) in catalogs {
+            if !allowed.catalogs.contains(catalog) {
+                continue;
+            }
+            for document in
+                capability_documents(cgs).map_err(DiscoveryMatcherError::CatalogueContext)?
+            {
+                let reference = CapabilityRef {
+                    catalog: catalog.clone(),
+                    capability: document.capability.clone(),
+                };
+                if !allowed.permits(&reference) {
+                    continue;
+                }
+                let cap = &cgs.capabilities[reference.capability.as_str()];
+                let mut inputs = Vec::new();
+                for fields in [
+                    &cap.inputs.scope.0,
+                    &cap.inputs.selection.0,
+                    &cap.inputs.controls.0,
+                ] {
+                    input_fields(fields, cgs, &mut inputs);
+                }
+                for input in [&cap.inputs.arguments, &cap.inputs.payload]
+                    .into_iter()
+                    .flatten()
+                {
+                    inputs.extend(input.description.iter().cloned());
+                    input_text(&input.input_type, cgs, &mut inputs);
+                }
+                documents.push(RankedDocument {
+                    key: reference.clone(),
+                    fields: [
+                        operation_meaning(cap),
+                        format!(
+                            "{} {}",
+                            document.collection.meaning,
+                            capability_observation_meaning(cgs, cap)
+                                .map_err(DiscoveryMatcherError::CatalogueContext)?
+                        ),
+                        inputs.join(" "),
+                    ],
+                });
+                let id = plasm_core::catalog_discovery::content_hash(
+                    &serde_json::to_vec(&reference).map_err(DiscoveryMatcherError::Packing)?,
+                );
+                candidates.insert(
+                    reference.clone(),
+                    RetrievedCapability {
+                        id,
+                        reference,
+                        document,
+                        admissions: BTreeSet::from(["authorized_catalogue_index".into()]),
+                    },
+                );
+            }
+        }
+        let references: Vec<_> = candidates.keys().cloned().collect();
+        let mut edges = BTreeSet::new();
+        let mut input_bindings = BTreeMap::new();
+        let sources =
+            project_input_source_candidates(&borrowed, &references, &|r| allowed.permits(r))?;
+        for source in sources {
+            // Only actual input bindings nominate suppliers. Membership evidence
+            // does not establish a producer-consumer assignment.
+            for binding in source.bindings {
+                let provenance = plasm_core::catalog_discovery::content_hash(
+                    &serde_json::to_vec(&binding).map_err(DiscoveryMatcherError::Packing)?,
+                );
+                edges.insert(Edge {
+                    source: binding.provider.clone(),
+                    consumer: binding.consumer.clone(),
+                    relationship: Relationship::SuppliesInput,
+                    provenance: provenance.clone(),
+                });
+                input_bindings.insert(provenance, binding);
+            }
+        }
+        let mut creators = BTreeMap::<(String, String), Vec<CapabilityRef>>::new();
+        for reference in candidates.keys() {
+            let cap = &catalogs[&reference.catalog].capabilities[reference.capability.as_str()];
+            if cap.kind == CapabilityKind::Create {
+                creators
+                    .entry((reference.catalog.clone(), cap.domain.to_string()))
+                    .or_default()
+                    .push(reference.clone());
+            }
+        }
+        for reference in candidates.keys() {
+            let cap = &catalogs[&reference.catalog].capabilities[reference.capability.as_str()];
+            if !matches!(
+                cap.kind,
+                CapabilityKind::Get | CapabilityKind::Query | CapabilityKind::Search
+            ) {
+                continue;
+            }
+            for creator in creators
+                .get(&(reference.catalog.clone(), cap.domain.to_string()))
+                .into_iter()
+                .flatten()
+            {
+                edges.insert(Edge {
+                    source: creator.clone(),
+                    consumer: reference.clone(),
+                    relationship: Relationship::MayCreateResource,
+                    provenance: format!("declared_create:{}:{}", reference.catalog, cap.domain),
+                });
+            }
+        }
+        let graph =
+            SearchGraph::new(candidates.keys().cloned().collect(), edges).map_err(|error| {
+                match error {
+                    super::search_graph::GraphError::Unauthorized(reference) => {
+                        DiscoveryMatcherError::UnauthorizedWitness(reference)
+                    }
+                }
+            })?;
+        let ranking = LexicalIndex::new(documents)
+            .map_err(|_| DiscoveryMatcherError::DuplicateCapabilityReference)?;
+        Ok(Self {
+            candidates,
+            ranking,
+            graph,
+            input_bindings,
+        })
+    }
+
+    /// Project only an admitted path. No catalogue-wide object is serialized into
+    /// the classifier request. The existing projector owns complete contracts.
+    pub fn evidence(
+        &self,
+        generation: &str,
+        references: &BTreeSet<CapabilityRef>,
+        catalogs: &BTreeMap<String, CGS>,
+        deployments: &DeploymentBindings,
+        allowed: &DiscoveryAuthorization,
+    ) -> Result<(RetrievalReceipt, CatalogEvidence), DiscoveryMatcherError> {
+        let candidates = references
+            .iter()
+            .map(|reference| {
+                self.candidates.get(reference).cloned().ok_or_else(|| {
+                    DiscoveryMatcherError::MissingCatalogueEvidence(reference.clone())
+                })
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+        let retrieval = RetrievalReceipt {
+            generation: generation.into(),
+            candidates,
+            lexical_count: 0,
+            vector_count: 0,
+            lexical_truncated: false,
+            vector_truncated: false,
+        };
+        let evidence = CatalogEvidence::from_catalogs(&retrieval, catalogs, deployments, &|r| {
+            allowed.permits(r)
+        })?;
+        Ok((retrieval, evidence))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn ranking_keeps_input_meaning_out_of_operation_but_preserves_full_contracts() {
+        let mut cgs = plasm_core::loader::load_schema_dir(
+            &std::path::Path::new(crate::test_manifest_dir())
+                .join("../../fixtures/schemas/discovery_reference_index"),
+        )
+        .unwrap();
+        let cap = cgs.capabilities.get_mut("process").unwrap();
+        cap.description = "Produce a spectrum.".into();
+        // Alter only input prose, not the operation or any declared relationship.
+        let original = operation_meaning(cap);
+        let input = cap
+            .inputs
+            .arguments
+            .as_mut()
+            .or(cap.inputs.payload.as_mut())
+            .unwrap();
+        input.description = Some("Optional archive rating criterion.".into());
+        assert_eq!(operation_meaning(cap), original);
+        let documents = capability_documents(&cgs).unwrap();
+        let document = documents
+            .iter()
+            .find(|d| d.capability == "process")
+            .unwrap();
+        assert!(document
+            .operation
+            .contract
+            .contains("Optional archive rating criterion"));
+        let catalogs = BTreeMap::from([("matrix".into(), cgs)]);
+        let allowed = DiscoveryAuthorization::catalogs(BTreeSet::from(["matrix".into()]));
+        let index = CatalogueSearch::new(&catalogs, &Default::default(), &allowed).unwrap();
+        let reference = CapabilityRef {
+            catalog: "matrix".into(),
+            capability: "process".into(),
+        };
+        assert_eq!(index.candidates[&reference].document, *document);
+        assert!(index
+            .ranking
+            .rank("criterion", "criterion")
+            .contains(&reference));
+        assert_eq!(index.ranking.rank("spectrum", "spectrum")[0], reference);
+        let denied = CatalogueSearch::new(
+            &catalogs,
+            &Default::default(),
+            &DiscoveryAuthorization::catalogs(BTreeSet::new()),
+        )
+        .unwrap();
+        assert!(denied.ranking.rank("spectrum", "criterion").is_empty());
+    }
+
+    #[test]
+    fn declared_output_meaning_is_ranked_without_leaking_to_opaque_peers() {
+        let mut cgs = plasm_core::loader::load_schema_dir(
+            &std::path::Path::new(crate::test_manifest_dir())
+                .join("../../fixtures/schemas/discovery_reference_index"),
+        )
+        .unwrap();
+        cgs.values.get_mut("result").unwrap().description = "Spectral amplitude.".into();
+        let documents = capability_documents(&cgs).unwrap();
+        let catalogs = BTreeMap::from([("matrix".into(), cgs)]);
+        let allowed = DiscoveryAuthorization::catalogs(BTreeSet::from(["matrix".into()]));
+        let index = CatalogueSearch::new(&catalogs, &Default::default(), &allowed).unwrap();
+        let ranked = index
+            .ranking
+            .rank("spectral amplitude", "spectral amplitude");
+        assert_eq!(
+            ranked,
+            vec![CapabilityRef {
+                catalog: "matrix".into(),
+                capability: "process".into()
+            }]
+        );
+        for candidate in index.candidates.values() {
+            assert_eq!(
+                &candidate.document,
+                documents
+                    .iter()
+                    .find(|d| d.capability == candidate.reference.capability)
+                    .unwrap()
+            );
+        }
+    }
+
+    #[test]
+    fn effect_only_meaning_is_searchable_without_input_expansion() {
+        let mut cgs = plasm_core::loader::load_schema_dir(
+            &std::path::Path::new(crate::test_manifest_dir())
+                .join("../../fixtures/schemas/discovery_reference_index"),
+        )
+        .unwrap();
+        let cap = cgs.capabilities.get_mut("prepare").unwrap();
+        cap.description.clear();
+        cap.output_schema.as_mut().unwrap().output_type = OutputType::SideEffect {
+            description: "Stages prepared material.".into(),
+        };
+        assert_eq!(operation_meaning(cap).trim(), "Stages prepared material.");
+    }
+}

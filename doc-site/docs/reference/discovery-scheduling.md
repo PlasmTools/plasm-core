@@ -1,8 +1,30 @@
 # Bounded discovery classification
 
-Retrieval is unchanged: up to 64 lexical and 64 vector candidates, deduplicated
-to at most 128. Authorization precedes classification. Already exposed capabilities
-are still judged against current discovery need and full intent ancestry.
+## Additive online selection
+
+The live discovery service passes the pinned session's exposed capability set to
+the connected selector. Already exposed declarations remain available; they are
+not separate contribution questions. Ranked exposed declarations can anchor
+missing suppliers, and direct exposed suppliers remain question-local evidence
+for new consumers. Evidence still counts toward the unchanged 16,000-byte,
+one-request budget. Exposure means a declaration is available, not that its
+acquisition has executed or that it is currently relevant or authorized to run.
+
+Only new candidates receive contribution judgments. Required prerequisite closure
+and authorization remain intact. A fully exposed catalogue requires no provider
+request. Zero additions to an existing surface does not imply an unmatched or
+completed workflow. Canonical exposure membership participates in selector cache
+identity, so a larger surface cannot reuse an earlier selection delta. Catalogue
+and authorization validation still precede cache admission.
+
+This change leaves original/current ranking and the contribution rubric unchanged;
+current-intent-only retrieval is a separate experiment. The scoped-classification
+API described below remains distinct from the live connected selector.
+
+## Scoped classification API
+
+The scoped-classification API accepts bounded retrieval receipts. Authorization
+precedes classification; callers determine its candidate set.
 
 Capability relevance uses native OpenRouter Decisions, default
 `openai/gpt-6-luna-decisions`; an eight-digit dated revision may be configured.
@@ -10,7 +32,7 @@ There is no whole-environment support classifier.
 
 ## Local contribution evidence
 
-Each request judges exactly one retrieved capability. It carries that target's
+Each question judges exactly one retrieved capability. It carries that target's
 complete catalogue declaration and referenced definitions, plus compact witnesses
 for directly connected catalogue input, receiver, membership and prerequisite
 bindings. Neighboring operations retain their authored description and exact
@@ -67,7 +89,7 @@ witnesses remain visible from both ends.
 ## Bounds and atomicity
 
 All local requests are constructed and checked before any provider call.
-Each complete UTF-8 request is limited to **16,000 bytes and eight capabilities**.
+Each original local scope is limited to **16,000 encoded bytes and eight capabilities**.
 Valid scopes exceeding either bound are retained as **uncertain**, without a
 provider call. The receipt's typed `budget_retained` entries record candidate ID,
 capability reference, measured count/bytes and both limits. These are host budget
@@ -75,15 +97,20 @@ outcomes, not model judgments, probabilities or provider usage. Fitting scopes
 still receive normal classification. No truncation, arbitrary neighbor ranking,
 larger-context retry or whole-catalogue evidence substitution occurs.
 
-`prepare_selection` validates every scope and separates fitting requests from
-budget outcomes. Live judging and sequential `SelectionPages::from_prepared`
+`prepare_selection` validates every scope, separates fitting requests from
+budget outcomes, and packs fitting scopes into requests of at most four questions
+and 16,000 full-body UTF-8 bytes. A merge must be smaller than its separate requests.
+Only exact common context and whole type definitions are shared. Every question's
+remaining cards, definitions, references and bindings stay in its own instructions;
+no union of sibling evidence is placed in shared state. Recombining shared state
+with one question's local evidence reconstructs its exact original scope.
+Singleton bodies and cache identities remain unchanged. Live judging and sequential `SelectionPages::from_prepared`
 consume both. Public execution APIs carry the complete prepared selection rather
 than a request-only vector that could lose local outcomes. Invalid evidence and
 unauthorized bindings abort preparation before any
 dispatch; budget retention catches only the typed size/count admission outcome.
 
-A provider context rejection of a local question is indivisible and fails the
-route. Successful judgments are not replayed as part of subdivision. A complete
+A provider context rejection fails the route without subdivision or replay. A complete
 selection requires one validated judgment or explicit budget outcome for every
 original retrieved candidate. Missing answers, malformed responses and provider
 faults still abort; they never become budget uncertainty. Selection returns no
@@ -104,8 +131,9 @@ values-before-records wire order. Retrieval permutation does not change bytes.
 The model sees only the local projection; a single internal definition serialization
 is reused while assembling the route's requests.
 
-Complete request bytes and framing version `decisions-compact-witnesses-v10`
-determine cache identity. Changed local evidence or intent invalidates that request.
+Complete request bytes and framing version `decisions-scoped-sharing-v11`
+determine packed cache identity; unchanged singletons retain `decisions-compact-witnesses-v10`.
+Changed local evidence or intent invalidates that request.
 There is no prompt padding or provider-error fallback. Budget outcomes are
 recomputed from the current pinned evidence, not cached as provider responses.
 Capability IDs remain scoped to the complete candidate/evidence set. Adding or
@@ -114,11 +142,12 @@ its cache key even when its semantic evidence is unchanged.
 
 | Boundary | Limit / behavior |
 | --- | --- |
-| Request | One question, eight capabilities, 16,000 full-body UTF-8 bytes |
+| Local question scope | Eight capabilities, original 16,000-byte admission unchanged |
+| Request | At most four questions; 16,000 full-body UTF-8 bytes; strictly smaller than separate bodies |
 | Route | At most four admitted provider futures |
 | Process | At most eight provider requests |
 | Queue | FIFO semaphore; no fleet-wide or strict per-tenant fairness claim |
-| Context rejection | Explicit indivisible-local-question failure |
+| Context rejection | Explicit failure; no subdivision or partial receipt |
 | Cancellation / error | Drop outstanding futures and release claims; no success receipt |
 | Cache fill | Exact-request coalescing for cloned discovery stores; failures not cached |
 
