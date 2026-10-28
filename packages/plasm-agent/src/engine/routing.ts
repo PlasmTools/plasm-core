@@ -59,7 +59,7 @@ const routingSchema = z.object({
     budget_retained: z.array(scopeBudgetRetention).max(0).optional(),
   }).strict(),
   search: z.object({
-    policy: z.literal("additive-connected-path-bm25f-rrf60-1-request-16000-bytes-v5"),
+    policy: z.literal("additive-connected-path-bm25f-rrf60-1-judgment-3-attempts-16000-byte-packet-v6"),
     exposed: z.array(capability),
     considered: z.array(capability),
     unexplored: z.array(capability),
@@ -67,10 +67,10 @@ const routingSchema = z.object({
       reference: capability,
       reason: z.enum(["requests", "input_bytes", "acquisition_cycle", "reported_input_tokens"]),
     }).strict()),
-    requests: z.number().int().min(0).max(1),
-    input_bytes: z.number().int().min(0).max(16000),
+    requests: z.number().int().min(0).max(3),
+    input_bytes: z.number().int().min(0).max(48000),
     reported_input_tokens: z.number().int().nonnegative().safe(),
-    missing_usage: z.number().int().min(0).max(1),
+    missing_usage: z.number().int().min(0).max(3),
   }).strict(),
   closure: prerequisiteClosureSchema.nullable(),
   recovery: z.object({
@@ -133,6 +133,9 @@ const routingSchema = z.object({
       && !(closure?.prerequisites.some(ref => capabilityKey(ref) === capabilityKey(item.reference)) ?? false))
     || routing.retrieval.candidates.some(candidate => !considered.has(capabilityKey(candidate.reference)))
     || routing.search.missing_usage > routing.search.requests
+    || (routing.search.requests === 0 ? routing.search.input_bytes !== 0
+      : routing.search.input_bytes === 0 || routing.search.input_bytes > routing.search.requests * 16000
+        || routing.search.input_bytes % routing.search.requests !== 0)
     || (closure?.prerequisites.some(ref => !considered.has(capabilityKey(ref))) ?? false)) {
     ctx.addIssue({code: "custom", path: ["search"], message: "bounded search accounting contradicts judged capabilities or required acquisitions"});
   }

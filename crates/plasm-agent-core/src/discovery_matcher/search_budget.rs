@@ -3,7 +3,9 @@
 use std::collections::BTreeSet;
 
 pub(super) const MAX_REQUESTS: usize = 1;
+pub(super) const MAX_ATTEMPTS: usize = 3;
 pub(super) const MAX_INPUT_BYTES: usize = 16_000;
+pub(super) const MAX_TRANSMITTED_BYTES: usize = MAX_INPUT_BYTES * MAX_ATTEMPTS;
 pub(super) const MAX_REPORTED_INPUT_TOKENS: u64 = 16_000;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -73,6 +75,24 @@ impl<K: Ord + Clone> SearchBudget<K> {
         }
     }
 
+    /// Retry the same admitted packet only; this does not admit another judgment
+    /// or reset spent work. The selector retains the immutable packet bytes.
+    pub fn reserve_retry(&mut self, body: &str) -> Result<(), BudgetStop> {
+        if self.reported_input_tokens > MAX_REPORTED_INPUT_TOKENS {
+            return Err(BudgetStop::ReportedInputTokens);
+        }
+        if self.requests == 0 || self.requests >= MAX_ATTEMPTS {
+            return Err(BudgetStop::Requests);
+        }
+        let bytes = self.input_bytes.saturating_add(body.len());
+        if body.len() > MAX_INPUT_BYTES || bytes > MAX_TRANSMITTED_BYTES {
+            return Err(BudgetStop::InputBytes);
+        }
+        self.requests += 1;
+        self.input_bytes = bytes;
+        Ok(())
+    }
+
     pub fn members(&self) -> &BTreeSet<K> {
         &self.members
     }
@@ -97,6 +117,40 @@ impl<K: Ord + Clone> SearchBudget<K> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn retries_charge_full_packet_without_readmitting_a_judgment() {
+        let mut budget = SearchBudget::default();
+        let body = "x".repeat(MAX_INPUT_BYTES);
+        assert_eq!(budget.reserve_retry(&body), Err(BudgetStop::Requests));
+        budget.reserve([0], &[&body]).unwrap();
+        for _ in 1..MAX_ATTEMPTS {
+            budget.record_usage(None);
+            budget.reserve_retry(&body).unwrap();
+        }
+        assert_eq!(budget.requests(), MAX_ATTEMPTS);
+        assert_eq!(budget.input_bytes(), MAX_TRANSMITTED_BYTES);
+        let mut continued = budget.clone();
+        assert_eq!(continued.reserve_retry(&body), Err(BudgetStop::Requests));
+        assert_eq!(
+            continued.reserve([1], &["another judgment"]),
+            Err(BudgetStop::Requests)
+        );
+        assert_eq!(continued, budget);
+        let mut budget = SearchBudget::default();
+        budget.reserve([0], &["first"]).unwrap();
+        let before = budget.clone();
+        assert_eq!(
+            budget.reserve_retry(&(body + "x")),
+            Err(BudgetStop::InputBytes)
+        );
+        assert_eq!(budget, before);
+        budget.record_usage(Some(MAX_REPORTED_INPUT_TOKENS + 1));
+        assert_eq!(
+            budget.reserve_retry("first"),
+            Err(BudgetStop::ReportedInputTokens)
+        );
+    }
 
     #[test]
     fn required_members_are_charged_and_shared_members_count_once() {

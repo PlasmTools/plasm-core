@@ -30,6 +30,12 @@ noAdditions.routing.search.missing_usage = 0;
 noAdditions.routing.closure = {business:[],input_sources:[],prerequisites:[],acquisitions:[],edges:[]};
 noAdditions.routing.recovery = null;
 assert.deepEqual(decodeRoutingPacket(JSON.stringify(noAdditions)), noAdditions);
+// A blocked new acquisition path cannot defer an already available declaration.
+const deferredExisting = structuredClone(noAdditions);
+deferredExisting.routing.search.deferred = [{
+  reference: deferredExisting.routing.search.exposed[0]!, reason: "input_bytes",
+}];
+assert.throws(() => decodeRoutingPacket(JSON.stringify(deferredExisting)), AgentExecutionFailure);
 const invalidEmptyInitial = structuredClone(noAdditions);
 invalidEmptyInitial.routing.search.exposed = [];
 assert.throws(() => decodeRoutingPacket(JSON.stringify(invalidEmptyInitial)), AgentExecutionFailure);
@@ -41,6 +47,20 @@ const budget = structuredClone(packet);
 budget.routing.search.unexplored = [{catalog:"matrix",capability:"other"}];
 budget.routing.search.deferred = [{reference:{catalog:"matrix",capability:"other"},reason:"input_bytes"}];
 assert.deepEqual(decodeRoutingPacket(JSON.stringify(budget)), budget);
+const retried = structuredClone(budget);
+retried.routing.search.requests = 3;
+retried.routing.search.input_bytes *= 3;
+retried.routing.search.missing_usage = 2;
+assert.deepEqual(decodeRoutingPacket(JSON.stringify(retried)), retried);
+for (const corrupt of [
+  (p: typeof retried) => { p.routing.search.requests = 4; },
+  (p: typeof retried) => { p.routing.search.input_bytes = 48001; },
+  (p: typeof retried) => { p.routing.search.input_bytes += 1; },
+  (p: typeof retried) => { p.routing.search.missing_usage = 4; },
+]) {
+  const invalid = structuredClone(retried); corrupt(invalid);
+  assert.throws(() => decodeRoutingPacket(JSON.stringify(invalid)), AgentExecutionFailure);
+}
 // A required acquisition remains exposed even if its separate contribution
 // question was deferred. Considered support for a rejected root stays unexplored.
 const support = {catalog: "matrix", capability: "acquire"};
@@ -54,7 +74,7 @@ unretainedSupport.routing.search.considered.push(support);
 unretainedSupport.routing.search.unexplored.push(support);
 assert.deepEqual(decodeRoutingPacket(JSON.stringify(unretainedSupport)), unretainedSupport);
 for (const corrupt of [
-  (p:typeof budget) => {p.routing.search.requests = 2;},
+  (p:typeof budget) => {p.routing.search.requests = 4;},
   (p:typeof budget) => {p.routing.search.input_bytes = 16001;},
   (p:typeof budget) => {p.routing.search.missing_usage = 2;},
   (p:typeof budget) => {p.routing.search.considered = [];},

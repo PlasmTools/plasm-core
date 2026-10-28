@@ -313,6 +313,9 @@ pub(super) fn plan(
         })
         .collect();
     let issued = request_packing::connected(local)?;
+    // An existing declaration may anchor an acquisition path that cannot fit.
+    // Deferring that expansion does not defer the declaration already exposed.
+    deferred.retain(|key, _| !context.exposed.contains(key));
     Ok(Plan {
         wave: proposed
             .into_iter()

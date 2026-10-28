@@ -3,6 +3,8 @@
 #[path = "online/additive_tests.rs"]
 mod additive_tests;
 mod connected;
+#[cfg(test)]
+mod retry_tests;
 use super::{
     catalogue_search::CatalogueSearch,
     search_budget::{BudgetStop, SearchBudget},
@@ -14,7 +16,7 @@ use crate::discovery_store::{DiscoveryAuthorization, RetrievalReceipt};
 use plasm_core::{prerequisites::DeploymentBindings, CGS};
 
 pub(crate) const SEARCH_POLICY: &str =
-    "additive-connected-path-bm25f-rrf60-1-request-16000-bytes-v5";
+    "additive-connected-path-bm25f-rrf60-1-judgment-3-attempts-16000-byte-packet-v6";
 
 #[derive(Clone, Copy)]
 pub struct SearchContext<'a> {
@@ -109,7 +111,7 @@ pub struct SearchProgress {
 
 impl std::fmt::Display for SearchProgress {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{} requests admitted, {} input bytes, {} judgments saved, {} pending capabilities; no requests replayed",
+        write!(f, "{} attempts admitted, {} input bytes, {} judgments saved, {} pending capabilities; spent admission retained",
             self.accounting.requests, self.accounting.input_bytes, self.judgments.len(), self.pending.len())
     }
 }
@@ -143,10 +145,11 @@ impl ReceivedResponseFailure {
 }
 
 fn reported_input_tokens(raw: &str) -> Option<u64> {
-    serde_json::from_str::<serde_json::Value>(raw)
-        .ok()?
-        .get("usage")?
-        .get("input_tokens")?
+    let value = serde_json::from_str::<serde_json::Value>(raw).ok()?;
+    let usage = value.get("usage")?;
+    usage
+        .get("input_tokens")
+        .or_else(|| usage.get("prompt_tokens"))?
         .as_u64()
 }
 
@@ -400,7 +403,8 @@ fn packet(
     Ok((issued, members))
 }
 
-/// No fixed task panels, provider retries, or execution effects. The returned
+/// No fixed task panels or execution effects. Bounded identical transport retries
+/// are charged and checkpointed before dispatch. The returned
 /// retrieval contains only judged leaves; the search receipt accounts for the rest.
 pub async fn select<F, Fut>(
     context: SearchContext<'_>,
@@ -499,46 +503,84 @@ where
         ))
         .await
         .map_err(DiscoveryMatcherError::Checkpoint)?;
-        let mut running = FuturesUnordered::new();
         for request in issued {
-            let response = decide(request.clone());
-            running.push(async move { (request, response.await) });
-        }
-        // One complete request is charged and checkpointed before dispatch.
-        while let Some((request, response)) = running.next().await {
-            let raw = match response {
-                Ok(raw) => raw,
-                Err(error) => {
-                    budget.record_usage(
-                        error
-                            .downcast_ref::<ReceivedResponseFailure>()
-                            .and_then(|failure| failure.input_tokens),
-                    );
-                    for _ in 0..running.len() {
-                        budget.record_usage(None);
+            let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(30);
+            let raw = loop {
+                let response = if tokio::time::Instant::now() >= deadline {
+                    Err(
+                        Box::new(crate::decision_transport::DecisionTransportError::DeadlineExpired)
+                            as DecisionProviderError,
+                    )
+                } else {
+                    tokio::time::timeout_at(deadline, decide(request.clone()))
+                        .await
+                        .unwrap_or_else(|_| {
+                            Err(Box::new(
+                                crate::decision_transport::DecisionTransportError::DeadlineExpired,
+                            ) as DecisionProviderError)
+                        })
+                };
+                match response {
+                    Ok(raw) => break raw,
+                    Err(error) => {
+                        budget.record_usage(
+                            error
+                                .downcast_ref::<ReceivedResponseFailure>()
+                                .and_then(|failure| failure.input_tokens),
+                        );
+                        let delay = error
+                            .downcast_ref::<crate::decision_transport::DecisionTransportError>()
+                            .and_then(|error| error.retry_delay(budget.requests()))
+                            .filter(|delay| {
+                                budget.requests() < search_budget::MAX_ATTEMPTS
+                                    && budget.reported_input_tokens()
+                                        <= search_budget::MAX_REPORTED_INPUT_TOKENS
+                                    && *delay
+                                        < deadline
+                                            .saturating_duration_since(tokio::time::Instant::now())
+                            });
+                        observe(progress(
+                            index,
+                            exposed,
+                            &budget,
+                            &judged,
+                            &routes,
+                            &deferred,
+                            pending.clone(),
+                            if delay.is_some() {
+                                ProgressState::Admitted
+                            } else {
+                                failure_state(error.as_ref())
+                            },
+                        ))
+                        .await
+                        .map_err(DiscoveryMatcherError::Checkpoint)?;
+                        let Some(delay) = delay else {
+                            return Err(DiscoveryMatcherError::Provider(error));
+                        };
+                        tokio::time::sleep(delay).await;
+                        if budget.reserve_retry(request.body()).is_err() {
+                            return Err(DiscoveryMatcherError::Provider(error));
+                        }
+                        observe(progress(
+                            index,
+                            exposed,
+                            &budget,
+                            &judged,
+                            &routes,
+                            &deferred,
+                            pending.clone(),
+                            ProgressState::Admitted,
+                        ))
+                        .await
+                        .map_err(DiscoveryMatcherError::Checkpoint)?;
                     }
-                    observe(progress(
-                        index,
-                        exposed,
-                        &budget,
-                        &judged,
-                        &routes,
-                        &deferred,
-                        pending.clone(),
-                        failure_state(error.as_ref()),
-                    ))
-                    .await
-                    .map_err(DiscoveryMatcherError::Checkpoint)?;
-                    return Err(DiscoveryMatcherError::Provider(error));
                 }
             };
             budget.record_usage(reported_input_tokens(&raw));
             let answers = match decode_batch(&request, &raw) {
                 Ok(answers) => answers,
                 Err(error) => {
-                    for _ in 0..running.len() {
-                        budget.record_usage(None);
-                    }
                     observe(progress(
                         index,
                         exposed,

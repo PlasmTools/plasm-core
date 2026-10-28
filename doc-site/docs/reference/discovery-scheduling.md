@@ -6,8 +6,8 @@ The live discovery service passes the pinned session's exposed capability set to
 the connected selector. Already exposed declarations remain available; they are
 not separate contribution questions. Ranked exposed declarations can anchor
 missing suppliers, and direct exposed suppliers remain question-local evidence
-for new consumers. Evidence still counts toward the unchanged 16,000-byte,
-one-request budget. Exposure means a declaration is available, not that its
+for new consumers. Evidence still counts toward the unchanged 16,000-byte
+packet limit and one logical judgment. Exposure means a declaration is available, not that its
 acquisition has executed or that it is currently relevant or authorized to run.
 
 Only new candidates receive contribution judgments. Required prerequisite closure
@@ -22,6 +22,18 @@ current-intent-only retrieval is a separate experiment. The scoped-classificatio
 API described below remains distinct from the live connected selector.
 
 ## Concurrent search ownership
+
+Transient provider or connectivity failures may retry the identical judgment,
+at most three attempts within 30 seconds, with exponential backoff, jitter and
+Retry-After respected within that deadline. Each attempt is reserved and
+checkpointed before dispatch: at most 48,000 admitted UTF-8 bytes. Receipts count
+all admitted attempts and missing usage; cancellation never refunds admission.
+An admission can be persisted before cancellation prevents transmission, so
+attempt records remain the evidence of actual provider traffic. Malformed
+responses, context limits, authorization and persistence failures do not retry.
+No API execution or business effect is retried by this policy. Selection,
+contracts and contribution instructions are unchanged. The v6 cache identity
+separates these receipts from the earlier single-attempt policy.
 
 Identical searches across stores or workers wait on a PostgreSQL transaction
 advisory lock before checking completion or reserving work. Ownership spans the

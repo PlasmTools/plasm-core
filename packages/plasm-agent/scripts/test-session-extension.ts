@@ -41,7 +41,7 @@ export async function checkSessionExtension(observe: (intent: string) => Promise
             }]
           },
           matching: {matches},
-          search: {policy: "additive-connected-path-bm25f-rrf60-1-request-16000-bytes-v5",
+          search: {policy: "additive-connected-path-bm25f-rrf60-1-judgment-3-attempts-16000-byte-packet-v6",
             exposed: [],
             considered: [{catalog:"matrix",capability:"read"}], unexplored: [], deferred: [],
             requests: 1, input_bytes: 1000, reported_input_tokens: 200, missing_usage: 0},

@@ -15,9 +15,15 @@ pub enum DecisionTransportError {
     ProviderRejected {
         status: reqwest::StatusCode,
         message: String,
+        retry_after: Option<Duration>,
     },
     #[error("decision response body could not be read")]
-    ResponseBody(#[source] reqwest::Error),
+    ResponseBody {
+        status: reqwest::StatusCode,
+        retry_after: Option<Duration>,
+        #[source]
+        source: reqwest::Error,
+    },
     #[error("decision transport failed")]
     Request(#[source] reqwest::Error),
     #[error("decision transport exhausted {attempts} attempts: {source}")]
@@ -30,6 +36,44 @@ pub enum DecisionTransportError {
     DeadlineExpired,
     #[error(transparent)]
     Record(#[from] DecisionRecordError),
+}
+
+impl DecisionTransportError {
+    /// Retry only transport/provider failures, never decoding or persistence.
+    /// The caller still owns attempt admission and the overall deadline.
+    pub(crate) fn retry_delay(&self, attempt: usize) -> Option<Duration> {
+        let after = match self {
+            Self::ProviderRejected {
+                status,
+                retry_after,
+                ..
+            } if transient(status.as_u16()) => *retry_after,
+            Self::Request(error) if request_retryable(error) => None,
+            Self::ResponseBody {
+                status,
+                retry_after,
+                ..
+            } if body_retryable(*status) => *retry_after,
+            _ => return None,
+        };
+        Some(retry_wait(attempt, Duration::from_millis(500), after))
+    }
+}
+
+fn request_retryable(error: &reqwest::Error) -> bool {
+    error.is_timeout() || error.is_connect() || error.is_body() || error.is_request()
+}
+
+fn body_retryable(status: reqwest::StatusCode) -> bool {
+    status.is_success() || transient(status.as_u16())
+}
+
+fn retry_wait(attempt: usize, backoff: Duration, after: Option<Duration>) -> Duration {
+    let entropy = uuid::Uuid::new_v4().as_u128() as u64;
+    let backoff = backoff.saturating_mul(1u32 << attempt.saturating_sub(1).min(10));
+    after
+        .unwrap_or_default()
+        .max(backoff + Duration::from_millis(entropy % 251))
 }
 
 #[derive(Debug, Error)]
@@ -220,6 +264,7 @@ pub(crate) async fn request_decision(
                                 DecisionTransportError::ProviderRejected {
                                     status,
                                     message: provider_message(&raw),
+                                    retry_after: delay,
                                 },
                             )
                         }
@@ -229,10 +274,14 @@ pub(crate) async fn request_decision(
                                 error: error.to_string(),
                             })?;
                             (
-                                transient(status.as_u16()) || status.is_success(),
+                                body_retryable(status),
                                 delay,
                                 error.to_string(),
-                                DecisionTransportError::ResponseBody(error),
+                                DecisionTransportError::ResponseBody {
+                                    status,
+                                    retry_after: delay,
+                                    source: error,
+                                },
                             )
                         }
                     }
@@ -243,7 +292,7 @@ pub(crate) async fn request_decision(
                         error: error.to_string(),
                     })?;
                     (
-                        error.is_timeout() || error.is_connect() || error.is_body(),
+                        request_retryable(&error),
                         None,
                         error.to_string(),
                         DecisionTransportError::Request(error),
@@ -261,10 +310,7 @@ pub(crate) async fn request_decision(
                 });
             }
             // Jitter each operation independently; Retry-After remains a lower bound.
-            let entropy = uuid::Uuid::new_v4().as_u128() as u64;
-            let backoff = policy.backoff.saturating_mul(1u32 << (attempt - 1).min(10));
-            let jitter = Duration::from_millis(entropy % 251);
-            let wait = delay.unwrap_or_default().max(backoff + jitter);
+            let wait = retry_wait(attempt, policy.backoff, delay);
             tracing::warn!(
                 attempt,
                 wait_ms = wait.as_millis(),
@@ -409,6 +455,70 @@ mod tests {
             assert_eq!(result.unwrap(), "judgment", "HTTP {status}");
             assert_eq!(requests, vec!["exact request"; 2], "HTTP {status}");
             assert_eq!(attempts.len(), 2, "HTTP {status}");
+        }
+    }
+
+    #[tokio::test]
+    async fn truncated_bodies_preserve_authorization_and_retry_after() {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        for status in [401, 403, 429, 503, 200] {
+            let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+            let endpoint = format!("http://{}/", listener.local_addr().unwrap());
+            let server = tokio::spawn(async move {
+                let (mut stream, _) = listener.accept().await.unwrap();
+                let mut request = [0; 4096];
+                stream.read(&mut request).await.unwrap();
+                stream.write_all(format!("HTTP/1.1 {status} Response\r\nContent-Length: 100\r\nRetry-After: 31\r\nConnection: close\r\n\r\nshort").as_bytes()).await.unwrap();
+                stream.shutdown().await.unwrap();
+            });
+            let error = request_decision(
+                &reqwest::Client::new(),
+                &endpoint,
+                "abstract",
+                "{}",
+                DecisionRetryPolicy {
+                    attempts: 1,
+                    ..Default::default()
+                },
+                |_| Ok(()),
+            )
+            .await
+            .unwrap_err();
+            server.await.unwrap();
+            assert!(matches!(error, DecisionTransportError::ResponseBody { .. }));
+            if matches!(status, 401 | 403) {
+                assert!(error.retry_delay(1).is_none());
+            } else {
+                assert!(error.retry_delay(1).unwrap() >= Duration::from_secs(31));
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn transient_outage_recovery_respects_explicit_attempt_policy() {
+        for status in [429, 502, 503, 504] {
+            let single = DecisionRetryPolicy {
+                attempts: 1,
+                backoff: Duration::ZERO,
+                ..Default::default()
+            };
+            let (result, requests, records) = exercise(vec![status, 200], single).await;
+            assert!(matches!(
+                result,
+                Err(DecisionTransportError::ProviderRejected { .. })
+            ));
+            assert_eq!(requests.len(), 1);
+            assert_eq!(records.len(), 1);
+
+            let bounded = DecisionRetryPolicy {
+                attempts: 3,
+                deadline: Duration::from_secs(30),
+                ..single
+            };
+            let (result, requests, records) = exercise(vec![status, 200], bounded).await;
+            assert_eq!(result.unwrap(), "judgment");
+            assert_eq!(requests, vec!["exact request"; 2]);
+            assert_eq!(records.len(), 2);
         }
     }
 

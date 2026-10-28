@@ -10,6 +10,53 @@ fn reference(name: &str) -> CapabilityRef {
     }
 }
 
+#[tokio::test]
+async fn oversized_acquisition_paths_never_defer_existing_declarations() {
+    let names: Vec<_> = fixture()["matrix"].capabilities.keys().cloned().collect();
+    for oversized in &names {
+        let mut catalogs = fixture();
+        catalogs
+            .get_mut("matrix")
+            .unwrap()
+            .capabilities
+            .get_mut(oversized)
+            .unwrap()
+            .description
+            .push_str(&" extensive authored contract evidence".repeat(1000));
+        for existing in &names {
+            let exposed = [reference(existing.as_str())];
+            let (_, _, receipt) = select(
+                SearchContext {
+                    model: RELEVANCE_MODEL,
+                    intent: &IntentProvenance::from_turns(["Produce spectrum".into()]).unwrap(),
+                    generation: "oversized-existing-path",
+                    catalogs: &catalogs,
+                    deployments: &Default::default(),
+                    allowed: &DiscoveryAuthorization::catalogs(BTreeSet::from(["matrix".into()])),
+                    exposed: &exposed,
+                },
+                |request| async move { Ok(answer(&request, "uncertain")) },
+            )
+            .await
+            .unwrap();
+            assert!(
+                receipt
+                    .deferred
+                    .iter()
+                    .all(|item| !exposed.contains(&item.reference)),
+                "existing={existing}, oversized={oversized}: {:?}",
+                receipt.deferred
+            );
+            assert!(receipt.input_bytes <= search_budget::MAX_INPUT_BYTES);
+            assert!(receipt.requests <= 1);
+            assert!(exposed.iter().all(|key| receipt.exposed.contains(key)));
+            if existing != oversized {
+                assert!(receipt.unexplored.contains(&reference(oversized)));
+            }
+        }
+    }
+}
+
 #[test]
 fn exposed_intermediate_preserves_the_unseen_creator_path() {
     let catalogs = fixture();
