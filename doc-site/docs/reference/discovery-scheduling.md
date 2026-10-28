@@ -21,6 +21,19 @@ This change leaves original/current ranking and the contribution rubric unchange
 current-intent-only retrieval is a separate experiment. The scoped-classification
 API described below remains distinct from the live connected selector.
 
+## Concurrent search ownership
+
+Identical searches across stores or workers wait on a PostgreSQL transaction
+advisory lock before checking completion or reserving work. Ownership spans the
+completed receipt publication. A follower then reuses that receipt rather than
+treating a live owner's durable reservation as interrupted work.
+
+The lock represents liveness; durable reservation and progress records represent
+spent work. Owner failure or cancellation releases the lock without deleting
+those records or authorizing another provider attempt. Cancelling a waiter does
+not cancel the owner. At most half of each store's database connections may be
+held by search ownership, leaving capacity for checkpoints and completion.
+
 ## Scoped classification API
 
 The scoped-classification API accepts bounded retrieval receipts. Authorization

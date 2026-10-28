@@ -235,24 +235,42 @@ impl DiscoveryService {
             return Err(DiscoveryServiceError::ExposedCapabilityUnauthorized);
         }
         let key = search_key(generation, provenance, allowed, &self.match_model, exposed)?;
-        let _same_search = self.store.pending_decisions.claim(&key).await;
-        if let Some(saved) = self.store.cached_selector_envelope(&key).await? {
-            let receipt: RoutingReceipt = serde_json::from_str(&saved)?;
-            if exposed
-                .iter()
-                .any(|reference| !receipt.search.exposed.contains(reference))
-            {
-                return Err(DiscoveryServiceError::ExposedCapabilityMissing);
-            }
-            return Ok(receipt);
-        }
-        let receipt = self
-            .route_uncached(generation, provenance, allowed, exposed)
-            .await?;
+        self.route_cached(&key, exposed, || {
+            self.route_uncached(generation, provenance, allowed, exposed)
+        })
+        .await
+    }
+
+    async fn route_cached<F, Fut>(
+        &self,
+        key: &str,
+        exposed: &[CapabilityRef],
+        work: F,
+    ) -> Result<RoutingReceipt>
+    where
+        F: FnOnce() -> Fut,
+        Fut: std::future::Future<Output = Result<RoutingReceipt>>,
+    {
+        let _same_search = self.store.pending_decisions.claim(key).await;
         self.store
-            .store_selector_envelope(&key, &serde_json::to_string(&receipt)?)
-            .await?;
-        Ok(receipt)
+            .with_selector_search(key, || async {
+                if let Some(saved) = self.store.cached_selector_envelope(key).await? {
+                    let receipt: RoutingReceipt = serde_json::from_str(&saved)?;
+                    if exposed
+                        .iter()
+                        .any(|reference| !receipt.search.exposed.contains(reference))
+                    {
+                        return Err(DiscoveryServiceError::ExposedCapabilityMissing);
+                    }
+                    return Ok(receipt);
+                }
+                let receipt = work().await?;
+                self.store
+                    .store_selector_envelope(key, &serde_json::to_string(&receipt)?)
+                    .await?;
+                Ok(receipt)
+            })
+            .await?
     }
 
     async fn route_uncached(
@@ -473,6 +491,9 @@ fn validate_closure_authorization(
     }
     Ok(())
 }
+
+#[cfg(test)]
+mod concurrency_tests;
 
 #[cfg(test)]
 mod tests {

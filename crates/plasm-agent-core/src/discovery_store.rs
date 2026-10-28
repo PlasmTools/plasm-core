@@ -215,7 +215,14 @@ pub struct DiscoveryStore {
     pool: DiscoveryDatabase,
     // Store clones (including short-lived Node route services) share cache fills.
     pub(crate) pending_decisions: std::sync::Arc<crate::discovery_scheduling::DecisionLocks>,
-    pub(crate) search_index: Arc<std::sync::Mutex<Option<(String, Arc<crate::discovery_matcher::catalogue_search::CatalogueSearch>)>>>,
+    pub(crate) search_index: Arc<
+        std::sync::Mutex<
+            Option<(
+                String,
+                Arc<crate::discovery_matcher::catalogue_search::CatalogueSearch>,
+            )>,
+        >,
+    >,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -663,6 +670,14 @@ impl DiscoveryStore {
             .map_err(DiscoveryStoreError::from)
     }
 
+    pub(crate) async fn with_selector_search<F, Fut, T>(&self, key: &str, work: F) -> Result<T>
+    where
+        F: FnOnce() -> Fut,
+        Fut: std::future::Future<Output = T>,
+    {
+        self.pool.with_search_lock(key, work).await
+    }
+
     pub async fn store_selector_envelope(&self, cache_key: &str, envelope: &str) -> Result<()> {
         sqlx::query(
             "INSERT INTO discovery_selector_cache (cache_key, envelope) VALUES ($1,$2) ON CONFLICT (cache_key) DO NOTHING",
@@ -1031,7 +1046,10 @@ mod tests {
             .await
             .unwrap();
         let evidence = crate::discovery_matcher::evidence::CatalogEvidence::from_catalogs(
-            &retrieval, &catalogs, &Default::default(), &|r| allowed.permits(r),
+            &retrieval,
+            &catalogs,
+            &Default::default(),
+            &|r| allowed.permits(r),
         )
         .unwrap();
         let batches = crate::discovery_matcher::issue_batches(

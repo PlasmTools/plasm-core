@@ -1,7 +1,9 @@
 //! Admission belongs outside SQLx's timed pool queue. Every database operation
 //! owns a permit until its connection (including rollback) is back in the pool.
 
-use sqlx::{pool::PoolConnection, postgres::PgPoolOptions, PgConnection, PgPool, Postgres};
+use sqlx::{
+    pool::PoolConnection, postgres::PgPoolOptions, Connection, PgConnection, PgPool, Postgres,
+};
 use std::{
     ops::{Deref, DerefMut},
     sync::Arc,
@@ -12,6 +14,7 @@ use tokio::sync::{OwnedSemaphorePermit, Semaphore};
 pub(super) struct DiscoveryDatabase {
     pool: PgPool,
     admission: Arc<Semaphore>,
+    search_admission: Arc<Semaphore>,
 }
 
 impl DiscoveryDatabase {
@@ -25,7 +28,37 @@ impl DiscoveryDatabase {
         Ok(Self {
             pool,
             admission: Arc::new(Semaphore::new(capacity)),
+            // Search owners must leave connections for checkpoints and completion.
+            search_admission: Arc::new(Semaphore::new(capacity / 2)),
         })
+    }
+
+    pub(super) async fn with_search_lock<F, Fut, T>(
+        &self,
+        key: &str,
+        work: F,
+    ) -> Result<T, super::DiscoveryStoreError>
+    where
+        F: FnOnce() -> Fut,
+        Fut: std::future::Future<Output = T>,
+    {
+        let _slot = self
+            .search_admission
+            .clone()
+            .acquire_owned()
+            .await
+            .map_err(super::DiscoveryStoreError::Admission)?;
+        let mut connection = self.acquire().await?;
+        let mut transaction = connection.begin().await?;
+        // The transaction owns liveness; durable started/progress rows own spent
+        // work. Cancellation rolls this lock back without erasing those rows.
+        sqlx::query("SELECT pg_advisory_xact_lock(hashtextextended($1, 80453271))")
+            .bind(key)
+            .execute(&mut *transaction)
+            .await?;
+        let result = work().await;
+        transaction.rollback().await?;
+        Ok(result)
     }
 
     pub(super) async fn acquire(&self) -> Result<DiscoveryConnection, super::DiscoveryStoreError> {
@@ -87,6 +120,7 @@ mod tests {
                 .connect_lazy("postgresql://localhost/discovery_test")
                 .unwrap(),
             admission: Arc::new(Semaphore::new(1)),
+            search_admission: Arc::new(Semaphore::new(0)),
         };
         db.admission.close();
         let error = match db.acquire().await {
