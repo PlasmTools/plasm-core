@@ -17,8 +17,43 @@ completed workflow. Canonical exposure membership participates in selector cache
 identity, so a larger surface cannot reuse an earlier selection delta. Catalogue
 and authorization validation still precede cache admission.
 
-This change leaves original/current ranking and the contribution rubric unchanged;
-current-intent-only retrieval is a separate experiment. The scoped-classification
+Within each session, completed judgments advance a durable exploration frontier.
+Matching candidates with fewer completed judgments take priority; their existing
+direct consumers of exposed producers take priority within that round, followed
+by current-need lexical order. Only existing typed supplier and creation edges
+nominate consumers; no transitive expansion or automatic exposure occurs. The
+same two initial root slots and packet budget apply. This is allocation priority, not a
+negative relevance cache: previous rejections can be reconsidered, never remove
+declarations and never grant execution permission. Session, catalogue generation,
+authorization and model scope the frontier. Duplicate completions advance it once.
+
+Connected packets factor exact repeated ancestry text into an ordered reference
+table. The current discovery request is the judgment outcome. Reconstructing the
+references preserves every byte of every turn, including constraints, conditions
+and revisions; no intent is summarized or discarded to fit the budget.
+
+Root retrieval uses the current discovery need, without rank fusion against the
+original outcome. All prior requests, constraints and ancestry still reach judgment.
+Authored fields use the existing catalogue lexical normalization, preserving short
+domain terms. Identical input annotations count once in retrieval, regardless of
+how many slots reuse them; every slot remains in the complete contract. Parent
+GETs index their authored embedded-relation descriptions;
+operations sharing the entity do not inherit those observations. These changes
+do not rewrite complete contracts or infer bindings from names.
+
+Discovery's lexical key also normalizes terminal `e` after suffix removal so
+authored `calibrate` and requested `calibrating` match. This local retrieval rule
+does not alter language correction, catalogue identities or typed bindings.
+Operation descriptions and declared effects both remain searchable: a generic
+effect description must not erase the operation's more specific authored purpose.
+
+An optional route's budget or acquisition-cycle failure does not reject its
+capability as an independently ranked root. Direct admission is measured
+separately with full target evidence and required closure. Unranked direct
+consumers may be nominated by an exposed producer; other unranked neighbours
+are not promoted to roots. An admitted direct root clears its earlier deferral.
+
+The contribution rubric is unchanged. The scoped-classification
 API described below remains distinct from the live connected selector.
 
 ## Concurrent search ownership
@@ -32,8 +67,8 @@ An admission can be persisted before cancellation prevents transmission, so
 attempt records remain the evidence of actual provider traffic. Malformed
 responses, context limits, authorization and persistence failures do not retry.
 No API execution or business effect is retried by this policy. Selection,
-contracts and contribution instructions are unchanged. The v6 cache identity
-separates these receipts from the earlier single-attempt policy.
+contracts and contribution instructions are unchanged. The v12 cache identity
+separates current-request judgments from the earlier original-outcome projection.
 
 Identical searches across stores or workers wait on a PostgreSQL transaction
 advisory lock before checking completion or reserving work. Ownership spans the

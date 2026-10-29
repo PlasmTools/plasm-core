@@ -5,7 +5,155 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::collections::BTreeMap;
 
+mod connected_size;
+pub(super) use connected_size::{connected_size, PreparedLocal};
+
 const MAX_QUESTIONS: usize = 4;
+
+#[derive(Serialize)]
+#[serde(rename_all = "snake_case")]
+enum ContextSource {
+    Outcome,
+    DiscoveryNeed,
+}
+
+#[derive(Serialize)]
+#[serde(untagged)]
+enum Fragment {
+    Statement(usize),
+    Source(ContextSource),
+}
+
+#[derive(Serialize)]
+struct IntentHistory {
+    statements: Vec<String>,
+    turns: Vec<Vec<Fragment>>,
+}
+
+/// Exact text factoring, not summarization: concatenating a turn's references
+/// reconstructs every byte, including negations, conditions and revision order.
+fn compact_history(context: &Context) -> IntentHistory {
+    let mut ids = BTreeMap::<String, usize>::new();
+    let mut statements = Vec::new();
+    let turns = context
+        .intent_turns
+        .iter()
+        .map(|turn| {
+            if turn == &context.outcome {
+                return vec![Fragment::Source(ContextSource::Outcome)];
+            }
+            if turn == &context.discovery_need {
+                return vec![Fragment::Source(ContextSource::DiscoveryNeed)];
+            }
+            turn.split_inclusive(['.', ';', '\n'])
+                .map(|text| {
+                    let next = statements.len();
+                    let id = *ids.entry(text.to_owned()).or_insert_with(|| {
+                        statements.push(text.to_owned());
+                        next
+                    });
+                    Fragment::Statement(id)
+                })
+                .collect()
+        })
+        .collect();
+    IntentHistory { statements, turns }
+}
+
+#[cfg(test)]
+mod ancestry_tests {
+    use super::*;
+
+    fn roundtrip(context: &Context) {
+        let history = compact_history(context);
+        let restored: Vec<String> = history
+            .turns
+            .iter()
+            .map(|turn| {
+                turn.iter()
+                    .map(|fragment| match fragment {
+                        Fragment::Statement(id) => history.statements[*id].as_str(),
+                        Fragment::Source(ContextSource::Outcome) => context.outcome.as_str(),
+                        Fragment::Source(ContextSource::DiscoveryNeed) => {
+                            context.discovery_need.as_str()
+                        }
+                    })
+                    .collect()
+            })
+            .collect();
+        assert_eq!(restored, context.intent_turns);
+    }
+
+    #[test]
+    fn history_roundtrip_retains_revisions_constraints_and_conditional_branches() {
+        let outcome = "Inspect specimens. Do not modify originals.".to_owned();
+        let need = "Cancel processing; report inspection results only.".to_owned();
+        let context = Context {
+            outcome: outcome.clone(),
+            discovery_need: need.clone(),
+            rule: "unchanged".into(),
+            intent_turns: vec![
+                outcome.clone(),
+                outcome,
+                "If inspection fails, calibrate; otherwise do not calibrate.\nLimit: 2.5 units."
+                    .into(),
+                "Never contact external services. ".into(),
+                need.clone(),
+                "Allow processing.".into(),
+                need,
+            ],
+        };
+        roundtrip(&context);
+        assert_eq!(
+            serde_json::to_string(&compact_history(&context)).unwrap(),
+            serde_json::to_string(&compact_history(&context)).unwrap()
+        );
+    }
+
+    #[test]
+    fn current_target_retains_prior_constraints_and_branches_in_order() {
+        for need in [
+            "Inspect available inputs.",
+            "The inspection is complete. Read ambient temperature instead.",
+            "Readiness is unknown.",
+        ] {
+            let context = Context {
+                outcome: need.into(),
+                discovery_need: need.into(),
+                rule: "unchanged".into(),
+                intent_turns: vec![
+                    "Inspect specimens. Preserve originals. If inspection fails, report missing inputs.".into(),
+                    need.into(),
+                ],
+            };
+            roundtrip(&context);
+            let packed = connected_context(&context).unwrap();
+            assert_eq!(packed["outcome"], need);
+            assert_eq!(packed["rule"], "unchanged");
+            assert_eq!(
+                packed["intent_history"]["turns"][1],
+                serde_json::json!(["outcome"])
+            );
+            assert!(!packed["intent_history"]["statements"]
+                .as_array()
+                .unwrap()
+                .is_empty());
+        }
+    }
+
+    #[test]
+    fn shared_statements_reduce_bytes_without_discarding_unique_text() {
+        let context = Context {outcome:"Inspect".into(), discovery_need:"Report".into(), rule:"unchanged".into(),
+            intent_turns:(0..32).map(|n| format!("Revision {n}.{}", " Preserve originals; use local observations only. If verification fails, retain the pending obligation.".repeat(8))).collect()};
+        roundtrip(&context);
+        assert!(
+            serde_json::to_vec(&compact_history(&context))
+                .unwrap()
+                .len()
+                < serde_json::to_vec(&context.intent_turns).unwrap().len() / 2
+        );
+    }
+}
 
 #[derive(Clone, Deserialize, Serialize, PartialEq)]
 struct Context {
@@ -176,29 +324,10 @@ fn connected_body(group: &[LocalRequest]) -> Result<String, DiscoveryMatcherErro
             if evidence.insert(key.clone(), local).is_some() {
                 return Err(DiscoveryMatcherError::DuplicateIssuedQuestion);
             }
-            let mut question = question.clone();
-            question.instructions = question
-                .instructions
-                .replace(
-                    "`capabilities.",
-                    &format!("`question_evidence.{key}.capabilities."),
-                )
-                .replace(
-                    "`capabilities`",
-                    &format!("`question_evidence.{key}.capabilities`"),
-                );
-            questions.insert(key.clone(), question);
+            questions.insert(key.clone(), connected_question(key, question.clone()));
         }
     }
-    let mut state =
-        serde_json::to_value(&group[0].state.context).map_err(DiscoveryMatcherError::Packing)?;
-    let state = state.as_object_mut().expect("context serializes as object");
-    if group[0].state.context.outcome == group[0].state.context.discovery_need
-        && group[0].state.context.intent_turns == [group[0].state.context.outcome.clone()]
-    {
-        state.remove("discovery_need");
-        state.remove("intent_turns");
-    }
+    let mut state = connected_context(&group[0].state.context)?;
     state.insert(
         "definitions".into(),
         serde_json::to_value(definitions).map_err(DiscoveryMatcherError::Packing)?,
@@ -217,11 +346,61 @@ fn connected_body(group: &[LocalRequest]) -> Result<String, DiscoveryMatcherErro
     .map_err(DiscoveryMatcherError::Packing)
 }
 
+fn connected_question(key: &str, mut question: Question) -> Question {
+    question.instructions = question
+        .instructions
+        .replace(
+            "`capabilities.",
+            &format!("`question_evidence.{key}.capabilities."),
+        )
+        .replace(
+            "`capabilities`",
+            &format!("`question_evidence.{key}.capabilities`"),
+        );
+    question
+}
+
+fn connected_context(
+    context: &Context,
+) -> Result<serde_json::Map<String, Value>, DiscoveryMatcherError> {
+    let Value::Object(mut state) =
+        serde_json::to_value(context).map_err(DiscoveryMatcherError::Packing)?
+    else {
+        unreachable!("context serializes as object")
+    };
+    state.remove("intent_turns");
+    if context.intent_turns != [context.outcome.clone()] {
+        state.insert(
+            "intent_history".into(),
+            serde_json::to_value(compact_history(context))
+                .map_err(DiscoveryMatcherError::Packing)?,
+        );
+    }
+    if context.outcome == context.discovery_need
+        && context.intent_turns == [context.outcome.clone()]
+    {
+        state.remove("discovery_need");
+    }
+    Ok(state)
+}
+
 /// Admission checks the complete serialized body. Never split a connected set
 /// into additional provider requests or discard a definition to fit a budget.
 pub(super) fn connected(
     batches: Vec<IssuedBatch>,
 ) -> Result<Option<IssuedBatch>, DiscoveryMatcherError> {
+    let Some(body) = connected_request_body(&batches)? else {
+        return Ok(None);
+    };
+    let mut merged = finish(batches, Some(body));
+    merged.cache_key =
+        content_hash(format!("decisions-connected-references-v13\n{}", merged.body).as_bytes());
+    Ok(Some(merged))
+}
+
+fn connected_request_body(
+    batches: &[IssuedBatch],
+) -> Result<Option<String>, DiscoveryMatcherError> {
     if batches.is_empty() {
         return Ok(None);
     }
@@ -234,11 +413,7 @@ pub(super) fn connected(
     }) {
         return Err(DiscoveryMatcherError::InvalidConnectedContext);
     }
-    let body = connected_body(&requests)?;
-    let mut merged = finish(batches, Some(body));
-    merged.cache_key =
-        content_hash(format!("decisions-connected-references-v12\n{}", merged.body).as_bytes());
-    Ok(Some(merged))
+    connected_body(&requests).map(Some)
 }
 
 fn finish(group: Vec<IssuedBatch>, body: Option<String>) -> IssuedBatch {

@@ -392,6 +392,10 @@ fn issue_projected_batch(
     issue_scope(model, intent, question, _evidence, ids, scope, true)
 }
 
+fn local_question_instructions(id: &str) -> String {
+    format!("Using the shared intent and rule, classify the contribution of `capabilities.{id}`. Other entries in `capabilities` are available composition evidence, not an execution plan.")
+}
+
 fn issue_scope(
     model: &str,
     intent: &IntentProvenance,
@@ -410,7 +414,7 @@ fn issue_scope(
         rule: RUBRIC,
         capabilities: scope.cards,
         discovery_need: intent.current(),
-        outcome: intent.original(),
+        outcome: intent.current(),
         types: scope.types,
         type_refs: scope.references,
         bindings: scope.bindings,
@@ -418,12 +422,16 @@ fn issue_scope(
     let body = RelevanceCodec::encode(&decisions::Request {
         model,
         state: &state,
-        questions: BTreeMap::from([(key.clone(), decisions::Question {
-            kind: "choice",
-            instructions: format!("Using the shared intent and rule, classify the contribution of `capabilities.{id}`. Other entries in `capabilities` are available composition evidence, not an execution plan."),
-            criteria: CRITERIA.into_iter().collect(),
-        })]),
-    }).map_err(DiscoveryMatcherError::Encode)?;
+        questions: BTreeMap::from([(
+            key.clone(),
+            decisions::Question {
+                kind: "choice",
+                instructions: local_question_instructions(id),
+                criteria: CRITERIA.into_iter().collect(),
+            },
+        )]),
+    })
+    .map_err(DiscoveryMatcherError::Encode)?;
     if admit_local
         && (scope.count > witnesses::MAX_CAPABILITIES || body.len() > witnesses::MAX_BYTES)
     {
@@ -1125,7 +1133,7 @@ mod tests {
             let content = question_content(&batches[0]);
             prop_assert_eq!(&content["context"]["intent_turns"], &json!(turns));
             prop_assert_eq!(&content["context"]["discovery_need"], &json!(provenance.current()));
-            prop_assert_eq!(&content["context"]["outcome"], &json!(turns.first().unwrap()));
+            prop_assert_eq!(&content["context"]["outcome"], &json!(provenance.current()));
         }
     }
 
@@ -1321,7 +1329,7 @@ mod tests {
         assert_eq!(seen.lock().unwrap()[0], expected_body);
         for body in seen.lock().unwrap().iter() {
             let request: serde_json::Value = serde_json::from_str(body).unwrap();
-            assert_eq!(request["state"]["outcome"], intent.original());
+            assert_eq!(request["state"]["outcome"], intent.current());
             assert_eq!(request["state"]["discovery_need"], intent.current());
             assert_eq!(
                 request["state"]["intent_turns"],

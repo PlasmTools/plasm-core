@@ -16,6 +16,61 @@ pub use crate::discovery_recovery::{CatalogAppDescription, DiscoveryRecovery, RE
 
 type Result<T> = std::result::Result<T, DiscoveryServiceError>;
 
+/// Completed searches advance priority once. No negative relevance decisions
+/// are applied to exposure or carried forward as permissions.
+#[derive(Default, Serialize, Deserialize)]
+struct SearchFrontier {
+    completed: std::collections::BTreeMap<String, std::collections::BTreeSet<CapabilityRef>>,
+}
+
+impl SearchFrontier {
+    fn visits(&self) -> std::collections::BTreeMap<CapabilityRef, usize> {
+        let mut visits = std::collections::BTreeMap::new();
+        for references in self.completed.values() {
+            for reference in references {
+                *visits.entry(reference.clone()).or_default() += 1;
+            }
+        }
+        visits
+    }
+
+    fn record(&mut self, key: &str, receipt: &RoutingReceipt) {
+        self.completed.entry(key.to_owned()).or_insert_with(|| {
+            receipt
+                .retrieval
+                .candidates
+                .iter()
+                .filter(|candidate| {
+                    receipt
+                        .matching
+                        .matches
+                        .iter()
+                        .any(|m| m.capability_id == candidate.id)
+                })
+                .map(|candidate| candidate.reference.clone())
+                .collect()
+        });
+    }
+}
+
+fn frontier_key(
+    pin: &str,
+    generation: &str,
+    allowed: &DiscoveryAuthorization,
+    model: &str,
+) -> Result<String> {
+    Ok(plasm_core::catalog_discovery::content_hash(
+        &serde_json::to_vec(&(
+            "session-frontier",
+            matcher::online::SEARCH_POLICY,
+            pin,
+            generation,
+            allowed,
+            model,
+        ))?,
+    ))
+}
+
 fn search_key(
     generation: &str,
     provenance: &crate::intent_provenance::IntentProvenance,
@@ -203,13 +258,33 @@ impl DiscoveryService {
                 .await?;
             request.new_generation.to_owned()
         };
+        let frontier_key = frontier_key(&pin_id, &generation, request.allowed, &self.match_model)?;
+        let search = search_key(
+            &generation,
+            request.intent_provenance,
+            request.allowed,
+            &self.match_model,
+            request.exposed,
+        )?;
+        let key = plasm_core::catalog_discovery::content_hash(
+            format!("{frontier_key}:{search}").as_bytes(),
+        );
         let mut receipt = self
-            .route(
-                &generation,
-                request.intent_provenance,
-                request.allowed,
-                request.exposed,
-            )
+            .route_frontier(&frontier_key, &key, request.exposed, |visits| {
+                let key = &key;
+                let generation = &generation;
+                async move {
+                    self.route_uncached(
+                        key,
+                        generation,
+                        request.intent_provenance,
+                        request.allowed,
+                        request.exposed,
+                        &visits,
+                    )
+                    .await
+                }
+            })
             .await?;
         receipt.pin_id = pin_id;
         self.store
@@ -235,10 +310,50 @@ impl DiscoveryService {
             return Err(DiscoveryServiceError::ExposedCapabilityUnauthorized);
         }
         let key = search_key(generation, provenance, allowed, &self.match_model, exposed)?;
-        self.route_cached(&key, exposed, || {
-            self.route_uncached(generation, provenance, allowed, exposed)
+        self.route_cached(&key, exposed, || async {
+            self.route_uncached(
+                &key,
+                generation,
+                provenance,
+                allowed,
+                exposed,
+                &Default::default(),
+            )
+            .await
         })
         .await
+    }
+
+    async fn route_frontier<F, Fut>(
+        &self,
+        frontier_key: &str,
+        key: &str,
+        exposed: &[CapabilityRef],
+        work: F,
+    ) -> Result<RoutingReceipt>
+    where
+        F: FnOnce(std::collections::BTreeMap<CapabilityRef, usize>) -> Fut,
+        Fut: std::future::Future<Output = Result<RoutingReceipt>>,
+    {
+        // One session owner, not nested database leases. A duplicate completion
+        // can repair a failed frontier write without repeating provider work.
+        let _same_session = self.store.pending_decisions.claim(frontier_key).await;
+        self.store
+            .with_selector_search(frontier_key, || async {
+                let mut frontier: SearchFrontier =
+                    match self.store.cached_selector_envelope(frontier_key).await? {
+                        Some(saved) => serde_json::from_str(&saved)?,
+                        None => SearchFrontier::default(),
+                    };
+                let visits = frontier.visits();
+                let receipt = self.route_owned(key, exposed, || work(visits)).await?;
+                frontier.record(key, &receipt);
+                self.store
+                    .store_search_progress(frontier_key, &serde_json::to_string(&frontier)?)
+                    .await?;
+                Ok(receipt)
+            })
+            .await?
     }
 
     async fn route_cached<F, Fut>(
@@ -253,32 +368,46 @@ impl DiscoveryService {
     {
         let _same_search = self.store.pending_decisions.claim(key).await;
         self.store
-            .with_selector_search(key, || async {
-                if let Some(saved) = self.store.cached_selector_envelope(key).await? {
-                    let receipt: RoutingReceipt = serde_json::from_str(&saved)?;
-                    if exposed
-                        .iter()
-                        .any(|reference| !receipt.search.exposed.contains(reference))
-                    {
-                        return Err(DiscoveryServiceError::ExposedCapabilityMissing);
-                    }
-                    return Ok(receipt);
-                }
-                let receipt = work().await?;
-                self.store
-                    .store_selector_envelope(key, &serde_json::to_string(&receipt)?)
-                    .await?;
-                Ok(receipt)
-            })
+            .with_selector_search(key, || async { self.route_owned(key, exposed, work).await })
             .await?
+    }
+
+    /// Caller holds the corresponding search or session ownership lease.
+    async fn route_owned<F, Fut>(
+        &self,
+        key: &str,
+        exposed: &[CapabilityRef],
+        work: F,
+    ) -> Result<RoutingReceipt>
+    where
+        F: FnOnce() -> Fut,
+        Fut: std::future::Future<Output = Result<RoutingReceipt>>,
+    {
+        if let Some(saved) = self.store.cached_selector_envelope(key).await? {
+            let receipt: RoutingReceipt = serde_json::from_str(&saved)?;
+            if exposed
+                .iter()
+                .any(|reference| !receipt.search.exposed.contains(reference))
+            {
+                return Err(DiscoveryServiceError::ExposedCapabilityMissing);
+            }
+            return Ok(receipt);
+        }
+        let receipt = work().await?;
+        self.store
+            .store_selector_envelope(key, &serde_json::to_string(&receipt)?)
+            .await?;
+        Ok(receipt)
     }
 
     async fn route_uncached(
         &self,
+        key: &str,
         generation: &str,
         provenance: &crate::intent_provenance::IntentProvenance,
         allowed: &DiscoveryAuthorization,
         exposed: &[CapabilityRef],
+        visits: &std::collections::BTreeMap<CapabilityRef, usize>,
     ) -> Result<RoutingReceipt> {
         if !exposed.iter().all(|r| allowed.permits(r)) {
             return Err(DiscoveryServiceError::ExposedCapabilityUnauthorized);
@@ -320,7 +449,6 @@ impl DiscoveryService {
                 index
             }
         };
-        let key = search_key(generation, provenance, allowed, &self.match_model, exposed)?;
         // Validate the pinned catalogue and authorization before durable admission.
         // Once admitted, interruption must not silently repeat provider work.
         if !self
@@ -343,6 +471,7 @@ impl DiscoveryService {
         let mut attempt = 0;
         let (retrieval, matching, search) = matcher::online::select_indexed(
             matcher::online::SearchContext {
+                visits,
                 model: &self.match_model,
                 intent: provenance,
                 generation,

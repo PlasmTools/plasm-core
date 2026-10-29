@@ -13,6 +13,7 @@ use plasm_core::{
     },
     schema::{
         CapabilityKind, CapabilitySchema, InputFieldSchema, InputFieldWire, InputType, OutputType,
+        RelationMaterialization,
     },
     CGS,
 };
@@ -20,18 +21,20 @@ use std::collections::{BTreeMap, BTreeSet};
 
 pub(crate) struct CatalogueSearch {
     pub(super) candidates: BTreeMap<CapabilityRef, RetrievedCapability>,
+    /// Stable question-local reference labels for this authorized revision.
+    pub(super) labels: BTreeMap<CapabilityRef, String>,
     pub(super) ranking: LexicalIndex<CapabilityRef>,
     pub(super) graph: SearchGraph<CapabilityRef>,
     pub(super) input_bindings: BTreeMap<String, InputSourceBinding>,
 }
 
-fn input_fields(fields: &[InputFieldSchema], cgs: &CGS, text: &mut Vec<String>) {
+fn input_fields(fields: &[InputFieldSchema], cgs: &CGS, text: &mut BTreeSet<String>) {
     for field in fields {
         text.extend(field.description.iter().cloned());
         match &field.wire {
             InputFieldWire::Registry(name) => {
                 if let Some(value) = cgs.values.get(name.as_str()) {
-                    text.push(value.description.clone());
+                    text.insert(value.description.clone());
                 }
             }
             InputFieldWire::Inline(input) => input_text(input, cgs, text),
@@ -39,7 +42,7 @@ fn input_fields(fields: &[InputFieldSchema], cgs: &CGS, text: &mut Vec<String>) 
     }
 }
 
-fn input_text(input: &InputType, cgs: &CGS, text: &mut Vec<String>) {
+fn input_text(input: &InputType, cgs: &CGS, text: &mut BTreeSet<String>) {
     match input {
         InputType::None | InputType::Value { .. } => {}
         InputType::Object { fields, .. } => input_fields(fields, cgs, text),
@@ -65,6 +68,33 @@ fn operation_meaning(cap: &CapabilitySchema) -> String {
         }
     }
     text
+}
+
+/// A parent GET can expose its declared embedded relations. Do not transfer
+/// those observations to every operation sharing the owning entity.
+fn embedded_observations(cap: &CapabilitySchema, cgs: &CGS) -> String {
+    if cap.kind != CapabilityKind::Get
+        || cap.output_schema.as_ref().is_some_and(|output| {
+            !matches!(&output.output_type, OutputType::Entity { entity_type } if entity_type.as_str() == cap.domain.as_str())
+        })
+    {
+        return String::new();
+    }
+    cgs.entities[&cap.domain]
+        .relations
+        .values()
+        .filter(|relation| {
+            matches!(
+                relation.materialize.as_ref(),
+                Some(
+                    RelationMaterialization::FromParentGet { .. }
+                        | RelationMaterialization::PreferFromParentGet { .. }
+                )
+            )
+        })
+        .map(|relation| relation.description.as_str())
+        .collect::<Vec<_>>()
+        .join(" ")
 }
 
 impl CatalogueSearch {
@@ -94,7 +124,9 @@ impl CatalogueSearch {
                     continue;
                 }
                 let cap = &cgs.capabilities[reference.capability.as_str()];
-                let mut inputs = Vec::new();
+                // Reusing one annotation across slots is not additional
+                // semantic evidence. Full contracts retain every input seat.
+                let mut inputs = BTreeSet::new();
                 for fields in [
                     &cap.inputs.scope.0,
                     &cap.inputs.selection.0,
@@ -114,12 +146,13 @@ impl CatalogueSearch {
                     fields: [
                         operation_meaning(cap),
                         format!(
-                            "{} {}",
+                            "{} {} {}",
                             document.collection.meaning,
                             capability_observation_meaning(cgs, cap)
-                                .map_err(DiscoveryMatcherError::CatalogueContext)?
+                                .map_err(DiscoveryMatcherError::CatalogueContext)?,
+                            embedded_observations(cap, cgs)
                         ),
-                        inputs.join(" "),
+                        inputs.into_iter().collect::<Vec<_>>().join(" "),
                     ],
                 });
                 let id = plasm_core::catalog_discovery::content_hash(
@@ -198,8 +231,14 @@ impl CatalogueSearch {
             })?;
         let ranking = LexicalIndex::new(documents)
             .map_err(|_| DiscoveryMatcherError::DuplicateCapabilityReference)?;
+        let labels = candidates
+            .keys()
+            .enumerate()
+            .map(|(i, reference)| (reference.clone(), format!("c{i}")))
+            .collect();
         Ok(Self {
             candidates,
+            labels,
             ranking,
             graph,
             input_bindings,
@@ -244,6 +283,72 @@ mod tests {
     use super::*;
 
     #[test]
+    fn authored_action_purpose_survives_a_nonspecific_effect_description() {
+        let mut cgs = plasm_core::loader::load_schema_dir(
+            &std::path::Path::new(crate::test_manifest_dir())
+                .join("../../fixtures/schemas/discovery_reference_index"),
+        )
+        .unwrap();
+        cgs.capabilities.retain(|name, _| name.as_str() == "opaque");
+        let cap = cgs.capabilities.get_mut("opaque").unwrap();
+        cap.description = "Polarize the specimen.".into();
+        cap.output_schema.as_mut().unwrap().output_type = OutputType::SideEffect {
+            description: "Changes the recorded state.".into(),
+        };
+        let catalogs = BTreeMap::from([("matrix".into(), cgs)]);
+        let allowed = DiscoveryAuthorization::catalogs(BTreeSet::from(["matrix".into()]));
+        let index = CatalogueSearch::new(&catalogs, &Default::default(), &allowed).unwrap();
+        assert_eq!(index.ranking.rank("Polarize").len(), 1);
+    }
+
+    #[test]
+    fn repeated_input_annotations_do_not_promote_a_weaker_operation() {
+        let mut cgs = plasm_core::loader::load_schema_dir(
+            &std::path::Path::new(crate::test_manifest_dir())
+                .join("../../fixtures/schemas/discovery_reference_index"),
+        )
+        .unwrap();
+        cgs.capabilities.get_mut("source_read").unwrap().description =
+            "Inspect calibration.".into();
+        let mut input = cgs.capabilities["prepare"]
+            .inputs
+            .arguments
+            .clone()
+            .unwrap();
+        let InputType::Object { fields, .. } = &mut input.input_type else {
+            panic!("fixture object")
+        };
+        fields[0].description = Some("Calibration".into());
+        let field = fields[0].clone();
+        let allowed = DiscoveryAuthorization::catalogs(BTreeSet::from(["matrix".into()]));
+        let target = CapabilityRef {
+            catalog: "matrix".into(),
+            capability: "source_read".into(),
+        };
+        for count in [1, 64] {
+            let mut input = input.clone();
+            let InputType::Object { fields, .. } = &mut input.input_type else {
+                unreachable!()
+            };
+            *fields = (0..count)
+                .map(|n| {
+                    let mut copy = field.clone();
+                    copy.name = format!("seat_{n}");
+                    copy
+                })
+                .collect();
+            cgs.capabilities.get_mut("opaque").unwrap().inputs.arguments = Some(input);
+            let catalogs = BTreeMap::from([("matrix".into(), cgs.clone())]);
+            let index = CatalogueSearch::new(&catalogs, &Default::default(), &allowed).unwrap();
+            assert_eq!(
+                index.ranking.rank("calibration")[0],
+                target,
+                "duplicate count {count}"
+            );
+        }
+    }
+
+    #[test]
     fn ranking_keeps_input_meaning_out_of_operation_but_preserves_full_contracts() {
         let mut cgs = plasm_core::loader::load_schema_dir(
             &std::path::Path::new(crate::test_manifest_dir())
@@ -279,18 +384,15 @@ mod tests {
             capability: "process".into(),
         };
         assert_eq!(index.candidates[&reference].document, *document);
-        assert!(index
-            .ranking
-            .rank("criterion", "criterion")
-            .contains(&reference));
-        assert_eq!(index.ranking.rank("spectrum", "spectrum")[0], reference);
+        assert!(index.ranking.rank("criterion").contains(&reference));
+        assert_eq!(index.ranking.rank("spectrum")[0], reference);
         let denied = CatalogueSearch::new(
             &catalogs,
             &Default::default(),
             &DiscoveryAuthorization::catalogs(BTreeSet::new()),
         )
         .unwrap();
-        assert!(denied.ranking.rank("spectrum", "criterion").is_empty());
+        assert!(denied.ranking.rank("spectrum criterion").is_empty());
     }
 
     #[test]
@@ -305,9 +407,7 @@ mod tests {
         let catalogs = BTreeMap::from([("matrix".into(), cgs)]);
         let allowed = DiscoveryAuthorization::catalogs(BTreeSet::from(["matrix".into()]));
         let index = CatalogueSearch::new(&catalogs, &Default::default(), &allowed).unwrap();
-        let ranked = index
-            .ranking
-            .rank("spectral amplitude", "spectral amplitude");
+        let ranked = index.ranking.rank("spectral amplitude");
         assert_eq!(
             ranked,
             vec![CapabilityRef {

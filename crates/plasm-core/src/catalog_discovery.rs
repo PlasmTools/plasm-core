@@ -218,6 +218,51 @@ mod tests {
     use super::*;
 
     #[test]
+    fn optional_source_meaning_survives_discovery_without_inventing_readiness() {
+        let fixture = std::path::Path::new(crate::test_manifest_dir())
+            .join("../../fixtures/schemas/resource_registration");
+        for meaning in [
+            "Routing coordinates",
+            "Calibration coefficients",
+            "Rendering parameters",
+        ] {
+            for required in [false, true] {
+                let mut cgs = crate::load_schema(&fixture).unwrap();
+                cgs.values
+                    .get_mut("definition")
+                    .unwrap()
+                    .description
+                    .clear();
+                let field = cgs
+                    .entities
+                    .get_mut("ResourceSource")
+                    .unwrap()
+                    .fields
+                    .get_mut("definition")
+                    .unwrap();
+                field.required = required;
+                field.description = meaning.into();
+                let before = serde_json::to_value(&cgs).unwrap();
+                let docs = capability_documents(&cgs).unwrap();
+                let source = docs
+                    .iter()
+                    .find(|d| d.capability == "source_query")
+                    .unwrap();
+                assert!(source.operation.contract.contains(meaning));
+                assert!(!source.operation.contract.contains("Observed readiness"));
+                assert_eq!(before, serde_json::to_value(&cgs).unwrap());
+                assert_eq!(
+                    cgs.entities["ResourceSource"].fields["definition"].required,
+                    required
+                );
+                let roundtrip: CapabilityDocument =
+                    serde_json::from_slice(&serde_json::to_vec(source).unwrap()).unwrap();
+                assert_eq!(*source, roundtrip);
+            }
+        }
+    }
+
+    #[test]
     fn resource_source_registration_and_readiness_remain_distinct() {
         let fixture = std::path::Path::new(crate::test_manifest_dir())
             .join("../../fixtures/schemas/resource_registration");

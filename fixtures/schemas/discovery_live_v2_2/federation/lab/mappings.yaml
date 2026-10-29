@@ -1,0 +1,20 @@
+{
+  "calibrate": {
+    "method": "POST",
+    "path": [
+      {
+        "type": "literal",
+        "value": "calibrate"
+      }
+    ]
+  },
+  "invoice_read": {
+    "method": "GET",
+    "path": [
+      {
+        "type": "literal",
+        "value": "invoice_read"
+      }
+    ]
+  }
+}

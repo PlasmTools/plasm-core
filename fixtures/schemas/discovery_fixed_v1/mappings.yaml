@@ -1,0 +1,12 @@
+source_read:
+  method: GET
+  path: [{ type: literal, value: source }]
+prepare:
+  method: POST
+  path: [{ type: literal, value: prepare }]
+process:
+  method: POST
+  path: [{ type: literal, value: process }]
+opaque:
+  method: POST
+  path: [{ type: literal, value: opaque }]

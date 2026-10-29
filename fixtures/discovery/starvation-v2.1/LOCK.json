@@ -1,0 +1,13 @@
+{
+  "fixtures/discovery/starvation-v2.1/generate.py": "298eabca8afcd810b113614a12976462b4f3f9c949836a360a9d5e4246857a00",
+  "fixtures/discovery/starvation-v2.1/cases.json": "48dd2f645fd95e70ef8d0c9188ea396878b675a3b614ef334c24beda70627012",
+  "fixtures/discovery/starvation-v2.1/noise.json": "bcc4d93d67c21b024a60a9b1ed9c43f24427280e3360e8f90474925b7e02383d",
+  "fixtures/discovery/starvation-v2.1/PROTOCOL.md": "2755ac2c59d59f853fca5f9955a4cbc2731ab3d60384dcf90a747173efe876a3",
+  "fixtures/schemas/discovery_starvation_v2_1/cross/domain.yaml": "16eb4d11585a5f63bb705f8db1dd2adcd160c286023d55054b85cf606d542c92",
+  "fixtures/schemas/discovery_starvation_v2_1/cross/mappings.yaml": "7c08543bf4664facc6799cfd9f0a6f167097c0ae637dd602224cdf129cb25ce5",
+  "fixtures/schemas/discovery_starvation_v2_1/local/domain.yaml": "bf3b7640e9dadb62bf7abbe67a649a3ace6d98a08f697a24c0b1c8f2245311b1",
+  "fixtures/schemas/discovery_starvation_v2_1/local/mappings.yaml": "7c08543bf4664facc6799cfd9f0a6f167097c0ae637dd602224cdf129cb25ce5",
+  "fixtures/schemas/discovery_starvation_v2_1/noise/domain.yaml": "e6f4c5757e487a88505c08fd1bade3e179ad2634ef5ccf33730744571c9b3362",
+  "fixtures/schemas/discovery_starvation_v2_1/noise/mappings.yaml": "f58e9762fd87f4e0b4cfe8a14b100456ac78364ecb44c2da2d3c035bd8a56bab",
+  "fixtures/discovery/starvation-v2.1/ERRATUM.md": "9480a772454ee13907d49d727bb260b57b964c8a3d0b0eb7ce26dcdf00b6f029"
+}

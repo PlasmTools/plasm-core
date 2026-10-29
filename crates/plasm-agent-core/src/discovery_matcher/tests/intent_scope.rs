@@ -86,7 +86,7 @@ fn outcome_and_need_preserve_revisions_constraints_and_unknown_state() {
             for batch in batches {
                 let body: serde_json::Value = serde_json::from_str(batch.body()).unwrap();
                 let state = &body["state"];
-                assert_eq!(state["outcome"], turns[0]);
+                assert_eq!(state["outcome"], *turns.last().unwrap());
                 assert_eq!(state["discovery_need"], *turns.last().unwrap());
                 assert_eq!(state["intent_turns"], json!(turns));
                 assert_eq!(state["rule"], policy["rule"]);

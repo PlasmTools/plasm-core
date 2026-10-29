@@ -534,6 +534,40 @@ mod tests {
         .unwrap()
     }
 
+    #[test]
+    fn narrative_projection_flattens_input_identity_but_retains_requiredness() {
+        let cgs = fixture();
+        let original = cgs.capabilities["record_get"].clone();
+        let mut renamed = original.clone();
+        let InputType::Object { fields, .. } =
+            &mut renamed.inputs.arguments.as_mut().unwrap().input_type
+        else {
+            panic!("abstract fixture must have object arguments");
+        };
+        fields[0].name = "different_binding".into();
+        let before = render(&cgs, &original, &cgs.entities["Record"]).unwrap();
+        let after = render(&cgs, &renamed, &cgs.entities["Record"]).unwrap();
+        // Diagnostic proof of current information loss, not a desired invariant:
+        // catalogue field identities differ, but discovery cannot distinguish them.
+        assert_ne!(
+            serde_json::to_value(&original.inputs).unwrap(),
+            serde_json::to_value(&renamed.inputs).unwrap()
+        );
+        assert_eq!(before.operation, after.operation);
+        let InputType::Object { fields, .. } =
+            &mut renamed.inputs.arguments.as_mut().unwrap().input_type
+        else {
+            unreachable!()
+        };
+        fields[0].required = true;
+        assert_ne!(
+            before.operation,
+            render(&cgs, &renamed, &cgs.entities["Record"])
+                .unwrap()
+                .operation
+        );
+    }
+
     proptest::proptest! {
         #[test]
         fn relation_use_preserves_binding_role_and_description_across_serialization(

@@ -20,6 +20,7 @@ async fn slow_retry_checkpoint_cannot_dispatch_after_deadline() {
     let allowed = DiscoveryAuthorization::catalogs(BTreeSet::from(["matrix".into()]));
     let intent = IntentProvenance::from_turns(["Produce spectrum".into()]).unwrap();
     let context = SearchContext {
+        visits: &Default::default(),
         model: RELEVANCE_MODEL,
         intent: &intent,
         generation: "slow-checkpoint",
@@ -60,6 +61,7 @@ async fn slow_retry_checkpoint_cannot_dispatch_after_deadline() {
 async fn pending_provider_is_cancelled_at_the_discovery_deadline() {
     let error = select(
         SearchContext {
+            visits: &Default::default(),
             model: RELEVANCE_MODEL,
             intent: &IntentProvenance::from_turns(["Produce spectrum".into()]).unwrap(),
             generation: "deadline",
@@ -96,6 +98,7 @@ async fn terminal_failures_and_retry_after_do_not_escape_attempt_or_time_limits(
         let allowed = DiscoveryAuthorization::catalogs(BTreeSet::from(["matrix".into()]));
         let intent = IntentProvenance::from_turns(["Produce spectrum".into()]).unwrap();
         let context = SearchContext {
+            visits: &Default::default(),
             model: RELEVANCE_MODEL,
             intent: &intent,
             generation: "retry-failure",
@@ -138,6 +141,7 @@ async fn failed_retry_checkpoint_prevents_the_next_dispatch() {
     let allowed = DiscoveryAuthorization::catalogs(BTreeSet::from(["matrix".into()]));
     let intent = IntentProvenance::from_turns(["Produce spectrum".into()]).unwrap();
     let context = SearchContext {
+        visits: &Default::default(),
         model: RELEVANCE_MODEL,
         intent: &intent,
         generation: "retry-checkpoint",
@@ -177,6 +181,7 @@ async fn malformed_success_is_not_a_transport_retry() {
     let mut calls = 0;
     let error = select(
         SearchContext {
+            visits: &Default::default(),
             model: RELEVANCE_MODEL,
             intent: &IntentProvenance::from_turns(["Produce spectrum".into()]).unwrap(),
             generation: "malformed",
@@ -203,6 +208,7 @@ async fn cancellation_during_retry_keeps_the_second_reservation() {
     let allowed = DiscoveryAuthorization::catalogs(BTreeSet::from(["matrix".into()]));
     let intent = IntentProvenance::from_turns(["Produce spectrum".into()]).unwrap();
     let context = SearchContext {
+        visits: &Default::default(),
         model: RELEVANCE_MODEL,
         intent: &intent,
         generation: "retry-cancel",
@@ -259,6 +265,7 @@ async fn transient_retry_is_identical_and_checkpointed_before_each_dispatch() {
     let allowed = DiscoveryAuthorization::catalogs(BTreeSet::from(["matrix".into()]));
     let intent = IntentProvenance::from_turns(["Produce spectrum".into()]).unwrap();
     let context = SearchContext {
+        visits: &Default::default(),
         model: RELEVANCE_MODEL,
         intent: &intent,
         generation: "retry-matrix",

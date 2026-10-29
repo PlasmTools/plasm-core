@@ -57,7 +57,7 @@
       ]
     },
     "search": {
-      "policy": "additive-connected-path-bm25f-rrf60-1-judgment-3-attempts-16000-byte-packet-v6",
+      "policy": "additive-connected-frontier-current-bm25f-1-judgment-3-attempts-16000-byte-packet-v12",
       "exposed": [],
       "considered": [{"catalog":"matrix","capability":"record_read"}],
       "unexplored": [],

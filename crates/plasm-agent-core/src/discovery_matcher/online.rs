@@ -4,7 +4,16 @@
 mod additive_tests;
 mod connected;
 #[cfg(test)]
+#[path = "online/fixed_suite.rs"]
+mod fixed_suite;
+#[cfg(test)]
+#[path = "online/live_gate.rs"]
+mod live_gate;
+#[cfg(test)]
 mod retry_tests;
+#[cfg(test)]
+#[path = "online/starvation_suite.rs"]
+mod starvation_suite;
 use super::{
     catalogue_search::CatalogueSearch,
     search_budget::{BudgetStop, SearchBudget},
@@ -16,7 +25,7 @@ use crate::discovery_store::{DiscoveryAuthorization, RetrievalReceipt};
 use plasm_core::{prerequisites::DeploymentBindings, CGS};
 
 pub(crate) const SEARCH_POLICY: &str =
-    "additive-connected-path-bm25f-rrf60-1-judgment-3-attempts-16000-byte-packet-v6";
+    "additive-connected-frontier-current-bm25f-1-judgment-3-attempts-16000-byte-packet-v12";
 
 #[derive(Clone, Copy)]
 pub struct SearchContext<'a> {
@@ -28,6 +37,8 @@ pub struct SearchContext<'a> {
     pub allowed: &'a DiscoveryAuthorization,
     /// Available declarations, not acquired values or permanent relevance judgments.
     pub exposed: &'a [CapabilityRef],
+    /// Session-local completed judgments; priority only, never an exclusion.
+    pub visits: &'a BTreeMap<CapabilityRef, usize>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -289,12 +300,12 @@ fn required_closure(
     Ok(closure)
 }
 
-fn packet(
+fn packet_scope(
     index: &CatalogueSearch,
     target: &CapabilityRef,
     route: &[Edge<CapabilityRef>],
     context: SearchContext<'_>,
-) -> Result<(IssuedBatch, BTreeSet<CapabilityRef>), DiscoveryMatcherError> {
+) -> Result<(witnesses::Scope, Question, BTreeSet<CapabilityRef>), DiscoveryMatcherError> {
     let mut route = route.to_vec();
     // Already available suppliers remain local composition evidence, without
     // becoming separate questions or implying their acquisition has executed.
@@ -308,13 +319,12 @@ fn packet(
     route.sort();
     route.dedup();
     let SearchContext {
-        model,
-        intent,
         generation,
         catalogs,
         deployments,
         allowed,
         exposed: _,
+        ..
     } = context;
     let mut members = BTreeSet::from([target.clone()]);
     for edge in &route {
@@ -383,20 +393,26 @@ fn packet(
         entity: candidate.document.entity.clone(),
         operation: evidence.capabilities[target].operation.clone(),
     };
-    let ids = index
-        .candidates
-        .keys()
-        .enumerate()
-        .map(|(i, reference)| (reference.clone(), format!("c{i}")))
-        .collect();
+    let ids = &index.labels;
     let definitions = witnesses::value(&evidence.definitions)?;
-    let scope = witnesses::project_path(target, &evidence, &ids, &definitions)?;
+    let scope = witnesses::project_path(target, &evidence, ids, &definitions)?;
+    Ok((scope, question, members))
+}
+
+#[cfg(test)]
+fn packet(
+    index: &CatalogueSearch,
+    target: &CapabilityRef,
+    route: &[Edge<CapabilityRef>],
+    context: SearchContext<'_>,
+) -> Result<(IssuedBatch, BTreeSet<CapabilityRef>), DiscoveryMatcherError> {
+    let (scope, question, members) = packet_scope(index, target, route, context)?;
     let issued = issue_scope(
-        model,
-        intent,
+        context.model,
+        context.intent,
         &question,
         &std::sync::Arc::new(vec![question.clone()]),
-        &ids,
+        &index.labels,
         scope,
         false,
     )?;
@@ -448,6 +464,7 @@ where
         deployments,
         allowed,
         exposed,
+        ..
     } = context;
     if !crate::decision_codec::model_matches(RELEVANCE_MODEL, model) {
         return Err(DiscoveryMatcherError::UnsupportedModel);
@@ -765,6 +782,7 @@ mod tests {
         }
         let (retrieval, _, receipt) = select(
             SearchContext {
+                visits: &Default::default(),
                 exposed: &[],
                 model: RELEVANCE_MODEL,
                 intent: &IntentProvenance::from_turns(["spectrometer".into()]).unwrap(),
@@ -797,6 +815,7 @@ mod tests {
         let captured = calls.clone();
         let (retrieval, matching, search) = select(
             SearchContext {
+                visits: &Default::default(),
                 exposed: &[],
                 model: RELEVANCE_MODEL,
                 intent: &IntentProvenance::from_turns(["spectrum".into()]).unwrap(),
@@ -858,6 +877,7 @@ mod tests {
         });
         let (_, _, search) = select(
             SearchContext {
+                visits: &Default::default(),
                 exposed: &[],
                 model: RELEVANCE_MODEL,
                 intent: &IntentProvenance::from_turns(["spectrum".into()]).unwrap(),
@@ -894,6 +914,7 @@ mod tests {
             .description = "spectrum ".repeat(20_000);
         let (retrieval, matching, search) = select(
             SearchContext {
+                visits: &Default::default(),
                 exposed: &[],
                 model: RELEVANCE_MODEL,
                 intent: &IntentProvenance::from_turns(["spectrum".into()]).unwrap(),
@@ -927,6 +948,7 @@ mod tests {
         catalogs.insert("unrelated".into(), unrelated);
         let (retrieval, _, search) = select(
             SearchContext {
+                visits: &Default::default(),
                 exposed: &[],
                 model: RELEVANCE_MODEL,
                 intent: &IntentProvenance::from_turns(["spectrum".into()]).unwrap(),
@@ -956,6 +978,7 @@ mod tests {
         let catalogs = fixture();
         let (retrieval, matching, search) = select(
             SearchContext {
+                visits: &Default::default(),
                 exposed: &[],
                 model: RELEVANCE_MODEL,
                 intent: &IntentProvenance::from_turns(["configured routine".into()]).unwrap(),
@@ -1007,6 +1030,7 @@ mod tests {
         };
         let (retrieval, matching, search) = select(
             SearchContext {
+                visits: &Default::default(),
                 exposed: &[],
                 model: RELEVANCE_MODEL,
                 intent: &IntentProvenance::from_turns(["spectrum".into()]).unwrap(),
@@ -1067,6 +1091,7 @@ mod tests {
             };
             let result = select(
                 SearchContext {
+                    visits: &Default::default(),
                     exposed: &[],
                     model: RELEVANCE_MODEL,
                     intent: &intent,
@@ -1102,6 +1127,7 @@ mod tests {
         let allowed = DiscoveryAuthorization::catalogs(BTreeSet::from(["matrix".into()]));
         let intent = IntentProvenance::from_turns(["spectrum".into()]).unwrap();
         let context = SearchContext {
+            visits: &Default::default(),
             exposed: &[],
             model: RELEVANCE_MODEL,
             intent: &intent,
@@ -1161,6 +1187,7 @@ mod tests {
         let allowed = DiscoveryAuthorization::catalogs(BTreeSet::from(["matrix".into()]));
         let intent = IntentProvenance::from_turns(["spectrum".into()]).unwrap();
         let context = SearchContext {
+            visits: &Default::default(),
             exposed: &[],
             model: RELEVANCE_MODEL,
             intent: &intent,
@@ -1190,6 +1217,7 @@ mod tests {
         let count = calls.clone();
         let error = select(
             SearchContext {
+                visits: &Default::default(),
                 exposed: &[],
                 model: RELEVANCE_MODEL,
                 intent: &IntentProvenance::from_turns(["spectrum".into()]).unwrap(),

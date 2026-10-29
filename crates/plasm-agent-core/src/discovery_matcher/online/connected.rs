@@ -5,6 +5,13 @@ type Route = Vec<Edge<CapabilityRef>>;
 type Bundle = BTreeMap<CapabilityRef, Route>;
 const MAX_VARIANTS: usize = 64;
 
+struct LocalPacket {
+    scope: witnesses::Scope,
+    question: Question,
+    members: BTreeSet<CapabilityRef>,
+    prepared: request_packing::PreparedLocal,
+}
+
 /// Required acquisitions are ancestry, not optional allocation slots. A path
 /// may start with several of them before reaching its first nominated supplier.
 fn allocation_slot(
@@ -122,29 +129,76 @@ fn body_size(
     selected: &Bundle,
     index: &CatalogueSearch,
     context: SearchContext<'_>,
-    cache: &mut BTreeMap<(CapabilityRef, Route), (IssuedBatch, BTreeSet<CapabilityRef>)>,
+    cache: &mut BTreeMap<(CapabilityRef, Route), LocalPacket>,
 ) -> Result<usize, DiscoveryMatcherError> {
-    let mut local = Vec::new();
     for (key, path) in selected {
         if context.exposed.contains(key) {
             continue;
         }
         let identity = (key.clone(), path.clone());
         if !cache.contains_key(&identity) {
-            cache.insert(identity.clone(), packet(index, key, path, context)?);
+            let (scope, question, members) = packet_scope(index, key, path, context)?;
+            let prepared = request_packing::PreparedLocal::for_scope(
+                context.model,
+                context.intent,
+                &index.labels[key],
+                &scope,
+            )?;
+            cache.insert(
+                identity,
+                LocalPacket {
+                    scope,
+                    question,
+                    members,
+                    prepared,
+                },
+            );
         }
-        local.push(cache[&identity].0.clone());
     }
-    Ok(request_packing::connected(local)?.map_or(0, |batch| batch.body().len()))
+    let local = selected
+        .iter()
+        .filter(|(key, _)| !context.exposed.contains(key))
+        .map(|(key, path)| &cache[&(key.clone(), path.clone())].prepared)
+        .collect::<Vec<_>>();
+    request_packing::connected_size(&local)
+}
+
+pub(super) fn root_order(
+    index: &CatalogueSearch,
+    context: SearchContext<'_>,
+) -> Vec<CapabilityRef> {
+    let mut order = index.ranking.rank(context.intent.current());
+    // Exposure is not execution or relevance, but a declared producer can
+    // nominate its direct consumer for judgment. Supplier-only traversal loses
+    // the other end of a path after its source has already been retained.
+    let consumers: BTreeSet<_> = index
+        .graph
+        .edges()
+        .filter(|edge| {
+            edge.relationship != Relationship::RequiredAcquisition
+                && context.exposed.contains(&edge.source)
+                && !context.exposed.contains(&edge.consumer)
+        })
+        .map(|edge| edge.consumer.clone())
+        .collect();
+    let ranked: BTreeSet<_> = order.iter().cloned().collect();
+    order.extend(consumers.difference(&ranked).cloned());
+    // Never reset exploration progress. Within a round, finish a directly
+    // connected frontier before unrelated roots; lexical ties remain stable.
+    order.sort_by_key(|key| {
+        (
+            context.visits.get(key).copied().unwrap_or(0),
+            !consumers.contains(key),
+        )
+    });
+    order
 }
 
 pub(super) fn plan(
     index: &CatalogueSearch,
     context: SearchContext<'_>,
 ) -> Result<Plan, DiscoveryMatcherError> {
-    let order = index
-        .ranking
-        .rank(context.intent.original(), context.intent.current());
+    let order = root_order(index, context);
     let ranks: BTreeMap<_, _> = order
         .iter()
         .enumerate()
@@ -152,6 +206,9 @@ pub(super) fn plan(
         .collect();
     let mut proposed = Bundle::new();
     let mut deferred = BTreeMap::new();
+    // A failed optional route does not establish that the direct root is too
+    // large. Only direct admission failures can suppress another root trial.
+    let mut root_deferred = BTreeSet::new();
     let mut cache = BTreeMap::new();
     let mut served = BTreeMap::<NominationSlot, usize>::new();
     // Ranked existing declarations can anchor missing suppliers, but consume
@@ -174,6 +231,7 @@ pub(super) fn plan(
             proposed = trial;
         } else {
             deferred.insert(key.clone(), DeferredReason::InputBytes);
+            root_deferred.insert(key.clone());
         }
     }
     loop {
@@ -218,7 +276,7 @@ pub(super) fn plan(
                 })
                 .or_insert(path);
         }
-        let mut best: Option<((usize, usize, usize, usize, CapabilityRef), Bundle)> = None;
+        let mut best: Option<((usize, usize, usize, usize, usize, CapabilityRef), Bundle)> = None;
         for (key, path) in &candidates {
             let mut fits = false;
             let alternatives = variants(key, path, index, context, &proposed, &BTreeSet::new())?;
@@ -241,6 +299,7 @@ pub(super) fn plan(
                     }
                 })?;
                 let priority = (
+                    context.visits.get(key).copied().unwrap_or(0),
                     *served.get(&slot).unwrap_or(&0),
                     path.len(),
                     size,
@@ -262,8 +321,7 @@ pub(super) fn plan(
             for key in &order {
                 if routes.contains_key(key)
                     || context.exposed.contains(key)
-                    || deferred.contains_key(key)
-                    || candidates.contains_key(key)
+                    || root_deferred.contains(key)
                 {
                     continue;
                 }
@@ -275,6 +333,7 @@ pub(super) fn plan(
                     break;
                 }
                 deferred.insert(key.clone(), DeferredReason::InputBytes);
+                root_deferred.insert(key.clone());
             }
             fitting
         };
@@ -307,11 +366,21 @@ pub(super) fn plan(
         .iter()
         .filter(|(key, _)| !context.exposed.contains(key))
         .map(|(key, path)| {
-            let (issued, evidence_members) = &cache[&(key.clone(), path.clone())];
-            members.extend(evidence_members.iter().cloned());
-            issued.clone()
+            let local = cache
+                .remove(&(key.clone(), path.clone()))
+                .expect("selected packet was prepared");
+            members.extend(local.members.iter().cloned());
+            issue_scope(
+                context.model,
+                context.intent,
+                &local.question,
+                &std::sync::Arc::new(vec![local.question.clone()]),
+                &index.labels,
+                local.scope,
+                false,
+            )
         })
-        .collect();
+        .collect::<Result<Vec<_>, _>>()?;
     let issued = request_packing::connected(local)?;
     // An existing declaration may anchor an acquisition path that cannot fit.
     // Deferring that expansion does not defer the declaration already exposed.

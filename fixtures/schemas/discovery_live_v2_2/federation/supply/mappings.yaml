@@ -1,0 +1,11 @@
+{
+  "sample_read": {
+    "method": "GET",
+    "path": [
+      {
+        "type": "literal",
+        "value": "sample_read"
+      }
+    ]
+  }
+}
