@@ -38,7 +38,7 @@ export function formatRecordedOutputs(artifacts: readonly OutputArtifact[]): str
     const kind = output.row_materialization === "Catalog" ? `${text(output.entry_id)}::${text(output.entity)}` : "computed output (not importable)";
     const complete = output.entities.every(row => row.completeness === "complete");
     const reference = artifact.reusable ? `self.recorded("${artifact.run_id}")` : artifact.run_id;
-    return `- \`${reference}\` — ${binding}: ${kind}[]; ${output.entities.length} rows; observed fields: ${fields.join(", ") || "none"}${complete ? "" : "; incomplete rows"}`;
+    return `- \`${reference}\` — ${binding}: ${kind}; ${output.entities.length} rows; observed fields: ${fields.join(", ") || "none"}${complete ? "" : "; incomplete rows"}`;
   });
   return "\n\n**Recorded outputs (historical):**\n" + lines.join("\n");
 }

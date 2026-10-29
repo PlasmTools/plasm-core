@@ -110,6 +110,7 @@ try {
   await drained;
   const planning = deferred<void>();
   const releasePlan = deferred<void>();
+  let fusedRuns = 0;
   const fused = new AgentRuntime({ agentRoot: root, tenantScope: session.tenantScope, archive: null, hostTransport: null, engine: {
     ...engine,
     dryRun: async () => {
@@ -117,13 +118,17 @@ try {
       await releasePlan.promise;
       return { writeCount: 0, planCommitRef: "pc1", summary: "read", fusedCleanRead: true };
     },
+    runPlan: async (...args) => { fusedRuns++; return engine.runPlan!(...args); },
   } });
   Reflect.set(fused, "workflowSession", session);
   const acceptedPlan = fused.plasm({ logicalSessionRef: session.logicalSessionRef, program: "fixture program" });
   await planning.promise;
   const fusedClose = fused.close();
   releasePlan.resolve();
-  assert.match(await acceptedPlan, /completed/, "accepted clean-read plan may finish its internal live run after admission closes");
+  const completedRead = await acceptedPlan;
+  assert.match(completedRead, /completed/, "accepted clean-read plan may finish its internal live run after admission closes");
+  assert.match(completedRead, /\*\*Executed reference:\*\* `pc1`/, "fused reads expose the real review identity for evidence binding");
+  assert.equal(fusedRuns, 1, 'rendering the reference never executes the observation again');
   await fusedClose;
   console.log("PASS: turn and runtime admission, in-flight execution and persistence drain, idempotent close and preserved failures");
 } finally { await rm(root, { recursive: true, force: true }); }

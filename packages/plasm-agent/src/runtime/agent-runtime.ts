@@ -580,7 +580,7 @@ export class AgentRuntime {
             result.message,
             result.ok,
           );
-          return markdown + formatRecordedOutputs(artifacts);
+          return markdown + `\n\n**Executed reference:** \`${input.runRef}\`` + formatRecordedOutputs(artifacts);
         } finally {
           if (!observationEnded) await this.endObservation(session.logicalSessionRef, observation);
         }

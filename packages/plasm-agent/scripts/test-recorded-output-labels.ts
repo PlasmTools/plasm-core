@@ -13,7 +13,8 @@ for (const entry of ["alpha", "beta"]) {
     for (const rows of [[], [{ key: "SECRET", optional: null }], [{key: "SECRET", optional: null}, {key: "SECRET"}]]) {
       const artifact = runOutputArtifactSchema.parse({run_id: id, producer_binding: binding, reusable: true, snapshot: snapshot(entry, rows)});
       const output = formatRecordedOutputs([artifact]);
-      assert.ok(output.includes(`${binding}: ${entry}::Resource[]`));
+      assert.ok(output.includes(`${binding}: ${entry}::Resource;`));
+      assert.ok(!output.includes('Resource[]'), 'observed rows do not establish a list-valued compute input');
       assert.ok(output.includes(id));
       assert.ok(output.includes(`self.recorded("${id}")`));
       assert.ok(!output.includes("SECRET") && !output.includes("null"));
