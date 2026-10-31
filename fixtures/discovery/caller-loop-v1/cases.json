@@ -1,0 +1,12 @@
+[
+ {"id":"a01","distractors":8,"position":1,"first_width":140,"target_width":110,"other_width":140,"connected":false,"amend_at":null,"observation_at":null},
+ {"id":"a02","distractors":64,"position":4,"first_width":140,"target_width":110,"other_width":140,"connected":false,"amend_at":null,"observation_at":null},
+ {"id":"b01","distractors":8,"position":1,"first_width":110,"target_width":140,"other_width":140,"connected":false,"amend_at":null,"observation_at":null},
+ {"id":"b02","distractors":64,"position":4,"first_width":110,"target_width":140,"other_width":140,"connected":false,"amend_at":null,"observation_at":null},
+ {"id":"c01","distractors":8,"position":4,"first_width":140,"target_width":140,"other_width":140,"connected":false,"amend_at":null,"observation_at":2},
+ {"id":"c02","distractors":64,"position":4,"first_width":80,"target_width":80,"other_width":80,"connected":false,"amend_at":null,"observation_at":2},
+ {"id":"d01","distractors":8,"position":4,"first_width":140,"target_width":140,"other_width":140,"connected":false,"amend_at":2,"observation_at":null},
+ {"id":"d02","distractors":64,"position":4,"first_width":140,"target_width":140,"other_width":140,"connected":false,"amend_at":3,"observation_at":null},
+ {"id":"e01","distractors":8,"position":4,"first_width":140,"target_width":140,"other_width":140,"connected":true,"amend_at":null,"observation_at":null},
+ {"id":"e02","distractors":64,"position":1,"first_width":140,"target_width":140,"other_width":140,"connected":true,"amend_at":null,"observation_at":null}
+]

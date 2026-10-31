@@ -2,6 +2,8 @@
 #[cfg(test)]
 #[path = "online/additive_tests.rs"]
 mod additive_tests;
+#[cfg(test)]
+mod reformulation_tests;
 mod connected;
 #[cfg(test)]
 #[path = "online/decision_diagnostic.rs"]

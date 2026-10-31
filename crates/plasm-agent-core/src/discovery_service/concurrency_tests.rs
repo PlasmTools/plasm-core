@@ -5,6 +5,9 @@ use std::sync::{
 };
 use tokio::sync::Notify;
 
+#[path = "objective_epoch_tests.rs"]
+mod objective_epoch_tests;
+
 struct AcceptContribution(AtomicUsize);
 
 #[async_trait::async_trait]

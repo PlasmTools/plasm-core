@@ -5,6 +5,13 @@ type Route = Vec<Edge<CapabilityRef>>;
 type Bundle = BTreeMap<CapabilityRef, Route>;
 const MAX_VARIANTS: usize = 64;
 
+#[cfg(test)]
+mod recorded_cost_tests;
+#[cfg(test)]
+mod capacity_tests;
+#[cfg(test)]
+mod caller_loop;
+
 struct LocalPacket {
     scope: witnesses::Scope,
     question: Question,
@@ -233,6 +240,16 @@ pub(super) fn plan_recalled(
     roots: Vec<CapabilityRef>,
 ) -> Result<Plan, DiscoveryMatcherError> {
     let order = order_recalled(index, context, roots);
+    plan_ordered(index, context, order)
+}
+
+// Separate ordering from exact packet construction for controlled scheduling
+// experiments. Production callers retain order_recalled unchanged.
+pub(super) fn plan_ordered(
+    index: &CatalogueSearch,
+    context: SearchContext<'_>,
+    order: Vec<CapabilityRef>,
+) -> Result<Plan, DiscoveryMatcherError> {
     let ranks: BTreeMap<_, _> = order
         .iter()
         .enumerate()
