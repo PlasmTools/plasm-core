@@ -1,6 +1,6 @@
 //! Native Decisions relevance boundary: shared evidence, independently bound questions.
 use super::{MatchChoice, SharedEvidence};
-use crate::decision_codec::{decode_choices, DecisionResponseError};
+use crate::decision_codec::{decode_choices, ProviderResponseError};
 use serde::Serialize;
 use std::collections::BTreeMap;
 
@@ -25,7 +25,7 @@ pub(super) fn decode<'a>(
     model: &str,
     keys: impl Iterator<Item = &'a String>,
     raw: &str,
-) -> Result<BTreeMap<String, MatchChoice>, DecisionResponseError> {
+) -> Result<BTreeMap<String, MatchChoice>, ProviderResponseError> {
     decode_choices(
         model,
         keys.map(String::as_str),
@@ -38,7 +38,7 @@ pub(super) fn decode<'a>(
             "relevant" => MatchChoice::Relevant,
             "uncertain" => MatchChoice::Uncertain,
             "unrelated" => MatchChoice::Unrelated,
-            _ => return Err(DecisionResponseError::UnsupportedChoice),
+            _ => return Err(ProviderResponseError::UnsupportedChoice),
         };
         Ok((key, choice))
     })

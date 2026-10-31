@@ -96,6 +96,23 @@ mod additive_identity_tests {
     use std::collections::BTreeSet;
 
     #[test]
+    fn equal_current_requests_keep_distinct_ancestry_in_search_identity() {
+        let allowed = DiscoveryAuthorization::catalogs(BTreeSet::from(["matrix".into()]));
+        let first =
+            crate::intent_provenance::IntentProvenance::from_turns(["Inspect".into()]).unwrap();
+        let revised = crate::intent_provenance::IntentProvenance::from_turns([
+            "Prepare".into(),
+            "Inspect".into(),
+        ])
+        .unwrap();
+        assert_eq!(first.current(), revised.current());
+        assert_ne!(
+            search_key("generation", &first, &allowed, "model", &[]).unwrap(),
+            search_key("generation", &revised, &allowed, "model", &[]).unwrap(),
+        );
+    }
+
+    #[test]
     fn search_identity_includes_canonical_exposure() {
         let intent =
             crate::intent_provenance::IntentProvenance::from_turns(["Inspect measurements".into()])
@@ -147,9 +164,9 @@ pub enum DiscoveryServiceError {
     #[error(transparent)]
     Matcher(Box<matcher::DiscoveryMatcherError>),
     #[error(transparent)]
-    DecisionTransport(#[from] crate::decision_transport::DecisionTransportError),
+    ProviderTransport(#[from] plasm_runtime::provider_transport::ProviderTransportError),
     #[error(transparent)]
-    DecisionRecord(#[from] crate::decision_transport::DecisionRecordError),
+    DecisionRecord(#[from] plasm_runtime::provider_transport::ProviderRecordError),
     #[error(transparent)]
     HttpClient(#[from] reqwest::Error),
     #[error(transparent)]
@@ -192,8 +209,7 @@ pub struct RouteTurn<'a> {
 
 pub struct DiscoveryService {
     store: DiscoveryStore,
-    client: reqwest::Client,
-    api_key: String,
+    transport: std::sync::Arc<dyn plasm_runtime::provider_transport::ProviderTransport>,
     match_model: String,
     rejection_dir: Option<std::path::PathBuf>,
 }
@@ -203,12 +219,17 @@ impl DiscoveryService {
     pub(crate) fn cached_test_service(store: DiscoveryStore) -> Self {
         Self {
             store,
-            client: reqwest::Client::builder()
-                .proxy(reqwest::Proxy::all("http://127.0.0.1:1").unwrap())
-                .timeout(std::time::Duration::from_secs(1))
-                .build()
-                .unwrap(),
-            api_key: "no-provider-calls-permitted".into(),
+            transport: std::sync::Arc::new(
+                plasm_runtime::provider_transport::ReqwestProviderTransport::new(
+                    reqwest::Client::builder()
+                        .proxy(reqwest::Proxy::all("http://127.0.0.1:1").unwrap())
+                        .timeout(std::time::Duration::from_secs(1))
+                        .build()
+                        .unwrap(),
+                    matcher::RELEVANCE_ENDPOINT,
+                    "no-provider-calls-permitted",
+                ),
+            ),
             match_model: matcher::RELEVANCE_MODEL.into(),
             rejection_dir: None,
         }
@@ -224,10 +245,17 @@ impl DiscoveryService {
                 .filter(|value| !value.is_empty())
                 .map(std::path::PathBuf::from),
             store,
-            client: reqwest::Client::builder()
-                .timeout(std::time::Duration::from_secs(300))
-                .build()?,
-            api_key,
+            transport: std::sync::Arc::new(scheduling::ScheduledProviderTransport(
+                std::sync::Arc::new(
+                    plasm_runtime::provider_transport::ReqwestProviderTransport::new(
+                        reqwest::Client::builder()
+                            .timeout(std::time::Duration::from_secs(300))
+                            .build()?,
+                        matcher::RELEVANCE_ENDPOINT,
+                        api_key,
+                    ),
+                ),
+            )),
             match_model: std::env::var("PLASM_DISCOVERY_CAPABILITY_MATCH_MODEL")
                 .unwrap_or_else(|_| matcher::RELEVANCE_MODEL.into()),
         })
@@ -468,8 +496,17 @@ impl DiscoveryService {
             return Err(DiscoveryServiceError::SearchAlreadyStarted);
         }
         let progress_key = format!("{key}:progress");
+        let recall = self
+            .store
+            .retrieve(
+                generation,
+                provenance.current(),
+                allowed,
+                &crate::discovery_store::RecallFrontier::from_state(exposed, visits),
+            )
+            .await?;
         let mut attempt = 0;
-        let (retrieval, matching, search) = matcher::online::select_indexed(
+        let (retrieval, matching, search) = matcher::online::select_recalled_indexed(
             matcher::online::SearchContext {
                 visits,
                 model: &self.match_model,
@@ -481,6 +518,7 @@ impl DiscoveryService {
                 exposed,
             },
             &index,
+            &recall,
             |issued| {
                 attempt += 1;
                 let attempt = attempt;
@@ -564,17 +602,14 @@ impl DiscoveryService {
         &self,
         body: &str,
         search_attempt: usize,
-    ) -> std::result::Result<String, crate::decision_transport::DecisionTransportError> {
-        let _permit = scheduling::provider_permit().await;
-        crate::decision_transport::request_decision(
-            &self.client,
-            matcher::RELEVANCE_ENDPOINT,
-            &self.api_key,
+    ) -> std::result::Result<String, plasm_runtime::provider_transport::ProviderTransportError>
+    {
+        plasm_runtime::provider_transport::request_attempt(
+            self.transport.as_ref(),
             body,
-            crate::decision_transport::DecisionRetryPolicy {
-                attempts: 1,
-                ..crate::decision_transport::DecisionRetryPolicy::default()
-            },
+            search_attempt,
+            plasm_runtime::provider_transport::ProviderRetryPolicy::discovery_attempt()
+                .attempt_timeout,
             |attempt| {
                 if let Some(directory) = &self.rejection_dir {
                     let mut record = serde_json::to_value(attempt)?;
@@ -593,7 +628,7 @@ impl DiscoveryService {
 fn save_rejection(
     directory: &std::path::Path,
     record: &serde_json::Value,
-) -> std::result::Result<(), crate::decision_transport::DecisionRecordError> {
+) -> std::result::Result<(), plasm_runtime::provider_transport::ProviderRecordError> {
     use std::io::Write;
 
     std::fs::create_dir_all(directory)?;

@@ -5,7 +5,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use thiserror::Error;
 
 #[derive(Debug, Error)]
-pub enum DecisionResponseError {
+pub enum ProviderResponseError {
     #[error("malformed decision response envelope")]
     MalformedEnvelope(#[source] serde_json::Error),
     #[error("decision response resolved to an unexpected model")]
@@ -31,7 +31,7 @@ pub enum DecisionCodecError {
     #[error("decision request serialization failed")]
     Serialize(#[from] serde_json::Error),
     #[error(transparent)]
-    Response(#[from] DecisionResponseError),
+    Response(#[from] ProviderResponseError),
 }
 
 const MAX_ROUNDED_PROBABILITY_DRIFT: f64 = 0.011;
@@ -80,14 +80,14 @@ pub(crate) fn decode_choices<'a>(
     questions: impl IntoIterator<Item = &'a str>,
     choices: &[&str],
     raw: &str,
-) -> Result<BTreeMap<String, ValidatedChoice>, DecisionResponseError> {
+) -> Result<BTreeMap<String, ValidatedChoice>, ProviderResponseError> {
     let envelope: ChoiceEnvelope =
-        serde_json::from_str(raw).map_err(DecisionResponseError::MalformedEnvelope)?;
+        serde_json::from_str(raw).map_err(ProviderResponseError::MalformedEnvelope)?;
     if !model_matches(model, &envelope.model) {
-        return Err(DecisionResponseError::UnexpectedModel);
+        return Err(ProviderResponseError::UnexpectedModel);
     }
     if envelope.provider != "OpenAI" {
-        return Err(DecisionResponseError::UnexpectedProvider);
+        return Err(ProviderResponseError::UnexpectedProvider);
     }
     let questions: BTreeSet<_> = questions.into_iter().collect();
     if envelope.answers.len() != questions.len()
@@ -96,24 +96,24 @@ pub(crate) fn decode_choices<'a>(
             .keys()
             .all(|key| questions.contains(key.as_str()))
     {
-        return Err(DecisionResponseError::AnswerSetMismatch);
+        return Err(ProviderResponseError::AnswerSetMismatch);
     }
     envelope
         .answers
         .into_iter()
         .map(|(question, answer)| {
             if answer.kind != "choice" {
-                return Err(DecisionResponseError::UnexpectedQuestionType);
+                return Err(ProviderResponseError::UnexpectedQuestionType);
             }
             if !choices.contains(&answer.choice.as_str()) {
-                return Err(DecisionResponseError::UnsupportedChoice);
+                return Err(ProviderResponseError::UnsupportedChoice);
             }
             if answer.probabilities.len() != choices.len()
                 || !choices
                     .iter()
                     .all(|key| answer.probabilities.contains_key(*key))
             {
-                return Err(DecisionResponseError::ProbabilityKeysMismatch);
+                return Err(ProviderResponseError::ProbabilityKeysMismatch);
             }
             let total: f64 = answer.probabilities.values().sum();
             if !answer
@@ -123,10 +123,10 @@ pub(crate) fn decode_choices<'a>(
                 || total <= 0.0
                 || (total - 1.0).abs() > MAX_ROUNDED_PROBABILITY_DRIFT
             {
-                return Err(DecisionResponseError::InvalidProbabilities);
+                return Err(ProviderResponseError::InvalidProbabilities);
             }
             if !answer.confidence.is_finite() || !(0.0..=1.0).contains(&answer.confidence) {
-                return Err(DecisionResponseError::InvalidConfidence);
+                return Err(ProviderResponseError::InvalidConfidence);
             }
             Ok((
                 question,
@@ -196,7 +196,7 @@ mod tests {
 
     fn decode(
         raw: &str,
-    ) -> std::result::Result<BTreeMap<String, ValidatedChoice>, DecisionResponseError> {
+    ) -> std::result::Result<BTreeMap<String, ValidatedChoice>, ProviderResponseError> {
         decode_choices("openai/gpt-6-luna-decisions", ["q"], &["yes", "no"], raw)
     }
 

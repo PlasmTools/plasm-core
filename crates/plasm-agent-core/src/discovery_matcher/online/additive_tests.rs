@@ -71,7 +71,7 @@ fn trial_packet_size_matches_dispatch_encoding_and_stable_labels() {
         }
     }
     // Serialization boundaries: escaped keys/values, multi-digit reference IDs,
-    // same-name definitions with different contents, and nontrivial ancestry.
+    // same-name definitions with different contents, and distinct current fields.
     let template = local[0].clone();
     let mut variants = Vec::new();
     for n in 0..16 {
@@ -87,8 +87,6 @@ fn trial_packet_size_matches_dispatch_encoding_and_stable_labels() {
         body["questions"] = json!({format!("q{n}"): question});
         body["state"]["outcome"] = json!("Observe \"α\"; preserve originals.\n");
         body["state"]["discovery_need"] = json!("Inspect β");
-        body["state"]["intent_turns"] =
-            json!(["Observe \"α\"; preserve originals.\n", "Inspect β"]);
         body["state"]["types"]["values"]
             .as_object_mut()
             .unwrap()
@@ -133,7 +131,7 @@ fn oversized_optional_route_does_not_block_affordable_direct_root() {
     let cgs = catalogs.get_mut("matrix").unwrap();
     cgs.capabilities
         .retain(|name, _| ["source_read", "prepare", "opaque"].contains(&name.as_str()));
-    let template = cgs.capabilities.remove("opaque").unwrap();
+    let template = cgs.capabilities.swap_remove("opaque").unwrap();
     for name in ["a", "b"] {
         let mut cap = template.clone();
         cap.name = name.into();
@@ -196,7 +194,8 @@ async fn current_discovery_need_is_not_drowned_by_original_context() {
     }
     let intent = IntentProvenance::from_turns([
         "Inspect calibration; preserve originals. If measurements fail, report uncertainty.".into(),
-        "Measure fluorescence".into(),
+        "Measure fluorescence; preserve originals. If measurements fail, report uncertainty."
+            .into(),
     ])
     .unwrap();
     let (retrieval, _, receipt) = select(
@@ -213,6 +212,8 @@ async fn current_discovery_need_is_not_drowned_by_original_context() {
         |request| async move {
             assert!(request.body().contains("preserve originals"));
             assert!(request.body().contains("If measurements fail"));
+            let body: serde_json::Value = serde_json::from_str(request.body()).unwrap();
+            assert!(body["state"].get("intent_history").is_none());
             Ok(answer(&request, "uncertain"))
         },
     )

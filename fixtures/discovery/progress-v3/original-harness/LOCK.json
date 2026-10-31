@@ -1,0 +1,8 @@
+{
+  "fixtures/discovery/progress-v3/PROTOCOL.md": "d1b24ea953ceb069b6c3ebb76ab0e2634822bfe66b9012e74e31b7a0a88a0c61",
+  "fixtures/discovery/progress-v3/cases.json": "c34dcca23176fadbd9a0d97dde02fa528b6afbbfe93ce8fe806fcf9726a59343",
+  "fixtures/discovery/progress-v3/generate.py": "cc5285cd29c68c7147250fa10c8f959c759cb0b478d77fabf4dae527b8aabec0",
+  "fixtures/discovery/progress-v3/run.py": "c8eb85fa9dec32c31a151099b47271389c62902c197ef38e3ae094ea3c61d40a",
+  "fixtures/schemas/discovery_progress_v3/domain.yaml": "1ff9a57fe9a919ad7ea9199132d9c91a9f380906ccb5998f60c2a42864dd7100",
+  "fixtures/schemas/discovery_progress_v3/mappings.yaml": "0c2c9e9d171191af92b66a01484160a6042302aeb099e8cfcb96978af90babf3"
+}

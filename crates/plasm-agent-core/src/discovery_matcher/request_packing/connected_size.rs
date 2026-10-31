@@ -38,7 +38,6 @@ impl PreparedLocal {
         scope: &witnesses::Scope,
     ) -> Result<Self, DiscoveryMatcherError> {
         let context = Context {
-            intent_turns: intent.turns().map(str::to_owned).collect(),
             rule: super::super::RUBRIC.into(),
             discovery_need: intent.current().into(),
             outcome: intent.current().into(),

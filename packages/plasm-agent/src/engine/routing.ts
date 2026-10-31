@@ -59,7 +59,7 @@ const routingSchema = z.object({
     budget_retained: z.array(scopeBudgetRetention).max(0).optional(),
   }).strict(),
   search: z.object({
-    policy: z.literal("additive-connected-frontier-current-bm25f-1-judgment-3-attempts-16000-byte-packet-v12"),
+    policy: z.literal("additive-connected-frontier-current-hybrid-evidence-1-judgment-3-attempts-16000-byte-packet-v16"),
     exposed: z.array(capability),
     considered: z.array(capability),
     unexplored: z.array(capability),

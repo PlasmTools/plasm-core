@@ -1,0 +1,26 @@
+[
+  {
+    "id": "vessel",
+    "left_effect": "Seal the vessel.",
+    "right_effect": "Inspect the vessel.",
+    "distractor": "Record historical instructions to seal or inspect the vessel, preserve its identifier and retain its location. This records text and does not change the vessel."
+  },
+  {
+    "id": "document",
+    "left_effect": "Encrypt the document.",
+    "right_effect": "Archive the document.",
+    "distractor": "Record historical instructions to encrypt or archive the document, preserve its identifier and retain its location. This records text and does not change the document."
+  },
+  {
+    "id": "component",
+    "left_effect": "Demagnetize the component.",
+    "right_effect": "Weigh the component.",
+    "distractor": "Record historical instructions to demagnetize or weigh the component, preserve its identifier and retain its location. This records text and does not change the component."
+  },
+  {
+    "id": "specimen",
+    "left_effect": "Desiccate the specimen.",
+    "right_effect": "Photograph the specimen.",
+    "distractor": "Record historical instructions to desiccate or photograph the specimen, preserve its identifier and retain its location. This records text and does not change the specimen."
+  }
+]

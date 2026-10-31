@@ -108,11 +108,14 @@ pub async fn seed_model_boundary(store: &DiscoveryStore, generation: &str, turns
         .load_discovery_generation(generation, &allowed)
         .await
         .unwrap();
-    plasm_agent_core::discovery_matcher::online::select(
+    let recall = store.retrieve(generation, intent, &allowed, &Default::default()).await.unwrap();
+    plasm_agent_core::discovery_matcher::online::select_retrieved(
         plasm_agent_core::discovery_matcher::online::SearchContext {
             model, intent: &provenance, generation, catalogs: &catalogs,
             deployments: &deployments, allowed: &allowed,
+            exposed: &[], visits: &Default::default(),
         },
+        &recall,
         |batch| async move {
         let body: Value = serde_json::from_str(batch.body()).unwrap();
         let answers: BTreeMap<_, _> = body["questions"]

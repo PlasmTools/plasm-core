@@ -1,0 +1,490 @@
+[
+  {
+    "id": "action_context-0-0",
+    "pair": "action_context-0",
+    "family": "action_context",
+    "request": "Seal the ceramic tile with a clear finish. The surface check is already complete; no inspection records are needed.",
+    "targets": [
+      "op_a"
+    ],
+    "witness": false
+  },
+  {
+    "id": "action_context-0-1",
+    "pair": "action_context-0",
+    "family": "action_context",
+    "request": "Seal the ceramic tile with a clear finish. The surface check is already complete; no inspection records are needed.",
+    "targets": [
+      "op_a"
+    ],
+    "witness": false
+  },
+  {
+    "id": "action_context-1-0",
+    "pair": "action_context-1",
+    "family": "action_context",
+    "request": "Seal the optical plate with a clear finish. The surface check is already complete; no inspection records are needed.",
+    "targets": [
+      "op_a"
+    ],
+    "witness": false
+  },
+  {
+    "id": "action_context-1-1",
+    "pair": "action_context-1",
+    "family": "action_context",
+    "request": "Seal the optical plate with a clear finish. The surface check is already complete; no inspection records are needed.",
+    "targets": [
+      "op_a"
+    ],
+    "witness": false
+  },
+  {
+    "id": "action_context-2-0",
+    "pair": "action_context-2",
+    "family": "action_context",
+    "request": "Seal the woven panel with a clear finish. The surface check is already complete; no inspection records are needed.",
+    "targets": [
+      "op_a"
+    ],
+    "witness": false
+  },
+  {
+    "id": "action_context-2-1",
+    "pair": "action_context-2",
+    "family": "action_context",
+    "request": "Seal the woven panel with a clear finish. The surface check is already complete; no inspection records are needed.",
+    "targets": [
+      "op_a"
+    ],
+    "witness": false
+  },
+  {
+    "id": "action_context-3-0",
+    "pair": "action_context-3",
+    "family": "action_context",
+    "request": "Seal the resin block with a clear finish. The surface check is already complete; no inspection records are needed.",
+    "targets": [
+      "op_a"
+    ],
+    "witness": false
+  },
+  {
+    "id": "action_context-3-1",
+    "pair": "action_context-3",
+    "family": "action_context",
+    "request": "Seal the resin block with a clear finish. The surface check is already complete; no inspection records are needed.",
+    "targets": [
+      "op_a"
+    ],
+    "witness": false
+  },
+  {
+    "id": "effect_role-0-0",
+    "pair": "effect_role-0",
+    "family": "effect_role",
+    "request": "Open the iris gate.",
+    "targets": [
+      "op_a"
+    ],
+    "witness": false
+  },
+  {
+    "id": "effect_role-0-1",
+    "pair": "effect_role-0",
+    "family": "effect_role",
+    "request": "Open the iris gate.",
+    "targets": [
+      "op_a"
+    ],
+    "witness": false
+  },
+  {
+    "id": "effect_role-1-0",
+    "pair": "effect_role-1",
+    "family": "effect_role",
+    "request": "Publish the prepared notice.",
+    "targets": [
+      "op_a"
+    ],
+    "witness": false
+  },
+  {
+    "id": "effect_role-1-1",
+    "pair": "effect_role-1",
+    "family": "effect_role",
+    "request": "Publish the prepared notice.",
+    "targets": [
+      "op_a"
+    ],
+    "witness": false
+  },
+  {
+    "id": "effect_role-2-0",
+    "pair": "effect_role-2",
+    "family": "effect_role",
+    "request": "Activate the prepared beacon.",
+    "targets": [
+      "op_a"
+    ],
+    "witness": false
+  },
+  {
+    "id": "effect_role-2-1",
+    "pair": "effect_role-2",
+    "family": "effect_role",
+    "request": "Activate the prepared beacon.",
+    "targets": [
+      "op_a"
+    ],
+    "witness": false
+  },
+  {
+    "id": "effect_role-3-0",
+    "pair": "effect_role-3",
+    "family": "effect_role",
+    "request": "Dispatch the prepared capsule.",
+    "targets": [
+      "op_a"
+    ],
+    "witness": false
+  },
+  {
+    "id": "effect_role-3-1",
+    "pair": "effect_role-3",
+    "family": "effect_role",
+    "request": "Dispatch the prepared capsule.",
+    "targets": [
+      "op_a"
+    ],
+    "witness": false
+  },
+  {
+    "id": "readiness-0-0",
+    "pair": "readiness-0",
+    "family": "readiness",
+    "request": "Calibrate the prism. The routing token is already available.",
+    "targets": [
+      "op_a"
+    ],
+    "witness": false
+  },
+  {
+    "id": "readiness-0-1",
+    "pair": "readiness-0",
+    "family": "readiness",
+    "request": "Calibrate the prism. The routing token is not yet available; it can be obtained before executing.",
+    "targets": [
+      "op_a"
+    ],
+    "witness": false
+  },
+  {
+    "id": "readiness-1-0",
+    "pair": "readiness-1",
+    "family": "readiness",
+    "request": "Stabilize the spindle. The routing token is already available.",
+    "targets": [
+      "op_a"
+    ],
+    "witness": false
+  },
+  {
+    "id": "readiness-1-1",
+    "pair": "readiness-1",
+    "family": "readiness",
+    "request": "Stabilize the spindle. The routing token is not yet available; it can be obtained before executing.",
+    "targets": [
+      "op_a"
+    ],
+    "witness": false
+  },
+  {
+    "id": "readiness-2-0",
+    "pair": "readiness-2",
+    "family": "readiness",
+    "request": "Align the aperture. The routing token is already available.",
+    "targets": [
+      "op_a"
+    ],
+    "witness": false
+  },
+  {
+    "id": "readiness-2-1",
+    "pair": "readiness-2",
+    "family": "readiness",
+    "request": "Align the aperture. The routing token is not yet available; it can be obtained before executing.",
+    "targets": [
+      "op_a"
+    ],
+    "witness": false
+  },
+  {
+    "id": "readiness-3-0",
+    "pair": "readiness-3",
+    "family": "readiness",
+    "request": "Charge the capsule. The routing token is already available.",
+    "targets": [
+      "op_a"
+    ],
+    "witness": false
+  },
+  {
+    "id": "readiness-3-1",
+    "pair": "readiness-3",
+    "family": "readiness",
+    "request": "Charge the capsule. The routing token is not yet available; it can be obtained before executing.",
+    "targets": [
+      "op_a"
+    ],
+    "witness": false
+  },
+  {
+    "id": "local_evidence-0-0",
+    "pair": "local_evidence-0",
+    "family": "local_evidence",
+    "request": "Tune the resonator.",
+    "targets": [
+      "op_a"
+    ],
+    "witness": true
+  },
+  {
+    "id": "local_evidence-0-1",
+    "pair": "local_evidence-0",
+    "family": "local_evidence",
+    "request": "Tune the resonator.",
+    "targets": [
+      "op_a"
+    ],
+    "witness": false
+  },
+  {
+    "id": "local_evidence-1-0",
+    "pair": "local_evidence-1",
+    "family": "local_evidence",
+    "request": "Anneal the wafer.",
+    "targets": [
+      "op_a"
+    ],
+    "witness": true
+  },
+  {
+    "id": "local_evidence-1-1",
+    "pair": "local_evidence-1",
+    "family": "local_evidence",
+    "request": "Anneal the wafer.",
+    "targets": [
+      "op_a"
+    ],
+    "witness": false
+  },
+  {
+    "id": "local_evidence-2-0",
+    "pair": "local_evidence-2",
+    "family": "local_evidence",
+    "request": "Balance the rotor.",
+    "targets": [
+      "op_a"
+    ],
+    "witness": true
+  },
+  {
+    "id": "local_evidence-2-1",
+    "pair": "local_evidence-2",
+    "family": "local_evidence",
+    "request": "Balance the rotor.",
+    "targets": [
+      "op_a"
+    ],
+    "witness": false
+  },
+  {
+    "id": "local_evidence-3-0",
+    "pair": "local_evidence-3",
+    "family": "local_evidence",
+    "request": "Sterilize the chamber.",
+    "targets": [
+      "op_a"
+    ],
+    "witness": true
+  },
+  {
+    "id": "local_evidence-3-1",
+    "pair": "local_evidence-3",
+    "family": "local_evidence",
+    "request": "Sterilize the chamber.",
+    "targets": [
+      "op_a"
+    ],
+    "witness": false
+  },
+  {
+    "id": "constraints_branches-0-0",
+    "pair": "constraints_branches-0",
+    "family": "constraints_branches",
+    "request": "Recoat the alloy marker; replacing its surface is permitted.",
+    "targets": [
+      "op_a"
+    ],
+    "witness": false
+  },
+  {
+    "id": "constraints_branches-0-1",
+    "pair": "constraints_branches-0",
+    "family": "constraints_branches",
+    "request": "Only inspect the alloy marker. Preserve its surface unchanged.",
+    "targets": [
+      "op_a"
+    ],
+    "witness": false
+  },
+  {
+    "id": "constraints_branches-1-0",
+    "pair": "constraints_branches-1",
+    "family": "constraints_branches",
+    "request": "Publish the aperture reading publicly.",
+    "targets": [
+      "op_a"
+    ],
+    "witness": false
+  },
+  {
+    "id": "constraints_branches-1-1",
+    "pair": "constraints_branches-1",
+    "family": "constraints_branches",
+    "request": "Keep the aperture reading private. Do not publish it.",
+    "targets": [
+      "op_a"
+    ],
+    "witness": false
+  },
+  {
+    "id": "constraints_branches-2-0",
+    "pair": "constraints_branches-2",
+    "family": "constraints_branches",
+    "request": "If the disk is scratched, polish it; otherwise leave it unchanged. The condition has not yet been checked.",
+    "targets": [
+      "op_a"
+    ],
+    "witness": false
+  },
+  {
+    "id": "constraints_branches-2-1",
+    "pair": "constraints_branches-2",
+    "family": "constraints_branches",
+    "request": "Never polish the ceramic disk. Inspect it without changing it.",
+    "targets": [
+      "op_a"
+    ],
+    "witness": false
+  },
+  {
+    "id": "constraints_branches-3-0",
+    "pair": "constraints_branches-3",
+    "family": "constraints_branches",
+    "request": "If the threshold is exceeded, notify the operator; otherwise remain silent. The threshold result is not yet known.",
+    "targets": [
+      "op_a"
+    ],
+    "witness": false
+  },
+  {
+    "id": "constraints_branches-3-1",
+    "pair": "constraints_branches-3",
+    "family": "constraints_branches",
+    "request": "Produce a private local draft only. Do not notify the operator or send a message.",
+    "targets": [
+      "op_a"
+    ],
+    "witness": false
+  },
+  {
+    "id": "scope_isolation-0-0",
+    "pair": "scope_isolation-0",
+    "family": "scope_isolation",
+    "request": "Seal the membrane.",
+    "targets": [
+      "op_a",
+      "op_b"
+    ],
+    "witness": false
+  },
+  {
+    "id": "scope_isolation-0-1",
+    "pair": "scope_isolation-0",
+    "family": "scope_isolation",
+    "request": "Seal the membrane.",
+    "targets": [
+      "op_a",
+      "op_b"
+    ],
+    "witness": false
+  },
+  {
+    "id": "scope_isolation-1-0",
+    "pair": "scope_isolation-1",
+    "family": "scope_isolation",
+    "request": "Illuminate the dial.",
+    "targets": [
+      "op_a",
+      "op_b"
+    ],
+    "witness": false
+  },
+  {
+    "id": "scope_isolation-1-1",
+    "pair": "scope_isolation-1",
+    "family": "scope_isolation",
+    "request": "Illuminate the dial.",
+    "targets": [
+      "op_a",
+      "op_b"
+    ],
+    "witness": false
+  },
+  {
+    "id": "scope_isolation-2-0",
+    "pair": "scope_isolation-2",
+    "family": "scope_isolation",
+    "request": "Balance the pendulum.",
+    "targets": [
+      "op_a",
+      "op_b"
+    ],
+    "witness": false
+  },
+  {
+    "id": "scope_isolation-2-1",
+    "pair": "scope_isolation-2",
+    "family": "scope_isolation",
+    "request": "Balance the pendulum.",
+    "targets": [
+      "op_a",
+      "op_b"
+    ],
+    "witness": false
+  },
+  {
+    "id": "scope_isolation-3-0",
+    "pair": "scope_isolation-3",
+    "family": "scope_isolation",
+    "request": "Open the shutter.",
+    "targets": [
+      "op_a",
+      "op_b"
+    ],
+    "witness": false
+  },
+  {
+    "id": "scope_isolation-3-1",
+    "pair": "scope_isolation-3",
+    "family": "scope_isolation",
+    "request": "Open the shutter.",
+    "targets": [
+      "op_a",
+      "op_b"
+    ],
+    "witness": false
+  }
+]

@@ -1,0 +1,438 @@
+{
+  "action_context-0-0": {
+    "target": "op_a",
+    "admissible": [
+      "relevant"
+    ],
+    "workflow_useful": true,
+    "rationale": "The operation performs the requested sealing.",
+    "pair_relation": "sensitivity"
+  },
+  "action_context-0-1": {
+    "target": "op_a",
+    "admissible": [
+      "unrelated"
+    ],
+    "workflow_useful": false,
+    "rationale": "Historical inspection serves an explicitly unneeded observation, not sealing.",
+    "pair_relation": "sensitivity"
+  },
+  "action_context-1-0": {
+    "target": "op_a",
+    "admissible": [
+      "relevant"
+    ],
+    "workflow_useful": true,
+    "rationale": "The operation performs the requested sealing.",
+    "pair_relation": "sensitivity"
+  },
+  "action_context-1-1": {
+    "target": "op_a",
+    "admissible": [
+      "unrelated"
+    ],
+    "workflow_useful": false,
+    "rationale": "Historical inspection serves an explicitly unneeded observation, not sealing.",
+    "pair_relation": "sensitivity"
+  },
+  "action_context-2-0": {
+    "target": "op_a",
+    "admissible": [
+      "relevant"
+    ],
+    "workflow_useful": true,
+    "rationale": "The operation performs the requested sealing.",
+    "pair_relation": "sensitivity"
+  },
+  "action_context-2-1": {
+    "target": "op_a",
+    "admissible": [
+      "unrelated"
+    ],
+    "workflow_useful": false,
+    "rationale": "Historical inspection serves an explicitly unneeded observation, not sealing.",
+    "pair_relation": "sensitivity"
+  },
+  "action_context-3-0": {
+    "target": "op_a",
+    "admissible": [
+      "relevant"
+    ],
+    "workflow_useful": true,
+    "rationale": "The operation performs the requested sealing.",
+    "pair_relation": "sensitivity"
+  },
+  "action_context-3-1": {
+    "target": "op_a",
+    "admissible": [
+      "unrelated"
+    ],
+    "workflow_useful": false,
+    "rationale": "Historical inspection serves an explicitly unneeded observation, not sealing.",
+    "pair_relation": "sensitivity"
+  },
+  "effect_role-0-0": {
+    "target": "op_a",
+    "admissible": [
+      "relevant"
+    ],
+    "workflow_useful": true,
+    "rationale": "Performs the requested effect.",
+    "pair_relation": "sensitivity"
+  },
+  "effect_role-0-1": {
+    "target": "op_a",
+    "admissible": [
+      "unrelated"
+    ],
+    "workflow_useful": false,
+    "rationale": "Performs the reverse effect or records a different stage; it does not cause the requested effect.",
+    "pair_relation": "sensitivity"
+  },
+  "effect_role-1-0": {
+    "target": "op_a",
+    "admissible": [
+      "relevant"
+    ],
+    "workflow_useful": true,
+    "rationale": "Performs the requested effect.",
+    "pair_relation": "sensitivity"
+  },
+  "effect_role-1-1": {
+    "target": "op_a",
+    "admissible": [
+      "unrelated"
+    ],
+    "workflow_useful": false,
+    "rationale": "Performs the reverse effect or records a different stage; it does not cause the requested effect.",
+    "pair_relation": "sensitivity"
+  },
+  "effect_role-2-0": {
+    "target": "op_a",
+    "admissible": [
+      "relevant"
+    ],
+    "workflow_useful": true,
+    "rationale": "Performs the requested effect.",
+    "pair_relation": "sensitivity"
+  },
+  "effect_role-2-1": {
+    "target": "op_a",
+    "admissible": [
+      "unrelated"
+    ],
+    "workflow_useful": false,
+    "rationale": "Performs the reverse effect or records a different stage; it does not cause the requested effect.",
+    "pair_relation": "sensitivity"
+  },
+  "effect_role-3-0": {
+    "target": "op_a",
+    "admissible": [
+      "relevant"
+    ],
+    "workflow_useful": true,
+    "rationale": "Performs the requested effect.",
+    "pair_relation": "sensitivity"
+  },
+  "effect_role-3-1": {
+    "target": "op_a",
+    "admissible": [
+      "unrelated"
+    ],
+    "workflow_useful": false,
+    "rationale": "Performs the reverse effect or records a different stage; it does not cause the requested effect.",
+    "pair_relation": "sensitivity"
+  },
+  "readiness-0-0": {
+    "target": "op_a",
+    "admissible": [
+      "relevant"
+    ],
+    "workflow_useful": true,
+    "rationale": "Known input makes execution readiness clear, but contribution comes from the effect.",
+    "pair_relation": "invariance"
+  },
+  "readiness-0-1": {
+    "target": "op_a",
+    "admissible": [
+      "relevant"
+    ],
+    "workflow_useful": true,
+    "rationale": "The same effect remains useful before its input has been obtained.",
+    "pair_relation": "invariance"
+  },
+  "readiness-1-0": {
+    "target": "op_a",
+    "admissible": [
+      "relevant"
+    ],
+    "workflow_useful": true,
+    "rationale": "Known input makes execution readiness clear, but contribution comes from the effect.",
+    "pair_relation": "invariance"
+  },
+  "readiness-1-1": {
+    "target": "op_a",
+    "admissible": [
+      "relevant"
+    ],
+    "workflow_useful": true,
+    "rationale": "The same effect remains useful before its input has been obtained.",
+    "pair_relation": "invariance"
+  },
+  "readiness-2-0": {
+    "target": "op_a",
+    "admissible": [
+      "relevant"
+    ],
+    "workflow_useful": true,
+    "rationale": "Known input makes execution readiness clear, but contribution comes from the effect.",
+    "pair_relation": "invariance"
+  },
+  "readiness-2-1": {
+    "target": "op_a",
+    "admissible": [
+      "relevant"
+    ],
+    "workflow_useful": true,
+    "rationale": "The same effect remains useful before its input has been obtained.",
+    "pair_relation": "invariance"
+  },
+  "readiness-3-0": {
+    "target": "op_a",
+    "admissible": [
+      "relevant"
+    ],
+    "workflow_useful": true,
+    "rationale": "Known input makes execution readiness clear, but contribution comes from the effect.",
+    "pair_relation": "invariance"
+  },
+  "readiness-3-1": {
+    "target": "op_a",
+    "admissible": [
+      "relevant"
+    ],
+    "workflow_useful": true,
+    "rationale": "The same effect remains useful before its input has been obtained.",
+    "pair_relation": "invariance"
+  },
+  "local_evidence-0-0": {
+    "target": "op_a",
+    "admissible": [
+      "relevant"
+    ],
+    "workflow_useful": true,
+    "rationale": "An authorized typed witness shows this token feeds an operation with the requested effect.",
+    "pair_relation": "evidence_resolution"
+  },
+  "local_evidence-0-1": {
+    "target": "op_a",
+    "admissible": [
+      "uncertain",
+      "unrelated"
+    ],
+    "workflow_useful": true,
+    "rationale": "The local packet does not identify any helpful downstream use. Global utility is deliberately hidden, so a positive answer is not established locally.",
+    "pair_relation": "evidence_resolution"
+  },
+  "local_evidence-1-0": {
+    "target": "op_a",
+    "admissible": [
+      "relevant"
+    ],
+    "workflow_useful": true,
+    "rationale": "An authorized typed witness shows this token feeds an operation with the requested effect.",
+    "pair_relation": "evidence_resolution"
+  },
+  "local_evidence-1-1": {
+    "target": "op_a",
+    "admissible": [
+      "uncertain",
+      "unrelated"
+    ],
+    "workflow_useful": true,
+    "rationale": "The local packet does not identify any helpful downstream use. Global utility is deliberately hidden, so a positive answer is not established locally.",
+    "pair_relation": "evidence_resolution"
+  },
+  "local_evidence-2-0": {
+    "target": "op_a",
+    "admissible": [
+      "relevant"
+    ],
+    "workflow_useful": true,
+    "rationale": "An authorized typed witness shows this token feeds an operation with the requested effect.",
+    "pair_relation": "evidence_resolution"
+  },
+  "local_evidence-2-1": {
+    "target": "op_a",
+    "admissible": [
+      "uncertain",
+      "unrelated"
+    ],
+    "workflow_useful": true,
+    "rationale": "The local packet does not identify any helpful downstream use. Global utility is deliberately hidden, so a positive answer is not established locally.",
+    "pair_relation": "evidence_resolution"
+  },
+  "local_evidence-3-0": {
+    "target": "op_a",
+    "admissible": [
+      "relevant"
+    ],
+    "workflow_useful": true,
+    "rationale": "An authorized typed witness shows this token feeds an operation with the requested effect.",
+    "pair_relation": "evidence_resolution"
+  },
+  "local_evidence-3-1": {
+    "target": "op_a",
+    "admissible": [
+      "uncertain",
+      "unrelated"
+    ],
+    "workflow_useful": true,
+    "rationale": "The local packet does not identify any helpful downstream use. Global utility is deliberately hidden, so a positive answer is not established locally.",
+    "pair_relation": "evidence_resolution"
+  },
+  "constraints_branches-0-0": {
+    "target": "op_a",
+    "admissible": [
+      "relevant"
+    ],
+    "workflow_useful": true,
+    "rationale": "The effect supports an explicitly requested outcome or conditional branch; exposure does not execute it.",
+    "pair_relation": "sensitivity"
+  },
+  "constraints_branches-0-1": {
+    "target": "op_a",
+    "admissible": [
+      "unrelated"
+    ],
+    "workflow_useful": false,
+    "rationale": "The documented effect contradicts an explicit restriction on the current request.",
+    "pair_relation": "sensitivity"
+  },
+  "constraints_branches-1-0": {
+    "target": "op_a",
+    "admissible": [
+      "relevant"
+    ],
+    "workflow_useful": true,
+    "rationale": "The effect supports an explicitly requested outcome or conditional branch; exposure does not execute it.",
+    "pair_relation": "sensitivity"
+  },
+  "constraints_branches-1-1": {
+    "target": "op_a",
+    "admissible": [
+      "unrelated"
+    ],
+    "workflow_useful": false,
+    "rationale": "The documented effect contradicts an explicit restriction on the current request.",
+    "pair_relation": "sensitivity"
+  },
+  "constraints_branches-2-0": {
+    "target": "op_a",
+    "admissible": [
+      "relevant"
+    ],
+    "workflow_useful": true,
+    "rationale": "The effect supports an explicitly requested outcome or conditional branch; exposure does not execute it.",
+    "pair_relation": "sensitivity"
+  },
+  "constraints_branches-2-1": {
+    "target": "op_a",
+    "admissible": [
+      "unrelated"
+    ],
+    "workflow_useful": false,
+    "rationale": "The documented effect contradicts an explicit restriction on the current request.",
+    "pair_relation": "sensitivity"
+  },
+  "constraints_branches-3-0": {
+    "target": "op_a",
+    "admissible": [
+      "relevant"
+    ],
+    "workflow_useful": true,
+    "rationale": "The effect supports an explicitly requested outcome or conditional branch; exposure does not execute it.",
+    "pair_relation": "sensitivity"
+  },
+  "constraints_branches-3-1": {
+    "target": "op_a",
+    "admissible": [
+      "unrelated"
+    ],
+    "workflow_useful": false,
+    "rationale": "The documented effect contradicts an explicit restriction on the current request.",
+    "pair_relation": "sensitivity"
+  },
+  "scope_isolation-0-0": {
+    "target": "op_a",
+    "admissible": [
+      "unrelated"
+    ],
+    "workflow_useful": false,
+    "rationale": "Only this target and its local references govern its contribution.",
+    "pair_relation": "invariance"
+  },
+  "scope_isolation-0-1": {
+    "target": "op_a",
+    "admissible": [
+      "unrelated"
+    ],
+    "workflow_useful": false,
+    "rationale": "Only this target and its local references govern its contribution.",
+    "pair_relation": "invariance"
+  },
+  "scope_isolation-1-0": {
+    "target": "op_a",
+    "admissible": [
+      "relevant"
+    ],
+    "workflow_useful": true,
+    "rationale": "Only this target and its local references govern its contribution.",
+    "pair_relation": "invariance"
+  },
+  "scope_isolation-1-1": {
+    "target": "op_a",
+    "admissible": [
+      "relevant"
+    ],
+    "workflow_useful": true,
+    "rationale": "Only this target and its local references govern its contribution.",
+    "pair_relation": "invariance"
+  },
+  "scope_isolation-2-0": {
+    "target": "op_a",
+    "admissible": [
+      "uncertain"
+    ],
+    "workflow_useful": null,
+    "rationale": "Only this target and its local references govern its contribution.",
+    "pair_relation": "invariance"
+  },
+  "scope_isolation-2-1": {
+    "target": "op_a",
+    "admissible": [
+      "uncertain"
+    ],
+    "workflow_useful": null,
+    "rationale": "Only this target and its local references govern its contribution.",
+    "pair_relation": "invariance"
+  },
+  "scope_isolation-3-0": {
+    "target": "op_a",
+    "admissible": [
+      "unrelated"
+    ],
+    "workflow_useful": false,
+    "rationale": "Only this target and its local references govern its contribution.",
+    "pair_relation": "invariance"
+  },
+  "scope_isolation-3-1": {
+    "target": "op_a",
+    "admissible": [
+      "unrelated"
+    ],
+    "workflow_useful": false,
+    "rationale": "Only this target and its local references govern its contribution.",
+    "pair_relation": "invariance"
+  }
+}

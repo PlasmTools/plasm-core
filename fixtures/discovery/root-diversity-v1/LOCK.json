@@ -1,0 +1,6 @@
+{
+  "fixtures/discovery/root-diversity-v1/cases.json": "1032a489d34c25044928d29f8913675f934cf0c64484df81150945fc29ea8cdb",
+  "fixtures/discovery/root-diversity-v1/PROTOCOL.md": "035b8e1acaf45b4448c52008b568e0ed0426158dbacb1c36abdb63d1d66b8cab",
+  "fixtures/schemas/discovery_trajectory_v4/domain.yaml": "82e26d4501ead82b72d634597bd7c97b92590ab7672162321548457ed1b45aef",
+  "fixtures/schemas/discovery_trajectory_v4/mappings.yaml": "351b98b22d8aaaa3cfba09c941367d26323a34f0479a8ae8baccd7a9791f0db1"
+}

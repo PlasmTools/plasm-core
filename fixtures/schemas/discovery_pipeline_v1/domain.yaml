@@ -1,0 +1,107 @@
+version: 1
+entry_id: workshop
+http_backend: http://127.0.0.1:9
+auth: { scheme: none }
+values:
+  v1: { type: string, description: Identity of an unprocessed ceramic sample. }
+  v2: { type: string, description: Identity of a prepared firing batch. }
+  v3: { type: string, description: Identity of a completed firing receipt. }
+  v4: { type: string, description: Identity of a cabinet. }
+  v5: { type: string, description: Identity of a specimen contained in a cabinet. }
+  v6: { type: string, description: Text of a public laboratory bulletin. }
+entities:
+  Sample:
+    id_field: id
+    fields: { id: { value_ref: v1, required: true } }
+  Batch:
+    id_field: id
+    fields: { id: { value_ref: v2, required: true } }
+  Receipt:
+    id_field: id
+    fields: { id: { value_ref: v3, required: true } }
+  Cabinet:
+    id_field: id
+    fields: { id: { value_ref: v4, required: true } }
+    relations:
+      specimens:
+        target: Specimen
+        cardinality: many
+        description: Complete current cabinet membership; unrelated specimens are not members.
+        materialize:
+          kind: from_parent_get
+          collection_coverage: complete
+          path: [{key: specimens}, {wildcard: true}]
+  Specimen:
+    id_field: id
+    fields: { id: { value_ref: v5, required: true } }
+  Bulletin:
+    id_field: text
+    fields: { text: { value_ref: v6, required: true } }
+capabilities:
+  sample_read:
+    entity: Sample
+    kind: get
+    description: Read ceramic samples available for firing, including their identities. Does not alter samples.
+    provides: [id]
+    output: { type: entity, entity_type: Sample }
+  prepare:
+    entity: Batch
+    kind: action
+    description: Prepare a ceramic sample as a firing batch without changing the source sample.
+    arguments:
+      input_type:
+        type: object
+        fields: [{name: sample, value_ref: v1, required: true}]
+    provides: [id]
+    output: { type: entity, entity_type: Batch }
+  fire:
+    entity: Receipt
+    kind: action
+    description: Fire a prepared batch in the workshop kiln and issue its completion receipt. This performs the firing, not a journal entry.
+    arguments:
+      input_type:
+        type: object
+        fields: [{name: batch, value_ref: v2, required: true}]
+    provides: [id]
+    output: { type: entity, entity_type: Receipt }
+  cabinet_read:
+    entity: Cabinet
+    kind: get
+    description: Read a cabinet with its complete current specimens and their identities. Does not change membership.
+    provides: [id]
+    output: { type: entity, entity_type: Cabinet }
+  specimen_read:
+    entity: Specimen
+    kind: get
+    description: Read one specimen and its identity.
+    provides: [id]
+    output: { type: entity, entity_type: Specimen }
+  stamp:
+    entity: Specimen
+    kind: action
+    description: Apply a calibration stamp to the identified specimen. Does not change any other specimen or its cabinet membership.
+    arguments:
+      input_type:
+        type: object
+        fields: [{name: specimen, value_ref: v5, required: true}]
+    output: { type: side_effect, description: The identified specimen receives a calibration stamp. }
+  publish:
+    entity: Bulletin
+    kind: create
+    description: Publish a public laboratory bulletin with the supplied text, independently of firing or calibration.
+    arguments:
+      input_type:
+        type: object
+        fields: [{name: text, value_ref: v6, required: true}]
+    provides: [text]
+    output: { type: entity, entity_type: Bulletin }
+  routine:
+    entity: Receipt
+    kind: action
+    description: Apply the configured laboratory routine; the resulting change is unspecified.
+    output: { type: side_effect, description: Performs an unspecified laboratory change. }
+  record:
+    entity: Receipt
+    kind: action
+    description: Record a ceramic firing, cabinet specimen calibration stamp, or public laboratory bulletin in the journal after it has happened. Records sample and batch identities and completion receipts. Does not fire, prepare, stamp, publish, or read current cabinet membership.
+    output: { type: side_effect, description: Adds historical text to the journal, without changing laboratory resources. }

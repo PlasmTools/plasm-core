@@ -1,0 +1,75 @@
+{
+  "version": 1,
+  "horizon": 24,
+  "gate": 4,
+  "growth": [
+    0,
+    100
+  ],
+  "cases": [
+    {
+      "id": "demagnetize",
+      "requests": [
+        "Demagnetize the component before transport in its packaging; preserve the identifier and dispatch readiness.",
+        "The component still needs demagnetization before transport. Preserve its identifier and packaging."
+      ],
+      "labels": {
+        "routine": "relevant"
+      },
+      "outcomes": [
+        [
+          "routine"
+        ]
+      ],
+      "relation": false
+    },
+    {
+      "id": "desiccate",
+      "requests": [
+        "Desiccate the specimen before storage in its container; preserve the identifier and shipment readiness.",
+        "The specimen still needs desiccation before storage. Preserve its identifier and container."
+      ],
+      "labels": {
+        "routine": "relevant"
+      },
+      "outcomes": [
+        [
+          "routine"
+        ]
+      ],
+      "relation": false
+    },
+    {
+      "id": "notarize",
+      "requests": [
+        "Notarize the document before delivery in its envelope; preserve the identifier and submission readiness.",
+        "The document still needs notarization before delivery. Preserve its identifier and envelope."
+      ],
+      "labels": {
+        "routine": "relevant"
+      },
+      "outcomes": [
+        [
+          "routine"
+        ]
+      ],
+      "relation": false
+    },
+    {
+      "id": "inspect",
+      "requests": [
+        "Inspect the component before transport in its packaging; preserve the identifier and dispatch readiness.",
+        "The component still needs inspection before transport. Preserve its identifier and packaging."
+      ],
+      "labels": {
+        "routine": "relevant"
+      },
+      "outcomes": [
+        [
+          "routine"
+        ]
+      ],
+      "relation": false
+    }
+  ]
+}

@@ -40,7 +40,7 @@
               "meaning": "Read selected records."
             }
           },
-          "admissions": []
+          "admissions": ["lexical"]
         }
       ],
       "lexical_count": 1,
@@ -57,7 +57,7 @@
       ]
     },
     "search": {
-      "policy": "additive-connected-frontier-current-bm25f-1-judgment-3-attempts-16000-byte-packet-v12",
+      "policy": "additive-connected-frontier-current-hybrid-evidence-1-judgment-3-attempts-16000-byte-packet-v16",
       "exposed": [],
       "considered": [{"catalog":"matrix","capability":"record_read"}],
       "unexplored": [],

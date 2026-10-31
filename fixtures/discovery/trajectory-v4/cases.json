@@ -1,0 +1,41 @@
+{
+  "version": 4,
+  "horizon": 24,
+  "gate": 4,
+  "growth": [0, 100, 1000],
+  "cases": [
+    {
+      "id": "service_effect",
+      "requests": [
+        "Fire the ceramic samples in the workshop kiln. Preserve source samples and obtain completion receipts. A historical journal entry is not the requested result.",
+        "I still need workshop operations to prepare the ceramic samples and fire their batches, keeping the source samples unchanged. Obtain firing receipts; do not substitute journal records.",
+        "Continue finding the workshop capabilities for actual ceramic firing with receipts, including any reads needed to supply their inputs. Preserve original samples, and do not merely record historical firing."
+      ],
+      "labels": {"sample_read":"relevant", "prepare":"relevant", "fire":"relevant"},
+      "outcomes": [["sample_read", "prepare", "fire"]],
+      "relation": false
+    },
+    {
+      "id": "collection_members",
+      "requests": [
+        "Apply a calibration stamp to every specimen currently in cabinet D using the workshop. Preserve cabinet membership and leave all other specimens unchanged.",
+        "I need the workshop's complete current cabinet D members and their identities so I can stamp exactly those specimens. Preserve membership; leave other specimens unchanged.",
+        "Continue exposing the workshop cabinet member read and calibration action. The scope remains all current specimens in cabinet D, with no membership changes or changes to other specimens."
+      ],
+      "labels": {"cabinet_read":"relevant", "specimen_read":"relevant", "stamp":"relevant"},
+      "outcomes": [["cabinet_read", "stamp"]],
+      "relation": true
+    },
+    {
+      "id": "independent_outcomes",
+      "requests": [
+        "Fire the ceramic samples in the workshop kiln and separately publish the public bulletin 'Inspection open'. Preserve source samples. Also expose the configured laboratory routine for inspection; its effect may be unspecified. Do not substitute historical journal records.",
+        "Complete both independent workshop needs: ceramic firing with receipts and publication of 'Inspection open'. Preserve source samples and keep the unspecified configured routine available for inspection. Journal entries are not either outcome.",
+        "Find remaining workshop capabilities for actual firing and public bulletin publication, including input acquisition. Preserve samples, retain the opaque configured routine for inspection, and do not replace either outcome with bookkeeping."
+      ],
+      "labels": {"sample_read":"relevant", "prepare":"relevant", "fire":"relevant", "publish":"relevant", "routine":"uncertain"},
+      "outcomes": [["sample_read", "prepare", "fire"], ["publish"], ["routine"]],
+      "relation": false
+    }
+  ]
+}

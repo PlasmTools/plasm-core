@@ -1,4 +1,5 @@
-//! Fixed offline native-pipeline evaluation. Labels enter only after admission.
+//! Fixed lexical/allocation component evaluation, not hybrid retrieval coverage.
+//! Labels enter only after admission; PostgreSQL service tests cover hybrid recall.
 use super::*;
 use std::{cell::RefCell, path::PathBuf};
 

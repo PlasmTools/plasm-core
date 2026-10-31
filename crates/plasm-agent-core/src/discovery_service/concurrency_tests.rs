@@ -5,12 +5,225 @@ use std::sync::{
 };
 use tokio::sync::Notify;
 
+struct AcceptContribution(AtomicUsize);
+
+#[async_trait::async_trait]
+impl plasm_runtime::provider_transport::ProviderTransport for AcceptContribution {
+    async fn send(
+        &self,
+        body: &str,
+        _: &mut plasm_runtime::provider_transport::AttemptRecorder<'_>,
+    ) -> std::result::Result<
+        plasm_runtime::provider_transport::ProviderResponse,
+        plasm_runtime::provider_transport::ProviderTransportError,
+    > {
+        self.0.fetch_add(1, Ordering::SeqCst);
+        let body: serde_json::Value = serde_json::from_str(body).unwrap();
+        let answers: std::collections::BTreeMap<_, _> = body["questions"]
+            .as_object()
+            .unwrap()
+            .keys()
+            .map(|key| {
+                (
+                    key.clone(),
+                    serde_json::json!({"type":"choice","choice":"relevant","confidence":1.0,
+                "probabilities":{"relevant":1.0,"uncertain":0.0,"unrelated":0.0}}),
+                )
+            })
+            .collect();
+        Ok(plasm_runtime::provider_transport::ProviderResponse {
+            status: reqwest::StatusCode::OK,
+            retry_after: None,
+            body: serde_json::json!({"model":matcher::RELEVANCE_MODEL,"provider":"OpenAI","answers":answers}).to_string(),
+        })
+    }
+}
+
+/// Exercise the real database-to-service boundary, not a preselected matcher fixture.
+#[tokio::test]
+#[ignore = "requires an isolated PLASM_TEST_POSTGRES_URL with pgvector"]
+async fn hybrid_service_admits_vector_only_candidate() {
+    use plasm_core::catalog_discovery::{content_hash, EmbeddingProfile};
+    use std::collections::{BTreeMap, BTreeSet};
+    let url = std::env::var("PLASM_TEST_POSTGRES_URL").unwrap();
+    let store = DiscoveryStore::connect(&url).await.unwrap();
+    store.migrate().await.unwrap();
+    let catalog = crate::discovery_store::tests::prepared("hybrid-proof", 1);
+    let bindings = plasm_core::prerequisites::DeploymentBindings {
+        bindings: vec![plasm_core::prerequisites::DeploymentBinding {
+            consumer: CapabilityRef {
+                catalog: "hybrid-proof".into(),
+                capability: "read".into(),
+            },
+            requirement: "scoped_access".into(),
+            provider_catalog: "hybrid-proof".into(),
+            provider: "value_source".into(),
+        }],
+    };
+    let generation = store
+        .import("hybrid-proof", vec![catalog], &bindings)
+        .await
+        .unwrap();
+    // Isolate the durable contribution cache across repeated proof invocations.
+    let intent = format!("xylovariance {}", uuid::Uuid::new_v4());
+    let intent = intent.as_str(); // No lexical overlap with the abstract catalogue.
+    let profile = EmbeddingProfile::default();
+    let key = content_hash(&serde_json::to_vec(&(intent, &profile)).unwrap());
+    let mut vector = vec![0.0; 1536];
+    vector[0] = 1.0;
+    let pool = sqlx::PgPool::connect(&url).await.unwrap();
+    sqlx::query("INSERT INTO discovery_intent_embeddings VALUES ($1,$2,$3::text::vector) ON CONFLICT DO NOTHING")
+        .bind(key).bind(serde_json::to_value(profile).unwrap()).bind(serde_json::to_string(&vector).unwrap())
+        .execute(&pool).await.unwrap();
+    pool.close().await;
+    let reference = CapabilityRef {
+        catalog: "hybrid-proof".into(),
+        capability: "create".into(),
+    };
+    let allowed = DiscoveryAuthorization {
+        catalogs: BTreeSet::from([reference.catalog.clone()]),
+        capabilities: BTreeMap::from([(
+            reference.catalog.clone(),
+            BTreeSet::from([reference.capability.clone()]),
+        )]),
+    };
+    let recall = store.retrieve(&generation, intent, &allowed, &Default::default()).await.unwrap();
+    assert_eq!(recall.lexical_count, 0);
+    assert_eq!(recall.vector_count, 1);
+    let mut service = DiscoveryService::cached_test_service(store);
+    let transport = Arc::new(AcceptContribution(AtomicUsize::new(0)));
+    service.transport = transport.clone();
+    let provenance =
+        crate::intent_provenance::IntentProvenance::from_turns([intent.into()]).unwrap();
+    let key = uuid::Uuid::new_v4().to_string();
+    let receipt = service
+        .route_cached(&key, &[], || async {
+            service
+                .route_uncached(
+                    &key,
+                    &generation,
+                    &provenance,
+                    &allowed,
+                    &[],
+                    &BTreeMap::new(),
+                )
+                .await
+        })
+        .await
+        .unwrap();
+    assert_eq!(
+        receipt.retrieval.vector_count, 1,
+        "service must consume hybrid recall"
+    );
+    assert_eq!(receipt.retrieval.lexical_count, 0);
+    let candidate = receipt
+        .retrieval
+        .candidates
+        .iter()
+        .find(|c| c.reference == reference)
+        .unwrap();
+    assert!(candidate.admissions.contains("vector"));
+    assert!(receipt
+        .matching
+        .matches
+        .iter()
+        .any(|m| m.capability_id == candidate.id));
+    assert_eq!(transport.0.load(Ordering::SeqCst), 1);
+    let other = DiscoveryService::cached_test_service(DiscoveryStore::connect(&url).await.unwrap());
+    let reused = other
+        .route_cached(&key, &[], || async {
+            panic!("completed hybrid search must reuse completion across stores")
+        })
+        .await
+        .unwrap();
+    assert_eq!(
+        serde_json::to_value(receipt).unwrap(),
+        serde_json::to_value(reused).unwrap()
+    );
+}
+
 fn receipt() -> RoutingReceipt {
     let packet: serde_json::Value = serde_json::from_str(include_str!(
         "../../../../fixtures/discovery/partial-routing.json"
     ))
     .unwrap();
     serde_json::from_value(packet["routing"].clone()).unwrap()
+}
+
+#[tokio::test]
+#[ignore = "requires an isolated PLASM_TEST_POSTGRES_URL with discovery_selector_cache"]
+async fn self_contained_requests_advance_frontier_but_exact_replays_do_not() {
+    let (a, b) = services().await;
+    let generation = uuid::Uuid::new_v4().to_string();
+    let allowed =
+        DiscoveryAuthorization::catalogs(std::collections::BTreeSet::from(["matrix".into()]));
+    let scope = frontier_key("session", &generation, &allowed, "fixture").unwrap();
+    let first = crate::intent_provenance::IntentProvenance::from_turns([
+        "Inspect current specimens without changes.".into(),
+    ])
+    .unwrap();
+    let repeated = first.derived(first.current().into()).unwrap();
+    let changed = repeated
+        .derived("Calibrate the identified specimen; preserve other specimens.".into())
+        .unwrap();
+    let calls = AtomicUsize::new(0);
+    let mut previous = None;
+    for (turn, intent) in [&first, &repeated, &changed].into_iter().enumerate() {
+        let key = search_key(&generation, intent, &allowed, "fixture", &[]).unwrap();
+        assert_ne!(previous.as_ref(), Some(&key));
+        let calls = &calls;
+        let actual = a
+            .route_frontier(&scope, &key, &[], |visits| async move {
+                assert!(visits.values().all(|count| *count == turn));
+                assert_eq!(visits.is_empty(), turn == 0);
+                calls.fetch_add(1, Ordering::SeqCst);
+                Ok(receipt())
+            })
+            .await
+            .unwrap();
+        let replay = b
+            .route_frontier(&scope, &key, &[], |_| async {
+                panic!("exact completed work must be reused across stores")
+            })
+            .await
+            .unwrap();
+        assert_eq!(
+            serde_json::to_value(actual).unwrap(),
+            serde_json::to_value(replay).unwrap()
+        );
+        previous = Some(key);
+    }
+    let recreated = DiscoveryService::cached_test_service(
+        DiscoveryStore::connect(&std::env::var("PLASM_TEST_POSTGRES_URL").unwrap())
+            .await
+            .unwrap(),
+    );
+    recreated
+        .route_frontier(&scope, previous.as_ref().unwrap(), &[], |_| async {
+            panic!("reconnecting must not replay completed work")
+        })
+        .await
+        .unwrap();
+    let saved: SearchFrontier = serde_json::from_str(
+        &recreated
+            .store
+            .cached_selector_envelope(&scope)
+            .await
+            .unwrap()
+            .unwrap(),
+    )
+    .unwrap();
+    assert_eq!(calls.load(Ordering::SeqCst), 3);
+    assert_eq!(saved.completed.len(), 3);
+    assert!(saved.visits().values().all(|count| *count == 3));
+    let exposed = vec![CapabilityRef {
+        catalog: "matrix".into(),
+        capability: "read".into(),
+    }];
+    assert_ne!(
+        previous.unwrap(),
+        search_key(&generation, &changed, &allowed, "fixture", &exposed).unwrap()
+    );
 }
 
 async fn services() -> (Arc<DiscoveryService>, Arc<DiscoveryService>) {

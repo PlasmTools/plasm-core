@@ -1,0 +1,9 @@
+{
+  "version": 4, "horizon": 24, "gate": 4, "growth": [0],
+  "cases": [
+    {"id":"same_resource_read_and_action", "requests":["Read the identified specimen and apply its calibration stamp. Leave cabinet membership unchanged.", "Inspect the specimen's identity and stamp that specimen without changing its cabinet membership."], "labels":{"specimen_read":"relevant","stamp":"relevant"}, "outcomes":[["specimen_read","stamp"]], "relation":false},
+    {"id":"known_input_action", "requests":["Fire the already prepared batch B in the workshop kiln and obtain its completion receipt. Its batch identity is supplied; no preparation is required.", "Execute kiln firing for prepared batch B, whose identity I already have. Return the receipt without preparing another batch."], "labels":{"fire":"relevant"}, "outcomes":[["fire"]], "relation":false},
+    {"id":"descriptive_read", "requests":["Read the identities of available ceramic samples. Do not prepare, fire or otherwise change them.", "Inspect available ceramic sample identities without any mutation or preparation."], "labels":{"sample_read":"relevant"}, "outcomes":[["sample_read"]], "relation":false},
+    {"id":"ordinary_independent_actions", "requests":["Prepare a ceramic sample without changing the source, and independently publish the bulletin 'Laboratory open'. Do not fire the batch.", "Publish 'Laboratory open' and prepare the ceramic sample as a batch; preserve its source and do not fire it."], "labels":{"sample_read":"relevant","prepare":"relevant","publish":"relevant"}, "outcomes":[["sample_read","prepare"],["publish"]], "relation":false}
+  ]
+}

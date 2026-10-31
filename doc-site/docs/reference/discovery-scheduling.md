@@ -27,13 +27,16 @@ negative relevance cache: previous rejections can be reconsidered, never remove
 declarations and never grant execution permission. Session, catalogue generation,
 authorization and model scope the frontier. Duplicate completions advance it once.
 
-Connected packets factor exact repeated ancestry text into an ordered reference
-table. The current discovery request is the judgment outcome. Reconstructing the
-references preserves every byte of every turn, including constraints, conditions
-and revisions; no intent is summarized or discarded to fit the budget.
+The current discovery request is self-contained: callers include relevant
+conditions and amendments. It is the judgment outcome; earlier requests are not
+model evidence. Lossless ancestry remains in audit receipts, continuation validation
+and search identity. Removing it from judgment does not reset spent work or the
+session frontier. Full target contracts and question-local composition evidence
+still count toward the unchanged packet limit.
 
 Root retrieval uses the current discovery need, without rank fusion against the
-original outcome. All prior requests, constraints and ancestry still reach judgment.
+original outcome. Conditions and amendments in the current request reach judgment
+unchanged; discovery does not reconstruct them from earlier requests.
 Authored fields use the existing catalogue lexical normalization, preserving short
 domain terms. Identical input annotations count once in retrieval, regardless of
 how many slots reuse them; every slot remains in the complete contract. Parent
@@ -64,11 +67,42 @@ Retry-After respected within that deadline. Each attempt is reserved and
 checkpointed before dispatch: at most 48,000 admitted UTF-8 bytes. Receipts count
 all admitted attempts and missing usage; cancellation never refunds admission.
 An admission can be persisted before cancellation prevents transmission, so
-attempt records remain the evidence of actual provider traffic. Malformed
+admission and dispatch-start receipts do not prove delivery to the provider. Malformed
 responses, context limits, authorization and persistence failures do not retry.
 No API execution or business effect is retried by this policy. Selection,
-contracts and contribution instructions are unchanged. The v12 cache identity
+contracts and contribution instructions are unchanged. The v13 cache identity
 separates current-request judgments from the earlier original-outcome projection.
+
+### Transport resilience and evidence
+
+Discovery injects a `DecisionTransport` that performs exactly one judgment attempt.
+The reqwest adapter and abstract transports cross the same interface. Provider
+admission is a decorator inside that attempt, so queue time is bounded and
+distinguished from dispatch and response-body time. The selector alone owns
+durable attempt/byte admission and the overall 30-second deadline. Each discovery
+transport invocation has an eight-second timeout, including admission. A stalled
+first attempt therefore returns a typed, retryable timeout before the logical
+budget expires. This slice is a conservative policy choice, not an empirically
+optimal timeout. Slow successful judgments can be cancelled and cost usage even
+when no response is received; cancelling a request does not cancel provider work.
+
+Runtime HTTP and decision transport share `external_resilience::RetryPolicy` for
+bounded exponential backoff, jitter, retry admission and `Retry-After` parsing.
+Jitter never shortens a server hint. Domain HTTP retries remain restricted to
+GET/HEAD/OPTIONS; a repeatable model POST does not authorize replay of API writes.
+Provider-specific status classification remains in each adapter's policy. A
+partially received 401/403 body remains terminal even when body reading times out.
+
+When `PLASM_DISCOVERY_REJECTION_DIR` is configured, lifecycle records include a
+stable `attempt_id`, start timestamp, elapsed milliseconds and the phase
+(`admission`, `dispatch`, `response_body`). Completion, failure and cancellation
+are recorded separately from response/transport receipts. Count terminal attempt
+receipts once; do not sum lifecycle events as requests or usage. Status and
+Retry-After survive a body timeout. Drop records cancellation when an outer
+deadline or caller cancels the future; persistence failure during drop is logged
+because cancellation cannot return an error. A process crash cannot run this
+cleanup: an unmatched start is unfinished work, not proof of a transmitted request.
+No admission or byte reservation is refunded by cancellation.
 
 Identical searches across stores or workers wait on a PostgreSQL transaction
 advisory lock before checking completion or reserving work. Ownership spans the

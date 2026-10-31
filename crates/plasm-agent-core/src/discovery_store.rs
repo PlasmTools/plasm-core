@@ -23,6 +23,42 @@ use std::sync::Arc;
 const CHANNEL_LIMIT: i64 = 64;
 pub const CANDIDATE_LIMIT: usize = 2 * CHANNEL_LIMIT as usize;
 
+/// Completed judgments and retained declarations affect recall before either
+/// bounded channel is truncated. They never change authorization or relevance.
+#[derive(Default, Serialize)]
+pub struct RecallFrontier(BTreeMap<String, BTreeMap<String, RecallVisit>>);
+
+#[derive(Default, Serialize)]
+struct RecallVisit {
+    exposed: bool,
+    visits: usize,
+}
+
+impl RecallFrontier {
+    pub fn from_state(exposed: &[CapabilityRef], visits: &BTreeMap<CapabilityRef, usize>) -> Self {
+        let mut frontier = Self::default();
+        for (reference, count) in visits {
+            frontier
+                .0
+                .entry(reference.catalog.clone())
+                .or_default()
+                .entry(reference.capability.clone())
+                .or_default()
+                .visits = *count;
+        }
+        for reference in exposed {
+            frontier
+                .0
+                .entry(reference.catalog.clone())
+                .or_default()
+                .entry(reference.capability.clone())
+                .or_default()
+                .exposed = true;
+        }
+        frontier
+    }
+}
+
 type Result<T> = std::result::Result<T, DiscoveryStoreError>;
 
 #[derive(Debug, thiserror::Error)]
@@ -233,8 +269,48 @@ pub struct RetrievedCapability {
     pub admissions: BTreeSet<String>,
 }
 
-/// Channel cutoffs are the only admission cutoffs. Identity order is stable;
-/// overlap merges provenance, never suppresses a unique candidate.
+enum RecallChannel {
+    Lexical,
+    Vector,
+}
+
+/// Schedule distinct authored evidence before repeated copies at the same frontier
+/// depth. This is not semantic equivalence: every identity remains eligible and
+/// receives its own downstream validation and judgment. Conditions and typed roles
+/// remain in the exact document key; neither entity nor vocabulary is a priority.
+fn recall_query(channel: RecallChannel) -> String {
+    let (prefix, join, predicate, score) = match channel {
+        RecallChannel::Lexical => (
+            "WITH terms AS (SELECT unnest(tsvector_to_array(to_tsvector('english',$3))) AS term), q AS (SELECT to_tsquery('english',string_agg(quote_literal(term),' | ')) AS query FROM terms),",
+            "CROSS JOIN q",
+            "AND c.search @@ q.query",
+            "ts_rank_cd(c.search,q.query)",
+        ),
+        RecallChannel::Vector => ("WITH", "", "", "-(c.embedding <=> $3::text::vector)"),
+    };
+    format!(
+        "{prefix} scored AS (
+            SELECT c.*,g.entry_id,{score} AS score,
+                COALESCE(($6::jsonb -> g.entry_id -> c.capability ->> 'exposed')::boolean,false) AS exposed,
+                COALESCE(($6::jsonb -> g.entry_id -> c.capability ->> 'visits')::numeric,0) AS visits
+            FROM discovery_capabilities c
+            JOIN discovery_generation_catalogs g USING (revision_id) {join}
+            WHERE g.generation_id=$1 AND g.entry_id=ANY($2)
+              AND (NOT ($5::jsonb ? g.entry_id) OR ($5::jsonb -> g.entry_id) ? c.capability)
+              {predicate}
+        ), scheduled AS (
+            SELECT *,row_number() OVER (
+                PARTITION BY entry_id,document - 'capability',exposed,visits
+                ORDER BY score DESC,revision_id,capability
+            ) AS evidence_rank FROM scored
+        )
+        SELECT * FROM scheduled
+        ORDER BY exposed,visits,evidence_rank,score DESC,revision_id,capability LIMIT $4"
+    )
+}
+
+/// Channel cutoffs are the only admission cutoffs. Interleave ranked channels
+/// before bounded allocation; overlap merges provenance without another quota.
 fn union_candidates(
     lexical: Vec<RetrievedCapability>,
     vector: Vec<RetrievedCapability>,
@@ -242,6 +318,14 @@ fn union_candidates(
     if lexical.len() > CHANNEL_LIMIT as usize || vector.len() > CHANNEL_LIMIT as usize {
         return Err(RetrievalValidationError::ChannelBoundExceeded);
     }
+    let order: Vec<_> = (0..lexical.len().max(vector.len()))
+        .flat_map(|rank| {
+            [&lexical, &vector]
+                .into_iter()
+                .filter_map(move |channel| channel.get(rank))
+        })
+        .map(|candidate| candidate.id.clone())
+        .collect();
     let mut union: BTreeMap<String, RetrievedCapability> = BTreeMap::new();
     for (channel, candidates) in [("lexical", lexical), ("vector", vector)] {
         let mut seen = BTreeSet::new();
@@ -262,7 +346,10 @@ fn union_candidates(
             }
         }
     }
-    Ok(union.into_values().collect())
+    Ok(order
+        .into_iter()
+        .filter_map(|id| union.remove(&id))
+        .collect())
 }
 
 impl RetrievalReceipt {
@@ -300,6 +387,9 @@ impl RetrievalReceipt {
 #[derive(Debug, Serialize, Deserialize)]
 pub struct RetrievalReceipt {
     pub generation: String,
+    /// Store retrieval returns the recall union; routing returns its judged
+    /// projection plus typed graph nominations. Counts describe this candidate
+    /// set, while truncation flags retain the upstream channel-cutoff evidence.
     pub candidates: Vec<RetrievedCapability>,
     pub lexical_count: usize,
     pub vector_count: usize,
@@ -635,6 +725,7 @@ impl DiscoveryStore {
         generation: &str,
         intent: &str,
         allowed: &DiscoveryAuthorization,
+        frontier: &RecallFrontier,
     ) -> Result<RetrievalReceipt> {
         if intent.trim().is_empty() {
             return Err(DiscoveryStoreError::EmptyIntent);
@@ -646,8 +737,15 @@ impl DiscoveryStore {
         let vector = if let Some(cached) = cached {
             cached
         } else {
+            let directory = std::env::var_os("PLASM_DISCOVERY_REJECTION_DIR")
+                .filter(|s| !s.is_empty())
+                .map(Into::into);
+            let mut receipts = plasm_runtime::provider_transport::ProviderReceiptSink::new(
+                "query_embedding",
+                directory,
+            );
             let vectors = plasm_catalog::embeddings::EmbeddingClient::from_env()?
-                .embed(&[intent.to_owned()])
+                .embed(&[intent.to_owned()], |event| receipts.record(event))
                 .await?;
             let vector = vector_literal(
                 vectors
@@ -658,7 +756,7 @@ impl DiscoveryStore {
                 .bind(&cache_key).bind(serde_json::to_value(&profile)?).bind(&vector).execute(&mut *self.pool.acquire().await?).await?;
             vector
         };
-        self.retrieve_vector(generation, intent, &vector, allowed)
+        self.retrieve_vector(generation, intent, &vector, allowed, frontier)
             .await
     }
 
@@ -710,13 +808,29 @@ impl DiscoveryStore {
         intent: &str,
         vector: &str,
         allowed: &DiscoveryAuthorization,
+        frontier: &RecallFrontier,
     ) -> Result<RetrievalReceipt> {
         let restrictions = serde_json::to_value(&allowed.capabilities)?;
+        let frontier = serde_json::to_value(frontier)?;
         let allowed: Vec<_> = allowed.catalogs.iter().cloned().collect();
-        let mut lexical = sqlx::query("WITH terms AS (SELECT unnest(tsvector_to_array(to_tsvector('english',$3))) AS term), q AS (SELECT to_tsquery('english',string_agg(quote_literal(term),' | ')) AS query FROM terms) SELECT c.*,g.entry_id FROM discovery_capabilities c JOIN discovery_generation_catalogs g USING (revision_id) CROSS JOIN q WHERE g.generation_id=$1 AND g.entry_id=ANY($2) AND (NOT ($5::jsonb ? g.entry_id) OR ($5::jsonb -> g.entry_id) ? c.capability) AND c.search @@ q.query ORDER BY ts_rank_cd(c.search,q.query) DESC,c.revision_id,c.capability LIMIT $4")
-            .bind(generation).bind(&allowed).bind(intent).bind(CHANNEL_LIMIT + 1).bind(&restrictions).fetch_all(&mut *self.pool.acquire().await?).await?;
-        let mut vector = sqlx::query("SELECT c.*,g.entry_id FROM discovery_capabilities c JOIN discovery_generation_catalogs g USING (revision_id) WHERE g.generation_id=$1 AND g.entry_id=ANY($2) AND (NOT ($5::jsonb ? g.entry_id) OR ($5::jsonb -> g.entry_id) ? c.capability) ORDER BY c.embedding <=> $3::text::vector,c.revision_id,c.capability LIMIT $4")
-            .bind(generation).bind(&allowed).bind(vector).bind(CHANNEL_LIMIT + 1).bind(&restrictions).fetch_all(&mut *self.pool.acquire().await?).await?;
+        let mut lexical = sqlx::query(&recall_query(RecallChannel::Lexical))
+            .bind(generation)
+            .bind(&allowed)
+            .bind(intent)
+            .bind(CHANNEL_LIMIT + 1)
+            .bind(&restrictions)
+            .bind(&frontier)
+            .fetch_all(&mut *self.pool.acquire().await?)
+            .await?;
+        let mut vector = sqlx::query(&recall_query(RecallChannel::Vector))
+            .bind(generation)
+            .bind(&allowed)
+            .bind(vector)
+            .bind(CHANNEL_LIMIT + 1)
+            .bind(&restrictions)
+            .bind(&frontier)
+            .fetch_all(&mut *self.pool.acquire().await?)
+            .await?;
         let lexical_truncated = lexical.len() > CHANNEL_LIMIT as usize;
         let vector_truncated = vector.len() > CHANNEL_LIMIT as usize;
         lexical.truncate(CHANNEL_LIMIT as usize);
@@ -764,7 +878,7 @@ fn candidate_from_row(row: &sqlx::postgres::PgRow) -> Result<RetrievedCapability
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
     use proptest::prelude::*;
 
@@ -780,6 +894,336 @@ mod tests {
         c.reference.capability = format!("read{id}");
         c.document.capability = c.reference.capability.clone();
         c
+    }
+
+    #[test]
+    fn recall_frontier_preserves_catalog_identity_and_separates_exposure_from_visits() {
+        let a = CapabilityRef {
+            catalog: "a".into(),
+            capability: "inspect".into(),
+        };
+        let b = CapabilityRef {
+            catalog: "b".into(),
+            capability: "inspect".into(),
+        };
+        let state = RecallFrontier::from_state(&[a.clone()], &BTreeMap::from([(a, 2), (b, 1)]));
+        let json = serde_json::to_value(state).unwrap();
+        assert_eq!(
+            json["a"]["inspect"],
+            serde_json::json!({"exposed":true,"visits":2})
+        );
+        assert_eq!(
+            json["b"]["inspect"],
+            serde_json::json!({"exposed":false,"visits":1})
+        );
+    }
+
+    #[tokio::test]
+    #[ignore = "requires an isolated PLASM_TEST_POSTGRES_URL with pgvector"]
+    async fn postgres_recall_distinct_evidence_precedes_duplicate_alternatives() {
+        let store = DiscoveryStore::connect(&std::env::var("PLASM_TEST_POSTGRES_URL").unwrap())
+            .await
+            .unwrap();
+        store.migrate().await.unwrap();
+        let mut cgs = prepared("evidence", 1).cgs;
+        let mut duplicate = cgs.capabilities["create"].clone();
+        duplicate.description = "Quartz quartz quartz quartz".into();
+        for i in 0..65 {
+            let name = format!("alternative_{i:03}");
+            let mut capability = duplicate.clone();
+            capability.name = name.clone().into();
+            cgs.capabilities.insert(name.into(), capability);
+        }
+        cgs.capabilities.get_mut("read").unwrap().description = "Quartz".into();
+        duplicate.name = "conditional".into();
+        duplicate.description = "Quartz under an explicit condition".into();
+        cgs.capabilities.insert("conditional".into(), duplicate);
+        let catalog = prepared_cgs("evidence", cgs);
+        let expected_documents: BTreeMap<_, _> = catalog
+            .discovery
+            .capabilities
+            .iter()
+            .map(|c| (c.document.capability.clone(), c.document.clone()))
+            .collect();
+        let generation = store
+            .import(
+                "evidence-proof",
+                vec![catalog],
+                &DeploymentBindings {
+                    bindings: vec![DeploymentBinding {
+                        consumer: CapabilityRef {
+                            catalog: "evidence".into(),
+                            capability: "read".into(),
+                        },
+                        requirement: "scoped_access".into(),
+                        provider_catalog: "evidence".into(),
+                        provider: "value_source".into(),
+                    }],
+                },
+            )
+            .await
+            .unwrap();
+        let permitted: BTreeSet<String> = (1..65)
+            .map(|i| format!("alternative_{i:03}"))
+            .chain(["read".into(), "conditional".into()])
+            .collect();
+        let allowed = DiscoveryAuthorization {
+            catalogs: BTreeSet::from(["evidence".into()]),
+            capabilities: BTreeMap::from([("evidence".into(), permitted.clone())]),
+        };
+        let mut vector = vec![0.0; 1536];
+        vector[0] = 1.0;
+        let vector = vector_literal(&vector).unwrap();
+        let first = store
+            .retrieve_vector(
+                &generation,
+                "quartz",
+                &vector,
+                &allowed,
+                &RecallFrontier::default(),
+            )
+            .await
+            .unwrap();
+        assert_eq!((first.lexical_count, first.vector_count), (64, 64));
+        for target in ["read", "conditional"] {
+            let position = first
+                .candidates
+                .iter()
+                .position(|c| c.reference.capability == target);
+            assert!(position.is_some_and(|p| p < 3),
+                "distinct authored evidence {target} must precede repeated evidence, got {position:?}");
+            assert_eq!(
+                first.candidates[position.unwrap()].admissions,
+                BTreeSet::from(["lexical".into(), "vector".into()])
+            );
+        }
+        assert!(!first
+            .candidates
+            .iter()
+            .any(|c| c.reference.capability == "alternative_000"));
+        let visits = first
+            .candidates
+            .iter()
+            .map(|c| (c.reference.clone(), 1))
+            .collect();
+        let next = store
+            .retrieve_vector(
+                &generation,
+                "quartz",
+                &vector,
+                &allowed,
+                &RecallFrontier::from_state(&[], &visits),
+            )
+            .await
+            .unwrap();
+        let seen: BTreeSet<_> = first
+            .candidates
+            .iter()
+            .chain(&next.candidates)
+            .map(|c| c.reference.capability.clone())
+            .collect();
+        assert_eq!(
+            seen, permitted,
+            "alternatives remain eligible; this is scheduling, not deduplication"
+        );
+        for c in first.candidates.iter().chain(&next.candidates) {
+            assert_eq!(c.document, expected_documents[&c.reference.capability]);
+            assert!(allowed.permits(&c.reference));
+        }
+    }
+
+    #[tokio::test]
+    #[ignore = "requires an isolated PLASM_TEST_POSTGRES_URL with pgvector"]
+    async fn postgres_recall_frontier_advances_both_channels_without_skipping_deferred_candidates()
+    {
+        let store = DiscoveryStore::connect(&std::env::var("PLASM_TEST_POSTGRES_URL").unwrap())
+            .await
+            .unwrap();
+        store.migrate().await.unwrap();
+        let names = (0..65)
+            .map(|i| format!("frontier-{i:03}"))
+            .chain(["frontier-target".into(), "frontier-forbidden".into()])
+            .collect::<Vec<_>>();
+        let catalogs = names.iter().map(|n| prepared(n, 1)).collect();
+        let bindings = DeploymentBindings {
+            bindings: names
+                .iter()
+                .map(|name| DeploymentBinding {
+                    consumer: CapabilityRef {
+                        catalog: name.clone(),
+                        capability: "read".into(),
+                    },
+                    requirement: "scoped_access".into(),
+                    provider_catalog: name.clone(),
+                    provider: "value_source".into(),
+                })
+                .collect(),
+        };
+        let generation = store
+            .import("recall-frontier-proof", catalogs, &bindings)
+            .await
+            .unwrap();
+        let allowed = DiscoveryAuthorization {
+            catalogs: names
+                .iter()
+                .filter(|n| n.as_str() != "frontier-forbidden")
+                .cloned()
+                .collect(),
+            capabilities: names
+                .iter()
+                .map(|n| {
+                    (
+                        n.clone(),
+                        BTreeSet::from([if n == "frontier-target" {
+                            "read"
+                        } else {
+                            "create"
+                        }
+                        .to_owned()]),
+                    )
+                })
+                .collect(),
+        };
+        // Synthetic indexed evidence isolates both channel cutoffs, without a model or task labels.
+        sqlx::query("UPDATE discovery_capabilities c SET search=to_tsvector('english', CASE WHEN capability='read' THEN 'quartz' ELSE 'quartz quartz quartz quartz' END) FROM discovery_generation_catalogs g WHERE c.revision_id=g.revision_id AND g.generation_id=$1")
+            .bind(&generation).execute(&mut *store.pool.acquire().await.unwrap()).await.unwrap();
+        let mut vector = vec![0.0; 1536];
+        vector[0] = 1.0;
+        let vector = vector_literal(&vector).unwrap();
+        let target = CapabilityRef {
+            catalog: "frontier-target".into(),
+            capability: "read".into(),
+        };
+        let first = store
+            .retrieve_vector(
+                &generation,
+                "quartz",
+                &vector,
+                &allowed,
+                &RecallFrontier::default(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(
+            (
+                first.lexical_count,
+                first.vector_count,
+                first.candidates.len()
+            ),
+            (64, 64, 64)
+        );
+        assert!(first.lexical_truncated && first.vector_truncated);
+        assert!(!first.candidates.iter().any(|c| c.reference == target));
+        let first_visits = BTreeMap::from([(first.candidates[0].reference.clone(), 1)]);
+        let partial = store
+            .retrieve_vector(
+                &generation,
+                "quartz",
+                &vector,
+                &allowed,
+                &RecallFrontier::from_state(&[], &first_visits),
+            )
+            .await
+            .unwrap();
+        assert!(
+            !partial.candidates.iter().any(|c| c.reference == target),
+            "63 deferred higher-ranked candidates must remain unvisited, not be skipped as a page"
+        );
+        let visits = first
+            .candidates
+            .iter()
+            .map(|c| (c.reference.clone(), 1))
+            .collect();
+        let next = store
+            .retrieve_vector(
+                &generation,
+                "quartz",
+                &vector,
+                &allowed,
+                &RecallFrontier::from_state(&[], &visits),
+            )
+            .await
+            .unwrap();
+        let found = next
+            .candidates
+            .iter()
+            .find(|c| c.reference == target)
+            .unwrap();
+        assert_eq!(
+            found.admissions,
+            BTreeSet::from(["lexical".into(), "vector".into()])
+        );
+        assert!(
+            next.candidates
+                .iter()
+                .position(|c| c.reference == target)
+                .unwrap()
+                < 2
+        );
+        let exposed = first
+            .candidates
+            .iter()
+            .map(|c| c.reference.clone())
+            .collect::<Vec<_>>();
+        let retained = store
+            .retrieve_vector(
+                &generation,
+                "quartz",
+                &vector,
+                &allowed,
+                &RecallFrontier::from_state(&exposed, &BTreeMap::new()),
+            )
+            .await
+            .unwrap();
+        assert!(
+            retained
+                .candidates
+                .iter()
+                .position(|c| c.reference == target)
+                .unwrap()
+                < 2
+        );
+        for receipt in [&first, &partial, &next, &retained] {
+            assert!(receipt.candidates.len() <= CANDIDATE_LIMIT);
+            assert!(receipt
+                .candidates
+                .iter()
+                .all(|c| allowed.permits(&c.reference)));
+        }
+        let replay = store
+            .retrieve_vector(
+                &generation,
+                "quartz",
+                &vector,
+                &allowed,
+                &RecallFrontier::from_state(&[], &visits),
+            )
+            .await
+            .unwrap();
+        assert_eq!(
+            serde_json::to_value(&next).unwrap(),
+            serde_json::to_value(replay).unwrap()
+        );
+    }
+
+    #[test]
+    fn hybrid_union_preserves_channel_priority_before_bounded_allocation() {
+        let lexical = vec![union_fixture(9), union_fixture(1)];
+        let vector = vec![union_fixture(8), union_fixture(1), union_fixture(7)];
+        let union = union_candidates(lexical.clone(), vector.clone()).unwrap();
+        assert_eq!(
+            union.iter().map(|c| c.id.as_str()).collect::<Vec<_>>(),
+            vec![
+                lexical[0].id.as_str(),
+                vector[0].id.as_str(),
+                lexical[1].id.as_str(),
+                vector[2].id.as_str()
+            ]
+        );
+        assert_eq!(
+            union[2].admissions,
+            BTreeSet::from(["lexical".into(), "vector".into()])
+        );
     }
 
     #[test]
@@ -873,7 +1317,7 @@ mod tests {
     };
     use plasm_core::prerequisites::DeploymentBinding;
 
-    fn prepared(entry: &str, version: u64) -> PreparedCatalog {
+    pub(crate) fn prepared(entry: &str, version: u64) -> PreparedCatalog {
         let mut cgs = plasm_core::loader::load_schema_dir(
             &Path::new(crate::test_manifest_dir())
                 .join("../../fixtures/schemas/prerequisite_matrix"),
@@ -881,6 +1325,11 @@ mod tests {
         .unwrap();
         cgs.bind_registry_entry_id(entry);
         cgs.version = version;
+        prepared_cgs(entry, cgs)
+    }
+
+    fn prepared_cgs(entry: &str, cgs: CGS) -> PreparedCatalog {
+        let version = cgs.version;
         let cgs = cgs.fresh_catalog_digest();
         let hash = cgs.catalog_cgs_hash_hex();
         let capabilities = capability_documents(&cgs)
@@ -1035,7 +1484,10 @@ mod tests {
             .bind(key).bind(serde_json::to_value(profile).unwrap()).bind(vector_literal(&vector).unwrap())
             .execute(&mut *store.pool.acquire().await.unwrap()).await.unwrap();
         let allowed = DiscoveryAuthorization::catalogs(names);
-        let retrieval = store.retrieve(&generation, intent, &allowed).await.unwrap();
+        let retrieval = store
+            .retrieve(&generation, intent, &allowed, &RecallFrontier::default())
+            .await
+            .unwrap();
         retrieval.validate(&allowed).unwrap();
         assert!(retrieval.candidates.len() > 32);
         assert!(retrieval.candidates.len() <= 128);
@@ -1238,6 +1690,7 @@ mod tests {
                 "zzzzunmatched",
                 &vector_literal(&vector).unwrap(),
                 &allowed,
+                &RecallFrontier::default(),
             )
             .await
             .unwrap();
@@ -1250,10 +1703,8 @@ mod tests {
             .candidates
             .iter()
             .any(|candidate| candidate.reference.capability == "read"));
-        assert!(receipt
-            .candidates
-            .windows(2)
-            .all(|pair| pair[0].id < pair[1].id));
+        assert_eq!(receipt.candidates[0].reference.capability, "read",
+            "empty-frontier vector recall preserves similarity rank rather than opaque identity order");
         assert!(receipt
             .candidates
             .iter()
@@ -1264,6 +1715,7 @@ mod tests {
                 "acquire unrelated words",
                 &vector_literal(&vector).unwrap(),
                 &allowed,
+                &RecallFrontier::default(),
             )
             .await
             .unwrap();
@@ -1277,6 +1729,7 @@ mod tests {
                 "read",
                 &vector_literal(&vector).unwrap(),
                 &DiscoveryAuthorization::catalogs(BTreeSet::new()),
+                &RecallFrontier::default(),
             )
             .await
             .unwrap();
@@ -1291,6 +1744,7 @@ mod tests {
                 "acquire read",
                 &vector_literal(&vector).unwrap(),
                 &restricted,
+                &RecallFrontier::default(),
             )
             .await
             .unwrap();

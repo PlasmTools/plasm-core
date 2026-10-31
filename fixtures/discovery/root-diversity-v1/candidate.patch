@@ -1,0 +1,28 @@
+Experiment only; rejected by the frozen ordinary-case adoption gate.
+Within root_order, replace the two-field stable sort key with:
+
+    let mut resource_counts = BTreeMap::new();
+    let ordinals: BTreeMap<_, _> = order
+        .iter()
+        .map(|key| {
+            let visits = context.visits.get(key).copied().unwrap_or(0);
+            let connected = consumers.contains(key);
+            let domain =
+                &context.catalogs[&key.catalog].capabilities[key.capability.as_str()].domain;
+            let count = resource_counts
+                .entry((visits, connected, &key.catalog, domain))
+                .or_insert(0usize);
+            let ordinal = *count;
+            *count += 1;
+            (key.clone(), ordinal)
+        })
+        .collect();
+    order.sort_by_key(|key| {
+        (
+            context.visits.get(key).copied().unwrap_or(0),
+            !consumers.contains(key),
+            ordinals[key],
+        )
+    });
+
+Candidate SEARCH_POLICY ended in v14; restored production policy is v13.

@@ -7,6 +7,7 @@ pub mod online;
 mod request_packing;
 mod search_budget;
 mod search_graph;
+#[cfg(test)]
 mod search_rank;
 mod witnesses;
 use crate::discovery_store::RetrievalReceipt;
@@ -25,6 +26,10 @@ type DecisionProviderError = Box<dyn std::error::Error + Send + Sync + 'static>;
 
 #[derive(Debug, Error)]
 pub enum DiscoveryMatcherError {
+    #[error("discovery recall is invalid")]
+    Retrieval(#[from] crate::discovery_store::RetrievalValidationError),
+    #[error("discovery recall belongs to a different generation")]
+    RetrievalGenerationMismatch,
     #[error("connected discovery questions must have identical model and intent context")]
     InvalidConnectedContext,
     #[error("discovery catalogue context is invalid")]
@@ -73,7 +78,7 @@ pub enum DiscoveryMatcherError {
     #[error("issued discovery request could not be packed")]
     Packing(#[source] serde_json::Error),
     #[error("decision response is invalid")]
-    Response(#[from] crate::decision_codec::DecisionResponseError),
+    Response(#[from] crate::decision_codec::ProviderResponseError),
     #[error("validated relevance answer is missing its issued question")]
     MissingAnswer,
     #[error("an accepted candidate has multiple relevance judgments")]
@@ -357,7 +362,6 @@ impl DecisionCodec for RelevanceCodec {
 }
 #[derive(Serialize)]
 struct SharedEvidence<'a> {
-    intent_turns: Vec<&'a str>,
     rule: &'static str,
     capabilities: witnesses::OrderedCards,
     discovery_need: &'a str,
@@ -410,7 +414,6 @@ fn issue_scope(
         .ok_or(DiscoveryMatcherError::MissingAnswer)?;
     let key = format!("q{}", &id[1..]);
     let state = SharedEvidence {
-        intent_turns: intent.turns().collect(),
         rule: RUBRIC,
         capabilities: scope.cards,
         discovery_need: intent.current(),
@@ -499,11 +502,11 @@ where
             }
             Err(error)
                 if error
-                    .downcast_ref::<crate::decision_transport::DecisionTransportError>()
+                    .downcast_ref::<plasm_runtime::provider_transport::ProviderTransportError>()
                     .is_some_and(|error| {
                         matches!(
                             error,
-                            crate::decision_transport::DecisionTransportError::ContextLimit
+                            plasm_runtime::provider_transport::ProviderTransportError::ContextLimit
                         )
                     }) =>
             {
@@ -1061,7 +1064,7 @@ mod tests {
             calls += 1;
             let result: Result<String, DecisionProviderError> = if batch.questions.len() > 4 {
                 Err(Box::new(
-                    crate::decision_transport::DecisionTransportError::ContextLimit,
+                    plasm_runtime::provider_transport::ProviderTransportError::ContextLimit,
                 ))
             } else {
                 for candidate in batch.bindings.values() {
@@ -1125,16 +1128,57 @@ mod tests {
 
     proptest! {
         #[test]
-        fn direct_provenance_preserves_every_turn(turns in prop::collection::vec("[a-zA-Z ]{1,80}", 1..32)) {
+        fn direct_judgment_uses_only_current_request(turns in prop::collection::vec("[a-zA-Z ]{1,80}", 1..32)) {
             let turns: Vec<_> = turns.into_iter().map(|text| format!("Need {text}")).collect();
             let provenance = IntentProvenance::from_turns(turns.clone()).unwrap();
             let (_, retrieval) = fixture();
             let batches = issue_batches(RELEVANCE_MODEL, &provenance, &retrieval).unwrap();
             let content = question_content(&batches[0]);
-            prop_assert_eq!(&content["context"]["intent_turns"], &json!(turns));
+            prop_assert!(content["context"].get("intent_turns").is_none());
+            let current = IntentProvenance::from_turns([provenance.current().to_owned()]).unwrap();
+            let direct = issue_batches(RELEVANCE_MODEL, &current, &retrieval).unwrap();
+            prop_assert_eq!(batches[0].body(), direct[0].body());
+            prop_assert_eq!(provenance.turns().collect::<Vec<_>>(), turns.iter().map(String::as_str).collect::<Vec<_>>());
             prop_assert_eq!(&content["context"]["discovery_need"], &json!(provenance.current()));
             prop_assert_eq!(&content["context"]["outcome"], &json!(provenance.current()));
         }
+    }
+
+    #[test]
+    fn current_request_packets_ignore_ancestry_but_preserve_conditions_and_full_evidence() {
+        let (_, retrieval) = fixture();
+        let current = "Inspect λ specimens; preserve originals. If validation fails, report missing inputs. Do not execute changes.";
+        let short = IntentProvenance::from_turns([current.into()]).unwrap();
+        let long = IntentProvenance::from_turns(
+            (0..40)
+                .map(|n| format!("Earlier search {n}: {}", "old request ".repeat(100)))
+                .chain([current.into()]),
+        )
+        .unwrap();
+        let build = |intent: &IntentProvenance| {
+            let batches = issue_batches(RELEVANCE_MODEL, intent, &retrieval).unwrap();
+            let prepared: Vec<_> = batches
+                .iter()
+                .map(|b| request_packing::PreparedLocal::new(b).unwrap())
+                .collect();
+            let predicted =
+                request_packing::connected_size(&prepared.iter().collect::<Vec<_>>()).unwrap();
+            let packet = request_packing::connected(batches).unwrap().unwrap();
+            assert_eq!(predicted, packet.body().len());
+            packet
+        };
+        let a = build(&short);
+        let b = build(&long);
+        assert_eq!(a.body(), b.body());
+        let body: serde_json::Value = serde_json::from_str(b.body()).unwrap();
+        assert_eq!(body["state"]["outcome"], current);
+        assert!(body["state"].get("intent_history").is_none());
+        assert!(body["state"].get("intent_turns").is_none());
+        assert_eq!(long.turns().count(), 41);
+        assert_ne!(
+            serde_json::to_value(short).unwrap(),
+            serde_json::to_value(long).unwrap()
+        );
     }
 
     #[test]
@@ -1173,10 +1217,7 @@ mod tests {
                 assert!(evidence.get("collection_meaning").is_none());
                 assert_eq!(content["context"]["discovery_need"], "First");
                 assert_eq!(content["context"]["outcome"], "First");
-                assert_eq!(
-                    content["context"]["intent_turns"],
-                    json!(["First", "First", "Revised", "First"])
-                );
+                assert!(content["context"].get("intent_turns").is_none());
                 assert_eq!(content["context"]["rule"], RUBRIC);
                 assert!(content["context"].get("intent_interpretation").is_none());
                 for (label, meaning) in CRITERIA {
@@ -1310,12 +1351,14 @@ mod tests {
             let client = &client;
             let endpoint = &endpoint;
             async move {
-                crate::decision_transport::request_decision(
-                    client,
-                    endpoint,
-                    "test-only",
+                plasm_runtime::provider_transport::request_provider(
+                    &plasm_runtime::provider_transport::ReqwestProviderTransport::new(
+                        client.clone(),
+                        endpoint,
+                        "test-only",
+                    ),
                     issued.body(),
-                    crate::decision_transport::DecisionRetryPolicy::default(),
+                    plasm_runtime::provider_transport::ProviderRetryPolicy::default(),
                     |_| Ok(()),
                 )
                 .await
@@ -1331,10 +1374,7 @@ mod tests {
             let request: serde_json::Value = serde_json::from_str(body).unwrap();
             assert_eq!(request["state"]["outcome"], intent.current());
             assert_eq!(request["state"]["discovery_need"], intent.current());
-            assert_eq!(
-                request["state"]["intent_turns"],
-                json!(intent.turns().collect::<Vec<_>>())
-            );
+            assert!(request["state"].get("intent_turns").is_none());
             assert!(request["state"].get("current_intent").is_none());
         }
         assert_eq!(receipt.matches[0].choice, MatchChoice::Uncertain);

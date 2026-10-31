@@ -2,7 +2,7 @@
 use super::*;
 
 #[test]
-fn outcome_and_need_preserve_revisions_constraints_and_unknown_state() {
+fn current_request_preserves_explicit_revisions_constraints_and_unknown_state() {
     let policy: serde_json::Value = serde_json::from_str(include_str!(
         "../../../../../fixtures/discovery/contribution-only-policy.json"
     ))
@@ -78,27 +78,31 @@ fn outcome_and_need_preserve_revisions_constraints_and_unknown_state() {
                 candidate
             })
             .collect();
-        let mut cache_keys = std::collections::BTreeSet::new();
+        let mut cache_keys = std::collections::BTreeMap::new();
         for turns in &histories {
             let intent = IntentProvenance::from_turns(turns.iter().map(|s| (*s).into())).unwrap();
             let batches = issue_batches(RELEVANCE_MODEL, &intent, &retrieval).unwrap();
-            assert!(cache_keys.insert(batches[0].cache_key.clone()));
+            if let Some(previous) =
+                cache_keys.insert(intent.current().to_owned(), batches[0].cache_key.clone())
+            {
+                assert_eq!(previous, batches[0].cache_key);
+            }
             for batch in batches {
                 let body: serde_json::Value = serde_json::from_str(batch.body()).unwrap();
                 let state = &body["state"];
                 assert_eq!(state["outcome"], *turns.last().unwrap());
                 assert_eq!(state["discovery_need"], *turns.last().unwrap());
-                assert_eq!(state["intent_turns"], json!(turns));
+                assert!(state.get("intent_turns").is_none());
                 assert_eq!(state["rule"], policy["rule"]);
                 // The live outcome is verbatim text, not the experimental
                 // structured outcome. Do not synthesize an empty alternatives
-                // field or extract/drop branches from the original history.
+                // field or interpret branches from earlier requests.
                 assert!(state["outcome"].is_string());
                 assert!(state.get("conditional_alternatives").is_none());
                 assert!(state.get("intent_interpretation").is_none());
                 assert!(state.get("current_intent").is_none());
                 // No inferred effective goal or fabricated readiness is injected.
-                assert_eq!(state.as_object().unwrap().len(), 7);
+                assert_eq!(state.as_object().unwrap().len(), 6);
                 assert!(state["types"].is_object());
                 assert!(state["type_refs"].is_object());
                 let cards = state["capabilities"].as_object().unwrap();

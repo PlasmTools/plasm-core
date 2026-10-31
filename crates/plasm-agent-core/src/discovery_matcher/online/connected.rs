@@ -30,6 +30,8 @@ pub(super) struct Plan {
     pub deferred: BTreeMap<CapabilityRef, DeferredReason>,
     pub issued: Option<IssuedBatch>,
     pub members: BTreeSet<CapabilityRef>,
+    #[cfg(test)]
+    pub diagnostic: Vec<serde_json::Value>,
 }
 
 fn variants(
@@ -163,11 +165,19 @@ fn body_size(
     request_packing::connected_size(&local)
 }
 
+#[cfg(test)]
 pub(super) fn root_order(
     index: &CatalogueSearch,
     context: SearchContext<'_>,
 ) -> Vec<CapabilityRef> {
-    let mut order = index.ranking.rank(context.intent.current());
+    order_recalled(index, context, index.ranking.rank(context.intent.current()))
+}
+
+fn order_recalled(
+    index: &CatalogueSearch,
+    context: SearchContext<'_>,
+    mut order: Vec<CapabilityRef>,
+) -> Vec<CapabilityRef> {
     // Exposure is not execution or relevance, but a declared producer can
     // nominate its direct consumer for judgment. Supplier-only traversal loses
     // the other end of a path after its source has already been retained.
@@ -184,7 +194,7 @@ pub(super) fn root_order(
     let ranked: BTreeSet<_> = order.iter().cloned().collect();
     order.extend(consumers.difference(&ranked).cloned());
     // Never reset exploration progress. Within a round, finish a directly
-    // connected frontier before unrelated roots; lexical ties remain stable.
+    // connected frontier before unrelated roots; recall order otherwise remains stable.
     order.sort_by_key(|key| {
         (
             context.visits.get(key).copied().unwrap_or(0),
@@ -194,11 +204,20 @@ pub(super) fn root_order(
     order
 }
 
+#[cfg(test)]
 pub(super) fn plan(
     index: &CatalogueSearch,
     context: SearchContext<'_>,
 ) -> Result<Plan, DiscoveryMatcherError> {
-    let order = root_order(index, context);
+    plan_recalled(index, context, index.ranking.rank(context.intent.current()))
+}
+
+pub(super) fn plan_recalled(
+    index: &CatalogueSearch,
+    context: SearchContext<'_>,
+    roots: Vec<CapabilityRef>,
+) -> Result<Plan, DiscoveryMatcherError> {
+    let order = order_recalled(index, context, roots);
     let ranks: BTreeMap<_, _> = order
         .iter()
         .enumerate()
@@ -211,6 +230,8 @@ pub(super) fn plan(
     let mut root_deferred = BTreeSet::new();
     let mut cache = BTreeMap::new();
     let mut served = BTreeMap::<NominationSlot, usize>::new();
+    #[cfg(test)]
+    let mut diagnostic = Vec::new();
     // Ranked existing declarations can anchor missing suppliers, but consume
     // neither a new-root slot nor a contribution question.
     for key in order
@@ -228,6 +249,10 @@ pub(super) fn plan(
         let mut trial = proposed.clone();
         trial.insert(key.clone(), Vec::new());
         if body_size(&trial, index, context, &mut cache)? <= search_budget::MAX_INPUT_BYTES {
+            #[cfg(test)]
+            diagnostic.push(serde_json::json!({"kind":"initial_root","root":key,
+                "before_bytes":body_size(&proposed,index,context,&mut cache)?,
+                "after_bytes":body_size(&trial,index,context,&mut cache)?}));
             proposed = trial;
         } else {
             deferred.insert(key.clone(), DeferredReason::InputBytes);
@@ -314,6 +339,12 @@ pub(super) fn plan(
                 deferred.insert(key.clone(), DeferredReason::InputBytes);
             }
         }
+        #[cfg(test)]
+        let admission_kind = if best.is_some() {
+            "optional_path"
+        } else {
+            "remaining_root"
+        };
         let bundle = if let Some((_, bundle)) = best {
             Some(bundle)
         } else {
@@ -340,6 +371,15 @@ pub(super) fn plan(
         let Some(bundle) = bundle else {
             break;
         };
+        #[cfg(test)]
+        {
+            let mut trial = proposed.clone();
+            trial.extend(bundle.clone());
+            diagnostic.push(serde_json::json!({"kind":admission_kind,
+                "members":bundle.iter().map(|(key,path)|serde_json::json!({"reference":key,"path":path})).collect::<Vec<_>>(),
+                "before_bytes":body_size(&proposed,index,context,&mut cache)?,
+                "after_bytes":body_size(&trial,index,context,&mut cache)?}));
+        }
         for (key, path) in bundle {
             if let Some(slot) = allocation_slot(index, &path)? {
                 *served.entry(slot).or_default() += 1;
@@ -386,6 +426,8 @@ pub(super) fn plan(
     // Deferring that expansion does not defer the declaration already exposed.
     deferred.retain(|key, _| !context.exposed.contains(key));
     Ok(Plan {
+        #[cfg(test)]
+        diagnostic,
         wave: proposed
             .into_iter()
             .filter(|(key, _)| !context.exposed.contains(key))

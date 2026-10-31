@@ -15,6 +15,9 @@ import { failureObservationSchema } from "../src/runtime/execution-failure.js";
 // Rust and TypeScript consume the same serialized relevance receipt.
 const fixture = JSON.parse(readFileSync(new URL("../../../fixtures/discovery/partial-routing.json", import.meta.url), "utf8"));
 const packet = routingPacketSchema.parse(fixture);
+const previousPolicy = structuredClone(fixture);
+previousPolicy.routing.search.policy = "additive-connected-frontier-current-bm25f-1-judgment-3-attempts-16000-byte-packet-v13";
+assert.equal(routingPacketSchema.safeParse(previousPolicy).success, false);
 // An existing surface with no additions is valid and is not an unmatched initial search.
 const noAdditions = structuredClone(packet);
 noAdditions.routing.search.exposed = packet.routing.retrieval.candidates.map(c => c.reference);

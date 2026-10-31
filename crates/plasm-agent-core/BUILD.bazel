@@ -5,17 +5,6 @@ load("@rules_rust//rust:defs.bzl", "rust_binary")
 
 build_targets()
 
-# Offline diagnostic adapter: production request encoding and response decoding.
-rust_binary(
-    name = "classification_probe",
-    srcs = ["examples/classification_probe.rs"],
-    crate_root = "examples/classification_probe.rs",
-    edition = "2021",
-    aliases = aliases(),
-    proc_macro_deps = all_crate_deps(proc_macro = True),
-    deps = [":plasm_agent_core"] + all_crate_deps(normal = True),
-)
-
 # Native serialization proof consumed by the TypeScript routing tests.
 rust_binary(
     name = "routing_contract",

@@ -166,7 +166,8 @@ fn local_context_preserves_intent_and_rubric_once_per_request() {
     assert_eq!(batches.len(), 8);
     for batch in batches {
         let body: serde_json::Value = serde_json::from_str(batch.body()).unwrap();
-        assert_eq!(body["state"]["intent_turns"], json!(turns));
+        assert!(body["state"].get("intent_turns").is_none());
+        assert_eq!(body["state"]["outcome"], intent.current());
         assert_eq!(body["state"]["rule"], RUBRIC);
         let cards = body["state"]["capabilities"].as_object().unwrap();
         assert_eq!(cards.len(), 1);

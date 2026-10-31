@@ -31,6 +31,7 @@ rust_library(
     deps = [
         "//crates/plasm-compile:plasm_compile",
         "//crates/plasm-core:plasm_core",
+        "//crates/plasm-runtime:plasm_runtime",
     ] + all_crate_deps(normal = True),
 )
 

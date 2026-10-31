@@ -1,21 +1,27 @@
 //! Revision-local authorized facts. Nothing in this index is model evidence until selected.
+#[cfg(test)]
+use super::search_rank::{LexicalIndex, RankedDocument};
 use super::{
     evidence::CatalogEvidence,
     search_graph::{Edge, Relationship, SearchGraph},
-    search_rank::{LexicalIndex, RankedDocument},
     DiscoveryMatcherError,
 };
 use crate::discovery_store::{DiscoveryAuthorization, RetrievalReceipt, RetrievedCapability};
 use plasm_core::{
-    catalog_discovery::{capability_documents, capability_observation_meaning},
+    catalog_discovery::capability_documents,
     prerequisites::{
         project_input_source_candidates, CapabilityRef, DeploymentBindings, InputSourceBinding,
     },
+    schema::CapabilityKind,
+    CGS,
+};
+#[cfg(test)]
+use plasm_core::{
+    catalog_discovery::capability_observation_meaning,
     schema::{
-        CapabilityKind, CapabilitySchema, InputFieldSchema, InputFieldWire, InputType, OutputType,
+        CapabilitySchema, InputFieldSchema, InputFieldWire, InputType, OutputType,
         RelationMaterialization,
     },
-    CGS,
 };
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -23,11 +29,13 @@ pub(crate) struct CatalogueSearch {
     pub(super) candidates: BTreeMap<CapabilityRef, RetrievedCapability>,
     /// Stable question-local reference labels for this authorized revision.
     pub(super) labels: BTreeMap<CapabilityRef, String>,
+    #[cfg(test)]
     pub(super) ranking: LexicalIndex<CapabilityRef>,
     pub(super) graph: SearchGraph<CapabilityRef>,
     pub(super) input_bindings: BTreeMap<String, InputSourceBinding>,
 }
 
+#[cfg(test)]
 fn input_fields(fields: &[InputFieldSchema], cgs: &CGS, text: &mut BTreeSet<String>) {
     for field in fields {
         text.extend(field.description.iter().cloned());
@@ -42,6 +50,7 @@ fn input_fields(fields: &[InputFieldSchema], cgs: &CGS, text: &mut BTreeSet<Stri
     }
 }
 
+#[cfg(test)]
 fn input_text(input: &InputType, cgs: &CGS, text: &mut BTreeSet<String>) {
     match input {
         InputType::None | InputType::Value { .. } => {}
@@ -57,6 +66,7 @@ fn input_text(input: &InputType, cgs: &CGS, text: &mut BTreeSet<String>) {
 
 /// Ranking fields retain authored roles. The rendered operation contract also
 /// contains inputs, so indexing it here would count inputs twice at two weights.
+#[cfg(test)]
 fn operation_meaning(cap: &CapabilitySchema) -> String {
     let mut text = cap.description.clone();
     if let Some(OutputType::SideEffect { description }) =
@@ -72,6 +82,7 @@ fn operation_meaning(cap: &CapabilitySchema) -> String {
 
 /// A parent GET can expose its declared embedded relations. Do not transfer
 /// those observations to every operation sharing the owning entity.
+#[cfg(test)]
 fn embedded_observations(cap: &CapabilitySchema, cgs: &CGS) -> String {
     if cap.kind != CapabilityKind::Get
         || cap.output_schema.as_ref().is_some_and(|output| {
@@ -108,6 +119,7 @@ impl CatalogueSearch {
             .map(|(key, cgs)| (key.clone(), cgs))
             .collect();
         let mut candidates = BTreeMap::new();
+        #[cfg(test)]
         let mut documents = Vec::new();
         for (catalog, cgs) in catalogs {
             if !allowed.catalogs.contains(catalog) {
@@ -123,38 +135,41 @@ impl CatalogueSearch {
                 if !allowed.permits(&reference) {
                     continue;
                 }
-                let cap = &cgs.capabilities[reference.capability.as_str()];
-                // Reusing one annotation across slots is not additional
-                // semantic evidence. Full contracts retain every input seat.
-                let mut inputs = BTreeSet::new();
-                for fields in [
-                    &cap.inputs.scope.0,
-                    &cap.inputs.selection.0,
-                    &cap.inputs.controls.0,
-                ] {
-                    input_fields(fields, cgs, &mut inputs);
-                }
-                for input in [&cap.inputs.arguments, &cap.inputs.payload]
-                    .into_iter()
-                    .flatten()
+                #[cfg(test)]
                 {
-                    inputs.extend(input.description.iter().cloned());
-                    input_text(&input.input_type, cgs, &mut inputs);
+                    let cap = &cgs.capabilities[reference.capability.as_str()];
+                    // Reusing one annotation across slots is not additional
+                    // semantic evidence. Full contracts retain every input seat.
+                    let mut inputs = BTreeSet::new();
+                    for fields in [
+                        &cap.inputs.scope.0,
+                        &cap.inputs.selection.0,
+                        &cap.inputs.controls.0,
+                    ] {
+                        input_fields(fields, cgs, &mut inputs);
+                    }
+                    for input in [&cap.inputs.arguments, &cap.inputs.payload]
+                        .into_iter()
+                        .flatten()
+                    {
+                        inputs.extend(input.description.iter().cloned());
+                        input_text(&input.input_type, cgs, &mut inputs);
+                    }
+                    documents.push(RankedDocument {
+                        key: reference.clone(),
+                        fields: [
+                            operation_meaning(cap),
+                            format!(
+                                "{} {} {}",
+                                document.collection.meaning,
+                                capability_observation_meaning(cgs, cap)
+                                    .map_err(DiscoveryMatcherError::CatalogueContext)?,
+                                embedded_observations(cap, cgs)
+                            ),
+                            inputs.into_iter().collect::<Vec<_>>().join(" "),
+                        ],
+                    });
                 }
-                documents.push(RankedDocument {
-                    key: reference.clone(),
-                    fields: [
-                        operation_meaning(cap),
-                        format!(
-                            "{} {} {}",
-                            document.collection.meaning,
-                            capability_observation_meaning(cgs, cap)
-                                .map_err(DiscoveryMatcherError::CatalogueContext)?,
-                            embedded_observations(cap, cgs)
-                        ),
-                        inputs.into_iter().collect::<Vec<_>>().join(" "),
-                    ],
-                });
                 let id = plasm_core::catalog_discovery::content_hash(
                     &serde_json::to_vec(&reference).map_err(DiscoveryMatcherError::Packing)?,
                 );
@@ -164,7 +179,7 @@ impl CatalogueSearch {
                         id,
                         reference,
                         document,
-                        admissions: BTreeSet::from(["authorized_catalogue_index".into()]),
+                        admissions: BTreeSet::new(),
                     },
                 );
             }
@@ -229,6 +244,7 @@ impl CatalogueSearch {
                     }
                 }
             })?;
+        #[cfg(test)]
         let ranking = LexicalIndex::new(documents)
             .map_err(|_| DiscoveryMatcherError::DuplicateCapabilityReference)?;
         let labels = candidates
@@ -239,6 +255,7 @@ impl CatalogueSearch {
         Ok(Self {
             candidates,
             labels,
+            #[cfg(test)]
             ranking,
             graph,
             input_bindings,

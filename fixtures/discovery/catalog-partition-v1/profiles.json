@@ -1,0 +1,52 @@
+[
+  {
+    "id": "topical/shards_000",
+    "shards": 0,
+    "description": "Record historical specimen cabinet membership, sample inspection, public bulletin publication and configured laboratory routine activity. This creates a historical record; it does not read current specimens or samples, publish a bulletin or invoke a routine."
+  },
+  {
+    "id": "topical/shards_001",
+    "shards": 1,
+    "description": "Record historical specimen cabinet membership, sample inspection, public bulletin publication and configured laboratory routine activity. This creates a historical record; it does not read current specimens or samples, publish a bulletin or invoke a routine."
+  },
+  {
+    "id": "topical/shards_004",
+    "shards": 4,
+    "description": "Record historical specimen cabinet membership, sample inspection, public bulletin publication and configured laboratory routine activity. This creates a historical record; it does not read current specimens or samples, publish a bulletin or invoke a routine."
+  },
+  {
+    "id": "topical/shards_016",
+    "shards": 16,
+    "description": "Record historical specimen cabinet membership, sample inspection, public bulletin publication and configured laboratory routine activity. This creates a historical record; it does not read current specimens or samples, publish a bulletin or invoke a routine."
+  },
+  {
+    "id": "topical/shards_120",
+    "shards": 120,
+    "description": "Record historical specimen cabinet membership, sample inspection, public bulletin publication and configured laboratory routine activity. This creates a historical record; it does not read current specimens or samples, publish a bulletin or invoke a routine."
+  },
+  {
+    "id": "remote/shards_000",
+    "shards": 0,
+    "description": "Record a historical payroll reconciliation entry for an archived salary ledger. This creates an accounting record and does not process a payment."
+  },
+  {
+    "id": "remote/shards_001",
+    "shards": 1,
+    "description": "Record a historical payroll reconciliation entry for an archived salary ledger. This creates an accounting record and does not process a payment."
+  },
+  {
+    "id": "remote/shards_004",
+    "shards": 4,
+    "description": "Record a historical payroll reconciliation entry for an archived salary ledger. This creates an accounting record and does not process a payment."
+  },
+  {
+    "id": "remote/shards_016",
+    "shards": 16,
+    "description": "Record a historical payroll reconciliation entry for an archived salary ledger. This creates an accounting record and does not process a payment."
+  },
+  {
+    "id": "remote/shards_120",
+    "shards": 120,
+    "description": "Record a historical payroll reconciliation entry for an archived salary ledger. This creates an accounting record and does not process a payment."
+  }
+]

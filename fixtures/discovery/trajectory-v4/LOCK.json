@@ -1,0 +1,6 @@
+{
+  "fixtures/discovery/trajectory-v4/cases.json": "a5d8c3e717fa6217627b1418935b6aba87c2508dbda9d6916c749b3cef6df92b",
+  "fixtures/discovery/trajectory-v4/PROTOCOL.md": "32773e988b19fbb5f4945f968525a1d2ecbae1ee71d5ab450c937b469773dec0",
+  "fixtures/schemas/discovery_trajectory_v4/domain.yaml": "82e26d4501ead82b72d634597bd7c97b92590ab7672162321548457ed1b45aef",
+  "fixtures/schemas/discovery_trajectory_v4/mappings.yaml": "351b98b22d8aaaa3cfba09c941367d26323a34f0479a8ae8baccd7a9791f0db1"
+}

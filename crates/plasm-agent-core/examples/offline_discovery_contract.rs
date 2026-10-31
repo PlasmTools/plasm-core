@@ -13,6 +13,8 @@ struct Input {
     intent: String,
     retrieval: RetrievalReceipt,
     #[serde(default)]
+    bindings: plasm_core::prerequisites::DeploymentBindings,
+    #[serde(default)]
     responses: Option<Vec<String>>,
 }
 fn main() -> Result<()> {
@@ -21,7 +23,7 @@ fn main() -> Result<()> {
     let evidence = plasm_agent_core::discovery_matcher::evidence::CatalogEvidence::from_catalogs(
         &input.retrieval,
         &input.catalogs,
-        &Default::default(),
+        &input.bindings,
         &|_| true,
     )?;
     let prepared = prepare_selection(RELEVANCE_MODEL, &provenance, &input.retrieval, &evidence)?;

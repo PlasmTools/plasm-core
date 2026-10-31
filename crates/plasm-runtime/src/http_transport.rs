@@ -852,12 +852,7 @@ fn parse_retry_after_header(headers: &reqwest::header::HeaderMap) -> Option<Dura
         .get(reqwest::header::RETRY_AFTER)
         .or_else(|| headers.get("retry-after"))
         .and_then(|v| v.to_str().ok())?;
-    let trimmed = raw.trim();
-    if let Ok(secs) = trimmed.parse::<u64>() {
-        return Some(Duration::from_secs(secs.min(86_400)));
-    }
-    // HTTP-date — best-effort via rough parse is omitted; fall through to None for non-integer
-    None
+    crate::external_resilience::parse_retry_after(raw)
 }
 
 /// Classify a non-success status for automatic retry (safe methods only at the transport layer).

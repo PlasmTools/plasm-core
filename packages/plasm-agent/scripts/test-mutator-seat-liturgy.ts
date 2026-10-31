@@ -4,6 +4,10 @@ import { readFileSync } from "node:fs";
 import { buildDefaultSystemLiturgy, buildPlasmToolDescription } from "../src/prompts/index.js";
 const card = buildPlasmToolDescription();
 const liturgy = buildDefaultSystemLiturgy();
+const context = readFileSync(new URL("../src/prompts/assets/plasm_context_tool.txt", import.meta.url), "utf8");
+assert.match(context, /self-contained current request including relevant conditions and amendments/);
+assert.match(context, /Prior requests remain audit\/search state, not judgment context/);
+assert.doesNotMatch(context, /ancestry supplies context/);
 for (const asset of ["initialize_workflow.txt", "plasm_context_tool.txt", "plasm_run_tool_base.txt", "plasm_tool.txt", "python-plasm-dag.txt"]) {
   assert.equal(
     readFileSync(new URL(`../src/prompts/assets/${asset}`, import.meta.url), "utf8"),

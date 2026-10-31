@@ -183,9 +183,8 @@ async fn native_live_discovery_gate_v2() {
                     async move {
                         if mode=="oracle" {return Ok(oracle);}
                         let begin=std::time::Instant::now();
-                        let result=crate::decision_transport::request_decision(client,RELEVANCE_ENDPOINT,credential,request.body(),
-                            crate::decision_transport::DecisionRetryPolicy {attempts:1,deadline:std::time::Duration::from_secs(30),
-                                attempt_timeout:std::time::Duration::from_secs(30),backoff:std::time::Duration::ZERO},
+                        let result=plasm_runtime::provider_transport::request_provider(&plasm_runtime::provider_transport::ReqwestProviderTransport::new(client.clone(), RELEVANCE_ENDPOINT, credential.clone()),request.body(),
+                            plasm_runtime::provider_transport::ProviderRetryPolicy::discovery_attempt(),
                             |attempt| {emit(output,json!({"kind":"transport","case":case.id,"repeat":repeat,"step":step+1,
                                 "call_seconds":begin.elapsed().as_secs_f64(),"record":attempt}));Ok(())}).await;
                         result.map_err(|e|Box::new(e) as DecisionProviderError)

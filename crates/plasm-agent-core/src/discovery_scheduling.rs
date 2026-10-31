@@ -1,7 +1,25 @@
 //! Process-wide provider admission; identical service requests share a cache fill.
+use plasm_runtime::provider_transport::{
+    AttemptRecorder, ProviderResponse, ProviderTransport, ProviderTransportError,
+};
 use std::collections::BTreeMap;
 use std::sync::{Arc, OnceLock, Weak};
 use tokio::sync::{Mutex, OwnedMutexGuard, Semaphore, SemaphorePermit};
+
+/// Admission is inside the attempt's timeout and lifecycle, not outside it.
+pub(crate) struct ScheduledProviderTransport(pub Arc<dyn ProviderTransport>);
+
+#[async_trait::async_trait]
+impl ProviderTransport for ScheduledProviderTransport {
+    async fn send(
+        &self,
+        body: &str,
+        observer: &mut AttemptRecorder<'_>,
+    ) -> Result<ProviderResponse, ProviderTransportError> {
+        let _permit = provider_permit().await;
+        self.0.send(body, observer).await
+    }
+}
 
 const PROVIDER_CONCURRENCY: usize = 8;
 
@@ -42,11 +60,53 @@ mod tests {
 
     #[tokio::test]
     async fn shared_provider_budget_and_cancellation_release_permits() {
+        struct MustNotDispatch;
+        #[async_trait::async_trait]
+        impl ProviderTransport for MustNotDispatch {
+            async fn send(
+                &self,
+                _: &str,
+                _: &mut AttemptRecorder<'_>,
+            ) -> Result<ProviderResponse, ProviderTransportError> {
+                panic!("queued request must not dispatch");
+            }
+        }
         let mut held = Vec::new();
         for _ in 0..PROVIDER_CONCURRENCY {
             held.push(provider_permit().await);
         }
         assert!(provider_permit().now_or_never().is_none());
+        let transport = ScheduledProviderTransport(Arc::new(MustNotDispatch));
+        let mut records = Vec::new();
+        let error = plasm_runtime::provider_transport::request_provider(
+            &transport,
+            "abstract",
+            plasm_runtime::provider_transport::ProviderRetryPolicy {
+                attempt_timeout: std::time::Duration::from_millis(20),
+                ..plasm_runtime::provider_transport::ProviderRetryPolicy::discovery_attempt()
+            },
+            |e| {
+                records.push(e.clone());
+                Ok(())
+            },
+        )
+        .await
+        .unwrap_err();
+        assert!(matches!(
+            error,
+            ProviderTransportError::AttemptTimeout {
+                phase: plasm_runtime::provider_transport::AttemptPhase::Admission,
+                status: None,
+                ..
+            }
+        ));
+        assert!(!records.iter().any(|e| matches!(
+            e,
+            plasm_runtime::provider_transport::ProviderAttempt::Lifecycle {
+                phase: plasm_runtime::provider_transport::AttemptPhase::Dispatch,
+                ..
+            }
+        )));
         held.pop();
         assert!(provider_permit().now_or_never().is_some());
     }

@@ -5,8 +5,32 @@ use crate::symbol_tuning::{
     ExposureSurfaceDelta,
 };
 use crate::{CapabilityKind, CGS};
-use std::collections::BTreeSet;
 use thiserror::Error;
+
+/// Complete navigation between already admitted endpoints in one catalog.
+/// This does not admit endpoint entities, fields, or capabilities.
+pub(crate) fn admit_exposed_relations(cgs: &CGS, entry_id: &str, surface: &mut ExposureSurface) {
+    for (name, entity) in &cgs.entities {
+        let source = ExposureEntityKey {
+            entry_id: entry_id.into(),
+            entity: name.clone(),
+        };
+        if !surface.entities.contains(&source) {
+            continue;
+        }
+        for (name, relation) in &entity.relations {
+            if surface.entities.contains(&ExposureEntityKey {
+                entry_id: entry_id.into(),
+                entity: relation.target_resource.clone(),
+            }) {
+                surface.slots.insert(ExposureSlotKey::Relation {
+                    source: source.clone(),
+                    relation: name.clone(),
+                });
+            }
+        }
+    }
+}
 
 #[derive(Debug, Error, Clone, PartialEq, Eq)]
 pub enum CapabilityExposureError {
@@ -143,25 +167,7 @@ pub fn selected_capability_surface(
             }
         }
     }
-    let entities: BTreeSet<_> = surface.entities.iter().cloned().collect();
-    for key in &entities {
-        let entity = cgs.entities.get(key.entity.as_str()).ok_or_else(|| {
-            CapabilityExposureError::ExposedEntityMissing {
-                entity: key.entity.to_string(),
-            }
-        })?;
-        for (name, relation) in &entity.relations {
-            if entities.contains(&ExposureEntityKey {
-                entry_id: entry_id.into(),
-                entity: relation.target_resource.clone(),
-            }) {
-                surface.slots.insert(ExposureSlotKey::Relation {
-                    source: key.clone(),
-                    relation: name.clone(),
-                });
-            }
-        }
-    }
+    admit_exposed_relations(cgs, entry_id, &mut surface);
     Ok(ExposureSurfaceDelta { required: surface })
 }
 
@@ -190,6 +196,7 @@ mod tests {
     use super::*;
     use crate::loader::load_schema_dir;
     use crate::symbol_tuning::{ExposureSlotKey, ExposureSurfaceDelta};
+    use std::collections::BTreeSet;
 
     fn auth_bearer_search_dir() -> std::path::PathBuf {
         std::path::Path::new(crate::test_manifest_dir())

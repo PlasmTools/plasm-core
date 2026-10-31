@@ -4,16 +4,26 @@
 mod additive_tests;
 mod connected;
 #[cfg(test)]
+#[path = "online/decision_diagnostic.rs"]
+mod decision_diagnostic;
+#[cfg(test)]
 #[path = "online/fixed_suite.rs"]
 mod fixed_suite;
 #[cfg(test)]
 #[path = "online/live_gate.rs"]
 mod live_gate;
 #[cfg(test)]
+#[path = "online/progress_suite.rs"]
+mod progress_suite;
+#[cfg(test)]
 mod retry_tests;
+#[cfg(test)]
+mod hybrid_tests;
 #[cfg(test)]
 #[path = "online/starvation_suite.rs"]
 mod starvation_suite;
+#[cfg(test)]
+mod trajectory_suite;
 use super::{
     catalogue_search::CatalogueSearch,
     search_budget::{BudgetStop, SearchBudget},
@@ -25,7 +35,7 @@ use crate::discovery_store::{DiscoveryAuthorization, RetrievalReceipt};
 use plasm_core::{prerequisites::DeploymentBindings, CGS};
 
 pub(crate) const SEARCH_POLICY: &str =
-    "additive-connected-frontier-current-bm25f-1-judgment-3-attempts-16000-byte-packet-v12";
+    "additive-connected-frontier-current-hybrid-evidence-1-judgment-3-attempts-16000-byte-packet-v16";
 
 #[derive(Clone, Copy)]
 pub struct SearchContext<'a> {
@@ -422,6 +432,7 @@ fn packet(
 /// No fixed task panels or execution effects. Bounded identical transport retries
 /// are charged and checkpointed before dispatch. The returned
 /// retrieval contains only judged leaves; the search receipt accounts for the rest.
+#[cfg(test)]
 pub async fn select<F, Fut>(
     context: SearchContext<'_>,
     decide: F,
@@ -444,9 +455,87 @@ where
     select_indexed(context, &index, decide, |_| async { Ok(()) }).await
 }
 
+/// Explicit lexical component fixture. Production must supply hybrid recall.
+#[cfg(test)]
 pub(crate) async fn select_indexed<F, Fut, O, OFut>(
     context: SearchContext<'_>,
     index: &CatalogueSearch,
+    decide: F,
+    observe: O,
+) -> Result<(RetrievalReceipt, CapabilityMatchReceipt, SearchReceipt), DiscoveryMatcherError>
+where
+    F: FnMut(IssuedBatch) -> Fut,
+    Fut: std::future::Future<Output = Result<String, DecisionProviderError>>,
+    O: FnMut(SearchProgress) -> OFut,
+    OFut: std::future::Future<Output = Result<(), DecisionProviderError>>,
+{
+    let recall = RetrievalReceipt {
+        generation: context.generation.into(),
+        candidates: index
+            .ranking
+            .rank(context.intent.current())
+            .into_iter()
+            .map(|r| index.candidates[&r].clone())
+            .collect(),
+        lexical_count: 0,
+        vector_count: 0,
+        lexical_truncated: false,
+        vector_truncated: false,
+    };
+    // Component growth fixtures intentionally exceed the production recall bound.
+    select_admitted(context, index, &recall, decide, observe).await
+}
+
+/// Public matcher boundary requires explicit recall from the pinned generation.
+pub async fn select_retrieved<F, Fut>(
+    context: SearchContext<'_>,
+    recall: &RetrievalReceipt,
+    decide: F,
+) -> Result<(RetrievalReceipt, CapabilityMatchReceipt, SearchReceipt), DiscoveryMatcherError>
+where
+    F: FnMut(IssuedBatch) -> Fut,
+    Fut: std::future::Future<Output = Result<String, DecisionProviderError>>,
+{
+    let index = CatalogueSearch::new(context.catalogs, context.deployments, context.allowed)?;
+    select_recalled_indexed(context, &index, recall, decide, |_| async { Ok(()) }).await
+}
+
+pub(crate) async fn select_recalled_indexed<F, Fut, O, OFut>(
+    context: SearchContext<'_>,
+    index: &CatalogueSearch,
+    recall: &RetrievalReceipt,
+    decide: F,
+    observe: O,
+) -> Result<(RetrievalReceipt, CapabilityMatchReceipt, SearchReceipt), DiscoveryMatcherError>
+where
+    F: FnMut(IssuedBatch) -> Fut,
+    Fut: std::future::Future<Output = Result<String, DecisionProviderError>>,
+    O: FnMut(SearchProgress) -> OFut,
+    OFut: std::future::Future<Output = Result<(), DecisionProviderError>>,
+{
+    recall.validate(context.allowed)?;
+    if recall.generation != context.generation {
+        return Err(DiscoveryMatcherError::RetrievalGenerationMismatch);
+    }
+    for candidate in &recall.candidates {
+        if !index
+            .candidates
+            .get(&candidate.reference)
+            .is_some_and(|local| local.document == candidate.document)
+        {
+            return Err(DiscoveryMatcherError::InvalidWitness {
+                reference: candidate.reference.clone(),
+                part: "retrieval document differs from pinned CGS",
+            });
+        }
+    }
+    select_admitted(context, index, recall, decide, observe).await
+}
+
+async fn select_admitted<F, Fut, O, OFut>(
+    context: SearchContext<'_>,
+    index: &CatalogueSearch,
+    recall: &RetrievalReceipt,
     mut decide: F,
     mut observe: O,
 ) -> Result<(RetrievalReceipt, CapabilityMatchReceipt, SearchReceipt), DiscoveryMatcherError>
@@ -477,7 +566,15 @@ where
             });
         }
     }
-    let planned = connected::plan(index, context)?;
+    let planned = connected::plan_recalled(
+        index,
+        context,
+        recall
+            .candidates
+            .iter()
+            .map(|c| c.reference.clone())
+            .collect(),
+    )?;
     let mut wave = planned.wave;
     let mut routes = BTreeMap::<CapabilityRef, Vec<Edge<CapabilityRef>>>::new();
     let mut judged = BTreeMap::new();
@@ -525,7 +622,7 @@ where
             let raw = loop {
                 let response = if tokio::time::Instant::now() >= deadline {
                     Err(
-                        Box::new(crate::decision_transport::DecisionTransportError::DeadlineExpired)
+                        Box::new(plasm_runtime::provider_transport::ProviderTransportError::DeadlineExpired)
                             as DecisionProviderError,
                     )
                 } else {
@@ -533,7 +630,7 @@ where
                         .await
                         .unwrap_or_else(|_| {
                             Err(Box::new(
-                                crate::decision_transport::DecisionTransportError::DeadlineExpired,
+                                plasm_runtime::provider_transport::ProviderTransportError::DeadlineExpired,
                             ) as DecisionProviderError)
                         })
                 };
@@ -546,7 +643,7 @@ where
                                 .and_then(|failure| failure.input_tokens),
                         );
                         let delay = error
-                            .downcast_ref::<crate::decision_transport::DecisionTransportError>()
+                            .downcast_ref::<plasm_runtime::provider_transport::ProviderTransportError>()
                             .and_then(|error| error.retry_delay(budget.requests()))
                             .filter(|delay| {
                                 budget.requests() < search_budget::MAX_ATTEMPTS
@@ -659,16 +756,37 @@ where
         wave.clear();
     }
     let references: BTreeSet<_> = judged.keys().cloned().collect();
+    // Question identities are revision-local reference hashes. Admission evidence
+    // is joined by the fully qualified reference, never by an incidental row ID.
+    let recalled: BTreeMap<_, _> = recall
+        .candidates
+        .iter()
+        .map(|c| (&c.reference, c))
+        .collect();
+    let candidates: Vec<_> = references
+        .iter()
+        .map(|r| {
+            let mut candidate = index.candidates[r].clone();
+            candidate.admissions = recalled
+                .get(r)
+                .map(|c| c.admissions.clone())
+                .unwrap_or_else(|| BTreeSet::from(["typed_relationship".into()]));
+            candidate
+        })
+        .collect();
     let retrieval = RetrievalReceipt {
         generation: generation.into(),
-        candidates: references
+        lexical_count: candidates
             .iter()
-            .map(|r| index.candidates[r].clone())
-            .collect(),
-        lexical_count: references.len(),
-        vector_count: 0,
-        lexical_truncated: false,
-        vector_truncated: false,
+            .filter(|c| c.admissions.contains("lexical"))
+            .count(),
+        vector_count: candidates
+            .iter()
+            .filter(|c| c.admissions.contains("vector"))
+            .count(),
+        candidates,
+        lexical_truncated: recall.lexical_truncated,
+        vector_truncated: recall.vector_truncated,
     };
     let matching = CapabilityMatchReceipt {
         matches: judged.into_values().collect(),

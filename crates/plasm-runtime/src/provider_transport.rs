@@ -1,47 +1,65 @@
-//! Bounded transport for repeatable, read-only model judgments. Never retries API effects.
+//! Bounded transport for repeatable provider requests. Never retries domain effects.
+use crate::external_resilience::ReplaySafety;
+use crate::external_resilience::RetryPolicy;
 use serde::{Deserialize, Serialize};
 use std::time::Duration;
 use thiserror::Error;
+mod attempt;
+mod records;
+pub use records::ProviderReceiptSink;
+#[cfg(test)]
+mod resilience_tests;
+#[cfg(test)]
+mod test_support;
+pub use attempt::{
+    AttemptPhase, AttemptRecorder, ProviderResponse, ProviderTransport, ReqwestProviderTransport,
+};
 
-type Result<T> = std::result::Result<T, DecisionTransportError>;
+type Result<T> = std::result::Result<T, ProviderTransportError>;
 
 #[derive(Debug, Error)]
-pub enum DecisionTransportError {
-    #[error("decision transport attempt budget must be positive")]
+pub enum ProviderTransportError {
+    #[error("provider transport attempt budget must be positive")]
     EmptyAttemptBudget,
-    #[error("decision context limit rejected this page")]
+    #[error("provider context limit rejected this request")]
     ContextLimit,
-    #[error("decision provider returned HTTP {status}: {message}")]
+    #[error("provider returned HTTP {status}: {message}")]
     ProviderRejected {
         status: reqwest::StatusCode,
         message: String,
         retry_after: Option<Duration>,
     },
-    #[error("decision response body could not be read")]
+    #[error("provider response body could not be read")]
     ResponseBody {
         status: reqwest::StatusCode,
         retry_after: Option<Duration>,
         #[source]
         source: reqwest::Error,
     },
-    #[error("decision transport failed")]
+    #[error("provider transport failed")]
     Request(#[source] reqwest::Error),
-    #[error("decision transport exhausted {attempts} attempts: {source}")]
+    #[error("provider transport exhausted {attempts} attempts: {source}")]
     RetryExhausted {
         attempts: usize,
         #[source]
-        source: Box<DecisionTransportError>,
+        source: Box<ProviderTransportError>,
     },
-    #[error("decision retry deadline expired")]
+    #[error("provider retry deadline expired")]
     DeadlineExpired,
+    #[error("provider attempt timed out during {phase:?} (HTTP status {status:?})")]
+    AttemptTimeout {
+        phase: AttemptPhase,
+        status: Option<u16>,
+        retry_after: Option<Duration>,
+    },
     #[error(transparent)]
-    Record(#[from] DecisionRecordError),
+    Record(#[from] ProviderRecordError),
 }
 
-impl DecisionTransportError {
+impl ProviderTransportError {
     /// Retry only transport/provider failures, never decoding or persistence.
     /// The caller still owns attempt admission and the overall deadline.
-    pub(crate) fn retry_delay(&self, attempt: usize) -> Option<Duration> {
+    pub fn retry_delay(&self, attempt: usize) -> Option<Duration> {
         let after = match self {
             Self::ProviderRejected {
                 status,
@@ -54,6 +72,11 @@ impl DecisionTransportError {
                 retry_after,
                 ..
             } if body_retryable(*status) => *retry_after,
+            Self::AttemptTimeout {
+                status,
+                retry_after,
+                ..
+            } if status.is_none_or(|s| (200..300).contains(&s) || transient(s)) => *retry_after,
             _ => return None,
         };
         Some(retry_wait(attempt, Duration::from_millis(500), after))
@@ -61,7 +84,7 @@ impl DecisionTransportError {
 }
 
 fn request_retryable(error: &reqwest::Error) -> bool {
-    error.is_timeout() || error.is_connect() || error.is_body() || error.is_request()
+    error.is_timeout() || error.is_connect() || error.is_body()
 }
 
 fn body_retryable(status: reqwest::StatusCode) -> bool {
@@ -70,34 +93,63 @@ fn body_retryable(status: reqwest::StatusCode) -> bool {
 
 fn retry_wait(attempt: usize, backoff: Duration, after: Option<Duration>) -> Duration {
     let entropy = uuid::Uuid::new_v4().as_u128() as u64;
-    let backoff = backoff.saturating_mul(1u32 << attempt.saturating_sub(1).min(10));
-    after
-        .unwrap_or_default()
-        .max(backoff + Duration::from_millis(entropy % 251))
+    ProviderRetryPolicy {
+        backoff,
+        ..Default::default()
+    }
+    .delay(attempt, after, entropy)
 }
 
 #[derive(Debug, Error)]
-pub enum DecisionRecordError {
-    #[error("decision attempt record JSON encoding failed")]
+pub enum ProviderRecordError {
+    #[error("provider attempt record JSON encoding failed")]
     Json(#[from] serde_json::Error),
-    #[error("decision attempt record could not be persisted")]
+    #[error("provider attempt record could not be persisted")]
     Io(#[from] std::io::Error),
 }
 
 #[derive(Clone, Copy)]
-pub(crate) struct DecisionRetryPolicy {
+pub struct ProviderRetryPolicy {
     pub attempts: usize,
     pub deadline: Duration,
     pub attempt_timeout: Duration,
     pub backoff: Duration,
 }
 
-impl Default for DecisionRetryPolicy {
+impl RetryPolicy for ProviderRetryPolicy {
+    fn max_attempts(&self) -> usize {
+        self.attempts
+    }
+    fn retry_budget(&self) -> Duration {
+        self.deadline
+    }
+    fn initial_backoff(&self) -> Duration {
+        self.backoff
+    }
+    fn max_backoff(&self) -> Duration {
+        Duration::from_secs(30)
+    }
+}
+
+impl ProviderRetryPolicy {
+    /// Online selection owns retry admission. Each invocation is one attempt,
+    /// with time left for further admitted attempts inside the 30-second search.
+    pub fn discovery_attempt() -> Self {
+        Self {
+            attempts: 1,
+            deadline: Duration::from_secs(30),
+            attempt_timeout: Duration::from_secs(8),
+            backoff: Duration::from_millis(500),
+        }
+    }
+}
+
+impl Default for ProviderRetryPolicy {
     fn default() -> Self {
         Self {
-            attempts: 5,
-            deadline: Duration::from_secs(300),
-            attempt_timeout: Duration::from_secs(120),
+            attempts: 3,
+            deadline: Duration::from_secs(30),
+            attempt_timeout: Duration::from_secs(8),
             backoff: Duration::from_millis(500),
         }
     }
@@ -105,13 +157,31 @@ impl Default for DecisionRetryPolicy {
 
 #[derive(Clone, Serialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
-pub(crate) enum DecisionAttempt {
+pub enum ProviderAttempt {
+    Lifecycle {
+        request_hash: String,
+        request_bytes: usize,
+        attempt_id: String,
+        started_at_unix_ms: u128,
+        attempt: usize,
+        phase: AttemptPhase,
+        event: &'static str,
+        elapsed_ms: u128,
+        http_status: Option<u16>,
+        retry_after_ms: Option<u128>,
+    },
     Response {
+        request_hash: String,
+        request_bytes: usize,
+        attempt_id: String,
         attempt: usize,
         http_status: u16,
         raw_response: String,
     },
     Transport {
+        request_hash: String,
+        request_bytes: usize,
+        attempt_id: String,
         attempt: usize,
         error: String,
     },
@@ -208,100 +278,80 @@ fn provider_messages_are_structured_bounded_and_unicode_safe() {
 
 fn retry_after(headers: &reqwest::header::HeaderMap) -> Option<Duration> {
     let value = headers.get(reqwest::header::RETRY_AFTER)?.to_str().ok()?;
-    if let Ok(seconds) = value.parse::<u64>() {
-        return Some(Duration::from_secs(seconds));
-    }
-    let at = chrono::DateTime::parse_from_rfc2822(value).ok()?;
-    Some(
-        (at.with_timezone(&chrono::Utc) - chrono::Utc::now())
-            .to_std()
-            .unwrap_or_default(),
-    )
+    crate::external_resilience::parse_retry_after(value)
 }
 
-pub(crate) async fn request_decision(
-    client: &reqwest::Client,
-    endpoint: &str,
-    key: &str,
+/// A single attempt for callers that own durable retry admission and deadlines.
+pub async fn request_attempt(
+    transport: &dyn ProviderTransport,
     body: &str,
-    policy: DecisionRetryPolicy,
-    mut record: impl FnMut(&DecisionAttempt) -> std::result::Result<(), DecisionRecordError>,
+    attempt: usize,
+    timeout: Duration,
+    mut record: impl FnMut(&ProviderAttempt) -> std::result::Result<(), ProviderRecordError> + Send,
+) -> Result<String> {
+    let deadline = tokio::time::Instant::now() + timeout;
+    let mut observer = AttemptRecorder::start(&mut record, attempt, body, deadline)?;
+    let outcome = if tokio::time::Instant::now() >= deadline {
+        Err(observer.timeout_error())
+    } else {
+        match tokio::time::timeout_at(deadline, transport.send(body, &mut observer)).await {
+            Ok(outcome) => outcome,
+            Err(_) => Err(observer.timeout_error()),
+        }
+    };
+    observer.finish(&outcome)?;
+    let response = outcome?;
+    if context_limit(response.status.as_u16(), &response.body) {
+        return Err(ProviderTransportError::ContextLimit);
+    }
+    if response.status.is_success() {
+        return Ok(response.body);
+    }
+    Err(ProviderTransportError::ProviderRejected {
+        status: response.status,
+        message: provider_message(&response.body),
+        retry_after: response.retry_after,
+    })
+}
+
+pub async fn request_provider(
+    transport: &dyn ProviderTransport,
+    body: &str,
+    policy: ProviderRetryPolicy,
+    mut record: impl FnMut(&ProviderAttempt) -> std::result::Result<(), ProviderRecordError> + Send,
 ) -> Result<String> {
     if policy.attempts == 0 {
-        return Err(DecisionTransportError::EmptyAttemptBudget);
+        return Err(ProviderTransportError::EmptyAttemptBudget);
     }
+    let started = tokio::time::Instant::now();
     let operation = async {
         for attempt in 1..=policy.attempts {
-            let response = client
-                .post(endpoint)
-                .bearer_auth(key)
-                .header(reqwest::header::CONTENT_TYPE, "application/json")
-                .body(body.to_owned())
-                .timeout(policy.attempt_timeout)
-                .send()
-                .await;
-            let (retry, delay, failure, terminal_error) = match response {
-                Ok(response) => {
-                    let status = response.status();
-                    let delay = retry_after(response.headers());
-                    match response.text().await {
-                        Ok(raw) => {
-                            record(&DecisionAttempt::Response {
-                                attempt,
-                                http_status: status.as_u16(),
-                                raw_response: raw.clone(),
-                            })?;
-                            if context_limit(status.as_u16(), &raw) {
-                                return Err(DecisionTransportError::ContextLimit);
-                            }
-                            if status.is_success() {
-                                return Ok(raw);
-                            }
-                            (
-                                transient(status.as_u16()),
-                                delay,
-                                format!("Decision provider HTTP {status}"),
-                                DecisionTransportError::ProviderRejected {
-                                    status,
-                                    message: provider_message(&raw),
-                                    retry_after: delay,
-                                },
-                            )
-                        }
-                        Err(error) => {
-                            record(&DecisionAttempt::Transport {
-                                attempt,
-                                error: error.to_string(),
-                            })?;
-                            (
-                                body_retryable(status),
-                                delay,
-                                error.to_string(),
-                                DecisionTransportError::ResponseBody {
-                                    status,
-                                    retry_after: delay,
-                                    source: error,
-                                },
-                            )
-                        }
-                    }
-                }
-                Err(error) => {
-                    record(&DecisionAttempt::Transport {
-                        attempt,
-                        error: error.to_string(),
-                    })?;
-                    (
-                        request_retryable(&error),
-                        None,
-                        error.to_string(),
-                        DecisionTransportError::Request(error),
-                    )
-                }
+            let remaining = policy.deadline.saturating_sub(started.elapsed());
+            if remaining.is_zero() {
+                return Err(ProviderTransportError::DeadlineExpired);
+            }
+            let terminal_error = match request_attempt(
+                transport,
+                body,
+                attempt,
+                policy.attempt_timeout.min(remaining),
+                &mut record,
+            )
+            .await
+            {
+                Ok(raw) => return Ok(raw),
+                Err(error) => error,
+            };
+            let retry = terminal_error.retry_delay(attempt).is_some();
+            let after = match &terminal_error {
+                ProviderTransportError::ProviderRejected { retry_after, .. }
+                | ProviderTransportError::ResponseBody { retry_after, .. }
+                | ProviderTransportError::AttemptTimeout { retry_after, .. } => *retry_after,
+                _ => None,
             };
             if !retry || attempt == policy.attempts {
                 return Err(if retry && attempt > 1 {
-                    DecisionTransportError::RetryExhausted {
+                    ProviderTransportError::RetryExhausted {
                         attempts: attempt,
                         source: Box::new(terminal_error),
                     }
@@ -310,20 +360,23 @@ pub(crate) async fn request_decision(
                 });
             }
             // Jitter each operation independently; Retry-After remains a lower bound.
-            let wait = retry_wait(attempt, policy.backoff, delay);
+            let wait = retry_wait(attempt, policy.backoff, after);
+            if !policy.allows_retry(ReplaySafety::Repeatable, attempt, started.elapsed(), wait) {
+                return Err(ProviderTransportError::DeadlineExpired);
+            }
             tracing::warn!(
                 attempt,
                 wait_ms = wait.as_millis(),
-                failure,
-                "retrying read-only decision request"
+                failure = %terminal_error,
+                "retrying repeatable provider request"
             );
             tokio::time::sleep(wait).await;
         }
-        Err(DecisionTransportError::EmptyAttemptBudget)
+        Err(ProviderTransportError::EmptyAttemptBudget)
     };
     tokio::time::timeout(policy.deadline, operation)
         .await
-        .map_err(|_| DecisionTransportError::DeadlineExpired)?
+        .map_err(|_| ProviderTransportError::DeadlineExpired)?
 }
 
 #[cfg(test)]
@@ -333,45 +386,38 @@ mod tests {
 
     async fn exercise(
         statuses: Vec<u16>,
-        policy: DecisionRetryPolicy,
-    ) -> (Result<String>, Vec<String>, Vec<DecisionAttempt>) {
+        policy: ProviderRetryPolicy,
+    ) -> (Result<String>, Vec<String>, Vec<ProviderAttempt>) {
         exercise_body(statuses, "judgment", policy).await
     }
 
     async fn exercise_body(
         statuses: Vec<u16>,
         raw: &'static str,
-        policy: DecisionRetryPolicy,
-    ) -> (Result<String>, Vec<String>, Vec<DecisionAttempt>) {
+        policy: ProviderRetryPolicy,
+    ) -> (Result<String>, Vec<String>, Vec<ProviderAttempt>) {
         let requests = Arc::new(Mutex::new(Vec::<String>::new()));
         let captured = requests.clone();
-        let router = axum::Router::new().route(
-            "/",
-            axum::routing::post(move |body: String| {
-                let captured = captured.clone();
-                let statuses = statuses.clone();
-                async move {
-                    let mut seen = captured.lock().unwrap();
-                    let status = statuses[seen.len().min(statuses.len() - 1)];
-                    seen.push(body);
-                    (axum::http::StatusCode::from_u16(status).unwrap(), raw)
-                }
-            }),
-        );
-        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
-        let endpoint = format!("http://{}/", listener.local_addr().unwrap());
-        let server = tokio::spawn(async move {
-            axum::serve(listener, router).await.unwrap();
-        });
+        let (endpoint, server) = test_support::spawn_server(move |body| {
+            let captured = captured.clone();
+            let statuses = statuses.clone();
+            async move {
+                let mut seen = captured.lock().unwrap();
+                let status = statuses[seen.len().min(statuses.len() - 1)];
+                seen.push(body);
+                (status, raw.to_owned())
+            }
+        })
+        .await;
         let mut attempts = Vec::new();
-        let result = request_decision(
-            &reqwest::Client::new(),
-            &endpoint,
-            "test",
+        let result = request_provider(
+            &ReqwestProviderTransport::new(reqwest::Client::new(), &endpoint, "test"),
             "exact request",
             policy,
             |r| {
-                attempts.push(r.clone());
+                if !matches!(r, ProviderAttempt::Lifecycle { .. }) {
+                    attempts.push(r.clone());
+                }
                 Ok(())
             },
         )
@@ -385,10 +431,10 @@ mod tests {
     async fn context_rejection_is_typed_and_never_retries_the_same_page() {
         let (result, requests, attempts) = exercise_body(vec![400, 200],
             r#"{"error":{"code":400,"message":"HTTP 400: {\"detail\":{\"error_type\":\"max_tokens_exceeded\"}}"}}"#,
-            DecisionRetryPolicy::default()).await;
+            ProviderRetryPolicy::default()).await;
         assert!(matches!(
             result.unwrap_err(),
-            DecisionTransportError::ContextLimit
+            ProviderTransportError::ContextLimit
         ));
         assert_eq!(requests.len(), 1);
         assert_eq!(attempts.len(), 1);
@@ -438,7 +484,7 @@ mod tests {
     #[tokio::test]
     async fn transient_responses_retry_identical_judgment_and_record_every_attempt() {
         let (result, requests, attempts) =
-            exercise(vec![529, 429, 200], DecisionRetryPolicy::default()).await;
+            exercise(vec![529, 429, 200], ProviderRetryPolicy::default()).await;
         assert_eq!(result.unwrap(), "judgment");
         assert_eq!(requests, vec!["exact request"; 3]);
         assert_eq!(attempts.len(), 3);
@@ -446,7 +492,7 @@ mod tests {
 
     #[tokio::test]
     async fn edge_gateway_failures_retry_the_same_read_only_judgment() {
-        let policy = DecisionRetryPolicy {
+        let policy = ProviderRetryPolicy {
             backoff: Duration::ZERO,
             ..Default::default()
         };
@@ -471,12 +517,10 @@ mod tests {
                 stream.write_all(format!("HTTP/1.1 {status} Response\r\nContent-Length: 100\r\nRetry-After: 31\r\nConnection: close\r\n\r\nshort").as_bytes()).await.unwrap();
                 stream.shutdown().await.unwrap();
             });
-            let error = request_decision(
-                &reqwest::Client::new(),
-                &endpoint,
-                "abstract",
+            let error = request_provider(
+                &ReqwestProviderTransport::new(reqwest::Client::new(), &endpoint, "abstract"),
                 "{}",
-                DecisionRetryPolicy {
+                ProviderRetryPolicy {
                     attempts: 1,
                     ..Default::default()
                 },
@@ -485,7 +529,7 @@ mod tests {
             .await
             .unwrap_err();
             server.await.unwrap();
-            assert!(matches!(error, DecisionTransportError::ResponseBody { .. }));
+            assert!(matches!(error, ProviderTransportError::ResponseBody { .. }));
             if matches!(status, 401 | 403) {
                 assert!(error.retry_delay(1).is_none());
             } else {
@@ -497,7 +541,7 @@ mod tests {
     #[tokio::test]
     async fn transient_outage_recovery_respects_explicit_attempt_policy() {
         for status in [429, 502, 503, 504] {
-            let single = DecisionRetryPolicy {
+            let single = ProviderRetryPolicy {
                 attempts: 1,
                 backoff: Duration::ZERO,
                 ..Default::default()
@@ -505,12 +549,12 @@ mod tests {
             let (result, requests, records) = exercise(vec![status, 200], single).await;
             assert!(matches!(
                 result,
-                Err(DecisionTransportError::ProviderRejected { .. })
+                Err(ProviderTransportError::ProviderRejected { .. })
             ));
             assert_eq!(requests.len(), 1);
             assert_eq!(records.len(), 1);
 
-            let bounded = DecisionRetryPolicy {
+            let bounded = ProviderRetryPolicy {
                 attempts: 3,
                 deadline: Duration::from_secs(30),
                 ..single
@@ -527,7 +571,7 @@ mod tests {
         let (result, requests, records) = exercise_body(
             vec![500],
             r#"{"error":{"message":"Abstract upstream failure","code":500}}"#,
-            DecisionRetryPolicy {
+            ProviderRetryPolicy {
                 attempts: 1,
                 ..Default::default()
             },
@@ -537,7 +581,7 @@ mod tests {
         assert_eq!(requests.len(), 1);
         assert_eq!(records.len(), 1);
         assert!(
-            matches!(error, DecisionTransportError::ProviderRejected { status, .. } if status.as_u16() == 500)
+            matches!(error, ProviderTransportError::ProviderRejected { status, .. } if status.as_u16() == 500)
         );
         assert!(error.to_string().contains("Abstract upstream failure"));
         assert!(!error.to_string().contains("retries"));
@@ -549,7 +593,7 @@ mod tests {
         let (result, requests, _) = exercise_body(
             vec![503],
             r#"{"error":{"message":"Abstract overloaded provider","code":503}}"#,
-            DecisionRetryPolicy {
+            ProviderRetryPolicy {
                 attempts: 2,
                 backoff: Duration::ZERO,
                 ..Default::default()
@@ -567,14 +611,14 @@ mod tests {
 
     #[tokio::test]
     async fn fatal_response_does_not_retry() {
-        let (result, requests, _) = exercise(vec![401, 200], DecisionRetryPolicy::default()).await;
+        let (result, requests, _) = exercise(vec![401, 200], ProviderRetryPolicy::default()).await;
         assert!(result.is_err());
         assert_eq!(requests.len(), 1);
     }
 
     #[tokio::test]
     async fn retry_budget_and_total_deadline_are_bounded() {
-        let policy = DecisionRetryPolicy {
+        let policy = ProviderRetryPolicy {
             attempts: 2,
             backoff: Duration::ZERO,
             ..Default::default()
@@ -582,7 +626,7 @@ mod tests {
         let (result, requests, _) = exercise(vec![529], policy).await;
         assert!(result.is_err());
         assert_eq!(requests.len(), 2);
-        let policy = DecisionRetryPolicy {
+        let policy = ProviderRetryPolicy {
             deadline: Duration::from_millis(100),
             backoff: Duration::from_secs(1),
             ..policy

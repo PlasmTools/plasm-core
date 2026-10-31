@@ -1,0 +1,10 @@
+{
+  "fixtures/discovery/resource-breadth-v5/cases.json": "effda4acd846da76602d7d8ba4a79173180b12dd5e7a0d070c02b9c20045a7e6",
+  "fixtures/discovery/resource-breadth-v5/profiles.json": "8a7bf85db47b74a7d4eecc3e314fa71a1b4393225ceb1b20758a3c8a22e705cd",
+  "fixtures/discovery/resource-breadth-v5/PROTOCOL.md": "043d83746d630b832bcccb899907422714f2d50d951439fbe41d868975fc0055",
+  "fixtures/discovery/resource-breadth-v5/run.py": "77e1d44b7103335d7ad37ef38c9507649d3518341409a6ca82cbfbcedc4b5e4f",
+  "fixtures/discovery/trajectory-v4/run.py": "b4dcd8d5ad04bcc2dc29937f6526212f25d6d07b6be84db600eb45825dd3ad26",
+  "crates/plasm-agent-core/src/discovery_matcher/online/resource_growth.rs": "985f55167c7f68014aef56c0a8467bffd86d6fa65315eb0eb601c8f1e4440f8c",
+  "fixtures/schemas/discovery_trajectory_v4/domain.yaml": "82e26d4501ead82b72d634597bd7c97b92590ab7672162321548457ed1b45aef",
+  "fixtures/schemas/discovery_trajectory_v4/mappings.yaml": "351b98b22d8aaaa3cfba09c941367d26323a34f0479a8ae8baccd7a9791f0db1"
+}

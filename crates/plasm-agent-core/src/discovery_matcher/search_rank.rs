@@ -99,6 +99,45 @@ impl<K: Ord + Clone> LexicalIndex<K> {
     pub fn rank(&self, need: &str) -> Vec<K> {
         self.query(&terms(need).collect())
     }
+
+    /// Test-only attribution. The production scoring path above is unchanged.
+    #[cfg(test)]
+    pub(super) fn explain(&self, need: &str) -> Vec<serde_json::Value>
+    where
+        K: serde::Serialize + std::fmt::Debug,
+    {
+        let mut details: BTreeMap<K, (f64, Vec<serde_json::Value>)> = BTreeMap::new();
+        for term in terms(need).collect::<BTreeSet<_>>() {
+            let Some(posting) = self.postings.get(&term) else {
+                continue;
+            };
+            let idf = (1.0
+                + (self.lengths.len() as f64 - posting.len() as f64 + 0.5)
+                    / (posting.len() as f64 + 0.5))
+                .ln();
+            for (key, frequencies) in posting {
+                let weighted_fields: [f64; 3] = std::array::from_fn(|field| {
+                    WEIGHTS[field] * frequencies[field] as f64
+                        / (1.0 - B + B * self.lengths[key][field] as f64 / self.averages[field])
+                });
+                let weighted: f64 = weighted_fields.iter().sum();
+                let contribution = idf * weighted * (K1 + 1.0) / (K1 + weighted);
+                let row = details.entry(key.clone()).or_default();
+                row.0 += contribution;
+                row.1.push(serde_json::json!({"term":term,"idf":idf,
+                    "frequencies":frequencies,"normalized_field_mass":weighted_fields,
+                    "score_contribution":contribution}));
+            }
+        }
+        let mut rows: Vec<_> = details.into_iter().collect();
+        rows.sort_by(|(a, (sa, _)), (b, (sb, _))| sb.total_cmp(sa).then_with(|| a.cmp(b)));
+        assert_eq!(
+            rows.iter().map(|(k, _)| k.clone()).collect::<Vec<_>>(),
+            self.rank(need)
+        );
+        rows.into_iter().enumerate().map(|(i,(key,(score,terms)))|
+            serde_json::json!({"reference":key,"rank":i+1,"score":score,"terms":terms})).collect()
+    }
 }
 
 #[cfg(test)]
@@ -128,6 +167,35 @@ mod tests {
             key: key.into(),
             fields: fields.map(str::to_owned),
         }
+    }
+
+    #[test]
+    fn score_attribution_preserves_order_and_explains_all_field_lanes() {
+        let index = LexicalIndex::new([
+            document("action", ["inspect spectrum", "spectrum", "spectrum"]),
+            document("context", ["archive", "spectrum", ""]),
+        ])
+        .ok()
+        .unwrap();
+        let details = index.explain("inspect spectrum spectrum");
+        assert_eq!(details[0]["reference"], "action");
+        for row in &details {
+            let sum: f64 = row["terms"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(|t| t["score_contribution"].as_f64().unwrap())
+                .sum();
+            assert_eq!(sum, row["score"].as_f64().unwrap());
+        }
+        let term = details[0]["terms"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|t| t["term"] == "spectrum")
+            .unwrap();
+        assert_eq!(term["frequencies"], serde_json::json!([1, 1, 1]));
+        assert!(index.explain("unmentioned").is_empty());
     }
 
     #[test]

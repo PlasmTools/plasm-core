@@ -2,11 +2,83 @@ use super::{
     tests::{answer, fixture},
     *,
 };
-use crate::decision_transport::DecisionTransportError;
+use plasm_runtime::provider_transport::ProviderTransportError;
 use std::sync::{Arc, Mutex};
 
+#[tokio::test]
+async fn stalled_transport_recovers_through_online_admission_without_replaying_effects() {
+    use plasm_runtime::provider_transport::{
+        request_attempt, ProviderRetryPolicy, ReqwestProviderTransport,
+    };
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    let effects = Arc::new(AtomicUsize::new(0));
+    let effect_calls = effects.clone();
+    let requests = Arc::new(Mutex::new(Vec::<String>::new()));
+    let seen = requests.clone();
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let endpoint = format!("http://{}/judge", listener.local_addr().unwrap());
+    let router = axum::Router::new()
+        .route("/effect", axum::routing::post(move || { effect_calls.fetch_add(1, Ordering::SeqCst); async { "effect" } }))
+        .route("/judge", axum::routing::post(move |body: String| {
+            let seen = seen.clone();
+            async move {
+                let first = { let mut requests = seen.lock().unwrap(); requests.push(body.clone()); requests.len() == 1 };
+                if first { std::future::pending::<()>().await; }
+                let body: serde_json::Value = serde_json::from_str(&body).unwrap();
+                let answers: BTreeMap<_,_> = body["questions"].as_object().unwrap().keys().map(|key| (key, serde_json::json!({"type":"choice","choice":"relevant","confidence":1.0,"probabilities":{"relevant":1.0,"uncertain":0.0,"unrelated":0.0}}))).collect();
+                serde_json::json!({"model":RELEVANCE_MODEL,"provider":"OpenAI","answers":answers}).to_string()
+            }
+        }));
+    let server = tokio::spawn(async move {
+        axum::serve(listener, router).await.unwrap();
+    });
+    let transport = ReqwestProviderTransport::new(reqwest::Client::new(), endpoint, "abstract");
+    let began = std::time::Instant::now();
+    let mut attempt = 0;
+    let result = select(
+        SearchContext {
+            visits: &Default::default(),
+            model: RELEVANCE_MODEL,
+            intent: &IntentProvenance::from_turns(["Produce spectrum".into()]).unwrap(),
+            generation: "transport-recovery",
+            catalogs: &fixture(),
+            deployments: &Default::default(),
+            allowed: &DiscoveryAuthorization::catalogs(BTreeSet::from(["matrix".into()])),
+            exposed: &[],
+        },
+        |issued| {
+            let transport = &transport;
+            attempt += 1;
+            let attempt = attempt;
+            async move {
+                request_attempt(
+                    transport,
+                    issued.body(),
+                    attempt,
+                    ProviderRetryPolicy::discovery_attempt().attempt_timeout,
+                    |_| Ok(()),
+                )
+                .await
+                .map_err(|e| Box::new(e) as DecisionProviderError)
+            }
+        },
+    )
+    .await;
+    server.abort();
+    let (_, matching, receipt) = result.unwrap();
+    let bodies = requests.lock().unwrap();
+    assert_eq!(bodies.len(), 2);
+    assert_eq!(bodies[0], bodies[1]);
+    assert_eq!(receipt.requests, 2);
+    assert_eq!(receipt.input_bytes, 2 * bodies[0].len());
+    assert!(receipt.input_bytes <= 48_000);
+    assert!(!matching.matches.is_empty());
+    assert!(began.elapsed() < std::time::Duration::from_secs(30));
+    assert_eq!(effects.load(Ordering::SeqCst), 0);
+}
+
 fn rejected(status: u16, retry_after: Option<std::time::Duration>) -> DecisionProviderError {
-    Box::new(DecisionTransportError::ProviderRejected {
+    Box::new(ProviderTransportError::ProviderRejected {
         status: reqwest::StatusCode::from_u16(status).unwrap(),
         message: "Abstract provider response".into(),
         retry_after,
@@ -51,8 +123,8 @@ async fn slow_retry_checkpoint_cannot_dispatch_after_deadline() {
         panic!("expected deadline error")
     };
     assert!(matches!(
-        error.downcast_ref::<DecisionTransportError>(),
-        Some(DecisionTransportError::DeadlineExpired)
+        error.downcast_ref::<ProviderTransportError>(),
+        Some(ProviderTransportError::DeadlineExpired)
     ));
     assert_eq!(calls, 1);
 }
@@ -78,8 +150,8 @@ async fn pending_provider_is_cancelled_at_the_discovery_deadline() {
         panic!("expected provider timeout")
     };
     assert!(matches!(
-        error.downcast_ref::<DecisionTransportError>(),
-        Some(DecisionTransportError::DeadlineExpired)
+        error.downcast_ref::<ProviderTransportError>(),
+        Some(ProviderTransportError::DeadlineExpired)
     ));
 }
 
@@ -294,7 +366,7 @@ async fn transient_retry_is_identical_and_checkpointed_before_each_dispatch() {
             assert!(matches!(last.state, ProgressState::Admitted));
             async move {
                 if count < 3 {
-                    Err(Box::new(DecisionTransportError::ProviderRejected {
+                    Err(Box::new(ProviderTransportError::ProviderRejected {
                         status: reqwest::StatusCode::SERVICE_UNAVAILABLE,
                         message: "Abstract temporary outage".into(),
                         retry_after: None,

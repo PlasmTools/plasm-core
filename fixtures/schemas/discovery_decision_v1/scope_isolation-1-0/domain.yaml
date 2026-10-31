@@ -1,0 +1,49 @@
+{
+  "version": 1,
+  "entry_id": "diagnostic",
+  "http_backend": "http://127.0.0.1:9",
+  "auth": {
+    "scheme": "none"
+  },
+  "values": {
+    "item_id": {
+      "type": "string",
+      "description": "Identity of a controlled item."
+    },
+    "ticket_id": {
+      "type": "string",
+      "description": "Opaque routing token identity."
+    }
+  },
+  "entities": {
+    "Item": {
+      "id_field": "id",
+      "fields": {
+        "id": {
+          "value_ref": "item_id",
+          "required": true
+        }
+      }
+    }
+  },
+  "capabilities": {
+    "op_a": {
+      "entity": "Item",
+      "kind": "action",
+      "description": "Illuminate the dial.",
+      "output": {
+        "type": "side_effect",
+        "description": "Illuminate the dial."
+      }
+    },
+    "op_b": {
+      "entity": "Item",
+      "kind": "action",
+      "description": "Illuminate the dial.",
+      "output": {
+        "type": "side_effect",
+        "description": "Illuminate the dial."
+      }
+    }
+  }
+}

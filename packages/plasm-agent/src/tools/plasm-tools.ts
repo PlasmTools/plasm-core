@@ -14,7 +14,7 @@ import { logicalSessionRefSchema, runReferenceSchema, workflowIntentSchema } fro
 import { failureResultsFor } from "./failure-results.js";
 
 const contextIntent = workflowIntentSchema.describe(
-  "The current intent for this discovery turn. The runtime appends it to the workflow provenance chain and retains ancestor context; explicit revisions may replace earlier goals.",
+  "Self-contained current discovery request, including relevant conditions and amendments. Prior requests remain audit/search state, not judgment context.",
 );
 const plasmContextInputSchema = z.discriminatedUnion("session_mode", [
   z.object({ intent: contextIntent, session_mode: z.literal("new") }).strict(),

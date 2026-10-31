@@ -107,6 +107,8 @@ pub mod credentials;
 pub mod error;
 pub mod evm;
 pub mod execution;
+pub mod external_resilience;
+pub mod provider_transport;
 pub mod graph_page_spill;
 pub mod hosted_oauth_kv;
 pub mod http_auth_failure;

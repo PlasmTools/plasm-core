@@ -44,7 +44,7 @@ pub(crate) fn plasm_tools(artifact_access: ArtifactAccessMode, ui_apps_enabled: 
     context_props.insert(
         "intent".into(),
         json_schema_non_empty_string_type(
-            "This turn's current intent. Appended to the workflow provenance chain; current intent drives retrieval, ancestry supplies context for judgment. Independent of session identity.",
+            "Self-contained current discovery request, including relevant conditions and amendments. Drives retrieval and contribution judgment. Prior requests remain audit/search state, not judgment context. Independent of session identity.",
         ),
     );
     context_props.insert(

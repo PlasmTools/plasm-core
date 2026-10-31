@@ -73,7 +73,7 @@ async fn provider_context_rejection_does_not_split_or_retry_evidence() {
         calls += 1;
         async {
             Err(
-                Box::new(crate::decision_transport::DecisionTransportError::ContextLimit)
+                Box::new(plasm_runtime::provider_transport::ProviderTransportError::ContextLimit)
                     as DecisionProviderError,
             )
         }

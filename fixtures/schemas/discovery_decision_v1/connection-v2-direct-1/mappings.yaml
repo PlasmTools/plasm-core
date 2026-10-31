@@ -1,0 +1,11 @@
+{
+  "op_a": {
+    "method": "POST",
+    "path": [
+      {
+        "type": "literal",
+        "value": "op_a"
+      }
+    ]
+  }
+}

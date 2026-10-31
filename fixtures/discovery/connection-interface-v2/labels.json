@@ -1,0 +1,158 @@
+{
+  "connection-v2-support-0": {
+    "admissible": [
+      "relevant"
+    ],
+    "workflow_useful": true
+  },
+  "connection-v2-support-1": {
+    "admissible": [
+      "relevant"
+    ],
+    "workflow_useful": true
+  },
+  "connection-v2-support-2": {
+    "admissible": [
+      "relevant"
+    ],
+    "workflow_useful": true
+  },
+  "connection-v2-support-3": {
+    "admissible": [
+      "relevant"
+    ],
+    "workflow_useful": true
+  },
+  "connection-v2-different_outcome-0": {
+    "admissible": [
+      "uncertain",
+      "unrelated"
+    ],
+    "workflow_useful": false
+  },
+  "connection-v2-different_outcome-1": {
+    "admissible": [
+      "uncertain",
+      "unrelated"
+    ],
+    "workflow_useful": false
+  },
+  "connection-v2-different_outcome-2": {
+    "admissible": [
+      "uncertain",
+      "unrelated"
+    ],
+    "workflow_useful": false
+  },
+  "connection-v2-different_outcome-3": {
+    "admissible": [
+      "uncertain",
+      "unrelated"
+    ],
+    "workflow_useful": false
+  },
+  "connection-v2-prohibited-0": {
+    "admissible": [
+      "uncertain",
+      "unrelated"
+    ],
+    "workflow_useful": false
+  },
+  "connection-v2-prohibited-1": {
+    "admissible": [
+      "uncertain",
+      "unrelated"
+    ],
+    "workflow_useful": false
+  },
+  "connection-v2-prohibited-2": {
+    "admissible": [
+      "uncertain",
+      "unrelated"
+    ],
+    "workflow_useful": false
+  },
+  "connection-v2-prohibited-3": {
+    "admissible": [
+      "uncertain",
+      "unrelated"
+    ],
+    "workflow_useful": false
+  },
+  "connection-v2-opaque-0": {
+    "admissible": [
+      "uncertain"
+    ],
+    "workflow_useful": null
+  },
+  "connection-v2-opaque-1": {
+    "admissible": [
+      "uncertain"
+    ],
+    "workflow_useful": null
+  },
+  "connection-v2-opaque-2": {
+    "admissible": [
+      "uncertain"
+    ],
+    "workflow_useful": null
+  },
+  "connection-v2-opaque-3": {
+    "admissible": [
+      "uncertain"
+    ],
+    "workflow_useful": null
+  },
+  "connection-v2-absent_witness-0": {
+    "admissible": [
+      "uncertain",
+      "unrelated"
+    ],
+    "workflow_useful": true
+  },
+  "connection-v2-absent_witness-1": {
+    "admissible": [
+      "uncertain",
+      "unrelated"
+    ],
+    "workflow_useful": true
+  },
+  "connection-v2-absent_witness-2": {
+    "admissible": [
+      "uncertain",
+      "unrelated"
+    ],
+    "workflow_useful": true
+  },
+  "connection-v2-absent_witness-3": {
+    "admissible": [
+      "uncertain",
+      "unrelated"
+    ],
+    "workflow_useful": true
+  },
+  "connection-v2-direct-0": {
+    "admissible": [
+      "relevant"
+    ],
+    "workflow_useful": true
+  },
+  "connection-v2-direct-1": {
+    "admissible": [
+      "relevant"
+    ],
+    "workflow_useful": true
+  },
+  "connection-v2-direct-2": {
+    "admissible": [
+      "relevant"
+    ],
+    "workflow_useful": true
+  },
+  "connection-v2-direct-3": {
+    "admissible": [
+      "relevant"
+    ],
+    "workflow_useful": true
+  }
+}
