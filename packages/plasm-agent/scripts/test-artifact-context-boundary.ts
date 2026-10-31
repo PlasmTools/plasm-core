@@ -52,7 +52,7 @@ try {
       {completeness: "complete", fields: {token: "ARTIFACT_ONLY_other"}}]};
   reusable = true;
   const labelled = await runtime.plasmRun({logicalSessionRef: session.logicalSessionRef, runRef: "pc1"});
-  assert.match(labelled, /observed: matrix::Resource\[\]/);
+  assert.match(labelled, /observed: matrix::Resource; 2 rows;/);
   assert.ok(labelled.includes(`self.recorded("${runId}")`), "callable intermediate output reaches the model-facing response");
   assert.match(labelled, /optional \(some rows\), token/);
   assert.ok(!labelled.includes("ARTIFACT_ONLY_") && !labelled.includes("**run_id:**"));

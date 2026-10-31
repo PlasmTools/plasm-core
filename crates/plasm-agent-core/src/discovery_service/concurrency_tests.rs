@@ -87,7 +87,10 @@ async fn hybrid_service_admits_vector_only_candidate() {
             BTreeSet::from([reference.capability.clone()]),
         )]),
     };
-    let recall = store.retrieve(&generation, intent, &allowed, &Default::default()).await.unwrap();
+    let recall = store
+        .retrieve(&generation, intent, &allowed, &Default::default())
+        .await
+        .unwrap();
     assert_eq!(recall.lexical_count, 0);
     assert_eq!(recall.vector_count, 1);
     let mut service = DiscoveryService::cached_test_service(store);
@@ -157,7 +160,6 @@ async fn self_contained_requests_advance_frontier_but_exact_replays_do_not() {
     let generation = uuid::Uuid::new_v4().to_string();
     let allowed =
         DiscoveryAuthorization::catalogs(std::collections::BTreeSet::from(["matrix".into()]));
-    let scope = frontier_key("session", &generation, &allowed, "fixture").unwrap();
     let first = crate::intent_provenance::IntentProvenance::from_turns([
         "Inspect current specimens without changes.".into(),
     ])
@@ -168,16 +170,31 @@ async fn self_contained_requests_advance_frontier_but_exact_replays_do_not() {
         .unwrap();
     let calls = AtomicUsize::new(0);
     let mut previous = None;
-    for (turn, intent) in [&first, &repeated, &changed].into_iter().enumerate() {
+    for (intent, expected_visits) in [(&first, 0), (&repeated, 1), (&changed, 0)] {
+        let scope = frontier_key(
+            "session",
+            &generation,
+            &allowed,
+            "fixture",
+            intent.current(),
+        )
+        .unwrap();
         let key = search_key(&generation, intent, &allowed, "fixture", &[]).unwrap();
         assert_ne!(previous.as_ref(), Some(&key));
         let calls = &calls;
+        let reject = intent.current() == first.current();
         let actual = a
             .route_frontier(&scope, &key, &[], |visits| async move {
-                assert!(visits.values().all(|count| *count == turn));
-                assert_eq!(visits.is_empty(), turn == 0);
+                assert!(visits.values().all(|count| *count == expected_visits));
+                assert_eq!(visits.is_empty(), expected_visits == 0);
                 calls.fetch_add(1, Ordering::SeqCst);
-                Ok(receipt())
+                let mut result = receipt();
+                if reject {
+                    for matched in &mut result.matching.matches {
+                        matched.choice = matcher::MatchChoice::Unrelated;
+                    }
+                }
+                Ok(result)
             })
             .await
             .unwrap();
@@ -198,6 +215,14 @@ async fn self_contained_requests_advance_frontier_but_exact_replays_do_not() {
             .await
             .unwrap(),
     );
+    let scope = frontier_key(
+        "session",
+        &generation,
+        &allowed,
+        "fixture",
+        changed.current(),
+    )
+    .unwrap();
     recreated
         .route_frontier(&scope, previous.as_ref().unwrap(), &[], |_| async {
             panic!("reconnecting must not replay completed work")
@@ -214,8 +239,41 @@ async fn self_contained_requests_advance_frontier_but_exact_replays_do_not() {
     )
     .unwrap();
     assert_eq!(calls.load(Ordering::SeqCst), 3);
-    assert_eq!(saved.completed.len(), 3);
-    assert!(saved.visits().values().all(|count| *count == 3));
+    assert_eq!(saved.completed.len(), 1);
+    assert!(saved.visits().values().all(|count| *count == 1));
+    let old_scope =
+        frontier_key("session", &generation, &allowed, "fixture", first.current()).unwrap();
+    let old_key = search_key(&generation, &first, &allowed, "fixture", &[]).unwrap();
+    recreated
+        .route_frontier(&old_scope, &old_key, &[], |_| async {
+            panic!("returning to a prior request must reuse its completion")
+        })
+        .await
+        .unwrap();
+    let old: SearchFrontier = serde_json::from_str(
+        &recreated
+            .store
+            .cached_selector_envelope(&old_scope)
+            .await
+            .unwrap()
+            .unwrap(),
+    )
+    .unwrap();
+    assert_eq!(old.completed.len(), 2);
+    assert!(old.visits().values().all(|count| *count == 2));
+    let returning = changed.derived(first.current().into()).unwrap();
+    let returning_key = search_key(&generation, &returning, &allowed, "fixture", &[]).unwrap();
+    recreated
+        .route_frontier(&old_scope, &returning_key, &[], |visits| async move {
+            assert!(!visits.is_empty());
+            assert!(
+                visits.values().all(|count| *count == 2),
+                "returning to inspection must restore exploration progress"
+            );
+            Ok(receipt())
+        })
+        .await
+        .unwrap();
     let exposed = vec![CapabilityRef {
         catalog: "matrix".into(),
         capability: "read".into(),
@@ -243,27 +301,39 @@ async fn services() -> (Arc<DiscoveryService>, Arc<DiscoveryService>) {
 fn frontier_identity_separates_sessions_revisions_models_and_authorization() {
     let allowed =
         DiscoveryAuthorization::catalogs(std::collections::BTreeSet::from(["matrix".into()]));
-    let key = frontier_key("session", "revision", &allowed, "model").unwrap();
+    let key = frontier_key("session", "revision", &allowed, "model", "Inspect").unwrap();
+    assert_ne!(
+        key,
+        frontier_key(
+            "session",
+            "revision",
+            &allowed,
+            "model",
+            "Calibrate; preserve originals"
+        )
+        .unwrap(),
+        "a rejection for inspection must not penalize a new calibration request"
+    );
     assert_eq!(
         key,
-        frontier_key("session", "revision", &allowed, "model").unwrap()
+        frontier_key("session", "revision", &allowed, "model", "Inspect").unwrap()
     );
     assert_ne!(
         key,
-        frontier_key("other", "revision", &allowed, "model").unwrap()
+        frontier_key("other", "revision", &allowed, "model", "Inspect").unwrap()
     );
     assert_ne!(
         key,
-        frontier_key("session", "new", &allowed, "model").unwrap()
+        frontier_key("session", "new", &allowed, "model", "Inspect").unwrap()
     );
     assert_ne!(
         key,
-        frontier_key("session", "revision", &allowed, "other").unwrap()
+        frontier_key("session", "revision", &allowed, "other", "Inspect").unwrap()
     );
     let narrowed = DiscoveryAuthorization::catalogs(Default::default());
     assert_ne!(
         key,
-        frontier_key("session", "revision", &narrowed, "model").unwrap()
+        frontier_key("session", "revision", &narrowed, "model", "Inspect").unwrap()
     );
 }
 

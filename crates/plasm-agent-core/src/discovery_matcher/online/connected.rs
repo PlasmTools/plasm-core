@@ -193,12 +193,27 @@ fn order_recalled(
         .collect();
     let ranked: BTreeSet<_> = order.iter().cloned().collect();
     order.extend(consumers.difference(&ranked).cloned());
-    // Never reset exploration progress. Within a round, finish a directly
-    // connected frontier before unrelated roots; recall order otherwise remains stable.
+    // Reserve priority for current-request recall before promoting the connected
+    // frontier. Otherwise a retained hub can consume both initial root slots
+    // indefinitely. Keep connected progress ahead of the remaining roots, and
+    // preserve visit rounds so rejection still advances exploration. Choose the
+    // recall representative from the least-visited round too: a rejected first
+    // root must not monopolize this opportunity while consumers pass the next.
+    let requested = order
+        .iter()
+        .filter(|key| !context.exposed.contains(key))
+        .min_by_key(|key| context.visits.get(*key).copied().unwrap_or(0))
+        .cloned();
     order.sort_by_key(|key| {
         (
             context.visits.get(key).copied().unwrap_or(0),
-            !consumers.contains(key),
+            if Some(key) == requested.as_ref() {
+                0
+            } else if consumers.contains(key) {
+                1
+            } else {
+                2
+            },
         )
     });
     order

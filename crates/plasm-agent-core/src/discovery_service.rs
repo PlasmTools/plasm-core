@@ -16,8 +16,8 @@ pub use crate::discovery_recovery::{CatalogAppDescription, DiscoveryRecovery, RE
 
 type Result<T> = std::result::Result<T, DiscoveryServiceError>;
 
-/// Completed searches advance priority once. No negative relevance decisions
-/// are applied to exposure or carried forward as permissions.
+/// Completed searches advance priority once within a self-contained request.
+/// No negative relevance decisions are applied to exposure or permissions.
 #[derive(Default, Serialize, Deserialize)]
 struct SearchFrontier {
     completed: std::collections::BTreeMap<String, std::collections::BTreeSet<CapabilityRef>>,
@@ -58,15 +58,17 @@ fn frontier_key(
     generation: &str,
     allowed: &DiscoveryAuthorization,
     model: &str,
+    current: &str,
 ) -> Result<String> {
     Ok(plasm_core::catalog_discovery::content_hash(
         &serde_json::to_vec(&(
-            "session-frontier",
+            "request-frontier",
             matcher::online::SEARCH_POLICY,
             pin,
             generation,
             allowed,
             model,
+            current,
         ))?,
     ))
 }
@@ -286,7 +288,13 @@ impl DiscoveryService {
                 .await?;
             request.new_generation.to_owned()
         };
-        let frontier_key = frontier_key(&pin_id, &generation, request.allowed, &self.match_model)?;
+        let frontier_key = frontier_key(
+            &pin_id,
+            &generation,
+            request.allowed,
+            &self.match_model,
+            request.intent_provenance.current(),
+        )?;
         let search = search_key(
             &generation,
             request.intent_provenance,
@@ -363,9 +371,9 @@ impl DiscoveryService {
         F: FnOnce(std::collections::BTreeMap<CapabilityRef, usize>) -> Fut,
         Fut: std::future::Future<Output = Result<RoutingReceipt>>,
     {
-        // One session owner, not nested database leases. A duplicate completion
+        // One request-frontier owner, not nested database leases. A duplicate completion
         // can repair a failed frontier write without repeating provider work.
-        let _same_session = self.store.pending_decisions.claim(frontier_key).await;
+        let _same_request = self.store.pending_decisions.claim(frontier_key).await;
         self.store
             .with_selector_search(frontier_key, || async {
                 let mut frontier: SearchFrontier =

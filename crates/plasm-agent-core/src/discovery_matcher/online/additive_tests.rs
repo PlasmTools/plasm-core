@@ -11,6 +11,135 @@ fn reference(name: &str) -> CapabilityRef {
 }
 
 #[test]
+fn continuation_recall_survives_exposed_hub_growth() {
+    for (count, contract_size) in [(8, 0), (8, 160), (64, 160)] {
+        let mut catalogs = fixture();
+        let cgs = catalogs.get_mut("matrix").unwrap();
+        let consumer = cgs.capabilities["prepare"].clone();
+        cgs.capabilities
+            .retain(|name, _| ["source_read", "opaque"].contains(&name.as_str()));
+        cgs.capabilities.get_mut("opaque").unwrap().description = format!(
+            "Apply the independent routine. {}",
+            "Authored independent contract. ".repeat(contract_size)
+        );
+        for n in 0..count {
+            let mut cap = consumer.clone();
+            cap.name = format!("consumer_{n:03}").into();
+            cap.description = format!(
+                "Prepare material for station {n}. {}",
+                "Authored station contract. ".repeat(160)
+            );
+            cgs.capabilities.insert(cap.name.clone(), cap);
+        }
+        let deployments = Default::default();
+        let allowed = DiscoveryAuthorization::catalogs(BTreeSet::from(["matrix".into()]));
+        let index = CatalogueSearch::new(&catalogs, &deployments, &allowed).unwrap();
+        let intent = IntentProvenance::from_turns([
+            "Apply the independent routine; preserve source material.".into(),
+        ])
+        .unwrap();
+        let exposed = [reference("source_read")];
+        let visits = Default::default();
+        let context = SearchContext {
+            model: RELEVANCE_MODEL,
+            intent: &intent,
+            generation: "continuation-v1",
+            catalogs: &catalogs,
+            deployments: &deployments,
+            allowed: &allowed,
+            exposed: &exposed,
+            visits: &visits,
+        };
+        for first in ["opaque", "consumer_000"] {
+            let mut recall = vec![reference(first)];
+            recall.extend(
+                (0..count)
+                    .map(|n| reference(&format!("consumer_{n:03}")))
+                    .filter(|r| r != &reference(first)),
+            );
+            let plan = connected::plan_recalled(&index, context, recall).unwrap();
+            assert!(
+                plan.wave.iter().any(|(key, _)| key == &reference(first)),
+                "current recalled root {first} starved by {count} connected consumers"
+            );
+            assert!(plan.issued.unwrap().body().len() <= search_budget::MAX_INPUT_BYTES);
+        }
+    }
+}
+
+#[test]
+fn independent_outcomes_advance_after_retention_or_rejection() {
+    for count in [8, 64] {
+        for retain_first in [false, true] {
+            let mut catalogs = fixture();
+            let cgs = catalogs.get_mut("matrix").unwrap();
+            let consumer = cgs.capabilities["prepare"].clone();
+            let independent = cgs.capabilities["opaque"].clone();
+            cgs.capabilities.retain(|name, _| name.as_str() == "source_read");
+            for name in ["outcome_a", "outcome_b"] {
+                let mut cap = independent.clone();
+                cap.name = name.into();
+                cap.description = format!(
+                    "Perform independent {name}. {}",
+                    "Authored independent contract. ".repeat(160)
+                );
+                cgs.capabilities.insert(cap.name.clone(), cap);
+            }
+            for n in 0..count {
+                let mut cap = consumer.clone();
+                cap.name = format!("consumer_{n:03}").into();
+                cap.description = format!(
+                    "Prepare material for station {n}. {}",
+                    "Authored station contract. ".repeat(160)
+                );
+                cgs.capabilities.insert(cap.name.clone(), cap);
+            }
+            let deployments = Default::default();
+            let allowed = DiscoveryAuthorization::catalogs(BTreeSet::from(["matrix".into()]));
+            let index = CatalogueSearch::new(&catalogs, &deployments, &allowed).unwrap();
+            let intent = IntentProvenance::from_turns([
+                "Perform both independent outcomes; preserve original material.".into(),
+            ])
+            .unwrap();
+            let mut exposed = vec![reference("source_read")];
+            let mut visits = BTreeMap::new();
+            let mut seen = BTreeSet::new();
+            for _ in 0..2 {
+                let mut recalled = vec![reference("outcome_a"), reference("outcome_b")];
+                recalled.extend((0..count).map(|n| reference(&format!("consumer_{n:03}"))));
+                let plan = connected::plan_recalled(
+                    &index,
+                    SearchContext {
+                        model: RELEVANCE_MODEL,
+                        intent: &intent,
+                        generation: "independent-v1",
+                        catalogs: &catalogs,
+                        deployments: &deployments,
+                        allowed: &allowed,
+                        exposed: &exposed,
+                        visits: &visits,
+                    },
+                    recalled,
+                )
+                .unwrap();
+                assert!(plan.issued.unwrap().body().len() <= search_budget::MAX_INPUT_BYTES);
+                for (key, _) in plan.wave {
+                    seen.insert(key.clone());
+                    *visits.entry(key.clone()).or_insert(0) += 1;
+                    if retain_first && key == reference("outcome_a") {
+                        exposed.push(key);
+                    }
+                }
+            }
+            assert!(
+                seen.contains(&reference("outcome_a")) && seen.contains(&reference("outcome_b")),
+                "independent outcome starved: consumers={count}, retain_first={retain_first}"
+            );
+        }
+    }
+}
+
+#[test]
 fn trial_packet_size_matches_dispatch_encoding_and_stable_labels() {
     let catalogs = fixture();
     let deployments = Default::default();
