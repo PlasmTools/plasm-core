@@ -25,6 +25,7 @@ use plasm_agent_core::discovery_store::{
     DiscoveryAuthorization, DiscoverySessionPin, DiscoveryStore, PreparedCatalog,
 };
 use plasm_agent_core::http_execute::CapabilitySeed;
+use plasm_agent_core::workflow_learning::native::{NativeLearningConfig, NativeLearningMode};
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
@@ -127,12 +128,22 @@ fn lock<T>(m: &Mutex<T>) -> std::sync::MutexGuard<'_, T> {
 #[napi]
 pub struct PlasmEngine {
     closing: std::sync::atomic::AtomicBool,
-    drained: tokio::sync::RwLock<bool>,
+    reviewing: std::sync::atomic::AtomicBool,
+    workflow_config: OnceCell<NativeLearningConfig>,
+    workflow_owner: OnceCell<Arc<plasm_agent_core::workflow_learning::WorkflowLearning>>,
+    drained: Arc<tokio::sync::RwLock<bool>>,
+    learning_pool: Arc<plasm_agent_core::live_plan_run_worker::LivePlanRunPool>,
     python_pool: Arc<plasm_agent_core::python_pool::PythonPool>,
     inner: Arc<AsyncMutex<InnerEngine>>,
     sessions: Mutex<HashMap<String, Arc<AsyncMutex<InnerEngine>>>>,
     discovery_store: Arc<OnceCell<DiscoveryStore>>,
     activated: tokio::sync::RwLock<Option<(String, std::collections::BTreeSet<String>)>>,
+}
+
+struct WorkflowAdmin {
+    guard: tokio::sync::OwnedRwLockReadGuard<bool>,
+    scope: plasm_agent_core::workflow_learning::model::LibraryScope,
+    owner: Arc<plasm_agent_core::workflow_learning::WorkflowLearning>,
 }
 
 impl Default for PlasmEngine {
@@ -145,15 +156,73 @@ impl PlasmEngine {
     pub fn new() -> Self {
         Self::with_runtime(None)
     }
-    async fn admit(&self) -> Result<tokio::sync::RwLockReadGuard<'_, bool>> {
-        if self.closing.load(std::sync::atomic::Ordering::Acquire) {
+    async fn admit(&self) -> Result<tokio::sync::OwnedRwLockReadGuard<bool>> {
+        if self.closing.load(std::sync::atomic::Ordering::Acquire)
+            || self.reviewing.load(std::sync::atomic::Ordering::Acquire)
+        {
             return Err(map_err(NodeEngineError::Closed));
         }
-        let guard = self.drained.read().await;
+        let guard = Arc::clone(&self.drained).read_owned().await;
+        if self.closing.load(std::sync::atomic::Ordering::Acquire)
+            || self.reviewing.load(std::sync::atomic::Ordering::Acquire)
+        {
+            return Err(map_err(NodeEngineError::Closed));
+        }
+        Ok(guard)
+    }
+
+    async fn admit_review(&self) -> Result<tokio::sync::OwnedRwLockReadGuard<bool>> {
+        if self.closing.load(std::sync::atomic::Ordering::Acquire)
+            || !self.reviewing.load(std::sync::atomic::Ordering::Acquire)
+        {
+            return Err(Error::from_reason(
+                "workflow review requires a drained open engine",
+            ));
+        }
+        let guard = Arc::clone(&self.drained).read_owned().await;
         if self.closing.load(std::sync::atomic::Ordering::Acquire) {
             return Err(map_err(NodeEngineError::Closed));
         }
         Ok(guard)
+    }
+
+    fn workflow_error(&self, error: impl std::error::Error) -> Error {
+        let mut error = map_err(error);
+        if let Some(config) = self
+            .workflow_config
+            .get()
+            .and_then(NativeLearningConfig::library)
+        {
+            error.reason = error
+                .reason
+                .replace(&config.database_url, "[workflow database]");
+        }
+        error
+    }
+
+    async fn workflow_admin(&self) -> Result<WorkflowAdmin> {
+        let guard = Arc::clone(&self.drained).read_owned().await;
+        if self.closing.load(std::sync::atomic::Ordering::Acquire) {
+            return Err(map_err(NodeEngineError::Closed));
+        }
+        let config = self
+            .workflow_config
+            .get()
+            .ok_or_else(|| Error::from_reason("workflow learning is not configured"))?;
+        if config.mode() != NativeLearningMode::Collect {
+            return Err(Error::from_reason(
+                "corpus administration requires collect mode",
+            ));
+        }
+        Ok(WorkflowAdmin {
+            guard,
+            scope: config.scope().map_err(map_err)?,
+            owner: Arc::clone(
+                self.workflow_owner
+                    .get()
+                    .ok_or_else(|| Error::from_reason("workflow learning is not configured"))?,
+            ),
+        })
     }
 
     fn session_engine(&self, id: &str) -> NodeResult<Arc<AsyncMutex<InnerEngine>>> {
@@ -238,7 +307,11 @@ impl PlasmEngine {
         tracing_setup::init();
         Self {
             closing: std::sync::atomic::AtomicBool::new(false),
-            drained: tokio::sync::RwLock::new(false),
+            reviewing: std::sync::atomic::AtomicBool::new(false),
+            workflow_config: OnceCell::new(),
+            workflow_owner: OnceCell::new(),
+            drained: Arc::new(tokio::sync::RwLock::new(false)),
+            learning_pool: Arc::new(plasm_agent_core::live_plan_run_worker::LivePlanRunPool::new()),
             python_pool: Arc::new(match monty_binary {
                 Some(path) => plasm_agent_core::python_pool::PythonPool::with_binary(path.into()),
                 None => Default::default(),
@@ -248,6 +321,183 @@ impl PlasmEngine {
             discovery_store: Arc::new(OnceCell::new()),
             activated: Default::default(),
         }
+    }
+
+    #[napi]
+    pub async fn configure_workflow_learning(&self, config_json: String) -> Result<()> {
+        let _exclusive = self.drained.write().await;
+        if self.closing.load(std::sync::atomic::Ordering::Acquire)
+            || self.reviewing.load(std::sync::atomic::Ordering::Acquire)
+            || self.workflow_config.get().is_some()
+            || !lock(&self.sessions).is_empty()
+        {
+            return Err(Error::from_reason(
+                "workflow configuration must precede session creation and cannot be changed",
+            ));
+        }
+        let config: NativeLearningConfig = serde_json::from_str(&config_json).map_err(map_err)?;
+        config.validate().map_err(map_err)?;
+        self.inner
+            .lock()
+            .await
+            .configure_workflow_learning(config.clone())
+            .map_err(map_err)?;
+        self.workflow_owner
+            .set(config.learning())
+            .map_err(|_| Error::from_reason("workflow configuration already set"))?;
+        self.workflow_config
+            .set(config)
+            .map_err(|_| Error::from_reason("workflow configuration already set"))?;
+        Ok(())
+    }
+
+    /// Stop solving admission and wait for native callbacks; retain immutable evidence access.
+    #[napi]
+    pub async fn drain(&self) -> Result<()> {
+        self.reviewing
+            .store(true, std::sync::atomic::Ordering::Release);
+        let _exclusive = self.drained.write().await;
+        if self.closing.load(std::sync::atomic::Ordering::Acquire) {
+            return Err(map_err(NodeEngineError::Closed));
+        }
+        Ok(())
+    }
+
+    #[napi]
+    pub async fn completed_workflow_runs(
+        &self,
+        logical_session_id: Option<String>,
+    ) -> Result<String> {
+        let _admission = self.admit_review().await?;
+        let engine = self.execution_engine(logical_session_id.as_deref()).await?;
+        self.learning_pool
+            .run_local(move || async move {
+                let _admission = _admission;
+                engine.completed_workflow_runs().await
+            })
+            .await
+            .map_err(map_err)?
+            .map_err(|error| self.workflow_error(error))
+    }
+
+    #[napi]
+    pub async fn read_workflow_evidence(
+        &self,
+        run_id: String,
+        logical_session_id: Option<String>,
+    ) -> Result<String> {
+        let _admission = self.admit_review().await?;
+        let engine = self.execution_engine(logical_session_id.as_deref()).await?;
+        self.learning_pool
+            .run_local(move || async move {
+                let _admission = _admission;
+                engine.read_workflow_evidence(&run_id).await
+            })
+            .await
+            .map_err(map_err)?
+            .map_err(|error| self.workflow_error(error))
+    }
+
+    #[napi]
+    pub async fn review_workflow(
+        &self,
+        request_json: String,
+        logical_session_id: Option<String>,
+    ) -> Result<String> {
+        let _admission = self.admit_review().await?;
+        let mut engine = self.execution_engine(logical_session_id.as_deref()).await?;
+        self.learning_pool
+            .run_local(move || async move {
+                let _admission = _admission;
+                engine.review_workflow(&request_json).await
+            })
+            .await
+            .map_err(map_err)?
+            .map_err(|error| self.workflow_error(error))
+    }
+
+    #[napi]
+    pub async fn fetch_workflow_example(
+        &self,
+        revision_ref: String,
+        logical_session_id: Option<String>,
+    ) -> Result<String> {
+        let _admission = self.admit().await?;
+        let mut engine = self.execution_engine(logical_session_id.as_deref()).await?;
+        self.learning_pool
+            .run_local(move || async move {
+                let _admission = _admission;
+                engine.fetch_workflow_example(&revision_ref).await
+            })
+            .await
+            .map_err(map_err)?
+            .map_err(|error| self.workflow_error(error))
+    }
+
+    /// Host-only corpus administration; never exposed by the agent review port.
+    #[napi]
+    pub async fn run_workflow_promotion(&self, timeout_seconds: u32) -> Result<String> {
+        let admin = self.workflow_admin().await?;
+        let status = self
+            .learning_pool
+            .run_local(move || async move {
+                let _guard = admin.guard;
+                plasm_agent_core::workflow_learning::native_admin::drain_promotion(
+                    &admin.owner,
+                    &admin.scope,
+                    std::time::Duration::from_secs(u64::from(timeout_seconds)),
+                )
+                .await
+            })
+            .await
+            .map_err(map_err)?
+            .map_err(|error| self.workflow_error(error))?;
+        serde_json::to_string(&status).map_err(map_err)
+    }
+
+    #[napi]
+    pub async fn export_workflow_proposals(&self) -> Result<String> {
+        let admin = self.workflow_admin().await?;
+        let artifacts = self
+            .learning_pool
+            .run_local(move || async move {
+                let _guard = admin.guard;
+                let repository = admin.owner.repository().await?;
+                Ok::<_, plasm_agent_core::workflow_learning::LearningError>(
+                    repository.export_review_artifacts(&admin.scope).await?,
+                )
+            })
+            .await
+            .map_err(map_err)?
+            .map_err(|error| self.workflow_error(error))?;
+        serde_json::to_string(&artifacts).map_err(map_err)
+    }
+
+    #[napi]
+    pub async fn publish_frozen_workflow_review(&self, request_json: String) -> Result<String> {
+        let request: plasm_agent_core::workflow_learning::repository::FrozenPublicationRequest =
+            serde_json::from_str(&request_json).map_err(map_err)?;
+        let admin = self.workflow_admin().await?;
+        let receipt = self
+            .learning_pool
+            .run_local(move || async move {
+                let _guard = admin.guard;
+                let repository = admin.owner.repository().await?;
+                Ok::<_, plasm_agent_core::workflow_learning::LearningError>(
+                    repository
+                        .publish_frozen(
+                            &admin.scope,
+                            request.review_ref,
+                            &request.artifact_hashes,
+                            &request.actor,
+                        )
+                        .await?,
+                )
+            })
+            .await
+            .map_err(map_err)?
+            .map_err(|error| self.workflow_error(error))?;
+        serde_json::to_string(&receipt).map_err(map_err)
     }
 
     /// Close admission, drain native callbacks and terminate pooled workers.
@@ -341,9 +591,55 @@ impl PlasmEngine {
             .routing_inputs(logical_session_id.as_deref())
             .await
             .map_err(map_err)?;
-        let service = DiscoveryService::from_env(store.clone())
+        let guidance = if let (Some(config), Some(owner)) =
+            (self.workflow_config.get(), self.workflow_owner.get())
+        {
+            let exposure = match config.mode() {
+                NativeLearningMode::Admission => Some(plasm_agent_core::workflow_learning::native_recall::ExampleExposure::AdmissionOnly),
+                NativeLearningMode::Examples => Some(plasm_agent_core::workflow_learning::native_recall::ExampleExposure::OptionalExamples),
+                _ => None,
+            };
+            match exposure {
+                Some(exposure) => {
+                    let owner = Arc::clone(owner);
+                    let scope = config.scope().map_err(map_err)?;
+                    let intent = provenance.current().to_owned();
+                    let allowed = allowed.clone();
+                    let guidance_store = store.clone();
+                    let guidance_generation = generation.clone();
+                    Some(
+                        self.learning_pool
+                            .run_local(move || async move {
+                                plasm_agent_core::workflow_learning::native_recall::recall_guidance(
+                                    &owner,
+                                    &scope,
+                                    &intent,
+                                    &allowed,
+                                    exposure,
+                                    &guidance_store,
+                                    &guidance_generation,
+                                )
+                                .await
+                            })
+                            .await
+                            .unwrap_or_else(|error| {
+                                tracing::warn!(%error, "workflow guidance executor unavailable");
+                                plasm_agent_core::workflow_learning::native_recall::ExampleGuidance::empty(
+                                    plasm_agent_core::workflow_learning::native_recall::RecallDisposition::Unavailable)
+                            }),
+                    )
+                }
+                None => None,
+            }
+        } else {
+            None
+        };
+        let mut service = DiscoveryService::from_env(store.clone())
             .map_err(NodeEngineError::from)
             .map_err(map_err)?;
+        if let Some(guidance) = &guidance {
+            service = service.with_catalogue_guidance(guidance.capabilities.clone());
+        }
         let receipt = service
             .route_turn(RouteTurn {
                 new_generation: &generation,
@@ -373,11 +669,17 @@ impl PlasmEngine {
                 sessions
                     .entry(receipt.pin_id.clone())
                     .or_insert_with(|| {
-                        Arc::new(AsyncMutex::new(InnerEngine::from_pinned_generation(
+                        let mut engine = InnerEngine::from_pinned_generation(
                             catalogs,
                             compiled_catalogs,
                             pin.clone(),
-                        )))
+                        );
+                        engine
+                            .configure_workflow_learning(
+                                self.workflow_config.get().cloned().unwrap_or_default(),
+                            )
+                            .expect("validated configuration on a fresh engine");
+                        Arc::new(AsyncMutex::new(engine))
                     })
                     .clone()
             };
@@ -395,8 +697,14 @@ impl PlasmEngine {
                 })
                 .transpose()?
         };
-        serde_json::to_string(&serde_json::json!({"routing":receipt,"teaching":teaching}))
-            .map_err(|e| Error::from_reason(e.to_string()))
+        let mut packet = serde_json::json!({"routing":receipt,"teaching":teaching});
+        if let Some(guidance) = guidance {
+            packet["workflow_examples"] =
+                serde_json::to_value(guidance.examples).map_err(map_err)?;
+            packet["workflow_recall"] =
+                serde_json::to_value(guidance.disposition).map_err(map_err)?;
+        }
+        serde_json::to_string(&packet).map_err(map_err)
     }
 
     #[napi]
@@ -483,10 +791,15 @@ impl PlasmEngine {
         let _admission = self.admit().await?;
         let mut engine = self.execution_engine(logical_session_id.as_deref()).await?;
         let callback = JsCallbackHttpTransport::new(transport.0, engine.primary_entry_id());
-        let result = engine
-            .run_plan_live(&plan_commit_ref, callback)
+        let result = self
+            .learning_pool
+            .run_local(move || async move {
+                let _admission = _admission;
+                engine.run_plan_live(&plan_commit_ref, callback).await
+            })
             .await
-            .map_err(map_err)?;
+            .map_err(map_err)?
+            .map_err(|error| self.workflow_error(error))?;
         Ok(JsRunPlanResult {
             ok: result.ok,
             message: result.message,

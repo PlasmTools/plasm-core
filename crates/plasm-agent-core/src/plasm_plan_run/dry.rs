@@ -104,7 +104,9 @@ pub fn evaluate_plasm_comp_dry(
     es: &ExecuteSession,
     bundle: &crate::plasm_comp_bundle::PlasmCompBundle,
 ) -> Result<DryPlasmPlanEvaluation, crate::program_diagnostic::ProgramStageError> {
-    evaluate_executable_comp_dry(es, bundle.executable(), bundle.artifact())
+    let mut dry = evaluate_executable_comp_dry(es, bundle.executable(), bundle.artifact())?;
+    dry.compilation_symbols = bundle.compilation_symbols().clone();
+    Ok(dry)
 }
 
 /// Production async admission waits for a coherent graph snapshot instead of
@@ -158,6 +160,7 @@ pub fn evaluate_executable_comp_dry(
     let parallel_root_surfaces_only =
         compute_parallel_root_surfaces_only(prepared.validated.artifact());
     Ok(DryPlasmPlanEvaluation {
+        compilation_symbols: Default::default(),
         version,
         name: comp.name.clone(),
         artifact: artifact.clone(),

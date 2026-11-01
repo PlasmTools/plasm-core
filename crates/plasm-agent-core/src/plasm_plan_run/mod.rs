@@ -201,6 +201,7 @@ impl PlasmPlanRunResult {
 /// Dry-run a program plan: validate, type-check, and render simulation JSON per node.
 #[derive(Debug)]
 pub struct DryPlasmPlanEvaluation {
+    pub compilation_symbols: crate::program_symbol_context::CompilationSymbolContext,
     pub version: serde_json::Value,
     pub name: Option<String>,
     artifact: plasm_core::PlasmCompArtifact,
@@ -315,6 +316,7 @@ impl DryPlasmPlanEvaluation {
         let mut graph_summary = cache.graph_summary.clone();
         enrich_graph_summary_flow(&mut graph_summary, &flow_analysis);
         Ok(Self {
+            compilation_symbols: cache.compilation_symbols.clone(),
             version: if cache.version.is_null() {
                 serde_json::json!(artifact.comp.version)
             } else {

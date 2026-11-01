@@ -61,14 +61,12 @@ fn compute_exposure_wave_changes(
 }
 
 /// Admit new relation slots, render + append the teaching delta, and persist the session.
-pub(crate) async fn commit_exposure_wave_delta(
-    st: &PlasmHostState,
-    prompt_hash_p: &PromptHashHex,
-    session_id_p: &ExecuteSessionId,
+pub(crate) fn stage_exposure_wave_delta(
     mut sess: crate::execute_session::ExecuteSession,
     mut exp: plasm_core::TeachingExposureSession,
     snapshot: ExposureWaveSnapshot,
-) -> Result<CommittedWaveDelta, super::SessionMutateError> {
+) -> Result<(crate::execute_session::ExecuteSession, CommittedWaveDelta), super::SessionMutateError>
+{
     {
         let layers: Vec<&CGS> = sess
             .contexts_by_entry
@@ -90,13 +88,14 @@ pub(crate) async fn commit_exposure_wave_delta(
     if changes.surface_unchanged() {
         sess.entities = exp.entities.clone();
         sess.teaching_exposure = Some(exp);
-        st.replace_execute_session(prompt_hash_p.as_str(), session_id_p.as_str(), sess)
-            .await?;
-        return Ok(CommittedWaveDelta {
-            markdown: String::new(),
-            relations_delta: Vec::new(),
-            surface_unchanged: true,
-        });
+        return Ok((
+            sess,
+            CommittedWaveDelta {
+                markdown: String::new(),
+                relations_delta: Vec::new(),
+                surface_unchanged: true,
+            },
+        ));
     }
 
     let teaching = plasm_core::prompt_render::python::prepare_python_teaching_wave(
@@ -121,14 +120,30 @@ pub(crate) async fn commit_exposure_wave_delta(
     }
     sess.entities = exp.entities.clone();
     sess.teaching_exposure = Some(exp);
+    Ok((
+        sess,
+        CommittedWaveDelta {
+            markdown: wave,
+            relations_delta,
+            surface_unchanged: false,
+        },
+    ))
+}
+
+/// Publish only a completely staged wave. Example serving compiles the staged
+/// session before entering this publication path.
+pub(crate) async fn commit_exposure_wave_delta(
+    st: &PlasmHostState,
+    prompt_hash_p: &PromptHashHex,
+    session_id_p: &ExecuteSessionId,
+    sess: crate::execute_session::ExecuteSession,
+    exp: plasm_core::TeachingExposureSession,
+    snapshot: ExposureWaveSnapshot,
+) -> Result<CommittedWaveDelta, super::SessionMutateError> {
+    let (sess, delta) = stage_exposure_wave_delta(sess, exp, snapshot)?;
     st.replace_execute_session(prompt_hash_p.as_str(), session_id_p.as_str(), sess)
         .await?;
-
-    Ok(CommittedWaveDelta {
-        markdown: wave,
-        relations_delta,
-        surface_unchanged: false,
-    })
+    Ok(delta)
 }
 
 #[cfg(test)]

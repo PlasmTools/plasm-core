@@ -342,6 +342,8 @@ pub enum RuntimeError {
     EntityRefScope(#[from] plasm_core::ScopeEntityRefNormalizeError),
     #[error("query resolution failed: {0}")]
     QueryResolution(#[from] plasm_core::QueryCapabilityResolveError),
+    #[error("relation dependency contract is invalid: {0}")]
+    RelationDependency(#[from] plasm_core::relation_materialize::dependencies::DependencyError),
     #[error("schema contract failed: {0}")]
     SchemaContract(#[from] Box<plasm_core::SchemaError>),
     #[error("operand resolution failed: {0}")]

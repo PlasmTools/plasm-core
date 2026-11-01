@@ -29,17 +29,20 @@ pub(crate) fn dispatch_plasm_mcp_call_tool_request<'a>(
     )
 }
 
-/// Run an owned MCP tool future on the live-plan large-stack worker pool.
+/// Run an owned MCP tool future on a dedicated large-stack admission pool.
+/// Its permits must be separate from execution: a tool can await a live run.
 ///
 /// The tool future is created and polled only on the worker (`run_local`) to
 /// contain its stack requirements. Errors are folded into
 /// [`crate::mcp_server::request::tool_error_result`] before the `Send` result crosses back.
-async fn on_live_plan_stack<F, Fut>(handler: &PlasmMcpHandler, f: F) -> CallToolResult
+async fn on_live_plan_stack<F, Fut>(f: F) -> CallToolResult
 where
     F: FnOnce() -> Fut + Send + 'static,
     Fut: std::future::Future<Output = Result<CallToolResult, ToolFailure>> + 'static,
 {
-    let pool = handler.plasm.live_plan_pool();
+    static TOOL_POOL: std::sync::OnceLock<crate::live_plan_run_worker::LivePlanRunPool> =
+        std::sync::OnceLock::new();
+    let pool = TOOL_POOL.get_or_init(crate::live_plan_run_worker::LivePlanRunPool::new);
     match pool
         .run_local(move || async move {
             match f().await {
@@ -61,14 +64,6 @@ async fn dispatch_plasm_mcp_call_tool_request_inner(
     params: CallToolRequestParams,
     runtime: Arc<McpRequest>,
 ) -> Result<CallToolResult, ToolFailure> {
-    fn record_workflow_tool(
-        tname: &'static str,
-        res: &Result<CallToolResult, ToolFailure>,
-        started: Instant,
-    ) {
-        record_named_mcp_tool(tname, res, started);
-    }
-
     fn record_app_ui_tool(
         tname: &'static str,
         res: &Result<CallToolResult, ToolFailure>,
@@ -115,13 +110,29 @@ async fn dispatch_plasm_mcp_call_tool_request_inner(
     );
 
     match params.name.as_ref() {
+        "plasm_review" | "plasm_example" => {
+            let started = Instant::now();
+            let owned = handler.clone();
+            let name = params.name.to_string();
+            let metric = if name == "plasm_review" {
+                "plasm_review"
+            } else {
+                "plasm_example"
+            };
+            let result = on_live_plan_stack(move || async move {
+                owned.handle_learning_tool(&key, &runtime, &v, &name).await
+            })
+            .await;
+            record_tool_result(metric, &result, started);
+            Ok(result)
+        }
         "plasm_context" => {
             let started = Instant::now();
             let owned = handler.clone();
             let key = key.clone();
             let runtime = Arc::clone(&runtime);
             let v = v.clone();
-            let res = on_live_plan_stack(handler, move || {
+            let res = on_live_plan_stack(move || {
                 let owned = owned.clone();
                 async move {
                     owned
@@ -157,29 +168,29 @@ async fn dispatch_plasm_mcp_call_tool_request_inner(
             }
             res
         }
-        "open_workflow" => {
+        "open_workflow" | "dry_workflow" | "run_workflow" => {
             let started = Instant::now();
-            let res = handler
-                .handle_mcp_tool_open_workflow(key.as_str(), &runtime, &v)
-                .await;
-            record_workflow_tool("open_workflow", &res, started);
-            res
-        }
-        "dry_workflow" => {
-            let started = Instant::now();
-            let res = handler
-                .handle_mcp_tool_dry_workflow(key.as_str(), &runtime, &v)
-                .await;
-            record_workflow_tool("dry_workflow", &res, started);
-            res
-        }
-        "run_workflow" => {
-            let started = Instant::now();
-            let res = handler
-                .handle_mcp_tool_run_workflow(key.as_str(), &runtime, &v)
-                .await;
-            record_workflow_tool("run_workflow", &res, started);
-            res
+            let owned = handler.clone();
+            let name = params.name.to_string();
+            let metric = match name.as_str() {
+                "open_workflow" => "open_workflow",
+                "dry_workflow" => "dry_workflow",
+                _ => "run_workflow",
+            };
+            let result = on_live_plan_stack(move || async move {
+                match name.as_str() {
+                    "open_workflow" => {
+                        owned
+                            .handle_mcp_tool_open_workflow(&key, &runtime, &v)
+                            .await
+                    }
+                    "dry_workflow" => owned.handle_mcp_tool_dry_workflow(&key, &runtime, &v).await,
+                    _ => owned.handle_mcp_tool_run_workflow(&key, &runtime, &v).await,
+                }
+            })
+            .await;
+            record_tool_result(metric, &result, started);
+            Ok(result)
         }
         "plasm" | "plasm_run" => {
             let started = Instant::now();
@@ -189,7 +200,7 @@ async fn dispatch_plasm_mcp_call_tool_request_inner(
             let key = key.clone();
             let runtime = Arc::clone(&runtime);
             let v = v.clone();
-            let res = on_live_plan_stack(handler, move || {
+            let res = on_live_plan_stack(move || {
                 let owned = owned.clone();
                 async move {
                     owned
@@ -249,5 +260,27 @@ async fn dispatch_plasm_mcp_call_tool_request_inner(
             );
             Err(ToolFailure::unknown_tool(params.name.clone()))
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn tool_admission_can_await_live_execution_without_sharing_permits() {
+        let execution_pool = Arc::new(crate::live_plan_run_worker::LivePlanRunPool::new());
+        let result = tokio::time::timeout(
+            Duration::from_secs(5),
+            on_live_plan_stack(move || async move {
+                execution_pool
+                    .run_local(|| async { CallToolResult::success(Vec::new()) })
+                    .await
+                    .map_err(|error| ToolFailure::rejected(error.to_string()))
+            }),
+        )
+        .await
+        .expect("tool admission must not occupy a live execution permit");
+        assert!(!result.is_error.unwrap_or(false));
     }
 }

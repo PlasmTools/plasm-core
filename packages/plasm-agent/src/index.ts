@@ -363,3 +363,4 @@ export type {
   ProgramBuilderOptions,
   ProgramBuilderProvenance,
 } from "./stubs/program-builder.js";
+export type { WorkflowLearningConfig, WorkflowReviewSession, WorkflowReviewInput, WorkflowReviewReceipt, CompletedRunIndex } from "./runtime/workflow-learning.js";

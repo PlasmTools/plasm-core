@@ -64,6 +64,7 @@ pub fn step_error_from_runtime(err: &RuntimeError, cgs: &CGS) -> StepError {
         | RuntimeError::IdentityWire(_)
         | RuntimeError::EntityRefScope(_)
         | RuntimeError::QueryResolution(_)
+        | RuntimeError::RelationDependency(_)
         | RuntimeError::SchemaContract(_)
         | RuntimeError::OperandResolution(_)
         | RuntimeError::ViewTemplate { .. }

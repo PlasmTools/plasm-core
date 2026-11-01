@@ -44,9 +44,18 @@ const plasmRunInputSchema = z.object({
 }).strict();
 
 export function createPlasmTools(
-  runtime: Pick<AgentRuntime, "plasmContext" | "plasm" | "plasmRun" | "recordExecutionFailure">,
+  runtime: Pick<AgentRuntime, "plasmContext" | "plasm" | "plasmRun" | "recordExecutionFailure"> & Partial<Pick<AgentRuntime, "workflowExampleServingEnabled" | "plasmExample">>,
 ): ToolSet {
   const tools: ToolSet = {};
+  if (runtime.workflowExampleServingEnabled?.()) {
+    const fetchExample = runtime.plasmExample?.bind(runtime);
+    if (!fetchExample) throw new Error("Example serving requires native fetch support");
+    tools.plasm_example = tool({
+      description: "Optionally fetch a workflow example revision offered by discovery. Returns source checked against this session and its minimal declarations. Supply actual task inputs and use ordinary plasm/plasm_run for execution; examples do not authorize effects.",
+      inputSchema: toolInput(z.object({ logical_session_ref: logicalSessionRefSchema, example_ref: z.string().uuid() }).strict()),
+      execute: ({ logical_session_ref, example_ref }) => fetchExample({ logicalSessionRef: logical_session_ref, revisionRef: example_ref }),
+    });
+  }
   const failures = failureResultsFor(runtime);
   async function invoke(name: string, run: () => Promise<string>) {
     try { return await run(); } catch (error) {

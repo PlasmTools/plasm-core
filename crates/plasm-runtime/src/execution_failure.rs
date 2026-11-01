@@ -463,6 +463,7 @@ impl From<crate::RuntimeError> for ExecutionFailure {
                 "pagination_progress_violation",
             ),
             CatalogTemplate(_)
+            | RelationDependency(_)
             | CompilationError { .. }
             | CmlError { .. }
             | CapabilityNotFound { .. } => (FailureCause::Catalog, "catalog_contract_violation"),
@@ -604,6 +605,7 @@ impl From<crate::RuntimeError> for ExecutionFailure {
             | IdentityWire(_)
             | EntityRefScope(_)
             | QueryResolution(_)
+            | RelationDependency(_)
             | SchemaContract(_)
             | OperandResolution(_)
             | ViewTemplate { .. }

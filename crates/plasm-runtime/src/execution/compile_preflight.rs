@@ -72,6 +72,14 @@ pub fn preflight_compile_bound_relation(
             mat,
         );
     };
+    // Validate the same static read-path contract issued by compiler admission.
+    plasm_core::relation_materialize::dependencies::resolve(
+        cgs,
+        cgs,
+        parent.name.as_str(),
+        relation.target_resource.as_str(),
+        relation.materialize.as_ref(),
+    )?;
     let materialize = relation
         .materialize
         .as_ref()

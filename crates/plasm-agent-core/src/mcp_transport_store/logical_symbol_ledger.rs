@@ -73,6 +73,30 @@ pub enum SymbolLedgerUpsertError {
 }
 
 impl LogicalSymbolLedgerRegistry {
+    /// Publish the local mirror after the descriptor/ledger atomic commit.
+    /// The descriptor carries the authoritative durable ledger bytes.
+    pub(crate) async fn cache_committed(
+        &self,
+        logical_id: Uuid,
+        catalog_cgs_hashes: IndexMap<String, String>,
+        exposure: TeachingExposureSession,
+        symbol_ledger_bytes: Vec<u8>,
+    ) {
+        self.cache_local(
+            logical_id,
+            LogicalSymbolLedgerEntry {
+                catalog_cgs_hashes,
+                exposure: Arc::new(exposure),
+            },
+        )
+        .await;
+        // Archive is replication of an acknowledged publication, never a
+        // prerequisite write that can leak an uncommitted allocation.
+        if let Some(archive) = self.archive().await.as_ref() {
+            archive.put(&logical_id, symbol_ledger_bytes).await;
+        }
+    }
+
     pub fn new_in_memory() -> Self {
         Self::default()
     }

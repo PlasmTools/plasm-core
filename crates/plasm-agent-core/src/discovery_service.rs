@@ -220,6 +220,7 @@ pub struct DiscoveryService {
     transport: std::sync::Arc<dyn plasm_runtime::provider_transport::ProviderTransport>,
     match_model: String,
     rejection_dir: Option<std::path::PathBuf>,
+    guided_capabilities: std::collections::BTreeSet<CapabilityRef>,
 }
 
 impl DiscoveryService {
@@ -240,6 +241,7 @@ impl DiscoveryService {
             ),
             match_model: matcher::RELEVANCE_MODEL.into(),
             rejection_dir: None,
+            guided_capabilities: Default::default(),
         }
     }
     pub fn from_env(store: DiscoveryStore) -> Result<Self> {
@@ -249,6 +251,7 @@ impl DiscoveryService {
             return Err(DiscoveryServiceError::EmptyApiKey);
         }
         Ok(Self {
+            guided_capabilities: Default::default(),
             rejection_dir: std::env::var_os("PLASM_DISCOVERY_REJECTION_DIR")
                 .filter(|value| !value.is_empty())
                 .map(std::path::PathBuf::from),
@@ -267,6 +270,15 @@ impl DiscoveryService {
             match_model: std::env::var("PLASM_DISCOVERY_CAPABILITY_MATCH_MODEL")
                 .unwrap_or_else(|_| matcher::RELEVANCE_MODEL.into()),
         })
+    }
+
+    /// Nominate reviewed catalogue dependencies for ordinary authorized admission.
+    pub fn with_catalogue_guidance(
+        mut self,
+        capabilities: impl IntoIterator<Item = CapabilityRef>,
+    ) -> Self {
+        self.guided_capabilities = capabilities.into_iter().take(32).collect();
+        self
     }
 
     /// Shared new/extend state machine; hosts supply authenticated scope and expiry.
@@ -308,9 +320,17 @@ impl DiscoveryService {
             &self.match_model,
             request.exposed,
         )?;
-        let key = plasm_core::catalog_discovery::content_hash(
-            format!("{frontier_key}:{search}").as_bytes(),
-        );
+        let key = if self.guided_capabilities.is_empty() {
+            plasm_core::catalog_discovery::content_hash(
+                format!("{frontier_key}:{search}").as_bytes(),
+            )
+        } else {
+            plasm_core::catalog_discovery::content_hash(&serde_json::to_vec(&(
+                &frontier_key,
+                &search,
+                &self.guided_capabilities,
+            ))?)
+        };
         let mut receipt = self
             .route_frontier(&frontier_key, &key, request.exposed, |visits| {
                 let key = &key;
@@ -351,7 +371,15 @@ impl DiscoveryService {
         if !exposed.iter().all(|reference| allowed.permits(reference)) {
             return Err(DiscoveryServiceError::ExposedCapabilityUnauthorized);
         }
-        let key = search_key(generation, provenance, allowed, &self.match_model, exposed)?;
+        let base = search_key(generation, provenance, allowed, &self.match_model, exposed)?;
+        let key = if self.guided_capabilities.is_empty() {
+            base
+        } else {
+            plasm_core::catalog_discovery::content_hash(&serde_json::to_vec(&(
+                base,
+                &self.guided_capabilities,
+            ))?)
+        };
         self.route_cached(&key, exposed, || async {
             self.route_uncached(
                 &key,
@@ -510,7 +538,7 @@ impl DiscoveryService {
             return Err(DiscoveryServiceError::SearchAlreadyStarted);
         }
         let progress_key = format!("{key}:progress");
-        let recall = self
+        let mut recall = self
             .store
             .retrieve(
                 generation,
@@ -519,6 +547,32 @@ impl DiscoveryService {
                 &crate::discovery_store::RecallFrontier::from_state(exposed, visits),
             )
             .await?;
+        let references = self
+            .guided_capabilities
+            .iter()
+            .filter(|r| {
+                allowed.permits(r)
+                    && catalogs
+                        .get(&r.catalog)
+                        .is_some_and(|c| c.capabilities.contains_key(r.capability.as_str()))
+            })
+            .cloned()
+            .collect();
+        if !self.guided_capabilities.is_empty() {
+            let (examples, _) =
+                index.evidence(generation, &references, &catalogs, &bindings, allowed)?;
+            let mut nominated = examples.candidates;
+            for candidate in &mut nominated {
+                candidate.admissions.insert("workflow_guidance".into());
+            }
+            for candidate in recall.candidates {
+                if !nominated.iter().any(|c| c.reference == candidate.reference) {
+                    nominated.push(candidate);
+                }
+            }
+            nominated.truncate(crate::discovery_store::CANDIDATE_LIMIT);
+            recall.candidates = nominated;
+        }
         let mut attempt = 0;
         let (retrieval, matching, search) = matcher::online::select_recalled_indexed(
             matcher::online::SearchContext {

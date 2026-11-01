@@ -151,6 +151,12 @@ const routingSchema = z.object({
 export const routingPacketSchema = z.object({
   routing: routingSchema,
   teaching: z.object({ prompt: z.string(), declarations_changed: z.boolean(), delta_refs: z.array(z.string()) }).nullable(),
+  workflow_examples: z.array(z.object({
+    example_ref: z.string().uuid(), purpose: z.string(), applicability: z.array(z.string()),
+    outputs: z.array(z.unknown()),
+    assurance: z.enum(["agent_attested", "postcondition_verified"]),
+  }).strict()).max(3).optional(),
+  workflow_recall: z.enum(["completed", "unavailable", "timed_out"]).optional(),
 });
 export type RoutingPacket = z.infer<typeof routingPacketSchema>;
 export type PrerequisiteClosure = z.infer<typeof prerequisiteClosureSchema>;

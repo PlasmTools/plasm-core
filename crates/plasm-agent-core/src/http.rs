@@ -83,6 +83,18 @@ pub struct PlasmHostBootstrap {
 pub fn build_plasm_host_state(
     bootstrap: PlasmHostBootstrap,
 ) -> Result<PlasmHostState, HostBootstrapError> {
+    let learning = Arc::new(crate::workflow_learning::WorkflowLearning::default());
+    if tokio::runtime::Handle::try_current().is_ok() {
+        learning.start_worker();
+    }
+    build_plasm_host_state_with_learning(bootstrap, learning)
+}
+
+/// Explicit native/application policy; never starts an environment-selected learner.
+pub fn build_plasm_host_state_with_learning(
+    bootstrap: PlasmHostBootstrap,
+    workflow_learning: Arc<crate::workflow_learning::WorkflowLearning>,
+) -> Result<PlasmHostState, HostBootstrapError> {
     let PlasmHostBootstrap {
         engine,
         mode,
@@ -162,6 +174,7 @@ pub fn build_plasm_host_state(
             oauth_link_catalog: None,
             outbound_secret_provider: None,
             workflows,
+            workflow_learning,
             redis_backend: None,
             live_plan_pool,
             blocking_compute,

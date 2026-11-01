@@ -81,7 +81,9 @@ impl PlasmMcpHandler {
         let committed = resolve_committed_plan(es.as_ref(), &commit_ref)
             .map_err(|e| ToolFailure::invalid_arguments(TOOL, Some(e.detail())))?;
         let bundle = PlasmCompBundle::new(committed.artifact.clone())
-            .map_err(|e| ToolFailure::rejected(format!("invalid committed comp: {e}")))?;
+            .map_err(|e| ToolFailure::rejected(format!("invalid committed comp: {e}")))?
+            .with_source(committed.program.clone())
+            .with_compilation_symbols(committed.dry_cache.compilation_symbols.clone());
         let dry = dry_for_committed_plasm_run(es.as_ref(), &bundle, &committed)
             .map_err(|e| ToolFailure::rejected(format!("plan rehydrate failed: {}", e.detail())))?;
         let ux_ctx = PlanUxBuildContext {

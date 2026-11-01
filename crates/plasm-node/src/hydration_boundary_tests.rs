@@ -138,7 +138,9 @@ async fn run_native_hydration() {
         "matrix",
         &cgs.capabilities["login"],
     );
-    let program = format!("class Read(Program):\n    def build(self):\n        auth = {session}.{login}()\n        saved = {saved}.query(access_token=auth.access_token)\n        notes = saved.flat_map(lambda row: {note}.get(row.note_id, access_token=auth.access_token))\n        return notes.flat_map(lambda row: row.owners)\n");
+    let program = format!(
+        "class Read(Program):\n    def build(self):\n        auth = {session}.{login}()\n        saved = {saved}.query(access_token=auth.access_token)\n        notes = saved.flat_map(lambda row: {note}.get(row.note_id, access_token=auth.access_token))\n        return notes.flat_map(lambda row: row.owners)\n"
+    );
     let owner = symbol("Owner");
     let owner_relation = plasm_core::symbol_tuning::SymbolRender::ident_sym_relation_for(
         &exposure.to_symbol_map(),
@@ -146,7 +148,9 @@ async fn run_native_hydration() {
         "Note",
         "owners",
     );
-    let mapped_program = format!("class MapNotes(Program):\n    @compute\n    def names(self, owners: list[Value[{owner}]]) -> str:\n        return '|'.join(owner.name for owner in owners)\n    @compute\n    def document(self, rows: list[Row]) -> str:\n        return '\\n'.join(row.title + ':' + row.names for row in rows)\n    def build(self):\n        auth = {session}.{login}()\n        notes = {folder}.get(\"root\", access_token=auth.access_token).notes.distinct(\"note_id\").order_by(\"note_id\")\n        mapped = notes.map(lambda note: {{\"title\": note.title, \"names\": self.names(note.{owner_relation})}}, max_parents=32)\n        return self.document(mapped)\n");
+    let mapped_program = format!(
+        "class MapNotes(Program):\n    @compute\n    def names(self, owners: list[Value[{owner}]]) -> str:\n        return '|'.join(owner.name for owner in owners)\n    @compute\n    def document(self, rows: list[Row]) -> str:\n        return '\\n'.join(row.title + ':' + row.names for row in rows)\n    def build(self):\n        auth = {session}.{login}()\n        notes = {folder}.get(\"root\", access_token=auth.access_token).notes.distinct(\"note_id\").order_by(\"note_id\")\n        mapped = notes.map(lambda note: {{\"title\": note.title, \"names\": self.names(note.{owner_relation})}}, max_parents=32)\n        return self.document(mapped)\n"
+    );
     let dry = engine.dry_run(&mapped_program).await.unwrap();
     assert!(dry.failure_json.is_none(), "{}", dry.summary);
     let result = engine
@@ -190,7 +194,9 @@ async fn run_native_hydration() {
             .collect::<Vec<_>>()
             .join("\n"))
     );
-    let folder_program = format!("class ReadFolder(Program):\n    def build(self):\n        auth = {session}.{login}()\n        notes = {folder}.get(\"root\", access_token=auth.access_token).notes\n        return notes.aggregate(n=agg.count())\n");
+    let folder_program = format!(
+        "class ReadFolder(Program):\n    def build(self):\n        auth = {session}.{login}()\n        notes = {folder}.get(\"root\", access_token=auth.access_token).notes\n        return notes.aggregate(n=agg.count())\n"
+    );
     let dry = engine.dry_run(&folder_program).await.unwrap();
     let result = engine
         .run_plan_live(&dry.plan_commit_ref, transport.clone())
@@ -200,7 +206,9 @@ async fn run_native_hydration() {
     let envelope: serde_json::Value =
         serde_json::from_str(result.rows_json.as_deref().unwrap()).unwrap();
     assert_eq!(envelope[0]["rows"][0]["n"], json!(18));
-    let compute_program = format!("class CountFolder(Program):\n    @compute\n    def size(self, rows: list[Value[{note}]]) -> str:\n        return str(len(rows))\n    def build(self):\n        auth = {session}.{login}()\n        notes = {folder}.get(\"root\", access_token=auth.access_token).notes\n        return self.size(notes)\n");
+    let compute_program = format!(
+        "class CountFolder(Program):\n    @compute\n    def size(self, rows: list[Value[{note}]]) -> str:\n        return str(len(rows))\n    def build(self):\n        auth = {session}.{login}()\n        notes = {folder}.get(\"root\", access_token=auth.access_token).notes\n        return self.size(notes)\n"
+    );
     let dry = engine.dry_run(&compute_program).await.unwrap();
     assert!(dry.failure_json.is_none(), "{}", dry.summary);
     let result = engine

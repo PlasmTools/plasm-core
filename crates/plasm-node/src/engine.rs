@@ -3,7 +3,7 @@
 use indexmap::IndexMap;
 use plasm_agent_core::discovery_store::DiscoverySessionPin;
 use plasm_agent_core::execute_session::ExecuteSession;
-use plasm_agent_core::http::{build_plasm_host_state, PlasmHostBootstrap};
+use plasm_agent_core::http::{build_plasm_host_state_with_learning, PlasmHostBootstrap};
 use plasm_agent_core::http_execute::CapabilitySeed;
 use plasm_agent_core::operation::{
     compute_plan_commit_id_from_dry, PlanCommitRecord, PLAN_COMMIT_TTL,
@@ -17,6 +17,9 @@ use plasm_agent_core::plasm_plan_run::{
 use plasm_agent_core::program_diagnostic::{ProgramDiagnostic, ProgramStageError};
 use plasm_agent_core::run_artifacts::RunArtifactStore;
 use plasm_agent_core::server_state::CatalogBootstrap;
+use plasm_agent_core::workflow_learning::native::{
+    NativeLearningConfig, NativeLearningError, NativeLearningMode,
+};
 use plasm_agent_core::PlasmCompBundle;
 use plasm_core::discovery::{CgsRegistry, RegistryEntryPair};
 use plasm_core::run_reference::ExecutableRunTarget;
@@ -32,12 +35,20 @@ use std::time::Instant;
 use thiserror::Error;
 
 /// Stable execute-session wire ids for in-process agent runs (run artifact store keys).
-const AGENT_PROMPT_HASH: &str = "plasm_node";
+const AGENT_PROMPT_HASH: &str = "e45f6d1eb01b0ae077a369e44b9f1571169db0f3c8edfe9e377a9fab30c92696";
 
 type Result<T> = std::result::Result<T, AgentEngineError>;
 
 #[derive(Debug, Error)]
 pub enum AgentEngineError {
+    #[error("native execution engine construction failed")]
+    Runtime(#[source] Box<plasm_runtime::RuntimeError>),
+    #[error("native workflow learning: {0}")]
+    Workflow(#[source] Box<NativeLearningError>),
+    #[error("workflow configuration must precede execution")]
+    WorkflowAlreadyStarted,
+    #[error("no authoritative workflow execution evidence exists")]
+    WorkflowEvidenceMissing,
     #[error(transparent)]
     CatalogTemplate(#[from] plasm_compile::CatalogTemplateError),
     #[error("catalog `{entry_id}` is not loaded")]
@@ -98,6 +109,18 @@ pub enum AgentEngineError {
         "plan commit flow policy rejected the plan ({verdict}) with {violations} violation(s)"
     )]
     FlowDenial { verdict: String, violations: usize },
+}
+
+impl From<plasm_runtime::RuntimeError> for AgentEngineError {
+    fn from(error: plasm_runtime::RuntimeError) -> Self {
+        Self::Runtime(Box::new(error))
+    }
+}
+
+impl From<NativeLearningError> for AgentEngineError {
+    fn from(error: NativeLearningError) -> Self {
+        Self::Workflow(Box::new(error))
+    }
 }
 
 impl From<plasm_core::catalog_il::CatalogIlError> for AgentEngineError {
@@ -248,8 +271,12 @@ fn live_run_meta_json(
 pub struct AgentEngine {
     python_pool: Arc<plasm_agent_core::python_pool::PythonPool>,
     session_id: String,
+    execute_session_id: plasm_agent_core::execute_path_ids::ExecuteSessionId,
     discovery_pin: Option<DiscoverySessionPin>,
     intent: String,
+    intent_turns: Vec<String>,
+    workflow_config: NativeLearningConfig,
+    host: Option<plasm_agent_core::server_state::PlasmHostState>,
     manifest_paths: Vec<std::path::PathBuf>,
     capabilities: Vec<(String, String)>,
     catalogs: IndexMap<String, Arc<CGS>>,
@@ -276,8 +303,12 @@ impl AgentEngine {
             session_id: plasm_agent_core::session_identity::LogicalSessionId::new_v4()
                 .as_uuid()
                 .to_string(),
+            execute_session_id: plasm_agent_core::execute_path_ids::ExecuteSessionId::new_random(),
             discovery_pin: None,
             intent: String::new(),
+            intent_turns: Vec::new(),
+            workflow_config: NativeLearningConfig::Baseline,
+            host: None,
             manifest_paths: Vec::new(),
             capabilities: Vec::new(),
             catalogs: IndexMap::new(),
@@ -293,10 +324,159 @@ impl AgentEngine {
 
     pub fn set_intent(&mut self, intent: impl Into<String>) {
         self.intent = intent.into();
+        self.intent_turns = vec![self.intent.clone()];
     }
 
     pub(crate) fn set_python_pool(&mut self, pool: Arc<plasm_agent_core::python_pool::PythonPool>) {
         self.python_pool = pool;
+    }
+
+    pub fn configure_workflow_learning(&mut self, config: NativeLearningConfig) -> Result<()> {
+        if self.host.is_some() || self.execute_session.is_some() {
+            return Err(AgentEngineError::WorkflowAlreadyStarted);
+        }
+        config.validate()?;
+        self.workflow_config = config;
+        Ok(())
+    }
+
+    pub async fn completed_workflow_runs(&self) -> Result<String> {
+        if self.workflow_config.mode() != NativeLearningMode::Collect {
+            return Err(NativeLearningError::Mode.into());
+        }
+        match &self.host {
+            Some(host) => Ok(serde_json::to_string(
+                &self
+                    .workflow_config
+                    .completed_runs(host, &self.session_id, &self.intent)
+                    .await?,
+            )?),
+            None => Ok(serde_json::json!({"intent":self.intent,"runs":[]}).to_string()),
+        }
+    }
+
+    pub async fn read_workflow_evidence(&self, run_id: &str) -> Result<String> {
+        let host = self
+            .host
+            .as_ref()
+            .ok_or(AgentEngineError::WorkflowEvidenceMissing)?;
+        Ok(serde_json::to_string(
+            &self
+                .workflow_config
+                .read_evidence(host, &self.session_id, run_id)
+                .await?,
+        )?)
+    }
+
+    pub async fn review_workflow(&mut self, request: &str) -> Result<String> {
+        #[derive(serde::Deserialize)]
+        #[serde(deny_unknown_fields)]
+        struct Review {
+            subtasks: Vec<plasm_agent_core::workflow_learning::model::AchievedSubtask>,
+        }
+        let request: Review = serde_json::from_str(request)?;
+        let host = self
+            .host
+            .as_ref()
+            .ok_or(AgentEngineError::WorkflowEvidenceMissing)?;
+        let session = self
+            .execute_session
+            .as_ref()
+            .ok_or(AgentEngineError::WorkflowEvidenceMissing)?;
+        // Update the resident snapshot after native graph execution and exposure extension.
+        self.workflow_config
+            .register(
+                host,
+                session,
+                &self.session_id,
+                self.execute_session_id.as_str(),
+                &self.intent_turns,
+            )
+            .await?;
+        Ok(serde_json::to_string(
+            &self
+                .workflow_config
+                .review(
+                    host,
+                    session,
+                    &self.session_id,
+                    self.execute_session_id.as_str(),
+                    request.subtasks,
+                )
+                .await?,
+        )?)
+    }
+
+    pub async fn fetch_workflow_example(&mut self, revision: &str) -> Result<String> {
+        let host = match &self.host {
+            Some(host) => host.clone(),
+            None => self.build_host_state(None)?,
+        };
+        let session = self.ensure_execute_session()?;
+        self.workflow_config
+            .register(
+                &host,
+                &session,
+                &self.session_id,
+                self.execute_session_id.as_str(),
+                &self.intent_turns,
+            )
+            .await?;
+        let allowed = self
+            .discovery_pin
+            .as_ref()
+            .map(|pin| pin.authorization.clone())
+            .unwrap_or_else(|| {
+                plasm_agent_core::discovery_store::DiscoveryAuthorization::catalogs(
+                    self.catalogs.keys().cloned().collect(),
+                )
+            });
+        let previous_capabilities = self
+            .capabilities
+            .iter()
+            .cloned()
+            .collect::<std::collections::BTreeSet<_>>();
+        let mut served = self
+            .workflow_config
+            .fetch(
+                &host,
+                &session,
+                self.execute_session_id.as_str(),
+                revision,
+                &allowed,
+            )
+            .await?;
+        let updated = host
+            .get_execute_session(AGENT_PROMPT_HASH, self.execute_session_id.as_str())
+            .await
+            .ok_or(AgentEngineError::WorkflowEvidenceMissing)?;
+        self.exposure = updated.teaching_exposure.clone();
+        if let Some(exposure) = &self.exposure {
+            self.capabilities = exposure
+                .entity_catalog_entry_ids
+                .iter()
+                .cloned()
+                .zip(exposure.entities.iter().cloned())
+                .collect();
+        }
+        self.execute_session = Some((*updated).clone());
+        served.teaching_delta = self.render_teaching_delta(&[])?;
+        #[derive(serde::Serialize)]
+        struct NativeServedExample {
+            #[serde(flatten)]
+            example: plasm_agent_core::workflow_learning::serving::ServedExample,
+            delta_refs: Vec<String>,
+        }
+        let delta_refs = self
+            .capabilities
+            .iter()
+            .filter(|reference| !previous_capabilities.contains(*reference))
+            .map(|(entry, entity)| format!("{entry}:{entity}"))
+            .collect();
+        Ok(serde_json::to_string(&NativeServedExample {
+            example: served,
+            delta_refs,
+        })?)
     }
 
     pub fn introspect_catalog(&self, entry_id: &str) -> Result<CatalogIntrospection> {
@@ -520,6 +700,7 @@ impl AgentEngine {
             self.intent.push('\n');
         }
         self.intent.push_str(intent);
+        self.intent_turns.push(intent.to_owned());
         let mut grouped = std::collections::BTreeMap::<String, Vec<String>>::new();
         for reference in closure
             .business
@@ -700,7 +881,7 @@ impl AgentEngine {
         {
             Ok(b) => b,
             Err(plasm_agent_core::compilation_error::CompilationError::Program(stage)) => {
-                return Ok(self.reject_from_stage(&es, trimmed, *stage))
+                return Ok(self.reject_from_stage(&es, trimmed, *stage));
             }
             Err(
                 error @ (plasm_agent_core::compilation_error::CompilationError::Host(_)
@@ -790,146 +971,177 @@ impl AgentEngine {
         plan_commit_ref: &str,
         transport: Arc<dyn HttpTransport>,
     ) -> Result<RunPlanResult> {
-        let trimmed = plan_commit_ref.trim();
-        if trimmed.is_empty() {
-            return Ok(RunPlanResult::reference_rejection(
-                "invalid_run_reference",
-                "Copy a reviewed commit reference or paging handle verbatim.",
-            ));
-        }
-        let es = self.ensure_execute_session()?;
-        let (bundle, dry, authorization) = match ExecutableRunTarget::parse(trimmed) {
-            Ok(ExecutableRunTarget::Commit(commit_ref)) => {
-                let committed = match resolve_committed_plan(&es, &commit_ref) {
-                    Ok(committed) => committed,
-                    Err(error) => return Ok(RunPlanResult::failure(error.into())),
-                };
-                let bundle = PlasmCompBundle::new(committed.artifact.clone())
-                    .map_err(AgentEngineError::CommittedPlanArtifact)?;
-                let dry = match dry_for_committed_plasm_run(&es, &bundle, &committed) {
-                    Ok(dry) => dry,
-                    Err(error) => return Ok(RunPlanResult::failure(error.into())),
-                };
-                (bundle, dry, Some(commit_ref))
-            }
-            Ok(ExecutableRunTarget::Page(handle)) => {
-                let bundle = match plasm_agent_core::mcp_server::compile_page_continuation(
-                    &es, &handle, 0,
-                ) {
-                    Ok(bundle) => bundle,
-                    Err(failure) => return Ok(RunPlanResult::failure(failure)),
-                };
-                let dry = match evaluate_plasm_comp_dry(&es, &bundle) {
-                    Ok(dry) => dry,
-                    Err(error) => return Ok(RunPlanResult::failure(error.into())),
-                };
-                (bundle, dry, None)
-            }
-            Err(_) => {
+        // Bound the public native future's layout independently of the composed
+        // authorization, execution and evidence protocols it drives.
+        let operation: std::pin::Pin<
+            Box<dyn std::future::Future<Output = Result<RunPlanResult>> + '_>,
+        > = Box::pin(async move {
+            let trimmed = plan_commit_ref.trim();
+            if trimmed.is_empty() {
                 return Ok(RunPlanResult::reference_rejection(
-                "invalid_run_reference",
-                format!("Run reference `{trimmed}` is not executable. Copy a reviewed commit reference from plasm or a continuation handle from plasm_run verbatim; run artifact IDs identify observations, not executable plans."),
-            ));
+                    "invalid_run_reference",
+                    "Copy a reviewed commit reference or paging handle verbatim.",
+                ));
             }
-        };
+            let es = self.ensure_execute_session()?;
+            let (bundle, dry, authorization) = match ExecutableRunTarget::parse(trimmed) {
+                Ok(ExecutableRunTarget::Commit(commit_ref)) => {
+                    let committed = match resolve_committed_plan(&es, &commit_ref) {
+                        Ok(committed) => committed,
+                        Err(error) => return Ok(RunPlanResult::failure(error.into())),
+                    };
+                    let bundle = PlasmCompBundle::new(committed.artifact.clone())
+                        .map_err(AgentEngineError::CommittedPlanArtifact)?
+                        .with_source(committed.program.clone())
+                        .with_compilation_symbols(committed.dry_cache.compilation_symbols.clone());
+                    let dry = match dry_for_committed_plasm_run(&es, &bundle, &committed) {
+                        Ok(dry) => dry,
+                        Err(error) => return Ok(RunPlanResult::failure(error.into())),
+                    };
+                    (bundle, dry, Some(commit_ref))
+                }
+                Ok(ExecutableRunTarget::Page(handle)) => {
+                    let bundle = match plasm_agent_core::mcp_server::compile_page_continuation(
+                        &es, &handle, 0,
+                    ) {
+                        Ok(bundle) => bundle,
+                        Err(failure) => return Ok(RunPlanResult::failure(failure)),
+                    };
+                    let dry = match evaluate_plasm_comp_dry(&es, &bundle) {
+                        Ok(dry) => dry,
+                        Err(error) => return Ok(RunPlanResult::failure(error.into())),
+                    };
+                    (bundle, dry, None)
+                }
+                Err(_) => {
+                    return Ok(RunPlanResult::reference_rejection(
+                        "invalid_run_reference",
+                        format!(
+                            "Run reference `{trimmed}` is not executable. Copy a reviewed commit reference from plasm or a continuation handle from plasm_run verbatim; run artifact IDs identify observations, not executable plans."
+                        ),
+                    ));
+                }
+            };
 
-        let host = self.build_host_state(transport)?;
-        let live_result = plasm_agent_core::plan_authorization::execute_authorized(
-            &es,
-            &host,
-            authorization.as_ref(),
-            Box::pin(run_plasm_comp(
+            let host = self.build_host_state(Some(transport))?;
+            self.workflow_config
+                .register(
+                    &host,
+                    &es,
+                    &self.session_id,
+                    self.execute_session_id.as_str(),
+                    &self.intent_turns,
+                )
+                .await?;
+            let execution = plasm_agent_core::plan_authorization::execute_authorized(
                 &es,
                 &host,
-                AGENT_PROMPT_HASH,
-                &self.session_id,
-                &bundle,
-                true,
-                None,
-                None,
-                Some(dry),
-                Some(plasm_agent_core::McpResultTransportPolicy {
-                    artifact_access: plasm_agent_core::ArtifactAccessMode::DagCompute,
-                    ..Default::default()
-                }),
-            )),
-        )
-        .await;
-        let live = match live_result {
-            Ok(live) => live,
-            Err(failure) => {
-                return Ok(RunPlanResult {
-                    ok: false,
-                    message: plasm_agent_core::agent_presentation::render_failure(&failure)
-                        .into_string(),
-                    rows_json: None,
-                    meta_json: None,
-                    artifacts_json: None,
-                    failure_json: Some(serde_json::to_string(&failure)?),
-                })
-            }
-        };
+                authorization.as_ref(),
+                Box::pin(run_plasm_comp(
+                    &es,
+                    &host,
+                    AGENT_PROMPT_HASH,
+                    self.execute_session_id.as_str(),
+                    &bundle,
+                    true,
+                    None,
+                    None,
+                    Some(dry),
+                    Some(plasm_agent_core::McpResultTransportPolicy {
+                        artifact_access: plasm_agent_core::ArtifactAccessMode::DagCompute,
+                        ..Default::default()
+                    }),
+                )),
+            );
+            let live_result = if self.workflow_config.mode() == NativeLearningMode::Collect {
+                plasm_agent_core::workflow_learning::native::observe_execution(
+                    &host,
+                    &es,
+                    self.execute_session_id.as_str(),
+                    &bundle,
+                    execution,
+                )
+                .await
+            } else {
+                execution.await
+            };
+            let live = match live_result {
+                Ok(live) => live,
+                Err(failure) => {
+                    return Ok(RunPlanResult {
+                        ok: false,
+                        message: plasm_agent_core::agent_presentation::render_failure(&failure)
+                            .into_string(),
+                        rows_json: None,
+                        meta_json: None,
+                        artifacts_json: None,
+                        failure_json: Some(serde_json::to_string(&failure)?),
+                    });
+                }
+            };
 
-        let publication: Result<RunPlanResult> = async {
-            let message = live
-                .run_markdown
-                .clone()
-                .unwrap_or_else(|| format!("Live run completed for `{trimmed}`."));
-            let mut artifacts = Vec::new();
-            for artifact in &live.code_plan_run_artifacts {
-                let id =
-                    plasm_agent_core::run_artifacts::RunArtifactId::from_wire(&artifact.run_id)
-                        .ok_or(AgentEngineError::InvalidRunArtifactId)?;
-                let payload = host
-                    .run_artifacts
-                    .get_payload_result(AGENT_PROMPT_HASH, &self.session_id, id)
-                    .await
-                    .map_err(AgentEngineError::RunArtifact)?
-                    .ok_or(AgentEngineError::RunArtifactMissing)?;
-                artifacts.push(serde_json::json!({
-                    "run_id": artifact.run_id,
-                    "producer_binding": artifact.node_id,
-                    "reusable": es.recorded_output_reusable(id).await,
-                    "snapshot": serde_json::from_slice::<serde_json::Value>(&payload.bytes)?,
-                }));
-            }
-            Ok(RunPlanResult {
-                ok: true,
-                message,
-                rows_json: live_run_rows_json(&live)?,
-                meta_json: live_run_meta_json(&live),
-                failure_json: None,
-                artifacts_json: Some(serde_json::to_string(&artifacts)?),
-            })
-        }
-        .await;
-        match publication {
-            Ok(result) => Ok(result),
-            Err(error) => {
-                let mut failure = plasm_runtime::ExecutionFailure::new(
-                    plasm_runtime::FailureCause::Runtime,
-                    "run_publication_failed",
-                    error.to_string(),
-                );
-                for step in &live.return_steps {
-                    failure = failure.with_effects(&step.result.operations);
+            let publication: Result<RunPlanResult> = async {
+                let message = live
+                    .run_markdown
+                    .clone()
+                    .unwrap_or_else(|| format!("Live run completed for `{trimmed}`."));
+                let mut artifacts = Vec::new();
+                for artifact in &live.code_plan_run_artifacts {
+                    let id =
+                        plasm_agent_core::run_artifacts::RunArtifactId::from_wire(&artifact.run_id)
+                            .ok_or(AgentEngineError::InvalidRunArtifactId)?;
+                    let payload = host
+                        .run_artifacts
+                        .get_payload_result(AGENT_PROMPT_HASH, self.execute_session_id.as_str(), id)
+                        .await
+                        .map_err(AgentEngineError::RunArtifact)?
+                        .ok_or(AgentEngineError::RunArtifactMissing)?;
+                    artifacts.push(serde_json::json!({
+                        "run_id": artifact.run_id,
+                        "producer_binding": artifact.node_id,
+                        "reusable": es.recorded_output_reusable(id).await,
+                        "snapshot": serde_json::from_slice::<serde_json::Value>(&payload.bytes)?,
+                    }));
                 }
                 Ok(RunPlanResult {
-                    ok: false,
-                    message: plasm_agent_core::agent_presentation::render_failure(&failure)
-                        .into_string(),
-                    rows_json: None,
-                    meta_json: None,
-                    artifacts_json: None,
-                    failure_json: Some(serde_json::to_string(&failure)?),
+                    ok: true,
+                    message,
+                    rows_json: live_run_rows_json(&live)?,
+                    meta_json: live_run_meta_json(&live),
+                    failure_json: None,
+                    artifacts_json: Some(serde_json::to_string(&artifacts)?),
                 })
             }
-        }
+            .await;
+            match publication {
+                Ok(result) => Ok(result),
+                Err(error) => {
+                    let mut failure = plasm_runtime::ExecutionFailure::new(
+                        plasm_runtime::FailureCause::Runtime,
+                        "run_publication_failed",
+                        error.to_string(),
+                    );
+                    for step in &live.return_steps {
+                        failure = failure.with_effects(&step.result.operations);
+                    }
+                    Ok(RunPlanResult {
+                        ok: false,
+                        message: plasm_agent_core::agent_presentation::render_failure(&failure)
+                            .into_string(),
+                        rows_json: None,
+                        meta_json: None,
+                        artifacts_json: None,
+                        failure_json: Some(serde_json::to_string(&failure)?),
+                    })
+                }
+            }
+        });
+        operation.await
     }
 
     fn build_host_state(
-        &self,
-        transport: Arc<dyn HttpTransport>,
+        &mut self,
+        transport: Option<Arc<dyn HttpTransport>>,
     ) -> Result<plasm_agent_core::server_state::PlasmHostState> {
         let pairs: Vec<RegistryEntryPair> = self
             .catalogs
@@ -950,18 +1162,36 @@ impl AgentEngine {
             ..ExecutionConfig::default()
         };
         config.apply_http_env_overrides();
-        let engine = ExecutionEngine::new_with_transport(config, transport, None);
-        let mut state = build_plasm_host_state(PlasmHostBootstrap {
-            engine,
-            mode: ExecutionMode::Live,
-            registry: Arc::new(registry),
-            catalog_bootstrap: CatalogBootstrap::Fixed,
-            incoming_auth: None,
-            run_artifacts: Arc::new(RunArtifactStore::memory()),
-            session_graph_persistence: None,
-            oss_local_filesystem_defaults: false,
-        })?;
+        if let Some(existing) = &self.host {
+            let mut state = existing.clone();
+            if let Some(transport) = transport {
+                state.oss.engine =
+                    Arc::new(ExecutionEngine::new_with_transport(config, transport, None));
+            }
+            return Ok(state);
+        }
+        let engine = ExecutionEngine::new(config.clone())?;
+        let mut state = build_plasm_host_state_with_learning(
+            PlasmHostBootstrap {
+                engine,
+                mode: ExecutionMode::Live,
+                registry: Arc::new(registry),
+                catalog_bootstrap: CatalogBootstrap::Fixed,
+                incoming_auth: None,
+                run_artifacts: Arc::new(RunArtifactStore::memory()),
+                session_graph_persistence: None,
+                oss_local_filesystem_defaults: false,
+            },
+            self.workflow_config.learning(),
+        )?;
         state.oss.python_pool = self.python_pool.clone();
+        // Retain shared session/evidence state, never the per-call JS callback:
+        // a referenced NAPI threadsafe function keeps the Node event loop alive.
+        self.host = Some(state.clone());
+        if let Some(transport) = transport {
+            state.oss.engine =
+                Arc::new(ExecutionEngine::new_with_transport(config, transport, None));
+        }
         Ok(state)
     }
 
@@ -1048,7 +1278,10 @@ impl AgentEngine {
             cgs,
             contexts_by_entry,
             primary_api,
-            String::new(),
+            self.workflow_config
+                .library()
+                .map(|c| c.scope.tenant.clone())
+                .unwrap_or_default(),
             String::new(),
             None,
             entities,
@@ -1418,7 +1651,10 @@ mod tests {
             .run_plan_live(&dry.plan_commit_ref, Arc::new(MockProductListTransport))
             .await
             .unwrap();
-        assert!(!repeated.ok, "consumed authorization must not execute again");
+        assert!(
+            !repeated.ok,
+            "consumed authorization must not execute again"
+        );
         let fresh = engine.dry_run("class Verify(Program):\n    @compute\n    def check(self, rows: list[Row]) -> bool:\n        return len(rows) == 1\n    def build(self):\n        observed = e1.query()\n        verified = self.check(observed)\n        return verified\n").await.unwrap();
         assert_ne!(dry.plan_commit_ref, fresh.plan_commit_ref);
         assert_eq!(dry.comp_json, fresh.comp_json);
@@ -1793,6 +2029,138 @@ mod tests {
         > {
             Err(plasm_runtime::error::RuntimeError::LiveAbsolutePaginationRequired)
         }
+    }
+
+    #[test]
+    fn export_native_workflow_fixture() {
+        let Some(directory) = std::env::var_os("PLASM_NATIVE_LEARNING_FIXTURE_OUT") else {
+            return;
+        };
+        let directory = PathBuf::from(directory);
+        std::fs::create_dir_all(&directory).unwrap();
+        let (engine, _) = tiny_engine();
+        let cgs = engine.catalogs["matrix"].as_ref();
+        let compiled = engine.compiled_catalogs["matrix"].as_ref();
+        let write =
+            |name: &str, bytes: Vec<u8>| std::fs::write(directory.join(name), bytes).unwrap();
+        write("matrix.cgs.json", serde_json::to_vec(cgs).unwrap());
+        let recipes = serde_json::to_vec(compiled).unwrap();
+        let recipes_hash = plasm_core::catalog_discovery::content_hash(&recipes);
+        write("matrix.recipes.json", recipes);
+        let profile = plasm_core::catalog_discovery::EmbeddingProfile::default();
+        let discovery = plasm_core::catalog_discovery::CatalogDiscoveryArtifact {
+            entry_id: "matrix".into(),
+            cgs_hash: cgs.catalog_cgs_hash_hex(),
+            renderer_version: plasm_core::catalog_discovery::DISCOVERY_RENDERER_VERSION,
+            capabilities: plasm_core::catalog_discovery::capability_documents(cgs)
+                .unwrap()
+                .into_iter()
+                .enumerate()
+                .map(|(index, document)| {
+                    let mut embedding = vec![0.0; profile.dimensions];
+                    embedding[index % profile.dimensions] = 1.0;
+                    plasm_core::catalog_discovery::EmbeddedCapability {
+                        document,
+                        embedding,
+                    }
+                })
+                .collect(),
+            profile: profile.clone(),
+            prerequisites: cgs.prerequisites.clone(),
+        };
+        discovery.validate(cgs).unwrap();
+        let discovery = serde_json::to_vec(&discovery).unwrap();
+        let manifest = plasm_core::catalog_il::CatalogManifest {
+            format_version: 3,
+            entry_id: "matrix".into(),
+            version: cgs.version,
+            cgs_hash: cgs.catalog_cgs_hash_hex(),
+            label: "Native workflow fixture".into(),
+            tags: vec![],
+            cgs_json: "matrix.cgs.json".into(),
+            recipes_json: "matrix.recipes.json".into(),
+            recipes_hash,
+            discovery_json: "matrix.discovery.json".into(),
+            discovery_hash: plasm_core::catalog_discovery::content_hash(&discovery),
+            embedding_profile: plasm_core::catalog_discovery::EmbeddingProfile::default(),
+        };
+        write("matrix.discovery.json", discovery);
+        write(
+            "matrix.manifest.json",
+            serde_json::to_vec_pretty(&manifest).unwrap(),
+        );
+    }
+
+    #[tokio::test]
+    async fn native_collect_seals_executed_source_and_scoped_receipts() {
+        let Ok(url) = std::env::var("PLASM_TEST_POSTGRES_URL") else {
+            return;
+        };
+        let (mut engine, info) = tiny_engine();
+        engine.session_id =
+            plasm_agent_core::session_identity::LogicalSessionId::new_v4().to_string();
+        let config = NativeLearningConfig::Collect(
+            plasm_agent_core::workflow_learning::native::NativeLibraryConfig {
+                scope: plasm_agent_core::workflow_learning::model::LibraryScope {
+                    tenant: format!("native-{}", engine.session_id),
+                    project: "offline".into(),
+                },
+                database_url: url,
+            },
+        );
+        engine.configure_workflow_learning(config.clone()).unwrap();
+        engine
+            .expose_seeds(
+                "Inspect fixture products",
+                &[CapabilitySeed {
+                    entry_id: info.entry_id,
+                    entity: "Product".into(),
+                }],
+            )
+            .unwrap();
+        let source = "class Inspect(Program):\n    def build(self):\n        return e1.query()\n";
+        let dry = engine.dry_run(source).await.unwrap();
+        assert!(dry.fused_clean_read);
+        let transport = Arc::new(MockProductListTransport);
+        let released_transport = Arc::downgrade(&transport);
+        let result = engine
+            .run_plan_live(&dry.plan_commit_ref, transport)
+            .await
+            .unwrap();
+        assert!(result.ok, "{}", result.message);
+        assert!(
+            released_transport.upgrade().is_none(),
+            "persistent evidence host must release per-call transport"
+        );
+        let index: serde_json::Value =
+            serde_json::from_str(&engine.completed_workflow_runs().await.unwrap()).unwrap();
+        let runs = index["runs"].as_array().unwrap();
+        assert!(!runs.is_empty());
+        let run_id = runs[0]["run_id"].as_str().unwrap();
+        let receipt: serde_json::Value =
+            serde_json::from_str(&engine.read_workflow_evidence(run_id).await.unwrap()).unwrap();
+        assert_eq!(receipt["source"], source.trim());
+        assert_eq!(receipt["scope"]["tenant"], config.scope().unwrap().tenant);
+        let review = serde_json::json!({"subtasks":[{"intent":"Inspect fixture products","observed_outcome":"Observed fixture product p1","run_ids":[run_id]}]});
+        let sealed: serde_json::Value =
+            serde_json::from_str(&engine.review_workflow(&review.to_string()).await.unwrap())
+                .unwrap();
+        assert!(sealed["review_ref"].is_string());
+        let invalid = serde_json::json!({"subtasks":[{"intent":"Unobserved","observed_outcome":"No evidence","run_ids":["missing"]}]});
+        assert!(engine.review_workflow(&invalid.to_string()).await.is_err());
+        let repository = config.learning().repository().await.unwrap();
+        let session_id = engine.session_id.clone();
+        engine.python_pool.close().await;
+        drop(engine);
+        // Durable receipts remain after the producing native engine is gone.
+        assert!(!repository
+            .execution_receipts(
+                &config.scope().unwrap(),
+                plasm_agent_core::session_identity::LogicalSessionId::parse(&session_id).unwrap()
+            )
+            .await
+            .unwrap()
+            .is_empty());
     }
 
     #[tokio::test]

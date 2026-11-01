@@ -17,6 +17,7 @@ pub(crate) mod literal_operands;
 #[cfg(test)]
 mod literal_tests;
 mod membership;
+pub(crate) mod operand_evidence;
 pub(crate) mod projection;
 pub(crate) mod quantifiers;
 mod reads;
@@ -66,6 +67,7 @@ fn lower_python_program(
         spans: BTreeMap::new(),
         compute_origins: BTreeMap::new(),
         recorded_outputs: BTreeMap::new(),
+        admitted_operands: Vec::new(),
     };
     // Upstream lexical scope includes declarations after return. Reserved host
     // bindings cannot be shadowed even by an unreachable local assignment.
@@ -202,7 +204,9 @@ fn lower_python_program(
     );
     // Declarations have no effects. Only emitted invocations require a sealed
     // input/output contract; text_compute_source checks each actual callsite.
-    let bundle = PlasmCompBundle::new(artifact)?;
+    let bundle = PlasmCompBundle::new(artifact)?
+        .with_source(source)
+        .with_python_operands(lower.admitted_operands);
 
     Ok(bundle)
 }
@@ -247,7 +251,7 @@ pub(crate) fn compile_python_program_checked(
     let bundle = lower_python_program(es, source, ast.suite())
         .map_err(|error| ProgramStageError::PythonLowering { error })?;
     crate::plasm_plan_run::evaluate_plasm_comp_dry(es, &bundle)?;
-    Ok(bundle)
+    Ok(bundle.capture_compilation_symbols(es))
 }
 
 #[derive(Default)]
@@ -303,6 +307,7 @@ struct Lower<'a> {
     spans: BTreeMap<String, serde_json::Value>,
     compute_origins: BTreeMap<String, crate::program_rejection::ReceiverIdentityOrigin>,
     recorded_outputs: BTreeMap<String, RecordedOutputOrigin>,
+    admitted_operands: Vec<operand_evidence::AdmittedOperand>,
 }
 impl Lower<'_> {
     fn expression_placement(&self, expression: &PyExpr) -> ExpressionPlacement {

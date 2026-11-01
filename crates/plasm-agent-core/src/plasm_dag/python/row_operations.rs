@@ -64,6 +64,12 @@ impl Lower<'_> {
                     ));
                 }
                 let page_size = integer(&call.arguments.args[0])?;
+                self.record_operand(
+                    &call.arguments.args[0],
+                    operand_evidence::OperandMeaning::Fixed(
+                        operand_evidence::FixedOperand::Cardinality,
+                    ),
+                );
                 let size = u32::try_from(page_size)
                     .ok()
                     .filter(|n| *n > 0)
@@ -114,14 +120,21 @@ impl Lower<'_> {
                 if call.arguments.args.is_empty() {
                     return Err(at(e, PythonSourceError::SelectFieldsMissing));
                 }
-                RowSuffix::Project {
-                    fields: call
-                        .arguments
-                        .args
-                        .iter()
-                        .map(string)
-                        .collect::<Result<_, _>>()?,
+                let fields = call
+                    .arguments
+                    .args
+                    .iter()
+                    .map(string)
+                    .collect::<Result<_, _>>()?;
+                for argument in &call.arguments.args {
+                    self.record_operand(
+                        argument,
+                        operand_evidence::OperandMeaning::Fixed(
+                            operand_evidence::FixedOperand::FieldSelection,
+                        ),
+                    );
                 }
+                RowSuffix::Project { fields }
             }
             OrderBy => {
                 if call.arguments.args.len() != 1 || call.arguments.keywords.len() > 1 {
@@ -134,6 +147,12 @@ impl Lower<'_> {
                     ));
                 }
                 let key = string(&call.arguments.args[0])?;
+                self.record_operand(
+                    &call.arguments.args[0],
+                    operand_evidence::OperandMeaning::Fixed(
+                        operand_evidence::FixedOperand::FieldSelection,
+                    ),
+                );
                 let descending = match call.arguments.keywords.first() {
                     None => false,
                     Some(keyword)
@@ -145,6 +164,12 @@ impl Lower<'_> {
                         let PyExpr::BooleanLiteral(value) = &keyword.value else {
                             return Err(at(e, PythonSourceError::DescendingRequiresBoolean));
                         };
+                        self.record_operand(
+                            &keyword.value,
+                            operand_evidence::OperandMeaning::Fixed(
+                                operand_evidence::FixedOperand::InvocationControl,
+                            ),
+                        );
                         value.value
                     }
                     _ => {
@@ -188,6 +213,12 @@ impl Lower<'_> {
                     },
                     Take => {
                         let take = integer(&call.arguments.args[0])?;
+                        self.record_operand(
+                            &call.arguments.args[0],
+                            operand_evidence::OperandMeaning::Fixed(
+                                operand_evidence::FixedOperand::Cardinality,
+                            ),
+                        );
                         let count = u32::try_from(take).ok().ok_or_else(|| {
                             at(e, PythonSourceError::InvalidTakeBound { value: take })
                         })?;

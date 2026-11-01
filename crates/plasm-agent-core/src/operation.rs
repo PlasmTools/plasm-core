@@ -353,6 +353,9 @@ pub enum OperationPollSnapshot {
 
 #[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize)]
 pub struct PlanCommitDryCache {
+    /// Immutable compiler-time symbol authority, carried outside semantic plan identity.
+    #[serde(default)]
+    pub compilation_symbols: crate::program_symbol_context::CompilationSymbolContext,
     #[serde(default)]
     pub version: serde_json::Value,
     #[serde(default)]
@@ -392,6 +395,7 @@ impl PlanCommitDryCache {
         )
         .to_hex();
         Self {
+            compilation_symbols: dry.compilation_symbols.clone(),
             version: dry.version.clone(),
             name: dry.name.clone(),
             topological_order: dry.topological_order.clone(),
@@ -887,26 +891,37 @@ async fn run_plasm_comp_on_pool(
     telemetry: Arc<plasm_runtime::LiveRunTelemetry>,
     dry: Option<DryPlasmPlanEvaluation>,
 ) -> Result<PlasmPlanRunResult, plasm_runtime::ExecutionFailure> {
-    pool.run(move || async move {
-        plasm_runtime::with_live_run_telemetry(telemetry, async move {
-            crate::plasm_plan_run::run_plasm_comp_python(
-                es.as_ref(),
-                st.as_ref(),
-                prompt_hash.as_str(),
-                session_id.as_str(),
-                &bundle,
-                true,
-                plan_hooks,
-                Some(&scope),
-                dry,
-                mcp_result_policy,
-            )
-            .await
-        })
+    pool.run_local(move || async move {
+        crate::workflow_learning::execution::observe_execution(
+            &st,
+            &es,
+            &session_id,
+            &bundle,
+            plasm_runtime::with_live_run_telemetry(telemetry, async {
+                crate::plasm_plan_run::run_plasm_comp_python(
+                    es.as_ref(),
+                    st.as_ref(),
+                    prompt_hash.as_str(),
+                    session_id.as_str(),
+                    &bundle,
+                    true,
+                    plan_hooks,
+                    Some(&scope),
+                    dry,
+                    mcp_result_policy,
+                )
+                .await
+            }),
+        )
         .await
     })
     .await
-    .map_err(crate::live_plan_run_worker::LivePlanRunError::into_execution_failure)
+    .map_err(|error| {
+        crate::live_plan_run_worker::LivePlanRunError::<plasm_runtime::ExecutionFailure>::from(
+            error,
+        )
+        .into_execution_failure()
+    })?
 }
 
 /// Start a background live plan run; poll with `wait(handle)` / cancel with `cancel(handle)`.
@@ -975,7 +990,9 @@ pub fn spawn_async_plan_run(
         )
         .await;
         ticker_cancel.cancel();
-        let _ = ticker.await;
+        if let Err(error) = ticker.await {
+            tracing::warn!(%error, "operation progress ticker did not finish cleanly");
+        }
         es.clear_live_run_telemetry();
         match result {
             Ok(out) => {

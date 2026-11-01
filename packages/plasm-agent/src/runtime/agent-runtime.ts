@@ -36,10 +36,12 @@ import { createAgentStateStore } from "../state/define-state.js";
 import { DiscoveryQueue } from "./discovery-queue.js";
 import { formatRecordedOutputs, runOutputArtifactSchema } from "../tools/recorded-outputs.js";
 import { checkObligationEvidence, sameObligationPredicate, type ObligationVerification, type EvidenceCheck } from "../tools/obligation-evidence.js";
+import { workflowLearningConfigSchema, workflowReviewInputSchema, type WorkflowLearningConfig, type WorkflowReviewSession } from "./workflow-learning.js";
 
 export type AgentArchiveStore = LocalArchiveStore | ProdArchiveStore;
 
 export interface AgentRuntimeConfig {
+  workflowLearning?: WorkflowLearningConfig;
   agentRoot: string;
   /** Optional first intent supplied by the embedding workflow. */
   initialIntent?: string;
@@ -204,10 +206,84 @@ export class AgentRuntime {
     return checked.ok && stillCurrent ? { ok: true, current: stillCurrent } : checked;
   }
   private readonly lifecycle = new DrainingLifecycle();
+  private readonly reviewLifecycle = new DrainingLifecycle();
+  private readonly learningConfig: WorkflowLearningConfig;
+  private learningConfigured?: Promise<void>;
+  private reviewSession?: Promise<WorkflowReviewSession>;
+  private readonly learningSessions = new Map<string, string>();
+
+  private configureLearning(): Promise<void> {
+    this.learningConfigured ??= this.engine.learning
+      ? this.engine.learning.configure(this.learningConfig)
+      : this.learningConfig.mode === "baseline" ? Promise.resolve()
+        : Promise.reject(new Error("Native engine does not support workflow learning"));
+    return this.learningConfigured;
+  }
+
+  beginWorkflowReview(): Promise<WorkflowReviewSession> {
+    if (this.learningConfig.mode !== "collect") return Promise.reject(new Error("Workflow review requires collect mode"));
+    this.reviewSession ??= this.enterWorkflowReview();
+    return this.reviewSession;
+  }
+
+  private async enterWorkflowReview(): Promise<WorkflowReviewSession> {
+    await this.lifecycle.drain();
+    await this.configureLearning();
+    const learning = this.engine.learning;
+    if (!learning) throw new Error("Native engine does not support workflow learning");
+    await learning.drain();
+    const sessionId = (ref: string): string => {
+      const id = this.learningSessions.get(logicalSessionRefSchema.parse(ref));
+      if (!id) throw new Error("Review session does not belong to this runtime");
+      return id;
+    };
+    return Object.freeze({
+      completedRuns: () => this.reviewLifecycle.run(async () => ({ sessions: await Promise.all(
+        [...this.learningSessions].map(async ([ref, id]) => ({
+          ...await learning.completedRuns(id), logical_session_ref: logicalSessionRefSchema.parse(ref),
+        })),
+      ) })),
+      readEvidence: (ref: string, run: string) => this.reviewLifecycle.run(() => learning.readEvidence(sessionId(ref), run)),
+      submitReview: (input: Parameters<WorkflowReviewSession["submitReview"]>[0]) => this.reviewLifecycle.run(() => {
+        const checked = workflowReviewInputSchema.parse(input);
+        return learning.review(sessionId(checked.logical_session_ref), checked.subtasks);
+      }),
+    });
+  }
+
+  workflowExampleServingEnabled(): boolean { return this.learningConfig.mode === "examples"; }
+
+  plasmExample(input: { logicalSessionRef: string; revisionRef: string }): Promise<string> {
+    const { logicalSessionRef, revisionRef } = input;
+    return this.lifecycle.run(async () => {
+      if (!this.workflowExampleServingEnabled()) throw new Error("Example fetch is disabled for this runtime");
+      const session = await this.requireSessionByRef(logicalSessionRef);
+      const learning = this.engine.learning;
+      if (!learning) throw new Error("Native engine does not support workflow learning");
+      const example = await learning.fetchExample(session.logicalSessionId, revisionRef);
+      const exposed = example.delta_refs.map(ref => {
+        const separator = ref.indexOf(":");
+        if (separator < 1) throw new Error("Invalid example teaching entity reference");
+        return { api: ref.slice(0, separator), entity: ref.slice(separator + 1) };
+      });
+      session.seeds = mergeSeeds(session.seeds, exposed);
+      if (example.teaching_delta.trim()) {
+        session.teachingPrompt = [session.teachingPrompt.trim(), example.teaching_delta.trim()].filter(Boolean).join("\n\n");
+        session.waves.push({ entryId: exposed[0]?.api ?? session.seeds[0]?.api ?? "unknown",
+          entities: exposed.map(entry => entry.entity), prompt: example.teaching_delta, at: new Date().toISOString() });
+      }
+      await this.sessionManager.update(session);
+      this.workflowSession = session;
+      return JSON.stringify(example);
+    });
+  }
 
   /** Stop new admissions, drain accepted work and close the owned engine. */
   close(): Promise<void> {
-    return this.lifecycle.close(() => this.engine.close());
+    return this.lifecycle.close(async () => {
+      await this.reviewSession?.catch(() => undefined);
+      await this.reviewLifecycle.close(() => this.engine.close());
+    });
   }
 
   private readonly engineInstanceId = randomUUID();
@@ -247,6 +323,7 @@ export class AgentRuntime {
   }
 
   constructor(config: AgentRuntimeConfig) {
+    this.learningConfig = workflowLearningConfigSchema.parse(config.workflowLearning ?? { mode: "baseline" });
     this.agentRoot = path.resolve(config.agentRoot);
     this.initialProvenance = config.initialIntent === undefined ? undefined : deriveIntent(undefined, workflowIntentSchema.parse(config.initialIntent));
     this.engine = config.engine ?? createEngine();
@@ -286,6 +363,7 @@ export class AgentRuntime {
   }
 
   private async bootstrapAdmitted(): Promise<LoadedCatalog[]> {
+    await this.configureLearning();
     if (this.archive) {
       await this.archive.bootstrap();
     }
@@ -330,6 +408,7 @@ export class AgentRuntime {
   }
 
   private async plasmContextTurn(input: PlasmContextInput): Promise<string> {
+    await this.configureLearning();
     const intent = workflowIntentSchema.parse(input.intent);
     const mode = input.sessionMode ?? "new";
     if (!intent) throw new Error("plasm_context requires intent");
@@ -347,6 +426,12 @@ export class AgentRuntime {
         existing?.logicalSessionId,
       );
       const { routing, teaching } = packet;
+      if (packet.workflow_examples?.length && !this.workflowExampleServingEnabled()) {
+        throw new Error("Native discovery disclosed examples in a mode that forbids them");
+      }
+      const examplesMarkdown = packet.workflow_examples?.length
+        ? `Optional workflow examples (fetch with plasm_example):\n${JSON.stringify(packet.workflow_examples)}`
+        : undefined;
       if (JSON.stringify(routing.intent_provenance) !== JSON.stringify(provenance)) throw new Error("Routing changed intent provenance");
       if (existing && (existing.logicalSessionId !== routing.pin_id
         || existing.registryGeneration !== routing.retrieval.generation)) {
@@ -361,6 +446,7 @@ export class AgentRuntime {
       session.registryGeneration = routing.retrieval.generation;
       await this.sessionManager.update(session);
       this.workflowSession = session;
+      this.learningSessions.set(session.logicalSessionRef, session.logicalSessionId);
       const recoveryMarkdown = routingRecoveryMarkdown(routing);
       if (!routing.closure) {
         await this.recordToolTrace("tool", "plasm_context", started, {
@@ -372,6 +458,7 @@ export class AgentRuntime {
           recoveryMarkdown ?? "**plasm_context:** no relevant capabilities selected",
           `**logical_session_ref:** \`${session.logicalSessionRef}\``,
           ...(recoveryMarkdown ? [] : routingExplanationLines(routing.matching)),
+          examplesMarkdown,
         ].filter(Boolean).join("\n\n");
       }
       if (!teaching || (!teaching.prompt.trim() && (!existing || teaching.declarations_changed))) {
@@ -404,7 +491,7 @@ export class AgentRuntime {
         session.logicalSessionRef, teaching.prompt,
         !existing ? "initial" : teaching.declarations_changed ? "extended" : "unchanged",
       );
-      return [routing.intent_analysis, teachingMarkdown, recoveryMarkdown].filter(Boolean).join("\n\n");
+      return [routing.intent_analysis, teachingMarkdown, recoveryMarkdown, examplesMarkdown].filter(Boolean).join("\n\n");
     });
   }
 

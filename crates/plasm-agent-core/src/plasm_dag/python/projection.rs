@@ -22,6 +22,12 @@ impl Lower<'_> {
         let mut fields = BTreeMap::new();
         for argument in &call.arguments.args {
             let field = string(argument)?;
+            self.record_operand(
+                argument,
+                operand_evidence::OperandMeaning::Fixed(
+                    operand_evidence::FixedOperand::FieldSelection,
+                ),
+            );
             let expr = ruff_python_parser::parse_expression(&format!("{parameter}.field"))
                 .map_err(PythonLoweringError::parse_error)?;
             let mut expr = *expr.into_syntax().body;
@@ -54,6 +60,12 @@ impl Lower<'_> {
                     .body
             } else {
                 let field = string(&keyword.value)?;
+                self.record_operand(
+                    &keyword.value,
+                    operand_evidence::OperandMeaning::Fixed(
+                        operand_evidence::FixedOperand::FieldSelection,
+                    ),
+                );
                 let expr = ruff_python_parser::parse_expression(&format!("{parameter}.field"))
                     .map_err(PythonLoweringError::parse_error)?;
                 let mut expr = *expr.into_syntax().body;
@@ -145,6 +157,12 @@ impl Lower<'_> {
         let mut fields = BTreeMap::new();
         for argument in &call.arguments.args {
             let name = string(argument)?;
+            self.record_operand(
+                argument,
+                operand_evidence::OperandMeaning::Fixed(
+                    operand_evidence::FixedOperand::FieldSelection,
+                ),
+            );
             let value = self.projection_field(source, &name)?;
             if fields.insert(name.clone(), value).is_some() {
                 return Err(at(
@@ -160,6 +178,12 @@ impl Lower<'_> {
                 .ok_or(crate::program_rejection::PythonLoweringInvariantError::ProjectionUnpackingNotAdmitted)?
                 .to_string();
             let value = self.projection_field(source, &string(&keyword.value)?)?;
+            self.record_operand(
+                &keyword.value,
+                operand_evidence::OperandMeaning::Fixed(
+                    operand_evidence::FixedOperand::FieldSelection,
+                ),
+            );
             if fields.insert(alias.clone(), value).is_some() {
                 return Err(at(
                     site,

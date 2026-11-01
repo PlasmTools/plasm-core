@@ -285,6 +285,15 @@ async fn hot_behind_durable_rehydrates_to_plan_revision() {
         )
         .await;
 
+    assert!(matches!(
+        crate::workflow_learning::serving::synchronized_hot_session(
+            &host,
+            created.prompt_hash.as_str(),
+            created.session.as_str()
+        )
+        .await,
+        Err(crate::workflow_learning::serving::ServingError::ContextRequired)
+    ));
     let recovered = host
         .get_execute_session(created.prompt_hash.as_str(), created.session.as_str())
         .await
@@ -503,4 +512,308 @@ async fn replace_execute_session_persists_before_hot_advance() {
     assert_eq!(hot.domain_revision, next.domain_revision);
     assert!(durable.prompt_text.contains("fail-closed wave"));
     assert!(hot.prompt_text.contains("fail-closed wave"));
+}
+
+#[tokio::test]
+async fn example_publication_cancelled_before_hot_update_rehydrates_committed_memory() {
+    let (mut host, created, live) = open_overshow_profile_host().await;
+    host.oss.execute_session_registry =
+        crate::mcp_transport_store::ExecuteSessionRegistry::new_in_memory();
+    // Establish the authoritative memory descriptor without changing exposure.
+    host.replace_execute_session(
+        created.prompt_hash.as_str(),
+        created.session.as_str(),
+        (*live).clone(),
+    )
+    .await
+    .expect("initial publication");
+    let mut next = (*live).clone();
+    next.domain_revision += 1;
+    next.prompt_text.push_str("\n# committed example wave\n");
+    let exposure =
+        crate::execute_session_materialize::build_durable_exposure_snapshot(&host, &next)
+            .await
+            .expect("snapshot");
+    let reuse = host
+        .sessions
+        .reuse_key_for_execute_pair(created.prompt_hash.as_str(), created.session.as_str())
+        .await
+        .expect("reuse key");
+    let receipt = crate::workflow_learning::serving::ServedExample {
+        catalog_fingerprints: Default::default(),
+        outputs: vec![],
+        example_id: uuid::Uuid::new_v4(),
+        source: "example source".into(),
+        teaching_delta: "example declarations".into(),
+        domain_revision: next.domain_revision,
+    };
+    let published = tokio::sync::Notify::new();
+    tokio::select! {
+        _ = async {
+            host.execute_session_registry.persist_example_fetch(&next, created.session.as_str(), &reuse, &exposure, receipt.clone())
+                .await.expect("aggregate publication");
+            published.notify_one();
+            std::future::pending::<()>().await;
+        } => unreachable!("publication future is cancelled before hot update"),
+        _ = published.notified() => {}
+    }
+    assert_eq!(
+        host.sessions
+            .get_by_strs(created.prompt_hash.as_str(), created.session.as_str())
+            .await
+            .expect("old hot")
+            .domain_revision,
+        live.domain_revision
+    );
+    assert!(matches!(
+        crate::workflow_learning::serving::synchronized_hot_session(
+            &host,
+            created.prompt_hash.as_str(),
+            created.session.as_str()
+        )
+        .await,
+        Err(crate::workflow_learning::serving::ServingError::ContextRequired)
+    ));
+    let recovered = host
+        .try_get_execute_session(created.prompt_hash.as_str(), created.session.as_str())
+        .await
+        .expect("lookup")
+        .expect("rehydrated session");
+    assert_eq!(recovered.domain_revision, next.domain_revision);
+    assert!(recovered.prompt_text.contains("committed example wave"));
+    let recovered_receipt = host
+        .execute_session_registry
+        .example_receipt(
+            created.prompt_hash.as_str(),
+            created.session.as_str(),
+            receipt.example_id,
+        )
+        .await
+        .expect("receipt lookup")
+        .expect("receipt");
+    assert_eq!(recovered_receipt.source, receipt.source);
+}
+
+#[tokio::test]
+async fn competing_example_publications_share_one_memory_cas() {
+    let (mut host, created, live) = open_overshow_profile_host().await;
+    host.oss.execute_session_registry =
+        crate::mcp_transport_store::ExecuteSessionRegistry::new_in_memory();
+    host.replace_execute_session(
+        created.prompt_hash.as_str(),
+        created.session.as_str(),
+        (*live).clone(),
+    )
+    .await
+    .expect("initial publication");
+    let mut next = (*live).clone();
+    next.domain_revision += 1;
+    let exposure =
+        crate::execute_session_materialize::build_durable_exposure_snapshot(&host, &next)
+            .await
+            .expect("snapshot");
+    let mut competing_exposure =
+        crate::execute_session_materialize::build_durable_exposure_snapshot(&host, &next)
+            .await
+            .expect("competing snapshot");
+    // Persistence owns byte identity, not compilation: model two distinct
+    // already-validated allocation blobs at the same proposed revision.
+    competing_exposure.symbol_ledger_bytes.push(99);
+    let reuse = host
+        .sessions
+        .reuse_key_for_execute_pair(created.prompt_hash.as_str(), created.session.as_str())
+        .await
+        .expect("reuse key");
+    let make_receipt = || crate::workflow_learning::serving::ServedExample {
+        catalog_fingerprints: Default::default(),
+        outputs: vec![],
+        example_id: uuid::Uuid::new_v4(),
+        source: "example".into(),
+        teaching_delta: "declarations".into(),
+        domain_revision: next.domain_revision,
+    };
+    let (first, second) = tokio::join!(
+        host.execute_session_registry.persist_example_fetch(
+            &next,
+            created.session.as_str(),
+            &reuse,
+            &exposure,
+            make_receipt()
+        ),
+        host.execute_session_registry.persist_example_fetch(
+            &next,
+            created.session.as_str(),
+            &reuse,
+            &competing_exposure,
+            make_receipt()
+        ),
+    );
+    assert_ne!(
+        first.is_ok(),
+        second.is_ok(),
+        "exactly one allocation publishes"
+    );
+    let descriptor = host
+        .execute_session_registry
+        .load(created.prompt_hash.as_str(), created.session.as_str())
+        .await
+        .expect("published descriptor");
+    assert_eq!(descriptor.example_fetch_receipts.len(), 1);
+}
+
+#[tokio::test]
+async fn optional_example_lookup_refuses_cold_session_without_rehydrating() {
+    let (host, created, _) = open_overshow_profile_host().await;
+    host.sessions
+        .remove_by_strs(created.prompt_hash.as_str(), created.session.as_str())
+        .await;
+    assert!(matches!(
+        crate::workflow_learning::serving::synchronized_hot_session(
+            &host,
+            created.prompt_hash.as_str(),
+            created.session.as_str()
+        )
+        .await,
+        Err(crate::workflow_learning::serving::ServingError::ContextRequired)
+    ));
+    assert!(host
+        .sessions
+        .get_by_strs(created.prompt_hash.as_str(), created.session.as_str())
+        .await
+        .is_none());
+    assert!(host
+        .execute_session_registry
+        .load(created.prompt_hash.as_str(), created.session.as_str())
+        .await
+        .is_some());
+}
+
+#[tokio::test]
+async fn memory_learning_watermark_retains_missing_completion_despite_stale_ack() {
+    let (mut host, created, live) = open_overshow_profile_host().await;
+    host.oss.execute_session_registry =
+        crate::mcp_transport_store::ExecuteSessionRegistry::new_in_memory();
+    host.replace_execute_session(
+        created.prompt_hash.as_str(),
+        created.session.as_str(),
+        (*live).clone(),
+    )
+    .await
+    .expect("session");
+    let registry = &host.execute_session_registry;
+    let other = registry.clone();
+    let ph = created.prompt_hash.as_str();
+    let sid = created.session.as_str();
+    assert!(!other
+        .learning_evidence_complete(ph, sid)
+        .await
+        .expect("missing"));
+    let first = registry
+        .begin_learning_execution(ph, sid, "first")
+        .await
+        .expect("begin");
+    assert_eq!(
+        registry
+            .begin_learning_execution(ph, sid, "first")
+            .await
+            .expect("same attempt"),
+        first
+    );
+    assert!(registry
+        .complete_learning_execution(ph, sid, first)
+        .await
+        .expect("complete"));
+    assert!(other
+        .learning_evidence_complete(ph, sid)
+        .await
+        .expect("verified"));
+    let fence = registry
+        .begin_learning_review(ph, sid)
+        .await
+        .expect("review gate");
+    assert!(other
+        .begin_learning_execution(ph, sid, "blocked-by-review")
+        .await
+        .is_err());
+    registry
+        .abort_learning_review(ph, sid, &fence)
+        .await
+        .expect("abort");
+    let newer = other
+        .begin_learning_review(ph, sid)
+        .await
+        .expect("new review");
+    assert!(!registry
+        .seal_learning_review(ph, sid, &fence, "old", "digest")
+        .await
+        .expect("stale fence"));
+    assert!(other
+        .seal_learning_review(ph, sid, &newer, "sealed", "digest")
+        .await
+        .expect("seal"));
+    let _failed = registry
+        .begin_learning_execution(ph, sid, "failed")
+        .await
+        .expect("failure started");
+    let later = other
+        .begin_learning_execution(ph, sid, "later")
+        .await
+        .expect("later started");
+    assert!(!registry
+        .complete_learning_execution(ph, sid, first)
+        .await
+        .expect("stale acknowledgment cannot complete the failed attempt"));
+    assert!(!other
+        .complete_learning_execution(ph, sid, later)
+        .await
+        .expect("incomplete predecessor"));
+    assert!(!other
+        .learning_evidence_complete(ph, sid)
+        .await
+        .expect("retained gap"));
+}
+
+#[tokio::test]
+async fn compiler_symbol_context_survives_durable_commit_rehydration() {
+    let (host, created, es) = open_overshow_profile_host().await;
+    let source = "class Saved(Program):\n    def build(self):\n        return e1.query()\n";
+    let bundle = crate::plasm_compile::compile_program(
+        &Default::default(),
+        None,
+        &es,
+        &created.session,
+        source,
+    )
+    .await
+    .expect("ordinary authored program admission");
+    assert!(bundle.compilation_symbols().captured().is_some());
+    let expected = bundle.compilation_symbols().clone();
+    let dry = crate::plasm_plan_run::evaluate_plasm_comp_dry(&es, &bundle).unwrap();
+    let reference = es.mint_plan_commit_ref();
+    let record = crate::operation::PlanCommitRecord::from_dry_review(
+        reference.clone(),
+        crate::operation::compute_plan_commit_id_from_dry(&dry),
+        es.domain_revision,
+        &dry,
+        source.into(),
+        PlanDryVerdict::Ok,
+        std::time::Instant::now() + PLAN_COMMIT_TTL,
+    )
+    .unwrap();
+    assert_eq!(record.dry_cache.compilation_symbols, expected);
+    register_plan_commit_and_persist(&host, &created.prompt_hash, &created.session, record)
+        .await
+        .unwrap();
+    host.sessions.purge_all().await;
+    let restored = host
+        .get_execute_session(&created.prompt_hash, &created.session)
+        .await
+        .unwrap();
+    let committed = super::resolve_committed_plan(&restored, &reference).unwrap();
+    assert_eq!(committed.dry_cache.compilation_symbols, expected);
+    let restored_bundle = PlasmCompBundle::new(committed.artifact)
+        .unwrap()
+        .with_source(committed.program)
+        .with_compilation_symbols(committed.dry_cache.compilation_symbols);
+    assert_eq!(restored_bundle.compilation_symbols(), &expected);
 }

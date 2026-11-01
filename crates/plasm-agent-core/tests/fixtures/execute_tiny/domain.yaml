@@ -53,6 +53,10 @@ capabilities:
     description: Fetch a product by id
     kind: get
     entity: Product
+    scope:
+    - name: id
+      value_ref: nv_product_id
+      required: true
     provides:
     - id
     - name

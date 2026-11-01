@@ -6,6 +6,9 @@
 //! (full field set or explicit nulls). Wire embeds are transport shortcuts; incomplete embeds
 //! are hydrated via target GET before plan compute (see `plasm_plan_run::relation_hydrate`).
 
+#[path = "relation_materialize_dependencies.rs"]
+pub mod dependencies;
+
 use crate::{Cardinality, EmbedOnMissPolicy, JsonPathSegment, Ref, RelationMaterialization};
 use crate::{Value, ValueRow};
 

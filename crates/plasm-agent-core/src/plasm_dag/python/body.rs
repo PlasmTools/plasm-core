@@ -352,6 +352,7 @@ impl Lower<'_> {
             spans: BTreeMap::new(),
             compute_origins: self.compute_origins.clone(),
             recorded_outputs: BTreeMap::new(),
+            admitted_operands: Vec::new(),
             frame,
             static_sequences: self.static_sequences.clone(),
         };
@@ -520,6 +521,7 @@ impl Lower<'_> {
                 singleton: contract.row_cardinality.permits_scalar_field_extract(),
             });
         }
+        self.admitted_operands.extend(scoped.admitted_operands);
         self.serial = scoped.serial;
         self.static_expansions = scoped.static_expansions;
         let result = CorrelatedBody {

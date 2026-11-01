@@ -8,6 +8,19 @@
  * executor instead of blocking it. Independent logical sessions remain concurrent.
  */
 export declare class PlasmEngine {
+  configureWorkflowLearning(configJson: string): Promise<void>
+  /** Close solve admission while preserving review/evidence calls. */
+  drain(): Promise<void>
+  completedWorkflowRuns(logicalSessionId?: string | undefined | null): Promise<string>
+  readWorkflowEvidence(runId: string, logicalSessionId?: string | undefined | null): Promise<string>
+  reviewWorkflow(requestJson: string, logicalSessionId?: string | undefined | null): Promise<string>
+  fetchWorkflowExample(revisionRef: string, logicalSessionId?: string | undefined | null): Promise<string>
+  /** Host-only corpus administration; not an agent tool. */
+  runWorkflowPromotion(timeoutSeconds: number): Promise<string>
+  /** JSON review batches include examples, catalogue_guidance, and its immutable batch digest, including zero-example reviews. */
+  exportWorkflowProposals(): Promise<string>
+  publishFrozenWorkflowReview(requestJson: string): Promise<string>
+
   /** Stop admission, drain native calls and close pooled Monty workers. */
   close(): Promise<void>
   constructor(montyBinary?: string | undefined | null)

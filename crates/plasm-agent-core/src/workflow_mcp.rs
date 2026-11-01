@@ -20,7 +20,7 @@ use crate::workflow_manifest::WorkflowManifest;
 use crate::workflow_readiness::assess_workflow_readiness;
 use crate::workflow_view_model::{
     build_workflow_view_model_with_readiness, instantiate_workflow_program,
-    sym_exposure_from_entity_symbols, sym_exposure_refs, validate_workflow_view_model,
+    validate_workflow_view_model,
 };
 
 pub const WORKFLOW_UI_URI: &str = "ui://plasm/workflow";
@@ -353,15 +353,15 @@ impl PlasmMcpHandler {
                 "Execute session expired: call `open_workflow` again.",
             ));
         };
-        let entity_symbols = sess
-            .teaching_exposure
-            .as_ref()
-            .map(|ex| ex.symbol_map_arc().exposed_entity_symbol_rows())
-            .unwrap_or_default();
-        let exposure_map = sym_exposure_from_entity_symbols(&entity_symbols);
-        let refs = sym_exposure_refs(&exposure_map);
-        let program = instantiate_workflow_program(&manifest, &template, &params_json, &refs)
-            .map_err(|e| ToolFailure::rejected(e.to_string()))?;
+        let symbols = crate::symbol_map_resolve::resolve_session_symbol_map(
+            &crate::symbol_map_resolve::SessionSymbolMapContext {
+                session: &sess,
+                cross_cache: None,
+            },
+        );
+        let program =
+            instantiate_workflow_program(&manifest, &template, &params_json, symbols.as_ref())
+                .map_err(|e| ToolFailure::rejected(e.to_string()))?;
         let dry_v = json!({
             "logical_session_ref": session_ref,
             "program": program.clone(),

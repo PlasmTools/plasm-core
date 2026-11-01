@@ -7,6 +7,7 @@ import type { LoadedCatalog } from "../catalog/loader.js";
 import { decodeRoutingPacket, type RoutingPacket } from "./routing.js";
 import { toNapiHostTransport } from "./host-transport-bridge.js";
 import { workflowIntentSchema, intentProvenanceSchema, type IntentProvenance } from "../runtime/session-contract.js";
+import { completedWorkflowRunsSchema, workflowReviewReceiptSchema, servedWorkflowExampleSchema, type WorkflowLearningEngine } from "../runtime/workflow-learning.js";
 
 const nodeRequire = createRequire(import.meta.url);
 
@@ -65,6 +66,7 @@ export type HostTransportResponse = {
 export type HostTransportFn = (request: HostTransportRequest) => Promise<HostTransportResponse>;
 
 export interface PlasmEngine {
+  readonly learning?: WorkflowLearningEngine;
   /** Close admission and drain all accepted native work before releasing workers. */
   close(): Promise<void>;
   loadCatalog(catalog: LoadedCatalog): Promise<void>;
@@ -86,6 +88,12 @@ export interface PlasmEngine {
 }
 
 type NativePlasmEngine = {
+  configureWorkflowLearning(configJson: string): Promise<void>;
+  drain(): Promise<void>;
+  completedWorkflowRuns(logicalSessionId: string): Promise<string>;
+  readWorkflowEvidence(runId: string, logicalSessionId: string): Promise<string>;
+  reviewWorkflow(requestJson: string, logicalSessionId: string): Promise<string>;
+  fetchWorkflowExample(revisionRef: string, logicalSessionId: string): Promise<string>;
   close(): Promise<void>;
   loadCatalog(catalogDir: string): Promise<{
     entryId: string;
@@ -142,6 +150,14 @@ function loadNativeConstructor(): NativeConstructor | null {
 export class NapiPlasmEngine implements PlasmEngine {
   private readonly native: NativePlasmEngine;
   private loaded: LoadedCatalog[] = [];
+  readonly learning: WorkflowLearningEngine = {
+    configure: config => this.native.configureWorkflowLearning(JSON.stringify(config)),
+    drain: () => this.native.drain(),
+    completedRuns: async id => completedWorkflowRunsSchema.parse(JSON.parse(await this.native.completedWorkflowRuns(id))),
+    readEvidence: async (id, run) => JSON.parse(await this.native.readWorkflowEvidence(run, id)) as unknown,
+    review: async (id, subtasks) => workflowReviewReceiptSchema.parse(JSON.parse(await this.native.reviewWorkflow(JSON.stringify({ subtasks }), id))),
+    fetchExample: async (id, revision) => servedWorkflowExampleSchema.parse(JSON.parse(await this.native.fetchWorkflowExample(revision, id))),
+  };
 
   close(): Promise<void> {
     return this.native.close();

@@ -9,6 +9,9 @@ mod open;
 mod seeds_apply;
 mod symbol_ledger;
 
+pub(crate) use commit::{stage_exposure_wave_delta, ExposureWaveSnapshot};
+pub(crate) use federate::prepare_federate_wave;
+
 pub use expand::{expand_execute_teaching_session, ExpandTeachingWaveResult};
 pub(crate) use exposure_replay::{
     apply_federate_exposure_wave, build_initial_exposure_wave, ExposureCatalogWave,
@@ -20,4 +23,3 @@ pub use mutate_error::SessionMutateError;
 pub use open::execute_session_create_response;
 pub(crate) use open::execute_session_create_response_inner;
 pub use seeds_apply::{apply_capability_seeds, apply_capability_seeds_for_mcp};
-pub(crate) use symbol_ledger::upsert_logical_ledger_from_snapshot;

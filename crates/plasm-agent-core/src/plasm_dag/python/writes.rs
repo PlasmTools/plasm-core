@@ -41,6 +41,7 @@ impl Lower<'_> {
                     )
                     .map_err(|error| at(site, error))?
             };
+            self.record_invocation_operand(&kw.value, owner, cap, &wire);
             if bound_arguments.insert(wire, &kw.value).is_some() {
                 return Err(at(
                     site,

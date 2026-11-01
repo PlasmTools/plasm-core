@@ -178,8 +178,52 @@ impl PlasmMcpHandler {
             crate::intent_provenance::IntentProvenance::from_turns([intent.to_owned()])
                 .map_err(|error| ToolFailure::rejected(error.to_string()))?
         };
+        let learning_scope = crate::workflow_learning::scope(&scope, tcfg.as_deref());
+        let (examples, associations) = match tokio::time::timeout(
+            std::time::Duration::from_secs(10),
+            async {
+                let catalog_fingerprints =
+                    match store.load_discovery_generation(&generation, &allowed).await {
+                        Ok((catalogs, _)) => catalogs
+                            .into_iter()
+                            .map(|(id, cgs)| (id, cgs.effective_catalog_cgs_hash_hex()))
+                            .collect(),
+                        Err(error) => {
+                            tracing::warn!(%error,"catalogue guidance pins unavailable");
+                            return Ok((Vec::new(), Vec::new()));
+                        }
+                    };
+                self.plasm
+                    .workflow_learning
+                    .recall_with_guidance(&learning_scope, intent, &allowed, &catalog_fingerprints)
+                    .await
+            },
+        )
+        .await
+        {
+            Ok(Ok(examples)) => examples,
+            Ok(Err(error)) => {
+                tracing::warn!(target:"plasm_agent::workflow_learning",%error,"example recall unavailable; discovery continues");
+                (Vec::new(), Vec::new())
+            }
+            Err(_) => {
+                tracing::warn!(target:"plasm_agent::workflow_learning","example recall exceeded its ten-second budget; discovery continues");
+                (Vec::new(), Vec::new())
+            }
+        };
+        let guided_capabilities = associations
+            .iter()
+            .flat_map(|association| {
+                association
+                    .requirements()
+                    .required_capabilities()
+                    .iter()
+                    .cloned()
+            })
+            .collect::<Vec<_>>();
         let service = DiscoveryService::from_env(store.clone())
-            .map_err(|e| ToolFailure::rejected(e.to_string()))?;
+            .map_err(|e| ToolFailure::rejected(e.to_string()))?
+            .with_catalogue_guidance(guided_capabilities);
         let receipt = service
             .route_turn(RouteTurn {
                 new_generation: &generation,
@@ -269,6 +313,23 @@ impl PlasmMcpHandler {
         }
         let logical_session_ref = format_logical_session_wire_ref(rec.logical_session_id);
         let ls_key = logical_uuid.to_string();
+        if self.plasm.workflow_learning.enabled() {
+            let learning_scope = crate::workflow_learning::scope(&scope, tcfg.as_deref());
+            match self.plasm.workflow_learning.repository().await {
+                Ok(repository) => {
+                    if let Err(error) = repository
+                        .bind_session(&learning_scope, rec.logical_session_id)
+                        .await
+                    {
+                        tracing::warn!(target: "plasm_agent::workflow_learning", %error, "session learning scope unavailable");
+                    }
+                }
+                Err(error) => {
+                    tracing::warn!(target: "plasm_agent::workflow_learning", %error, "learning unavailable; discovery continues")
+                }
+            }
+            self.plasm.workflow_learning.start_worker();
+        }
         let accumulated_intent = rec.accumulated_intent.as_str();
         let distinct_entries: Vec<String> = {
             let mut seen = std::collections::HashSet::new();
@@ -407,6 +468,15 @@ impl PlasmMcpHandler {
             out.symbol_space_reset,
             "",
         );
+        if !examples.is_empty() {
+            text.push_str("\nOptional workflow examples (retrieve with plasm_example):\n");
+            for example in &examples {
+                text.push_str(&format!(
+                    "- {}: {}\n",
+                    example.id, example.candidate.intent.purpose
+                ));
+            }
+        }
         if let Some(session) = routed_host
             .get_execute_session(&out.prompt_hash, &out.session_id)
             .await
@@ -518,6 +588,21 @@ impl PlasmMcpHandler {
             serde_json::to_value(route.as_ref())
                 .map_err(|e| ToolFailure::rejected(e.to_string()))?,
         );
+        if !examples.is_empty() {
+            plasm.insert(
+                "workflow_examples".into(),
+                json!(examples
+                    .iter()
+                    .map(|example| {
+                        let program = example.candidate.program();
+                        json!({"example_ref":example.id,"purpose":example.candidate.intent.purpose,
+                    "applicability":example.candidate.intent.facets,
+                    "outputs":program.map(|p| &p.outputs),
+                    "assurance":example.candidate.quality.assurance})
+                    })
+                    .collect::<Vec<_>>()),
+            );
+        }
         let text = crate::mcp_agent_present::AgentContent::context(
             &crate::mcp_agent_present::ContextTokenRefs {
                 logical_session_ref: logical_session_ref.as_str(),

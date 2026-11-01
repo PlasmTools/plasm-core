@@ -95,6 +95,7 @@ pub(crate) fn plasm_tools(artifact_access: ArtifactAccessMode, ui_apps_enabled: 
         model.output_schema = None;
         model
     }];
+    tools.extend(crate::workflow_learning_mcp::tools());
 
     tools.push({
         let mut model = Tool::default();

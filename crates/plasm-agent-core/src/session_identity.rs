@@ -36,7 +36,10 @@ const SESSION_KEY_PREFIX: &str = "mcp:logical:session:v2:";
 const RECENT_SESSIONS_CAP: usize = 32;
 
 /// Server-minted UUID identifying one Plasm logical session (prompt + execute + trace root).
-#[derive(Clone, Copy, Debug, Eq, PartialEq, Hash)]
+#[derive(
+    Clone, Copy, Debug, Eq, PartialEq, Ord, PartialOrd, Hash, serde::Serialize, serde::Deserialize,
+)]
+#[serde(transparent)]
 pub struct LogicalSessionId(pub Uuid);
 
 impl LogicalSessionId {

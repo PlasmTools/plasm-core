@@ -25,6 +25,10 @@ use plasm_core::PlasmCompArtifact;
 pub struct PlasmCompBundle {
     artifact: PlasmCompArtifact,
     executable: ExecutablePlasmComp,
+    source: Option<std::sync::Arc<str>>,
+    compilation_symbols: crate::program_symbol_context::CompilationSymbolContext,
+    python_operands:
+        Option<std::sync::Arc<[crate::plasm_dag::python::operand_evidence::AdmittedOperand]>>,
 }
 
 impl PlasmCompBundle {
@@ -33,7 +37,77 @@ impl PlasmCompBundle {
         Ok(Self {
             artifact,
             executable,
+            source: None,
+            compilation_symbols: Default::default(),
+            python_operands: None,
         })
+    }
+
+    /// Source provenance is retained in memory, outside the semantic plan artifact.
+    pub fn with_source(mut self, source: impl Into<std::sync::Arc<str>>) -> Self {
+        self.source = Some(source.into());
+        self
+    }
+
+    pub(crate) fn capture_compilation_symbols(
+        mut self,
+        session: &crate::execute_session::ExecuteSession,
+    ) -> Self {
+        use crate::program_symbol_context::{
+            CompilationSymbolContext, CompilationSymbols, SymbolContextUnavailable,
+        };
+        self.compilation_symbols = match CompilationSymbols::capture(session, &self) {
+            Ok(value) => CompilationSymbolContext::Captured(Box::new(value)),
+            Err(error) => {
+                CompilationSymbolContext::Unavailable(SymbolContextUnavailable::CaptureFailed {
+                    diagnostic: error.to_string(),
+                })
+            }
+        };
+        self
+    }
+
+    pub(crate) fn compiled_dependencies(
+        &self,
+    ) -> Result<
+        &std::collections::BTreeSet<plasm_core::prerequisites::CapabilityRef>,
+        crate::plasm_dag::dependencies::DependencyUnavailable,
+    > {
+        self.compilation_symbols
+            .captured()
+            .ok_or(crate::plasm_dag::dependencies::DependencyUnavailable::NotCaptured)?
+            .dependencies()
+            .capabilities(&self.artifact.comp)
+    }
+
+    pub fn compilation_symbols(&self) -> &crate::program_symbol_context::CompilationSymbolContext {
+        &self.compilation_symbols
+    }
+
+    pub fn with_compilation_symbols(
+        mut self,
+        context: crate::program_symbol_context::CompilationSymbolContext,
+    ) -> Self {
+        self.compilation_symbols = context;
+        self
+    }
+
+    pub(crate) fn with_python_operands(
+        mut self,
+        operands: Vec<crate::plasm_dag::python::operand_evidence::AdmittedOperand>,
+    ) -> Self {
+        self.python_operands = Some(operands.into());
+        self
+    }
+
+    pub(crate) fn python_operands(
+        &self,
+    ) -> Option<&[crate::plasm_dag::python::operand_evidence::AdmittedOperand]> {
+        self.python_operands.as_deref()
+    }
+
+    pub(crate) fn source(&self) -> Option<&str> {
+        self.source.as_deref()
     }
 
     pub fn artifact(&self) -> &PlasmCompArtifact {

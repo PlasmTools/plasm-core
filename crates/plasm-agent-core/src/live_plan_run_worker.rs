@@ -30,6 +30,20 @@ pub enum LivePlanRunError<E: std::error::Error + 'static> {
     Task(#[from] E),
 }
 
+impl From<LivePlanRunError<std::convert::Infallible>>
+    for LivePlanRunError<plasm_runtime::ExecutionFailure>
+{
+    fn from(error: LivePlanRunError<std::convert::Infallible>) -> Self {
+        match error {
+            LivePlanRunError::PoolClosed => Self::PoolClosed,
+            LivePlanRunError::Spawn(source) => Self::Spawn(source),
+            LivePlanRunError::ResultDropped => Self::ResultDropped,
+            LivePlanRunError::Panicked { payload } => Self::Panicked { payload },
+            LivePlanRunError::Task(never) => match never {},
+        }
+    }
+}
+
 impl LivePlanRunError<plasm_runtime::ExecutionFailure> {
     pub fn into_execution_failure(self) -> plasm_runtime::ExecutionFailure {
         match self {

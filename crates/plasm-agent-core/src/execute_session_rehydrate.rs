@@ -412,6 +412,7 @@ mod tests {
     #[test]
     fn descriptor_expired_rejects_past_timestamp() {
         let desc = PersistedExecuteSessionDescriptor {
+            example_fetch_receipts: Default::default(),
             prompt_hash: "ph".into(),
             session_id: "sid".into(),
             prompt_text: String::new(),
@@ -510,6 +511,7 @@ mod tests {
         })
         .expect("valid catalog fixture");
         let desc = PersistedExecuteSessionDescriptor {
+            example_fetch_receipts: Default::default(),
             prompt_hash: "ph".into(),
             session_id: "sid".into(),
             prompt_text: String::new(),
@@ -560,6 +562,7 @@ mod tests {
     #[test]
     fn pinned_hashes_from_descriptor_legacy_single_entry() {
         let desc = PersistedExecuteSessionDescriptor {
+            example_fetch_receipts: Default::default(),
             prompt_hash: "ph".into(),
             session_id: "sid".into(),
             prompt_text: String::new(),
@@ -656,6 +659,7 @@ mod tests {
             Arc::new(plasm_core::CgsContext::entry("langmatrix_b", cgs.clone())),
         );
         let desc = PersistedExecuteSessionDescriptor {
+            example_fetch_receipts: Default::default(),
             prompt_hash: "ph".into(),
             session_id: "sid".into(),
             prompt_text: String::new(),

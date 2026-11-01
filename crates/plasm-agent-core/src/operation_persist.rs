@@ -191,6 +191,7 @@ mod tests {
             PersistedExecuteSessionDescriptor, PersistedSessionReuseKey,
         };
         let desc = PersistedExecuteSessionDescriptor {
+            example_fetch_receipts: Default::default(),
             discovery_pin: None,
             prompt_hash: ph.into(),
             session_id: sid.into(),

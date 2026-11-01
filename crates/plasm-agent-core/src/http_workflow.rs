@@ -13,8 +13,7 @@ use crate::http_problem_util::{problem_response, problem_types};
 use crate::server_state::PlasmHostState;
 use crate::workflow_manifest::{InstantiateRequest, InstantiateResponse};
 use crate::workflow_view_model::{
-    build_workflow_view_model_with_readiness, default_sym_exposure, instantiate_workflow_program,
-    sym_exposure_refs,
+    build_workflow_view_model_with_readiness, instantiate_workflow_program,
 };
 
 pub fn workflow_routes() -> Router {
@@ -74,6 +73,9 @@ async fn get_workflow_view_model(
 
 async fn post_workflow_instantiate(
     Extension(st): Extension<PlasmHostState>,
+    Extension(crate::incoming_auth::IncomingPrincipal(principal)): Extension<
+        crate::incoming_auth::IncomingPrincipal,
+    >,
     Path(id): Path<String>,
     Json(body): Json<InstantiateRequest>,
 ) -> Response {
@@ -100,10 +102,57 @@ async fn post_workflow_instantiate(
             );
         }
     };
-    let exposure_map = default_sym_exposure(&manifest);
-    let refs = sym_exposure_refs(&exposure_map);
-    match instantiate_workflow_program(&manifest, &template, &body.parameters, &refs) {
-        Ok(program) => Json(InstantiateResponse { program }).into_response(),
+    let scope = crate::incoming_auth::tenant_scope(principal.as_ref());
+    let logical =
+        match crate::mcp_logical_ref::parse_logical_session_wire_ref(&body.logical_session_ref) {
+            Ok(logical) => logical,
+            Err(error) => {
+                return (axum::http::StatusCode::BAD_REQUEST, error.to_string()).into_response()
+            }
+        };
+    if !st.logical_sessions.verify_tenant(logical, &scope).await {
+        return (
+            axum::http::StatusCode::NOT_FOUND,
+            "unknown workflow session",
+        )
+            .into_response();
+    }
+    let Some((prompt_hash, session_id)) = st.logical_execute_bindings.get(&logical.as_uuid()).await
+    else {
+        return (
+            axum::http::StatusCode::NOT_FOUND,
+            "workflow session has no execution binding",
+        )
+            .into_response();
+    };
+    let Some(session) = st.get_execute_session(&prompt_hash, &session_id).await else {
+        return (
+            axum::http::StatusCode::NOT_FOUND,
+            "workflow execution session expired",
+        )
+            .into_response();
+    };
+    if session.tenant_scope != scope {
+        return (
+            axum::http::StatusCode::NOT_FOUND,
+            "unknown workflow session",
+        )
+            .into_response();
+    }
+    let symbols = crate::symbol_map_resolve::resolve_session_symbol_map(
+        &crate::symbol_map_resolve::SessionSymbolMapContext {
+            session: &session,
+            cross_cache: None,
+        },
+    );
+    match instantiate_workflow_program(&manifest, &template, &body.parameters, symbols.as_ref()) {
+        Ok(program) => {
+            if let Err(error) = crate::plasm_dag::compile_python_program_checked(&session, &program)
+            {
+                return (axum::http::StatusCode::BAD_REQUEST, error.to_string()).into_response();
+            }
+            Json(InstantiateResponse { program }).into_response()
+        }
         Err(e) => problem_response(
             Problem::custom(
                 ProblemStatus::BAD_REQUEST,

@@ -19,7 +19,7 @@ pub const RUN_ARTIFACT_WIRE_PREFIX: &str = "pr";
 pub const RUN_ARTIFACT_PAYLOAD_SCHEMA_VERSION: u32 = 5;
 
 /// Canonical 32-byte identity for a stored execute run snapshot (content-addressed).
-#[derive(Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct RunArtifactId([u8; 32]);
 
 impl RunArtifactId {
@@ -94,6 +94,20 @@ impl Serialize for RunArtifactId {
         S: serde::Serializer,
     {
         serializer.serialize_str(&self.to_wire())
+    }
+}
+
+impl<'de> Deserialize<'de> for RunArtifactId {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        let wire = String::deserialize(deserializer)?;
+        Self::from_wire(&wire)
+            .ok_or_else(|| serde::de::Error::custom("expected pr followed by a SHA-256 digest"))
+    }
+}
+
+impl fmt::Display for RunArtifactId {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(&self.to_wire())
     }
 }
 

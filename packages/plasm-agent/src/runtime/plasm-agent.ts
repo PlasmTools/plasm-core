@@ -128,6 +128,11 @@ export class PlasmAgent {
     return this.lifecycle.close(() => this.runtime.close());
   }
 
+  async beginWorkflowReview(): Promise<import("./workflow-learning.js").WorkflowReviewSession> {
+    await this.lifecycle.drain();
+    return this.runtime.beginWorkflowReview();
+  }
+
   private initialContext?: Promise<string>;
   readonly runtime: AgentRuntime;
   private readonly model: string | LanguageModel;
