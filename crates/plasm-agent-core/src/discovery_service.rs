@@ -92,6 +92,12 @@ fn search_key(
     ))
 }
 
+// Keep model-free allocation experiments on the production frontier identity.
+#[cfg(test)]
+pub(crate) fn diagnostic_frontier_key(current: &str, allowed: &DiscoveryAuthorization) -> String {
+    frontier_key("diagnostic-pin", "frozen", allowed, "fixture-model", current).unwrap()
+}
+
 #[cfg(test)]
 mod additive_identity_tests {
     use super::*;

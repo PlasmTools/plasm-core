@@ -1,0 +1,10 @@
+{
+  "crates/plasm-agent-core/src/discovery_matcher/online/continuation_diagnostic.rs": "ec92207750ce25d426c4d3f8a0606ba80c758a697171387292536ab77b4eec32",
+  "fixtures/discovery/continuation-scope-v2/OFFLINE-WORDING-PROTOCOL.md": "4ae7e6dc0d7615b62e18275becf988031c795676bb55fe0e3a04aa142c3dd8a2",
+  "fixtures/discovery/continuation-scope-v2/PROTOCOL.md": "2461c567765ec21c1e9bcf1242354713dc3901e636adba3c39e14e654f9cf3b0",
+  "fixtures/discovery/continuation-scope-v2/REVIEW.md": "63eb0c58a3ba6e97e2d870573a63e872c19811a07124de34a15b2bac84ffb3fb",
+  "fixtures/discovery/continuation-scope-v2/WORDING.md": "ad3f5c559d2afde3753abed69b65b1548820dda764423550e8f993a25f0459bb",
+  "fixtures/discovery/continuation-scope-v2/summarize.py": "92f9f13318b2932fa76a4c3ee58a619a612cec3bbc66084f0d87fb75c9feb281",
+  "fixtures/discovery/continuation-scope-v2/test_summary.py": "c325f0c90693ab76cef0b7937ceb6055fb7e58f99897b72130b7ac5d1ff05661",
+  "packages/plasm-agent/scripts/diagnose-discovery-wording.ts": "4b0c8536df1503dd083a4a027cee7f0c3ff45ab05b22b5f06fdacfbe98c72f68"
+}

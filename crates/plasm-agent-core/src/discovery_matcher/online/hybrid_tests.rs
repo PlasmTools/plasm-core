@@ -1,6 +1,9 @@
 //! Explicit recall tests: no lexical fixture may manufacture the candidate set.
 use super::*;
 
+#[path = "continuation_diagnostic.rs"]
+mod continuation_diagnostic;
+
 #[test]
 fn shared_routing_fixture_uses_current_native_policy() {
     let packet: serde_json::Value = serde_json::from_str(include_str!(
