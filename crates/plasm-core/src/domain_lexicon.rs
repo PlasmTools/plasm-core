@@ -332,8 +332,6 @@ mod tests {
     #[test]
     fn tokenises_snake_case() {
         let t = tokens("team_id");
-        assert!(t.contains(&"team".to_string()));
-        assert!(t.contains(&"id".to_string()) || t.is_empty() || !t.contains(&"id".to_string()));
         // "id" is 2 chars — filtered by length >= 3 — that's intentional
         assert!(!t.contains(&"id".to_string()));
         assert!(t.contains(&"team".to_string()));

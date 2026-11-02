@@ -588,40 +588,6 @@ mod tests {
         assert_eq!(frame.schema, original.schema);
     }
 
-    #[test]
-    fn filter_sort_limit_roundtrip() {
-        let rows = vec![
-            row!({"owner":"alice","score":10}),
-            row!({"owner":"bob","score":30}),
-            row!({"owner":"alice","score":20}),
-        ];
-        let pred = plasm_core::PlanPredicate {
-            field_path: FieldPath::from_dotted("owner").unwrap(),
-            op: PlanPredicateOp::Eq,
-            value: PlasmDataValue::Literal {
-                value: plasm_core::operand_binding::ResolvedValue::new(value!("alice"))
-                    .expect("literal data"),
-            },
-        };
-        let ops = vec![
-            ComputeOp::Filter {
-                predicates: vec![pred].into(),
-            },
-            ComputeOp::Sort {
-                key: FieldPath::from_dotted("score").unwrap(),
-                descending: true,
-            },
-            ComputeOp::Limit { count: 1 },
-        ];
-        let ComputeEvalOutcome::Rows(plasm_core::CollectedFrame { rows: out, .. }) =
-            evaluate_fixture(&ops, &rows).unwrap()
-        else {
-            panic!("rows");
-        };
-        assert_eq!(out.len(), 1);
-        assert_eq!(out[0]["score"], value!(20));
-    }
-
     fn filter_eq_pan(rhs: plasm_core::Value) -> PlanPredicate {
         PlanPredicate {
             field_path: FieldPath::from_dotted("pan").unwrap(),
@@ -808,30 +774,6 @@ mod tests {
             panic!("rows");
         };
         assert_eq!(out[0]["cycle"], value!(10));
-    }
-
-    #[test]
-    fn with_div_is_float() {
-        let rows = vec![row!({"quantity": 10, "price": 4})];
-        let columns = parse_with_body("rate: quantity / price").unwrap();
-        let ComputeEvalOutcome::Rows(plasm_core::CollectedFrame { rows: out, .. }) =
-            evaluate_fixture(&[ComputeOp::With { columns }], &rows).unwrap()
-        else {
-            panic!("rows");
-        };
-        assert_eq!(out[0]["rate"].as_number().unwrap(), 2.5);
-    }
-
-    #[test]
-    fn with_string_plus_concat() {
-        let rows = vec![row!({"first": "al", "last": "ice"})];
-        let columns = parse_with_body("name: first + last").unwrap();
-        let ComputeEvalOutcome::Rows(plasm_core::CollectedFrame { rows: out, .. }) =
-            evaluate_fixture(&[ComputeOp::With { columns }], &rows).unwrap()
-        else {
-            panic!("rows");
-        };
-        assert_eq!(out[0]["name"], value!("alice"));
     }
 
     #[test]

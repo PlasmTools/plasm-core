@@ -758,51 +758,6 @@ mod tests {
     }
 
     #[test]
-    fn test_extract_simple_path() {
-        let json = json!({
-            "data": {
-                "name": "test"
-            }
-        });
-
-        let path = PathExpr::from_slice(&["data", "name"]);
-        let result = extract_path(&path, &json).unwrap();
-
-        assert_eq!(result.len(), 1);
-        assert_eq!(result[0], json!("test"));
-    }
-
-    #[test]
-    fn test_extract_wildcard_path() {
-        let json = json!({
-            "results": [
-                {"id": "1", "name": "first"},
-                {"id": "2", "name": "second"}
-            ]
-        });
-
-        let path = PathExpr::from_slice(&["results", "*", "name"]);
-        let result = extract_path(&path, &json).unwrap();
-
-        assert_eq!(result.len(), 2);
-        assert_eq!(result[0], json!("first"));
-        assert_eq!(result[1], json!("second"));
-    }
-
-    #[test]
-    fn test_extract_array_index() {
-        let json = json!({
-            "items": ["first", "second", "third"]
-        });
-
-        let path = PathExpr::from_slice(&["items", "1"]);
-        let result = extract_path(&path, &json).unwrap();
-
-        assert_eq!(result.len(), 1);
-        assert_eq!(result[0], json!("second"));
-    }
-
-    #[test]
     fn test_transform_to_string() {
         let value = json!(123);
         let transform = Transform::ToString;

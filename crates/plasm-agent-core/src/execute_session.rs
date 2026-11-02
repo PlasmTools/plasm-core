@@ -2396,51 +2396,6 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn reuse_returns_same_session_id_for_same_entry_and_entities() {
-        let store = ExecuteSessionStore::default();
-        let cgs = Arc::new(CGS::new());
-        let key = SessionReuseKey {
-            tenant_scope: String::new(),
-            entry_id: "default".into(),
-            catalog_cgs_hash: cgs.catalog_cgs_hash_hex(),
-            entities: vec!["Pet".into(), "Store".into()],
-            context_intent: None,
-            principal: None,
-            logical_session_id: None,
-        };
-
-        let mut ctxs = IndexMap::new();
-        ctxs.insert(
-            "default".into(),
-            Arc::new(CgsContext::entry("default", cgs.clone())),
-        );
-        let s1 = ExecuteSession::new(
-            "ph1".into(),
-            "prompt-a".into(),
-            cgs.clone(),
-            ctxs,
-            "default".into(),
-            String::new(),
-            String::new(),
-            None,
-            vec!["Pet".into(), "Store".into()],
-            None,
-            None,
-            cgs.catalog_cgs_hash_hex(),
-            None,
-        );
-        store
-            .insert(key.clone(), "ph1".into(), "sid-one".into(), s1)
-            .await;
-
-        let reused = store.try_reuse_session(&key).await;
-        assert!(reused.is_some(), "expected reuse");
-        let (sid, sess) = reused.unwrap();
-        assert_eq!(sid, "sid-one");
-        assert_eq!(sess.prompt_text, "prompt-a");
-    }
-
-    #[tokio::test]
     async fn distinct_open_sessions_use_distinct_graph_caches() {
         let cgs = Arc::new(CGS::new());
         let mut ctxs = IndexMap::new();

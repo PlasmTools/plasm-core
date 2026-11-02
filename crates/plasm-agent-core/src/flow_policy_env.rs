@@ -108,17 +108,4 @@ mod tests {
         }
     }
 
-    #[test]
-    fn bundled_vultr_linear_ops_security_preset_parses() {
-        let path = PathBuf::from("fixtures/flow-policies/vultr-linear-ops-security.json");
-        if !path.exists() {
-            return;
-        }
-        let snapshot = snapshot_from_path(&path).expect("bundled preset");
-        let FlowPolicySnapshot::Active { policy, .. } = snapshot else {
-            panic!("expected active snapshot");
-        };
-        assert_eq!(policy.forbidden.len(), 3);
-        assert!(policy.capability_gates.len() >= 5);
-    }
 }

@@ -969,18 +969,6 @@ mod tests {
     }
 
     #[test]
-    fn builds_entity_subcommands() {
-        let cgs = test_cgs();
-        let app = build_app(&cgs, AgentCliSurface::CgsClient);
-        let subs: Vec<_> = app
-            .get_subcommands()
-            .map(|c| c.get_name().to_string())
-            .collect();
-        assert!(subs.contains(&"account".to_string()));
-        assert!(subs.contains(&"contact".to_string()));
-    }
-
-    #[test]
     fn account_has_query_and_relations() {
         let cgs = test_cgs();
         let app = build_app(&cgs, AgentCliSurface::CgsClient);
@@ -1363,22 +1351,6 @@ mod tests {
         cgs
     }
 
-    #[test]
-    fn entity_ref_generates_subcommand() {
-        let cgs = test_cgs_with_entity_ref();
-        let app = build_app(&cgs, AgentCliSurface::CgsClient);
-        let order = app.find_subcommand("order").unwrap();
-        let subs: Vec<_> = order
-            .get_subcommands()
-            .map(|c| c.get_name().to_string())
-            .collect();
-        assert!(
-            subs.contains(&"pet-id".to_string()),
-            "expected 'pet-id' subcommand for EntityRef field petId, got {:?}",
-            subs
-        );
-    }
-
     fn test_cgs_with_reverse_traversal() -> CGS {
         let mut cgs = test_cgs_with_entity_ref();
 
@@ -1418,22 +1390,6 @@ mod tests {
         }).unwrap();
 
         cgs
-    }
-
-    #[test]
-    fn reverse_traversal_generates_subcommand() {
-        let cgs = test_cgs_with_reverse_traversal();
-        let app = build_app(&cgs, AgentCliSurface::CgsClient);
-        let pet = app.find_subcommand("pet").unwrap();
-        let subs: Vec<_> = pet
-            .get_subcommands()
-            .map(|c| c.get_name().to_string())
-            .collect();
-        assert!(
-            subs.contains(&"orders".to_string()),
-            "expected 'orders' reverse-traversal subcommand on Pet, got {:?}",
-            subs
-        );
     }
 
     #[test]

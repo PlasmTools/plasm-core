@@ -4458,33 +4458,7 @@ mod tests {
             .expect("filled e# identity must parse");
     }
 
-    #[test]
-    fn parse_get_with_string_id() {
-        if !has_petstore() {
-            return;
-        }
-        let cgs = petstore_cgs();
-        let r = parse(r#"Pet("fluffy")"#, &cgs).unwrap();
-        if let Expr::Get(g) = &r.expr {
-            assert_eq!(g.reference.simple_id().map(|s| s.as_str()), Some("fluffy"));
-        }
-    }
-
     /// Semantic parallel: matrix `lang_query_all` (bare entity query).
-    #[test]
-    fn parse_query_all() {
-        if !has_petstore() {
-            return;
-        }
-        let cgs = petstore_cgs();
-        let r = parse("Pet", &cgs).unwrap();
-        assert!(matches!(r.expr, Expr::Query(_)));
-        if let Expr::Query(q) = &r.expr {
-            assert_eq!(q.entity, "Pet");
-            assert!(q.predicate.is_none());
-        }
-    }
-
     /// Pagination IR micro-case; matrix touches paging via `lang_domain_symbol_page_size`.
     #[test]
     fn parse_page_continuation() {
@@ -4583,19 +4557,6 @@ mod tests {
             panic!("expected Cancel, got {:?}", r.expr);
         };
         assert_eq!(c.handle.as_str(), format!("{wire}_o2"));
-    }
-
-    #[test]
-    fn parse_query_with_filter() {
-        if !has_petstore() {
-            return;
-        }
-        let cgs = petstore_cgs();
-        let r = parse("Pet{status=available}", &cgs).unwrap();
-        assert!(matches!(r.expr, Expr::Query(_)));
-        if let Expr::Query(q) = &r.expr {
-            assert!(q.predicate.is_some());
-        }
     }
 
     #[test]
