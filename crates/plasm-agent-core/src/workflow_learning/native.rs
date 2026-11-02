@@ -56,6 +56,8 @@ pub enum NativeLearningError {
     #[error(transparent)]
     Learning(#[from] super::LearningError),
     #[error(transparent)]
+    Archive(#[from] super::archive::ArchiveError),
+    #[error(transparent)]
     Review(#[from] super::review::ReviewError),
     #[error(transparent)]
     Persistence(

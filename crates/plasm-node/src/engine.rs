@@ -39,6 +39,12 @@ const AGENT_PROMPT_HASH: &str = "e45f6d1eb01b0ae077a369e44b9f1571169db0f3c8edfe9
 
 type Result<T> = std::result::Result<T, AgentEngineError>;
 
+pub(crate) struct ArchiveValidationContext {
+    pub host: plasm_agent_core::server_state::PlasmHostState,
+    pub session: ExecuteSession,
+    pub authorization: plasm_agent_core::discovery_store::DiscoveryAuthorization,
+}
+
 #[derive(Debug, Error)]
 pub enum AgentEngineError {
     #[error("native execution engine construction failed")]
@@ -85,6 +91,8 @@ pub enum AgentEngineError {
     NoCatalogsLoaded,
     #[error("teaching exposure is unavailable")]
     TeachingExposureMissing,
+    #[error("archive validation requires an activated catalogue generation")]
+    ArchiveGenerationRequired,
     #[error("primary catalog `{entry_id}` is missing")]
     PrimaryCatalogMissing { entry_id: String },
     #[error("NAPI host state construction failed")]
@@ -1284,12 +1292,6 @@ impl AgentEngine {
         exposure: &TeachingExposureSession,
         intent: &str,
     ) -> Result<ExecuteSession> {
-        use plasm_core::CgsContext;
-
-        let mut contexts_by_entry: IndexMap<String, Arc<CgsContext>> = IndexMap::new();
-        for (api, cgs) in &self.catalogs {
-            contexts_by_entry.insert(api.clone(), Arc::new(CgsContext::entry(api, cgs.clone())));
-        }
         let seeds: Vec<CapabilitySeed> = capabilities
             .iter()
             .map(|(api, entity)| CapabilitySeed {
@@ -1299,6 +1301,21 @@ impl AgentEngine {
             .collect();
         let primary_api =
             primary_entry_id_from_seeds(&seeds).ok_or(AgentEngineError::NoCatalogsLoaded)?;
+        self.build_execute_session_for_primary(primary_api, exposure, intent)
+    }
+
+    fn build_execute_session_for_primary(
+        &self,
+        primary_api: String,
+        exposure: &TeachingExposureSession,
+        intent: &str,
+    ) -> Result<ExecuteSession> {
+        use plasm_core::CgsContext;
+
+        let mut contexts_by_entry: IndexMap<String, Arc<CgsContext>> = IndexMap::new();
+        for (api, cgs) in &self.catalogs {
+            contexts_by_entry.insert(api.clone(), Arc::new(CgsContext::entry(api, cgs.clone())));
+        }
         if !self.catalogs.contains_key(&primary_api) {
             return Err(AgentEngineError::PrimaryCatalogMissing {
                 entry_id: primary_api,
@@ -1344,6 +1361,36 @@ impl AgentEngine {
         Ok(session)
     }
 
+    /// An import checks source against current contracts without opening a user
+    /// session, publishing teaching, or acquiring an execution ticket.
+    pub(crate) fn archive_validation_context(&mut self) -> Result<ArchiveValidationContext> {
+        let authorization = self
+            .discovery_pin
+            .as_ref()
+            .ok_or(AgentEngineError::ArchiveGenerationRequired)?
+            .authorization
+            .clone();
+        let primary = authorization
+            .catalogs
+            .iter()
+            .next()
+            .ok_or(AgentEngineError::NoCatalogsLoaded)?;
+        let cgs =
+            self.catalogs
+                .get(primary)
+                .ok_or_else(|| AgentEngineError::PinnedCatalogMissing {
+                    entry_id: primary.clone(),
+                })?;
+        let exposure = TeachingExposureSession::new(cgs, primary, &[]);
+        let session = self.build_execute_session_for_primary(primary.clone(), &exposure, "")?;
+        let host = self.build_host_state(None)?;
+        Ok(ArchiveValidationContext {
+            host,
+            session,
+            authorization,
+        })
+    }
+
     fn ensure_execute_session(&mut self) -> Result<ExecuteSession> {
         if let Some(es) = self.execute_session.clone() {
             return Ok(es);
@@ -1373,6 +1420,36 @@ mod tests {
     };
     use std::path::PathBuf;
     use std::sync::Arc;
+
+    #[tokio::test]
+    async fn archive_validation_context_does_not_open_or_expose_a_user_session() {
+        let (mut engine, _) = tiny_engine();
+        assert!(matches!(
+            engine.archive_validation_context(),
+            Err(AgentEngineError::ArchiveGenerationRequired)
+        ));
+        engine.discovery_pin = Some(DiscoverySessionPin {
+            generation: "archive-fixture".into(),
+            pin_id: plasm_agent_core::session_identity::LogicalSessionId::new_v4().to_string(),
+            authorization: plasm_agent_core::discovery_store::DiscoveryAuthorization::catalogs(
+                ["matrix".into()].into(),
+            ),
+        });
+        let validation = engine.archive_validation_context().unwrap();
+        assert!(validation.session.entities.is_empty());
+        assert!(validation
+            .session
+            .teaching_exposure
+            .as_ref()
+            .unwrap()
+            .entities
+            .is_empty());
+        assert_eq!(validation.authorization.catalogs.len(), 1);
+        assert!(engine.execute_session.is_none());
+        assert!(engine.exposure.is_none());
+        assert!(engine.capabilities.is_empty());
+        assert!(engine.intent_turns.is_empty());
+    }
 
     #[tokio::test]
     async fn run_reference_admission_is_effect_free_and_correctable() {

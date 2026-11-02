@@ -57,6 +57,88 @@ pub enum ServingError {
     ),
 }
 
+/// Shared dependency policy for live retrieval and archive adoption. Session
+/// materialization and publication remain owned by their respective callers.
+pub(crate) struct ExampleDependencyProjection {
+    pub required: Vec<CapabilityRef>,
+    pub groups: BTreeMap<String, BTreeSet<String>>,
+    pub domains: Vec<(String, plasm_core::ValueDomainKey)>,
+}
+
+impl ExampleDependencyProjection {
+    pub(crate) fn resolve(
+        program: &TeachingProgram,
+        catalogs: &BTreeMap<String, std::sync::Arc<plasm_core::CgsContext>>,
+        deployments: &plasm_core::prerequisites::DeploymentBindings,
+        allowed: &DiscoveryAuthorization,
+    ) -> Result<Self, ServingError> {
+        if program
+            .catalog_fingerprints
+            .keys()
+            .any(|entry| !allowed.catalogs.contains(entry) || !catalogs.contains_key(entry))
+        {
+            return Err(ServingError::Inapplicable);
+        }
+        let direct = program.required_capabilities.clone();
+        if direct.iter().any(|reference| !allowed.permits(reference)) {
+            return Err(ServingError::Inapplicable);
+        }
+        let borrowed = catalogs
+            .iter()
+            .map(|(entry, context)| (entry.clone(), context.cgs.as_ref()))
+            .collect();
+        let closure = prerequisite_closure(&borrowed, deployments, &direct, &allowed.catalogs)
+            .map_err(ServingError::Prerequisite)?;
+        let required: Vec<_> = closure
+            .business
+            .into_iter()
+            .chain(closure.input_sources)
+            .chain(closure.prerequisites)
+            .collect::<BTreeSet<_>>()
+            .into_iter()
+            .collect();
+        if required.iter().any(|reference| !allowed.permits(reference)) {
+            return Err(ServingError::Inapplicable);
+        }
+        let mut groups: BTreeMap<String, BTreeSet<String>> = BTreeMap::new();
+        for dependency in &program.dependencies {
+            groups
+                .entry(dependency.entry_id.clone())
+                .or_default()
+                .insert(dependency.entity.clone());
+        }
+        for reference in &required {
+            let cap = catalogs
+                .get(&reference.catalog)
+                .and_then(|context| context.cgs.capabilities.get(reference.capability.as_str()))
+                .ok_or_else(|| ServingError::Invalid("required capability missing".into()))?;
+            groups
+                .entry(reference.catalog.clone())
+                .or_default()
+                .insert(cap.domain.to_string());
+        }
+        let domains: Vec<_> = program
+            .occurrences
+            .iter()
+            .filter_map(|occurrence| match &occurrence.reference {
+                super::teaching::SemanticReference::ValueDomain {
+                    entry_id,
+                    value_ref,
+                } => Some((entry_id.clone(), value_ref.clone())),
+                _ => None,
+            })
+            .collect::<BTreeSet<_>>()
+            .into_iter()
+            .map(|(entry, key)| plasm_core::ValueDomainKey::new(key).map(|key| (entry, key)))
+            .collect::<Result<_, _>>()?;
+        Ok(Self {
+            required,
+            groups,
+            domains,
+        })
+    }
+}
+
 pub struct PreparedExampleFetch {
     scope: LibraryScope,
     id: Uuid,
@@ -144,66 +226,19 @@ pub async fn prepare_example_fetch(
         };
         catalogs.insert(entry.clone(), context);
     }
-    let direct = portable.required_capabilities.clone();
-    if direct.iter().any(|reference| !allowed.permits(reference)) {
-        return Err(ServingError::Inapplicable);
-    }
-    let borrowed = catalogs
-        .iter()
-        .map(|(entry, context)| (entry.clone(), context.cgs.as_ref()))
-        .collect();
-    let closure = prerequisite_closure(
-        &borrowed,
+    let ExampleDependencyProjection {
+        required,
+        groups,
+        domains,
+    } = ExampleDependencyProjection::resolve(
+        &portable,
+        &catalogs,
         &staged.prerequisite_deployments,
-        &direct,
-        &allowed.catalogs,
-    )
-    .map_err(ServingError::Prerequisite)?;
-    let required: Vec<_> = closure
-        .business
-        .into_iter()
-        .chain(closure.input_sources)
-        .chain(closure.prerequisites)
-        .collect::<BTreeSet<_>>()
-        .into_iter()
-        .collect();
-    if required.iter().any(|reference| !allowed.permits(reference)) {
-        return Err(ServingError::Inapplicable);
-    }
-    let mut groups: BTreeMap<String, BTreeSet<String>> = BTreeMap::new();
-    for dependency in &portable.dependencies {
-        groups
-            .entry(dependency.entry_id.clone())
-            .or_default()
-            .insert(dependency.entity.clone());
-    }
-    for reference in &required {
-        let cap = catalogs
-            .get(&reference.catalog)
-            .and_then(|context| context.cgs.capabilities.get(reference.capability.as_str()))
-            .ok_or_else(|| ServingError::Invalid("required capability missing".into()))?;
-        groups
-            .entry(reference.catalog.clone())
-            .or_default()
-            .insert(cap.domain.to_string());
-    }
+        allowed,
+    )?;
     for (entry, entities) in &groups {
         materialize_dependency(host, &mut staged, entry, entities).await?;
     }
-    let domains: Vec<_> = portable
-        .occurrences
-        .iter()
-        .filter_map(|occurrence| match &occurrence.reference {
-            super::teaching::SemanticReference::ValueDomain {
-                entry_id,
-                value_ref,
-            } => Some((entry_id.clone(), value_ref.clone())),
-            _ => None,
-        })
-        .collect::<BTreeSet<_>>()
-        .into_iter()
-        .map(|(entry, key)| plasm_core::ValueDomainKey::new(key).map(|key| (entry, key)))
-        .collect::<Result<_, _>>()?;
     for (entry, _) in &domains {
         if !staged.contexts_by_entry.contains_key(entry) {
             let context = registry.load_context(entry)?;
@@ -220,66 +255,7 @@ pub async fn prepare_example_fetch(
                 .insert(entry.clone(), host.catalog.compiled_catalog(entry)?);
         }
     }
-    let mut exposure = staged
-        .teaching_exposure
-        .take()
-        .ok_or(ServingError::Inapplicable)?;
-    let snapshot = ExposureWaveSnapshot {
-        slots_before: exposure.surface.slots.clone(),
-        caps_before: exposure.surface.capabilities.clone(),
-        entity_count_before: exposure.entities.len(),
-        relation_keys: exposure.all_qualified_entities(),
-    };
-    let layers: Vec<_> = staged
-        .contexts_by_entry
-        .values()
-        .map(|context| context.cgs.as_ref())
-        .collect();
-    for (entry, entities) in &groups {
-        let context = &staged.contexts_by_entry[entry];
-        let capabilities = required
-            .iter()
-            .filter(|reference| &reference.catalog == entry)
-            .map(|reference| reference.capability.clone())
-            .collect::<Vec<_>>();
-        let delta = plasm_core::capability_exposure::selected_capability_surface(
-            &context.cgs,
-            entry,
-            &capabilities,
-        )
-        .map_err(ServingError::CapabilityExposure)?;
-        let names: Vec<_> = entities.iter().map(String::as_str).collect();
-        exposure.expose_surface(&layers, context.cgs.clone(), entry, &names, delta);
-    }
-    for (entry, _) in &domains {
-        exposure.expose_entities(
-            &layers,
-            staged.contexts_by_entry[entry].cgs.clone(),
-            entry,
-            &[],
-        );
-    }
-    let (mut staged, mut delta) = stage_exposure_wave_delta(staged, exposure, snapshot)
-        .map_err(|error| ServingError::Session(Box::new(error)))?;
-    if !domains.is_empty() {
-        let exposure = staged
-            .teaching_exposure
-            .as_ref()
-            .ok_or(ServingError::Inapplicable)?;
-        let wave = plasm_core::prompt_render::python::prepare_python_domain_wave(
-            exposure,
-            &staged.python_teaching,
-            &domains,
-        )?;
-        if !wave.declarations.is_empty() {
-            staged.prompt_text.push_str("\n\n");
-            staged.prompt_text.push_str(&wave.declarations);
-            staged.domain_revision = staged.domain_revision.saturating_add(1);
-            delta.markdown.push_str("\n\n");
-            delta.markdown.push_str(&wave.declarations);
-        }
-        staged.python_teaching = wave.next_state;
-    }
+    let (staged, teaching_delta) = stage_example_symbols(staged, &required, &groups, &domains)?;
     let TeachingProgram {
         source,
         outputs,
@@ -323,10 +299,81 @@ pub async fn prepare_example_fetch(
         required,
         staged,
         source,
-        teaching: delta.markdown,
+        teaching: teaching_delta,
         outputs,
         catalog_fingerprints,
     })
+}
+
+/// Shared pure symbol staging for serving and host-owned archive validation.
+/// Callers authenticate all catalogue/capability requirements before this boundary.
+pub(crate) fn stage_example_symbols(
+    mut staged: ExecuteSession,
+    required: &[CapabilityRef],
+    groups: &BTreeMap<String, BTreeSet<String>>,
+    domains: &[(String, plasm_core::ValueDomainKey)],
+) -> Result<(ExecuteSession, String), ServingError> {
+    let mut exposure = staged
+        .teaching_exposure
+        .take()
+        .ok_or(ServingError::Inapplicable)?;
+    let snapshot = ExposureWaveSnapshot {
+        slots_before: exposure.surface.slots.clone(),
+        caps_before: exposure.surface.capabilities.clone(),
+        entity_count_before: exposure.entities.len(),
+        relation_keys: exposure.all_qualified_entities(),
+    };
+    let layers: Vec<_> = staged
+        .contexts_by_entry
+        .values()
+        .map(|context| context.cgs.as_ref())
+        .collect();
+    for (entry, entities) in groups {
+        let context = &staged.contexts_by_entry[entry];
+        let capabilities = required
+            .iter()
+            .filter(|reference| &reference.catalog == entry)
+            .map(|reference| reference.capability.clone())
+            .collect::<Vec<_>>();
+        let delta = plasm_core::capability_exposure::selected_capability_surface(
+            &context.cgs,
+            entry,
+            &capabilities,
+        )
+        .map_err(ServingError::CapabilityExposure)?;
+        let names: Vec<_> = entities.iter().map(String::as_str).collect();
+        exposure.expose_surface(&layers, context.cgs.clone(), entry, &names, delta);
+    }
+    for (entry, _) in domains {
+        exposure.expose_entities(
+            &layers,
+            staged.contexts_by_entry[entry].cgs.clone(),
+            entry,
+            &[],
+        );
+    }
+    let (mut staged, mut delta) = stage_exposure_wave_delta(staged, exposure, snapshot)
+        .map_err(|error| ServingError::Session(Box::new(error)))?;
+    if !domains.is_empty() {
+        let exposure = staged
+            .teaching_exposure
+            .as_ref()
+            .ok_or(ServingError::Inapplicable)?;
+        let wave = plasm_core::prompt_render::python::prepare_python_domain_wave(
+            exposure,
+            &staged.python_teaching,
+            domains,
+        )?;
+        if !wave.declarations.is_empty() {
+            staged.prompt_text.push_str("\n\n");
+            staged.prompt_text.push_str(&wave.declarations);
+            staged.domain_revision = staged.domain_revision.saturating_add(1);
+            delta.markdown.push_str("\n\n");
+            delta.markdown.push_str(&wave.declarations);
+        }
+        staged.python_teaching = wave.next_state;
+    }
+    Ok((staged, delta.markdown))
 }
 
 async fn materialize_dependency(

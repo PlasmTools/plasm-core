@@ -1,4 +1,5 @@
 //! Verified workflow learning. Provider proposals never bypass deterministic gates.
+pub mod archive;
 pub mod catalogue_guidance;
 pub(crate) mod execution;
 mod identity;

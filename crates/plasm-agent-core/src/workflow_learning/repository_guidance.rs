@@ -182,7 +182,26 @@ impl WorkflowRepository {
             return Ok(());
         };
         let associations: Vec<CatalogueAssociation> = serde_json::from_value(payload)?;
-        let scope = &seal.request.scope;
+        self.publish_associations_in_transaction(
+            tx,
+            &seal.request.scope,
+            seal,
+            &associations,
+            publish,
+            &PublicationSupport::LocalReview(review),
+        )
+        .await
+    }
+
+    pub(super) async fn publish_associations_in_transaction(
+        &self,
+        tx: &mut sqlx_tracing::Transaction<'_, sqlx::Postgres>,
+        scope: &LibraryScope,
+        seal: &SealedReview,
+        associations: &[CatalogueAssociation],
+        publish: bool,
+        support: &PublicationSupport,
+    ) -> Result<()> {
         for association in associations {
             association.validate(seal)?;
             if !publish || !association.confirmed {
@@ -205,11 +224,10 @@ impl WorkflowRepository {
                 let id = Uuid::new_v4();
                 sqlx::query("INSERT INTO workflow_learning_catalogue_guidance(id,tenant,project,family,variant,association) VALUES($1,$2,$3,$4,$5,$6)")
                     .bind(id).bind(&scope.tenant).bind(&scope.project).bind(&association.family).bind(&association.variant)
-                    .bind(serde_json::to_value(&association)?).execute(&mut tx.executor()).await?;
+                    .bind(serde_json::to_value(association)?).execute(&mut tx.executor()).await?;
                 id
             };
-            sqlx::query("INSERT INTO workflow_learning_guidance_support(association_id,review_id) VALUES($1,$2) ON CONFLICT DO NOTHING")
-                .bind(id).bind(review).execute(&mut tx.executor()).await?;
+            support.attach_guidance(tx, id).await?;
         }
         Ok(())
     }

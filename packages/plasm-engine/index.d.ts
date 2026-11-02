@@ -20,6 +20,12 @@ export declare class PlasmEngine {
   /** JSON review batches include examples, catalogue_guidance, and its immutable batch digest, including zero-example reviews. */
   exportWorkflowProposals(): Promise<string>
   publishFrozenWorkflowReview(requestJson: string): Promise<string>
+  /** Host-only task assessment, never a program-success assertion. */
+  recordWorkflowAssessment(assessmentJson: string): Promise<void>
+  exportWorkflowArchive(requestJson: string): Promise<string>
+  exportRetainedWorkflowArchive(digest: string): Promise<string>
+  /** Requires an activated catalogue generation and an explicit source policy. */
+  importWorkflowArchive(archiveJson: string, policyJson: string): Promise<string>
 
   /** Stop admission, drain native calls and close pooled Monty workers. */
   close(): Promise<void>

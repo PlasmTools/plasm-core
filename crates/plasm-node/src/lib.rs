@@ -500,6 +500,151 @@ impl PlasmEngine {
         serde_json::to_string(&receipt).map_err(map_err)
     }
 
+    /// Host-only assessment attachment; never exposed as an agent tool.
+    #[napi]
+    pub async fn record_workflow_assessment(&self, assessment_json: String) -> Result<()> {
+        let assessment = parse_archive_metadata::<
+            plasm_agent_core::workflow_learning::archive::TaskAssessment,
+        >(&assessment_json)?;
+        let admin = self.workflow_admin().await?;
+        self.learning_pool
+            .run_local(move || async move {
+                let _guard = admin.guard;
+                let repository = admin.owner.repository().await?;
+                repository
+                    .record_archive_assessment(&admin.scope, &assessment)
+                    .await?;
+                Ok::<_, plasm_agent_core::workflow_learning::native::NativeLearningError>(())
+            })
+            .await
+            .map_err(map_err)?
+            .map_err(|error| self.workflow_error(error))
+    }
+
+    #[napi]
+    pub async fn export_workflow_archive(&self, request_json: String) -> Result<String> {
+        let request = parse_archive_metadata::<
+            plasm_agent_core::workflow_learning::archive::ArchiveExportRequest,
+        >(&request_json)?;
+        let admin = self.workflow_admin().await?;
+        let bytes = self
+            .learning_pool
+            .run_local(move || async move {
+                let _guard = admin.guard;
+                let repository = admin.owner.repository().await?;
+                let archive = repository.export_archive(&admin.scope, &request).await?;
+                Ok::<_, plasm_agent_core::workflow_learning::native::NativeLearningError>(
+                    archive.encode()?,
+                )
+            })
+            .await
+            .map_err(map_err)?
+            .map_err(|error| self.workflow_error(error))?;
+        String::from_utf8(bytes).map_err(map_err)
+    }
+
+    /// Import validates in a fresh administrative context. It never borrows a
+    /// caller's logical session or installs executable evidence as a local run.
+    #[napi]
+    pub async fn import_workflow_archive(
+        &self,
+        archive_json: String,
+        policy_json: String,
+    ) -> Result<String> {
+        use plasm_agent_core::workflow_learning::archive::{
+            ArchiveImportPolicy, MAX_ARCHIVE_BYTES,
+        };
+        if archive_json.len() > MAX_ARCHIVE_BYTES {
+            return Err(Error::from_reason(
+                "archive exceeds bounded admission limits",
+            ));
+        }
+        let policy = parse_archive_metadata::<ArchiveImportPolicy>(&policy_json)?;
+        let admin = self.workflow_admin().await?;
+        let (generation, allowed) = self
+            .activated
+            .read()
+            .await
+            .clone()
+            .ok_or_else(|| map_err(NodeEngineError::NoActivatedGeneration))?;
+        let store = self
+            .discovery_store
+            .get()
+            .ok_or_else(|| map_err(NodeEngineError::DiscoveryStoreUnavailable))?;
+        let (catalogs, compiled, deployments) = store
+            .load_generation(&generation)
+            .await
+            .map_err(NodeEngineError::from)
+            .map_err(map_err)?;
+        let pin = DiscoverySessionPin {
+            generation,
+            authorization: DiscoveryAuthorization::catalogs(allowed),
+            pin_id: plasm_agent_core::session_identity::LogicalSessionId::new_v4().to_string(),
+        };
+        let mut validation_engine =
+            InnerEngine::from_pinned_generation(catalogs, compiled, pin, deployments);
+        validation_engine
+            .configure_workflow_learning(
+                self.workflow_config
+                    .get()
+                    .cloned()
+                    .ok_or_else(|| Error::from_reason("workflow learning is not configured"))?,
+            )
+            .map_err(map_err)?;
+        validation_engine.set_python_pool(self.python_pool.clone());
+        let report = self
+            .learning_pool
+            .run_local(move || async move {
+                let _guard = admin.guard;
+                let context = validation_engine.archive_validation_context()?;
+                let repository = admin.owner.repository().await.map_err(
+                    plasm_agent_core::workflow_learning::native::NativeLearningError::from,
+                )?;
+                let report = repository
+                    .import_archive(
+                        &admin.scope,
+                        archive_json.as_bytes(),
+                        &policy,
+                        &context.host,
+                        &context.session,
+                        &context.authorization,
+                    )
+                    .await
+                    .map_err(
+                        plasm_agent_core::workflow_learning::native::NativeLearningError::from,
+                    )?;
+                Ok::<_, engine::AgentEngineError>(report)
+            })
+            .await
+            .map_err(map_err)?
+            .map_err(|error| self.workflow_error(error))?;
+        serde_json::to_string(&report).map_err(map_err)
+    }
+
+    /// Re-export the immutable imported document, preserving its source identity.
+    #[napi]
+    pub async fn export_retained_workflow_archive(&self, digest: String) -> Result<String> {
+        let digest = plasm_agent_core::workflow_learning::archive::ArchiveDigest::try_from(digest)
+            .map_err(map_err)?;
+        let admin = self.workflow_admin().await?;
+        let bytes = self
+            .learning_pool
+            .run_local(move || async move {
+                let _guard = admin.guard;
+                let repository = admin.owner.repository().await?;
+                let archive = repository
+                    .export_retained_archive(&admin.scope, &digest)
+                    .await?;
+                Ok::<_, plasm_agent_core::workflow_learning::native::NativeLearningError>(
+                    archive.encode()?,
+                )
+            })
+            .await
+            .map_err(map_err)?
+            .map_err(|error| self.workflow_error(error))?;
+        String::from_utf8(bytes).map_err(map_err)
+    }
+
     /// Close admission, drain native callbacks and terminate pooled workers.
     /// Cancellation leaves admission closed; a subsequent close completes cleanup.
     #[napi]
@@ -811,6 +956,15 @@ impl PlasmEngine {
             failure_json: result.failure_json,
         })
     }
+}
+
+fn parse_archive_metadata<T: serde::de::DeserializeOwned>(json: &str) -> Result<T> {
+    if json.len() > 1024 * 1024 {
+        return Err(Error::from_reason(
+            "archive metadata exceeds bounded admission limits",
+        ));
+    }
+    serde_json::from_str(json).map_err(map_err)
 }
 
 #[cfg(test)]

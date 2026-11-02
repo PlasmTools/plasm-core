@@ -609,7 +609,7 @@ impl TeachingProgram {
         Ok(self.rebind_teaching(session)?.source)
     }
 
-    fn witness_version_current(&self) -> bool {
+    pub(super) fn witness_version_current(&self) -> bool {
         self.schema_version == TEACHING_SCHEMA_VERSION
             && self.compiler_version == env!("CARGO_PKG_VERSION")
             && self.comp_wire_version == plasm_core::PLASM_COMP_WIRE_VERSION

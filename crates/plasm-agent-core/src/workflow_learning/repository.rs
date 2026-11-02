@@ -70,6 +70,10 @@ fn validate_seal_format(value: &serde_json::Value) -> std::result::Result<(), Re
 
 type Result<T> = std::result::Result<T, RepositoryError>;
 
+#[path = "archive_repository.rs"]
+mod archive_repository;
+use archive_repository::PublicationSupport;
+
 #[path = "repository_frozen.rs"]
 mod frozen;
 pub use frozen::{FrozenProposalArtifact, FrozenPublicationReceipt, FrozenPublicationRequest};
@@ -183,6 +187,9 @@ impl WorkflowRepository {
             .execute(&mut tx.executor())
             .await?;
         sqlx::raw_sql(include_str!("schema.sql"))
+            .execute(&mut tx.executor())
+            .await?;
+        sqlx::raw_sql(include_str!("archive_schema.sql"))
             .execute(&mut tx.executor())
             .await?;
         tx.commit().await?;
@@ -598,21 +605,6 @@ impl WorkflowRepository {
                 "review candidate batch exceeds 32",
             ));
         }
-        let mut ordered: Vec<_> = candidates.iter().collect();
-        ordered.sort_by(|left, right| {
-            (
-                &left.family,
-                &left.variant,
-                left.coverage.iter().collect::<BTreeSet<_>>(),
-                &left.identity,
-            )
-                .cmp(&(
-                    &right.family,
-                    &right.variant,
-                    right.coverage.iter().collect::<BTreeSet<_>>(),
-                    &right.identity,
-                ))
-        });
         let seal: Option<serde_json::Value> = sqlx::query_scalar("SELECT seal FROM workflow_learning_reviews WHERE id=$1 AND fence=$2 AND state='leased' AND lease_until>clock_timestamp() FOR UPDATE")
             .bind(claim.id).bind(claim.fence).fetch_optional(&mut tx.executor()).await?;
         let seal: SealedReview =
@@ -636,6 +628,58 @@ impl WorkflowRepository {
             .await?;
         self.publish_guidance_in_transaction(&mut tx, claim.id, &seal, publish)
             .await?;
+        self.publish_candidates_in_transaction(
+            &mut tx,
+            scope,
+            &seal,
+            candidates,
+            policy,
+            approved,
+            &PublicationSupport::LocalReview(claim.id),
+        )
+        .await?;
+        // Recheck real time after locks and all writes; expiry rolls back the whole publication.
+        let finished_state = if policy == PublicationPolicy::Reviewed && !approved {
+            "awaiting_approval"
+        } else {
+            "completed"
+        };
+        let changed = sqlx::query("UPDATE workflow_learning_reviews SET state=$3 WHERE id=$1 AND fence=$2 AND lease_until>clock_timestamp()")
+            .bind(claim.id).bind(claim.fence).bind(finished_state).execute(&mut tx.executor()).await?.rows_affected();
+        if changed != 1 {
+            return Err(RepositoryError::LeaseConflict);
+        }
+        tx.commit().await?;
+        Ok(())
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    async fn publish_candidates_in_transaction(
+        &self,
+        tx: &mut sqlx_tracing::Transaction<'_, sqlx::Postgres>,
+        scope: &LibraryScope,
+        seal: &SealedReview,
+        candidates: &[Candidate],
+        policy: PublicationPolicy,
+        approved: bool,
+        support: &PublicationSupport,
+    ) -> Result<()> {
+        let publish = policy.permits_publication(approved);
+        let mut ordered: Vec<_> = candidates.iter().collect();
+        ordered.sort_by(|left, right| {
+            (
+                &left.family,
+                &left.variant,
+                left.coverage.iter().collect::<BTreeSet<_>>(),
+                &left.identity,
+            )
+                .cmp(&(
+                    &right.family,
+                    &right.variant,
+                    right.coverage.iter().collect::<BTreeSet<_>>(),
+                    &right.identity,
+                ))
+        });
         let mut families = BTreeMap::new();
         for candidate in ordered {
             if candidate.embedding_profile.trim().is_empty() {
@@ -650,7 +694,9 @@ impl WorkflowRepository {
             }
             let family_key = (candidate.family.clone(), candidate.variant.clone());
             if let Some(expected) = families.get(&family_key) {
-                if *expected != candidate.expected_family_version {
+                if matches!(support, PublicationSupport::LocalReview(_))
+                    && *expected != candidate.expected_family_version
+                {
                     return Err(RepositoryError::PortfolioConflict);
                 }
             } else {
@@ -658,7 +704,9 @@ impl WorkflowRepository {
                 .bind(&scope.tenant).bind(&scope.project).bind(&candidate.family).bind(&candidate.variant).execute(&mut tx.executor()).await?;
                 let version: i64 = sqlx::query_scalar("SELECT version FROM workflow_learning_families WHERE tenant=$1 AND project=$2 AND family=$3 AND variant=$4 FOR UPDATE")
                 .bind(&scope.tenant).bind(&scope.project).bind(&candidate.family).bind(&candidate.variant).fetch_one(&mut tx.executor()).await?;
-                if version != candidate.expected_family_version {
+                if matches!(support, PublicationSupport::LocalReview(_))
+                    && version != candidate.expected_family_version
+                {
                     return Err(RepositoryError::PortfolioConflict);
                 }
                 families.insert(family_key, version);
@@ -686,17 +734,20 @@ impl WorkflowRepository {
                 .transpose()?;
             let can_activate = match &existing {
                 None => true,
-                Some((id,state,old)) if state == "candidate" && old.checked_program() == candidate.checked_program()
-                    && old.behavior_fingerprint() == candidate.behavior_fingerprint()
-                    && old.catalog_fingerprints == candidate.catalog_fingerprints => {
-                    (policy == PublicationPolicy::Reviewed && approved) || !sqlx::query_scalar::<_,bool>("SELECT EXISTS(SELECT 1 FROM workflow_learning_support WHERE example_id=$1 AND review_id=$2)")
-                        .bind(id).bind(claim.id).fetch_one(&mut tx.executor()).await?
+                Some((id, state, old))
+                    if state == "candidate"
+                        && old.checked_program() == candidate.checked_program()
+                        && old.behavior_fingerprint() == candidate.behavior_fingerprint()
+                        && old.catalog_fingerprints == candidate.catalog_fingerprints =>
+                {
+                    (policy == PublicationPolicy::Reviewed && approved)
+                        || !support.has_example(tx, *id).await?
                 }
                 Some(_) => false,
             };
             let mut state = "candidate";
             let mut victim: Option<(Uuid, &Quality)> = None;
-            if can_activate && publish && candidate.verified_by(&seal) {
+            if can_activate && publish && candidate.verified_by(seal) {
                 let coverage: BTreeSet<_> = candidate.coverage.iter().collect();
                 for (id, old) in &active {
                     if old.coverage.iter().collect::<BTreeSet<_>>() == coverage
@@ -741,27 +792,14 @@ impl WorkflowRepository {
                     .bind(&candidate.identity).bind(serde_json::to_value(candidate)?).bind(state).bind(candidate.diagnostic().map(|d|d.message.as_str())).execute(&mut tx.executor()).await?;
                 id
             };
-            if candidate.verified_by(&seal) {
-                sqlx::query("INSERT INTO workflow_learning_support(example_id,review_id) VALUES($1,$2) ON CONFLICT DO NOTHING")
-                .bind(id).bind(claim.id).execute(&mut tx.executor()).await?;
+            if candidate.verified_by(seal) {
+                support.attach_example(tx, id).await?;
             }
         }
         for (family, variant) in families.keys() {
             sqlx::query("UPDATE workflow_learning_families SET version=version+1 WHERE tenant=$1 AND project=$2 AND family=$3 AND variant=$4")
                 .bind(&scope.tenant).bind(&scope.project).bind(family).bind(variant).execute(&mut tx.executor()).await?;
         }
-        // Recheck real time after locks and all writes; expiry rolls back the whole publication.
-        let finished_state = if policy == PublicationPolicy::Reviewed && !approved {
-            "awaiting_approval"
-        } else {
-            "completed"
-        };
-        let changed = sqlx::query("UPDATE workflow_learning_reviews SET state=$3 WHERE id=$1 AND fence=$2 AND lease_until>clock_timestamp()")
-            .bind(claim.id).bind(claim.fence).bind(finished_state).execute(&mut tx.executor()).await?.rows_affected();
-        if changed != 1 {
-            return Err(RepositoryError::LeaseConflict);
-        }
-        tx.commit().await?;
         Ok(())
     }
 
