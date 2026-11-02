@@ -36,6 +36,8 @@ class P(Program):
         return e1.query().where(lambda r: r.score is not None and r.score > 0).select("title")
 
 Absent: AttributeError; select needs fields; guard nulls.
-Compute budgets: projection reduces fields/bytes, not row count. Filter rows before compute when the task permits; nested inputs share the row budget. Never truncate a complete-set calculation to silence a budget failure.
+Compute budgets: projection reduces bytes, not rows; nested inputs share the row budget. Filter only when the task permits; never truncate required complete sets.
 
-Entity unions: use `rows.of_type(eN)` before variant fields/relations/actions; the target must be a declared variant. This selects original rows and retains their recorded identity; computed dictionaries cannot be narrowed into entities.
+`rows.of_type(eN)`: select a declared variant before its fields/relations/actions; preserves original identity, never turns computed records into entities.
+
+`self.recorded("pr…")` in build: completed catalog output as historical records array, pinned at admission; no producer replay or receiver identity. Bind before callbacks. Missing/incomplete fails; get/query remain fresh.
