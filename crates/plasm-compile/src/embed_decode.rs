@@ -278,12 +278,9 @@ fn decode_single_entity(
             relation_decoder.relation.clone(),
             DecodedRelation::Specified(observed_membership(
                 cgs,
-                &(
-                    "decoded_embed",
-                    &core.reference,
-                    &relation_decoder.relation,
-                    source,
-                ),
+                // Membership is the parent's relation, independent of which
+                // wire projection supplied it. Rows and coverage remain evidence.
+                &("decoded_embed", &core.reference, &relation_decoder.relation),
                 refs,
                 exhaustive_count,
             )?),
@@ -665,7 +662,7 @@ fn expand_transitive_from_parent_get_embeds(
                 rel_name.as_str().to_string(),
                 DecodedRelation::Specified(observed_membership(
                     Some(cgs),
-                    &("decoded_embed", &entity.reference, rel_name, &wire),
+                    &("decoded_embed", &entity.reference, rel_name),
                     refs,
                     exhaustive_count,
                 )?),
@@ -743,6 +740,100 @@ mod tests {
     use crate::decoder::{PathExpr, RelationDecoder};
     use plasm_core::Cardinality;
     use serde_json::json;
+
+    #[test]
+    fn relation_membership_identity_is_independent_of_parent_projection() {
+        let cgs = plasm_core::load_schema_dir(
+            &std::path::PathBuf::from(crate::test_manifest_dir())
+                .join("../../fixtures/schemas/hydration_boundary_matrix"),
+        )
+        .unwrap();
+        let parent = cgs.get_entity("Folder").unwrap();
+        let target = cgs.get_entity("Note").unwrap();
+        let Some(RelationMaterialization::FromParentGet { path, .. }) =
+            &parent.relations["notes"].materialize
+        else {
+            panic!("fixture embed")
+        };
+        let child = entity_decoder_for_from_parent_get_target(
+            target,
+            parent,
+            path_expr_from_json_segments(path).unwrap(),
+        );
+        let decoder =
+            EntityDecoder::new("Folder", PathExpr::empty()).with_relations(vec![RelationDecoder {
+                relation: "notes".into(),
+                decoder: child,
+                cardinality: Cardinality::Many,
+            }]);
+        let decode = |wire| {
+            decode_entities_with_cgs(&decoder, &wire, Some(&cgs))
+                .unwrap()
+                .remove(0)
+        };
+        let summary = decode(json!({"id":"root", "notes":[{"note_id":1}]}));
+        let detail = decode(
+            json!({"id":"root", "label":"observed", "notes":[{"note_id":1,"title":"detail"}]}),
+        );
+        assert_eq!(summary.reference, detail.reference);
+        assert_eq!(summary.relations["notes"], detail.relations["notes"]);
+
+        // Changed membership, occurrence order and duplicates remain observations,
+        // not interchangeable merely because they describe the same relation.
+        for ids in [vec![], vec![2], vec![1, 1], vec![1, 2], vec![2, 1]] {
+            let changed = decode(
+                json!({"id":"root", "notes":ids.iter().map(|id| json!({"note_id":id})).collect::<Vec<_>>()}),
+            );
+            assert_ne!(summary.relations["notes"], changed.relations["notes"]);
+        }
+        let ordered = decode(json!({"id":"root","notes":[{"note_id":1},{"note_id":2}]}));
+        let reversed = decode(json!({"id":"root","notes":[{"note_id":2},{"note_id":1}]}));
+        assert_ne!(ordered.relations["notes"], reversed.relations["notes"]);
+        let other = decode(json!({"id":"other","notes":[{"note_id":1}]}));
+        assert_ne!(summary.relations["notes"], other.relations["notes"]);
+        let missing = decode(json!({"id":"root"}));
+        assert_ne!(
+            summary.relations.get("notes"),
+            missing.relations.get("notes")
+        );
+
+        // The iterative nested decoder must use the same identity rule.
+        let nested = decode(
+            json!({"id":"root","notes":[{"note_id":1,"owners":[{"owner_id":1,"name":"A","_tag":"x"}]}]}),
+        );
+        let enriched = decode(
+            json!({"id":"root","notes":[{"note_id":1,"title":"detail","owners":[{"owner_id":1,"name":"A","_tag":"x","description":"more"}]}]}),
+        );
+        assert_eq!(nested.relations["notes"], enriched.relations["notes"]);
+        assert_eq!(
+            nested.embedded_entities[0].relations["owners"],
+            enriched.embedded_entities[0].relations["owners"]
+        );
+
+        let mut different_catalog = cgs.clone();
+        different_catalog
+            .entities
+            .get_mut("Note")
+            .unwrap()
+            .description = "Another catalog revision".into();
+        let revised = decode_entities_with_cgs(
+            &decoder,
+            &json!({"id":"root","notes":[{"note_id":1}]}),
+            Some(&different_catalog),
+        )
+        .unwrap()
+        .remove(0);
+        assert_ne!(summary.relations["notes"], revised.relations["notes"]);
+
+        let context = ("decoded_embed", &summary.reference, "notes");
+        let refs = vec![Ref::new("Note", "1")];
+        let partial = observed_membership(Some(&cgs), &context, refs.clone(), None).unwrap();
+        let complete = observed_membership(Some(&cgs), &context, refs, Some(1)).unwrap();
+        assert_eq!(partial.record().identity(), complete.record().identity());
+        assert_ne!(partial, complete);
+        assert!(!partial.is_exhaustive());
+        assert!(complete.is_exhaustive());
+    }
 
     #[test]
     fn identity_text_never_guesses_numeric_type_or_saturates() {

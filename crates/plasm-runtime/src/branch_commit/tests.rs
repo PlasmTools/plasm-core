@@ -3,6 +3,63 @@
 use super::*;
 use crate::ExecutionSource;
 
+#[test]
+fn equivalent_decoded_membership_commits_across_read_projections() {
+    use plasm_compile::decoder::{EntityDecoder, PathExpr, PathSegment, RelationDecoder};
+    use plasm_core::Cardinality;
+    let cgs = plasm_core::load_schema_dir(
+        &std::path::PathBuf::from(crate::test_manifest_dir())
+            .join("../../fixtures/schemas/hydration_boundary_matrix"),
+    )
+    .unwrap();
+    let mut child = EntityDecoder::new(
+        "Note",
+        PathExpr {
+            segments: vec![
+                PathSegment::Key {
+                    name: "notes".into(),
+                },
+                PathSegment::Wildcard,
+            ],
+        },
+    );
+    child.id_field = Some("note_id".into());
+    let decoder =
+        EntityDecoder::new("Folder", PathExpr::empty()).with_relations(vec![RelationDecoder {
+            relation: "notes".into(),
+            decoder: child,
+            cardinality: Cardinality::Many,
+        }]);
+    let decode = |wire| {
+        let decoded = plasm_compile::decode_entities_with_cgs(&decoder, &wire, Some(&cgs))
+            .unwrap()
+            .remove(0);
+        crate::CachedEntity::from_decoded(
+            decoded.reference,
+            decoded.fields,
+            decoded.relations,
+            1,
+            crate::EntityCompleteness::Summary,
+        )
+    };
+    let mut session = SessionMaterialization::new();
+    let (mut first, first_base) = BranchMaterializationBase::fork_from(&session);
+    let (mut second, second_base) = BranchMaterializationBase::fork_from(&session);
+    first
+        .insert(decode(
+            serde_json::json!({"id":"root", "notes":[{"note_id":1}]}),
+        ))
+        .unwrap();
+    second.insert(decode(serde_json::json!({"id":"root", "label":"detail", "notes":[{"note_id":1,"title":"observed"}]}))).unwrap();
+    assert!(!detect_materialization_conflicts(&session, &first_base, &first).has_any());
+    session.absorb_branch(first).unwrap();
+    assert!(
+        !detect_materialization_conflicts(&session, &second_base, &second).has_any(),
+        "equivalent membership from another read projection must converge without a retry"
+    );
+    session.absorb_branch(second).unwrap();
+}
+
 fn type_entity_with_relation(relation: &str, target: Ref) -> crate::CachedEntity {
     use crate::{CachedEntity, EntityCompleteness};
     use indexmap::IndexMap;
