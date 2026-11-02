@@ -76,7 +76,7 @@ pub struct CompilationSymbols {
     domain_revision: u32,
     source_sha256: String,
     compiled_sha256: String,
-    plan_id: String,
+    plan_id: plasm_core::CompiledProgramId,
     compiler_version: String,
     comp_wire_version: u32,
     /// Every compiler context, including ambient contexts used by pure Python compute.
@@ -142,9 +142,7 @@ impl CompilationSymbols {
             compiled_sha256: plasm_core::catalog_discovery::content_hash(&serde_json::to_vec(
                 &serde_json::to_value(&bundle.artifact().comp)?,
             )?),
-            plan_id: plasm_core::catalog_discovery::content_hash(&serde_json::to_vec(
-                &bundle.artifact().comp,
-            )?),
+            plan_id: plasm_core::CompiledProgramId::from_comp(&bundle.artifact().comp),
             compiler_version: env!("CARGO_PKG_VERSION").into(),
             comp_wire_version: plasm_core::plasm_monad::PLASM_COMP_WIRE_VERSION,
             catalog_fingerprints: catalogs,
@@ -390,7 +388,7 @@ impl SavedProgramContext {
             || template.tenant_scope != compilation.tenant_scope
             || receipt.prompt_hash.as_str() != compilation.prompt_hash
             || receipt.catalog_fingerprints != compilation.catalog_fingerprints
-            || receipt.plan_id.as_str() != compilation.plan_id
+            || receipt.plan_id != compilation.plan_id
             || plasm_core::catalog_discovery::content_hash(receipt.source.as_bytes())
                 != compilation.source_sha256
             || plasm_core::catalog_discovery::content_hash(&serde_json::to_vec(
@@ -414,10 +412,8 @@ impl SavedProgramContext {
         )
         .await
         .map_err(|error| SymbolContextError::Admission(Box::new(error)))?;
-        if plasm_core::catalog_discovery::content_hash(&serde_json::to_vec(&serde_json::to_value(
-            &compiled.artifact().comp,
-        )?)?)
-            != compilation.compiled_sha256
+        if plasm_core::CompiledProgramId::from_comp(&compiled.artifact().comp)
+            != compilation.plan_id
         {
             return Err(SymbolContextError::Identity);
         }
@@ -475,6 +471,11 @@ mod tests {
     #[tokio::test]
     async fn serialized_original_ledger_replays_after_session_exposure_changes_without_effects() {
         let (receipt, mut session) = receipt();
+        assert_eq!(
+            receipt.symbol_context.captured().unwrap().plan_id,
+            receipt.plan_id,
+            "saved compilation and execution must share the core structural identity"
+        );
         let original = receipt
             .symbol_context
             .captured()
