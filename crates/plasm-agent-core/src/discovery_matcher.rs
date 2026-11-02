@@ -22,7 +22,7 @@ use serde_json::json;
 use std::collections::{BTreeMap, BTreeSet};
 use thiserror::Error;
 
-type DecisionProviderError = Box<dyn std::error::Error + Send + Sync + 'static>;
+pub(crate) type DecisionProviderError = Box<dyn std::error::Error + Send + Sync + 'static>;
 
 #[derive(Debug, Error)]
 pub enum DiscoveryMatcherError {

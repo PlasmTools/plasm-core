@@ -6,6 +6,134 @@ use plasm_runtime::provider_transport::ProviderTransportError;
 use std::sync::{Arc, Mutex};
 
 #[tokio::test]
+async fn successful_response_persistence_does_not_expire_provider_deadline() {
+    exercise_response_checkpoint(false, false, 31).await;
+}
+
+#[tokio::test]
+async fn recovered_response_persistence_does_not_replay_provider() {
+    exercise_response_checkpoint(true, false, 31).await;
+}
+
+#[tokio::test]
+async fn failed_response_persistence_is_checkpoint_failure_without_replay() {
+    exercise_response_checkpoint(false, true, 0).await;
+}
+
+async fn exercise_response_checkpoint(fail_first: bool, fail_write: bool, delay_secs: u64) {
+    use crate::discovery_service::decision_checkpoint::{DecisionCache, DecisionCheckpoint};
+    use futures_util::FutureExt;
+    struct SlowCache {
+        saved: Mutex<Option<String>>,
+        delay_secs: u64,
+        fail_write: bool,
+    }
+    #[async_trait::async_trait]
+    impl DecisionCache for SlowCache {
+        async fn load(&self, _: &str) -> Result<Option<String>, DecisionProviderError> {
+            Ok(self.saved.lock().unwrap().clone())
+        }
+        async fn save(&self, _: &str, raw: &str) -> Result<(), DecisionProviderError> {
+            tokio::time::sleep(std::time::Duration::from_secs(self.delay_secs)).await;
+            if self.fail_write {
+                return Err(Box::new(std::io::Error::other(
+                    "abstract checkpoint failed",
+                )));
+            }
+            *self.saved.lock().unwrap() = Some(raw.into());
+            Ok(())
+        }
+    }
+    let cache = SlowCache {
+        saved: Mutex::new(None),
+        delay_secs,
+        fail_write,
+    };
+    let locks = crate::discovery_scheduling::DecisionLocks::default();
+    let checkpoint = DecisionCheckpoint::new(&cache, &locks);
+    let catalogs = fixture();
+    let deployments = Default::default();
+    let allowed = DiscoveryAuthorization::catalogs(BTreeSet::from(["matrix".into()]));
+    let intent = IntentProvenance::from_turns(["Produce spectrum".into()]).unwrap();
+    let index = CatalogueSearch::new(&catalogs, &deployments, &allowed).unwrap();
+    let mut calls = 0;
+    let cache_key = Mutex::new(None::<String>);
+    let result = select_indexed(
+        SearchContext {
+            visits: &Default::default(),
+            model: RELEVANCE_MODEL,
+            intent: &intent,
+            generation: "response-persistence",
+            catalogs: &catalogs,
+            deployments: &deployments,
+            allowed: &allowed,
+            exposed: &[],
+        },
+        &index,
+        |request| {
+            calls += 1;
+            let fail = fail_first && calls == 1;
+            *cache_key.lock().unwrap() = Some(request.cache_key().into());
+            let checkpoint = &checkpoint;
+            async move {
+                let raw = answer(&request, "relevant");
+                checkpoint
+                    .receive(request, || async {
+                        if fail {
+                            Err(rejected(503, None))
+                        } else {
+                            Ok(raw)
+                        }
+                    })
+                    .await
+            }
+        },
+        |progress| {
+            let key = cache_key.lock().unwrap().clone();
+            let checkpoint = &checkpoint;
+            let locks = &locks;
+            async move {
+                if matches!(progress.state, ProgressState::Settled) {
+                    assert!(
+                        locks.claim(key.as_ref().unwrap()).now_or_never().is_none(),
+                        "identical cache fills must wait for persistence"
+                    );
+                }
+                checkpoint.persist().await
+            }
+        },
+    )
+    .await;
+    if fail_write {
+        assert!(
+            matches!(result, Err(DiscoveryMatcherError::Checkpoint(_))),
+            "{result:?}"
+        );
+        assert!(cache.saved.lock().unwrap().is_none());
+    } else {
+        assert!(
+            result.is_ok(),
+            "a received valid response must survive its durable checkpoint: {result:?}"
+        );
+        assert!(cache.saved.lock().unwrap().is_some());
+        let (_, _, receipt) = result.unwrap();
+        assert_eq!(receipt.requests, 1 + usize::from(fail_first));
+    }
+    assert_eq!(
+        calls,
+        1 + usize::from(fail_first),
+        "persistence cannot replay a provider request"
+    );
+    assert!(
+        locks
+            .claim(cache_key.lock().unwrap().as_ref().unwrap())
+            .now_or_never()
+            .is_some(),
+        "completion or failure must release cache-fill ownership"
+    );
+}
+
+#[tokio::test]
 async fn stalled_transport_recovers_through_online_admission_without_replaying_effects() {
     use plasm_runtime::provider_transport::{
         request_attempt, ProviderRetryPolicy, ReqwestProviderTransport,

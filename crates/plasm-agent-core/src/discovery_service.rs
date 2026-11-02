@@ -1,6 +1,7 @@
 //! Direct, bounded capability discovery: deterministic recall followed by Luna relevance matching.
 
 use crate::discovery_scheduling as scheduling;
+pub(crate) mod decision_checkpoint;
 use plasm_core::prerequisites::{
     prerequisite_closure, CapabilityRef, PrerequisiteClosure, PrerequisiteError,
 };
@@ -95,7 +96,14 @@ fn search_key(
 // Keep model-free allocation experiments on the production frontier identity.
 #[cfg(test)]
 pub(crate) fn diagnostic_frontier_key(current: &str, allowed: &DiscoveryAuthorization) -> String {
-    frontier_key("diagnostic-pin", "frozen", allowed, "fixture-model", current).unwrap()
+    frontier_key(
+        "diagnostic-pin",
+        "frozen",
+        allowed,
+        "fixture-model",
+        current,
+    )
+    .unwrap()
 }
 
 #[cfg(test)]
@@ -573,6 +581,10 @@ impl DiscoveryService {
             nominated.truncate(crate::discovery_store::CANDIDATE_LIMIT);
             recall.candidates = nominated;
         }
+        let checkpoint = decision_checkpoint::DecisionCheckpoint::new(
+            &self.store,
+            &self.store.pending_decisions,
+        );
         let mut attempt = 0;
         let (retrieval, matching, search) = matcher::online::select_recalled_indexed(
             matcher::online::SearchContext {
@@ -590,34 +602,22 @@ impl DiscoveryService {
             |issued| {
                 attempt += 1;
                 let attempt = attempt;
+                let checkpoint = &checkpoint;
                 async move {
-                    // Serialize identical requests within this service, then recheck the
-                    // durable cache. Failures are never cached; cancellation releases ownership.
-                    let _same_request =
-                        self.store.pending_decisions.claim(issued.cache_key()).await;
-                    if let Some(raw) = self
-                        .store
-                        .cached_selector_envelope(issued.cache_key())
-                        .await?
-                    {
-                        return Ok(raw);
-                    }
-                    let raw = self.contribution_response(issued.body(), attempt).await?;
-                    matcher::decode_batch(&issued, &raw).map_err(|error| {
-                        matcher::online::ReceivedResponseFailure::new(&raw, Box::new(error))
-                    })?;
-                    self.store
-                        .store_selector_envelope(issued.cache_key(), &raw)
+                    checkpoint
+                        .receive(issued.clone(), || async {
+                            self.contribution_response(issued.body(), attempt)
+                                .await
+                                .map_err(|error| Box::new(error) as matcher::DecisionProviderError)
+                        })
                         .await
-                        .map_err(|error| {
-                            matcher::online::ReceivedResponseFailure::new(&raw, Box::new(error))
-                        })?;
-                    Ok(raw)
                 }
             },
             |progress| {
                 let key = &progress_key;
+                let checkpoint = &checkpoint;
                 async move {
+                    checkpoint.persist().await?;
                     self.store
                         .store_search_progress(key, &serde_json::to_string(&progress)?)
                         .await?;
