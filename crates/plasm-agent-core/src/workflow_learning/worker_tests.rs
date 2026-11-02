@@ -352,7 +352,7 @@ async fn postgres_review_to_checked_example_without_provider_calls() {
         logical_session: ids::logical("logical"),
         session_revision: 1,
         run_id: ids::run("fixture-run"),
-        plan_id: CompiledProgramId::from_comp(&bundle.artifact().comp).unwrap(),
+        plan_id: CompiledProgramId::from_comp(&bundle.artifact().comp),
         prompt_hash: session.prompt_hash.parse().unwrap(),
         execute_session: ids::execute("fixture-execute"),
         run_artifact: serde_json::json!({"fixture_completed":true}),
@@ -541,7 +541,7 @@ async fn postgres_review_to_checked_example_without_provider_calls() {
         crate::plasm_dag::compile_python_program_checked(&session, &second_source).unwrap();
     let mut second_program = receipt.clone();
     second_program.run_id = ids::run("second-program-run");
-    second_program.plan_id = CompiledProgramId::from_comp(&second_bundle.artifact().comp).unwrap();
+    second_program.plan_id = CompiledProgramId::from_comp(&second_bundle.artifact().comp);
     second_program.session_revision = 2;
     second_program.source = second_source.clone();
     second_program.compiled_plan = serde_json::to_value(&second_bundle.artifact().comp).unwrap();
@@ -953,7 +953,7 @@ async fn postgres_sensitive_source_still_reaches_curation_and_independent_guidan
         logical_session: ids::logical("logical"),
         session_revision: 1,
         run_id: ids::run("sensitive-run"),
-        plan_id: CompiledProgramId::from_comp(&bundle.artifact().comp).unwrap(),
+        plan_id: CompiledProgramId::from_comp(&bundle.artifact().comp),
         prompt_hash: session.prompt_hash.parse().unwrap(),
         execute_session: ids::execute("execute"),
         run_artifact: serde_json::json!({"fixture_completed":true}),

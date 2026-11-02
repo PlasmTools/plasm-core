@@ -233,6 +233,11 @@ pub async fn observe_execution<F>(
 where
     F: std::future::Future<Output = Result<PlasmPlanRunResult, plasm_runtime::ExecutionFailure>>,
 {
+    if bundle.execution_evidence_kind()
+        == crate::plasm_comp_bundle::ExecutionEvidenceKind::ResultDelivery
+    {
+        return execution.await;
+    }
     let ticket =
         match PostgresEvidenceJournal::for_operation(host, session, execute_session).await {
             Some(journal) => Some(ExecutionLearningTicket::begin(journal).await.map_err(

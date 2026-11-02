@@ -458,7 +458,7 @@ mod tests {
             logical_session: ids::logical("logical"),
             session_revision: 0,
             run_id: ids::run("test-run"),
-            plan_id: CompiledProgramId::from_comp(&compiled.artifact().comp).unwrap(),
+            plan_id: CompiledProgramId::from_comp(&compiled.artifact().comp),
             prompt_hash: session.prompt_hash.parse().unwrap(),
             execute_session: ids::execute("execute"),
             run_artifact: serde_json::json!({}),

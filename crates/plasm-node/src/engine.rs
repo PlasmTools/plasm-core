@@ -2934,20 +2934,32 @@ mod tests {
     }
     #[tokio::test]
     async fn native_paging_preserves_origin_and_rows_after_federation_expands() {
-        assert_native_paging("e1.query()", false).await;
+        assert_native_paging("e1.query()", false, None).await;
     }
 
     #[tokio::test]
     async fn native_complete_computed_rowset_uses_the_same_paging_protocol() {
-        assert_native_paging("e1.query().select('id', 'n')", true).await;
+        assert_native_paging("e1.query().select('id', 'n')", true, None).await;
     }
 
     #[tokio::test]
     async fn native_synthetic_projection_pages_preserve_typed_rows() {
-        assert_native_paging("e1.query().select('id', n='n')", true).await;
+        assert_native_paging("e1.query().select('id', n='n')", true, None).await;
     }
 
-    async fn assert_native_paging(expression: &str, complete_source: bool) {
+    #[tokio::test]
+    async fn native_collect_pages_never_open_program_evidence_or_block_review() {
+        let Ok(url) = std::env::var("PLASM_TEST_POSTGRES_URL") else {
+            return;
+        };
+        assert_native_paging("e1.query().select('id', 'n')", true, Some(url)).await;
+    }
+
+    async fn assert_native_paging(
+        expression: &str,
+        complete_source: bool,
+        learning_database: Option<String>,
+    ) {
         use async_trait::async_trait;
         use plasm_compile::CompiledRequest;
         struct Pages(Arc<std::sync::atomic::AtomicUsize>);
@@ -3007,9 +3019,23 @@ mod tests {
                 ("other".into(), other_compiled),
             ]
             .into(),
-            "paging-session".into(),
+            plasm_agent_core::session_identity::LogicalSessionId::new_v4().to_string(),
             Arc::new(Default::default()),
         );
+        let collecting = learning_database.is_some();
+        if let Some(database_url) = learning_database {
+            engine
+                .configure_workflow_learning(NativeLearningConfig::Collect(
+                    plasm_agent_core::workflow_learning::native::NativeLibraryConfig {
+                        scope: plasm_agent_core::workflow_learning::model::LibraryScope {
+                            tenant: format!("paging-{}", engine.session_id),
+                            project: "offline".into(),
+                        },
+                        database_url,
+                    },
+                ))
+                .unwrap();
+        }
         engine
             .expose_seeds(
                 "list rows",
@@ -3094,6 +3120,23 @@ mod tests {
             88,
             "no dropped or repeated rows across native paging"
         );
+        if collecting {
+            let index: serde_json::Value =
+                serde_json::from_str(&engine.completed_workflow_runs().await.unwrap()).unwrap();
+            let runs = index["runs"].as_array().unwrap();
+            assert_eq!(runs.len(), 1, "pages must never create program receipts");
+            let review = serde_json::json!({"subtasks":[{
+                "intent":"List fixture rows", "observed_outcome":"Observed all 88 rows",
+                "run_ids":[runs[0]["run_id"]]
+            }]});
+            let sealed: serde_json::Value =
+                serde_json::from_str(&engine.review_workflow(&review.to_string()).await.unwrap())
+                    .unwrap();
+            assert!(
+                sealed["review_ref"].is_string(),
+                "page delivery left unresolved evidence"
+            );
+        }
     }
 }
 

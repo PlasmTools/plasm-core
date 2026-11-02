@@ -20,6 +20,14 @@ impl From<PlasmCompBundleError> for plasm_runtime::ExecutionFailure {
 }
 use plasm_core::PlasmCompArtifact;
 
+/// Execution evidence belongs to authored programs. Result delivery is a
+/// downstream operation and cannot open or complete a program learning ticket.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum ExecutionEvidenceKind {
+    Program,
+    ResultDelivery,
+}
+
 /// Canonical compile/run artifact. Wire consumers see [`PlasmCompArtifact::comp`] only.
 #[derive(Debug, Clone)]
 pub struct PlasmCompBundle {
@@ -112,6 +120,24 @@ impl PlasmCompBundle {
 
     pub fn artifact(&self) -> &PlasmCompArtifact {
         &self.artifact
+    }
+
+    pub(crate) fn execution_evidence_kind(&self) -> ExecutionEvidenceKind {
+        use plasm_core::{Expr, PlasmStepPayload};
+        // Page continuations are compiled as a single invoke. Classify the
+        // typed operation, independently of source text, transport or success.
+        let mut steps = self.artifact.comp.steps.values();
+        match (steps.next(), steps.next()) {
+            (Some(PlasmStepPayload::Invoke(invoke)), None)
+                if invoke
+                    .ir
+                    .as_ref()
+                    .is_some_and(|ir| matches!(ir.expr, Expr::Page(_))) =>
+            {
+                ExecutionEvidenceKind::ResultDelivery
+            }
+            _ => ExecutionEvidenceKind::Program,
+        }
     }
 
     pub(crate) fn executable(&self) -> &ExecutablePlasmComp {

@@ -19,7 +19,7 @@ async fn reviewed(repo: &WorkflowRepository, scope: &LibraryScope, logical: &str
         logical_session: logical,
         session_revision: 1,
         run_id: ids::run(&format!("run-{logical}")),
-        plan_id: CompiledProgramId::from_comp(&bundle.artifact().comp).unwrap(),
+        plan_id: CompiledProgramId::from_comp(&bundle.artifact().comp),
         prompt_hash: session.prompt_hash.parse().unwrap(),
         execute_session: ids::execute("fixture-execute"),
         run_artifact: serde_json::json!({"fixture":"trusted completed operation"}),

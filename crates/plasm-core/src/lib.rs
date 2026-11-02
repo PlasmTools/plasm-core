@@ -486,9 +486,11 @@ macro_rules! fixture_row { ($($tt:tt)*) => { $crate::ValueRow::try_from($crate::
 #[cfg(test)]
 pub(crate) use {fixture_row, fixture_value};
 
+pub mod program_identity;
 pub mod value_arithmetic;
 pub mod value_equality;
 pub mod value_order;
+pub use program_identity::{CompiledProgramId, InvalidCompiledProgramId};
 
 #[cfg(test)]
 pub(crate) fn test_manifest_dir() -> &'static str {

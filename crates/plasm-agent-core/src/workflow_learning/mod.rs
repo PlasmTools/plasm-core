@@ -295,7 +295,7 @@ impl WorkflowLearning {
                     logical_session,
                     session_revision: revision,
                     run_id: id,
-                    plan_id: CompiledProgramId::from_comp(&bundle.artifact().comp)?,
+                    plan_id: CompiledProgramId::from_comp(&bundle.artifact().comp),
                     prompt_hash: session.prompt_hash.parse()?,
                     execute_session: execute_session.parse()?,
                     run_artifact: serde_json::to_value(document)?,

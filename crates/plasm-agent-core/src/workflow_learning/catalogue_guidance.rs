@@ -175,7 +175,7 @@ impl CatalogueAssociation {
                 )?) != self.requirements.compiled_sha256()
                 || CompiledProgramId::from_comp(&serde_json::from_value::<plasm_core::PlasmComp>(
                     receipt.compiled_plan.clone(),
-                )?)? != receipt.plan_id
+                )?) != receipt.plan_id
                 || self
                     .requirements
                     .catalog_fingerprints()

@@ -1,57 +1,43 @@
 //! Identity of a complete compiled program, distinct from a reviewed plan commit.
-use serde::{Deserialize, Serialize};
-
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize)]
-#[serde(transparent)]
-pub struct CompiledProgramId(String);
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
-#[error("compiled program identity must be a lowercase SHA-256 digest")]
-pub struct InvalidCompiledProgramId;
-
-impl CompiledProgramId {
-    pub fn from_comp(comp: &plasm_core::PlasmComp) -> Result<Self, serde_json::Error> {
-        Ok(Self(plasm_core::catalog_discovery::content_hash(
-            &serde_json::to_vec(comp)?,
-        )))
-    }
-
-    pub fn as_str(&self) -> &str {
-        &self.0
-    }
-}
-
-impl std::str::FromStr for CompiledProgramId {
-    type Err = InvalidCompiledProgramId;
-    fn from_str(value: &str) -> Result<Self, Self::Err> {
-        if value.len() != 64
-            || !value
-                .bytes()
-                .all(|c| c.is_ascii_digit() || (b'a'..=b'f').contains(&c))
-        {
-            return Err(InvalidCompiledProgramId);
-        }
-        Ok(Self(value.into()))
-    }
-}
-
-impl std::fmt::Display for CompiledProgramId {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.write_str(self.as_str())
-    }
-}
-
-impl<'de> Deserialize<'de> for CompiledProgramId {
-    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
-        String::deserialize(deserializer)?
-            .parse()
-            .map_err(serde::de::Error::custom)
-    }
-}
+pub use plasm_core::CompiledProgramId;
 
 #[cfg(test)]
 mod tests {
     use super::super::{model::*, test_identities as ids};
+
+    #[tokio::test]
+    async fn compiled_multi_argument_program_keeps_identity_through_jsonb() {
+        let Ok(url) = std::env::var("PLASM_TEST_POSTGRES_URL") else {
+            return;
+        };
+        let session = crate::workflow_learning::teaching::tests::session(&["LangItem"]);
+        let symbols = crate::symbol_map_resolve::resolve_session_symbol_map(
+            &crate::symbol_map_resolve::SessionSymbolMapContext {
+                session: &session,
+                cross_cache: None,
+            },
+        );
+        let entity = symbols.entity_sym_for("langmatrix", "LangItem");
+        let method = symbols.method_sym_for("langmatrix", "LangItem", "langitem_create");
+        let source = format!("class Create(Program):\n    def build(self):\n        return {entity}.{method}(title='Fixture', score=25, owner='fixture-owner', active=True)\n");
+        let bundle = crate::plasm_dag::compile_python_program_checked(&session, &source).unwrap();
+        let original = &bundle.artifact().comp;
+        let pool = sqlx::postgres::PgPoolOptions::new()
+            .max_connections(1)
+            .connect(&url)
+            .await
+            .unwrap();
+        let persisted: serde_json::Value = sqlx::query_scalar("SELECT $1::jsonb")
+            .bind(serde_json::to_value(original).unwrap())
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        let restored: plasm_core::PlasmComp = serde_json::from_value(persisted).unwrap();
+        assert_eq!(
+            CompiledProgramId::from_comp(original),
+            CompiledProgramId::from_comp(&restored)
+        );
+    }
 
     #[test]
     fn durable_receipt_rejects_invalid_and_cross_domain_wire_identities() {
