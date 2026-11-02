@@ -1,5 +1,13 @@
 # Python language conformance matrix
 
+Local dictionary field inference is exercised through production admission and
+live Monty execution in `python_compute_dictionary_and_multiple_inputs_live`:
+dynamic-key record accumulation, repeated inputs, per-field list mutation,
+deduplication and empty input. The separate
+`python_compute_dictionary_field_precision_rejects_invalidated_writes` witness
+checks dynamic field writes, alias mutation and dictionary updates. These preserve
+ordinary dictionary contracts; they do not grant fixed-record or entity authority.
+
 Declaration reachability and private compute naming are covered by the live
 `compute_private_unused` case and the declaration-constructor registry. Abstract
 `python_admission_corrections` tests additionally preserve typed causes, validate

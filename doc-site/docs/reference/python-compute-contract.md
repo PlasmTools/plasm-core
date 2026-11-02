@@ -808,6 +808,37 @@ attribute. Empty dictionaries are valid when their key/value contracts are known
 mutated containers use upstream inference, not return-literal inspection. Dictionaries
 survive serialization and subsequent typed compute without gaining entity authority.
 
+### Local dictionary field inference
+
+Within a compute function, the upstream checker can retain literal-key field types
+for a locally constructed dictionary of records. For example, a title and a list
+remain distinct in this accumulator:
+
+```python
+groups = {}
+for row in rows:
+    key = str(row.id)
+    if key not in groups:
+        groups[key] = {"title": str(row.title), "items": []}
+    groups[key]["items"].append(str(row.title))
+```
+
+This precision requires evidence for the local value producers and uses. An
+unclassified alias or container escape, nested-scope capture (including a generator
+expression), dynamic field write, or destructive mutation invalidates the
+refinement. Ordinary dictionary checking then applies;
+the checker does not assume that an uncertain field is still a list. Incompatible
+field use remains an admission error. This is upstream inference, not Plasm source
+rewriting or a second checker.
+
+The refinement neither guarantees a key's presence nor changes the materialized
+`Dictionary { key, value }` contract. Missing-key access still raises `KeyError`.
+Returning a dictionary does not export a fixed-record guarantee or entity authority,
+and another compute invocation checks its actual input contract independently.
+Returning the accumulator itself can still require an explicit closed dictionary
+annotation when ordinary container inference retains an unresolved empty-list
+element type. Local field precision is not permission to materialize `Unknown`.
+
 Compute argument assignment follows Python typing, but runtime input validation
 retains the actual contract (for example, Boolean stays Boolean even when Python
 allows it as an `int` argument). Independent arguments are packed without a join or

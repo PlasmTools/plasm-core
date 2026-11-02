@@ -2783,6 +2783,43 @@ async fn python_compute_dictionary_and_multiple_inputs_live() {
         ("class P(Program):\n    def build(self):\n        return \"done\"\n        missing()\n", serde_json::json!("done"), ReturnShape::Scalar),
         ("class P(Program):\n    def build(self):\n        def title(row: Row, /):\n            return {\"name\": row.title}\n        return self.names(E.query().map(title, max_parents=2))\n    @compute\n    def names(self, rows: list[Row]) -> str:\n        return \",\".join(str(row.name) for row in rows)\n", serde_json::json!("one,two"), ReturnShape::Scalar),
         ("class P(Program):\n    def build(self):\n        return E.query().take(1).select(n=lambda row: sum(row for row in [1, 2])).n\n", serde_json::json!(3), ReturnShape::Scalar),
+        (r#"class GroupRecords(Program):
+    def build(self):
+        return self.render(E.query())
+    @compute
+    def render(self, rows: list[Row]) -> str:
+        groups = {}
+        order = []
+        for row in rows + rows:
+            key = str(row.id)
+            if key not in groups:
+                groups[key] = {"title": str(row.title), "items": []}
+                order.append(key)
+            groups[key]["items"].append(str(row.title))
+        result = []
+        for key in order:
+            items = "|".join(dict.fromkeys(groups[key]["items"]))
+            result.append(groups[key]["title"] + ":" + items)
+        return ";".join(result)
+"#, serde_json::json!("one:one;two:two"), ReturnShape::Scalar),
+        (r#"class EmptyGroups(Program):
+    def build(self):
+        return self.render(E.query())
+    @compute
+    def render(self, rows: list[Row]) -> str:
+        groups = {}
+        order = []
+        for row in rows[:0]:
+            key = str(row.id)
+            if key not in groups:
+                groups[key] = {"title": str(row.title), "items": []}
+                order.append(key)
+            groups[key]["items"].append(str(row.title))
+        result = []
+        for key in order:
+            result.append(groups[key]["title"] + ":" + "|".join(groups[key]["items"]))
+        return ";".join(result)
+"#, serde_json::json!(""), ReturnShape::Scalar),
     ];
     for (index, (source, expected, shape)) in cases.iter().enumerate() {
         let case = Case {
@@ -2829,4 +2866,31 @@ async fn python_compute_dictionary_and_multiple_inputs_live() {
         assert_eq!(actual, *expected, "case {index}");
     }
     server.abort();
+}
+
+#[tokio::test]
+async fn python_compute_dictionary_field_precision_rejects_invalidated_writes() {
+    let es = language_matrix::matrix_execute_session(language_matrix::load_language_matrix_cgs());
+    for mutation in [
+        "groups[key][str(row.title)] = 'replaced'",
+        "alias = groups[key]\n            alias['items'] = 'replaced'",
+        "groups[key].update({'items': 'replaced'})",
+    ] {
+        let source = format!(r#"class InvalidGroups(Program):
+    def build(self):
+        return self.render(E.query())
+    @compute
+    def render(self, rows: list[Row]) -> str:
+        groups = {{}}
+        for row in rows:
+            key = str(row.id)
+            if key not in groups:
+                groups[key] = {{"title": str(row.title), "items": []}}
+            {mutation}
+            groups[key]["items"].append(str(row.title))
+        return "invalid"
+"#);
+        let error = compile_fixture(&es, &source).await.unwrap_err();
+        assert!(error.to_string().contains("append"), "{mutation}: {error}");
+    }
 }
