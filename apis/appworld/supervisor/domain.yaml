@@ -58,18 +58,23 @@ entities:
       street_address:
         required: false
         value_ref: nv_str
+        description: Street address of this named location.
       city:
         required: false
         value_ref: nv_str
+        description: City of this named location.
       state:
         required: false
         value_ref: nv_str
+        description: State or region of this named location.
       country:
         required: false
         value_ref: nv_str
+        description: Country of this named location.
       zip_code:
         required: false
         value_ref: nv_int
+        description: Postal code of this named location.
   PaymentCard:
     id_field: card_number
     description: Payment card details on the supervisor profile, usable as input to card registration. Not a service-local saved card ID; presence and expiry do not establish sufficient funds.
