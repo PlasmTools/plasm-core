@@ -57,6 +57,7 @@ async fn spotify_library_view_observes_direct_membership_without_containment_req
         [("spotify".into(), cgs)].into(),
         [("spotify".into(), compiled)].into(),
         "spotify-membership-witness".into(),
+        std::sync::Arc::new(Default::default()),
     );
     let teaching = engine
         .expose_seeds(

@@ -110,6 +110,7 @@ async fn run_native_hydration() {
         [("matrix".into(), cgs)].into(),
         [("matrix".into(), compiled)].into(),
         "hydration-session".into(),
+        std::sync::Arc::new(Default::default()),
     );
     let seeds = ["Session", "SavedNote", "Note", "Owner", "Folder"].map(|entity| CapabilitySeed {
         entry_id: "matrix".into(),

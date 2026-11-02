@@ -240,8 +240,7 @@ impl PlasmEngine {
             Some(id) => self.session_engine(id).map_err(map_err)?,
             None => Arc::clone(&self.inner),
         };
-        let mut engine = shared.lock_owned().await;
-        engine.set_python_pool(self.python_pool.clone());
+        let engine = shared.lock_owned().await;
         if logical_session_id.is_some() {
             self.refresh_discovery_session(&engine)
                 .await
@@ -305,6 +304,10 @@ impl PlasmEngine {
     #[napi(constructor)]
     pub fn with_runtime(monty_binary: Option<String>) -> Self {
         tracing_setup::init();
+        let python_pool = Arc::new(match monty_binary {
+            Some(path) => plasm_agent_core::python_pool::PythonPool::with_binary(path.into()),
+            None => Default::default(),
+        });
         Self {
             closing: std::sync::atomic::AtomicBool::new(false),
             reviewing: std::sync::atomic::AtomicBool::new(false),
@@ -312,11 +315,8 @@ impl PlasmEngine {
             workflow_owner: OnceCell::new(),
             drained: Arc::new(tokio::sync::RwLock::new(false)),
             learning_pool: Arc::new(plasm_agent_core::live_plan_run_worker::LivePlanRunPool::new()),
-            python_pool: Arc::new(match monty_binary {
-                Some(path) => plasm_agent_core::python_pool::PythonPool::with_binary(path.into()),
-                None => Default::default(),
-            }),
-            inner: Arc::new(AsyncMutex::new(InnerEngine::new())),
+            inner: Arc::new(AsyncMutex::new(InnerEngine::new(python_pool.clone()))),
+            python_pool,
             sessions: Mutex::new(HashMap::new()),
             discovery_store: Arc::new(OnceCell::new()),
             activated: Default::default(),
@@ -581,8 +581,13 @@ impl PlasmEngine {
             authorization: DiscoveryAuthorization::catalogs(allowed),
             pin_id: plasm_agent_core::session_identity::LogicalSessionId::new_v4().to_string(),
         };
-        let mut validation_engine =
-            InnerEngine::from_pinned_generation(catalogs, compiled, pin, deployments);
+        let mut validation_engine = InnerEngine::from_pinned_generation(
+            catalogs,
+            compiled,
+            pin,
+            deployments,
+            self.python_pool.clone(),
+        );
         validation_engine
             .configure_workflow_learning(
                 self.workflow_config
@@ -591,7 +596,6 @@ impl PlasmEngine {
                     .ok_or_else(|| Error::from_reason("workflow learning is not configured"))?,
             )
             .map_err(map_err)?;
-        validation_engine.set_python_pool(self.python_pool.clone());
         let report = self
             .learning_pool
             .run_local(move || async move {
@@ -819,6 +823,7 @@ impl PlasmEngine {
                             compiled_catalogs,
                             pin.clone(),
                             prerequisite_deployments,
+                            self.python_pool.clone(),
                         );
                         engine
                             .configure_workflow_learning(
@@ -1003,6 +1008,7 @@ mod mutex_law_tests {
                 Default::default(),
                 pin,
                 Default::default(),
+                engine.python_pool.clone(),
             ))),
         );
         *engine.activated.write().await =
@@ -1043,6 +1049,7 @@ mod mutex_law_tests {
             [("fixture".into(), plasm_core::CGS::new())].into(),
             Default::default(),
             "closing-session".into(),
+            engine.python_pool.clone(),
         );
         let mut admitted = Box::pin(engine.introspect_catalog("fixture".into()));
         poll_fn(|cx| {
@@ -1104,6 +1111,7 @@ mod mutex_law_tests {
             [("fixture".into(), plasm_core::CGS::new())].into(),
             Default::default(),
             "queued-session".into(),
+            engine.python_pool.clone(),
         );
         let mut first = Box::pin(engine.dry_run("invalid".into(), None));
         let mut cancelled = Box::pin(engine.introspect_catalog("fixture".into()));
@@ -1139,7 +1147,12 @@ mod mutex_law_tests {
     async fn logical_sessions_have_independent_queues_and_survive_holder_cancellation() {
         let engine = Arc::new(PlasmEngine::new());
         for id in ["a", "b"] {
-            lock(&engine.sessions).insert(id.into(), Arc::new(AsyncMutex::new(InnerEngine::new())));
+            lock(&engine.sessions).insert(
+                id.into(),
+                Arc::new(AsyncMutex::new(InnerEngine::new(
+                    engine.python_pool.clone(),
+                ))),
+            );
         }
         let a = engine.session_engine("a").unwrap();
         let (tx, rx) = tokio::sync::oneshot::channel();

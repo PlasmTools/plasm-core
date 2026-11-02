@@ -301,14 +301,14 @@ pub struct AgentEngine {
 
 impl Default for AgentEngine {
     fn default() -> Self {
-        Self::new()
+        Self::new(Arc::new(Default::default()))
     }
 }
 
 impl AgentEngine {
-    pub fn new() -> Self {
+    pub fn new(python_pool: Arc<plasm_agent_core::python_pool::PythonPool>) -> Self {
         Self {
-            python_pool: Arc::new(Default::default()),
+            python_pool,
             session_id: plasm_agent_core::session_identity::LogicalSessionId::new_v4()
                 .as_uuid()
                 .to_string(),
@@ -335,10 +335,6 @@ impl AgentEngine {
     pub fn set_intent(&mut self, intent: impl Into<String>) {
         self.intent = intent.into();
         self.intent_turns = vec![self.intent.clone()];
-    }
-
-    pub(crate) fn set_python_pool(&mut self, pool: Arc<plasm_agent_core::python_pool::PythonPool>) {
-        self.python_pool = pool;
     }
 
     pub fn configure_workflow_learning(&mut self, config: NativeLearningConfig) -> Result<()> {
@@ -658,8 +654,9 @@ impl AgentEngine {
         catalogs: std::collections::BTreeMap<String, CGS>,
         compiled_catalogs: std::collections::BTreeMap<String, Arc<plasm_compile::CompiledCatalog>>,
         session_id: String,
+        python_pool: Arc<plasm_agent_core::python_pool::PythonPool>,
     ) -> Self {
-        let mut engine = Self::new();
+        let mut engine = Self::new(python_pool);
         engine.session_id = session_id;
         for (id, cgs) in catalogs {
             engine
@@ -676,8 +673,10 @@ impl AgentEngine {
         compiled_catalogs: std::collections::BTreeMap<String, Arc<plasm_compile::CompiledCatalog>>,
         pin: DiscoverySessionPin,
         prerequisite_deployments: plasm_core::prerequisites::DeploymentBindings,
+        python_pool: Arc<plasm_agent_core::python_pool::PythonPool>,
     ) -> Self {
-        let mut engine = Self::from_generation(catalogs, compiled_catalogs, pin.pin_id.clone());
+        let mut engine =
+            Self::from_generation(catalogs, compiled_catalogs, pin.pin_id.clone(), python_pool);
         engine.discovery_pin = Some(pin);
         engine.prerequisite_deployments = prerequisite_deployments;
         engine
@@ -1735,6 +1734,12 @@ mod tests {
     }
 
     fn tiny_engine() -> (AgentEngine, CatalogInfo) {
+        tiny_engine_with_pool(Arc::new(Default::default()))
+    }
+
+    fn tiny_engine_with_pool(
+        pool: Arc<plasm_agent_core::python_pool::PythonPool>,
+    ) -> (AgentEngine, CatalogInfo) {
         let mut cgs = plasm_core::load_schema_dir(&execute_tiny_dir()).unwrap();
         cgs.bind_registry_entry_id("matrix");
         let info = CatalogInfo {
@@ -1747,6 +1752,7 @@ mod tests {
                 [("matrix".into(), cgs)].into(),
                 [("matrix".into(), compiled)].into(),
                 "matrix-session".into(),
+                pool,
             ),
             info,
         )
@@ -1815,6 +1821,7 @@ mod tests {
                 [("return_projection".into(), cgs)].into(),
                 [("return_projection".into(), compiled)].into(),
                 "return-projection-session".into(),
+                Arc::new(Default::default()),
             ),
             info,
         )
@@ -1908,12 +1915,41 @@ mod tests {
         );
     }
 
-    #[tokio::test]
-    async fn execution_failure_missing_worker_is_not_a_node_program_correction() {
-        let (mut engine, info) = tiny_engine();
+    async fn retained_context_engine(
+        pool: Arc<plasm_agent_core::python_pool::PythonPool>,
+    ) -> AgentEngine {
+        let (loaded, info) = tiny_engine_with_pool(pool.clone());
+        let mut engine = AgentEngine::from_pinned_generation(
+            loaded
+                .catalogs
+                .into_iter()
+                .map(|(entry, cgs)| (entry, cgs.as_ref().clone()))
+                .collect(),
+            loaded.compiled_catalogs.into_iter().collect(),
+            DiscoverySessionPin {
+                authorization: plasm_agent_core::discovery_store::DiscoveryAuthorization::catalogs(
+                    ["matrix".into()].into(),
+                ),
+                generation: "runtime-fixture-generation".into(),
+                pin_id: plasm_agent_core::session_identity::LogicalSessionId::new_v4().to_string(),
+            },
+            Default::default(),
+            pool,
+        );
+        engine
+            .configure_workflow_learning(NativeLearningConfig::Admission(
+                plasm_agent_core::workflow_learning::native::NativeLibraryConfig {
+                    scope: plasm_agent_core::workflow_learning::model::LibraryScope {
+                        tenant: "runtime-owner-fixture".into(),
+                        project: "offline".into(),
+                    },
+                    database_url: "postgresql://127.0.0.1:1/unavailable".into(),
+                },
+            ))
+            .unwrap();
         engine
             .expose_seeds(
-                "test intent",
+                "inspect records",
                 &[CapabilitySeed {
                     entry_id: info.entry_id,
                     entity: "Product".into(),
@@ -1921,10 +1957,61 @@ mod tests {
             )
             .await
             .unwrap();
-        engine.set_python_pool(Arc::new(
-            plasm_agent_core::python_pool::PythonPool::with_binary(std::path::PathBuf::from(
-                "/nonexistent-plasm-conformance-worker",
-            )),
+        assert!(
+            engine.host.is_some(),
+            "context publication must precede compute"
+        );
+        engine
+    }
+
+    #[tokio::test]
+    async fn configured_runtime_is_shared_before_context_and_cached_host_compute() {
+        let binary = std::env::var_os("PLASM_MONTY_BINARY")
+            .map(std::path::PathBuf::from)
+            .unwrap_or_else(|| {
+                std::env::current_exe()
+                    .unwrap()
+                    .parent()
+                    .unwrap()
+                    .parent()
+                    .unwrap()
+                    .join("monty")
+            });
+        let owner = crate::PlasmEngine::with_runtime(Some(binary.to_string_lossy().into_owned()));
+        assert!(Arc::ptr_eq(
+            &owner.inner.lock().await.python_pool,
+            &owner.python_pool
+        ));
+        let mut engine = retained_context_engine(owner.python_pool.clone()).await;
+        let cached = engine.host.as_ref().unwrap().oss.python_pool.clone();
+        assert!(Arc::ptr_eq(&cached, &owner.python_pool));
+        let dry = engine.dry_run("class Count(Program):\n    @compute\n    def count(self, rows: list[Row]) -> int:\n        return len(rows)\n    def build(self):\n        return self.count(e1.query())\n").await.unwrap();
+        assert!(dry.failure_json.is_none(), "{}", dry.summary);
+        let result = engine
+            .run_plan_live(&dry.plan_commit_ref, Arc::new(MockProductListTransport))
+            .await
+            .unwrap();
+        assert!(result.ok, "{}", result.message);
+        assert!(Arc::ptr_eq(
+            &engine.host.as_ref().unwrap().oss.python_pool,
+            &cached
+        ));
+        assert!(Arc::ptr_eq(
+            &engine.build_host_state(None).unwrap().oss.python_pool,
+            &cached
+        ));
+        owner.close().await;
+    }
+
+    #[tokio::test]
+    async fn execution_failure_missing_worker_is_not_a_node_program_correction() {
+        let pool = Arc::new(plasm_agent_core::python_pool::PythonPool::with_binary(
+            std::path::PathBuf::from("/nonexistent-plasm-conformance-worker"),
+        ));
+        let mut engine = retained_context_engine(pool.clone()).await;
+        assert!(Arc::ptr_eq(
+            &engine.host.as_ref().unwrap().oss.python_pool,
+            &pool
         ));
         let dry = engine.dry_run("class Read(Program):\n    @compute\n    def count(self, rows: list[Row]) -> int:\n        return len(rows)\n    def build(self):\n        return self.count(e1.query())\n").await.unwrap();
         assert!(dry.failure_json.is_none());
@@ -2423,7 +2510,7 @@ mod tests {
                     let mut engine = AgentEngine::from_generation(
                         [("matrix".into(), cgs)].into(), [("matrix".into(), compiled)].into(),
                         "stack-session".into(),
-                    );
+                    Arc::new(Default::default()),);
                     engine.expose_seeds("update items", &[CapabilitySeed {
                         entry_id: "matrix".into(), entity: "LangItem".into(),
                     }]).await.unwrap();
@@ -2484,8 +2571,13 @@ mod tests {
             generation: "fixture-generation".into(),
             pin_id: plasm_agent_core::session_identity::LogicalSessionId::new_v4().to_string(),
         };
-        let mut engine =
-            AgentEngine::from_pinned_generation(catalogs, compiled, pin, deployments.clone());
+        let mut engine = AgentEngine::from_pinned_generation(
+            catalogs,
+            compiled,
+            pin,
+            deployments.clone(),
+            Arc::new(Default::default()),
+        );
         for _ in 0..2 {
             engine
                 .expose_routing("inspect fixture files", &closure)
@@ -2630,6 +2722,7 @@ mod tests {
             compiled_catalogs,
             pin.clone(),
             Default::default(),
+            Arc::new(Default::default()),
         );
         let route = |name: &str| PrerequisiteClosure {
             business: vec![CapabilityRef {
@@ -2742,7 +2835,7 @@ mod tests {
 
     #[test]
     fn runtime_loader_rejects_raw_authoring_schema() {
-        assert!(AgentEngine::new()
+        assert!(AgentEngine::default()
             .load_catalog(&execute_tiny_dir())
             .is_err());
     }
@@ -2868,6 +2961,7 @@ mod tests {
             ]
             .into(),
             "paging-session".into(),
+            Arc::new(Default::default()),
         );
         engine
             .expose_seeds(
