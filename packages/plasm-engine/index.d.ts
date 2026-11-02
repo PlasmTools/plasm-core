@@ -26,6 +26,8 @@ export declare class PlasmEngine {
   exportRetainedWorkflowArchive(digest: string): Promise<string>
   /** Requires an activated catalogue generation and an explicit source policy. */
   importWorkflowArchive(archiveJson: string, policyJson: string): Promise<string>
+  /** Host-only normal serving validation in fresh pinned contexts; no execution. */
+  verifyWorkflowLibrary(limit: number): Promise<string>
 
   /** Stop admission, drain native calls and close pooled Monty workers. */
   close(): Promise<void>

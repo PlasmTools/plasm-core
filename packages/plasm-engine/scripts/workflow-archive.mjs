@@ -3,20 +3,22 @@
 import { open } from 'node:fs/promises';
 import { parseArgs } from 'node:util';
 import { createRequire } from 'node:module';
-import { resolve } from 'node:path';
+import { resolve, dirname } from 'node:path';
+import { createHash } from 'node:crypto';
+const sha256 = bytes => createHash('sha256').update(bytes).digest('hex');
 
 const require = createRequire(import.meta.url);
 const { PlasmEngine } = require('../runtime.cjs');
 const { values, positionals } = parseArgs({ allowPositionals: true, options: {
-  config: { type: 'string' }, output: { type: 'string' }, audit: { type: 'string' },
+  limit: { type: 'string' }, config: { type: 'string' }, output: { type: 'string' }, audit: { type: 'string' },
   request: { type: 'string' }, assessments: { type: 'string' }, digest: { type: 'string' },
   archive: { type: 'string' }, policy: { type: 'string' },
   catalogs: { type: 'string' }, bindings: { type: 'string' }, deployment: { type: 'string' },
 } });
 const action = positionals[0];
-if (positionals.length !== 1 || !['export', 'import'].includes(action)
+if (positionals.length !== 1 || !['export', 'import', 'verify'].includes(action)
     || !values.config || !values.output || !values.audit) {
-  throw new Error('Usage: plasm-workflow-archive export|import --config FILE --output NEW_FILE --audit NEW_FILE [--request FILE --assessments FILE] [--archive FILE --policy FILE --catalogs FILE --bindings FILE --deployment ID]');
+  throw new Error('Usage: plasm-workflow-archive export|import|verify --config FILE --output NEW_FILE --audit NEW_FILE [--request FILE --assessments FILE] [--archive FILE --policy FILE --catalogs FILE --bindings FILE --deployment ID]');
 }
 if (resolve(values.output) === resolve(values.audit)) throw new Error('Archive and audit destinations must differ');
 
@@ -78,22 +80,58 @@ try {
     const document = JSON.parse(archive);
     await record({event: 'archive_exported', digest: document.digest, items: document.items.length});
   } else {
-    if (!values.archive || !values.policy || !values.catalogs || !values.bindings || !values.deployment) {
+    if (!values.archive || (action === 'import' && !values.policy) || !values.catalogs || !values.bindings || !values.deployment) {
       throw new Error('Import requires --archive, --policy, --catalogs, --bindings and --deployment');
     }
-    const catalogs = JSON.parse(await readBounded(values.catalogs));
+    const catalogBytes = await readBounded(values.catalogs);
+    const bindingBytes = await readBounded(values.bindings);
+    const catalogs = JSON.parse(catalogBytes);
     if (!Array.isArray(catalogs) || catalogs.length === 0 || catalogs.length > 10000
         || catalogs.some(value => typeof value !== 'string' || value.length === 0)) {
       throw new Error('Catalogues must be an array of authoritative packed manifest paths');
     }
-    for (const catalog of catalogs) await engine.loadCatalog(catalog);
-    await engine.activateDiscovery(values.deployment, await readBounded(values.bindings));
-    const report = await engine.importWorkflowArchive(
-      await readBounded(values.archive, 512 * 1024 * 1024), await readBounded(values.policy));
-    await output.writeFile(report + '\n');
-    await output.sync();
-    const parsed = JSON.parse(report);
-    await record({event: 'archive_imported', digest: parsed.archive_digest, items: parsed.items.length});
+    const fingerprints = [];
+    for (const catalog of catalogs) {
+      const manifestBytes = await readBounded(catalog);
+      const manifest = JSON.parse(manifestBytes);
+      if (typeof manifest.cgs_json !== 'string' || typeof manifest.recipes_json !== 'string') {
+        throw new Error('Packed catalogue requires CGS and recipes artifacts');
+      }
+      fingerprints.push({
+        manifest_sha256: sha256(manifestBytes),
+        cgs_sha256: sha256(await readBounded(resolve(dirname(catalog), manifest.cgs_json), 512 * 1024 * 1024)),
+        recipes_sha256: sha256(await readBounded(resolve(dirname(catalog), manifest.recipes_json), 512 * 1024 * 1024)),
+      });
+      await engine.loadCatalog(catalog);
+    }
+    await engine.activateDiscovery(values.deployment, bindingBytes);
+    const archiveBytes = await readBounded(values.archive, 512 * 1024 * 1024);
+    if (action === 'verify') {
+      const limit = values.limit === undefined ? 32 : Number(values.limit);
+      if (!Number.isInteger(limit) || limit < 1 || limit > 32) throw new Error('Verification limit must be 1..32');
+      const archive = JSON.parse(archiveBytes);
+      const retained = await engine.exportRetainedWorkflowArchive(archive.digest);
+      if (retained !== archiveBytes) throw new Error('Archive bytes differ from the retained target archive');
+      const checked = JSON.parse(await engine.verifyWorkflowLibrary(limit));
+      const proof = {
+        schema_version: 1, kind: 'workflow_serving_compatibility_v1',
+        archive_digest: archive.digest, archive_sha256: sha256(archiveBytes),
+        catalogs_sha256: sha256(catalogBytes), bindings_sha256: sha256(bindingBytes),
+        deployment: values.deployment, catalogs: fingerprints, report: checked,
+      };
+      await output.writeFile(JSON.stringify(proof) + '\n');
+      await output.sync();
+      await record({event: 'library_compatibility_checked', count: checked.examples.length, truncated: checked.truncated});
+      if (checked.truncated || checked.examples.length === 0 || checked.examples.some(example => example.outcome.status !== 'checked')) {
+        throw new Error('Library compatibility gate failed; bounded report retained');
+      }
+    } else {
+      const report = await engine.importWorkflowArchive(archiveBytes, await readBounded(values.policy));
+      await output.writeFile(report + '\n');
+      await output.sync();
+      const parsed = JSON.parse(report);
+      await record({event: 'archive_imported', digest: parsed.archive_digest, items: parsed.items.length});
+    }
   }
 } catch (error) {
   const message = String(error instanceof Error ? error.message : 'archive administration failed')

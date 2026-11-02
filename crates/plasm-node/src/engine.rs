@@ -413,6 +413,50 @@ impl AgentEngine {
         )?)
     }
 
+    pub(crate) async fn verify_workflow_example(
+        &mut self,
+        revision: &plasm_agent_core::workflow_learning::model::StoredExample,
+    ) -> Result<crate::workflow_verification::ExampleVerification> {
+        use crate::workflow_verification::{CompatibilityOutcome, ExampleVerification};
+        self.set_intent("Verify stored teaching compatibility");
+        let context = self.archive_validation_context()?;
+        self.workflow_config
+            .register(
+                &context.host,
+                &context.session,
+                &self.session_id,
+                self.execute_session_id.as_str(),
+                &self.intent_turns,
+            )
+            .await?;
+        let outcome = match self
+            .workflow_config
+            .fetch(
+                &context.host,
+                &context.session,
+                self.execute_session_id.as_str(),
+                &revision.id.to_string(),
+                &context.authorization,
+            )
+            .await
+        {
+            Ok(served) => CompatibilityOutcome::Checked {
+                source_sha256: plasm_core::catalog_discovery::content_hash(
+                    served.source.as_bytes(),
+                ),
+                domain_revision: served.domain_revision,
+            },
+            Err(NativeLearningError::Serving(error)) => {
+                CompatibilityOutcome::from_serving_error(error)
+            }
+            Err(error) => return Err(error.into()),
+        };
+        Ok(ExampleVerification {
+            example_ref: revision.id.to_string(),
+            outcome,
+        })
+    }
+
     pub async fn fetch_workflow_example(&mut self, revision: &str) -> Result<String> {
         let host = match &self.host {
             Some(host) => host.clone(),
@@ -1733,7 +1777,7 @@ mod tests {
         }
     }
 
-    fn tiny_engine() -> (AgentEngine, CatalogInfo) {
+    pub(super) fn tiny_engine() -> (AgentEngine, CatalogInfo) {
         tiny_engine_with_pool(Arc::new(Default::default()))
     }
 
@@ -2206,7 +2250,7 @@ mod tests {
         assert_eq!(live_run_rows_json(&live).unwrap(), None);
     }
 
-    struct MockProductListTransport;
+    pub(super) struct MockProductListTransport;
 
     #[async_trait::async_trait]
     impl plasm_runtime::http_transport::HttpTransport for MockProductListTransport {
@@ -2253,9 +2297,12 @@ mod tests {
         let Some(directory) = std::env::var_os("PLASM_NATIVE_LEARNING_FIXTURE_OUT") else {
             return;
         };
-        let directory = PathBuf::from(directory);
-        std::fs::create_dir_all(&directory).unwrap();
         let (engine, _) = tiny_engine();
+        write_native_workflow_fixture(&PathBuf::from(directory), &engine);
+    }
+
+    pub(super) fn write_native_workflow_fixture(directory: &Path, engine: &AgentEngine) {
+        std::fs::create_dir_all(directory).unwrap();
         let cgs = engine.catalogs["matrix"].as_ref();
         let compiled = engine.compiled_catalogs["matrix"].as_ref();
         let write =
@@ -3053,3 +3100,7 @@ mod tests {
 #[cfg(test)]
 #[path = "hydration_boundary_tests.rs"]
 mod hydration_boundary_tests;
+
+#[cfg(test)]
+#[path = "workflow_verification_tests.rs"]
+mod workflow_verification_tests;

@@ -87,3 +87,19 @@ sessions must not promote their own outcomes into the consumed library.
 For an exact round-trip of an imported archive, use `export --digest DIGEST`
 instead of `--request`; this returns the retained original document and preserves
 its source scope and item identities. It cannot attach new assessments.
+
+After import, verify ordinary serving against the destination's activated catalogue
+and deployment bindings without executing any example:
+
+```sh
+plasm-workflow-archive verify --config destination-scope.json \
+  --archive training.archive.json --catalogs catalogs.json --bindings bindings.json \
+  --deployment verification --output compatibility.json --audit compatibility-audit.json
+```
+
+The host checks at most 32 eligible revisions, each in a fresh context, through
+normal symbol binding and Python admission. The private report binds the retained
+archive, catalogue files and deployment bindings by SHA-256 and records typed
+per-revision outcomes. Empty, truncated or partially unsuccessful reports fail the
+command while retaining the report. This proves serving compatibility only; it
+neither executes effects nor measures semantic recall or task usefulness.

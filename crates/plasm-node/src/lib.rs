@@ -4,6 +4,7 @@ mod engine;
 mod tracing_setup;
 mod transport;
 mod types;
+mod workflow_verification;
 
 pub use engine::{
     AgentEngine, CapabilityIntrospection, CatalogInfo, CatalogIntrospection, DryRunResult,
@@ -198,6 +199,37 @@ impl PlasmEngine {
                 .replace(&config.database_url, "[workflow database]");
         }
         error
+    }
+
+    async fn administrative_generation(
+        &self,
+    ) -> Result<workflow_verification::AdministrativeGeneration> {
+        let (generation, allowed) = self
+            .activated
+            .read()
+            .await
+            .clone()
+            .ok_or_else(|| map_err(NodeEngineError::NoActivatedGeneration))?;
+        let store = self
+            .discovery_store
+            .get()
+            .ok_or_else(|| map_err(NodeEngineError::DiscoveryStoreUnavailable))?;
+        let (catalogs, compiled, deployments) = store
+            .load_generation(&generation)
+            .await
+            .map_err(NodeEngineError::from)
+            .map_err(map_err)?;
+        let pin = DiscoverySessionPin {
+            generation,
+            authorization: DiscoveryAuthorization::catalogs(allowed),
+            pin_id: plasm_agent_core::session_identity::LogicalSessionId::new_v4().to_string(),
+        };
+        Ok(workflow_verification::AdministrativeGeneration {
+            catalogs,
+            compiled,
+            pin,
+            deployments,
+        })
     }
 
     async fn workflow_admin(&self) -> Result<WorkflowAdmin> {
@@ -561,39 +593,14 @@ impl PlasmEngine {
         }
         let policy = parse_archive_metadata::<ArchiveImportPolicy>(&policy_json)?;
         let admin = self.workflow_admin().await?;
-        let (generation, allowed) = self
-            .activated
-            .read()
-            .await
-            .clone()
-            .ok_or_else(|| map_err(NodeEngineError::NoActivatedGeneration))?;
-        let store = self
-            .discovery_store
-            .get()
-            .ok_or_else(|| map_err(NodeEngineError::DiscoveryStoreUnavailable))?;
-        let (catalogs, compiled, deployments) = store
-            .load_generation(&generation)
-            .await
-            .map_err(NodeEngineError::from)
-            .map_err(map_err)?;
-        let pin = DiscoverySessionPin {
-            generation,
-            authorization: DiscoveryAuthorization::catalogs(allowed),
-            pin_id: plasm_agent_core::session_identity::LogicalSessionId::new_v4().to_string(),
-        };
-        let mut validation_engine = InnerEngine::from_pinned_generation(
-            catalogs,
-            compiled,
-            pin,
-            deployments,
-            self.python_pool.clone(),
-        );
-        validation_engine
-            .configure_workflow_learning(
+        let generation = self.administrative_generation().await?;
+        let mut validation_engine = generation
+            .engine(
                 self.workflow_config
                     .get()
                     .cloned()
                     .ok_or_else(|| Error::from_reason("workflow learning is not configured"))?,
+                self.python_pool.clone(),
             )
             .map_err(map_err)?;
         let report = self
@@ -647,6 +654,59 @@ impl PlasmEngine {
             .map_err(map_err)?
             .map_err(|error| self.workflow_error(error))?;
         String::from_utf8(bytes).map_err(map_err)
+    }
+
+    /// Host-only bounded serving verification; never runs the checked programs.
+    #[napi]
+    pub async fn verify_workflow_library(&self, limit: u32) -> Result<String> {
+        use workflow_verification::{LibraryVerification, MAX_VERIFIED_EXAMPLES};
+        if limit == 0 || limit > MAX_VERIFIED_EXAMPLES {
+            return Err(Error::from_reason("verification limit must be 1..32"));
+        }
+        let admin = self.workflow_admin().await?;
+        let generation = self.administrative_generation().await?;
+        let library = self
+            .workflow_config
+            .get()
+            .and_then(NativeLearningConfig::library)
+            .cloned()
+            .ok_or_else(|| Error::from_reason("workflow library is not configured"))?;
+        let pool = self.python_pool.clone();
+        let report = self
+            .learning_pool
+            .run_local(move || async move {
+                let _guard = admin.guard;
+                let repository = admin.owner.repository().await.map_err(
+                    plasm_agent_core::workflow_learning::native::NativeLearningError::from,
+                )?;
+                let mut eligible = repository
+                    .list_eligible(&admin.scope, limit + 1)
+                    .await
+                    .map_err(
+                        plasm_agent_core::workflow_learning::native::NativeLearningError::from,
+                    )?;
+                let truncated = eligible.len() > limit as usize;
+                eligible.truncate(limit as usize);
+                let mut examples = Vec::with_capacity(eligible.len());
+                for revision in eligible {
+                    let mut engine = generation.engine(
+                        NativeLearningConfig::Examples(library.clone()),
+                        pool.clone(),
+                    )?;
+                    examples.push(engine.verify_workflow_example(&revision).await?);
+                }
+                Ok::<_, engine::AgentEngineError>(LibraryVerification {
+                    scope: admin.scope,
+                    generation: generation.pin.generation,
+                    limit,
+                    truncated,
+                    examples,
+                })
+            })
+            .await
+            .map_err(map_err)?
+            .map_err(|error| self.workflow_error(error))?;
+        serde_json::to_string(&report).map_err(map_err)
     }
 
     /// Close admission, drain native callbacks and terminate pooled workers.
