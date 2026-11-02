@@ -504,7 +504,7 @@ fn project_links(
             collect_values(
                 &part,
                 &reference.catalog,
-                &definitions,
+                definitions,
                 &mut types,
                 &mut names,
                 reference,

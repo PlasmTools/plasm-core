@@ -11,7 +11,9 @@ pub enum DryPlanValidationError {
         "plan node {index} relation target catalog `{entry_id}` is not loaded in this session"
     )]
     RelationTargetCatalogNotLoaded { index: usize, entry_id: String },
-    #[error("plan node {index} relation target entity `{entity}` is not present in catalog `{entry_id}`")]
+    #[error(
+        "plan node {index} relation target entity `{entity}` is not present in catalog `{entry_id}`"
+    )]
     RelationTargetEntityNotPresent {
         index: usize,
         entity: String,
@@ -55,7 +57,9 @@ pub enum DryPlanValidationError {
         #[source]
         source: plasm_core::CatalogOwnershipError,
     },
-    #[error("plan node {index} relation source catalog `{entry_id}` is not loaded for entity `{entity}`")]
+    #[error(
+        "plan node {index} relation source catalog `{entry_id}` is not loaded for entity `{entity}`"
+    )]
     RelationSourceCatalogNotLoaded {
         index: usize,
         entry_id: String,
@@ -81,7 +85,9 @@ pub enum DryPlanValidationError {
         actual: String,
         expected: String,
     },
-    #[error("plan node {index} relation cardinality {actual} does not match catalog cardinality {expected}")]
+    #[error(
+        "plan node {index} relation cardinality {actual} does not match catalog cardinality {expected}"
+    )]
     RelationCardinalityMismatch {
         index: usize,
         actual: crate::plasm_plan::RelationCardinality,

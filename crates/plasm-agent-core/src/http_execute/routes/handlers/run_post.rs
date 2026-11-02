@@ -373,20 +373,21 @@ pub(crate) async fn post_run_execute_session_inner(
             );
         }
     }
-    match crate::run_delivery::deliver_http_live_run(crate::run_delivery::HttpLiveRunRequest {
-        es: Arc::clone(&sess),
-        st: Arc::new(st.clone()),
-        prompt_hash: ph_str.clone(),
-        session_id: sid_str.clone(),
-        bundle: bundle.clone(),
-        dry: dry_gate,
-        wait_live,
-        review: accepted.review_for_delivery,
-        verdict_for_gate: accepted.verdict_for_gate,
-        plan_commit_ref: plan_commit_ref.clone(),
-    })
-    .await
-    {
+    let delivered =
+        crate::run_delivery::deliver_http_live_run(crate::run_delivery::HttpLiveRunRequest {
+            es: Arc::clone(&sess),
+            st: Arc::new(st.clone()),
+            prompt_hash: ph_str.clone(),
+            session_id: sid_str.clone(),
+            bundle: bundle.clone(),
+            dry: dry_gate,
+            wait_live,
+            review: accepted.review_for_delivery,
+            verdict_for_gate: accepted.verdict_for_gate,
+            plan_commit_ref: plan_commit_ref.clone(),
+        })
+        .await;
+    match delivered {
         Ok(crate::run_delivery::HttpLiveRunOutcome::Accept { result, .. }) => {
             respond_plan_run_live_result(kind, &result, &sess)
         }

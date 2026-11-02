@@ -75,7 +75,8 @@ fn independent_outcomes_advance_after_retention_or_rejection() {
             let cgs = catalogs.get_mut("matrix").unwrap();
             let consumer = cgs.capabilities["prepare"].clone();
             let independent = cgs.capabilities["opaque"].clone();
-            cgs.capabilities.retain(|name, _| name.as_str() == "source_read");
+            cgs.capabilities
+                .retain(|name, _| name.as_str() == "source_read");
             for name in ["outcome_a", "outcome_b"] {
                 let mut cap = independent.clone();
                 cap.name = name.into();

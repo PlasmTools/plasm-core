@@ -56,7 +56,6 @@ mod executable_plan;
 mod materialize;
 mod materialize_prefer;
 mod orchestrator;
-mod result_heading;
 mod parse;
 mod plan_bounded_parallel;
 mod plan_fanout_parallel;
@@ -65,6 +64,7 @@ mod plan_schedule;
 mod prefer_embed_hydrate;
 mod relation_hydrate;
 mod render_columns;
+mod result_heading;
 mod row_values;
 mod step_materialize;
 

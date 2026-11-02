@@ -2,8 +2,6 @@
 #[cfg(test)]
 #[path = "online/additive_tests.rs"]
 mod additive_tests;
-#[cfg(test)]
-mod reformulation_tests;
 mod connected;
 #[cfg(test)]
 #[path = "online/decision_diagnostic.rs"]
@@ -12,15 +10,17 @@ mod decision_diagnostic;
 #[path = "online/fixed_suite.rs"]
 mod fixed_suite;
 #[cfg(test)]
+mod hybrid_tests;
+#[cfg(test)]
 #[path = "online/live_gate.rs"]
 mod live_gate;
 #[cfg(test)]
 #[path = "online/progress_suite.rs"]
 mod progress_suite;
 #[cfg(test)]
-mod retry_tests;
+mod reformulation_tests;
 #[cfg(test)]
-mod hybrid_tests;
+mod retry_tests;
 #[cfg(test)]
 #[path = "online/starvation_suite.rs"]
 mod starvation_suite;
@@ -176,16 +176,21 @@ fn reported_input_tokens(raw: &str) -> Option<u64> {
         .as_u64()
 }
 
+struct ProgressFrontier<'a> {
+    routes: &'a BTreeMap<CapabilityRef, Vec<Edge<CapabilityRef>>>,
+    deferred: &'a BTreeMap<CapabilityRef, DeferredReason>,
+}
+
 fn progress(
     index: &CatalogueSearch,
     exposed: &[CapabilityRef],
     budget: &SearchBudget<CapabilityRef>,
     judged: &BTreeMap<CapabilityRef, CapabilityIntentMatch>,
-    routes: &BTreeMap<CapabilityRef, Vec<Edge<CapabilityRef>>>,
-    deferred: &BTreeMap<CapabilityRef, DeferredReason>,
+    frontier: ProgressFrontier<'_>,
     pending: BTreeSet<CapabilityRef>,
     state: ProgressState,
 ) -> SearchProgress {
+    let ProgressFrontier { routes, deferred } = frontier;
     SearchProgress {
         state,
         accounting: SearchReceipt {
@@ -335,7 +340,6 @@ fn packet_scope(
         catalogs,
         deployments,
         allowed,
-        exposed: _,
         ..
     } = context;
     let mut members = BTreeSet::from([target.clone()]);
@@ -612,8 +616,10 @@ where
             exposed,
             &budget,
             &judged,
-            &routes,
-            &deferred,
+            ProgressFrontier {
+                routes: &routes,
+                deferred: &deferred,
+            },
             pending.clone(),
             ProgressState::Admitted,
         ))
@@ -623,10 +629,9 @@ where
             let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(30);
             let raw = loop {
                 let response = if tokio::time::Instant::now() >= deadline {
-                    Err(
-                        Box::new(plasm_runtime::provider_transport::ProviderTransportError::DeadlineExpired)
-                            as DecisionProviderError,
-                    )
+                    Err(Box::new(
+                        plasm_runtime::provider_transport::ProviderTransportError::DeadlineExpired,
+                    ) as DecisionProviderError)
                 } else {
                     tokio::time::timeout_at(deadline, decide(request.clone()))
                         .await
@@ -660,8 +665,10 @@ where
                             exposed,
                             &budget,
                             &judged,
-                            &routes,
-                            &deferred,
+                            ProgressFrontier {
+                                routes: &routes,
+                                deferred: &deferred,
+                            },
                             pending.clone(),
                             if delay.is_some() {
                                 ProgressState::Admitted
@@ -683,8 +690,10 @@ where
                             exposed,
                             &budget,
                             &judged,
-                            &routes,
-                            &deferred,
+                            ProgressFrontier {
+                                routes: &routes,
+                                deferred: &deferred,
+                            },
                             pending.clone(),
                             ProgressState::Admitted,
                         ))
@@ -702,8 +711,10 @@ where
                         exposed,
                         &budget,
                         &judged,
-                        &routes,
-                        &deferred,
+                        ProgressFrontier {
+                            routes: &routes,
+                            deferred: &deferred,
+                        },
                         pending.clone(),
                         failure_state(&error),
                     ))
@@ -721,7 +732,7 @@ where
                 if answer.choice != MatchChoice::Unrelated {
                     routes.insert(reference.clone(), route.clone());
                 }
-                pending.remove(&reference);
+                pending.remove(reference);
                 if judged.insert(reference.clone(), answer).is_some() {
                     return Err(DiscoveryMatcherError::DuplicateAnswer);
                 }
@@ -748,8 +759,10 @@ where
             exposed,
             &budget,
             &judged,
-            &routes,
-            &deferred,
+            ProgressFrontier {
+                routes: &routes,
+                deferred: &deferred,
+            },
             pending,
             ProgressState::Settled,
         ))

@@ -107,17 +107,27 @@ async fn publish(
         .unwrap()
 }
 
+struct PublishedPipeline<'a> {
+    catalogs: &'a BTreeMap<String, CGS>,
+    generation: &'a str,
+    store: &'a DiscoveryStore,
+    service: &'a DiscoveryService,
+}
+
 async fn measure_live(
     out: &std::path::Path,
     fixture: &Fixture,
     case: &Case,
     count: usize,
     rotate: bool,
-    catalogs: &BTreeMap<String, CGS>,
-    generation: &str,
-    store: &DiscoveryStore,
-    service: &DiscoveryService,
+    pipeline: PublishedPipeline<'_>,
 ) -> serde_json::Value {
+    let PublishedPipeline {
+        catalogs,
+        generation,
+        store,
+        service,
+    } = pipeline;
     let allowed = DiscoveryAuthorization::catalogs(catalogs.keys().cloned().collect());
     let mut exposed = BTreeSet::new();
     let mut history = Vec::new();
@@ -300,10 +310,12 @@ async fn frozen_production_discovery_pipeline() {
                         case,
                         *count,
                         rotate,
-                        &catalogs,
-                        &generation,
-                        &store,
-                        &service,
+                        PublishedPipeline {
+                            catalogs: &catalogs,
+                            generation: &generation,
+                            store: &store,
+                            service: &service,
+                        },
                     )
                     .await,
                 );
@@ -339,10 +351,12 @@ async fn frozen_production_discovery_pipeline() {
                         case,
                         *count,
                         false,
-                        &catalogs,
-                        &generation,
-                        &store,
-                        &service,
+                        PublishedPipeline {
+                            catalogs: &catalogs,
+                            generation: &generation,
+                            store: &store,
+                            service: &service,
+                        },
                     )
                     .await,
                 );

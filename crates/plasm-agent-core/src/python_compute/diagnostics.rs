@@ -157,6 +157,16 @@ pub(super) fn semantic_text(text: &str, labels: &BTreeMap<String, String>) -> St
     out
 }
 
+pub(super) fn help(code: &str) -> Option<&'static str> {
+    match code {
+        "invalid-return-type" => Some("Return the declared field shape and value types, or correct the return annotation; keep optional fields distinct from null."),
+        "invalid-argument-type" => Some("Match the expected input shape and value types; a single record is not a list of records."),
+        "unresolved-attribute" => Some("Use a field exposed by this value's contract; narrow nullable or union values before reading variant fields."),
+        "unresolved-reference" => Some("Define this name in the compute scope or pass it as an explicit compute input."),
+        _ => None,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -246,15 +256,5 @@ mod tests {
             assert!(!rendered.contains("PlasmOutput"), "{rendered}");
             assert!(rendered.contains("help:"), "{rendered}");
         }
-    }
-}
-
-pub(super) fn help(code: &str) -> Option<&'static str> {
-    match code {
-        "invalid-return-type" => Some("Return the declared field shape and value types, or correct the return annotation; keep optional fields distinct from null."),
-        "invalid-argument-type" => Some("Match the expected input shape and value types; a single record is not a list of records."),
-        "unresolved-attribute" => Some("Use a field exposed by this value's contract; narrow nullable or union values before reading variant fields."),
-        "unresolved-reference" => Some("Define this name in the compute scope or pass it as an explicit compute input."),
-        _ => None,
     }
 }

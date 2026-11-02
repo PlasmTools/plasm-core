@@ -2581,8 +2581,7 @@ fn python_mixed_branch_diagnostic_repair_preserves_action_guard() {
                 let source = format!("class P(Program):\n    def build(self):\n        return {item}.query().flat_map(lambda row: {branch})\n");
                 let error = compile_python_program(&es, &source)
                     .await
-                    .err()
-                    .expect("mixed branch rejected")
+                    .expect_err("mixed branch rejected")
                     .to_string();
                 assert!(error.contains("EffectAck"), "{error}");
                 assert!(error.contains("return None"), "{error}");
@@ -2629,8 +2628,7 @@ fn python_ack_receiver_diagnostic_preserves_sequenced_effects() {
                 let source = format!("class P(Program):\n    def build(self):\n        first = {first}\n        second = first.flat_map(lambda ack: {item}.{publish}(content='second'))\n        return second\n");
                 let error = compile_python_program(&es, &source)
                     .await
-                    .err()
-                    .expect("ack is not rows")
+                    .expect_err("ack is not rows")
                     .to_string();
                 assert!(error.contains("`first`"), "{error}");
                 assert!(error.contains("EffectAck"), "{error}");

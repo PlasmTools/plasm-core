@@ -33,7 +33,7 @@ pub enum DiscoveryMatcherError {
     #[error("connected discovery questions must have identical model and intent context")]
     InvalidConnectedContext,
     #[error("discovery catalogue context is invalid")]
-    CatalogueContext(#[source] plasm_core::catalog_discovery::CatalogDiscoveryError),
+    CatalogueContext(#[source] Box<plasm_core::catalog_discovery::CatalogDiscoveryError>),
     #[error("pinned catalogue evidence is missing for {0:?}")]
     MissingCatalogueEvidence(CapabilityRef),
     #[error("catalogue {catalog} is missing referenced definition {name}")]
@@ -98,6 +98,13 @@ pub enum DiscoveryMatcherError {
     #[error("discovery progress persistence failed")]
     Checkpoint(#[source] DecisionProviderError),
 }
+
+impl From<plasm_core::catalog_discovery::CatalogDiscoveryError> for DiscoveryMatcherError {
+    fn from(error: plasm_core::catalog_discovery::CatalogDiscoveryError) -> Self {
+        Self::CatalogueContext(Box::new(error))
+    }
+}
+
 pub const RELEVANCE_MODEL: &str = "openai/gpt-6-luna-decisions";
 // Local requests include the complete target and direct compact witnesses.
 #[cfg(test)]
@@ -686,6 +693,22 @@ mod tests {
     mod scoped_sharing;
     use super::*;
     use proptest::prelude::*;
+
+    #[test]
+    fn catalogue_failure_preserves_concrete_source() {
+        use plasm_core::catalog_discovery::CatalogDiscoveryError;
+        use std::error::Error;
+
+        let error = DiscoveryMatcherError::from(CatalogDiscoveryError::CatalogRevisionMismatch);
+        assert!(matches!(
+            error
+                .source()
+                .and_then(|source| source.downcast_ref::<Box<CatalogDiscoveryError>>())
+                .map(Box::as_ref),
+            Some(CatalogDiscoveryError::CatalogRevisionMismatch)
+        ));
+    }
+
     fn issue_batches(
         model: &str,
         intent: &IntentProvenance,
@@ -744,7 +767,8 @@ mod tests {
                 serde_json::from_str(&response(&batch, &[MatchChoice::Uncertain])).unwrap();
             raw["model"] = json!(model);
             let answers = decode_batch(&batch, &raw.to_string()).unwrap();
-            let receipt = finish_selection(answers, &retrieval, &[batch.clone()]).unwrap();
+            let receipt =
+                finish_selection(answers, &retrieval, std::slice::from_ref(&batch)).unwrap();
             assert_eq!(
                 receipt.selected(&retrieval).len(),
                 retrieval.candidates.len()

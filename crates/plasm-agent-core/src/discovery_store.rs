@@ -246,19 +246,22 @@ pub struct DiscoverySessionPin {
     pub pin_id: String,
 }
 
+/// Store clones share one search index pinned to its catalogue generation.
+type SharedCatalogueSearchCache = Arc<
+    std::sync::Mutex<
+        Option<(
+            String,
+            Arc<crate::discovery_matcher::catalogue_search::CatalogueSearch>,
+        )>,
+    >,
+>;
+
 #[derive(Clone)]
 pub struct DiscoveryStore {
     pool: DiscoveryDatabase,
     // Store clones (including short-lived Node route services) share cache fills.
     pub(crate) pending_decisions: std::sync::Arc<crate::discovery_scheduling::DecisionLocks>,
-    pub(crate) search_index: Arc<
-        std::sync::Mutex<
-            Option<(
-                String,
-                Arc<crate::discovery_matcher::catalogue_search::CatalogueSearch>,
-            )>,
-        >,
-    >,
+    pub(crate) search_index: SharedCatalogueSearchCache,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -906,7 +909,10 @@ pub(crate) mod tests {
             catalog: "b".into(),
             capability: "inspect".into(),
         };
-        let state = RecallFrontier::from_state(&[a.clone()], &BTreeMap::from([(a, 2), (b, 1)]));
+        let state = RecallFrontier::from_state(
+            std::slice::from_ref(&a),
+            &BTreeMap::from([(a.clone(), 2), (b, 1)]),
+        );
         let json = serde_json::to_value(state).unwrap();
         assert_eq!(
             json["a"]["inspect"],

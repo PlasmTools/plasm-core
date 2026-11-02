@@ -279,7 +279,7 @@ impl CatalogEvidence {
                             &catalogs[catalog],
                             cap,
                         )
-                        .map_err(DiscoveryMatcherError::CatalogueContext)?,
+                        .map_err(DiscoveryMatcherError::from)?,
                     },
                     references: collector.references,
                 },

@@ -322,7 +322,7 @@ fn map_body_effects(plan: &ValidatedPlan, es: Option<&ExecuteSession>) -> Vec<Pl
                 _ => render_plan_dry_op(&op),
             };
             effects.push(PlanDryEffect {
-                binding: map_display_id(node.id().as_str(), &labels),
+                binding: map_display_id(node.id().as_str(), labels),
                 uses: projection.uses(node),
                 kind: node.kind(),
                 expression,
@@ -334,10 +334,10 @@ fn map_body_effects(plan: &ValidatedPlan, es: Option<&ExecuteSession>) -> Vec<Pl
             // Keep receiver/input reads: their values feed the `$` holes in
             // subsequent calls. Omitting them would hide literal identities.
             effects.push(PlanDryEffect {
-                binding: map_display_id(node.id().as_str(), &labels),
+                binding: map_display_id(node.id().as_str(), labels),
                 uses: projection.uses(node),
                 kind: surface.kind,
-                expression: surface_compact_expr(surface, es, &labels),
+                expression: surface_compact_expr(surface, es, labels),
                 description: if matches!(
                     surface.effect_class,
                     EffectClass::Write | EffectClass::SideEffect
@@ -358,7 +358,7 @@ fn map_body_effects(plan: &ValidatedPlan, es: Option<&ExecuteSession>) -> Vec<Pl
             ) {
                 let target = &fanout.effect_template.qualified_entity;
                 effects.push(PlanDryEffect {
-                    binding: map_display_id(node.id().as_str(), &labels),
+                    binding: map_display_id(node.id().as_str(), labels),
                     uses: projection.uses(node),
                     kind: fanout.effect_template.kind,
                     expression: format!(
@@ -366,7 +366,7 @@ fn map_body_effects(plan: &ValidatedPlan, es: Option<&ExecuteSession>) -> Vec<Pl
                         crate::plan_dry_compact::compact_agent_surface_expr(&effect_template_body(
                             &fanout.effect_template,
                             es,
-                            &labels
+                            labels
                         ))
                     ),
                     description: effect_description(
@@ -523,7 +523,7 @@ pub fn build_plan_dry_compact_view(
         node_count: plan.nodes.len(),
         read_count,
         write_count,
-        return_label: primary_return_label(plan, &display_map),
+        return_label: primary_return_label(plan, display_map),
         show_execution_order_footer,
         deny_line,
         warnings: review.warning_line(return_unbounded),

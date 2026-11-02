@@ -125,9 +125,7 @@ impl CatalogueSearch {
             if !allowed.catalogs.contains(catalog) {
                 continue;
             }
-            for document in
-                capability_documents(cgs).map_err(DiscoveryMatcherError::CatalogueContext)?
-            {
+            for document in capability_documents(cgs).map_err(DiscoveryMatcherError::from)? {
                 let reference = CapabilityRef {
                     catalog: catalog.clone(),
                     capability: document.capability.clone(),
@@ -163,7 +161,7 @@ impl CatalogueSearch {
                                 "{} {} {}",
                                 document.collection.meaning,
                                 capability_observation_meaning(cgs, cap)
-                                    .map_err(DiscoveryMatcherError::CatalogueContext)?,
+                                    .map_err(DiscoveryMatcherError::from)?,
                                 embedded_observations(cap, cgs)
                             ),
                             inputs.into_iter().collect::<Vec<_>>().join(" "),

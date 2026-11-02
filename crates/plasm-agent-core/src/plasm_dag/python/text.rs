@@ -418,32 +418,6 @@ fn locate_compute_error(
         .with_span((def.start().to_u32(), def.end().to_u32()))
 }
 
-#[cfg(test)]
-mod attribution_tests {
-    use super::*;
-
-    #[test]
-    fn generated_compute_does_not_borrow_an_authored_namesake() {
-        let program = "class P(Program):\n    def checked_unpack(self):\n        return 1\n";
-        let parsed = ruff_python_parser::parse_expression("(first, second)").unwrap();
-        let error =
-            PythonLoweringError::from(crate::program_rejection::PythonComputeRejection::from(
-                crate::program_rejection::PythonComputeError::SourceBudgetExceeded {
-                    actual_bytes: 5000,
-                    limit_bytes: 4096,
-                },
-            ));
-        let error = locate_compute_error(program, None, &parsed.syntax().body, error);
-        assert_eq!(error.span_offset(), Some(0));
-        assert!(matches!(
-            &error,
-            PythonLoweringError::Located { context: None, .. }
-        ));
-        assert!(!error.to_string().contains("authored declaration"));
-        assert!(!error.to_string().contains("checked_unpack"));
-    }
-}
-
 pub(super) fn inferred_schema(
     es: &ExecuteSession,
     state: &super::super::types::CompileState<'_>,
@@ -726,4 +700,30 @@ fn compute_owner(
         }
     }
     None
+}
+
+#[cfg(test)]
+mod attribution_tests {
+    use super::*;
+
+    #[test]
+    fn generated_compute_does_not_borrow_an_authored_namesake() {
+        let program = "class P(Program):\n    def checked_unpack(self):\n        return 1\n";
+        let parsed = ruff_python_parser::parse_expression("(first, second)").unwrap();
+        let error =
+            PythonLoweringError::from(crate::program_rejection::PythonComputeRejection::from(
+                crate::program_rejection::PythonComputeError::SourceBudgetExceeded {
+                    actual_bytes: 5000,
+                    limit_bytes: 4096,
+                },
+            ));
+        let error = locate_compute_error(program, None, &parsed.syntax().body, error);
+        assert_eq!(error.span_offset(), Some(0));
+        assert!(matches!(
+            &error,
+            PythonLoweringError::Located { context: None, .. }
+        ));
+        assert!(!error.to_string().contains("authored declaration"));
+        assert!(!error.to_string().contains("checked_unpack"));
+    }
 }
