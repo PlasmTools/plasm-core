@@ -184,7 +184,7 @@ impl WorkflowRepository {
             if proposal_hash(&candidate)? != stored_hash {
                 return Err(RepositoryError::ImmutableConflict);
             }
-            let states:Vec<String>=sqlx::query_scalar("SELECT state FROM workflow_learning_examples WHERE tenant=$1 AND project=$2 AND family=$3 AND variant=$4 AND identity=$5 FOR SHARE")
+            let states:Vec<String>=sqlx::query_scalar("SELECT state FROM workflow_learning_examples WHERE tenant=$1 AND project=$2 AND family=$3 AND variant=$4 AND identity=$5 AND NOT (state='bad' AND reason IS NOT DISTINCT FROM 'incompatible teaching format; retained for repair') FOR SHARE")
                 .bind(&scope.tenant).bind(&scope.project).bind(&candidate.family).bind(&candidate.variant).bind(&candidate.identity).fetch_all(&mut tx.executor()).await?;
             if states
                 .iter()

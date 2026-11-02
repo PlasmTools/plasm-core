@@ -20,9 +20,9 @@ The unit of learning is a complete authored program. Compiler checks and retaine
 
 The execution ticket, evidence journal and review gate are useful behavioral seams: their types enforce sequencing and their offline implementations support crash/concurrency checks. They are not interchangeable wrappers introduced merely to increase trait count. Review sealing and portfolio publication retain their durable transaction/fence ownership; optional retrieval stages exposure before publication.
 
-## Verification
+## Initial review verification
 
-Current verification uses compiler-artifact paths from Cargo's JSON output, an explicit runtime `CARGO_MANIFEST_DIR`, local Monty admission and the isolated PostgreSQL database `workflow_revision_test` with per-test schemas.
+Initial verification used compiler-artifact paths from Cargo's JSON output, an explicit runtime `CARGO_MANIFEST_DIR`, local Monty admission and the isolated PostgreSQL database `workflow_revision_test` with per-test schemas.
 
 | Check | Result |
 | --- | --- |
@@ -54,3 +54,46 @@ The final direct core test filter is `workflow_learning`; related filters are `p
 Typed compiler disclosure is not a universal secret detector. Successful execution evidence and agent-attested goal satisfaction remain separate assurance levels. The prior retained AppWorld check established exact computation/source preservation and teaching eligibility for two reconstructable contexts out of seven reviewed programs; it did not establish held-out usefulness or promotion quality. Further task evaluation must use its own frozen inputs and report its complete denominator.
 
 Native binding SHA-256 for this verification: `01417ef3afc329fba754ca2af3df654cacb18426f6200b6b8e57d9c7333a4f67`. The cross-process proof collects real local-fixture executions, seals and curates their review, persists and publishes examples plus independent guidance, and fetches checked whole-program source from a separate process under reordered session symbols.
+
+## Corrections from the subsequent AppWorld collection
+
+The committed implementation was exercised on a separately frozen eight-task
+collection. An operational failure stopped it after five attempts; no reviewer
+submitted a claim. That collection exposed two integration gaps:
+
+- Native context extensions advanced the local session without publishing each
+  successor to the core registry. A later execution therefore triggered a valid
+  revision guard. Native exposure now stages its complete local change, publishes
+  through the existing exposure gate and descriptor CAS, then installs state and
+  returns teaching. Rejected publication changes neither local exposure nor stored
+  intent. Corpus database binding is separate; context teaching does not open it.
+  Baseline retains lazy execute-session construction.
+- Native generation loading discarded deployment bindings. Discovery resolved
+  prerequisites using them, but execution evidence could not. The native engine
+  now retains that typed authority, and compilation snapshots capture and restore
+  the exact bindings independently of the caller's current state. Teaching
+  compatibility fingerprints relevant bindings. Witness version 3 retains older
+  revisions as incompatible; they do not prevent a newly checked same-identity
+  revision from being published.
+
+These corrections do not alter the frozen collection or establish live promotion
+usefulness. Review generation/deadline exhaustion remains a separate evaluation
+finding. The parent repository retains the complete task and corpus report.
+
+Post-correction checks use fresh, separate PostgreSQL schemas for core and native
+tests, with serial test execution and local Monty. The workflow suite passed 71
+tests, compilation context 8, logical identity 4, and native engine 40. The native
+engine checks include real mock-provider execution, three intervening context
+waves, another execution and review sealing. The optional native subprocess and
+Redis cross-instance proofs were explicitly excluded from this run. They are not
+included in these pass counts. Scoped formatting and diff checks passed.
+Strict core/node all-target Clippy also passed with `-D warnings`; the existing
+vendored Monty deprecation warning is outside these crates.
+
+The build sets `PLASM_RELEASE_VERSION=0.5.5` explicitly, matching this workspace,
+to avoid the existing build script repeatedly tracking an absent Docker image-tag
+file. No build script or dependency changes were made.
+
+```sh
+PLASM_RELEASE_VERSION=0.5.5 cargo clippy -p plasm-agent-core -p plasm-node --all-targets --offline -- -D warnings
+```

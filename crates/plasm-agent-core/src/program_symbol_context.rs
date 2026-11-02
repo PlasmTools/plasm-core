@@ -12,6 +12,8 @@ pub enum SymbolContextError {
     MissingExposure,
     #[error("Python symbol authority failed: {0}")]
     PythonTeaching(#[from] plasm_core::prompt_render::python::PythonTeachingError),
+    #[error("saved compilation has no deployment binding authority")]
+    MissingDeploymentAuthority,
     #[error("compilation symbol context is unavailable")]
     Unavailable,
     #[error("saved program identity or compilation digest differs")]
@@ -54,6 +56,19 @@ impl PythonSymbolAuthority {
     }
 }
 
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]
+#[serde(tag = "state", content = "bindings", rename_all = "snake_case")]
+enum CapturedDeploymentBindings {
+    Captured(plasm_core::prerequisites::DeploymentBindings),
+    #[default]
+    Unavailable,
+}
+impl CapturedDeploymentBindings {
+    fn is_unavailable(&self) -> bool {
+        matches!(self, Self::Unavailable)
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct CompilationSymbols {
     tenant_scope: String,
@@ -70,6 +85,11 @@ pub struct CompilationSymbols {
     ledger_bytes: Vec<u8>,
     #[serde(default, skip_serializing_if = "PythonSymbolAuthority::is_unavailable")]
     python_teaching: PythonSymbolAuthority,
+    #[serde(
+        default,
+        skip_serializing_if = "CapturedDeploymentBindings::is_unavailable"
+    )]
+    prerequisite_deployments: CapturedDeploymentBindings,
     #[serde(default)]
     disclosure: CapturedDisclosure,
     #[serde(default)]
@@ -130,6 +150,9 @@ impl CompilationSymbols {
             catalog_fingerprints: catalogs,
             ledger_bytes: ledger.encode()?,
             python_teaching: PythonSymbolAuthority::Captured(python_teaching),
+            prerequisite_deployments: CapturedDeploymentBindings::Captured(
+                session.prerequisite_deployments.clone(),
+            ),
             dependencies: crate::plasm_dag::dependencies::DependencyEvidence::capture(
                 session,
                 &bundle.artifact().comp,
@@ -214,6 +237,12 @@ impl CompilationSymbols {
             PythonSymbolAuthority::Captured(state) => state.clone(),
             PythonSymbolAuthority::Unavailable => return Err(SymbolContextError::Unavailable),
         };
+        session.set_prerequisite_deployments(match &self.prerequisite_deployments {
+            CapturedDeploymentBindings::Captured(bindings) => bindings.clone(),
+            CapturedDeploymentBindings::Unavailable => {
+                return Err(SymbolContextError::MissingDeploymentAuthority)
+            }
+        });
         session.prompt_hash = self.prompt_hash.clone();
         session.domain_revision = self.domain_revision;
         isolate_repair_materialization(&mut session);

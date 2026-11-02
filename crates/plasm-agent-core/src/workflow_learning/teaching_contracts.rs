@@ -47,6 +47,31 @@ impl TeachingProgram {
             .collect();
         self.required_capabilities = capabilities.iter().cloned().collect();
         self.semantic_contracts.clear();
+        let mut deployments: Vec<_> = session
+            .prerequisite_deployments
+            .bindings
+            .iter()
+            .filter(|binding| capabilities.contains(&binding.consumer))
+            .collect();
+        deployments.sort_by(|a, b| {
+            (
+                &a.consumer,
+                &a.requirement,
+                &a.provider_catalog,
+                &a.provider,
+            )
+                .cmp(&(
+                    &b.consumer,
+                    &b.requirement,
+                    &b.provider_catalog,
+                    &b.provider,
+                ))
+        });
+        let bytes = serde_json::to_vec(&deployments).map_err(|_| TeachingError::InvalidLedger)?;
+        self.semantic_contracts.insert(
+            "deployment_bindings".into(),
+            hex::encode(Sha256::digest(bytes)),
+        );
         for occurrence in &self.occurrences {
             if let SemanticReference::ValueDomain {
                 entry_id,

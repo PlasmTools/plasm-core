@@ -114,7 +114,7 @@ WHERE state IN ('active','candidate','superseded')
 AND (coalesce(candidate#>>'{state,evidence,program,program,format}',candidate#>>'{state,program,program,format}')
     IS DISTINCT FROM 'whole_program_example'
     OR coalesce(candidate#>'{state,evidence,program,program,schema_version}',candidate#>'{state,program,program,schema_version}')
-    IS DISTINCT FROM '2'::jsonb);
+    IS DISTINCT FROM '3'::jsonb);
 UPDATE workflow_learning_reviews SET state='failed',lease_until=NULL,
     failure_reason='incompatible teaching evidence version; retained for repair'
 WHERE state IN ('queued','leased','awaiting_approval') AND (
@@ -123,5 +123,5 @@ WHERE state IN ('queued','leased','awaiting_approval') AND (
         WHERE NOT (receipt ? 'observation' AND receipt ? 'catalogue_requirements')
         OR (receipt#>>'{observation,state}'='available' AND (
             receipt#>>'{observation,value,program,format}' IS DISTINCT FROM 'whole_program_example'
-            OR receipt#>'{observation,value,program,schema_version}' IS DISTINCT FROM '2'::jsonb)))
+            OR receipt#>'{observation,value,program,schema_version}' IS DISTINCT FROM '3'::jsonb)))
 );

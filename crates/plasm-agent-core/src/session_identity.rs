@@ -279,14 +279,13 @@ impl LogicalSessionRegistry {
         Ok(rec)
     }
 
-    /// Commit the identity already pinned by successful discovery. Identical retries are idempotent.
-    pub async fn register_routed_session(
+    /// Validate scope and intent ancestry without publishing a logical-session update.
+    pub async fn validate_routed_session(
         &self,
         id: LogicalSessionId,
         tenant_scope: &str,
         provenance: &crate::intent_provenance::IntentProvenance,
-        discovery_pin: Option<crate::discovery_store::DiscoverySessionPin>,
-    ) -> Result<LogicalSessionRecord, LogicalSessionRegistrationError> {
+    ) -> Result<(), LogicalSessionRegistrationError> {
         if let Some(existing) = self.get(id).await {
             if existing.tenant_scope != tenant_scope {
                 return Err(LogicalSessionRegistrationError::ScopeMismatch);
@@ -299,6 +298,19 @@ impl LogicalSessionRegistry {
                 return Err(LogicalSessionRegistrationError::AncestryRewrite);
             }
         }
+        Ok(())
+    }
+
+    /// Commit the identity already pinned by successful discovery. Identical retries are idempotent.
+    pub async fn register_routed_session(
+        &self,
+        id: LogicalSessionId,
+        tenant_scope: &str,
+        provenance: &crate::intent_provenance::IntentProvenance,
+        discovery_pin: Option<crate::discovery_store::DiscoverySessionPin>,
+    ) -> Result<LogicalSessionRecord, LogicalSessionRegistrationError> {
+        self.validate_routed_session(id, tenant_scope, provenance)
+            .await?;
         let intent_turns: Vec<_> = provenance.turns().map(str::to_owned).collect();
         let rec = LogicalSessionRecord {
             logical_session_id: id,

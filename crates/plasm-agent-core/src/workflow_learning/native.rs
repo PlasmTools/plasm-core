@@ -122,8 +122,8 @@ impl NativeLearningConfig {
         ))
     }
 
-    /// Registers the actual native session, never a reconstructed transcript.
-    pub async fn register(
+    /// Publishes a native exposure through the core descriptor CAS without opening the learning database.
+    pub async fn publish_exposure(
         &self,
         host: &PlasmHostState,
         session: &ExecuteSession,
@@ -136,47 +136,72 @@ impl NativeLearningConfig {
         }
         let logical = LogicalSessionId::parse(logical_id)?;
         let provenance = IntentProvenance::from_turns(turns.to_vec())?;
-        host.logical_sessions
-            .register_routed_session(
-                logical,
-                &session.tenant_scope,
-                &provenance,
-                session.discovery_pin.clone(),
-            )
-            .await?;
-        host.logical_execute_bindings
-            .insert(
-                logical.as_uuid(),
-                session.prompt_hash.clone(),
-                session_id.to_owned(),
-            )
-            .await;
-        let key = SessionReuseKey {
-            tenant_scope: session.tenant_scope.clone(),
-            entry_id: session.entry_id.clone(),
-            catalog_cgs_hash: session.catalog_cgs_hash.clone(),
-            entities: session.entities.clone(),
-            context_intent: session.context_intent.clone(),
-            principal: None,
-            logical_session_id: Some(logical_id.to_owned()),
+        let coordinate = crate::session_coordination::ExecuteCoordKey {
+            prompt_hash: session.prompt_hash.clone(),
+            session_id: session_id.to_owned(),
         };
-        if host
-            .sessions
-            .get_by_strs(&session.prompt_hash, session_id)
+        host.session_coordination
+            .with_exposure_commit(&coordinate, || async {
+                host.logical_sessions
+                    .validate_routed_session(logical, &session.tenant_scope, &provenance)
+                    .await?;
+                let key = SessionReuseKey {
+                    tenant_scope: session.tenant_scope.clone(),
+                    entry_id: session.entry_id.clone(),
+                    catalog_cgs_hash: session.catalog_cgs_hash.clone(),
+                    entities: session.entities.clone(),
+                    context_intent: session.context_intent.clone(),
+                    principal: None,
+                    logical_session_id: Some(logical_id.to_owned()),
+                };
+                if host
+                    .sessions
+                    .get_by_strs(&session.prompt_hash, session_id)
+                    .await
+                    .is_some()
+                {
+                    host.replace_execute_session(&session.prompt_hash, session_id, session.clone())
+                        .await?;
+                } else {
+                    host.store_execute_session(
+                        key,
+                        session.prompt_hash.clone(),
+                        session_id.to_owned(),
+                        session.clone(),
+                    )
+                    .await?;
+                }
+                host.logical_sessions
+                    .register_routed_session(
+                        logical,
+                        &session.tenant_scope,
+                        &provenance,
+                        session.discovery_pin.clone(),
+                    )
+                    .await?;
+                host.logical_execute_bindings
+                    .insert(
+                        logical.as_uuid(),
+                        session.prompt_hash.clone(),
+                        session_id.to_owned(),
+                    )
+                    .await;
+                Ok(())
+            })
             .await
-            .is_some()
-        {
-            host.replace_execute_session(&session.prompt_hash, session_id, session.clone())
-                .await?;
-        } else {
-            host.store_execute_session(
-                key,
-                session.prompt_hash.clone(),
-                session_id.to_owned(),
-                session.clone(),
-            )
+    }
+
+    /// Registers the actual native session, never a reconstructed transcript.
+    pub async fn register(
+        &self,
+        host: &PlasmHostState,
+        session: &ExecuteSession,
+        logical_id: &str,
+        session_id: &str,
+        turns: &[String],
+    ) -> Result<(), NativeLearningError> {
+        self.publish_exposure(host, session, logical_id, session_id, turns)
             .await?;
-        }
         if self.mode() == NativeLearningMode::Collect {
             host.workflow_learning
                 .repository()

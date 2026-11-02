@@ -794,6 +794,11 @@ impl ExecuteSession {
         }
     }
 
+    /// The pinned prerequisite authority used by compilation and inheritance.
+    pub fn prerequisite_deployments(&self) -> &plasm_core::prerequisites::DeploymentBindings {
+        &self.prerequisite_deployments
+    }
+
     /// Pin explicit prerequisite deployments for RA-17 compile checks and RA-6 inherit.
     pub fn set_prerequisite_deployments(
         &mut self,

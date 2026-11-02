@@ -132,6 +132,11 @@ travels through the compiled bundle, dry evaluation, persisted plan-commit cache
 and reconstructed native/MCP execution bundle. It is outside semantic plan
 identity: adding provenance does not change commit or schedule hashes.
 
+The snapshot also captures the pinned deployment bindings that resolve catalogue
+prerequisites. Restoration uses those exact bindings, never the caller's current
+choices. Compatibility fingerprints include relevant bindings because a provider
+change can alter semantics without changing a catalogue signature.
+
 Compilation-context pins and exposed-ledger pins describe separate authorities.
 A native host may compile with additional loaded catalogues that have no exposed
 symbols, including the context assigned to ordinary Python compute. Exact
@@ -157,12 +162,18 @@ Missing recorded prerequisites remain unavailable.
 
 Historical receipts without captured context remain explicitly unavailable for
 exact repair. Old parameterized-example artifacts are not reinterpreted as
-teaching examples. Teaching witness version 2 also rejects earlier examples
-without the separate nominal-symbol authority; retained incompatible revisions
+teaching examples. Teaching witness version 3 rejects earlier examples
+without the separate nominal-symbol and deployment authority; retained incompatible revisions
 are not eligible for approval, publication or serving.
 Incompatible representation/compiler contracts require
 revalidation through the current path; sealed evidence is never retroactively
 filled using guessed symbol orders or edited defaults.
+
+Native context extensions stage intent, symbols and teaching state, then publish
+each successor through the core exposure transaction before returning teaching.
+Failed publication leaves the local state unchanged. This publication does not
+open the optional learning database; corpus binding remains an execution/review
+concern.
 
 ## Publication and bounded retrieval
 

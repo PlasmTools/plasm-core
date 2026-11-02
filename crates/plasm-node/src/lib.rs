@@ -654,7 +654,7 @@ impl PlasmEngine {
             .map_err(NodeEngineError::from)
             .map_err(map_err)?;
         let teaching = {
-            let (catalogs, compiled_catalogs, _) = store
+            let (catalogs, compiled_catalogs, prerequisite_deployments) = store
                 .load_generation(&receipt.retrieval.generation)
                 .await
                 .map_err(NodeEngineError::from)
@@ -673,6 +673,7 @@ impl PlasmEngine {
                             catalogs,
                             compiled_catalogs,
                             pin.clone(),
+                            prerequisite_deployments,
                         );
                         engine
                             .configure_workflow_learning(
@@ -687,15 +688,15 @@ impl PlasmEngine {
             if engine.discovery_pin() != Some(&pin) {
                 return Err(map_err(NodeEngineError::RoutingPinMismatch));
             }
-            receipt
-                .closure
-                .as_ref()
-                .map(|closure| {
+            match receipt.closure.as_ref() {
+                Some(closure) => Some(
                     engine
                         .expose_routing(&receipt.intent, closure)
-                        .map_err(map_err)
-                })
-                .transpose()?
+                        .await
+                        .map_err(map_err)?,
+                ),
+                None => None,
+            }
         };
         let mut packet = serde_json::json!({"routing":receipt,"teaching":teaching});
         if let Some(guidance) = guidance {
@@ -724,6 +725,7 @@ impl PlasmEngine {
             .collect();
         let result = engine
             .expose_seeds(intent, &capability_seeds)
+            .await
             .map_err(map_err)?;
         Ok(JsTeachingResult {
             prompt: result.prompt,
@@ -846,6 +848,7 @@ mod mutex_law_tests {
                 Default::default(),
                 Default::default(),
                 pin,
+                Default::default(),
             ))),
         );
         *engine.activated.write().await =

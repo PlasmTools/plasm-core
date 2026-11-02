@@ -23,7 +23,7 @@ use crate::{
 mod catalogue_context;
 pub use catalogue_context::CapabilityTeachingContract;
 
-pub(super) const TEACHING_SCHEMA_VERSION: u32 = 2;
+pub(super) const TEACHING_SCHEMA_VERSION: u32 = 3;
 #[path = "teaching_contracts.rs"]
 mod contracts;
 pub use contracts::{ProgramCatalogueRequirements, TeachingOutput};

@@ -95,6 +95,15 @@ async fn postgres_frozen_proposals_preserve_uncertainty_and_publish_without_mode
         catalog_fingerprints: checked.program().catalog_fingerprints.clone(),
         expected_family_version: 0,
     };
+    let retained_id = Uuid::new_v4();
+    let mut retained = serde_json::to_value(&candidate)?;
+    *retained
+        .pointer_mut("/state/evidence/program/program/schema_version")
+        .expect("verified program version") = serde_json::json!(2);
+    sqlx::query("INSERT INTO workflow_learning_examples(id,tenant,project,family,variant,identity,candidate,state,reason) VALUES($1,$2,$3,$4,$5,$6,$7,'bad','incompatible teaching format; retained for repair')")
+        .bind(retained_id).bind(&scope.tenant).bind(&scope.project).bind(&candidate.family)
+        .bind(&candidate.variant).bind(&candidate.identity).bind(&retained)
+        .execute(&mut repo.pool.acquire().await?).await?;
     let mut uncertain = candidate.clone();
     uncertain.family = "uncertain-purpose".into();
     uncertain.state = CandidateState::Uncertain {
@@ -146,6 +155,18 @@ async fn postgres_frozen_proposals_preserve_uncertainty_and_publish_without_mode
     );
     let active = repo.list_eligible(&scope, 10).await?;
     assert_eq!(active.len(), 1);
+    assert_ne!(active[0].id, retained_id);
+    let (state, payload): (String, serde_json::Value) =
+        sqlx::query_as("SELECT state,candidate FROM workflow_learning_examples WHERE id=$1")
+            .bind(retained_id)
+            .fetch_one(&mut repo.pool.acquire().await?)
+            .await?;
+    assert_eq!(state, "bad");
+    assert_eq!(
+        payload, retained,
+        "new checked authority never rewrites retained evidence"
+    );
+
     let supports: i64 =
         sqlx::query_scalar("SELECT count(*) FROM workflow_learning_support WHERE review_id=$1")
             .bind(handle.id)

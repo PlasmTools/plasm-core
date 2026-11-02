@@ -812,16 +812,86 @@ fn annotation_only_catalogue_is_pinned_without_fabricated_capability() {
 
 #[test]
 fn earlier_whole_program_witness_cannot_supply_nominal_symbol_authority() {
-    let mut checked = checked_fixture();
-    checked.program.schema_version = 1;
-    // The previous representation's AST fingerprint could remain internally valid;
-    // version rejection must stand independently of that structural check.
-    checked.program.structural_fingerprint = checked.program.fingerprint().unwrap();
-    let decoded: CheckedTeachingExample =
-        serde_json::from_value(serde_json::to_value(&checked).unwrap()).unwrap();
-    assert!(!decoded.integrity_valid());
+    for previous_version in [1, 2] {
+        let mut checked = checked_fixture();
+        checked.program.schema_version = previous_version;
+        // The previous representation's AST fingerprint could remain internally valid;
+        // version rejection must stand independently of that structural check.
+        checked.program.structural_fingerprint = checked.program.fingerprint().unwrap();
+        let decoded: CheckedTeachingExample =
+            serde_json::from_value(serde_json::to_value(&checked).unwrap()).unwrap();
+        assert!(!decoded.integrity_valid());
+        assert!(matches!(
+            decoded.program.rebind_teaching(&session(&["LangItem"])),
+            Err(TeachingError::NeedsRevalidation)
+        ));
+    }
+}
+
+#[test]
+fn catalogue_requirements_use_captured_deployment_authority_and_reject_missing_binding() {
+    use plasm_core::prerequisites::{CapabilityRef, DeploymentBinding, DeploymentBindings};
+    let root = std::path::PathBuf::from(crate::test_manifest_dir());
+    let cgs = plasm_core::loader::load_schema_dir(
+        &root.join("../../fixtures/schemas/prerequisite_matrix"),
+    )
+    .unwrap();
+    let mut original = session_with_schema(&["BusinessRecord", "ProviderResult"], Arc::new(cgs));
+    let symbols = resolve_session_symbol_map(&SessionSymbolMapContext {
+        session: &original,
+        cross_cache: None,
+    });
+    let method = symbols.method_sym_for("langmatrix", "ProviderResult", "acquire");
+    let source = format!("class Example(Program):\n    def build(self):\n        access = e2.{method}(account='account-a')\n        return e1.query(credential=access.value)\n");
+    let missing = crate::plasm_dag::compile_python_program_checked(&original, &source).unwrap();
+    assert!(
+        matches!(ProgramCatalogueRequirements::from_compiled(&original, &missing), Err(TeachingError::Prerequisite(error)) if matches!(*error, plasm_core::prerequisites::PrerequisiteError::MissingDeploymentBinding))
+    );
+    let bindings = DeploymentBindings {
+        bindings: vec![DeploymentBinding {
+            consumer: CapabilityRef {
+                catalog: "langmatrix".into(),
+                capability: "read".into(),
+            },
+            requirement: "scoped_access".into(),
+            provider_catalog: "langmatrix".into(),
+            provider: "value_source".into(),
+        }],
+    };
+    original.set_prerequisite_deployments(bindings.clone());
+    let compiled = crate::plasm_dag::compile_python_program_checked(&original, &source).unwrap();
+    let expected = ProgramCatalogueRequirements::from_compiled(&original, &compiled).unwrap();
+    assert!(expected
+        .required_capabilities()
+        .iter()
+        .any(|cap| cap.capability == "acquire"));
+    let serialized = serde_json::to_value(compiled.compilation_symbols()).unwrap();
+    let decoded: crate::program_symbol_context::CompilationSymbolContext =
+        serde_json::from_value(serialized.clone()).unwrap();
+    original.set_prerequisite_deployments(Default::default());
+    let restored = decoded
+        .captured()
+        .unwrap()
+        .restore_symbol_authority(&original)
+        .unwrap();
+    assert_eq!(restored.prerequisite_deployments, bindings);
+    assert_eq!(
+        ProgramCatalogueRequirements::from_compiled(&original, &compiled).unwrap(),
+        expected
+    );
+    let mut historical = serialized;
+    historical["value"]
+        .as_object_mut()
+        .unwrap()
+        .remove("prerequisite_deployments");
+    let decoded: crate::program_symbol_context::CompilationSymbolContext =
+        serde_json::from_value(historical.clone()).unwrap();
+    assert_eq!(serde_json::to_value(&decoded).unwrap(), historical);
     assert!(matches!(
-        decoded.program.rebind_teaching(&session(&["LangItem"])),
-        Err(TeachingError::NeedsRevalidation)
+        decoded
+            .captured()
+            .unwrap()
+            .restore_symbol_authority(&original),
+        Err(crate::program_symbol_context::SymbolContextError::MissingDeploymentAuthority)
     ));
 }

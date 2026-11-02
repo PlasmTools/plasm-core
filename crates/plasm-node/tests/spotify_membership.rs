@@ -66,6 +66,7 @@ async fn spotify_library_view_observes_direct_membership_without_containment_req
                 entity: "Library".into(),
             }],
         )
+        .await
         .unwrap();
     // The single seeded entity owns e1 in this fresh session.
     assert!(teaching.prompt.contains("e1.query(access_token:"));

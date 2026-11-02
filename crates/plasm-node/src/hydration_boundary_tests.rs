@@ -117,6 +117,7 @@ async fn run_native_hydration() {
     });
     engine
         .expose_seeds("read notes and their owners", &seeds)
+        .await
         .unwrap();
     let transport = Arc::new(Transport {
         calls: Default::default(),
