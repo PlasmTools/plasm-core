@@ -37,7 +37,7 @@ use crate::discovery_store::{DiscoveryAuthorization, RetrievalReceipt};
 use plasm_core::{prerequisites::DeploymentBindings, CGS};
 
 pub(crate) const SEARCH_POLICY: &str =
-    "additive-connected-frontier-current-hybrid-evidence-1-judgment-3-attempts-16000-byte-packet-v18";
+    "additive-connected-frontier-current-hybrid-evidence-1-judgment-3-attempts-16000-byte-packet-v19";
 
 #[derive(Clone, Copy)]
 pub struct SearchContext<'a> {

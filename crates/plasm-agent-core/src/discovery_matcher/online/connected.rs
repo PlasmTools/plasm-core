@@ -3,14 +3,27 @@ use super::*;
 
 type Route = Vec<Edge<CapabilityRef>>;
 type Bundle = BTreeMap<CapabilityRef, Route>;
+
+/// Lexicographic scheduling order: fairness precedes cost and recall rank.
+#[derive(PartialEq, Eq, PartialOrd, Ord)]
+struct BundlePriority {
+    visits: usize,
+    served_in_slot: usize,
+    path_length: usize,
+    input_bytes: usize,
+    recall_rank: usize,
+    reference: CapabilityRef,
+}
 const MAX_VARIANTS: usize = 64;
 
 #[cfg(test)]
-mod recorded_cost_tests;
+mod allocation_progress_tests;
+#[cfg(test)]
+mod caller_loop;
 #[cfg(test)]
 mod capacity_tests;
 #[cfg(test)]
-mod caller_loop;
+mod recorded_cost_tests;
 
 struct LocalPacket {
     scope: witnesses::Scope,
@@ -145,7 +158,7 @@ fn body_size(
             continue;
         }
         let identity = (key.clone(), path.clone());
-        if !cache.contains_key(&identity) {
+        if let std::collections::btree_map::Entry::Vacant(entry) = cache.entry(identity) {
             let (scope, question, members) = packet_scope(index, key, path, context)?;
             let prepared = request_packing::PreparedLocal::for_scope(
                 context.model,
@@ -153,15 +166,12 @@ fn body_size(
                 &index.labels[key],
                 &scope,
             )?;
-            cache.insert(
-                identity,
-                LocalPacket {
-                    scope,
-                    question,
-                    members,
-                    prepared,
-                },
-            );
+            entry.insert(LocalPacket {
+                scope,
+                question,
+                members,
+                prepared,
+            });
         }
     }
     let local = selected
@@ -333,7 +343,7 @@ pub(super) fn plan_ordered(
                 })
                 .or_insert(path);
         }
-        let mut best: Option<((usize, usize, usize, usize, usize, CapabilityRef), Bundle)> = None;
+        let mut best: Option<(BundlePriority, Bundle)> = None;
         for (key, path) in &candidates {
             let mut fits = false;
             let alternatives = variants(key, path, index, context, &proposed, &BTreeSet::new())?;
@@ -355,14 +365,14 @@ pub(super) fn plan_ordered(
                         part: "optional path has no nomination slot",
                     }
                 })?;
-                let priority = (
-                    context.visits.get(key).copied().unwrap_or(0),
-                    *served.get(&slot).unwrap_or(&0),
-                    path.len(),
-                    size,
-                    *ranks.get(key).unwrap_or(&usize::MAX),
-                    key.clone(),
-                );
+                let priority = BundlePriority {
+                    visits: context.visits.get(key).copied().unwrap_or(0),
+                    served_in_slot: *served.get(&slot).unwrap_or(&0),
+                    path_length: path.len(),
+                    input_bytes: size,
+                    recall_rank: *ranks.get(key).unwrap_or(&usize::MAX),
+                    reference: key.clone(),
+                };
                 if best.as_ref().is_none_or(|(old, _)| priority < *old) {
                     best = Some((priority, bundle));
                 }
@@ -371,35 +381,37 @@ pub(super) fn plan_ordered(
                 deferred.insert(key.clone(), DeferredReason::InputBytes);
             }
         }
-        #[cfg(test)]
-        let admission_kind = if best.is_some() {
-            "optional_path"
-        } else {
-            "remaining_root"
-        };
-        let bundle = if let Some((_, bundle)) = best {
-            Some(bundle)
-        } else {
-            let mut fitting = None;
-            for key in &order {
-                if routes.contains_key(key)
-                    || context.exposed.contains(key)
-                    || root_deferred.contains(key)
-                {
-                    continue;
-                }
-                let mut trial = proposed.clone();
-                trial.insert(key.clone(), Vec::new());
-                if body_size(&trial, index, context, &mut cache)? <= search_budget::MAX_INPUT_BYTES
-                {
-                    fitting = Some(Bundle::from([(key.clone(), Vec::new())]));
-                    break;
-                }
-                deferred.insert(key.clone(), DeferredReason::InputBytes);
-                root_deferred.insert(key.clone());
+        // Visit rounds apply across both nomination lanes. Otherwise a
+        // repeatedly rejected optional path can fill every packet before an
+        // unjudged recalled root receives its first question. Within a round,
+        // retain connected-path priority; neither lane grants relevance.
+        let mut fitting_root = None;
+        for key in &order {
+            if routes.contains_key(key)
+                || context.exposed.contains(key)
+                || root_deferred.contains(key)
+                || best.as_ref().is_some_and(|(priority, _)| {
+                    context.visits.get(key).copied().unwrap_or(0) >= priority.visits
+                })
+            {
+                continue;
             }
-            fitting
+            let mut trial = proposed.clone();
+            trial.insert(key.clone(), Vec::new());
+            if body_size(&trial, index, context, &mut cache)? <= search_budget::MAX_INPUT_BYTES {
+                fitting_root = Some(Bundle::from([(key.clone(), Vec::new())]));
+                break;
+            }
+            deferred.insert(key.clone(), DeferredReason::InputBytes);
+            root_deferred.insert(key.clone());
+        }
+        #[cfg(test)]
+        let admission_kind = if fitting_root.is_some() {
+            "remaining_root"
+        } else {
+            "optional_path"
         };
+        let bundle = fitting_root.or_else(|| best.map(|(_, bundle)| bundle));
         let Some(bundle) = bundle else {
             break;
         };
