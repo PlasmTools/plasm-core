@@ -25,11 +25,10 @@ pub const MATRIX_FED_B: &str = "langmatrix_b";
 pub fn reviewed_update_program() -> String {
     let cgs = load_language_matrix_cgs();
     let exposure = TeachingExposureSession::new(&cgs, MATRIX_ENTRY_ID, &["LangItem"]);
-    let method = exposure.to_symbol_map().method_sym_for(
-        MATRIX_ENTRY_ID,
-        "LangItem",
-        "langitem_update",
-    );
+    let method =
+        exposure
+            .to_symbol_map()
+            .method_sym_for(MATRIX_ENTRY_ID, "LangItem", "langitem_update");
     assert!(method.starts_with('m'), "fixture update must be exposed");
     format!("class UpdateItem(Program):\n    def build(self):\n        return e1.get(\"i1\").{method}(title=\"Reviewed\", score=10, owner=\"alice\").aggregate(n=agg.count())\n")
 }

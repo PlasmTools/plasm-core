@@ -639,7 +639,10 @@ mod sufficiency_tests {
                 lexical_truncated: false,
                 vector_truncated: false,
             },
-            matching: CapabilityMatchReceipt { matches: vec![], budget_retained: vec![] },
+            matching: CapabilityMatchReceipt {
+                matches: vec![],
+                budget_retained: vec![],
+            },
             search: Default::default(),
 
             closure: Some(plasm_core::prerequisites::PrerequisiteClosure {

@@ -107,5 +107,4 @@ mod tests {
             assert_eq!(policy.capability_gates.len(), 1);
         }
     }
-
 }

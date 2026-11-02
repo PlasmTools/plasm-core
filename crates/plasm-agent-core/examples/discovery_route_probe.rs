@@ -263,7 +263,12 @@ async fn main() -> Result<()> {
     std::fs::create_dir_all(&cell)?;
     let authorization = DiscoveryAuthorization::catalogs(allowed);
     let retrieval = store
-        .retrieve(&generation, &case.intent, &authorization, &Default::default())
+        .retrieve(
+            &generation,
+            &case.intent,
+            &authorization,
+            &Default::default(),
+        )
         .await?;
     save(cell.join("retrieval.json"), &retrieval)?;
     let service = DiscoveryService::from_env(store)?;

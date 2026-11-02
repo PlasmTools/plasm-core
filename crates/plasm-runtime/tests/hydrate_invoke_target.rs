@@ -2,8 +2,10 @@ use plasm_core::{Expr, InvokeExpr, Value, CGS};
 use plasm_runtime::{preflight_compile_expr, SessionMaterialization, ViewAmbientContext};
 
 fn fixture() -> CGS {
-    let dir = std::path::PathBuf::from(std::env::var("CARGO_MANIFEST_DIR").expect("test runner must set CARGO_MANIFEST_DIR"))
-        .join("../../fixtures/schemas/hydrate_invoke_target");
+    let dir = std::path::PathBuf::from(
+        std::env::var("CARGO_MANIFEST_DIR").expect("test runner must set CARGO_MANIFEST_DIR"),
+    )
+    .join("../../fixtures/schemas/hydrate_invoke_target");
     plasm_core::load_schema(&dir).expect("load hydrate_invoke_target fixture")
 }
 

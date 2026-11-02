@@ -1,10 +1,10 @@
 //! Finite branch-type product plus arithmetic/effect boundaries, through Python admission.
 use plasm_agent::plasm_compile::compile_python_program;
 use plasm_runtime::{FailureCause, RecoveryDisposition};
-use serde_json::{Value, json};
+use serde_json::{json, Value};
 use std::sync::{
-    Arc,
     atomic::{AtomicUsize, Ordering},
+    Arc,
 };
 
 struct Server(tokio::task::JoinHandle<()>);

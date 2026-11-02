@@ -5,9 +5,11 @@ use plasm_core::PromptPipelineConfig;
 use std::path::PathBuf;
 
 fn measure(api: &str, seeds: &[&str]) {
-    let schema = PathBuf::from(std::env::var("CARGO_MANIFEST_DIR").expect("test runner must set CARGO_MANIFEST_DIR"))
-        .join("../../apis")
-        .join(api);
+    let schema = PathBuf::from(
+        std::env::var("CARGO_MANIFEST_DIR").expect("test runner must set CARGO_MANIFEST_DIR"),
+    )
+    .join("../../apis")
+    .join(api);
     let cgs = load_schema_dir(&schema).unwrap();
     let cfg = RenderConfig {
         focus: FocusSpec::SeedsExact(seeds),

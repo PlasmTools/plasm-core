@@ -28,7 +28,10 @@ fn routing(intent: String) -> RoutingReceipt {
             lexical_truncated: false,
             vector_truncated: false,
         },
-        matching: CapabilityMatchReceipt { matches: vec![], budget_retained: vec![] },
+        matching: CapabilityMatchReceipt {
+            matches: vec![],
+            budget_retained: vec![],
+        },
         search: Default::default(),
         closure: Some(PrerequisiteClosure {
             acquisitions: vec![],
@@ -77,12 +80,15 @@ fn cli_routed_context_and_plan_protocol() {
     )
     .unwrap();
     let command = |args: &[&str]| {
-        Command::new(std::env::var_os("CARGO_BIN_EXE_plasm").expect("test runner must supply the built plasm binary"))
-            .current_dir(workspace.path())
-            .env("PLASM_WORKSPACE", workspace.path())
-            .args(args)
-            .output()
-            .unwrap()
+        Command::new(
+            std::env::var_os("CARGO_BIN_EXE_plasm")
+                .expect("test runner must supply the built plasm binary"),
+        )
+        .current_dir(workspace.path())
+        .env("PLASM_WORKSPACE", workspace.path())
+        .args(args)
+        .output()
+        .unwrap()
     };
     let opened = command(&["context", "--new", "--intent", "read records"]);
     assert!(

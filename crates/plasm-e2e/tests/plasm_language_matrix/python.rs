@@ -2487,7 +2487,10 @@ async fn python_value_closure_rejects_ambiguous_and_forged_inputs() {
             "compute input annotation mismatches the row shape",
         ),
         ("'wrong'", "input differs from its annotation"),
-        ("{'a': 1, 'b': 2}", "compute input annotation mismatches the row shape"),
+        (
+            "{'a': 1, 'b': 2}",
+            "compute input annotation mismatches the row shape",
+        ),
     ] {
         let source = format!("class Invalid(Program):\n    @compute\n    def calc(self, value: int) -> int:\n        return value + 1\n    def build(self):\n        return self.calc({argument})\n");
         let error = compile_fixture(&es, &source).await.unwrap_err();
@@ -2771,7 +2774,10 @@ async fn python_compute_dictionary_and_multiple_inputs_live() {
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let base = format!("http://{}", listener.local_addr().unwrap());
     let server = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
-    enum ReturnShape { Rows, Scalar }
+    enum ReturnShape {
+        Rows,
+        Scalar,
+    }
     let cases = [
         ("class P(Program):\n    def build(self):\n        return self.extract(E.query())\n    @compute\n    def extract(self, rows: list[Row]) -> list[dict]:\n        out = []\n        for row in rows:\n            out.append({'name': row.title})\n        return out\n", serde_json::json!([{"name":"one"},{"name":"two"}]), ReturnShape::Rows),
         ("class P(Program):\n    def build(self):\n        return self.count(E.query(), E.get('i1'))\n    @compute\n    def count(self, left: list[Row], right: Row) -> dict:\n        out = {}\n        out['left'] = len(left)\n        out['right'] = len([right])\n        return out\n", serde_json::json!({"left":2,"right":1}), ReturnShape::Scalar),
@@ -2876,7 +2882,8 @@ async fn python_compute_dictionary_field_precision_rejects_invalidated_writes() 
         "alias = groups[key]\n            alias['items'] = 'replaced'",
         "groups[key].update({'items': 'replaced'})",
     ] {
-        let source = format!(r#"class InvalidGroups(Program):
+        let source = format!(
+            r#"class InvalidGroups(Program):
     def build(self):
         return self.render(E.query())
     @compute
@@ -2889,7 +2896,8 @@ async fn python_compute_dictionary_field_precision_rejects_invalidated_writes() 
             {mutation}
             groups[key]["items"].append(str(row.title))
         return "invalid"
-"#);
+"#
+        );
         let error = compile_fixture(&es, &source).await.unwrap_err();
         assert!(error.to_string().contains("append"), "{mutation}: {error}");
     }

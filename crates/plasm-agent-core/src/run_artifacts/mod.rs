@@ -27,12 +27,12 @@ mod uri;
 #[cfg(test)]
 mod tests;
 
+pub use completed_output::{CompletedOutput, CompletedOutputError};
 pub use persist::{
     mint_run_artifact_id_for_session, persist_execute_run, PersistExecuteRunError,
     PersistExecuteRunInput,
 };
 pub use types::*;
-pub use completed_output::{CompletedOutput, CompletedOutputError};
 
 use backend::RunArtifactBackend;
 use backend_fs::FsRunArtifactBackend;

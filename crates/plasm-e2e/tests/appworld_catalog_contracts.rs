@@ -771,7 +771,8 @@ async fn spotify_song_release_date_is_preserved_and_invalid_wire_values_fail() {
             axum::serve(listener, app).await.unwrap();
         });
         let cgs = plasm_core::load_schema_dir(
-            &std::path::Path::new(plasm_e2e::test_manifest_dir()).join("../../apis/appworld/spotify"),
+            &std::path::Path::new(plasm_e2e::test_manifest_dir())
+                .join("../../apis/appworld/spotify"),
         )
         .unwrap();
         let compiled = Arc::new(plasm_compile::compile_cgs_capability_templates(&cgs).unwrap());

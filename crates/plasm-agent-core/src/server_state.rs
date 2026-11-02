@@ -401,12 +401,23 @@ impl PlasmHostState {
                 crate::metrics::record_execute_rehydrate("ok", "");
                 session.bind_operation_wire(session_id);
                 if let (Some(id), Some(teaching)) = (
-                    desc.reuse_key.logical_session_id.as_deref().and_then(|id| Uuid::parse_str(id).ok()),
+                    desc.reuse_key
+                        .logical_session_id
+                        .as_deref()
+                        .and_then(|id| Uuid::parse_str(id).ok()),
                     session.teaching_exposure.as_ref(),
                 ) {
-                    self.logical_symbol_ledgers.cache_committed(id,
-                        desc.catalog_cgs_hashes_by_entry.iter().map(|(entry, hash)| (entry.clone(), hash.clone())).collect(),
-                        teaching.clone(), desc.symbol_ledger_bytes.clone()).await;
+                    self.logical_symbol_ledgers
+                        .cache_committed(
+                            id,
+                            desc.catalog_cgs_hashes_by_entry
+                                .iter()
+                                .map(|(entry, hash)| (entry.clone(), hash.clone()))
+                                .collect(),
+                            teaching.clone(),
+                            desc.symbol_ledger_bytes.clone(),
+                        )
+                        .await;
                 }
                 let reuse_key: SessionReuseKey = desc.reuse_key.into();
                 self.sessions
@@ -523,20 +534,57 @@ impl PlasmHostState {
         session_id: &str,
         session: ExecuteSession,
         receipt: crate::workflow_learning::serving::ServedExample,
-    ) -> Result<(), crate::mcp_transport_store::execute_session_registry::ExecuteSessionPersistError> {
+    ) -> Result<(), crate::mcp_transport_store::execute_session_registry::ExecuteSessionPersistError>
+    {
         use crate::mcp_transport_store::execute_session_registry::ExecuteSessionPersistError;
-        let ph = prompt_hash.parse::<PromptHashHex>().map_err(|_| ExecuteSessionPersistError::SessionUnavailable)?;
-        let sid = session_id.parse::<ExecuteSessionId>().map_err(|_| ExecuteSessionPersistError::SessionUnavailable)?;
-        let reuse_key = self.sessions.reuse_key_for_execute_pair(prompt_hash, session_id).await
+        let ph = prompt_hash
+            .parse::<PromptHashHex>()
+            .map_err(|_| ExecuteSessionPersistError::SessionUnavailable)?;
+        let sid = session_id
+            .parse::<ExecuteSessionId>()
+            .map_err(|_| ExecuteSessionPersistError::SessionUnavailable)?;
+        let reuse_key = self
+            .sessions
+            .reuse_key_for_execute_pair(prompt_hash, session_id)
+            .await
             .ok_or(ExecuteSessionPersistError::MissingReuseKey)?;
-        let pins = session.contexts_by_entry.iter().map(|(entry, context)|
-            (entry.clone(), crate::catalog_hash::EffectiveCatalogHash::from_effective_cgs(&context.cgs))).collect();
-        let exposure = crate::execute_session_materialize::build_durable_exposure_snapshot_reusing_pins(&session, pins).await?;
-        self.execute_session_registry.persist_example_fetch(&session, session_id, &reuse_key, &exposure, receipt).await?;
-        if let (Some(id), Some(teaching)) = (reuse_key.logical_session_id.as_deref().and_then(|id| Uuid::parse_str(id).ok()), session.teaching_exposure.as_ref()) {
-            self.logical_symbol_ledgers.cache_committed(id,
-                exposure.catalog_cgs_hashes_by_entry.iter().map(|(entry, hash)| (entry.clone(), hash.as_str().to_owned())).collect(),
-                teaching.clone(), exposure.symbol_ledger_bytes.clone()).await;
+        let pins = session
+            .contexts_by_entry
+            .iter()
+            .map(|(entry, context)| {
+                (
+                    entry.clone(),
+                    crate::catalog_hash::EffectiveCatalogHash::from_effective_cgs(&context.cgs),
+                )
+            })
+            .collect();
+        let exposure =
+            crate::execute_session_materialize::build_durable_exposure_snapshot_reusing_pins(
+                &session, pins,
+            )
+            .await?;
+        self.execute_session_registry
+            .persist_example_fetch(&session, session_id, &reuse_key, &exposure, receipt)
+            .await?;
+        if let (Some(id), Some(teaching)) = (
+            reuse_key
+                .logical_session_id
+                .as_deref()
+                .and_then(|id| Uuid::parse_str(id).ok()),
+            session.teaching_exposure.as_ref(),
+        ) {
+            self.logical_symbol_ledgers
+                .cache_committed(
+                    id,
+                    exposure
+                        .catalog_cgs_hashes_by_entry
+                        .iter()
+                        .map(|(entry, hash)| (entry.clone(), hash.as_str().to_owned()))
+                        .collect(),
+                    teaching.clone(),
+                    exposure.symbol_ledger_bytes.clone(),
+                )
+                .await;
         }
         self.sessions.replace_session(&ph, &sid, session).await;
         Ok(())
@@ -581,19 +629,27 @@ impl PlasmHostState {
         let logical_id = reuse_key
             .and_then(|key| key.logical_session_id.as_ref())
             .and_then(|id| Uuid::parse_str(id).ok())
-            .or(self.logical_execute_bindings.find_by_execute(prompt_hash, session_id).await);
-        if let (Some(logical_id), Some(teaching)) = (logical_id, session.teaching_exposure.as_ref()) {
-            self.logical_symbol_ledgers.cache_committed(
-                logical_id,
-                exposure.catalog_cgs_hashes_by_entry.iter()
-                    .map(|(entry, hash)| (entry.clone(), hash.as_str().to_owned())).collect(),
-                teaching.clone(),
-                exposure.symbol_ledger_bytes.clone(),
-            ).await;
+            .or(self
+                .logical_execute_bindings
+                .find_by_execute(prompt_hash, session_id)
+                .await);
+        if let (Some(logical_id), Some(teaching)) = (logical_id, session.teaching_exposure.as_ref())
+        {
+            self.logical_symbol_ledgers
+                .cache_committed(
+                    logical_id,
+                    exposure
+                        .catalog_cgs_hashes_by_entry
+                        .iter()
+                        .map(|(entry, hash)| (entry.clone(), hash.as_str().to_owned()))
+                        .collect(),
+                    teaching.clone(),
+                    exposure.symbol_ledger_bytes.clone(),
+                )
+                .await;
         }
         Ok(())
     }
-
 }
 
 #[derive(Debug, thiserror::Error)]

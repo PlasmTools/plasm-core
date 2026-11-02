@@ -230,5 +230,4 @@ mod tests {
         .unwrap();
         assert!(matches!(row_filter, BackendFilter::Field { .. }));
     }
-
 }
