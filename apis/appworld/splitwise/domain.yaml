@@ -1208,7 +1208,7 @@ capabilities:
       value_ref: nv_group_ref
       required: false
   expense_get:
-    description: Show one expense by ID. Access permits its creator, payer, debtor or a member of its group, including records absent from the authenticated user's expense list.
+    description: Show an expense. Access permits its creator, payer, debtor or a member of its group, including records absent from the authenticated user's expense list.
     kind: get
     entity: Expense
     arguments:
