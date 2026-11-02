@@ -226,7 +226,13 @@ mod tests {
             operations: vec![],
             operation_handle_next: 1,
             python_teaching: Default::default(),
-            symbol_ledger_bytes: Vec::new(),
+            symbol_ledger_bytes: plasm_core::PersistedSymbolLedger::from_session(
+                &plasm_core::TeachingExposureSession::new(&CGS::new(), "default", &[]),
+                Default::default(),
+            )
+            .expect("empty exposure ledger")
+            .encode()
+            .expect("encoded exposure ledger"),
             prerequisite_deployments: Default::default(),
         };
         store.write().await.insert(

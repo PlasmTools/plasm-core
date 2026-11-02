@@ -1039,6 +1039,7 @@ mod routed_terminal_tests {
                                 "intent":payload["intent"],"pin_id":"pin",
                                 "retrieval":{"generation":"generation-one","candidates":[],"lexical_count":0,"vector_count":0,"lexical_truncated":false,"vector_truncated":false},
                                 "matching":{"matches":[]},
+                                "search":crate::discovery_matcher::online::SearchReceipt::default(),
                                 "closure":null
                             }
                         });
