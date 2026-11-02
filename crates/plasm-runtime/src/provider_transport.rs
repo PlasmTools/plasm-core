@@ -513,7 +513,21 @@ mod tests {
             let server = tokio::spawn(async move {
                 let (mut stream, _) = listener.accept().await.unwrap();
                 let mut request = [0; 4096];
-                stream.read(&mut request).await.unwrap();
+                let mut received = 0;
+                loop {
+                    assert!(received < request.len(), "fixture request exceeds bound");
+                    let amount = stream.read(&mut request[received..]).await.unwrap();
+                    assert!(amount > 0, "client closed before completing its request");
+                    received += amount;
+                    if let Some(end) = request[..received]
+                        .windows(4)
+                        .position(|bytes| bytes == b"\r\n\r\n")
+                        .filter(|end| received >= *end + 6)
+                    {
+                        assert_eq!(&request[end + 4..end + 6], b"{}");
+                        break;
+                    }
+                }
                 stream.write_all(format!("HTTP/1.1 {status} Response\r\nContent-Length: 100\r\nRetry-After: 31\r\nConnection: close\r\n\r\nshort").as_bytes()).await.unwrap();
                 stream.shutdown().await.unwrap();
             });

@@ -317,8 +317,14 @@ mod tests {
 
     use super::run_artifact_refs_for_trace;
 
+    fn current_trace_comp_json() -> serde_json::Value {
+        let mut comp = minimal_trace_comp_json();
+        comp["version"] = serde_json::json!(plasm_core::plasm_monad::PLASM_COMP_WIRE_VERSION);
+        comp
+    }
+
     fn minimal_shared_comp() -> Arc<TraceCompWire> {
-        Arc::new(TraceCompWire::from_json_value(minimal_trace_comp_json()).expect("minimal comp"))
+        Arc::new(TraceCompWire::from_json_value(current_trace_comp_json()).expect("minimal comp"))
     }
 
     #[tokio::test]
@@ -427,7 +433,7 @@ mod tests {
 
     #[test]
     fn execute_started_with_comp_has_bind_topology() {
-        let mut comp_json = minimal_trace_comp_json();
+        let mut comp_json = current_trace_comp_json();
         comp_json["steps"]["a"] = serde_json::json!({
             "kind": "invoke",
             "plan_kind": "query",
