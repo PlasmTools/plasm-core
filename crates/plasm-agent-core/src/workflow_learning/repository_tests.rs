@@ -445,7 +445,10 @@ async fn postgres_workflow_seals_and_fences() -> std::result::Result<(), Box<dyn
     let mut approval_request = request.clone();
     approval_request.session_revision = 20;
     let approval_review = repo.review(&approval_request).await?;
-    let approval_claim = repo.claim(60).await?.expect("approval test job");
+    let approval_claim = repo
+        .claim_scoped(60, Some(&scope))
+        .await?
+        .expect("approval test job");
     assert_eq!(approval_review.id, approval_claim.id);
     let mut approval_candidate = active[0].candidate.clone();
     approval_candidate.family = "operator-reviewed".into();
@@ -463,7 +466,7 @@ async fn postgres_workflow_seals_and_fences() -> std::result::Result<(), Box<dyn
             .fetch_one(&mut repo.pool.acquire().await?)
             .await?;
     assert_eq!("awaiting_approval", awaiting);
-    assert!(repo.claim(60).await?.is_none());
+    assert!(repo.claim_scoped(60, Some(&scope)).await?.is_none());
     assert!(matches!(
         repo.approve_publication(&unrelated_scope, approval_review.id, "operator")
             .await,
@@ -480,7 +483,10 @@ async fn postgres_workflow_seals_and_fences() -> std::result::Result<(), Box<dyn
     .fetch_one(&mut repo.pool.acquire().await?)
     .await?;
     assert_eq!("operator-123", actor);
-    let approved_claim = repo.claim(60).await?.expect("approved job");
+    let approved_claim = repo
+        .claim_scoped(60, Some(&scope))
+        .await?
+        .expect("approved job");
     assert!(approved_claim.fence > approval_claim.fence);
     approval_candidate.expected_family_version = 1;
     repo.finish(
@@ -498,7 +504,10 @@ async fn postgres_workflow_seals_and_fences() -> std::result::Result<(), Box<dyn
     retry_request.session_revision = 21;
     let retry_review = repo.review(&retry_request).await?;
     for failure in 1..=3 {
-        let retry_claim = repo.claim(60).await?.expect("due retry job");
+        let retry_claim = repo
+            .claim_scoped(60, Some(&scope))
+            .await?
+            .expect("due retry job");
         assert_eq!(retry_review.id, retry_claim.id);
         repo.job_failure(&retry_claim, "provider temporarily unavailable", true)
             .await?;
@@ -514,7 +523,7 @@ async fn postgres_workflow_seals_and_fences() -> std::result::Result<(), Box<dyn
             "provider temporarily unavailable",
             row.try_get::<String, _>("failure_reason")?
         );
-        assert!(repo.claim(60).await?.is_none());
+        assert!(repo.claim_scoped(60, Some(&scope)).await?.is_none());
         if failure < 3 {
             sqlx::query("UPDATE workflow_learning_reviews SET next_attempt=clock_timestamp()-interval '1 second' WHERE id=$1")
                 .bind(retry_review.id).execute(&mut repo.pool.acquire().await?).await?;
@@ -523,11 +532,14 @@ async fn postgres_workflow_seals_and_fences() -> std::result::Result<(), Box<dyn
     let mut expiry_request = request.clone();
     expiry_request.session_revision = 22;
     let expiry_review = repo.review(&expiry_request).await?;
-    let expired_claim = repo.claim(60).await?.expect("expiry test job");
+    let expired_claim = repo
+        .claim_scoped(60, Some(&scope))
+        .await?
+        .expect("expiry test job");
     assert_eq!(expiry_review.id, expired_claim.id);
     sqlx::query("UPDATE workflow_learning_reviews SET lease_until=clock_timestamp()-interval '1 second' WHERE id=$1")
         .bind(expiry_review.id).execute(&mut repo.pool.acquire().await?).await?;
-    assert!(repo.claim(60).await?.is_none());
+    assert!(repo.claim_scoped(60, Some(&scope)).await?.is_none());
     let expired_row = sqlx::query(
         "SELECT attempts,state,failure_reason FROM workflow_learning_reviews WHERE id=$1",
     )
@@ -547,11 +559,14 @@ async fn postgres_workflow_seals_and_fences() -> std::result::Result<(), Box<dyn
     ));
     sqlx::query("UPDATE workflow_learning_reviews SET next_attempt=clock_timestamp()-interval '1 second' WHERE id=$1")
         .bind(expiry_review.id).execute(&mut repo.pool.acquire().await?).await?;
-    let reclaimed = repo.claim(60).await?.expect("due reclaimed job");
+    let reclaimed = repo
+        .claim_scoped(60, Some(&scope))
+        .await?
+        .expect("due reclaimed job");
     assert!(reclaimed.fence > expired_claim.fence);
     repo.job_failure(&reclaimed, "permanent provider rejection", false)
         .await?;
-    assert!(repo.claim(60).await?.is_none());
+    assert!(repo.claim_scoped(60, Some(&scope)).await?.is_none());
 
     // Preparing a seal must not expose a claimable job before the session gate commits.
     let mut pending_request = request.clone();
@@ -564,7 +579,7 @@ async fn postgres_workflow_seals_and_fences() -> std::result::Result<(), Box<dyn
             .fetch_one(&mut repo.pool.acquire().await?)
             .await?;
     assert_eq!(0, invisible);
-    assert!(repo.claim(60).await?.is_none());
+    assert!(repo.claim_scoped(60, Some(&scope)).await?.is_none());
     drop(pending);
     let handle = repo
         .prepare_review(&pending_request)
@@ -572,7 +587,10 @@ async fn postgres_workflow_seals_and_fences() -> std::result::Result<(), Box<dyn
         .commit()
         .await?;
     assert_ne!(uncommitted_id, handle.id);
-    let complementary_claim = repo.claim(60).await?.expect("committed prepared job");
+    let complementary_claim = repo
+        .claim_scoped(60, Some(&scope))
+        .await?
+        .expect("committed prepared job");
     assert_eq!(handle.id, complementary_claim.id);
 
     // One seal can retain complementary coverage in the same family, using one CAS.
@@ -608,7 +626,10 @@ async fn postgres_workflow_seals_and_fences() -> std::result::Result<(), Box<dyn
     let mut conflict_request = request.clone();
     conflict_request.session_revision = 24;
     repo.review(&conflict_request).await?;
-    let conflict_claim = repo.claim(60).await?.expect("group conflict job");
+    let conflict_claim = repo
+        .claim_scoped(60, Some(&scope))
+        .await?
+        .expect("group conflict job");
     let mut inconsistent = complementary[..2].to_vec();
     inconsistent[0].expected_family_version = 2;
     inconsistent[1].expected_family_version = 1;

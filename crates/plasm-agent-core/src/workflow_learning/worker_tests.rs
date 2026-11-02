@@ -406,7 +406,7 @@ async fn postgres_review_to_checked_example_without_provider_calls() {
             .is_none(),
         "missing provider must leave fresh proposals unclaimed"
     );
-    let claim = repo.claim(60).await.unwrap().unwrap();
+    let claim = repo.claim_scoped(60, Some(&scope)).await.unwrap().unwrap();
     assert_eq!(claim.id, review.id);
     assert!(NormalizationContext::review(&claim, usize::MAX, NormalizationStage::Initial).is_err());
     assert!(NormalizationContext::review(
