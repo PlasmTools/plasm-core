@@ -34,7 +34,7 @@ pub enum DiscoveryMatcherError {
     InvalidConnectedContext,
     #[error("discovery catalogue context is invalid")]
     CatalogueContext(#[source] Box<plasm_core::catalog_discovery::CatalogDiscoveryError>),
-    #[error("pinned catalogue evidence is missing for {0:?}")]
+    #[error("pinned catalogue evidence is missing for {0}")]
     MissingCatalogueEvidence(CapabilityRef),
     #[error("catalogue {catalog} is missing referenced definition {name}")]
     MissingEvidenceDefinition { catalog: String, name: String },

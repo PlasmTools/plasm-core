@@ -271,7 +271,7 @@ mod tests {
     use std::rc::Rc;
 
     #[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
-    #[error("injected evidence fault at {0:?}")]
+    #[error("injected evidence fault at {0}")]
     struct Fault(Stage);
 
     #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -280,6 +280,16 @@ mod tests {
         Record,
         Complete,
         Fail,
+    }
+    impl std::fmt::Display for Stage {
+        fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+            f.write_str(match self {
+                Self::Begin => "begin",
+                Self::Record => "record",
+                Self::Complete => "complete",
+                Self::Fail => "fail",
+            })
+        }
     }
 
     #[derive(Default)]

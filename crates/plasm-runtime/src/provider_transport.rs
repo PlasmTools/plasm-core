@@ -46,7 +46,7 @@ pub enum ProviderTransportError {
     },
     #[error("provider retry deadline expired")]
     DeadlineExpired,
-    #[error("provider attempt timed out during {phase:?} (HTTP status {status:?})")]
+    #[error("provider attempt timed out during {phase}{}", status.map(|code| format!(" after HTTP {code}")).unwrap_or_default())]
     AttemptTimeout {
         phase: AttemptPhase,
         status: Option<u16>,

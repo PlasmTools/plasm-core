@@ -26,6 +26,8 @@ pub use catalogue_context::CapabilityTeachingContract;
 pub(super) const TEACHING_SCHEMA_VERSION: u32 = 3;
 #[path = "teaching_contracts.rs"]
 mod contracts;
+#[path = "teaching_display.rs"]
+mod display;
 pub use contracts::{ProgramCatalogueRequirements, TeachingOutput};
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
@@ -140,7 +142,7 @@ pub enum TeachingError {
     Parse(#[source] Box<ruff_python_parser::ParseError>),
     #[error("session symbol cannot be resolved: {0}")]
     SymbolResolution(#[source] Box<plasm_core::symbol_tuning::SymbolResolveError>),
-    #[error("semantic reference is not exposed: {0:?}")]
+    #[error("semantic reference is not exposed: {0}")]
     UnexposedReference(SemanticReference),
     #[error("admitted plan is missing compiler dependency evidence")]
     MissingCompilerDependency,
@@ -161,7 +163,7 @@ pub enum TeachingError {
     #[error("rewritten program does not preserve the compiled computation")]
     ChangedComputation,
     #[error(
-        "compiled preservation failed: {category:?}; original={original_hash}; recompiled={recompiled_hash}; path={path:?}"
+        "compiled preservation failed: {category}; original={original_hash}; recompiled={recompiled_hash}; path={}", display::PreservationLocation(path)
     )]
     PreservationMismatch {
         category: PreservationCategory,

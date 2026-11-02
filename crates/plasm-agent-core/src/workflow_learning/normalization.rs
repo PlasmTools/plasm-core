@@ -17,6 +17,15 @@ pub enum NormalizationField {
     Facet,
     Alias,
 }
+impl std::fmt::Display for NormalizationField {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(match self {
+            Self::Purpose => "purpose",
+            Self::Facet => "facet",
+            Self::Alias => "alias",
+        })
+    }
+}
 
 #[derive(Debug, thiserror::Error)]
 pub enum NormalizationError {
@@ -32,19 +41,19 @@ pub enum NormalizationError {
     MissingChoice,
     #[error("normalization proposal does not match the declared schema")]
     Proposal(#[source] serde_json::Error),
-    #[error("normalization {field:?} at index {index} is blank")]
+    #[error("normalization {field} at index {index} is blank")]
     BlankText {
         field: NormalizationField,
         index: usize,
     },
-    #[error("normalization {field:?} at index {index} has {actual} characters; limit is {limit}")]
+    #[error("normalization {field} at index {index} has {actual} characters; limit is {limit}")]
     TextTooLong {
         field: NormalizationField,
         index: usize,
         actual: usize,
         limit: usize,
     },
-    #[error("normalization {field:?} count is {actual}; limit is {limit}")]
+    #[error("normalization {field} count is {actual}; limit is {limit}")]
     TooManyItems {
         field: NormalizationField,
         actual: usize,

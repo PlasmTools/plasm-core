@@ -17,6 +17,17 @@ pub enum ExecutionState {
     Failed,
     Indeterminate,
 }
+impl std::fmt::Display for ExecutionState {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(match self {
+            Self::Ready => "ready",
+            Self::Running => "running",
+            Self::Succeeded => "succeeded",
+            Self::Failed => "failed",
+            Self::Indeterminate => "indeterminate",
+        })
+    }
+}
 
 impl ExecutionState {
     fn consumed_guidance(self) -> &'static str {
@@ -113,7 +124,7 @@ impl Drop for ExecutionClaim {
 
 #[derive(Debug, thiserror::Error)]
 pub enum AuthorizationError {
-    #[error("authorization `{commit_ref}` is {state:?}; this call dispatched nothing. {}", state.consumed_guidance())]
+    #[error("authorization `{commit_ref}` is {state}; this call dispatched nothing. {}", state.consumed_guidance())]
     Consumed {
         commit_ref: PlanCommitRef,
         state: ExecutionState,

@@ -9,6 +9,15 @@ pub enum AttemptPhase {
     Dispatch,
     ResponseBody,
 }
+impl std::fmt::Display for AttemptPhase {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(match self {
+            Self::Admission => "request admission",
+            Self::Dispatch => "request dispatch",
+            Self::ResponseBody => "response body reception",
+        })
+    }
+}
 
 pub struct ProviderResponse {
     pub status: reqwest::StatusCode,

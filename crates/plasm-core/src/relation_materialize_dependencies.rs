@@ -7,6 +7,14 @@ pub enum Owner {
     Source,
     Target,
 }
+impl std::fmt::Display for Owner {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(match self {
+            Self::Source => "source",
+            Self::Target => "target",
+        })
+    }
+}
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CapabilityDependency {
     pub owner: Owner,
@@ -14,7 +22,7 @@ pub struct CapabilityDependency {
 }
 #[derive(Debug, thiserror::Error)]
 pub enum DependencyError {
-    #[error("relation capability `{capability}` is missing from {owner:?} catalogue")]
+    #[error("relation capability `{capability}` is missing from {owner} catalogue")]
     MissingCapability { owner: Owner, capability: String },
     #[error("relation target `{entity}` has no get capability")]
     MissingGet { entity: String },
