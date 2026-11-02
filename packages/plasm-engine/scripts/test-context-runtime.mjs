@@ -29,15 +29,20 @@ try {
         return self.count(products)
 `);
   assert.ok(plan.planCommitRef, plan.summary);
-  let requests = 0;
+  const requests = [];
+  const products = [{ id: 'one', name: 'One', category_id: null }, { id: 'two', name: 'Two', category_id: null }];
   const result = await engine.runPlanLive(plan.planCommitRef, async request => {
-    requests++;
     assert.equal(request.method, 'GET');
-    assert.equal(new URL(request.url).pathname, '/products');
-    return { status: 200, body: JSON.stringify([{ id: 'one', name: 'One' }, { id: 'two', name: 'Two' }]) };
+    const path = new URL(request.url).pathname;
+    requests.push(path);
+    if (path === '/products') return { status: 200, body: JSON.stringify(products) };
+    // The matrix permits hydration of the list rows through their Get capability.
+    const product = products.find(row => path === `/products/${row.id}`);
+    assert.ok(product, `Unexpected fixture request: ${path}`);
+    return { status: 200, body: JSON.stringify(product) };
   });
   assert.equal(result.ok, true, result.message);
-  assert.equal(requests, 1);
+  assert.ok(requests.includes('/products'), 'Execute the fixture query before compute');
   assert.match(result.message, /\b2\b/);
   console.log('PASS: retained context executes compute through the packaged runtime; no providers or live effects');
 } finally {
