@@ -5,9 +5,15 @@ use crate::row_predicate::entity_matches_predicates;
 use crate::top_k::TopKHeap;
 use crate::{RowMatchBudget, StreamConsumeOpts};
 
+/// One root occurrence and the descendants decoded from that observation.
+#[derive(Debug, Clone)]
+pub struct RetainedObservation {
+    pub entity: CachedEntity,
+    pub descendants: Vec<CachedEntity>,
+}
+
 pub struct PageIngestOutcome {
-    pub merge_into_mat: Vec<CachedEntity>,
-    pub yield_entities: Vec<CachedEntity>,
+    pub yield_entities: Vec<RetainedObservation>,
     pub progress_rows: usize,
     pub row_match_budget_satisfied: bool,
 }
@@ -59,19 +65,14 @@ impl PageCollector {
         })
     }
 
-    pub fn skips_pre_page_merge(&self) -> bool {
-        !matches!(self, Self::Standard)
-    }
-
     pub fn ingest_page(
         &mut self,
-        entities: Vec<CachedEntity>,
+        entities: Vec<RetainedObservation>,
     ) -> Result<PageIngestOutcome, crate::RuntimeError> {
         Ok(match self {
             Self::Standard => {
                 let progress_rows = entities.len();
                 PageIngestOutcome {
-                    merge_into_mat: Vec::new(),
                     yield_entities: entities,
                     progress_rows,
                     row_match_budget_satisfied: false,
@@ -83,7 +84,7 @@ impl PageCollector {
             } => {
                 let mut filtered = Vec::new();
                 for entity in entities {
-                    if entity_matches_predicates(&entity, &budget.predicates)? {
+                    if entity_matches_predicates(&entity.entity, &budget.predicates)? {
                         filtered.push(entity);
                     }
                 }
@@ -91,7 +92,6 @@ impl PageCollector {
                 let satisfied = *matching_total >= budget.count;
                 PageIngestOutcome {
                     progress_rows: filtered.len(),
-                    merge_into_mat: filtered.clone(),
                     yield_entities: filtered,
                     row_match_budget_satisfied: satisfied,
                 }
@@ -102,7 +102,6 @@ impl PageCollector {
                     heap.insert(entity)?;
                 }
                 PageIngestOutcome {
-                    merge_into_mat: Vec::new(),
                     yield_entities: Vec::new(),
                     progress_rows,
                     row_match_budget_satisfied: false,
@@ -111,10 +110,10 @@ impl PageCollector {
         })
     }
 
-    pub fn finish(self) -> Option<Vec<CachedEntity>> {
+    pub fn finish(self) -> Option<Vec<RetainedObservation>> {
         match self {
             Self::TopK(heap) => {
-                let entities = heap.into_sorted_entities();
+                let entities = heap.into_sorted_observations();
                 if entities.is_empty() {
                     None
                 } else {
@@ -159,7 +158,12 @@ mod tests {
             completeness: crate::EntityCompleteness::Summary,
             unavailable_fields: Default::default(),
         };
-        assert!(collector.ingest_page(vec![entity]).is_err());
+        assert!(collector
+            .ingest_page(vec![RetainedObservation {
+                entity,
+                descendants: vec![]
+            }])
+            .is_err());
         consume.top_k.as_mut().unwrap().sort_key = vec!["absent".into()];
         assert!(PageCollector::new(&consume, &cgs, "Item").is_err());
     }

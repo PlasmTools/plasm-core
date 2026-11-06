@@ -322,7 +322,10 @@ mod field_demand_tests {
         )
         .unwrap();
         assert!(matches!(
-            heap.insert(entity),
+            heap.insert(crate::paginated_collect::RetainedObservation {
+                entity,
+                descendants: vec![]
+            }),
             Err(RuntimeError::FieldUnavailable { .. })
         ));
     }

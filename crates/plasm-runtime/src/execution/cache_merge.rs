@@ -28,7 +28,6 @@ pub(crate) fn query_result_merge_cache(
         )?);
     }
     let count = cached_entities.len();
-    mat.merge(cached_entities.clone())?;
     let mut stats = ExecutionStats::from_telemetry(CacheTelemetry::default(), network_requests);
     stats.record_rows_materialized(count);
     Ok(DecodedQueryBatch {

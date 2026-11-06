@@ -2,6 +2,56 @@
 
 use super::*;
 
+/// One provider envelope and its collection projection, shared by both query paths.
+pub(super) struct PreparedQueryResponse {
+    pub envelope: serde_json::Value,
+    pub projection: serde_json::Value,
+}
+
+pub(super) fn prepare_query_response(
+    response: serde_json::Value,
+    template: &CapabilityTemplate,
+    env: &CmlEnv,
+) -> Result<PreparedQueryResponse, RuntimeError> {
+    match template {
+        CapabilityTemplate::Mcp(mapping) => {
+            let envelope = crate::mcp_execution::select_response(response, &mapping.response)?;
+            let projection = envelope
+                .pointer(&mapping.response.pointer)
+                .cloned()
+                .ok_or_else(|| crate::mcp_execution::McpExecutionError::MissingPointer {
+                    pointer: mapping.response.pointer.clone(),
+                })?;
+            if !projection.is_array() {
+                return Err(crate::mcp_execution::McpExecutionError::QueryArrayRequired.into());
+            }
+            Ok(PreparedQueryResponse {
+                envelope,
+                projection,
+            })
+        }
+        CapabilityTemplate::Http(cml) | CapabilityTemplate::GraphQl(cml) => {
+            let projection = prepare_http_query_response(response.clone(), cml, env);
+            let envelope =
+                normalize_collection_response(response, &response_bare_array_wrap_key(cml));
+            Ok(PreparedQueryResponse {
+                envelope,
+                projection,
+            })
+        }
+        CapabilityTemplate::EvmCall(_) | CapabilityTemplate::EvmLogs(_) => {
+            let envelope = normalize_collection_response(response, "results");
+            Ok(PreparedQueryResponse {
+                projection: envelope.clone(),
+                envelope,
+            })
+        }
+        CapabilityTemplate::View(_) | CapabilityTemplate::CredentialBind(_) => {
+            Err(RuntimeError::ViewQueryDispatchRequired)
+        }
+    }
+}
+
 fn response_narrow_hint(response: &serde_json::Value, segment: &str) -> crate::ResponseNarrowHint {
     if let Some(detail) = graphql_errors_summary(response) {
         return crate::ResponseNarrowHint::GraphQl { detail };
