@@ -2,78 +2,115 @@
 
 use super::*;
 
-pub(crate) fn client_side_predicate_matches(
-    entity: &CachedEntity,
-    predicate: &plasm_core::Predicate,
-) -> Result<bool, RuntimeError> {
-    use plasm_core::CompOp;
-    match predicate {
-        plasm_core::Predicate::True => Ok(true),
-        plasm_core::Predicate::False => Ok(false),
-        plasm_core::Predicate::Comparison { field, op, value } => {
-            crate::row_predicate::require_entity_field_available(entity, field)?;
-            let rhs = value.to_value();
-            let Some(actual_tf) = entity.get_field(field) else {
-                return Ok(*op == CompOp::Exists && matches!(rhs, Value::Null));
-            };
-            let actual = actual_tf.to_value();
-            let money_err = |e: plasm_core::CrossCurrencyError| {
-                RuntimeError::from(plasm_core::TypeError::from(e))
-            };
-            Ok(match op {
-                CompOp::Eq => plasm_core::money::values_eq(&actual, &rhs).map_err(money_err)?,
-                CompOp::Neq => !plasm_core::money::values_eq(&actual, &rhs).map_err(money_err)?,
-                CompOp::Gt => plasm_core::money::values_ord(&actual, &rhs)
-                    .map_err(money_err)?
-                    .is_some_and(|o| o.is_gt()),
-                CompOp::Lt => plasm_core::money::values_ord(&actual, &rhs)
-                    .map_err(money_err)?
-                    .is_some_and(|o| o.is_lt()),
-                CompOp::Gte => plasm_core::money::values_ord(&actual, &rhs)
-                    .map_err(money_err)?
-                    .is_some_and(|o| o.is_ge()),
-                CompOp::Lte => plasm_core::money::values_ord(&actual, &rhs)
-                    .map_err(money_err)?
-                    .is_some_and(|o| o.is_le()),
-                CompOp::Contains => actual.contains(&rhs),
-                CompOp::In => match &rhs {
-                    Value::Array(arr) => arr.contains(&actual),
-                    _ => false,
-                },
-                CompOp::Exists => !matches!(actual, Value::Null),
-            })
-        }
-        plasm_core::Predicate::And { args } => {
-            for a in args {
-                if !client_side_predicate_matches(entity, a)? {
-                    return Ok(false);
-                }
+pub(crate) enum PreparedEntityPredicate {
+    True,
+    False,
+    Atom(Box<crate::row_predicate::PreparedRowPredicate>),
+    And(Vec<Self>),
+    Or(Vec<Self>),
+    Not(Box<Self>),
+}
+
+impl PreparedEntityPredicate {
+    pub(crate) fn new(
+        cgs: &CGS,
+        entity: &str,
+        predicate: &plasm_core::Predicate,
+    ) -> Result<Self, RuntimeError> {
+        use plasm_core::{CompOp, PlanPredicateOp as Op, Predicate};
+        Ok(match predicate {
+            Predicate::True | Predicate::ExistsRelation { .. } => Self::True,
+            Predicate::False => Self::False,
+            Predicate::Comparison { field, op, value } => {
+                let bound = crate::row_predicate::BoundRowPredicate {
+                    field_path: plasm_core::FieldPath::from_dotted(field)
+                        .map_err(crate::row_predicate::RowPredicateError::from)?,
+                    op: match op {
+                        CompOp::Eq => Op::Eq,
+                        CompOp::Neq => Op::Ne,
+                        CompOp::Gt => Op::Gt,
+                        CompOp::Lt => Op::Lt,
+                        CompOp::Gte => Op::Gte,
+                        CompOp::Lte => Op::Lte,
+                        CompOp::Contains => Op::Contains,
+                        CompOp::In => Op::In,
+                        CompOp::Exists => Op::Exists,
+                    },
+                    value: plasm_core::operand_binding::ResolvedValue::new(value.to_value())?,
+                };
+                Self::Atom(Box::new(
+                    crate::row_predicate::PreparedRowPredicate::prepare(cgs, entity, &bound)?,
+                ))
             }
-            Ok(true)
-        }
-        plasm_core::Predicate::Or { args } => {
-            for a in args {
-                if client_side_predicate_matches(entity, a)? {
-                    return Ok(true);
+            Predicate::And { args } => Self::And(
+                args.iter()
+                    .map(|p| Self::new(cgs, entity, p))
+                    .collect::<Result<_, _>>()?,
+            ),
+            Predicate::Or { args } => Self::Or(
+                args.iter()
+                    .map(|p| Self::new(cgs, entity, p))
+                    .collect::<Result<_, _>>()?,
+            ),
+            Predicate::Not { predicate } => Self::Not(Box::new(Self::new(cgs, entity, predicate)?)),
+        })
+    }
+
+    fn evaluate(&self, entity: &CachedEntity) -> Result<Option<bool>, RuntimeError> {
+        Ok(match self {
+            Self::True => Some(true),
+            Self::False => Some(false),
+            Self::Atom(p) => p.evaluate_entity(entity)?,
+            Self::Not(p) => p.evaluate(entity)?.map(|v| !v),
+            Self::And(args) => {
+                let mut result = Some(true);
+                for p in args {
+                    if result == Some(false) {
+                        break;
+                    }
+                    result = match (result, p.evaluate(entity)?) {
+                        (_, Some(false)) => Some(false),
+                        (None, _) | (_, None) => None,
+                        _ => Some(true),
+                    };
                 }
+                result
             }
-            Ok(false)
-        }
-        plasm_core::Predicate::Not { predicate: inner } => {
-            Ok(!client_side_predicate_matches(entity, inner)?)
-        }
-        plasm_core::Predicate::ExistsRelation { .. } => Ok(true),
+            Self::Or(args) => {
+                let mut result = Some(false);
+                for p in args {
+                    if result == Some(true) {
+                        break;
+                    }
+                    result = match (result, p.evaluate(entity)?) {
+                        (_, Some(true)) => Some(true),
+                        (None, _) | (_, None) => None,
+                        _ => Some(false),
+                    };
+                }
+                result
+            }
+        })
+    }
+
+    pub(crate) fn matches(&self, entity: &CachedEntity) -> Result<bool, RuntimeError> {
+        Ok(self.evaluate(entity)? == Some(true))
     }
 }
 
 pub(crate) fn filter_entities_by_predicate(
     entities: Vec<CachedEntity>,
     pred: &plasm_core::Predicate,
+    cgs: &CGS,
 ) -> Result<Vec<CachedEntity>, RuntimeError> {
+    let Some(first) = entities.first() else {
+        return Ok(entities);
+    };
+    let prepared = PreparedEntityPredicate::new(cgs, first.reference.entity_type.as_str(), pred)?;
     let mut out = Vec::with_capacity(entities.len());
-    for e in entities {
-        if client_side_predicate_matches(&e, pred)? {
-            out.push(e);
+    for entity in entities {
+        if prepared.matches(&entity)? {
+            out.push(entity);
         }
     }
     Ok(out)
@@ -271,8 +308,22 @@ pub(crate) fn collect_predicate_vars(
 mod field_demand_tests {
     use super::*;
 
+    fn client_side_predicate_matches(
+        entity: &CachedEntity,
+        predicate: &plasm_core::Predicate,
+        cgs: &CGS,
+    ) -> Result<bool, RuntimeError> {
+        PreparedEntityPredicate::new(cgs, entity.reference.entity_type.as_str(), predicate)?
+            .matches(entity)
+    }
+
     #[test]
     fn unavailable_fields_fail_when_consumed_without_erasing_membership() {
+        let cgs = plasm_core::load_schema_dir(
+            &std::path::PathBuf::from(crate::test_manifest_dir())
+                .join("../../fixtures/schemas/plasm_pagination_matrix"),
+        )
+        .unwrap();
         let mut entity = CachedEntity::from_decoded(
             Ref::new("Item", "one"),
             Default::default(),
@@ -282,7 +333,7 @@ mod field_demand_tests {
         );
         entity.unavailable_fields.insert("n".into());
         let predicate = plasm_core::Predicate::eq("n", 42);
-        let error = client_side_predicate_matches(&entity, &predicate).unwrap_err();
+        let error = client_side_predicate_matches(&entity, &predicate, &cgs).unwrap_err();
         assert!(matches!(error, RuntimeError::FieldUnavailable { .. }));
         let failure = crate::ExecutionFailure::from(error);
         assert_eq!(failure.code, "field_unavailable");
@@ -292,14 +343,16 @@ mod field_demand_tests {
             &entity,
             &plasm_core::Predicate::Or {
                 args: vec![plasm_core::Predicate::True, predicate.clone()],
-            }
+            },
+            &cgs
         )
         .unwrap());
         assert!(!client_side_predicate_matches(
             &entity,
             &plasm_core::Predicate::And {
                 args: vec![plasm_core::Predicate::False, predicate],
-            }
+            },
+            &cgs
         )
         .unwrap());
         let bound = crate::row_predicate::BoundRowPredicate {
@@ -308,7 +361,9 @@ mod field_demand_tests {
             value: plasm_core::operand_binding::ResolvedValue::new(Value::Integer(42)).unwrap(),
         };
         assert!(matches!(
-            crate::row_predicate::entity_matches_predicate(&entity, &bound),
+            crate::row_predicate::PreparedRowPredicate::prepare(&cgs, "Item", &bound)
+                .unwrap()
+                .matches_entity(&entity),
             Err(RuntimeError::FieldUnavailable { .. })
         ));
         let mut heap = crate::top_k::TopKHeap::new(
@@ -319,6 +374,7 @@ mod field_demand_tests {
                 row_filter: vec![],
             },
             plasm_core::value_contract::ValueContract::scalar(plasm_core::FieldType::Integer),
+            vec![],
         )
         .unwrap();
         assert!(matches!(
@@ -328,5 +384,28 @@ mod field_demand_tests {
             }),
             Err(RuntimeError::FieldUnavailable { .. })
         ));
+    }
+
+    #[test]
+    fn residual_not_preserves_null_as_unknown() {
+        let cgs = plasm_core::load_schema_dir(
+            &std::path::PathBuf::from(crate::test_manifest_dir())
+                .join("../../fixtures/schemas/plasm_pagination_matrix"),
+        )
+        .unwrap();
+        let entity = CachedEntity::from_decoded(
+            Ref::new("Item", "one"),
+            [("n".into(), Value::Null)].into_iter().collect(),
+            Default::default(),
+            1,
+            EntityCompleteness::Summary,
+        );
+        let predicate = plasm_core::Predicate::Not {
+            predicate: Box::new(plasm_core::Predicate::eq("n", 42)),
+        };
+        assert!(!PreparedEntityPredicate::new(&cgs, "Item", &predicate)
+            .unwrap()
+            .matches(&entity)
+            .unwrap());
     }
 }

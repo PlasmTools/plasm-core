@@ -378,7 +378,7 @@ impl ExecutionEngine {
                         entity_field_predicate(pred, entity_def, Some(&cap_params))
                     {
                         res.entities =
-                            filter_entities_by_predicate(res.entities, &entity_pred)?;
+                            filter_entities_by_predicate(res.entities, &entity_pred, cgs)?;
                     }
                 }
             }
@@ -499,6 +499,18 @@ impl ExecutionEngine {
         )?;
         let collector =
             crate::paginated_collect::PageCollector::new(&consume, cgs, query.entity.as_str())?;
+        let cap_params = capability_param_names(&capability);
+        let predicate = query
+            .predicate
+            .as_ref()
+            .and_then(|pred| {
+                cgs.get_entity(&query.entity)
+                    .and_then(|entity| entity_field_predicate(pred, entity, Some(&cap_params)))
+            })
+            .map(|pred| {
+                super::predicates::PreparedEntityPredicate::new(cgs, query.entity.as_str(), &pred)
+            })
+            .transpose()?;
         let stream = Box::pin(async_stream::try_stream! {
             use plasm_core::collection_codec::{CollectionCodec, Demand, PageTermination, RecordingCodec, SharedRows, Transform};
             let codec = RecordingCodec::new();
@@ -562,9 +574,6 @@ impl ExecutionEngine {
                 })?;
                 crate::record_live_page_audit(transition.audit);
                 let inherit = CapabilityParamEnv::from_cml_env(&env, &capability);
-                let cap_params = capability_param_names(&capability);
-                let predicate = query.predicate.as_ref().and_then(|pred| cgs.get_entity(&query.entity)
-                    .and_then(|entity| entity_field_predicate(pred, entity, Some(&cap_params))));
                 // A plain expression prefix selects source occurrences before detail IO.
                 // Filters and top-k need their candidates; host paging must retain the
                 // backend page because its continuation starts at the next page.
@@ -584,7 +593,7 @@ impl ExecutionEngine {
                 let mut entities = Vec::with_capacity(hydrated.len());
                 for observed in hydrated {
                     if let Some(pred) = &predicate {
-                        if !client_side_predicate_matches(&observed.entity, pred)? { continue; }
+                        if !pred.matches(&observed.entity)? { continue; }
                     }
                     entities.push(observed);
                 }

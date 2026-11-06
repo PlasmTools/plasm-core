@@ -708,49 +708,54 @@ async fn pull_right_preserves_exact_integer_comparison() {
         Arc::new(PrecisionCrossPages),
         None,
     );
-    let mut mat = SessionMaterialization::new();
-    let query = QueryExpr::filtered(
-        "LangTag",
-        Predicate::Comparison {
-            field: "item_id.score".into(),
-            op: plasm_core::CompOp::Gt,
-            value: Value::Integer(9007199254740992).try_into().unwrap(),
-        },
-    );
-    let crosses = [plasm_core::cross_entity::CrossEntityPredicate {
-        ref_field: "item_id".into(),
-        foreign_entity: "LangItem".into(),
-        foreign_predicate: Predicate::Comparison {
-            field: "score".into(),
-            op: plasm_core::CompOp::Gt,
-            value: Value::Integer(9007199254740992).try_into().unwrap(),
-        },
-    }];
-    let result = ExecutionEngine::run_in_execute_task_scopes(
-        "http://fixture".into(),
-        None,
-        None,
-        None,
-        None,
-        ExecuteOptions::for_catalog(&cgs)
-            .unwrap()
-            .compiled_catalog
-            .unwrap(),
-        None,
-        None,
-        engine.execute_query_cross_entity(
-            &query,
-            &crosses,
-            &cgs,
-            &mut mat,
-            ExecutionMode::Live,
-            StreamConsumeOpts::default(),
-            &ViewAmbientContext::default(),
-        ),
-    )
-    .await
-    .unwrap();
-    assert_eq!(result.entities().len(), 1);
+    for (field, value) in [
+        ("score", Value::Integer(9007199254740992)),
+        ("title", Value::String("alpha".into())),
+    ] {
+        let mut mat = SessionMaterialization::new();
+        let query = QueryExpr::filtered(
+            "LangTag",
+            Predicate::Comparison {
+                field: format!("item_id.{field}"),
+                op: plasm_core::CompOp::Gt,
+                value: value.clone().try_into().unwrap(),
+            },
+        );
+        let crosses = [plasm_core::cross_entity::CrossEntityPredicate {
+            ref_field: "item_id".into(),
+            foreign_entity: "LangItem".into(),
+            foreign_predicate: Predicate::Comparison {
+                field: field.into(),
+                op: plasm_core::CompOp::Gt,
+                value: value.try_into().unwrap(),
+            },
+        }];
+        let result = ExecutionEngine::run_in_execute_task_scopes(
+            "http://fixture".into(),
+            None,
+            None,
+            None,
+            None,
+            ExecuteOptions::for_catalog(&cgs)
+                .unwrap()
+                .compiled_catalog
+                .unwrap(),
+            None,
+            None,
+            engine.execute_query_cross_entity(
+                &query,
+                &crosses,
+                &cgs,
+                &mut mat,
+                ExecutionMode::Live,
+                StreamConsumeOpts::default(),
+                &ViewAmbientContext::default(),
+            ),
+        )
+        .await
+        .unwrap();
+        assert_eq!(result.entities().len(), 1);
+    }
 }
 
 #[async_trait]

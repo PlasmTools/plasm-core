@@ -27,8 +27,8 @@ pub enum RowComputeError {
     RowCountOverflow,
     #[error("money sum requires a money contract")]
     MoneySumRequiresMoney,
-    #[error("contains requires two string values")]
-    ContainsRequiresStrings,
+    #[error("contains requires a string, array, set, or record with a compatible operand")]
+    ContainsRequiresCompatibleOperands,
     #[error("membership requires a string or array on the right")]
     MembershipRequiresCollection,
     #[error("string membership requires a string on the left")]

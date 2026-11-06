@@ -1,7 +1,7 @@
 //! Page collectors for paginated query streams (standard, row-match, top-k).
 
 use crate::cache::CachedEntity;
-use crate::row_predicate::entity_matches_predicates;
+use crate::row_predicate::PreparedRowPredicate;
 use crate::top_k::TopKHeap;
 use crate::{RowMatchBudget, StreamConsumeOpts};
 
@@ -22,6 +22,7 @@ pub enum PageCollector {
     Standard,
     RowMatch {
         budget: RowMatchBudget,
+        predicates: Vec<PreparedRowPredicate>,
         matching_total: usize,
     },
     TopK(TopKHeap),
@@ -54,10 +55,20 @@ impl PageCollector {
             for segment in path {
                 contract = contract.field(segment)?;
             }
-            Self::TopK(TopKHeap::new(spec.clone(), contract)?)
+            let predicates = spec
+                .row_filter
+                .iter()
+                .map(|p| PreparedRowPredicate::prepare(cgs, entity, p))
+                .collect::<Result<Vec<_>, _>>()?;
+            Self::TopK(TopKHeap::new(spec.clone(), contract, predicates)?)
         } else if let Some(ref budget) = consume.row_match_budget {
             Self::RowMatch {
                 budget: budget.clone(),
+                predicates: budget
+                    .predicates
+                    .iter()
+                    .map(|p| PreparedRowPredicate::prepare(cgs, entity, p))
+                    .collect::<Result<Vec<_>, _>>()?,
                 matching_total: 0,
             }
         } else {
@@ -80,11 +91,18 @@ impl PageCollector {
             }
             Self::RowMatch {
                 budget,
+                predicates,
                 matching_total,
             } => {
                 let mut filtered = Vec::new();
                 for entity in entities {
-                    if entity_matches_predicates(&entity.entity, &budget.predicates)? {
+                    if predicates.iter().try_fold(true, |matched, p| {
+                        if matched {
+                            p.matches_entity(&entity.entity)
+                        } else {
+                            Ok(false)
+                        }
+                    })? {
                         filtered.push(entity);
                     }
                 }

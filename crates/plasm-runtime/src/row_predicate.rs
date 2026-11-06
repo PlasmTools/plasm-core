@@ -4,14 +4,218 @@ use crate::cache::CachedEntity;
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
+/// A comparison prepared against the declared value domain, before any rows are read.
+#[derive(Debug, Clone)]
+pub struct PreparedScalarPredicate {
+    contract: plasm_core::value_contract::ValueContract,
+    op: plasm_core::PlanPredicateOp,
+    rhs: plasm_core::Value,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Error)]
+pub enum ScalarPredicateError {
+    #[error(transparent)]
+    Ordering(#[from] plasm_core::value_order::OrderingError),
+    #[error(transparent)]
+    Equality(#[from] plasm_core::value_equality::ValueEqualityError),
+    #[error("contains requires a string, array, set, or record with a compatible operand")]
+    ContainsRequiresCompatibleOperands,
+    #[error("membership requires a string or array on the right")]
+    MembershipRequiresCollection,
+    #[error("string membership requires a string on the left")]
+    StringMembershipRequiresString,
+}
+
+impl PreparedScalarPredicate {
+    pub fn new(
+        contract: plasm_core::value_contract::ValueContract,
+        op: plasm_core::PlanPredicateOp,
+        mut rhs: plasm_core::Value,
+    ) -> Result<Self, plasm_core::CoercionError> {
+        use plasm_core::{value_contract::ValueShape, PlanPredicateOp::*};
+        if op == Contains && matches!(rhs, plasm_core::Value::String(_)) {
+            if let ValueShape::Array { element } | ValueShape::Set { element } = &contract.shape {
+                if let ValueShape::Scalar { field_type } = &element.shape {
+                    if matches!(
+                        field_type,
+                        plasm_core::FieldType::Integer
+                            | plasm_core::FieldType::Number
+                            | plasm_core::FieldType::Boolean
+                    ) {
+                        rhs = plasm_core::coerce_value_for_field_type(field_type, None, None, rhs)?;
+                    }
+                }
+            }
+        }
+        if matches!(op, In | NotIn) {
+            if let (ValueShape::Scalar { field_type }, plasm_core::Value::Array(items)) =
+                (&contract.shape, &mut rhs)
+            {
+                if matches!(
+                    field_type,
+                    plasm_core::FieldType::Integer
+                        | plasm_core::FieldType::Number
+                        | plasm_core::FieldType::Boolean
+                ) {
+                    for item in items.iter_mut() {
+                        if matches!(item, plasm_core::Value::String(_)) {
+                            *item = plasm_core::coerce_value_for_field_type(
+                                field_type,
+                                None,
+                                None,
+                                item.clone(),
+                            )?;
+                        }
+                    }
+                }
+            }
+        }
+        if matches!(op, Eq | Ne | Lt | Lte | Gt | Gte) {
+            if let ValueShape::Scalar { field_type } = &contract.shape {
+                if matches!(rhs, plasm_core::Value::String(_))
+                    && matches!(
+                        field_type,
+                        plasm_core::FieldType::Integer
+                            | plasm_core::FieldType::Number
+                            | plasm_core::FieldType::Boolean
+                    )
+                {
+                    rhs = plasm_core::coerce_value_for_field_type(field_type, None, None, rhs)?;
+                }
+            }
+        }
+        Ok(Self { contract, op, rhs })
+    }
+
+    /// SQL-style null is returned as unknown; the caller owns missing-field policy.
+    pub fn evaluate(&self, lhs: &plasm_core::Value) -> Result<Option<bool>, ScalarPredicateError> {
+        use plasm_core::{value_equality::Equatable, value_order::Orderable, PlanPredicateOp::*};
+        let rhs = &self.rhs;
+        if self.op == Exists {
+            return Ok(Some(!lhs.is_null()));
+        }
+        if lhs.is_null() || rhs.is_null() {
+            return Ok(None);
+        }
+        if matches!(self.op, Lt | Lte | Gt | Gte) {
+            let order = self.contract.ordering()?.compare_literal(lhs, rhs)?;
+            return Ok(Some(match self.op {
+                Lt => order.is_lt(),
+                Lte => order.is_le(),
+                Gt => order.is_gt(),
+                Gte => order.is_ge(),
+                _ => unreachable!(),
+            }));
+        }
+        if matches!(self.op, Eq | Ne) {
+            let equal = match self.contract.ordering() {
+                Ok(order) => order.equal_literal(lhs, rhs)?,
+                Err(_) => self.contract.equality()?.equivalent(lhs, rhs)?,
+            };
+            return Ok(Some(if self.op == Eq { equal } else { !equal }));
+        }
+        Ok(Some(match self.op {
+            Contains => {
+                match (&self.contract.shape, lhs, rhs) {
+                    (
+                        plasm_core::value_contract::ValueShape::Scalar {
+                            field_type: plasm_core::FieldType::MultiSelect,
+                        },
+                        plasm_core::Value::Array(items),
+                        plasm_core::Value::String(value),
+                    ) => {
+                        let mut found = false;
+                        for item in items {
+                            let text = item.as_str().ok_or(plasm_core::value_equality::ValueEqualityError::InvalidRepresentation)?;
+                            found |= text == value;
+                        }
+                        found
+                    }
+                    (
+                        plasm_core::value_contract::ValueShape::Array { element }
+                        | plasm_core::value_contract::ValueShape::Set { element },
+                        plasm_core::Value::Array(items),
+                        value,
+                    ) => {
+                        let mut found = false;
+                        for item in items {
+                            if item.is_null() {
+                                continue;
+                            }
+                            found = match element.ordering() {
+                                Ok(order) => order.equal_literal(item, value)?,
+                                Err(_) => element.equality()?.equivalent(item, value)?,
+                            };
+                            if found {
+                                break;
+                            }
+                        }
+                        found
+                    }
+                    (
+                        plasm_core::value_contract::ValueShape::Dictionary { .. }
+                        | plasm_core::value_contract::ValueShape::Record { .. }
+                        | plasm_core::value_contract::ValueShape::ObservedRecord { .. }
+                        | plasm_core::value_contract::ValueShape::MappingRecord { .. },
+                        plasm_core::Value::Object(fields),
+                        plasm_core::Value::String(key),
+                    ) => fields.contains_key(key),
+                    (_, plasm_core::Value::String(left), plasm_core::Value::String(right)) => {
+                        left.contains(right)
+                    }
+                    _ => return Err(ScalarPredicateError::ContainsRequiresCompatibleOperands),
+                }
+            }
+            In | NotIn => {
+                let found = if let Some(haystack) = rhs.as_str() {
+                    haystack.contains(
+                        lhs.as_str()
+                            .ok_or(ScalarPredicateError::StringMembershipRequiresString)?,
+                    )
+                } else if let Some(items) = rhs.as_array() {
+                    let mut found = false;
+                    let mut unknown = false;
+                    for item in items {
+                        if item.is_null() {
+                            unknown = true;
+                            continue;
+                        }
+                        found = match self.contract.ordering() {
+                            Ok(order) => order.equal_literal(lhs, item)?,
+                            Err(_) => self.contract.equality()?.equivalent(lhs, item)?,
+                        };
+                        if found {
+                            break;
+                        }
+                    }
+                    if !found && unknown {
+                        return Ok(None);
+                    }
+                    found
+                } else {
+                    return Err(ScalarPredicateError::MembershipRequiresCollection);
+                };
+                if self.op == NotIn {
+                    !found
+                } else {
+                    found
+                }
+            }
+            _ => unreachable!(),
+        }))
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Error)]
 pub enum RowPredicateError {
-    #[error("money comparison has incompatible currencies `{left}` and `{right}`")]
-    MoneyCurrencyMismatch { left: String, right: String },
-    #[error("ordered predicate operands are incomparable")]
-    IncomparableOperands,
-    #[error("ordered predicate comparison requires finite numbers")]
-    NonFiniteNumber,
+    #[error("prepared predicate count {prepared} does not match requested count {requested}")]
+    PreparationMismatch { requested: usize, prepared: usize },
+    #[error(transparent)]
+    InvalidPath(#[from] plasm_core::plasm_monad::PlanAtomError),
+    #[error(transparent)]
+    Scalar(#[from] ScalarPredicateError),
+    #[error("predicate field `{field}` is unobserved, not null")]
+    Unobserved { field: String },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -19,6 +223,114 @@ pub struct BoundRowPredicate {
     pub field_path: plasm_core::FieldPath,
     pub op: plasm_core::PlanPredicateOp,
     pub value: plasm_core::operand_binding::ResolvedValue,
+}
+
+#[derive(Debug, Clone)]
+pub struct PreparedRowPredicate {
+    path: plasm_core::FieldPath,
+    scalar: PreparedScalarPredicate,
+}
+
+impl PreparedRowPredicate {
+    fn normalize_observation(
+        &self,
+        value: plasm_core::Value,
+    ) -> Result<plasm_core::Value, crate::RuntimeError> {
+        use plasm_core::{value_contract::ValueShape, FieldType, PlanPredicateOp, Value};
+        if self.scalar.op != PlanPredicateOp::Exists && matches!(value, Value::String(_)) {
+            if let ValueShape::Scalar { field_type } = &self.scalar.contract.shape {
+                if matches!(
+                    field_type,
+                    FieldType::Integer | FieldType::Number | FieldType::Boolean
+                ) {
+                    return Ok(plasm_core::coerce_value_for_field_type(
+                        field_type, None, None, value,
+                    )?);
+                }
+            }
+        }
+        Ok(value)
+    }
+
+    pub fn from_contract(
+        predicate: &BoundRowPredicate,
+        contract: plasm_core::value_contract::ValueContract,
+    ) -> Result<Self, plasm_core::CoercionError> {
+        Ok(Self {
+            path: predicate.field_path.clone(),
+            scalar: PreparedScalarPredicate::new(
+                contract,
+                predicate.op,
+                predicate.value.value().clone(),
+            )?,
+        })
+    }
+
+    pub fn prepare(
+        cgs: &plasm_core::CGS,
+        entity: &str,
+        predicate: &BoundRowPredicate,
+    ) -> Result<Self, crate::RuntimeError> {
+        let (head, tail) = predicate
+            .field_path
+            .segments()
+            .split_first()
+            .ok_or(crate::RuntimeError::TopKFieldEmpty)?;
+        let field = cgs
+            .get_entity(entity)
+            .and_then(|e| e.fields.get(head.as_str()))
+            .ok_or_else(|| crate::RuntimeError::FieldUnknown {
+                entity: entity.to_owned(),
+                field: head.clone(),
+            })?;
+        let mut contract = plasm_core::value_contract::ValueContract::from_domain(
+            cgs,
+            "",
+            field.kind.registry_key(),
+        )?;
+        contract.nullable = !field.required;
+        for segment in tail {
+            contract = contract.field(segment)?;
+        }
+        Ok(Self::from_contract(predicate, contract)?)
+    }
+
+    pub fn matches_entity(&self, entity: &CachedEntity) -> Result<bool, crate::RuntimeError> {
+        Ok(self.evaluate_entity(entity)? == Some(true))
+    }
+
+    pub fn evaluate_entity(
+        &self,
+        entity: &CachedEntity,
+    ) -> Result<Option<bool>, crate::RuntimeError> {
+        if let Some(field) = self.path.segments().first() {
+            require_entity_field_available(entity, field)?;
+        }
+        let value = entity_field_path_value(entity, self.path.segments()).ok_or_else(|| {
+            RowPredicateError::Unobserved {
+                field: self.path.dotted(),
+            }
+        })?;
+        let value = self.normalize_observation(value)?;
+        Ok(self
+            .scalar
+            .evaluate(&value)
+            .map_err(RowPredicateError::from)?)
+    }
+
+    pub fn matches_row(&self, row: &plasm_core::Value) -> Result<bool, crate::RuntimeError> {
+        let value = row_value_field_path(row, self.path.segments()).ok_or_else(|| {
+            RowPredicateError::Unobserved {
+                field: self.path.dotted(),
+            }
+        })?;
+        let value = self.normalize_observation(value)?;
+        Ok(self
+            .scalar
+            .evaluate(&value)
+            .map_err(RowPredicateError::from)?
+            == Some(true))
+    }
 }
 
 /// Unavailable is an acquisition failure, not a Python null or a false predicate.
@@ -64,236 +376,140 @@ pub fn row_value_field_path(
     Some(cur)
 }
 
-pub fn entity_matches_predicates(
-    entity: &CachedEntity,
-    predicates: &[BoundRowPredicate],
-) -> Result<bool, crate::RuntimeError> {
-    for predicate in predicates {
-        if !entity_matches_predicate(entity, predicate)? {
-            return Ok(false);
-        }
-    }
-    Ok(true)
-}
-
-pub fn entity_matches_predicate(
-    entity: &CachedEntity,
-    pred: &BoundRowPredicate,
-) -> Result<bool, crate::RuntimeError> {
-    if let Some(field) = pred.field_path.segments().first() {
-        require_entity_field_available(entity, field)?;
-    }
-    let lhs = entity_field_path_value(entity, pred.field_path.segments())
-        .unwrap_or(plasm_core::Value::Null);
-    value_predicate_matches(&lhs, pred.op, pred.value.value())
-        .map_err(crate::RuntimeError::RowPredicate)
-}
-
-pub fn row_matches_predicate(
-    value: &plasm_core::Value,
-    pred: &BoundRowPredicate,
-) -> Result<bool, crate::RuntimeError> {
-    let lhs =
-        row_value_field_path(value, pred.field_path.segments()).unwrap_or(plasm_core::Value::Null);
-    value_predicate_matches(&lhs, pred.op, pred.value.value())
-        .map_err(crate::RuntimeError::RowPredicate)
-}
-
-pub fn value_predicate_matches(
-    lhs: &plasm_core::Value,
-    op: plasm_core::PlanPredicateOp,
-    rhs: &plasm_core::Value,
-) -> Result<bool, RowPredicateError> {
-    let equal = |lhs: &plasm_core::Value,
-                 rhs: &plasm_core::Value|
-     -> Result<bool, RowPredicateError> {
-        if matches!(lhs, plasm_core::Value::Money(_)) || matches!(rhs, plasm_core::Value::Money(_))
-        {
-            plasm_core::money::values_eq(lhs, rhs).map_err(|error| {
-                RowPredicateError::MoneyCurrencyMismatch {
-                    left: error.left().to_owned(),
-                    right: error.right().to_owned(),
-                }
-            })
-        } else {
-            Ok(values_eq_loose(lhs, rhs))
-        }
-    };
-    if (matches!(lhs, plasm_core::Value::Money(_)) || matches!(rhs, plasm_core::Value::Money(_)))
-        && matches!(
-            op,
-            plasm_core::PlanPredicateOp::Lt
-                | plasm_core::PlanPredicateOp::Lte
-                | plasm_core::PlanPredicateOp::Gt
-                | plasm_core::PlanPredicateOp::Gte
-        )
-    {
-        let ordering = plasm_core::money::values_ord(lhs, rhs).map_err(|error| {
-            RowPredicateError::MoneyCurrencyMismatch {
-                left: error.left().to_owned(),
-                right: error.right().to_owned(),
-            }
-        })?;
-        return Ok(ordering.is_some_and(|o| match op {
-            plasm_core::PlanPredicateOp::Lt => o.is_lt(),
-            plasm_core::PlanPredicateOp::Lte => o.is_le(),
-            plasm_core::PlanPredicateOp::Gt => o.is_gt(),
-            _ => o.is_ge(),
-        }));
-    }
-    Ok(match op {
-        plasm_core::PlanPredicateOp::Eq => equal(lhs, rhs)?,
-        plasm_core::PlanPredicateOp::Ne => !equal(lhs, rhs)?,
-        plasm_core::PlanPredicateOp::Exists => !matches!(lhs, plasm_core::Value::Null),
-        plasm_core::PlanPredicateOp::Contains => lhs
-            .as_str()
-            .zip(rhs.as_str())
-            .is_some_and(|(l, r)| l.contains(r)),
-        plasm_core::PlanPredicateOp::In | plasm_core::PlanPredicateOp::NotIn => {
-            let mut found = false;
-            if let Some(items) = rhs.as_array() {
-                for item in items {
-                    found |= equal(lhs, item)?;
-                }
-            }
-            if op == plasm_core::PlanPredicateOp::NotIn {
-                !found
-            } else {
-                found
-            }
-        }
-        plasm_core::PlanPredicateOp::Lt
-        | plasm_core::PlanPredicateOp::Lte
-        | plasm_core::PlanPredicateOp::Gt
-        | plasm_core::PlanPredicateOp::Gte => compare_ordered(lhs, rhs, op)?,
-    })
-}
-
-/// Typed data equality plus bool ↔ boolish-string (`true`/`True`/`false`/`False`).
-fn values_eq_loose(lhs: &plasm_core::Value, rhs: &plasm_core::Value) -> bool {
-    if lhs == rhs {
-        return true;
-    }
-    match (value_as_boolish(lhs), value_as_boolish(rhs)) {
-        (Some(a), Some(b)) => a == b,
-        _ => false,
-    }
-}
-
-fn value_as_boolish(v: &plasm_core::Value) -> Option<bool> {
-    match v {
-        plasm_core::Value::Bool(b) => Some(*b),
-        plasm_core::Value::String(s) if s.eq_ignore_ascii_case("true") => Some(true),
-        plasm_core::Value::String(s) if s.eq_ignore_ascii_case("false") => Some(false),
-        _ => None,
-    }
-}
-
-fn compare_ordered(
-    lhs: &plasm_core::Value,
-    rhs: &plasm_core::Value,
-    op: plasm_core::PlanPredicateOp,
-) -> Result<bool, RowPredicateError> {
-    fn number(value: &plasm_core::Value) -> Option<std::borrow::Cow<'_, plasm_core::Value>> {
-        use plasm_core::Value;
-        if value.is_number() {
-            return Some(std::borrow::Cow::Borrowed(value));
-        }
-        let text = value.as_str()?;
-        // Residual wire strings retain exact integer magnitude before considering floats.
-        let parsed = text
-            .parse::<i64>()
-            .map(Value::Integer)
-            .or_else(|_| text.parse::<u64>().map(Value::Unsigned))
-            .or_else(|_| text.parse::<f64>().map(Value::Float))
-            .ok()?;
-        Some(std::borrow::Cow::Owned(parsed))
-    }
-    let Some((l, r)) = number(lhs).zip(number(rhs)) else {
-        return Err(RowPredicateError::IncomparableOperands);
-    };
-    plasm_core::value_expression::compare(op, &l, &r)
-        .map_err(|_| RowPredicateError::NonFiniteNumber)
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
+    use plasm_core::{value_contract::ValueContract, FieldType, PlanPredicateOp as Op, Value};
 
     #[test]
-    fn ordered_native_and_wire_integers_do_not_round_through_float() {
-        use plasm_core::{PlanPredicateOp::Gt, Value};
-        for high in [
-            Value::Integer(9007199254740993),
-            Value::String("9007199254740993".into()),
-        ] {
-            assert!(value_predicate_matches(&high, Gt, &Value::Integer(9007199254740992)).unwrap());
-        }
-        assert!(value_predicate_matches(
-            &Value::Unsigned(u64::MAX),
-            Gt,
-            &Value::Unsigned(u64::MAX - 1)
+    fn declared_domains_control_order_and_coercion() {
+        let text = PreparedScalarPredicate::new(
+            ValueContract::scalar(FieldType::String),
+            Op::Gt,
+            Value::String("20".into()),
         )
-        .unwrap());
-    }
-
-    #[test]
-    fn ordered_compare_unifies_numeric_string_lhs() {
-        assert!(value_predicate_matches(
-            &plasm_core::Value::String("5".into()),
-            plasm_core::PlanPredicateOp::Gt,
-            &plasm_core::Value::Integer(0),
-        )
-        .unwrap());
+        .unwrap();
         assert_eq!(
-            value_predicate_matches(
-                &plasm_core::Value::String("nope".into()),
-                plasm_core::PlanPredicateOp::Gt,
-                &plasm_core::Value::Integer(0),
-            )
-            .unwrap_err(),
-            RowPredicateError::IncomparableOperands
+            text.evaluate(&Value::String("3".into())).unwrap(),
+            Some(true)
         );
+        let number = PreparedScalarPredicate::new(
+            ValueContract::scalar(FieldType::Integer),
+            Op::Gt,
+            Value::String("9007199254740992".into()),
+        )
+        .unwrap();
+        assert_eq!(
+            number.evaluate(&Value::Integer(9007199254740993)).unwrap(),
+            Some(true)
+        );
+        assert_eq!(number.evaluate(&Value::Null).unwrap(), None);
+        let boolean = PreparedScalarPredicate::new(
+            ValueContract::scalar(FieldType::Boolean),
+            Op::Eq,
+            Value::String("true".into()),
+        )
+        .unwrap();
+        assert_eq!(boolean.evaluate(&Value::Bool(true)).unwrap(), Some(true));
     }
 
     #[test]
-    fn eq_unifies_bool_and_boolish_strings() {
-        assert!(value_predicate_matches(
-            &plasm_core::Value::Bool(true),
-            plasm_core::PlanPredicateOp::Eq,
-            &plasm_core::Value::String("true".into()),
-        )
-        .unwrap());
-        assert!(value_predicate_matches(
-            &plasm_core::Value::String("True".into()),
-            plasm_core::PlanPredicateOp::Eq,
-            &plasm_core::Value::Bool(true),
-        )
-        .unwrap());
-        assert!(!value_predicate_matches(
-            &plasm_core::Value::String("True".into()),
-            plasm_core::PlanPredicateOp::Eq,
-            &plasm_core::Value::Bool(false),
-        )
-        .unwrap());
+    fn row_adapter_coerces_declared_wire_values_and_rejects_missing_fields() {
+        let bound = BoundRowPredicate {
+            field_path: plasm_core::FieldPath::from_dotted("n").unwrap(),
+            op: Op::Gt,
+            value: plasm_core::operand_binding::ResolvedValue::new(Value::Integer(
+                9007199254740992,
+            ))
+            .unwrap(),
+        };
+        let prepared =
+            PreparedRowPredicate::from_contract(&bound, ValueContract::scalar(FieldType::Integer))
+                .unwrap();
+        let row =
+            plasm_core::json_value_to_plasm_value(&serde_json::json!({"n":"9007199254740993"}));
+        assert!(prepared.matches_row(&row).unwrap());
+        let missing = plasm_core::json_value_to_plasm_value(&serde_json::json!({}));
+        assert!(matches!(
+            prepared.matches_row(&missing),
+            Err(crate::RuntimeError::RowPredicate(
+                RowPredicateError::Unobserved { .. }
+            ))
+        ));
     }
 
     #[test]
-    fn malformed_ordered_operands_are_not_silently_treated_as_non_matches() {
-        let error = value_predicate_matches(
-            &plasm_core::Value::String("nope".into()),
-            plasm_core::PlanPredicateOp::Gt,
-            &plasm_core::Value::Integer(0),
+    fn temporal_order_and_typed_faults_are_preserved() {
+        let contract = plasm_core::temporal_value::TemporalKind::Datetime.contract();
+        let pred = PreparedScalarPredicate::new(
+            contract,
+            Op::Gt,
+            Value::String("2024-01-01T00:00:00Z".into()),
         )
-        .unwrap_err();
-        assert_eq!(error, RowPredicateError::IncomparableOperands);
+        .unwrap();
+        assert_eq!(
+            pred.evaluate(&Value::String("2024-01-01T01:00:00+02:00".into()))
+                .unwrap(),
+            Some(false)
+        );
+        assert!(matches!(
+            pred.evaluate(&Value::String("bad".into())),
+            Err(ScalarPredicateError::Ordering(_))
+        ));
+    }
 
-        let error = value_predicate_matches(
-            &plasm_core::Value::Float(f64::INFINITY),
-            plasm_core::PlanPredicateOp::Gt,
-            &plasm_core::Value::Float(0.0),
+    #[test]
+    fn money_currency_errors_and_null_membership_keep_their_causes() {
+        let usd = Value::Money(plasm_core::MoneyValue::new(
+            "1".parse().unwrap(),
+            Some("USD".into()),
+        ));
+        let eur = Value::Money(plasm_core::MoneyValue::new(
+            "2".parse().unwrap(),
+            Some("EUR".into()),
+        ));
+        let contract = ValueContract::scalar(FieldType::Money);
+        let ordered = PreparedScalarPredicate::new(contract.clone(), Op::Gt, usd.clone()).unwrap();
+        assert!(matches!(
+            ordered.evaluate(&eur),
+            Err(ScalarPredicateError::Ordering(
+                plasm_core::value_order::OrderingError::InvalidMoney(_)
+            ))
+        ));
+        let member = PreparedScalarPredicate::new(
+            contract,
+            Op::In,
+            Value::Array(vec![Value::Null, usd.clone()]),
         )
-        .unwrap_err();
-        assert_eq!(error, RowPredicateError::NonFiniteNumber);
+        .unwrap();
+        assert_eq!(member.evaluate(&usd).unwrap(), Some(true));
+        let other = Value::Money(plasm_core::MoneyValue::new(
+            "3".parse().unwrap(),
+            Some("USD".into()),
+        ));
+        assert_eq!(member.evaluate(&other).unwrap(), None);
+    }
+
+    #[test]
+    fn contains_respects_declared_collection_element_domain() {
+        let contract = ValueContract {
+            shape: plasm_core::value_contract::ValueShape::Array {
+                element: Box::new(ValueContract::scalar(FieldType::Integer)),
+            },
+            domain: None,
+            nullable: false,
+        };
+        let predicate =
+            PreparedScalarPredicate::new(contract, Op::Contains, Value::Integer(9007199254740993))
+                .unwrap();
+        assert_eq!(
+            predicate
+                .evaluate(&Value::Array(vec![
+                    Value::Integer(9007199254740992),
+                    Value::Integer(9007199254740993)
+                ]))
+                .unwrap(),
+            Some(true)
+        );
     }
 }

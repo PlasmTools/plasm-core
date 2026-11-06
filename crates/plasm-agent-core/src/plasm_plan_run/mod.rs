@@ -106,9 +106,7 @@ pub use parse::SessionCatalogNotLoaded;
 pub(crate) use parse::{
     entry_scoped_execute_session, propagate_row_identities, row_identities_from_entities,
 };
-pub(crate) use row_values::{
-    cached_entity_row_values, predicate_matches, value_at_dotted, value_at_segments,
-};
+pub(crate) use row_values::{cached_entity_row_values, value_at_dotted, value_at_segments};
 
 #[cfg(test)]
 use crate::plasm_plan::{parse_plan_value, validate_plan_artifact};

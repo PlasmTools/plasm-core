@@ -158,8 +158,8 @@ pub(crate) use identity::{
     merge_entity_id_from_into_input_env, ref_to_identity_ambient, value_to_ambient_string,
 };
 pub(crate) use predicates::{
-    capability_param_names, client_side_predicate_matches, collect_predicate_vars,
-    entity_field_predicate, extract_predicate_vars, extract_ref_id, filter_entities_by_predicate,
+    capability_param_names, collect_predicate_vars, entity_field_predicate, extract_predicate_vars,
+    extract_ref_id, filter_entities_by_predicate,
 };
 pub(crate) use response_prep::{
     apply_response_preprocess, cml_id_string, extract_single_entity_payload_from_response,

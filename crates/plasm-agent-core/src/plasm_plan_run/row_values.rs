@@ -68,13 +68,6 @@ pub(crate) fn augment_row_with_identity(
     plasm_core::ValueRow::from(obj)
 }
 
-pub(crate) fn predicate_matches(
-    row: &plasm_core::Value,
-    pred: &plasm_runtime::row_predicate::BoundRowPredicate,
-) -> Result<bool, plasm_runtime::RuntimeError> {
-    plasm_runtime::row_matches_predicate(row, pred)
-}
-
 #[cfg(test)]
 mod presentation_contract_tests {
     use super::*;

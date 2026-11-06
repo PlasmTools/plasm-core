@@ -5,10 +5,10 @@ use super::rows::{Cell, FrameState, Row};
 use chrono::{DateTime, Utc};
 use plasm_core::{
     fold_compute_ops, CollectCardinality, CollectReason, ComputeOp, PlanNode, PlanPredicate,
-    PlanPredicateOp, RowPlan, StepId, WithExpr,
+    RowPlan, StepId, WithExpr,
 };
 #[cfg(test)]
-use plasm_core::{FieldPath, PlasmDataValue};
+use plasm_core::{FieldPath, PlanPredicateOp, PlasmDataValue};
 #[cfg(test)]
 use rust_decimal::Decimal;
 /// Owned result at the host boundary (Render is not a PlanNode).
@@ -110,17 +110,14 @@ fn apply_node(
                             PredicateEvaluationError::Equality(error) => {
                                 plasm_core::RowComputeError::Equality(error)
                             }
-                            PredicateEvaluationError::ContainsRequiresStrings => {
-                                plasm_core::RowComputeError::ContainsRequiresStrings
+                            PredicateEvaluationError::ContainsRequiresCompatibleOperands => {
+                                plasm_core::RowComputeError::ContainsRequiresCompatibleOperands
                             }
                             PredicateEvaluationError::MembershipRequiresCollection => {
                                 plasm_core::RowComputeError::MembershipRequiresCollection
                             }
                             PredicateEvaluationError::StringMembershipRequiresString => {
                                 plasm_core::RowComputeError::StringMembershipRequiresString
-                            }
-                            PredicateEvaluationError::MembershipComparison => {
-                                plasm_core::RowComputeError::MembershipComparison
                             }
                             PredicateEvaluationError::MissingField { field } => {
                                 r.missing_field(&field)
@@ -241,9 +238,7 @@ fn apply_node(
 enum Predicate {
     Atom {
         name: String,
-        op: PlanPredicateOp,
-        rhs: plasm_core::Value,
-        contract: Box<plasm_core::value_contract::ValueContract>,
+        scalar: Box<crate::row_predicate::PreparedScalarPredicate>,
     },
     And(Vec<Self>),
     Or(Vec<Self>),
@@ -258,14 +253,12 @@ enum PredicateEvaluationError {
     Equality(#[from] plasm_core::value_equality::ValueEqualityError),
     #[error("field `{field}` is unobserved (not null)")]
     MissingField { field: String },
-    #[error("contains requires two string values")]
-    ContainsRequiresStrings,
+    #[error("contains requires a string, array, set, or record with a compatible operand")]
+    ContainsRequiresCompatibleOperands,
     #[error("membership requires a string or array on the right")]
     MembershipRequiresCollection,
     #[error("string membership requires a string on the left")]
     StringMembershipRequiresString,
-    #[error("membership values cannot be compared in their declared value domain")]
-    MembershipComparison,
 }
 impl Predicate {
     fn compile(
@@ -277,39 +270,12 @@ impl Predicate {
             BooleanExpr::Atom(p) => {
                 let contract =
                     plasm_core::row_plan::contracts::field_contract(input, &p.field_path)?;
-                let mut rhs = p.value.clone().into_resolved()?.into_value();
-                if matches!(
-                    p.op,
-                    PlanPredicateOp::Eq
-                        | PlanPredicateOp::Ne
-                        | PlanPredicateOp::Lt
-                        | PlanPredicateOp::Lte
-                        | PlanPredicateOp::Gt
-                        | PlanPredicateOp::Gte
-                ) {
-                    if let plasm_core::value_contract::ValueShape::Scalar { field_type } =
-                        &contract.shape
-                    {
-                        // CompareUnify is driven by the declared domain, never storage.
-                        if matches!(rhs, plasm_core::Value::String(_))
-                            && matches!(
-                                field_type,
-                                plasm_core::FieldType::Integer
-                                    | plasm_core::FieldType::Number
-                                    | plasm_core::FieldType::Boolean
-                            )
-                        {
-                            rhs = plasm_core::coerce_value_for_field_type(
-                                field_type, None, None, rhs,
-                            )?;
-                        }
-                    }
-                }
+                let rhs = p.value.clone().into_resolved()?.into_value();
                 Self::Atom {
                     name: p.field_path.dotted(),
-                    op: p.op,
-                    rhs,
-                    contract: Box::new(contract),
+                    scalar: Box::new(crate::row_predicate::PreparedScalarPredicate::new(
+                        contract, p.op, rhs,
+                    )?),
                 }
             }
             BooleanExpr::And(xs) => Self::And(
@@ -326,78 +292,38 @@ impl Predicate {
         })
     }
     fn evaluate(&self, row: &Row<'_>) -> Result<Option<bool>, PredicateEvaluationError> {
-        use PlanPredicateOp::*;
         Ok(match self {
-            Self::Atom {
-                name,
-                op,
-                rhs,
-                contract,
-            } => {
+            Self::Atom { name, scalar } => {
                 let lhs = row
                     .get(name)
                     .ok_or_else(|| PredicateEvaluationError::MissingField {
                         field: name.clone(),
                     })?;
-                if *op == Exists {
-                    Some(!lhs.is_null())
-                } else if lhs.is_null() || rhs.is_null() {
-                    None
-                } else if matches!(op, Lt | Lte | Gt | Gte) {
-                    let order = plasm_core::value_order::Orderable::ordering(contract.as_ref())?
-                        .compare_literal(lhs, rhs)?;
-                    Some(match op {
-                        Lt => order.is_lt(),
-                        Lte => order.is_le(),
-                        Gt => order.is_gt(),
-                        Gte => order.is_ge(),
-                        _ => unreachable!(),
-                    })
-                } else if matches!(op, Eq | Ne) {
-                    use plasm_core::{value_equality::Equatable, value_order::Orderable};
-                    let equal = match contract.ordering() {
-                        Ok(order) => order.equal_literal(lhs, rhs)?,
-                        Err(_) => contract.equality()?.equivalent(lhs, rhs)?,
-                    };
-                    Some(if *op == Eq { equal } else { !equal })
-                } else {
-                    Some(match op {
-                        Contains => lhs
-                            .as_str()
-                            .zip(rhs.as_str())
-                            .map(|(left, right)| left.contains(right))
-                            .ok_or(PredicateEvaluationError::ContainsRequiresStrings)?,
-                        In | NotIn => {
-                            let found = if let Some(haystack) = rhs.as_str() {
-                                haystack.contains(lhs.as_str().ok_or(
-                                    PredicateEvaluationError::StringMembershipRequiresString,
-                                )?)
-                            } else if let Some(items) = rhs.as_array() {
-                                let mut found = false;
-                                for item in items {
-                                    found |= plasm_core::value_expression::compare(Eq, lhs, item)
-                                        .map_err(|_| {
-                                        PredicateEvaluationError::MembershipComparison
-                                    })?;
-                                }
-                                found
-                            } else {
-                                return Err(PredicateEvaluationError::MembershipRequiresCollection);
-                            };
-                            if *op == NotIn {
-                                !found
-                            } else {
-                                found
-                            }
-                        }
-                        _ => unreachable!("all other predicate operators were handled above"),
-                    })
-                }
+                scalar.evaluate(lhs).map_err(|error| match error {
+                    crate::row_predicate::ScalarPredicateError::Ordering(e) => {
+                        PredicateEvaluationError::Ordering(e)
+                    }
+                    crate::row_predicate::ScalarPredicateError::Equality(e) => {
+                        PredicateEvaluationError::Equality(e)
+                    }
+                    crate::row_predicate::ScalarPredicateError::ContainsRequiresCompatibleOperands => {
+                        PredicateEvaluationError::ContainsRequiresCompatibleOperands
+                    }
+                    crate::row_predicate::ScalarPredicateError::MembershipRequiresCollection => {
+                        PredicateEvaluationError::MembershipRequiresCollection
+                    }
+                    crate::row_predicate::ScalarPredicateError::StringMembershipRequiresString => {
+                        PredicateEvaluationError::StringMembershipRequiresString
+                    }
+                })?
             }
             Self::Not(x) => x.evaluate(row)?.map(|x| !x),
             Self::And(xs) => {
                 let mut result = Some(true);
                 for x in xs {
+                    if result == Some(false) {
+                        break;
+                    }
                     let v = x.evaluate(row)?;
                     result = match (result, v) {
                         (Some(false), _) | (_, Some(false)) => Some(false),
@@ -410,6 +336,9 @@ impl Predicate {
             Self::Or(xs) => {
                 let mut result = Some(false);
                 for x in xs {
+                    if result == Some(true) {
+                        break;
+                    }
                     let v = x.evaluate(row)?;
                     result = match (result, v) {
                         (Some(true), _) | (_, Some(true)) => Some(true),
@@ -546,8 +475,12 @@ mod tests {
             op: pred.op,
             value: restored.value.into_resolved().unwrap(),
         };
-        assert!(crate::row_predicate::row_matches_predicate(&wrong_currency[0], &bound).is_err());
-        assert!(crate::row_predicate::row_matches_predicate(&rows[1], &bound).unwrap());
+        let contract =
+            plasm_core::value_contract::ValueContract::scalar(plasm_core::FieldType::Money);
+        let prepared =
+            crate::row_predicate::PreparedRowPredicate::from_contract(&bound, contract).unwrap();
+        assert!(prepared.matches_row(&wrong_currency[0]).is_err());
+        assert!(prepared.matches_row(&rows[1]).unwrap());
     }
 
     #[test]
@@ -713,7 +646,7 @@ mod tests {
         .unwrap_err();
         assert!(matches!(
             error,
-            plasm_core::RowComputeError::ContainsRequiresStrings
+            plasm_core::RowComputeError::ContainsRequiresCompatibleOperands
         ));
     }
 

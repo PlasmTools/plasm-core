@@ -84,6 +84,266 @@ async fn numeric_root_projection_matches_single_and_paginated_queries() {
 }
 
 #[tokio::test]
+async fn row_budget_uses_declared_text_ordering() {
+    use plasm_core::{FieldPath, PlanPredicateOp};
+    use plasm_runtime::{BoundRowPredicate, RowMatchBudget, TopKSpec};
+    let (base, server) =
+        serve(serde_json::json!([{"id":"i1","title":"3","score":1,"owner":"owner"}])).await;
+    let mut cgs = plasm_core::load_schema_dir(
+        &std::path::Path::new(plasm_e2e::test_manifest_dir())
+            .join("../../fixtures/schemas/plasm_language_matrix_views"),
+    )
+    .unwrap();
+    cgs.capabilities
+        .get_mut("langitem_query")
+        .unwrap()
+        .mapping
+        .as_mut()
+        .unwrap()
+        .template
+        .0["pagination"] = pagination();
+    let engine = ExecutionEngine::new(ExecutionConfig {
+        base_url: Some(base),
+        hydrate: false,
+        ..Default::default()
+    })
+    .unwrap();
+    let mut query = QueryExpr::all("LangItem");
+    query.capability_name = Some("langitem_query".into());
+    let predicate = BoundRowPredicate {
+        field_path: FieldPath::from_dotted("title").unwrap(),
+        op: PlanPredicateOp::Gt,
+        value: plasm_core::operand_binding::ResolvedValue::new(Value::String("20".into())).unwrap(),
+    };
+    for top_k in [false, true] {
+        let consume = if top_k {
+            StreamConsumeOpts {
+                fetch_all: true,
+                top_k: Some(TopKSpec {
+                    count: 1,
+                    sort_key: vec!["score".into()],
+                    descending: false,
+                    row_filter: vec![predicate.clone()],
+                }),
+                ..Default::default()
+            }
+        } else {
+            StreamConsumeOpts {
+                fetch_all: true,
+                row_match_budget: Some(RowMatchBudget {
+                    count: 1,
+                    predicates: vec![predicate.clone()],
+                }),
+                ..Default::default()
+            }
+        };
+        let result = engine
+            .execute(
+                &Expr::Query(query.clone()),
+                &cgs,
+                &mut SessionMaterialization::new(),
+                Some(ExecutionMode::Live),
+                consume,
+                ExecuteOptions::for_catalog(&cgs).unwrap(),
+            )
+            .await
+            .expect("declared text ordering");
+        assert_eq!(result.count(), 1, "top_k={top_k}");
+    }
+    server.abort();
+}
+
+#[tokio::test]
+async fn row_budget_distinguishes_null_from_unobserved() {
+    use plasm_core::{FieldPath, PlanPredicateOp};
+    use plasm_runtime::{
+        row_predicate::RowPredicateError, BoundRowPredicate, RowMatchBudget, RuntimeError,
+    };
+    let mut cgs = plasm_core::load_schema_dir(
+        &std::path::Path::new(plasm_e2e::test_manifest_dir())
+            .join("../../fixtures/schemas/plasm_language_matrix_views"),
+    )
+    .unwrap();
+    cgs.capabilities
+        .get_mut("langitem_query")
+        .unwrap()
+        .mapping
+        .as_mut()
+        .unwrap()
+        .template
+        .0["pagination"] = pagination();
+    let mut query = QueryExpr::all("LangItem");
+    query.capability_name = Some("langitem_query".into());
+    for (row, missing) in [
+        (serde_json::json!({"id":"i1","title":null}), false),
+        (serde_json::json!({"id":"i1"}), true),
+    ] {
+        let (base, server) = serve(serde_json::json!([row])).await;
+        let engine = ExecutionEngine::new(ExecutionConfig {
+            base_url: Some(base),
+            hydrate: false,
+            ..Default::default()
+        })
+        .unwrap();
+        let result = engine
+            .execute(
+                &Expr::Query(query.clone()),
+                &cgs,
+                &mut SessionMaterialization::new(),
+                Some(ExecutionMode::Live),
+                StreamConsumeOpts {
+                    fetch_all: true,
+                    row_match_budget: Some(RowMatchBudget {
+                        count: 1,
+                        predicates: vec![BoundRowPredicate {
+                            field_path: FieldPath::from_dotted("title").unwrap(),
+                            op: PlanPredicateOp::Gt,
+                            value: plasm_core::operand_binding::ResolvedValue::new(Value::String(
+                                "a".into(),
+                            ))
+                            .unwrap(),
+                        }],
+                    }),
+                    ..Default::default()
+                },
+                ExecuteOptions::for_catalog(&cgs).unwrap(),
+            )
+            .await;
+        if missing {
+            assert!(matches!(
+                result,
+                Err(RuntimeError::RowPredicate(
+                    RowPredicateError::Unobserved { .. }
+                ))
+            ));
+        } else {
+            assert_eq!(result.unwrap().count(), 0);
+        }
+        server.abort();
+    }
+}
+
+#[tokio::test]
+async fn row_budget_retains_currency_mismatch_cause() {
+    use plasm_core::{FieldPath, PlanPredicateOp};
+    use plasm_runtime::{
+        row_predicate::{RowPredicateError, ScalarPredicateError},
+        BoundRowPredicate, RowMatchBudget, RuntimeError,
+    };
+    let (base, server) =
+        serve(serde_json::json!([{"id":"o1","price":"10","quote_currency":"EUR"}])).await;
+    let mut cgs = plasm_core::load_schema_dir(
+        &std::path::Path::new(plasm_e2e::test_manifest_dir())
+            .join("../../fixtures/schemas/plasm_language_matrix"),
+    )
+    .unwrap();
+    cgs.capabilities
+        .get_mut("langoffer_query")
+        .unwrap()
+        .mapping
+        .as_mut()
+        .unwrap()
+        .template
+        .0["pagination"] = pagination();
+    let engine = ExecutionEngine::new(ExecutionConfig {
+        base_url: Some(base),
+        hydrate: false,
+        ..Default::default()
+    })
+    .unwrap();
+    let mut query = QueryExpr::all("LangOffer");
+    query.capability_name = Some("langoffer_query".into());
+    let rhs = Value::Money(plasm_core::MoneyValue::new(
+        "5".parse().unwrap(),
+        Some("USD".into()),
+    ));
+    let result = engine
+        .execute(
+            &Expr::Query(query),
+            &cgs,
+            &mut SessionMaterialization::new(),
+            Some(ExecutionMode::Live),
+            StreamConsumeOpts {
+                fetch_all: true,
+                row_match_budget: Some(RowMatchBudget {
+                    count: 1,
+                    predicates: vec![BoundRowPredicate {
+                        field_path: FieldPath::from_dotted("price").unwrap(),
+                        op: PlanPredicateOp::Gt,
+                        value: plasm_core::operand_binding::ResolvedValue::new(rhs).unwrap(),
+                    }],
+                }),
+                ..Default::default()
+            },
+            ExecuteOptions::for_catalog(&cgs).unwrap(),
+        )
+        .await;
+    assert!(matches!(
+        result,
+        Err(RuntimeError::RowPredicate(RowPredicateError::Scalar(
+            ScalarPredicateError::Ordering(plasm_core::value_order::OrderingError::InvalidMoney(_))
+        )))
+    ));
+    server.abort();
+}
+
+#[tokio::test]
+async fn row_budget_contains_uses_declared_array_element() {
+    use plasm_core::{FieldPath, PlanPredicateOp};
+    use plasm_runtime::{BoundRowPredicate, RowMatchBudget};
+    let (base, server) =
+        serve(serde_json::json!([{"id":"i1","title":"one","tag_labels":["alpha","beta"]}])).await;
+    let mut cgs = plasm_core::load_schema_dir(
+        &std::path::Path::new(plasm_e2e::test_manifest_dir())
+            .join("../../fixtures/schemas/plasm_language_matrix"),
+    )
+    .unwrap();
+    cgs.capabilities
+        .get_mut("langitem_query")
+        .unwrap()
+        .mapping
+        .as_mut()
+        .unwrap()
+        .template
+        .0["pagination"] = pagination();
+    let engine = ExecutionEngine::new(ExecutionConfig {
+        base_url: Some(base),
+        hydrate: false,
+        ..Default::default()
+    })
+    .unwrap();
+    let mut query = QueryExpr::all("LangItem");
+    query.capability_name = Some("langitem_query".into());
+    let result = engine
+        .execute(
+            &Expr::Query(query),
+            &cgs,
+            &mut SessionMaterialization::new(),
+            Some(ExecutionMode::Live),
+            StreamConsumeOpts {
+                fetch_all: true,
+                row_match_budget: Some(RowMatchBudget {
+                    count: 1,
+                    predicates: vec![BoundRowPredicate {
+                        field_path: FieldPath::from_dotted("tag_labels").unwrap(),
+                        op: PlanPredicateOp::Contains,
+                        value: plasm_core::operand_binding::ResolvedValue::new(Value::String(
+                            "alpha".into(),
+                        ))
+                        .unwrap(),
+                    }],
+                }),
+                ..Default::default()
+            },
+            ExecuteOptions::for_catalog(&cgs).unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(result.count(), 1);
+    server.abort();
+}
+
+#[tokio::test]
 async fn paginated_query_publishes_embedded_children_without_hydration() {
     let (base, server) = serve(
         serde_json::json!([{"id":"i1", "lines":[{"id":"l1","item_id":"i1","note":"observed"}]}]),

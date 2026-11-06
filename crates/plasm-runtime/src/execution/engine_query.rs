@@ -189,11 +189,21 @@ impl ExecutionEngine {
 
             // Pull-right client-side filter for any crosses that couldn't push left.
             if !pull_right_crosses.is_empty() {
+                let prepared_crosses = pull_right_crosses
+                    .iter()
+                    .map(|cross| {
+                        super::predicates::PreparedEntityPredicate::new(
+                            cgs,
+                            &cross.foreign_entity,
+                            &cross.foreign_predicate,
+                        )
+                    })
+                    .collect::<Result<Vec<_>, _>>()?;
                 let mut filtered = Vec::new();
                 let input = result.entities().clone();
                 for (position, entity) in input.iter().enumerate() {
                     let mut passes = true;
-                    for cross in &pull_right_crosses {
+                    for (cross, predicate) in pull_right_crosses.iter().zip(&prepared_crosses) {
                         let ref_id = extract_ref_id(entity, &cross.ref_field, cgs);
                         let Some(id) = ref_id else {
                             passes = false;
@@ -210,7 +220,7 @@ impl ExecutionEngine {
                             break;
                         };
 
-                        if !client_side_predicate_matches(foreign, &cross.foreign_predicate)? {
+                        if !predicate.matches(foreign)? {
                             passes = false;
                             break;
                         }
