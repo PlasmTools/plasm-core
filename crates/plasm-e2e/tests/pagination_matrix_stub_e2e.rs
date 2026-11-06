@@ -20,6 +20,7 @@ use std::sync::{Arc, Mutex};
 #[derive(Clone, Default)]
 struct StubState {
     summaries: bool,
+    overlap_second_page: bool,
     details: Arc<Mutex<Vec<String>>>,
     requests: Arc<Mutex<Vec<RecordedRequest>>>,
 }
@@ -58,6 +59,8 @@ fn items(n: usize) -> Vec<serde_json::Value> {
 struct IndexedParams {
     page_index: Option<u64>,
     page_limit: Option<u64>,
+    from_block: Option<u64>,
+    to_block: Option<u64>,
 }
 
 async fn indexed(
@@ -65,6 +68,15 @@ async fn indexed(
     Query(q): Query<IndexedParams>,
 ) -> Json<serde_json::Value> {
     let mut map = HashMap::new();
+    if let (Some(from), Some(to)) = (q.from_block, q.to_block) {
+        map.insert("from_block".into(), from.to_string());
+        map.insert("to_block".into(), to.to_string());
+        st.requests
+            .lock()
+            .unwrap()
+            .push(RecordedRequest { query: map });
+        return Json(serde_json::json!({"results":[{"id":format!("block-{from}"),"n":from}]}));
+    }
     if let Some(v) = q.page_index {
         map.insert("page_index".into(), v.to_string());
     }
@@ -80,7 +92,10 @@ async fn indexed(
     let index = q.page_index.unwrap_or(0) as usize;
     // Historical corruption: start = page_index * page_limit (not remaining budget).
     let start = index.saturating_mul(limit);
-    let page = all.into_iter().skip(start).take(limit).collect::<Vec<_>>();
+    let mut page = all.into_iter().skip(start).take(limit).collect::<Vec<_>>();
+    if st.overlap_second_page && index == 1 && !page.is_empty() {
+        page[0]["id"] = serde_json::json!("id-19");
+    }
     Json(
         serde_json::json!({ "results": if st.summaries { page.into_iter().map(|r| serde_json::json!({"id":r["id"]})).collect::<Vec<_>>() } else { page } }),
     )
@@ -190,6 +205,176 @@ fn ids(result: &plasm_runtime::ExecutionResult) -> Vec<String> {
         .iter()
         .map(|e| e.reference.primary_slot_str())
         .collect()
+}
+
+#[tokio::test]
+async fn block_ranges_advance_through_real_http_and_report_terminal() {
+    let (url, stub) = spawn_stub().await;
+    let mut cgs = load_matrix_cgs();
+    cgs.capabilities
+        .get_mut("item_query")
+        .unwrap()
+        .mapping
+        .as_mut()
+        .unwrap()
+        .template
+        .0["pagination"] = serde_json::json!({
+        "strategy":"block_range", "location":"block_range",
+        "params":{"range":{"fixed":20,"role":"page_size"}}
+    });
+    let engine = make_engine(&url);
+    let mut cache = SessionMaterialization::new();
+    let mut query = QueryExpr::all("Item");
+    query.capability_name = Some("item_query".into());
+    query.pagination = Some(QueryPagination {
+        from_block: Some(0),
+        to_block: Some(44),
+        ..Default::default()
+    });
+    let tel = Arc::new(LiveRunTelemetry::new());
+    let result = plasm_runtime::with_live_run_telemetry(tel.clone(), async {
+        engine
+            .execute(
+                &Expr::Query(query),
+                &cgs,
+                &mut cache,
+                Some(ExecutionMode::Live),
+                StreamConsumeOpts {
+                    fetch_all: true,
+                    ..Default::default()
+                },
+                ExecuteOptions::for_catalog(&cgs).unwrap(),
+            )
+            .await
+    })
+    .await
+    .unwrap();
+    assert_eq!(ids(&result), vec!["block-0", "block-20", "block-40"]);
+    let reqs = stub.requests.lock().unwrap().clone();
+    let ranges: Vec<_> = reqs
+        .iter()
+        .map(|r| (r.query["from_block"].clone(), r.query["to_block"].clone()))
+        .collect();
+    assert_eq!(
+        ranges,
+        [
+            ("0".into(), "19".into()),
+            ("20".into(), "39".into()),
+            ("40".into(), "44".into())
+        ]
+    );
+    let audits = tel.drain_page_audits();
+    assert_eq!(audits.len(), 3);
+    assert!(matches!(
+        audits.last().unwrap().terminal,
+        Some(plasm_runtime::PaginationTerminalReason::BlockRangeComplete)
+    ));
+}
+
+#[tokio::test]
+async fn resume_continues_real_http_at_the_next_page() {
+    let (url, stub) = spawn_stub().await;
+    let cgs = load_matrix_cgs();
+    let engine = make_engine(&url);
+    let mut cache = SessionMaterialization::new();
+    let mut query = QueryExpr::all("Item");
+    query.capability_name = Some("item_query".into());
+    let opts = ExecuteOptions::for_catalog(&cgs).unwrap();
+    let first = engine
+        .execute(
+            &Expr::Query(query),
+            &cgs,
+            &mut cache,
+            Some(ExecutionMode::Live),
+            StreamConsumeOpts {
+                one_page: true,
+                max_items: Some(20),
+                ..Default::default()
+            },
+            opts.clone(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(ids(&first).len(), 20);
+    let resume = first.pagination_resume.expect("continuation");
+    let rest = engine
+        .execute_pagination_resume(
+            *resume,
+            &cgs,
+            &mut cache,
+            Some(ExecutionMode::Live),
+            StreamConsumeOpts {
+                fetch_all: true,
+                ..Default::default()
+            },
+            opts,
+        )
+        .await
+        .unwrap();
+    assert_eq!(
+        ids(&rest),
+        (20..45).map(|n| format!("id-{n}")).collect::<Vec<_>>()
+    );
+    let indices: Vec<_> = stub
+        .requests
+        .lock()
+        .unwrap()
+        .iter()
+        .filter_map(|r| r.query.get("page_index").cloned())
+        .collect();
+    assert_eq!(indices, ["0", "1", "2"]);
+}
+
+#[tokio::test]
+async fn resume_rejects_overlap_with_a_prior_http_page() {
+    let (url, _) = spawn_stub_with(StubState {
+        overlap_second_page: true,
+        ..Default::default()
+    })
+    .await;
+    let cgs = load_matrix_cgs();
+    let engine = make_engine(&url);
+    let mut cache = SessionMaterialization::new();
+    let mut query = QueryExpr::all("Item");
+    query.capability_name = Some("item_query".into());
+    let opts = ExecuteOptions::for_catalog(&cgs).unwrap();
+    let first = engine
+        .execute(
+            &Expr::Query(query),
+            &cgs,
+            &mut cache,
+            Some(ExecutionMode::Live),
+            StreamConsumeOpts {
+                one_page: true,
+                max_items: Some(20),
+                ..Default::default()
+            },
+            opts.clone(),
+        )
+        .await
+        .unwrap();
+    let result = engine
+        .execute_pagination_resume(
+            *first.pagination_resume.unwrap(),
+            &cgs,
+            &mut cache,
+            Some(ExecutionMode::Live),
+            StreamConsumeOpts {
+                fetch_all: true,
+                ..Default::default()
+            },
+            opts,
+        )
+        .await;
+    assert!(
+        matches!(
+            result,
+            Err(plasm_runtime::RuntimeError::PaginationProgress {
+                reason: plasm_runtime::PaginationTerminalReason::DuplicateIdentityOverlap
+            })
+        ),
+        "cross-page overlap must survive resume: {result:?}"
+    );
 }
 
 #[tokio::test]
