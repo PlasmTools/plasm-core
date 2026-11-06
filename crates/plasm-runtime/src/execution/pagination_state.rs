@@ -1,5 +1,6 @@
 //! Pagination loop state machine and CML request param injection.
 
+use super::pagination_driver::{PageContinuation, PaginationTerminalReason};
 use super::{json_to_plasm_value, QueryPaginationState, RuntimeError, StreamConsumeOpts};
 use indexmap::IndexMap;
 use plasm_compile::{CompiledOperation, CompiledRequest, PaginationConfig};
@@ -436,15 +437,16 @@ impl PaginationLoopState {
         full_page_len: usize,
         requested_limit: u32,
         link_next: Option<&str>,
-        _last_entity_id: Option<&str>,
-    ) -> Result<bool, RuntimeError> {
+    ) -> Result<PageContinuation, RuntimeError> {
         // LinkHeader: next URL from response header.
         if pconf.location == plasm_compile::PaginationLocation::LinkHeader {
             let Some(url) = link_next.filter(|u| !u.is_empty()) else {
-                return Ok(false);
+                return Ok(PageContinuation::Exhausted(
+                    PaginationTerminalReason::LinkHeaderExhausted,
+                ));
             };
             self.next_absolute_url = Some(url.to_string());
-            return Ok(true);
+            return Ok(PageContinuation::More);
         }
 
         // ResponseNextUrl: next URL from a JSON body field (e.g. Graph @odata.nextLink).
@@ -462,24 +464,30 @@ impl PaginationLoopState {
                 response.get(field).and_then(|v| v.as_str())
             };
             let Some(url) = url.filter(|u| !u.is_empty()) else {
-                return Ok(false);
+                return Ok(PageContinuation::Exhausted(
+                    PaginationTerminalReason::NextUrlExhausted,
+                ));
             };
             self.next_absolute_url = Some(url.to_string());
-            return Ok(true);
+            return Ok(PageContinuation::More);
         }
 
         // BlockRange: advance from_block past the last requested range.
         if pconf.location == plasm_compile::PaginationLocation::BlockRange {
             let Some(last_to) = self.last_requested_to_block else {
-                return Ok(false);
+                return Ok(PageContinuation::Exhausted(
+                    PaginationTerminalReason::BlockRangeComplete,
+                ));
             };
             if let Some(final_to) = self.final_to_block {
                 if last_to >= final_to {
-                    return Ok(false);
+                    return Ok(PageContinuation::Exhausted(
+                        PaginationTerminalReason::BlockRangeComplete,
+                    ));
                 }
             }
             self.from_block = Some(last_to.saturating_add(1));
-            return Ok(true);
+            return Ok(PageContinuation::More);
         }
 
         // Explicit stop_when condition.
@@ -489,14 +497,18 @@ impl PaginationLoopState {
                 plasm_compile::PaginationStop::FieldEquals { field, eq } => {
                     if let Some(val) = resp.get(field) {
                         if val == eq {
-                            return Ok(false);
+                            return Ok(PageContinuation::Exhausted(
+                                PaginationTerminalReason::StopWhen,
+                            ));
                         }
                     }
                 }
                 plasm_compile::PaginationStop::FieldAbsent { field, absent } => {
                     let is_absent = resp.get(field).map(|v| v.is_null()).unwrap_or(true);
                     if is_absent == *absent {
-                        return Ok(false);
+                        return Ok(PageContinuation::Exhausted(
+                            PaginationTerminalReason::StopWhen,
+                        ));
                     }
                 }
             }
@@ -511,7 +523,9 @@ impl PaginationLoopState {
                         let current = n.as_i64().unwrap_or(0);
                         let next = current + step;
                         if max.is_some_and(|m| next > m) {
-                            return Ok(false);
+                            return Ok(PageContinuation::Exhausted(
+                                PaginationTerminalReason::CounterMax,
+                            ));
                         }
                         self.param_values
                             .insert(name.clone(), Some(serde_json::Value::Number(next.into())));
@@ -550,15 +564,21 @@ impl PaginationLoopState {
 
         // Implicit stop: any FromResponse param became absent → cursor exhausted.
         if any_from_response_absent && pconf.stop_when.is_none() {
-            return Ok(false);
+            return Ok(PageContinuation::Exhausted(
+                PaginationTerminalReason::CursorExhausted,
+            ));
         }
 
         // Default short-page heuristic: stop when items array is shorter than requested.
         if full_page_len == 0 || (full_page_len as u32) < requested_limit {
-            return Ok(false);
+            return Ok(PageContinuation::Exhausted(if full_page_len == 0 {
+                PaginationTerminalReason::EmptyPage
+            } else {
+                PaginationTerminalReason::ShortPage
+            }));
         }
 
-        Ok(true)
+        Ok(PageContinuation::More)
     }
 }
 
@@ -691,7 +711,7 @@ mod page_index_overlap_regressions {
         assert_eq!(http.to_json()["query"]["include_self"], true);
         state.record_page_observed();
         state
-            .advance_after_page(&pconf, &serde_json::json!({}), 21, 20, None, None)
+            .advance_after_page(&pconf, &serde_json::json!({}), 21, 20, None)
             .expect("continuation");
 
         let snapshot = QueryPaginationState::from(&state);
@@ -732,7 +752,7 @@ mod page_index_overlap_regressions {
 
         // Advance page_index as after a full upstream page of 20.
         state
-            .advance_after_page(&pconf, &serde_json::json!({}), 20, 20, None, None)
+            .advance_after_page(&pconf, &serde_json::json!({}), 20, 20, None)
             .expect("advance");
 
         let mut page1 = empty_http_op();
@@ -789,10 +809,10 @@ mod page_index_overlap_regressions {
                 &serde_json::json!({"next_cursor": "second"}),
                 2,
                 2,
-                None,
                 None
             )
-            .unwrap());
+            .unwrap()
+            .has_more());
         let mut second = plasm_compile::compile_operation(&template, &env).unwrap();
         state.apply_request_params(&mut second, &pconf).unwrap();
         let CompiledOperation::Http(second) = second else {

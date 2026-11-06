@@ -453,7 +453,8 @@ impl ExecutionEngine {
                     Err(RuntimeError::PaginationPageLimit { max_pages: MAX_PAGES })?;
                 }
                 let (response, link_next, http_live) =
-                    if let Some(url) = driver.take_next_absolute_url() {
+                    match driver.prepare_request(&base_compiled)? {
+                    super::pagination_driver::PageRequest::Absolute(url) => {
                         if matches!(&base_compiled, CompiledOperation::Http(request) if request.credential.is_some()) {
                             Err::<(), RuntimeError>(crate::credentials::CredentialError::AbsoluteContinuationForbidden.into())?;
                         }
@@ -466,16 +467,15 @@ impl ExecutionEngine {
                         )
                         .await?;
                         (j, link, true)
-                    } else {
-                        let mut compiled = base_compiled.clone();
-                        driver.apply_request_params(&mut compiled)?;
+                    }
+                    super::pagination_driver::PageRequest::Compiled(compiled) => {
                         let (j, link, src) = with_dispatch_entity(
                             Some(query.entity.as_str()),
                             self.execute_with_replay_full(&compiled, mode, Some(mat)),
                         )
                         .await?;
                         (j, link, src == ExecutionSource::Live)
-                    };
+                    }};
 
 
                 let response = match &capability_template {
@@ -498,14 +498,17 @@ impl ExecutionEngine {
                 };
                 let decoded = plasm_compile::decode_output_with_cgs(&decoder, &decode_response, Some(cgs))?;
                 let full_page_len = decoded.len();
-                let last_id = decoded.last().map(|row| row.reference.primary_slot_str());
                 let timestamp = current_timestamp();
                 let page_cached: Vec<CachedEntity> = decoded.into_iter().map(|row| {
                     let completeness = response_coverage.classify(&row);
                     CachedEntity::from_decoded(row.reference, row.fields, row.relations, timestamp, completeness)
                 }).collect();
                 let page_ids = page_cached.iter().map(|row| serde_json::to_string(&row.reference)).collect::<Result<Vec<_>, _>>()?;
-                crate::record_live_page_audit(driver.record_page(pages as u32, &page_ids, full_page_len as u32, page_cached.len() as u32, None, None)?);
+                let transition = driver.observe_page(super::pagination_driver::PageObservation {
+                    ordinal: pages as u32, entity_ids: &page_ids, returned_rows: full_page_len as u32,
+                    accepted_rows: page_cached.len() as u32, response: &normalized, next_link: link_next.as_deref(),
+                })?;
+                crate::record_live_page_audit(transition.audit);
                 if !collector.skips_pre_page_merge() { mat.merge(page_cached.clone())?; }
                 let inherit = CapabilityParamEnv::from_cml_env(&env, &capability);
                 stamp_entities_and_mat(&page_cached, mat, &inherit);
@@ -543,7 +546,7 @@ impl ExecutionEngine {
                 report_rows_materialized(ingest.progress_rows);
                 let references = if top_k { top_k_input } else { ingest.yield_entities.iter().map(|row| row.reference.clone()).collect() };
                 retained_total += references.len();
-                let more = driver.advance_after_page(&normalized, full_page_len, link_next.as_deref(), last_id.as_deref())?;
+                let more = transition.continuation.has_more();
                 let more = match &capability_template {
                     CapabilityTemplate::Mcp(mapping) => match &mapping.collection {
                         Some(contract) => mcp_collection.observe(contract, &response, full_page_len, more)?,

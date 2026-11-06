@@ -12,6 +12,34 @@ use std::sync::{
 
 struct NextUrlPages;
 
+struct RepeatingUrlPages(AtomicUsize);
+
+#[async_trait]
+impl HttpTransport for RepeatingUrlPages {
+    async fn send_compiled_http(
+        &self,
+        _: &str,
+        _: &CompiledRequest,
+        _: Option<ResolvedAuth>,
+    ) -> Result<(serde_json::Value, Option<String>), RuntimeError> {
+        Ok((
+            serde_json::json!({"results":[{"id":"first","n":1}], "next":"http://fixture/page-2"}),
+            None,
+        ))
+    }
+    async fn get_json_absolute(
+        &self,
+        _: &str,
+        _: Option<ResolvedAuth>,
+    ) -> Result<(serde_json::Value, Option<String>), RuntimeError> {
+        let n = self.0.fetch_add(1, Ordering::SeqCst);
+        Ok((
+            serde_json::json!({"results":[{"id":format!("next-{n}"),"n":n}], "next":"http://fixture/page-2"}),
+            None,
+        ))
+    }
+}
+
 struct LinkPage;
 
 #[async_trait]
@@ -120,6 +148,197 @@ async fn replay_preserves_next_link() {
     assert_eq!(next.as_deref(), Some("http://fixture/page-2"));
 }
 
+#[tokio::test]
+async fn replay_query_refuses_unrecorded_absolute_continuation() {
+    use super::super::pagination_driver::{PageRequest, PaginationDriver};
+    use crate::ReplayStore;
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let base_url = format!("http://{}", listener.local_addr().unwrap());
+    let next_url = format!("{base_url}/page-2");
+    let link = next_url.clone();
+    let server = tokio::spawn(async move {
+        let (mut socket, _) = listener.accept().await.unwrap();
+        let mut buf = [0; 4096];
+        socket.read(&mut buf).await.unwrap();
+        let body = r#"{"results":[{"id":"first","n":1}]}"#;
+        let reply = format!("HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nLink: <{}>; rel=\"next\"\r\nConnection: close\r\n\r\n{}", body.len(), link, body);
+        socket.write_all(reply.as_bytes()).await.unwrap();
+    });
+    let mut cgs = load_schema_dir(
+        &std::path::PathBuf::from(crate::test_manifest_dir())
+            .join("../../fixtures/schemas/plasm_pagination_matrix"),
+    )
+    .unwrap();
+    cgs.capabilities
+        .get_mut("item_query")
+        .unwrap()
+        .mapping
+        .as_mut()
+        .unwrap()
+        .template
+        .0["pagination"] = serde_json::json!({
+        "strategy":"link_header", "location":"link_header", "params":{}
+    });
+    let catalog = plasm_compile::compile_cgs_capability_templates(&cgs).unwrap();
+    let template = catalog.capability("item_query").unwrap();
+    let base = plasm_compile::compile_operation(template, &plasm_compile::CmlEnv::new()).unwrap();
+    let config =
+        plasm_compile::pagination_config_for_capability(cgs.get_capability("item_query").unwrap())
+            .unwrap();
+    let mut driver = PaginationDriver::try_from_config(
+        config,
+        &plasm_core::QueryPagination::default(),
+        &StreamConsumeOpts::default(),
+    )
+    .unwrap();
+    let PageRequest::Compiled(request) = driver.prepare_request(&base).unwrap() else {
+        panic!("first page is compiled")
+    };
+    let request = *request;
+    let fingerprint = crate::RequestFingerprint::from_operation(&request).unwrap();
+    let mut engine = ExecutionEngine::new(ExecutionConfig {
+        base_url: Some(base_url),
+        ..Default::default()
+    })
+    .unwrap();
+    let (body, next_link, _) = engine
+        .execute_with_replay_full(&request, ExecutionMode::Live, None)
+        .await
+        .unwrap();
+    server.await.unwrap();
+    assert_eq!(next_link.as_deref(), Some(next_url.as_str()));
+    engine
+        .replay_store
+        .as_mut()
+        .unwrap()
+        .store(
+            fingerprint,
+            crate::ReplayEntry {
+                request,
+                outcome: crate::replay::TransportOutcome {
+                    response: body,
+                    next_link,
+                },
+                decoded_entities: vec![],
+                schema_snapshot: serde_json::json!({}),
+                timestamp: 0,
+            },
+        )
+        .unwrap();
+    let result = engine
+        .execute(
+            &Expr::Query(QueryExpr::all("Item")),
+            &cgs,
+            &mut SessionMaterialization::new(),
+            Some(ExecutionMode::Replay),
+            StreamConsumeOpts {
+                fetch_all: true,
+                ..Default::default()
+            },
+            ExecuteOptions::for_catalog(&cgs).unwrap(),
+        )
+        .await;
+    assert!(
+        matches!(result, Err(RuntimeError::LiveAbsolutePaginationRequired)),
+        "must not claim cached first page is exhaustive: {result:?}"
+    );
+}
+
+#[tokio::test]
+async fn replay_query_returns_all_recorded_pages() {
+    use super::super::pagination_driver::{PageObservation, PageRequest, PaginationDriver};
+    use crate::ReplayStore;
+    let cgs = load_schema_dir(
+        &std::path::PathBuf::from(crate::test_manifest_dir())
+            .join("../../fixtures/schemas/plasm_pagination_matrix"),
+    )
+    .unwrap();
+    let catalog = plasm_compile::compile_cgs_capability_templates(&cgs).unwrap();
+    let base = plasm_compile::compile_operation(
+        catalog.capability("item_query").unwrap(),
+        &plasm_compile::CmlEnv::new(),
+    )
+    .unwrap();
+    let config =
+        plasm_compile::pagination_config_for_capability(cgs.get_capability("item_query").unwrap())
+            .unwrap();
+    let mut driver = PaginationDriver::try_from_config(
+        config,
+        &plasm_core::QueryPagination::default(),
+        &StreamConsumeOpts::default(),
+    )
+    .unwrap();
+    let mut engine = ExecutionEngine::new_with_transport(
+        ExecutionConfig {
+            base_url: Some("http://fixture".into()),
+            ..Default::default()
+        },
+        Arc::new(LinkPage),
+        None,
+    );
+    for (ordinal, range) in [0..20, 20..21].into_iter().enumerate() {
+        let PageRequest::Compiled(request) = driver.prepare_request(&base).unwrap() else {
+            panic!("parameter pagination")
+        };
+        let request = *request;
+        let rows: Vec<_> = range
+            .map(|n| serde_json::json!({"id":format!("id-{n}"),"n":n}))
+            .collect();
+        let ids: Vec<_> = rows
+            .iter()
+            .map(|r| r["id"].as_str().unwrap().to_owned())
+            .collect();
+        let response = serde_json::json!({"results":rows});
+        driver
+            .observe_page(PageObservation {
+                ordinal: ordinal as u32,
+                entity_ids: &ids,
+                returned_rows: ids.len() as u32,
+                accepted_rows: ids.len() as u32,
+                response: &response,
+                next_link: None,
+            })
+            .unwrap();
+        let fingerprint = crate::RequestFingerprint::from_operation(&request).unwrap();
+        engine
+            .replay_store
+            .as_mut()
+            .unwrap()
+            .store(
+                fingerprint,
+                crate::ReplayEntry {
+                    request,
+                    outcome: crate::replay::TransportOutcome {
+                        response,
+                        next_link: None,
+                    },
+                    decoded_entities: vec![],
+                    schema_snapshot: serde_json::json!({}),
+                    timestamp: 0,
+                },
+            )
+            .unwrap();
+    }
+    let result = engine
+        .execute(
+            &Expr::Query(QueryExpr::all("Item")),
+            &cgs,
+            &mut SessionMaterialization::new(),
+            Some(ExecutionMode::Replay),
+            StreamConsumeOpts {
+                fetch_all: true,
+                ..Default::default()
+            },
+            ExecuteOptions::for_catalog(&cgs).unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(result.count(), 21);
+    assert_eq!(result.coverage(), ResultCoverage::Complete);
+    assert_eq!(result.source, ExecutionSource::Replay);
+}
+
 #[async_trait]
 impl HttpTransport for NextUrlPages {
     async fn send_compiled_http(
@@ -189,6 +408,58 @@ async fn next_url_distinct_pages_do_not_repeat_coordinate() {
         .expect("distinct pages must advance");
     assert_eq!(result.count(), 2);
     assert_eq!(result.coverage(), ResultCoverage::Complete);
+}
+
+#[tokio::test]
+async fn next_url_repeated_coordinate_is_rejected() {
+    let mut cgs = load_schema_dir(
+        &std::path::PathBuf::from(crate::test_manifest_dir())
+            .join("../../fixtures/schemas/plasm_pagination_matrix"),
+    )
+    .unwrap();
+    cgs.capabilities
+        .get_mut("item_query")
+        .unwrap()
+        .mapping
+        .as_mut()
+        .unwrap()
+        .template
+        .0["pagination"] = serde_json::json!({
+        "strategy":"next_url", "location":"response_next_url", "response_next_url_field":"next", "params":{"limit":{"fixed":20,"role":"page_size"}}
+    });
+    let transport = Arc::new(RepeatingUrlPages(AtomicUsize::new(0)));
+    let engine = ExecutionEngine::new_with_transport(
+        ExecutionConfig {
+            base_url: Some("http://fixture".into()),
+            ..Default::default()
+        },
+        transport.clone(),
+        None,
+    );
+    let result = engine
+        .execute(
+            &Expr::Query(QueryExpr::all("Item")),
+            &cgs,
+            &mut SessionMaterialization::new(),
+            Some(ExecutionMode::Live),
+            StreamConsumeOpts {
+                fetch_all: true,
+                ..Default::default()
+            },
+            ExecuteOptions::for_catalog(&cgs).unwrap(),
+        )
+        .await;
+    assert!(matches!(
+        result,
+        Err(RuntimeError::PaginationProgress {
+            reason: PaginationTerminalReason::RepeatedCoordinate
+        })
+    ));
+    assert_eq!(
+        transport.0.load(Ordering::SeqCst),
+        1,
+        "reject the repeated URL before issuing it again"
+    );
 }
 
 struct Pages {

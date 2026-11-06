@@ -54,6 +54,37 @@ pub struct PageAudit {
     pub terminal: Option<PaginationTerminalReason>,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum PageContinuation {
+    More,
+    Exhausted(PaginationTerminalReason),
+}
+
+impl PageContinuation {
+    pub(crate) fn has_more(&self) -> bool {
+        matches!(self, Self::More)
+    }
+}
+
+pub(crate) enum PageRequest {
+    Compiled(Box<CompiledOperation>),
+    Absolute(String),
+}
+
+pub(crate) struct PageObservation<'a> {
+    pub ordinal: u32,
+    pub entity_ids: &'a [String],
+    pub returned_rows: u32,
+    pub accepted_rows: u32,
+    pub response: &'a serde_json::Value,
+    pub next_link: Option<&'a str>,
+}
+
+pub(crate) struct PageTransition {
+    pub audit: PageAudit,
+    pub continuation: PageContinuation,
+}
+
 fn digest_hex(bytes: impl AsRef<[u8]>) -> String {
     hex::encode(blake3::hash(bytes.as_ref()).as_bytes())
 }
@@ -94,7 +125,6 @@ pub struct PaginationProgressGuard {
     seen_coords: BTreeSet<String>,
     seen_ids: BTreeSet<String>,
     last_cursor_digest: Option<String>,
-    last_next_url_digest: Option<String>,
 }
 
 impl PaginationProgressGuard {
@@ -103,7 +133,6 @@ impl PaginationProgressGuard {
         coordinate_digest: &str,
         entity_ids: &[String],
         cursor_digest: Option<&str>,
-        next_url_digest: Option<&str>,
         full_page: bool,
     ) -> Result<(u32, u32), PaginationTerminalReason> {
         if !self.seen_coords.insert(coordinate_digest.to_string()) {
@@ -114,12 +143,6 @@ impl PaginationProgressGuard {
                 return Err(PaginationTerminalReason::NonProgress);
             }
             self.last_cursor_digest = Some(c.to_string());
-        }
-        if let Some(u) = next_url_digest {
-            if self.last_next_url_digest.as_deref() == Some(u) {
-                return Err(PaginationTerminalReason::NonProgress);
-            }
-            self.last_next_url_digest = Some(u.to_string());
         }
 
         let mut novel = 0u32;
@@ -190,12 +213,6 @@ impl PaginationDriver {
         self.contract.strategy()
     }
 
-    pub(crate) fn take_next_absolute_url(&mut self) -> Option<String> {
-        let url = self.state.next_absolute_url.take();
-        self.requested_url_digest = url.as_deref().map(digest_hex);
-        url
-    }
-
     pub(crate) fn last_requested_limit(&self) -> u32 {
         self.state.last_requested_limit
     }
@@ -204,43 +221,34 @@ impl PaginationDriver {
         (&self.state).into()
     }
 
-    pub(crate) fn apply_request_params(
+    pub(crate) fn prepare_request(
         &mut self,
-        compiled: &mut CompiledOperation,
-    ) -> Result<(), RuntimeError> {
+        base: &CompiledOperation,
+    ) -> Result<PageRequest, RuntimeError> {
+        if let Some(url) = self.state.next_absolute_url.take() {
+            self.requested_url_digest = Some(digest_hex(&url));
+            return Ok(PageRequest::Absolute(url));
+        }
         self.requested_url_digest = None;
+        let mut compiled = base.clone();
         self.state
-            .apply_request_params(compiled, self.contract.config())
+            .apply_request_params(&mut compiled, self.contract.config())?;
+        Ok(PageRequest::Compiled(Box::new(compiled)))
     }
 
-    pub(crate) fn advance_after_page(
+    /// Validate a decoded page and advance its provider continuation as one transition.
+    pub(crate) fn observe_page(
         &mut self,
-        response: &serde_json::Value,
-        full_page_len: usize,
-        link_next: Option<&str>,
-        last_entity_id: Option<&str>,
-    ) -> Result<bool, RuntimeError> {
-        let limit = self.state.last_requested_limit;
-        self.state.advance_after_page(
-            self.contract.config(),
+        page: PageObservation<'_>,
+    ) -> Result<PageTransition, RuntimeError> {
+        let PageObservation {
+            ordinal: page_ordinal,
+            entity_ids,
+            returned_rows,
+            accepted_rows,
             response,
-            full_page_len,
-            limit,
-            link_next,
-            last_entity_id,
-        )
-    }
-
-    /// Observe one decoded page: fail closed on non-progress / overlap, return sanitized audit.
-    pub fn record_page(
-        &mut self,
-        page_ordinal: u32,
-        entity_ids: &[String],
-        returned_rows: u32,
-        accepted_rows: u32,
-        continuation: Option<&str>,
-        terminal: Option<PaginationTerminalReason>,
-    ) -> Result<PageAudit, RuntimeError> {
+            next_link,
+        } = page;
         let snap = self.snapshot();
         let param_digest = sanitize_param_digest(&snap.param_values);
         let coordinate_digest = digest_hex(serde_json::to_vec(&(
@@ -258,10 +266,6 @@ impl PaginationDriver {
             })
             .and_then(|(_, v)| v.as_ref())
             .map(|v| digest_hex(v.to_string()));
-        let next_url_digest = snap
-            .next_absolute_url
-            .as_ref()
-            .map(|u| digest_hex(u.as_bytes()));
         let full_page = returned_rows > 0
             && self
                 .contract
@@ -275,28 +279,47 @@ impl PaginationDriver {
                 &coordinate_digest,
                 entity_ids,
                 cursor_digest.as_deref(),
-                next_url_digest.as_deref(),
                 full_page,
             )
             .map_err(|reason| RuntimeError::PaginationProgress { reason })?;
 
         self.state.record_page_observed();
+        let continuation = self.state.advance_after_page(
+            self.contract.config(),
+            response,
+            returned_rows as usize,
+            self.state.last_requested_limit,
+            next_link,
+        )?;
+        let terminal = match &continuation {
+            PageContinuation::More => None,
+            PageContinuation::Exhausted(reason) => Some(reason.clone()),
+        };
+        let continuation_digest = self.state.next_absolute_url.as_deref().map(digest_hex);
+        if continuation_digest.is_some() && continuation_digest == self.requested_url_digest {
+            return Err(RuntimeError::PaginationProgress {
+                reason: PaginationTerminalReason::RepeatedCoordinate,
+            });
+        }
 
-        Ok(PageAudit {
-            page_ordinal,
-            strategy: Some(self.strategy().to_string()),
-            param_digest,
-            requested_size: self.last_requested_limit(),
-            returned_rows,
-            novel_rows: novel,
-            duplicate_rows: dup,
-            accepted_rows,
-            fingerprint: digest_hex(format!(
-                "{page_ordinal}|{coordinate_digest}|{returned_rows}|{novel}|{dup}"
-            )),
-            coordinate_digest,
-            continuation: continuation.map(str::to_string),
-            terminal,
+        Ok(PageTransition {
+            audit: PageAudit {
+                page_ordinal,
+                strategy: Some(self.strategy().to_string()),
+                param_digest,
+                requested_size: self.last_requested_limit(),
+                returned_rows,
+                novel_rows: novel,
+                duplicate_rows: dup,
+                accepted_rows,
+                fingerprint: digest_hex(format!(
+                    "{page_ordinal}|{coordinate_digest}|{returned_rows}|{novel}|{dup}"
+                )),
+                coordinate_digest,
+                continuation: continuation_digest,
+                terminal,
+            },
+            continuation,
         })
     }
 }
@@ -329,6 +352,22 @@ impl std::fmt::Display for PaginationTerminalReason {
 mod tests {
     use super::*;
     use plasm_compile::{PaginationLocation, PaginationParam, PaginationParamRole};
+
+    fn page(
+        driver: &mut PaginationDriver,
+        ordinal: u32,
+        ids: &[String],
+        count: u32,
+    ) -> Result<PageTransition, RuntimeError> {
+        driver.observe_page(PageObservation {
+            ordinal,
+            entity_ids: ids,
+            returned_rows: count,
+            accepted_rows: count,
+            response: &serde_json::json!({}),
+            next_link: None,
+        })
+    }
 
     fn page_number_config() -> PaginationConfig {
         PaginationConfig {
@@ -374,9 +413,9 @@ mod tests {
     #[test]
     fn guard_detects_duplicate_identity_overlap() {
         let mut g = PaginationProgressGuard::default();
-        g.observe_page("c0", &["a".into(), "b".into()], None, None, true)
+        g.observe_page("c0", &["a".into(), "b".into()], None, true)
             .unwrap();
-        let err = g.observe_page("c1", &["b".into(), "c".into()], None, None, true);
+        let err = g.observe_page("c1", &["b".into(), "c".into()], None, true);
         assert_eq!(err, Err(PaginationTerminalReason::DuplicateIdentityOverlap));
     }
 
@@ -389,13 +428,18 @@ mod tests {
             &StreamConsumeOpts::default(),
         )
         .unwrap();
-        first
-            .record_page(0, &["first".into()], 1, 1, None, None)
-            .unwrap();
-        let state = PaginationLoopState::try_from(first.snapshot()).unwrap();
+        page(&mut first, 0, &["first".into()], 1).unwrap();
+        let mut snapshot = first.snapshot();
+        snapshot
+            .param_values
+            .iter_mut()
+            .find(|(name, _)| name == "page_index")
+            .unwrap()
+            .1 = Some(serde_json::json!(0));
+        let state = PaginationLoopState::try_from(snapshot).unwrap();
         let mut resumed = PaginationDriver::from_resume(config.validate().unwrap(), state);
         assert!(matches!(
-            resumed.record_page(1, &["second".into()], 1, 1, None, None),
+            page(&mut resumed, 1, &["second".into()], 1),
             Err(RuntimeError::PaginationProgress {
                 reason: PaginationTerminalReason::RepeatedCoordinate
             })
@@ -434,17 +478,13 @@ mod tests {
                 headers: None,
             })
         };
-        driver.apply_request_params(&mut request()).unwrap();
-        driver
-            .record_page(0, &["first".into()], 1, 1, None, None)
-            .unwrap();
-        assert!(driver
-            .advance_after_page(&serde_json::json!({}), 1, None, None)
-            .unwrap());
-        driver.apply_request_params(&mut request()).unwrap();
-        driver
-            .record_page(1, &["second".into()], 1, 1, None, None)
-            .unwrap();
+        driver.prepare_request(&request()).unwrap();
+        assert!(page(&mut driver, 0, &["first".into()], 1)
+            .unwrap()
+            .continuation
+            .has_more());
+        driver.prepare_request(&request()).unwrap();
+        page(&mut driver, 1, &["second".into()], 1).unwrap();
     }
 
     #[test]
@@ -475,11 +515,12 @@ mod tests {
             })
         };
 
-        let mut first = request();
-        driver
-            .apply_request_params(&mut first)
-            .expect("first request");
-        let CompiledOperation::Http(first) = first else {
+        let PageRequest::Compiled(first) =
+            driver.prepare_request(&request()).expect("first request")
+        else {
+            unreachable!()
+        };
+        let CompiledOperation::Http(first) = *first else {
             unreachable!()
         };
         assert_eq!(first.to_json()["query"]["include_self"], true);
@@ -487,34 +528,31 @@ mod tests {
             .map(|n| format!("user-{n}"))
             .chain(["self".into()])
             .collect();
-        driver
-            .record_page(0, &first_ids, 21, 21, None, None)
-            .expect("first page");
-        assert!(driver
-            .advance_after_page(&serde_json::json!({}), 21, None, None)
-            .expect("advance"));
+        assert!(page(&mut driver, 0, &first_ids, 21)
+            .expect("first page")
+            .continuation
+            .has_more());
 
-        let mut second = request();
-        driver
-            .apply_request_params(&mut second)
-            .expect("second request");
-        let CompiledOperation::Http(second) = &second else {
+        let PageRequest::Compiled(second) =
+            driver.prepare_request(&request()).expect("second request")
+        else {
+            unreachable!()
+        };
+        let CompiledOperation::Http(second) = *second else {
             unreachable!()
         };
         assert!(second.to_json()["query"].get("include_self").is_none());
         let second_ids: Vec<String> = (20..40).map(|n| format!("user-{n}")).collect();
-        driver
-            .record_page(1, &second_ids, 20, 20, None, None)
-            .expect("nonoverlapping second page");
-        assert!(driver
-            .advance_after_page(&serde_json::json!({}), 20, None, None)
-            .expect("advance"));
+        assert!(page(&mut driver, 1, &second_ids, 20)
+            .expect("nonoverlapping second page")
+            .continuation
+            .has_more());
         let contract = driver.config().validate().unwrap();
         let state = PaginationLoopState::try_from(driver.snapshot()).unwrap();
         let mut driver = PaginationDriver::from_resume(contract, state);
         let overlap = (39..59).map(|n| format!("user-{n}")).collect::<Vec<_>>();
         assert!(matches!(
-            driver.record_page(2, &overlap, 20, 20, None, None),
+            page(&mut driver, 2, &overlap, 20),
             Err(RuntimeError::PaginationProgress {
                 reason: PaginationTerminalReason::DuplicateIdentityOverlap
             })
