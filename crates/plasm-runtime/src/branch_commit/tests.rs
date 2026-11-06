@@ -99,7 +99,10 @@ fn response_store_write_conflict_on_concurrent_insert() {
     let fp = RequestFingerprint::from_hex(&format!("{:064x}", 7u64)).expect("fp");
     session.store(
         fp.clone(),
-        serde_json::json!({"a": 1}),
+        crate::replay::TransportOutcome {
+            response: serde_json::json!({"a": 1}),
+            next_link: None,
+        },
         ExecutionSource::Live,
     );
 
@@ -107,7 +110,10 @@ fn response_store_write_conflict_on_concurrent_insert() {
     let mut branch = session.clone();
     branch.store(
         fp.clone(),
-        serde_json::json!({"a": 2}),
+        crate::replay::TransportOutcome {
+            response: serde_json::json!({"a": 2}),
+            next_link: None,
+        },
         ExecutionSource::Live,
     );
     let write_set = branch.branch_write_fingerprints(&base);
@@ -118,7 +124,10 @@ fn response_store_write_conflict_on_concurrent_insert() {
 
     session.store(
         fp.clone(),
-        serde_json::json!({"a": 9}),
+        crate::replay::TransportOutcome {
+            response: serde_json::json!({"a": 9}),
+            next_link: None,
+        },
         ExecutionSource::Live,
     );
     let conflicts =
@@ -132,7 +141,10 @@ fn response_store_idempotent_concurrent_write_no_conflict() {
     let fp = RequestFingerprint::from_hex(&format!("{:064x}", 8u64)).expect("fp");
     session.store(
         fp.clone(),
-        serde_json::json!({"a": 1}),
+        crate::replay::TransportOutcome {
+            response: serde_json::json!({"a": 1}),
+            next_link: None,
+        },
         ExecutionSource::Live,
     );
 
@@ -140,13 +152,19 @@ fn response_store_idempotent_concurrent_write_no_conflict() {
     let mut branch = session.clone();
     branch.store(
         fp.clone(),
-        serde_json::json!({"a": 2}),
+        crate::replay::TransportOutcome {
+            response: serde_json::json!({"a": 2}),
+            next_link: None,
+        },
         ExecutionSource::Live,
     );
     let write_set = branch.branch_write_fingerprints(&base);
     session.store(
         fp.clone(),
-        serde_json::json!({"a": 2}),
+        crate::replay::TransportOutcome {
+            response: serde_json::json!({"a": 2}),
+            next_link: None,
+        },
         ExecutionSource::Live,
     );
     let conflicts =
@@ -513,7 +531,10 @@ fn mutation_branch_commit_replaces_poisoned_read_caches() {
     let fp = RequestFingerprint::from_hex(&format!("{:064x}", 42u64)).expect("fp");
     session.responses.store(
         fp.clone(),
-        serde_json::json!({"balance": 3000}),
+        crate::replay::TransportOutcome {
+            response: serde_json::json!({"balance": 3000}),
+            next_link: None,
+        },
         ExecutionSource::Live,
     );
 

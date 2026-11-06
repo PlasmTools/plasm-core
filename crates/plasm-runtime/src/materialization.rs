@@ -99,7 +99,7 @@ pub struct SessionResponseStore {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct StoredResponse {
-    pub response: serde_json::Value,
+    pub outcome: crate::replay::TransportOutcome,
     pub source: ExecutionSource,
 }
 
@@ -111,11 +111,11 @@ impl SessionResponseStore {
     pub fn store(
         &mut self,
         fingerprint: RequestFingerprint,
-        response: serde_json::Value,
+        outcome: crate::replay::TransportOutcome,
         source: ExecutionSource,
     ) {
         self.entries
-            .insert(fingerprint, Arc::new(StoredResponse { response, source }));
+            .insert(fingerprint, Arc::new(StoredResponse { outcome, source }));
     }
 
     pub fn invalidate_entity_type(&mut self, _entity_type: &str) {
@@ -141,7 +141,7 @@ impl SessionResponseStore {
             .iter()
             .filter_map(|(fp, arc)| match base.get(fp) {
                 None => Some(fp.clone()),
-                Some(base_arc) if arc.response != base_arc.response => Some(fp.clone()),
+                Some(base_arc) if arc.outcome != base_arc.outcome => Some(fp.clone()),
                 _ => None,
             })
             .collect()
@@ -157,17 +157,17 @@ impl SessionResponseStore {
             .iter()
             .filter(|fp| match base.get(*fp) {
                 None => match (
-                    session.entries.get(*fp).map(|a| &a.response),
-                    branch.entries.get(*fp).map(|a| &a.response),
+                    session.entries.get(*fp).map(|a| &a.outcome),
+                    branch.entries.get(*fp).map(|a| &a.outcome),
                 ) {
                     (None, _) => false,
                     (Some(session_val), Some(branch_val)) => session_val != branch_val,
                     (Some(_), None) => false,
                 },
                 Some(base_arc) => {
-                    let base_val = Some(&base_arc.response);
-                    let branch_val = branch.entries.get(*fp).map(|a| &a.response);
-                    let session_val = session.entries.get(*fp).map(|a| &a.response);
+                    let base_val = Some(&base_arc.outcome);
+                    let branch_val = branch.entries.get(*fp).map(|a| &a.outcome);
+                    let session_val = session.entries.get(*fp).map(|a| &a.outcome);
                     content_diverged(base_val, branch_val, session_val)
                 }
             })
@@ -867,7 +867,10 @@ mod tests {
         .expect("fp");
         store.store(
             fp.clone(),
-            serde_json::json!({"ok": true}),
+            crate::replay::TransportOutcome {
+                response: serde_json::json!({"ok": true}),
+                next_link: None,
+            },
             ExecutionSource::Live,
         );
         assert!(store.lookup(&fp).is_some());
@@ -937,12 +940,18 @@ mod tests {
         let mut branch = session.clone();
         branch.store(
             fp.clone(),
-            serde_json::json!({"rows": [1, 2]}),
+            crate::replay::TransportOutcome {
+                response: serde_json::json!({"rows": [1, 2]}),
+                next_link: None,
+            },
             ExecutionSource::Live,
         );
         session.store(
             fp.clone(),
-            serde_json::json!({"rows": [1, 2]}),
+            crate::replay::TransportOutcome {
+                response: serde_json::json!({"rows": [1, 2]}),
+                next_link: None,
+            },
             ExecutionSource::Live,
         );
         let write_set = branch.branch_write_fingerprints(&base);
@@ -955,6 +964,36 @@ mod tests {
     }
 
     #[test]
+    fn response_store_continuation_difference_conflicts() {
+        let mut session = SessionResponseStore::default();
+        let fingerprint = RequestFingerprint::from_hex(&format!("{:064x}", 44u64)).unwrap();
+        let base = session.entries_snapshot();
+        let mut branch = session.clone();
+        let response = serde_json::json!({"rows": [1]});
+        branch.store(
+            fingerprint.clone(),
+            crate::replay::TransportOutcome {
+                response: response.clone(),
+                next_link: Some("https://example.test/next".into()),
+            },
+            ExecutionSource::Live,
+        );
+        session.store(
+            fingerprint.clone(),
+            crate::replay::TransportOutcome {
+                response,
+                next_link: None,
+            },
+            ExecutionSource::Live,
+        );
+        let writes = branch.branch_write_fingerprints(&base);
+        assert_eq!(
+            SessionResponseStore::detect_write_conflicts(&session, &branch, &base, &writes),
+            vec![fingerprint]
+        );
+    }
+
+    #[test]
     fn response_store_brand_new_divergent_conflict() {
         let mut session = SessionResponseStore::default();
         let fp = RequestFingerprint::from_hex(&format!("{:064x}", 43u64)).expect("fp");
@@ -962,12 +1001,18 @@ mod tests {
         let mut branch = session.clone();
         branch.store(
             fp.clone(),
-            serde_json::json!({"rows": [1]}),
+            crate::replay::TransportOutcome {
+                response: serde_json::json!({"rows": [1]}),
+                next_link: None,
+            },
             ExecutionSource::Live,
         );
         session.store(
             fp.clone(),
-            serde_json::json!({"rows": [2]}),
+            crate::replay::TransportOutcome {
+                response: serde_json::json!({"rows": [2]}),
+                next_link: None,
+            },
             ExecutionSource::Live,
         );
         let write_set = branch.branch_write_fingerprints(&base);

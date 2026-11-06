@@ -221,6 +221,7 @@ pub(crate) fn pagination_context_map<'a>(
 /// Unified pagination state machine driven by the composable `PaginationConfig`.
 /// No style-enum branching — param types and stop conditions carry all information.
 pub(crate) struct PaginationLoopState {
+    pub(crate) progress_guard: super::pagination_driver::PaginationProgressGuard,
     pub mcp_collection: crate::mcp_execution::McpCollectionProgress,
     /// Current value for each param. `None` = `FromResponse` not yet received.
     param_values: indexmap::IndexMap<String, Option<serde_json::Value>>,
@@ -255,6 +256,7 @@ impl PaginationLoopState {
                 ));
             }
             return Ok(Self {
+                progress_guard: Default::default(),
                 param_values: indexmap::IndexMap::new(),
                 pages_observed: 0,
                 mcp_collection: Default::default(),
@@ -289,6 +291,7 @@ impl PaginationLoopState {
         }
 
         Ok(Self {
+            progress_guard: Default::default(),
             param_values,
             pages_observed: 0,
             mcp_collection: Default::default(),
@@ -562,6 +565,7 @@ impl PaginationLoopState {
 impl From<&PaginationLoopState> for QueryPaginationState {
     fn from(s: &PaginationLoopState) -> Self {
         Self {
+            progress_guard: s.progress_guard.clone(),
             param_values: s
                 .param_values
                 .iter()
@@ -583,6 +587,7 @@ impl TryFrom<QueryPaginationState> for PaginationLoopState {
 
     fn try_from(s: QueryPaginationState) -> Result<Self, Self::Error> {
         Ok(Self {
+            progress_guard: s.progress_guard,
             param_values: s.param_values.into_iter().collect(),
             pages_observed: s.pages_observed,
             mcp_collection: s.mcp_collection,

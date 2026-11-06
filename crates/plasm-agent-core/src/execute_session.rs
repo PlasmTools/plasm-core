@@ -2650,6 +2650,7 @@ mod tests {
                 response_next_url_field: None,
             },
             state: QueryPaginationState {
+                progress_guard: Default::default(),
                 param_values: vec![("page".into(), Some(serde_json::json!(0)))],
                 pages_observed: 0,
                 next_absolute_url: None,

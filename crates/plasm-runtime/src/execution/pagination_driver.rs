@@ -89,8 +89,8 @@ fn sanitize_param_digest(values: &[(String, Option<serde_json::Value>)]) -> Stri
 }
 
 /// Progress / overlap guard state across pages.
-#[derive(Debug, Default)]
-pub(crate) struct PaginationProgressGuard {
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct PaginationProgressGuard {
     seen_coords: BTreeSet<String>,
     seen_ids: BTreeSet<String>,
     last_cursor_digest: Option<String>,
@@ -146,7 +146,7 @@ impl PaginationProgressGuard {
 pub struct PaginationDriver {
     contract: ValidatedPagination,
     state: PaginationLoopState,
-    guard: PaginationProgressGuard,
+    requested_url_digest: Option<String>,
 }
 
 impl PaginationDriver {
@@ -159,7 +159,7 @@ impl PaginationDriver {
         Ok(Self {
             contract,
             state,
-            guard: PaginationProgressGuard::default(),
+            requested_url_digest: None,
         })
     }
 
@@ -167,7 +167,7 @@ impl PaginationDriver {
         Self {
             contract,
             state,
-            guard: PaginationProgressGuard::default(),
+            requested_url_digest: None,
         }
     }
 
@@ -191,7 +191,9 @@ impl PaginationDriver {
     }
 
     pub(crate) fn take_next_absolute_url(&mut self) -> Option<String> {
-        self.state.next_absolute_url.take()
+        let url = self.state.next_absolute_url.take();
+        self.requested_url_digest = url.as_deref().map(digest_hex);
+        url
     }
 
     pub(crate) fn last_requested_limit(&self) -> u32 {
@@ -206,6 +208,7 @@ impl PaginationDriver {
         &mut self,
         compiled: &mut CompiledOperation,
     ) -> Result<(), RuntimeError> {
+        self.requested_url_digest = None;
         self.state
             .apply_request_params(compiled, self.contract.config())
     }
@@ -240,7 +243,12 @@ impl PaginationDriver {
     ) -> Result<PageAudit, RuntimeError> {
         let snap = self.snapshot();
         let param_digest = sanitize_param_digest(&snap.param_values);
-        let coordinate_digest = digest_hex(param_digest.as_bytes());
+        let coordinate_digest = digest_hex(serde_json::to_vec(&(
+            &snap.param_values,
+            &self.requested_url_digest,
+            snap.from_block,
+            snap.last_requested_to_block,
+        ))?);
         let cursor_digest = snap
             .param_values
             .iter()
@@ -261,7 +269,8 @@ impl PaginationDriver {
                 .is_some_and(|s| returned_rows >= s);
 
         let (novel, dup) = self
-            .guard
+            .state
+            .progress_guard
             .observe_page(
                 &coordinate_digest,
                 entity_ids,
@@ -372,6 +381,73 @@ mod tests {
     }
 
     #[test]
+    fn resume_preserves_seen_page_coordinates() {
+        let config = page_number_config();
+        let mut first = PaginationDriver::try_from_config(
+            config.clone(),
+            &QueryPagination::default(),
+            &StreamConsumeOpts::default(),
+        )
+        .unwrap();
+        first
+            .record_page(0, &["first".into()], 1, 1, None, None)
+            .unwrap();
+        let state = PaginationLoopState::try_from(first.snapshot()).unwrap();
+        let mut resumed = PaginationDriver::from_resume(config.validate().unwrap(), state);
+        assert!(matches!(
+            resumed.record_page(1, &["second".into()], 1, 1, None, None),
+            Err(RuntimeError::PaginationProgress {
+                reason: PaginationTerminalReason::RepeatedCoordinate
+            })
+        ));
+    }
+
+    #[test]
+    fn distinct_block_ranges_have_distinct_coordinates() {
+        let mut config = page_number_config();
+        config.strategy = Some(PaginationStrategyKind::BlockRange);
+        config.location = PaginationLocation::BlockRange;
+        config.params.shift_remove("page_index");
+        let user = QueryPagination {
+            from_block: Some(0),
+            to_block: Some(2000),
+            ..Default::default()
+        };
+        let mut driver = PaginationDriver::try_from_config(
+            config,
+            &user,
+            &StreamConsumeOpts {
+                fetch_all: true,
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        let request = || {
+            CompiledOperation::Http(plasm_compile::CompiledRequest {
+                credential: None,
+                method: plasm_compile::HttpMethod::Get,
+                path: "/logs".into(),
+                query: None,
+                body: None,
+                body_format: Default::default(),
+                multipart: None,
+                headers: None,
+            })
+        };
+        driver.apply_request_params(&mut request()).unwrap();
+        driver
+            .record_page(0, &["first".into()], 1, 1, None, None)
+            .unwrap();
+        assert!(driver
+            .advance_after_page(&serde_json::json!({}), 1, None, None)
+            .unwrap());
+        driver.apply_request_params(&mut request()).unwrap();
+        driver
+            .record_page(1, &["second".into()], 1, 1, None, None)
+            .unwrap();
+    }
+
+    #[test]
     fn first_only_pinned_identity_does_not_weaken_cross_page_guard() {
         use plasm_compile::{CompiledRequest, HttpMethod};
         use plasm_core::Value;
@@ -433,6 +509,9 @@ mod tests {
         assert!(driver
             .advance_after_page(&serde_json::json!({}), 20, None, None)
             .expect("advance"));
+        let contract = driver.config().validate().unwrap();
+        let state = PaginationLoopState::try_from(driver.snapshot()).unwrap();
+        let mut driver = PaginationDriver::from_resume(contract, state);
         let overlap = (39..59).map(|n| format!("user-{n}")).collect::<Vec<_>>();
         assert!(matches!(
             driver.record_page(2, &overlap, 20, 20, None, None),

@@ -6,11 +6,27 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::path::PathBuf;
 
+/// The provider body and the continuation observed with it.
+#[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct TransportOutcome {
+    pub response: serde_json::Value,
+    pub next_link: Option<String>,
+}
+
+impl std::fmt::Debug for TransportOutcome {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("TransportOutcome")
+            .field("response", &self.response)
+            .field("next_link", &self.next_link.as_ref().map(|_| "<redacted>"))
+            .finish()
+    }
+}
+
 /// A recorded request/response pair with metadata
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ReplayEntry {
     pub request: CompiledOperation,
-    pub response: serde_json::Value,
+    pub outcome: TransportOutcome,
     pub decoded_entities: Vec<serde_json::Value>,
     pub schema_snapshot: serde_json::Value, // CGS as JSON
     pub timestamp: u64,
@@ -463,11 +479,30 @@ mod tests {
     fn create_test_entry() -> ReplayEntry {
         ReplayEntry {
             request: create_test_request(),
-            response: serde_json::json!({"result": "success"}),
+            outcome: TransportOutcome {
+                response: serde_json::json!({"result": "success"}),
+                next_link: None,
+            },
             decoded_entities: vec![],
             schema_snapshot: serde_json::json!({}),
             timestamp: 1234567890,
         }
+    }
+
+    #[test]
+    fn replay_requires_continuation_evidence_and_redacts_links_in_debug() {
+        let entry = create_test_entry();
+        let mut old = serde_json::to_value(&entry).unwrap();
+        let object = old.as_object_mut().unwrap();
+        let outcome = object.remove("outcome").unwrap();
+        object.insert("response".into(), outcome["response"].clone());
+        assert!(serde_json::from_value::<ReplayEntry>(old).is_err());
+
+        let outcome = TransportOutcome {
+            response: serde_json::json!({}),
+            next_link: Some("https://example.test/page?secret=private".into()),
+        };
+        assert!(!format!("{outcome:?}").contains("private"));
     }
 
     #[test]

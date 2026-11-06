@@ -201,6 +201,8 @@ pub type RowsProgressFn = std::sync::Arc<dyn Fn(usize) + Send + Sync>;
 /// Snapshot of [`PaginationLoopState`] for opaque LLM paging continuations (host-only; not for wire serde).
 #[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct QueryPaginationState {
+    #[serde(skip)]
+    pub progress_guard: super::pagination_driver::PaginationProgressGuard,
     pub mcp_collection: crate::mcp_execution::McpCollectionProgress,
     pub param_values: Vec<(String, Option<serde_json::Value>)>,
     /// Number of successfully decoded pages, including pages before a resume.

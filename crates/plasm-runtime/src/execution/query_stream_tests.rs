@@ -10,6 +10,187 @@ use std::sync::{
     Arc, Mutex,
 };
 
+struct NextUrlPages;
+
+struct LinkPage;
+
+#[async_trait]
+impl HttpTransport for LinkPage {
+    async fn send_compiled_http(
+        &self,
+        _: &str,
+        _: &CompiledRequest,
+        _: Option<ResolvedAuth>,
+    ) -> Result<(serde_json::Value, Option<String>), RuntimeError> {
+        Ok((
+            serde_json::json!({"results":[{"id":"first","n":1}]}),
+            Some("http://fixture/page-2".to_owned()),
+        ))
+    }
+    async fn get_json_absolute(
+        &self,
+        _: &str,
+        _: Option<ResolvedAuth>,
+    ) -> Result<(serde_json::Value, Option<String>), RuntimeError> {
+        panic!("unexpected absolute request")
+    }
+}
+
+#[tokio::test]
+async fn response_cache_preserves_next_link() {
+    let engine = ExecutionEngine::new_with_transport(
+        ExecutionConfig {
+            base_url: Some("http://fixture".into()),
+            ..Default::default()
+        },
+        Arc::new(LinkPage),
+        None,
+    );
+    let request = CompiledOperation::Http(CompiledRequest {
+        credential: None,
+        method: plasm_compile::HttpMethod::Get,
+        path: "/items".into(),
+        query: None,
+        body: None,
+        body_format: Default::default(),
+        multipart: None,
+        headers: None,
+    });
+    let mut mat = SessionMaterialization::new();
+    let first = engine
+        .execute_with_replay_full(&request, ExecutionMode::Live, Some(&mut mat))
+        .await
+        .unwrap();
+    let cached = engine
+        .execute_with_replay_full(&request, ExecutionMode::Live, Some(&mut mat))
+        .await
+        .unwrap();
+    assert_eq!(first.1.as_deref(), Some("http://fixture/page-2"));
+    assert_eq!(
+        cached.1, first.1,
+        "a cached page must retain its continuation"
+    );
+}
+
+#[tokio::test]
+async fn replay_preserves_next_link() {
+    use crate::ReplayStore;
+    let mut engine = ExecutionEngine::new_with_transport(
+        ExecutionConfig {
+            base_url: Some("http://fixture".into()),
+            ..Default::default()
+        },
+        Arc::new(LinkPage),
+        None,
+    );
+    let request = CompiledOperation::Http(CompiledRequest {
+        credential: None,
+        method: plasm_compile::HttpMethod::Get,
+        path: "/items".into(),
+        query: None,
+        body: None,
+        body_format: Default::default(),
+        multipart: None,
+        headers: None,
+    });
+    let fingerprint = crate::RequestFingerprint::from_operation(&request).unwrap();
+    engine
+        .replay_store
+        .as_mut()
+        .unwrap()
+        .store(
+            fingerprint,
+            crate::ReplayEntry {
+                request: request.clone(),
+                outcome: crate::replay::TransportOutcome {
+                    response: serde_json::json!({"results":[{"id":"first","n":1}]}),
+                    next_link: Some("http://fixture/page-2".into()),
+                },
+                decoded_entities: vec![],
+                schema_snapshot: serde_json::json!({}),
+                timestamp: 0,
+            },
+        )
+        .unwrap();
+    let (_, next, source) = engine
+        .execute_with_replay_full(&request, ExecutionMode::Replay, None)
+        .await
+        .unwrap();
+    assert_eq!(source, ExecutionSource::Replay);
+    assert_eq!(next.as_deref(), Some("http://fixture/page-2"));
+}
+
+#[async_trait]
+impl HttpTransport for NextUrlPages {
+    async fn send_compiled_http(
+        &self,
+        _: &str,
+        _: &CompiledRequest,
+        _: Option<ResolvedAuth>,
+    ) -> Result<(serde_json::Value, Option<String>), RuntimeError> {
+        Ok((
+            serde_json::json!({"results": [{"id":"first","n":1}], "next":"http://fixture/page-2"}),
+            None,
+        ))
+    }
+
+    async fn get_json_absolute(
+        &self,
+        url: &str,
+        _: Option<ResolvedAuth>,
+    ) -> Result<(serde_json::Value, Option<String>), RuntimeError> {
+        assert_eq!(url, "http://fixture/page-2");
+        Ok((
+            serde_json::json!({"results": [{"id":"second","n":2}], "next":null}),
+            None,
+        ))
+    }
+}
+
+#[tokio::test]
+async fn next_url_distinct_pages_do_not_repeat_coordinate() {
+    let mut cgs = load_schema_dir(
+        &std::path::PathBuf::from(crate::test_manifest_dir())
+            .join("../../fixtures/schemas/plasm_pagination_matrix"),
+    )
+    .unwrap();
+    cgs.capabilities
+        .get_mut("item_query")
+        .unwrap()
+        .mapping
+        .as_mut()
+        .unwrap()
+        .template
+        .0["pagination"] = serde_json::json!({
+        "strategy":"next_url", "location":"response_next_url",
+        "response_next_url_field":"next", "params":{"limit":{"fixed":20,"role":"page_size"}}
+    });
+    let engine = ExecutionEngine::new_with_transport(
+        ExecutionConfig {
+            base_url: Some("http://fixture".into()),
+            ..Default::default()
+        },
+        Arc::new(NextUrlPages),
+        None,
+    );
+    let result = engine
+        .execute(
+            &Expr::Query(QueryExpr::all("Item")),
+            &cgs,
+            &mut SessionMaterialization::new(),
+            Some(ExecutionMode::Live),
+            StreamConsumeOpts {
+                fetch_all: true,
+                ..Default::default()
+            },
+            ExecuteOptions::for_catalog(&cgs).unwrap(),
+        )
+        .await
+        .expect("distinct pages must advance");
+    assert_eq!(result.count(), 2);
+    assert_eq!(result.coverage(), ResultCoverage::Complete);
+}
+
 struct Pages {
     lists: AtomicUsize,
     details: AtomicUsize,

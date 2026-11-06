@@ -408,14 +408,23 @@ impl ExecutionEngine {
                             &mut consult,
                         ) {
                             append_request_fingerprint(fingerprint.to_hex());
-                            return Ok((stored.response, None, stored.source));
+                            return Ok((
+                                stored.outcome.response,
+                                stored.outcome.next_link,
+                                stored.source,
+                            ));
                         }
                     }
                     ExecutionCacheConsult::record_response_miss(&mut consult);
                     let (resp, link) = self.execute_operation_full(compiled).await?;
-                    session
-                        .responses
-                        .store(fingerprint, resp.clone(), ExecutionSource::Live);
+                    session.responses.store(
+                        fingerprint,
+                        crate::replay::TransportOutcome {
+                            response: resp.clone(),
+                            next_link: link.clone(),
+                        },
+                        ExecutionSource::Live,
+                    );
                     Ok((resp, link, ExecutionSource::Live))
                 } else {
                     let (resp, link) = self.execute_operation_full(compiled).await?;
@@ -428,7 +437,11 @@ impl ExecutionEngine {
                         use crate::ReplayStore;
                         if let Some(entry) = store.lookup(&fingerprint)? {
                             append_request_fingerprint(fingerprint.to_hex());
-                            return Ok((entry.response, None, ExecutionSource::Replay));
+                            return Ok((
+                                entry.outcome.response,
+                                entry.outcome.next_link,
+                                ExecutionSource::Replay,
+                            ));
                         }
                     }
                 }
@@ -442,7 +455,11 @@ impl ExecutionEngine {
                         use crate::ReplayStore;
                         if let Some(entry) = store.lookup(&fingerprint)? {
                             append_request_fingerprint(fingerprint.to_hex());
-                            return Ok((entry.response, None, ExecutionSource::Replay));
+                            return Ok((
+                                entry.outcome.response,
+                                entry.outcome.next_link,
+                                ExecutionSource::Replay,
+                            ));
                         }
                     }
                 }
@@ -454,14 +471,23 @@ impl ExecutionEngine {
                             &mut consult,
                         ) {
                             append_request_fingerprint(fingerprint.to_hex());
-                            return Ok((stored.response, None, stored.source));
+                            return Ok((
+                                stored.outcome.response,
+                                stored.outcome.next_link,
+                                stored.source,
+                            ));
                         }
                     }
                     ExecutionCacheConsult::record_response_miss(&mut consult);
                     let (resp, link) = self.execute_operation_full(compiled).await?;
-                    session
-                        .responses
-                        .store(fingerprint, resp.clone(), ExecutionSource::Live);
+                    session.responses.store(
+                        fingerprint,
+                        crate::replay::TransportOutcome {
+                            response: resp.clone(),
+                            next_link: link.clone(),
+                        },
+                        ExecutionSource::Live,
+                    );
                     Ok((resp, link, ExecutionSource::Live))
                 } else {
                     let (resp, link) = self.execute_operation_full(compiled).await?;
