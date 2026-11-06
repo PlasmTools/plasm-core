@@ -467,10 +467,21 @@ pub fn values_eq(left: &Value, right: &Value) -> Result<bool, CrossCurrencyError
 pub fn values_ord(left: &Value, right: &Value) -> Result<Option<Ordering>, CrossCurrencyError> {
     match try_cmp_values(left, right)? {
         Some(ord) => Ok(Some(ord)),
-        None => Ok(match (left.as_number(), right.as_number()) {
-            (Some(a), Some(b)) => a.partial_cmp(&b),
-            _ => None,
-        }),
+        None if [left, right]
+            .iter()
+            .any(|value| matches!(value, Value::Float(n) if !n.is_finite())) =>
+        {
+            Ok(left
+                .as_number()
+                .zip(right.as_number())
+                .and_then(|(a, b)| a.partial_cmp(&b)))
+        }
+        None if left.is_number() && right.is_number() => {
+            Ok(crate::value_expression::ordering(left, right)
+                .ok()
+                .flatten())
+        }
+        None => Ok(None),
     }
 }
 
@@ -879,6 +890,26 @@ mod tests {
             values_ord(&Value::String("100".into()), &Value::String("20".into()))
                 .unwrap()
                 .is_none()
+        );
+    }
+
+    #[test]
+    fn numeric_predicate_order_preserves_integer_precision_and_nonfinite_policy() {
+        assert_eq!(
+            values_ord(
+                &Value::Integer(9007199254740993),
+                &Value::Integer(9007199254740992)
+            )
+            .unwrap(),
+            Some(std::cmp::Ordering::Greater)
+        );
+        assert_eq!(
+            values_ord(&Value::Float(f64::INFINITY), &Value::Integer(1)).unwrap(),
+            Some(std::cmp::Ordering::Greater)
+        );
+        assert_eq!(
+            values_ord(&Value::Float(f64::NAN), &Value::Integer(1)).unwrap(),
+            None
         );
     }
 

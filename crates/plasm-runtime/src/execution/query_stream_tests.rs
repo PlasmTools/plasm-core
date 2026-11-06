@@ -656,6 +656,103 @@ fn terminal_query_rejects_undecomposed_cross_entity_predicate() {
 }
 
 struct CrossQueryPages(Mutex<Vec<String>>);
+
+struct PrecisionCrossPages;
+
+#[async_trait]
+impl HttpTransport for PrecisionCrossPages {
+    async fn send_compiled_http(
+        &self,
+        _: &str,
+        request: &CompiledRequest,
+        _: Option<ResolvedAuth>,
+    ) -> Result<(serde_json::Value, Option<String>), RuntimeError> {
+        let body = match request.path.as_str() {
+            "/language/v1/tags" => serde_json::json!([{"id":"t1","item_id":"i1","label":"tag"}]),
+            "/language/v1/items/i1" => {
+                serde_json::json!({"id":"i1","title":"selected","score":9007199254740993_i64,"owner":"chosen"})
+            }
+            path => panic!("unexpected path {path}"),
+        };
+        Ok((body, None))
+    }
+    async fn get_json_absolute(
+        &self,
+        _: &str,
+        _: Option<ResolvedAuth>,
+    ) -> Result<(serde_json::Value, Option<String>), RuntimeError> {
+        panic!("unexpected request")
+    }
+}
+
+#[tokio::test]
+async fn pull_right_preserves_exact_integer_comparison() {
+    let mut cgs = load_schema_dir(
+        &std::path::PathBuf::from(crate::test_manifest_dir())
+            .join("../../fixtures/schemas/plasm_language_matrix"),
+    )
+    .unwrap();
+    cgs.capabilities
+        .get_mut("langtag_query")
+        .unwrap()
+        .inputs
+        .scope
+        .0
+        .clear();
+    let engine = ExecutionEngine::new_with_transport(
+        ExecutionConfig {
+            base_url: Some("http://fixture".into()),
+            hydrate: false,
+            ..Default::default()
+        },
+        Arc::new(PrecisionCrossPages),
+        None,
+    );
+    let mut mat = SessionMaterialization::new();
+    let query = QueryExpr::filtered(
+        "LangTag",
+        Predicate::Comparison {
+            field: "item_id.score".into(),
+            op: plasm_core::CompOp::Gt,
+            value: Value::Integer(9007199254740992).try_into().unwrap(),
+        },
+    );
+    let crosses = [plasm_core::cross_entity::CrossEntityPredicate {
+        ref_field: "item_id".into(),
+        foreign_entity: "LangItem".into(),
+        foreign_predicate: Predicate::Comparison {
+            field: "score".into(),
+            op: plasm_core::CompOp::Gt,
+            value: Value::Integer(9007199254740992).try_into().unwrap(),
+        },
+    }];
+    let result = ExecutionEngine::run_in_execute_task_scopes(
+        "http://fixture".into(),
+        None,
+        None,
+        None,
+        None,
+        ExecuteOptions::for_catalog(&cgs)
+            .unwrap()
+            .compiled_catalog
+            .unwrap(),
+        None,
+        None,
+        engine.execute_query_cross_entity(
+            &query,
+            &crosses,
+            &cgs,
+            &mut mat,
+            ExecutionMode::Live,
+            StreamConsumeOpts::default(),
+            &ViewAmbientContext::default(),
+        ),
+    )
+    .await
+    .unwrap();
+    assert_eq!(result.entities().len(), 1);
+}
+
 #[async_trait]
 impl HttpTransport for CrossQueryPages {
     async fn send_compiled_http(
