@@ -19,7 +19,7 @@ const DIAGNOSTIC_LIMIT: usize = 2048;
 pub enum NormalizationStage {
     Initial,
     Compare {
-        run_id: super::super::model::RunArtifactId,
+        execution_id: super::super::model::ExecutionId,
     },
 }
 #[derive(Debug, Clone, Serialize)]
@@ -50,13 +50,13 @@ impl NormalizationContext {
         let subtask = claim.seal.request.subtasks.get(subtask_index).ok_or(
             RepositoryError::InvalidEvidence("normalization subtask is absent from sealed review"),
         )?;
-        if let NormalizationStage::Compare { run_id } = &stage {
-            if !subtask.run_ids.contains(run_id)
+        if let NormalizationStage::Compare { execution_id } = &stage {
+            if !subtask.execution_ids.contains(execution_id)
                 || !claim
                     .seal
                     .executions
                     .iter()
-                    .any(|execution| &execution.run_id == run_id)
+                    .any(|execution| &execution.execution_id == execution_id)
             {
                 return Err(RepositoryError::InvalidEvidence(
                     "normalization run is not evidence for this subtask",

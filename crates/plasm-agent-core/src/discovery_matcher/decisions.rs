@@ -9,8 +9,19 @@ pub(crate) const ENDPOINT: &str = "https://openrouter.ai/api/alpha/decisions";
 #[derive(Serialize)]
 pub(super) struct Request<'a> {
     pub model: &'a str,
-    pub state: &'a SharedEvidence<'a>,
+    pub state: State<'a>,
     pub questions: BTreeMap<String, Question>,
+}
+
+/// The same Decisions protocol carries either the existing graph witness or an
+/// operation-bound witness; neither representation grants catalogue access.
+#[derive(Serialize)]
+#[serde(untagged)]
+pub(super) enum State<'a> {
+    Graph(&'a SharedEvidence<'a>),
+    #[cfg(test)]
+    Operation(&'a super::operations::DecisionState<'a>),
+    OperationGraph(&'a super::operations::GraphDecisionState<'a>),
 }
 
 #[derive(Serialize)]

@@ -1,0 +1,56 @@
+{
+  "purpose": "Fresh abstract development controls frozen before the rubric comparison; not production teaching or a holdout score.",
+  "families": [
+    {
+      "id": "calibration",
+      "entity": "Instrument",
+      "intent": "Calibrate instrument K. Leave the calibration of every other instrument unchanged.",
+      "collection": "Instruments may be placed in an editable calibration queue.",
+      "operations": [
+        ["calibrate_queue", "action", "Calibrate every instrument currently in the calibration queue. Instruments outside that queue are unchanged. This operation does not select individual queue members.", "relevant"],
+        ["configure_queue", "action", "Replace calibration-queue membership with the supplied instrument identities. Does not calibrate instruments.", "relevant"],
+        ["inspect", "get", "Read an instrument's identity and calibration state.", "relevant"],
+        ["fixed_global", "action", "Calibrate every instrument in the installation, including instruments other than the requested one. The scope is fixed: no queue, filter, exclusion or per-instrument option applies.", "unrelated"],
+        ["weather", "get", "Read a city's weather forecast.", "unrelated"],
+        ["history", "get", "Read historical calibration records.", null]
+      ]
+    },
+    {
+      "id": "exporting",
+      "entity": "Record",
+      "intent": "Export record R to an external destination. Do not export any other record.",
+      "collection": "Records can belong to editable export selections.",
+      "operations": [
+        ["export_selection", "action", "Export every record in the selected export selection to an external destination. Records outside the selection are not exported. This operation cannot choose individual selection members.", "relevant"],
+        ["configure_selection", "action", "Replace an export selection's membership with the supplied record identities. Does not export records.", "relevant"],
+        ["inspect", "get", "Read a record by identity.", "relevant"],
+        ["fixed_global", "action", "Export every record in the store, including records other than the requested one, to an external destination. Scope is fixed and cannot be filtered, configured or restricted.", "unrelated"],
+        ["weather", "get", "Read a city's weather forecast.", "unrelated"],
+        ["history", "get", "Read previous export events.", null]
+      ]
+    },
+    {
+      "id": "scheduling",
+      "entity": "Job",
+      "intent": "Schedule job J for execution. Leave every other job unscheduled.",
+      "collection": "Jobs may be placed in an editable submission batch before scheduling.",
+      "operations": [
+        ["submit_batch", "action", "Schedule every job in the submission batch. Jobs outside the batch remain unscheduled. This operation does not select a subset of batch members.", "relevant"],
+        ["configure_batch", "action", "Replace submission-batch membership with the supplied job identities. Does not schedule jobs.", "relevant"],
+        ["inspect", "get", "Read a job's identity and scheduling state.", "relevant"],
+        ["fixed_global", "action", "Schedule every job in the system, including jobs other than the requested one. The scope is fixed and does not respect submission batches or exclusions.", "unrelated"],
+        ["weather", "get", "Read a city's weather forecast.", "unrelated"],
+        ["history", "get", "Read previous execution records for a job.", null]
+      ]
+    }
+  ],
+  "precondition_control": {
+    "id": "missing_credential",
+    "entity": "Node",
+    "intent": "Report the current health of node N.",
+    "collection": "Compute nodes with observable health status.",
+    "operations": [
+      ["health", "get", "Read the current health of the supplied node identity. Requires a valid access token as an input; no token value is supplied in this request.", "relevant"]
+    ]
+  }
+}

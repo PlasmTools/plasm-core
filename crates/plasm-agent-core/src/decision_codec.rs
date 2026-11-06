@@ -1,8 +1,18 @@
 //! Provider serialization seam. JSON exists only at encode/decode, never as
 //! selection state. Each decoder receives the binding context issued with its request.
 use serde::{Deserialize, Serialize};
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeMap;
 use thiserror::Error;
+
+/// A provider packet owns both its cache identity and its response binding.
+/// The checkpoint layer never interprets semantic choices or candidate IDs.
+pub(crate) trait DecisionPacket {
+    fn cache_key(&self) -> &str;
+    fn validate_response(
+        &self,
+        raw: &str,
+    ) -> Result<(), Box<dyn std::error::Error + Send + Sync + 'static>>;
+}
 
 #[derive(Debug, Error)]
 pub enum ProviderResponseError {
@@ -81,6 +91,19 @@ pub(crate) fn decode_choices<'a>(
     choices: &[&str],
     raw: &str,
 ) -> Result<BTreeMap<String, ValidatedChoice>, ProviderResponseError> {
+    let question_choices: BTreeMap<_, _> = questions
+        .into_iter()
+        .map(|question| (question.to_owned(), choices.to_vec()))
+        .collect();
+    decode_choice_sets(model, &question_choices, raw)
+}
+
+/// Validate each question against its own issued choice set.
+pub(crate) fn decode_choice_sets(
+    model: &str,
+    questions: &BTreeMap<String, Vec<&str>>,
+    raw: &str,
+) -> Result<BTreeMap<String, ValidatedChoice>, ProviderResponseError> {
     let envelope: ChoiceEnvelope =
         serde_json::from_str(raw).map_err(ProviderResponseError::MalformedEnvelope)?;
     if !model_matches(model, &envelope.model) {
@@ -89,12 +112,11 @@ pub(crate) fn decode_choices<'a>(
     if envelope.provider != "OpenAI" {
         return Err(ProviderResponseError::UnexpectedProvider);
     }
-    let questions: BTreeSet<_> = questions.into_iter().collect();
     if envelope.answers.len() != questions.len()
         || !envelope
             .answers
             .keys()
-            .all(|key| questions.contains(key.as_str()))
+            .all(|key| questions.contains_key(key))
     {
         return Err(ProviderResponseError::AnswerSetMismatch);
     }
@@ -102,6 +124,7 @@ pub(crate) fn decode_choices<'a>(
         .answers
         .into_iter()
         .map(|(question, answer)| {
+            let choices = &questions[&question];
             if answer.kind != "choice" {
                 return Err(ProviderResponseError::UnexpectedQuestionType);
             }
@@ -207,6 +230,36 @@ mod tests {
         let output = decode(&input.to_string()).unwrap();
         let answer = &output["q"];
         assert_eq!(answer.choice, "yes");
+    }
+
+    #[test]
+    fn mixed_question_choices_are_bound_to_each_question() {
+        let questions = BTreeMap::from([
+            ("effect".to_owned(), vec!["aligned", "unrequested"]),
+            ("relevance".to_owned(), vec!["relevant", "unrelated"]),
+        ]);
+        let answer = |choice: &str, first: &str, second: &str| {
+            json!({"type":"choice", "choice":choice, "confidence":1.0,
+                "probabilities":{(first):1.0, (second):0.0}})
+        };
+        let mut input = json!({"model":"openai/gpt-6-luna-decisions", "provider":"OpenAI",
+            "answers":{"effect":answer("aligned", "aligned", "unrequested"),
+                "relevance":answer("relevant", "relevant", "unrelated")}});
+        assert!(decode_choice_sets(
+            "openai/gpt-6-luna-decisions",
+            &questions,
+            &input.to_string()
+        )
+        .is_ok());
+        input["answers"]["effect"] = answer("relevant", "relevant", "unrelated");
+        assert!(matches!(
+            decode_choice_sets(
+                "openai/gpt-6-luna-decisions",
+                &questions,
+                &input.to_string()
+            ),
+            Err(ProviderResponseError::UnsupportedChoice)
+        ));
     }
 
     #[test]

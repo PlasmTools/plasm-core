@@ -39,7 +39,7 @@ export const SUBMIT_ANSWER_TOOL_DESCRIPTION =
 /** Structural gate: environment-action evals must discover before abandon / no-access claims. */
 export const EVAL_TERMINAL_REQUIRES_DISCOVERY =
   "Initial discovery is required before ending an environment-action evaluation. " +
-  "Call plasm_context with session_mode new and the task intent first. " +
+  "The host must initialize the workflow before the model continues. " +
   "Do not claim unsupported access or abandon before discovery.";
 
 export type EvalTerminalGate = {

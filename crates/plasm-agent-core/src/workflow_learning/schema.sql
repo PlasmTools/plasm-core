@@ -4,9 +4,16 @@ CREATE TABLE IF NOT EXISTS workflow_learning_sessions (
 );
 CREATE TABLE IF NOT EXISTS workflow_learning_receipts (
     tenant text NOT NULL, project text NOT NULL, logical_session text NOT NULL,
-    session_revision bigint NOT NULL CHECK (session_revision >= 0), run_id text NOT NULL,
-    receipt jsonb NOT NULL,
-    PRIMARY KEY(tenant,project,logical_session,session_revision,run_id)
+    session_revision bigint NOT NULL CHECK (session_revision >= 0), execution_id text NOT NULL,
+    receipt jsonb NOT NULL, program_digest text NOT NULL,
+    PRIMARY KEY(tenant,project,logical_session,session_revision,execution_id)
+);
+-- The compiler-derived program and semantic authority are immutable and shared
+-- by every completed execution of the same observation within a project.
+CREATE TABLE IF NOT EXISTS workflow_learning_program_observations (
+    tenant text NOT NULL, project text NOT NULL, digest text NOT NULL,
+    observation jsonb NOT NULL,
+    PRIMARY KEY(tenant,project,digest)
 );
 CREATE TABLE IF NOT EXISTS workflow_learning_execution_journal (
     tenant text NOT NULL, project text NOT NULL, logical_session text NOT NULL,
@@ -25,6 +32,9 @@ CREATE TABLE IF NOT EXISTS workflow_learning_reviews (
     failure_reason text, created_at timestamptz NOT NULL DEFAULT now(),
     UNIQUE(tenant,project,logical_session,session_revision)
 );
+-- `digest` retains the original immutable review identity. Following the
+-- reference cutover this independently binds the compact current seal.
+ALTER TABLE workflow_learning_reviews ADD COLUMN IF NOT EXISTS seal_content_digest text;
 ALTER TABLE workflow_learning_reviews ADD COLUMN IF NOT EXISTS attempts integer NOT NULL DEFAULT 0 CHECK(attempts >= 0);
 ALTER TABLE workflow_learning_reviews ADD COLUMN IF NOT EXISTS next_attempt timestamptz NOT NULL DEFAULT now();
 ALTER TABLE workflow_learning_reviews DROP CONSTRAINT IF EXISTS workflow_learning_reviews_state_check;
@@ -32,6 +42,12 @@ ALTER TABLE workflow_learning_reviews ADD CONSTRAINT workflow_learning_reviews_s
     CHECK(state IN ('queued','leased','completed','failed','awaiting_approval'));
 CREATE INDEX IF NOT EXISTS workflow_learning_jobs ON workflow_learning_reviews(state,lease_until,created_at);
 CREATE INDEX IF NOT EXISTS workflow_learning_job_schedule ON workflow_learning_reviews(state,next_attempt,created_at);
+-- Capture and review records carry an authorized training epoch.
+ALTER TABLE workflow_learning_execution_journal ADD COLUMN IF NOT EXISTS training_epoch uuid;
+ALTER TABLE workflow_learning_execution_journal DROP CONSTRAINT IF EXISTS workflow_learning_execution_journal_state_check;
+ALTER TABLE workflow_learning_execution_journal ADD CONSTRAINT workflow_learning_execution_journal_state_check CHECK(state IN ('pending','complete','unknown','excluded'));
+ALTER TABLE workflow_learning_receipts ADD COLUMN IF NOT EXISTS training_epoch uuid;
+ALTER TABLE workflow_learning_reviews ADD COLUMN IF NOT EXISTS training_epoch uuid;
 CREATE TABLE IF NOT EXISTS workflow_learning_publication_approvals (
     review_id uuid PRIMARY KEY REFERENCES workflow_learning_reviews(id),
     tenant text NOT NULL, project text NOT NULL, actor text NOT NULL CHECK(length(trim(actor))>0),
@@ -80,6 +96,35 @@ CREATE TABLE IF NOT EXISTS workflow_learning_frozen_publications (
     artifact_hashes jsonb NOT NULL,
     published_at timestamptz NOT NULL DEFAULT now()
 );
+CREATE TABLE IF NOT EXISTS workflow_training_publications (
+    publication_order bigserial UNIQUE NOT NULL,
+    review_id uuid NOT NULL REFERENCES workflow_learning_reviews(id),
+    tenant text NOT NULL, project text NOT NULL, selection_digest text NOT NULL,
+    actor text NOT NULL, credential text NOT NULL,
+    artifact_hashes jsonb NOT NULL, guidance_digest text NOT NULL,
+    published_at timestamptz NOT NULL DEFAULT now(),
+    PRIMARY KEY(review_id,selection_digest)
+);
+CREATE TABLE IF NOT EXISTS workflow_training_review_commands (
+    tenant text NOT NULL, project text NOT NULL, logical_session text NOT NULL,
+    actor text NOT NULL, credential text NOT NULL, idempotency_key uuid NOT NULL,
+    command jsonb NOT NULL, review_id uuid NOT NULL REFERENCES workflow_learning_reviews(id), digest text NOT NULL,
+    PRIMARY KEY(tenant,project,logical_session,actor,credential,idempotency_key)
+);
+ALTER TABLE workflow_training_publications ADD COLUMN IF NOT EXISTS authority jsonb;
+CREATE TABLE IF NOT EXISTS workflow_training_decision_receipts (
+    request_id uuid PRIMARY KEY, tenant text NOT NULL, project text NOT NULL,
+    actor text NOT NULL, credential text NOT NULL, idempotency_key uuid NOT NULL,
+    expected_revision bigint NOT NULL, selection jsonb NOT NULL, approved boolean NOT NULL,
+    receipt jsonb NOT NULL,
+    UNIQUE(tenant,project,actor,credential,idempotency_key)
+);
+CREATE TABLE IF NOT EXISTS workflow_training_candidate_decisions (
+    request_id uuid NOT NULL, review_id uuid NOT NULL REFERENCES workflow_learning_reviews(id),
+    candidate_hash text NOT NULL, action jsonb NOT NULL,
+    actor text NOT NULL, credential text NOT NULL, decided_at timestamptz NOT NULL DEFAULT now(),
+    PRIMARY KEY(request_id,review_id,candidate_hash)
+);
 CREATE TABLE IF NOT EXISTS workflow_learning_normalization_calls (
     id uuid PRIMARY KEY, tenant text NOT NULL, project text NOT NULL,
     review_id uuid REFERENCES workflow_learning_reviews(id), context jsonb NOT NULL,
@@ -108,20 +153,8 @@ CREATE TABLE IF NOT EXISTS workflow_learning_guidance_support (
     PRIMARY KEY(association_id,review_id)
 );
 CREATE INDEX IF NOT EXISTS workflow_learning_guidance_scope ON workflow_learning_catalogue_guidance(tenant,project);
--- Full teaching-format cutover: retain old JSON for repair, never reinterpret templates.
-UPDATE workflow_learning_examples SET state='bad', reason='incompatible teaching format; retained for repair'
-WHERE state IN ('active','candidate','superseded')
-AND (coalesce(candidate#>>'{state,evidence,program,program,format}',candidate#>>'{state,program,program,format}')
-    IS DISTINCT FROM 'whole_program_example'
-    OR coalesce(candidate#>'{state,evidence,program,program,schema_version}',candidate#>'{state,program,program,schema_version}')
-    IS DISTINCT FROM '3'::jsonb);
-UPDATE workflow_learning_reviews SET state='failed',lease_until=NULL,
-    failure_reason='incompatible teaching evidence version; retained for repair'
-WHERE state IN ('queued','leased','awaiting_approval') AND (
-    jsonb_typeof(seal->'executions') IS DISTINCT FROM 'array'
-    OR EXISTS(SELECT 1 FROM jsonb_array_elements(CASE WHEN jsonb_typeof(seal->'executions')='array' THEN seal->'executions' ELSE '[]'::jsonb END) receipt
-        WHERE NOT (receipt ? 'observation' AND receipt ? 'catalogue_requirements')
-        OR (receipt#>>'{observation,state}'='available' AND (
-            receipt#>>'{observation,value,program,format}' IS DISTINCT FROM 'whole_program_example'
-            OR receipt#>'{observation,value,program,schema_version}' IS DISTINCT FROM '3'::jsonb)))
+CREATE TABLE IF NOT EXISTS workflow_training_automatic_decisions (
+ review_id uuid PRIMARY KEY REFERENCES workflow_learning_reviews(id),
+ grant_id uuid NOT NULL, candidate_hashes jsonb NOT NULL,
+ decided_at timestamptz NOT NULL DEFAULT clock_timestamp()
 );

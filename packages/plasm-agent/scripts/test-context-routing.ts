@@ -42,6 +42,21 @@ assert.throws(() => decodeRoutingPacket(JSON.stringify(deferredExisting)), Agent
 const invalidEmptyInitial = structuredClone(noAdditions);
 invalidEmptyInitial.routing.search.exposed = [];
 assert.throws(() => decodeRoutingPacket(JSON.stringify(invalidEmptyInitial)), AgentExecutionFailure);
+const pendingInitial = structuredClone(invalidEmptyInitial);
+pendingInitial.routing.closure = null;
+pendingInitial.teaching = null;
+pendingInitial.routing.search.unexplored = [packet.routing.retrieval.candidates[0]!.reference];
+pendingInitial.routing.search.deferred = [{reference: packet.routing.retrieval.candidates[0]!.reference, reason: "operation_pending"}];
+assert.deepEqual(decodeRoutingPacket(JSON.stringify(pendingInitial)), pendingInitial);
+const relevantWithPendingOperations = structuredClone(packet);
+relevantWithPendingOperations.routing.search.deferred = [{reference: packet.routing.retrieval.candidates[0]!.reference, reason: "operation_pending"}];
+assert.deepEqual(decodeRoutingPacket(JSON.stringify(relevantWithPendingOperations)), relevantWithPendingOperations);
+const relevantWithUnavailableFollowup = structuredClone(relevantWithPendingOperations);
+relevantWithUnavailableFollowup.routing.search.deferred[0]!.reason = "provider_unavailable";
+assert.deepEqual(decodeRoutingPacket(JSON.stringify(relevantWithUnavailableFollowup)), relevantWithUnavailableFollowup);
+const invalidDeferredRelevant = structuredClone(relevantWithPendingOperations);
+invalidDeferredRelevant.routing.search.deferred[0]!.reason = "input_bytes";
+assert.throws(() => decodeRoutingPacket(JSON.stringify(invalidDeferredRelevant)), AgentExecutionFailure);
 const rejudged = structuredClone(packet);
 rejudged.routing.search.exposed = [packet.routing.retrieval.candidates[0]!.reference];
 assert.throws(() => decodeRoutingPacket(JSON.stringify(rejudged)), AgentExecutionFailure);
@@ -55,10 +70,12 @@ retried.routing.search.requests = 3;
 retried.routing.search.input_bytes *= 3;
 retried.routing.search.missing_usage = 2;
 assert.deepEqual(decodeRoutingPacket(JSON.stringify(retried)), retried);
+const distinctWaves = structuredClone(retried);
+distinctWaves.routing.search.input_bytes += 1;
+assert.deepEqual(decodeRoutingPacket(JSON.stringify(distinctWaves)), distinctWaves);
 for (const corrupt of [
   (p: typeof retried) => { p.routing.search.requests = 4; },
   (p: typeof retried) => { p.routing.search.input_bytes = 48001; },
-  (p: typeof retried) => { p.routing.search.input_bytes += 1; },
   (p: typeof retried) => { p.routing.search.missing_usage = 4; },
 ]) {
   const invalid = structuredClone(retried); corrupt(invalid);
@@ -136,7 +153,7 @@ const failingTools = createPlasmTools({
   recordExecutionFailure: async () => {},
 });
 const failedContext = failureObservationSchema.parse(await failingTools.plasm_context!.execute!(
-  {intent:"Read records", session_mode:"new"}, {toolCallId:"contract", messages:[], context:{}},
+  {intent:"Read records", session_mode:"extend", logical_session_ref:"l_AAAAAAAAQACAAAAAAAAAAQ"}, {toolCallId:"contract", messages:[], context:{}},
 ));
 assert.equal(failedContext.failure.code, "discovery_response_contract");
 assert.match(failedContext.summary, /not valid JSON/);
@@ -203,7 +220,7 @@ async function proveBootstrap(wire: unknown): Promise<void> {
   const root = await mkdtemp(path.join(tmpdir(), "plasm-budget-routing-"));
   const unused = async (): Promise<never> => {throw new Error("unexpected execution");};
   let routes = 0;
-  const engine: PlasmEngine = {
+  const engine: PlasmEngine = { takeCompletedTeaching: async () => "",
     close: async () => {}, loadCatalog: unused, activateDiscovery: unused,
     synthesizeTeaching: unused, dryRun: unused, runPlan: unused, run: unused, introspectCatalog: unused,
     routeIntent: async provenance => {

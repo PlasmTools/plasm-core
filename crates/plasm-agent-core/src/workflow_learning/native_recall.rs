@@ -1,7 +1,6 @@
 //! Native discovery consumes the same authorized library recall as HTTP/MCP.
 use super::{
     model::{LibraryScope, OutcomeAssurance, StoredExample},
-    teaching::TeachingOutput,
     WorkflowLearning,
 };
 use crate::discovery_store::DiscoveryAuthorization;
@@ -18,8 +17,7 @@ pub enum ExampleExposure {
 pub struct ExampleSummary {
     pub example_ref: uuid::Uuid,
     pub purpose: String,
-    pub applicability: Vec<String>,
-    pub outputs: Vec<TeachingOutput>,
+    pub outputs: Vec<String>,
     pub assurance: OutcomeAssurance,
 }
 
@@ -27,6 +25,7 @@ pub struct ExampleSummary {
 #[serde(rename_all = "snake_case")]
 pub enum RecallDisposition {
     Completed,
+    Pending,
     Unavailable,
     TimedOut,
 }
@@ -46,7 +45,7 @@ impl ExampleGuidance {
         }
     }
 
-    fn from_authorized(
+    pub fn from_authorized(
         examples: Vec<StoredExample>,
         associations: Vec<super::catalogue_guidance::CatalogueAssociation>,
         exposure: ExampleExposure,
@@ -70,8 +69,11 @@ impl ExampleGuidance {
                 summaries.push(ExampleSummary {
                     example_ref: example.id,
                     purpose: example.candidate.intent.purpose.clone(),
-                    applicability: example.candidate.intent.facets.clone(),
-                    outputs: program.outputs.clone(),
+                    outputs: program
+                        .outputs
+                        .iter()
+                        .map(|output| output.summary())
+                        .collect(),
                     assurance: example.candidate.quality.assurance,
                 });
             }
@@ -96,33 +98,22 @@ pub async fn recall_guidance(
     store: &crate::discovery_store::DiscoveryStore,
     generation: &str,
 ) -> ExampleGuidance {
-    tokio::time::timeout(std::time::Duration::from_secs(10), async {
-        let catalog_fingerprints = match store.load_discovery_generation(generation, allowed).await
-        {
-            Ok((catalogs, _)) => catalogs
-                .into_iter()
-                .map(|(id, cgs)| (id, cgs.effective_catalog_cgs_hash_hex()))
-                .collect(),
-            Err(error) => {
-                tracing::warn!(%error,"catalogue guidance pins unavailable");
-                return ExampleGuidance::empty(RecallDisposition::Unavailable);
-            }
-        };
-        match learning
-            .recall_with_guidance(scope, intent, allowed, &catalog_fingerprints)
-            .await
-        {
-            Ok((examples, associations)) => {
-                ExampleGuidance::from_authorized(examples, associations, exposure)
-            }
-            Err(error) => {
-                tracing::warn!(%error,"native workflow recall unavailable");
-                ExampleGuidance::empty(RecallDisposition::Unavailable)
-            }
+    match learning
+        .recall_with_guidance(scope, intent, allowed, store, generation)
+        .await
+    {
+        Ok((examples, associations)) => {
+            ExampleGuidance::from_authorized(examples, associations, exposure)
         }
-    })
-    .await
-    .unwrap_or_else(|_| ExampleGuidance::empty(RecallDisposition::TimedOut))
+        Err(super::LearningError::RecallTimeout(stage)) => {
+            tracing::warn!(%stage, "native workflow recall timed out");
+            ExampleGuidance::empty(RecallDisposition::TimedOut)
+        }
+        Err(error) => {
+            tracing::warn!(%error,"native workflow recall unavailable");
+            ExampleGuidance::empty(RecallDisposition::Unavailable)
+        }
+    }
 }
 
 #[cfg(test)]
@@ -173,6 +164,11 @@ mod tests {
             Vec::new(),
             ExampleExposure::OptionalExamples,
         );
+        let rendered = serde_json::to_string(&optional.examples).unwrap();
+        assert!(!rendered.contains("catalog_hash"));
+        assert!(!rendered.contains("catalog_fingerprints"));
+        assert!(!rendered.contains("row_type"));
+        assert!(!rendered.contains("applicability"));
         assert!(
             admission.capabilities.is_empty(),
             "examples alone do not manufacture catalogue associations"

@@ -6,11 +6,12 @@
  */
 import assert from "node:assert/strict";
 import { mock } from "node:test";
-import { tool } from "ai";
+import { APICallError, tool } from "ai";
 import { MockLanguageModelV3 } from "ai/test";
 import { z } from "zod";
 import { runEveToolLoop } from "../src/telemetry/eve-tool-loop.js";
 import { createEvalTerminalTools } from "../src/tools/harness-tools.js";
+import type { ProviderRequestEvent } from "../src/telemetry/provider-completion.js";
 
 const usage = {
   inputTokens: { total: 8, noCache: 8, cacheRead: 0, cacheWrite: 0 },
@@ -19,6 +20,7 @@ const usage = {
 
 let calls = 0;
 let abortObserved = false;
+const providerEvents: Array<ProviderRequestEvent & { step: number }> = [];
 const model = new MockLanguageModelV3({
   doStream: async (options) => {
     const index = calls++;
@@ -80,6 +82,7 @@ const result = await runEveToolLoop({
   messages: [{ role: "user", content: "finish the task" }],
   maxSteps: 3,
   generationTimeoutMs: 20,
+  onProviderRequest: event => providerEvents.push(event),
   maxConsecutiveProviderFailures: 2,
   agentName: "generation-timeout-recovery",
   telemetry: { isEnabled: false },
@@ -90,6 +93,37 @@ assert.equal(calls, 2, "one timed-out generation receives one recovery turn");
 assert.equal(result.stopReason, "completed");
 assert.equal(result.generationTimeoutCount, 1);
 assert.deepEqual(result.stepFinishReasons, ["error", "tool-calls"]);
+assert.ok(providerEvents.some(event => event.step === 1 && event.phase === "abort"));
+assert.ok(providerEvents.some(event => event.step === 2 && event.phase === "end"));
+assert.ok(providerEvents.some(event => event.step === 2 && event.phase === "finish" && event.input_tokens === 8));
+assert.ok(providerEvents.some(event => event.step === 1 && event.phase === "start" && (event.prompt_bytes ?? 0) > 0 && (event.tool_schema_bytes ?? 0) > 0));
+assert.ok(providerEvents.some(event => event.step === 1 && event.phase === "start" && event.tool_schema_sizes?.some(tool => tool.name === "complete_task" && tool.bytes > 0)));
+assert.ok(!JSON.stringify(providerEvents).includes("provider generation exceeded"), "timing records contain no prompt text");
+
+let retryCalls = 0;
+const retryEvents: Array<ProviderRequestEvent & { step: number }> = [];
+const retryModel = new MockLanguageModelV3({
+  doStream: async () => {
+    if (++retryCalls === 1) throw new APICallError({
+      message: "retry fixture", url: "https://example.invalid", requestBodyValues: {},
+      statusCode: 429, isRetryable: true,
+    });
+    return { stream: new ReadableStream({ start(controller) {
+      controller.enqueue({ type: "tool-call", toolCallId: "retry-complete", toolName: "complete_task", input: "{}" });
+      controller.enqueue({ type: "finish", finishReason: { unified: "tool-calls", raw: "tool_calls" }, usage });
+      controller.close();
+    } }) };
+  },
+});
+const retried = await runEveToolLoop({
+  model: retryModel, system: "system", messages: [{ role: "user", content: "test" }],
+  tools: createEvalTerminalTools(), maxSteps: 1, generationTimeoutMs: 10_000,
+  agentName: "provider-retry-observation", telemetry: { isEnabled: false },
+  onProviderRequest: event => retryEvents.push(event),
+});
+assert.equal(retried.stopReason, "completed");
+assert.deepEqual(retryEvents.filter(event => event.phase === "start").map(event => event.attempt), [1, 2]);
+assert.ok(retryEvents.some(event => event.phase === "error" && event.attempt === 1));
 
 let exhaustedCalls = 0;
 const exhaustedModel = new MockLanguageModelV3({
@@ -283,5 +317,55 @@ assert.equal(tailAborted, true);
 assert.equal(tailExecutions, 0);
 assert.equal(stalled.stopReason, "provider_exhausted");
 assert.equal(stalled.generationTimeoutCount, 1);
+
+// An upstream implementation can ignore AbortSignal. Check cancellation at
+// the real loop boundary without letting the fixture hang indefinitely.
+let releaseIgnoringAbort!: () => void;
+let ignoredAbortObserved = false;
+const ignoringAbort = new MockLanguageModelV3({
+  doStream: async options => {
+    options.abortSignal?.addEventListener("abort", () => { ignoredAbortObserved = true; }, { once: true });
+    await new Promise<void>(resolve => { releaseIgnoringAbort = resolve; });
+    throw new Error("fixture released");
+  },
+});
+const ignoredRun = runEveToolLoop({
+  model: ignoringAbort, system: "system", messages: [{ role: "user", content: "test" }],
+  tools: {}, maxSteps: 1, generationTimeoutMs: 20, maxConsecutiveProviderFailures: 1,
+  agentName: "provider-ignores-abort", telemetry: { isEnabled: false },
+}).then(() => "settled", () => "settled");
+const promptSettlement = await Promise.race([
+  ignoredRun,
+  new Promise<"pending">(resolve => setTimeout(() => resolve("pending"), 100)),
+]);
+assert.equal(ignoredAbortObserved, true);
+assert.equal(promptSettlement, "settled", "a non-cooperative upstream must not defeat the deadline");
+releaseIgnoringAbort();
+await ignoredRun;
+console.log(`non-cooperative provider after abort: ${promptSettlement}`);
+
+let lateEffects = 0;
+let releaseLateStream!: () => void;
+const ignoringReadAbort = new MockLanguageModelV3({
+  doStream: async () => ({ stream: new ReadableStream({ start(controller) {
+    controller.enqueue({ type: "tool-call", toolCallId: "late", toolName: "record", input: "{}" });
+    controller.enqueue({ type: "finish", finishReason: { unified: "tool-calls", raw: "tool_calls" }, usage });
+    releaseLateStream = () => { try { controller.close(); } catch { /* already cancelled */ } };
+  } }) }),
+});
+const lateRun = runEveToolLoop({
+  model: ignoringReadAbort, system: "system", messages: [{ role: "user", content: "test" }],
+  tools: { record: tool({ inputSchema: z.object({}), execute: async () => { lateEffects++; return "effect"; } }) },
+  maxSteps: 1, generationTimeoutMs: 20, maxConsecutiveProviderFailures: 1,
+  agentName: "provider-ignores-stream-abort", telemetry: { isEnabled: false },
+});
+const lateSettlement = await Promise.race([
+  lateRun.then(() => "settled"),
+  new Promise<"pending">(resolve => setTimeout(() => resolve("pending"), 100)),
+]);
+assert.equal(lateSettlement, "settled", "stalled streams must not defeat the deadline");
+releaseLateStream();
+await lateRun;
+assert.equal(lateEffects, 0, "a late finish must never dispatch a side effect");
 
 console.log("ok: generation-timeout-recovery");

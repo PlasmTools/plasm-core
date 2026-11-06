@@ -1,10 +1,11 @@
-use super::tests::{tiny_engine, write_native_workflow_fixture, MockProductListTransport};
+use super::tests::{
+    opt_in_training_with_policy, review_request, tiny_engine, write_native_workflow_fixture,
+    MockProductListTransport,
+};
 use super::*;
 use plasm_agent_core::workflow_learning::{
-    archive::{
-        ArchiveDigest, ArchiveExportRequest, ArchiveKind, ArchiveRecord, AssessmentUnavailable,
-        CollectionIdentity, TaskAssessment, TaskMembership, TaskOutcome,
-    },
+    archive::ArchiveKind,
+    filesystem_archive::{Reader, Record, RecordKind},
     index::NormalizedIntent,
     model::{Candidate, CandidateState, PublicationPolicy, Quality, VerifiedProgram},
     repository::WorkflowRepository,
@@ -15,43 +16,26 @@ async fn evidence_counts(
     repository: &WorkflowRepository,
     scope: &plasm_agent_core::workflow_learning::model::LibraryScope,
 ) -> (usize, usize) {
-    let archive = repository
-        .export_archive(
-            scope,
-            &ArchiveExportRequest {
-                kind: ArchiveKind::PrivateCollection,
-                collection: CollectionIdentity {
-                    protocol_digest: ArchiveDigest::try_from("a".repeat(64)).unwrap(),
-                    tasks: vec![TaskMembership {
-                        task_id: "fixture".into(),
-                        group_id: "fixture".into(),
-                    }],
-                },
-            },
-        )
+    let path = std::env::temp_dir().join(format!(
+        "plasm-evidence-counts-{}",
+        plasm_agent_core::session_identity::LogicalSessionId::new_v4()
+    ));
+    let manifest = repository
+        .export_filesystem_archive(scope, &path, ArchiveKind::PrivateCollection)
         .await
         .unwrap();
-    let items = &archive.document().items;
-    (
-        items
-            .iter()
-            .filter(|item| {
-                matches!(
-                    item.record,
-                    ArchiveRecord::Observation { .. } | ArchiveRecord::HistoricalObservation { .. }
-                )
-            })
-            .count(),
-        items
-            .iter()
-            .filter(|item| {
-                matches!(
-                    item.record,
-                    ArchiveRecord::Review { .. } | ArchiveRecord::HistoricalReview { .. }
-                )
-            })
-            .count(),
-    )
+    let observations = manifest
+        .records
+        .values()
+        .filter(|record| record.kind == RecordKind::Observation)
+        .count();
+    let reviews = manifest
+        .records
+        .values()
+        .filter(|record| record.kind == RecordKind::Review)
+        .count();
+    std::fs::remove_dir_all(path).unwrap();
+    (observations, reviews)
 }
 
 #[tokio::test]
@@ -75,6 +59,7 @@ async fn postgres_library_probe_uses_serving_without_executions_and_rejects_cont
                 project: "fixture".into(),
             },
             database_url: url,
+            serve_examples: false,
         },
     );
     producer
@@ -91,6 +76,7 @@ async fn postgres_library_probe_uses_serving_without_executions_and_rejects_cont
         .await
         .unwrap();
     let source = "class Inspect(Program):\n    def build(self):\n        return e1.query()\n";
+    let actor = opt_in_training_with_policy(&producer, true).await;
     let plan = producer.dry_run(source).await.unwrap();
     assert!(
         producer
@@ -100,9 +86,9 @@ async fn postgres_library_probe_uses_serving_without_executions_and_rejects_cont
             .ok
     );
     let index: serde_json::Value =
-        serde_json::from_str(&producer.completed_workflow_runs().await.unwrap()).unwrap();
-    let run = index["runs"][0]["run_id"].as_str().unwrap();
-    producer.review_workflow(&serde_json::json!({"subtasks":[{"intent":"Inspect products","observed_outcome":"Observed fixture product","run_ids":[run]}]}).to_string()).await.unwrap();
+        serde_json::from_str(&producer.completed_workflow_executions().await.unwrap()).unwrap();
+    let run = index["executions"][0]["execution_id"].as_str().unwrap();
+    producer.review_workflow(&review_request(serde_json::json!([{"intent":"Inspect products","observed_outcome":"Observed fixture product","execution_ids":[run]}])).to_string(),actor).await.unwrap();
     let repository = config.learning().repository().await.unwrap();
     let scope = config.scope().unwrap();
     let claim = repository.claim(120).await.unwrap().unwrap();
@@ -120,7 +106,7 @@ async fn postgres_library_probe_uses_serving_without_executions_and_rejects_cont
         variant: "matrix".into(),
         identity: checked.program().structural_fingerprint.clone(),
         coverage: vec!["products".into()],
-        quality: Quality::observed(&claim.seal, &[receipt.run_id], 1).unwrap(),
+        quality: Quality::observed(&claim.seal, &[receipt.execution_id], 1).unwrap(),
         state: CandidateState::Verified {
             evidence: VerifiedProgram::observed(checked, claim.seal.assurance),
         },
@@ -131,49 +117,18 @@ async fn postgres_library_probe_uses_serving_without_executions_and_rejects_cont
         .finish(&claim, &[candidate], PublicationPolicy::Automatic)
         .await
         .unwrap();
-    repository
-        .record_archive_assessment(
-            &scope,
-            &TaskAssessment {
-                attempt_id: "fixture".into(),
-                task_id: "fixture".into(),
-                group_id: "fixture".into(),
-                logical_sessions: vec![
-                    plasm_agent_core::session_identity::LogicalSessionId::parse(
-                        &producer.session_id,
-                    )
-                    .unwrap(),
-                ],
-                protocol_digest: ArchiveDigest::try_from("a".repeat(64)).unwrap(),
-                assessor: "native-offline-fixture".into(),
-                outcome: TaskOutcome::Unavailable {
-                    reason: AssessmentUnavailable::NotAttempted,
-                },
-            },
-        )
-        .await
-        .unwrap();
     if let Ok(output) = std::env::var("PLASM_SERVING_PROBE_FIXTURE_OUT") {
         let output = std::path::Path::new(&output);
         assert!(!output.exists(), "fixture output must be new");
         write_native_workflow_fixture(output, &producer);
-        let archive = repository
-            .export_archive(
+        repository
+            .export_filesystem_archive(
                 &scope,
-                &ArchiveExportRequest {
-                    kind: ArchiveKind::PrivateCollection,
-                    collection: CollectionIdentity {
-                        protocol_digest: ArchiveDigest::try_from("a".repeat(64)).unwrap(),
-                        tasks: vec![TaskMembership {
-                            task_id: "fixture".into(),
-                            group_id: "fixture".into(),
-                        }],
-                    },
-                },
+                &output.join("archive"),
+                ArchiveKind::PrivateCollection,
             )
             .await
             .unwrap();
-        std::fs::write(output.join("archive.json"), archive.encode().unwrap()).unwrap();
     }
     let before = evidence_counts(&repository, &scope).await;
     assert_eq!(before, (1, 1));
@@ -181,6 +136,93 @@ async fn postgres_library_probe_uses_serving_without_executions_and_rejects_cont
         "plasm-serving-proof-{}",
         plasm_agent_core::session_identity::LogicalSessionId::new_v4()
     ));
+    // A different target must explicitly attest the exact source review before
+    // a compiler-checked example may be adopted. Reimport is idempotent.
+    let fixture = directory.join("import-fixture");
+    write_native_workflow_fixture(&fixture, &producer);
+    let archive_path = directory.join("source-archive");
+    let manifest = repository
+        .export_filesystem_archive(&scope, &archive_path, ArchiveKind::PrivateCollection)
+        .await
+        .unwrap();
+    let reader = Reader::open(&archive_path).unwrap();
+    let evidence = manifest
+        .records
+        .keys()
+        .find_map(|identity| match reader.read_record(identity).unwrap() {
+            Record::ExampleSupport { evidence, .. } => Some(evidence),
+            _ => None,
+        })
+        .expect("published example support");
+    let mut target_config = config.clone();
+    if let NativeLearningConfig::Collect(ref mut target) = target_config {
+        target.scope.project = format!("import-{}", producer.session_id);
+    } else {
+        panic!("expected collecting target");
+    }
+    let target = crate::PlasmEngine::new();
+    target
+        .configure_workflow_learning(serde_json::to_string(&target_config).unwrap())
+        .await
+        .unwrap();
+    let key = plasm_agent_core::session_identity::LogicalSessionId::new_v4().to_string();
+    target.configure_training(serde_json::json!({"subject":"fixture-attestor", "credential":"fixture-key", "idempotency_key": key,
+        "grant":{"grantee":"fixture-attestor", "credential":"fixture-key", "actions":["attest_imported_review"],
+            "expires_at":"2099-01-01T00:00:00Z", "publication_policy":{"policy":"human_reviewed"}, "target":{"scope":"project"}}}).to_string()).await.unwrap();
+    target
+        .load_catalog(
+            fixture
+                .join("matrix.manifest.json")
+                .to_string_lossy()
+                .into_owned(),
+        )
+        .await
+        .unwrap();
+    target
+        .activate_discovery(
+            format!("import-proof-{}", producer.session_id),
+            serde_json::to_string(&plasm_core::prerequisites::DeploymentBindings::default())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    target.authorize_imported_workflow_review(serde_json::json!({"archive_digest":manifest.digest, "evidence":evidence,
+        "decision_id":plasm_agent_core::session_identity::LogicalSessionId::new_v4().to_string(), "expires_at":"2099-01-01T00:00:00Z"}).to_string()).await.unwrap();
+    let policy = serde_json::json!({"expected_digest": manifest.digest, "source_scope": manifest.source_scope}).to_string();
+    let imported: serde_json::Value = serde_json::from_str(
+        &target
+            .import_workflow_archive(archive_path.to_string_lossy().into_owned(), policy.clone())
+            .await
+            .unwrap(),
+    )
+    .unwrap();
+    assert!(
+        imported["items"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|item| item["disposition"]["status"] == "eligible_candidate"),
+        "{imported}"
+    );
+    let repeated: serde_json::Value = serde_json::from_str(
+        &target
+            .import_workflow_archive(archive_path.to_string_lossy().into_owned(), policy)
+            .await
+            .unwrap(),
+    )
+    .unwrap();
+    assert!(
+        repeated["items"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .all(|item| item["disposition"]["status"] == "duplicate"),
+        "{repeated}"
+    );
+    let checked: serde_json::Value =
+        serde_json::from_str(&target.verify_workflow_library(1).await.unwrap()).unwrap();
+    assert_eq!(checked["examples"][0]["outcome"]["status"], "checked");
+    target.close().await;
     for changed in [false, true] {
         if changed {
             let cgs = Arc::make_mut(producer.catalogs.get_mut("matrix").unwrap());

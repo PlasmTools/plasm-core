@@ -10,6 +10,7 @@ use uuid::Uuid;
 
 use crate::mcp_api_key_registry::{
     McpApiKeyListItem, McpApiKeyProvisioned, McpApiKeyRegistry, McpApiKeyStatusPublic,
+    VerifiedMcpApiKey,
 };
 
 #[async_trait]
@@ -62,7 +63,7 @@ pub trait McpTransportAuth: Send + Sync {
         new_key_label: String,
     ) -> Result<McpApiKeyProvisioned, SecretStoreError>;
 
-    async fn verify_api_key(&self, raw_key: &str) -> Option<Uuid>;
+    async fn verify_api_key(&self, raw_key: &str) -> Option<VerifiedMcpApiKey>;
 
     async fn public_key_status(
         &self,
@@ -133,7 +134,7 @@ impl McpTransportAuth for McpApiKeyRegistry {
         McpApiKeyRegistry::rotate_one_for_config(self, config_id, key_id, new_key_label).await
     }
 
-    async fn verify_api_key(&self, raw_key: &str) -> Option<Uuid> {
+    async fn verify_api_key(&self, raw_key: &str) -> Option<VerifiedMcpApiKey> {
         McpApiKeyRegistry::verify_api_key(self, raw_key).await
     }
 

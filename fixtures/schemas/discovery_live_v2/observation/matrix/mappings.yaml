@@ -1,0 +1,20 @@
+{
+  "depth_read": {
+    "method": "GET",
+    "path": [
+      {
+        "type": "literal",
+        "value": "depth_read"
+      }
+    ]
+  },
+  "invoice_read": {
+    "method": "GET",
+    "path": [
+      {
+        "type": "literal",
+        "value": "invoice_read"
+      }
+    ]
+  }
+}

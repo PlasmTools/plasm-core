@@ -1,6 +1,6 @@
 //! Evidence-backed assessments of observed behavior, call cost, and readability.
 //! Successful execution is evidence of observation, not edge-case robustness.
-use super::model::{ExecutionReceipt, OutcomeAssurance, RunArtifactId, SealedReview};
+use super::model::{ExecutionId, ExecutionReceipt, OutcomeAssurance, SealedReview};
 use super::teaching::CheckedTeachingExample;
 use serde::{Deserialize, Serialize};
 use std::{cmp::Ordering, collections::BTreeSet, num::NonZeroU32};
@@ -39,7 +39,7 @@ pub(super) fn program_observations<'a>(
                 || first.compiled_plan != receipt.compiled_plan
                 || first.observation != receipt.observation
                 || first.catalogue_requirements != receipt.catalogue_requirements
-                || first.symbol_context != receipt.symbol_context
+                || first.teaching_plan != receipt.teaching_plan
                 || first.catalog_fingerprints != receipt.catalog_fingerprints
                 || first.prompt_hash != receipt.prompt_hash
                 || first.execute_session != receipt.execute_session
@@ -55,16 +55,14 @@ pub(super) fn program_observations<'a>(
 /// Immutable reference to the exact host receipt, not an LLM assertion.
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 pub struct ExecutionEvidenceRef {
-    run_id: RunArtifactId,
+    execution_id: ExecutionId,
     receipt_digest: String,
 }
 impl ExecutionEvidenceRef {
     fn from_receipt(receipt: &ExecutionReceipt) -> Result<Self, QualityError> {
         Ok(Self {
-            run_id: receipt.run_id,
-            receipt_digest: plasm_core::catalog_discovery::content_hash(&serde_json::to_vec(
-                receipt,
-            )?),
+            execution_id: receipt.execution_id,
+            receipt_digest: receipt.evidence_digest()?.as_str().to_owned(),
         })
     }
 }
@@ -73,15 +71,15 @@ struct ExecutionEvidence {
     receipts: BTreeSet<ExecutionEvidenceRef>,
 }
 impl ExecutionEvidence {
-    fn selected(seal: &SealedReview, run_ids: &[RunArtifactId]) -> Result<Self, QualityError> {
-        let requested: BTreeSet<_> = run_ids.iter().collect();
+    fn selected(seal: &SealedReview, execution_ids: &[ExecutionId]) -> Result<Self, QualityError> {
+        let requested: BTreeSet<_> = execution_ids.iter().collect();
         if requested.is_empty() {
             return Err(QualityError::MissingEvidence);
         }
         let receipts = seal
             .executions
             .iter()
-            .filter(|receipt| requested.contains(&receipt.run_id))
+            .filter(|receipt| requested.contains(&receipt.execution_id))
             .map(ExecutionEvidenceRef::from_receipt)
             .collect::<Result<BTreeSet<_>, _>>()?;
         if receipts.len() != requested.len() {
@@ -101,7 +99,7 @@ impl ExecutionEvidence {
                 CheckedTeachingExample::from_observation(&receipt.observation)
                     .is_ok_and(|observed| &observed == program)
             })
-            .map(|receipt| receipt.run_id)
+            .map(|receipt| receipt.execution_id)
             .collect::<Vec<_>>();
         Self::selected(seal, &ids)
     }
@@ -121,7 +119,7 @@ impl ExecutionEvidence {
         let selected = seal.executions.iter().filter(|receipt| {
             self.receipts
                 .iter()
-                .any(|reference| reference.run_id == receipt.run_id)
+                .any(|reference| reference.execution_id == receipt.execution_id)
         });
         Ok(program_observations(selected)?.len())
     }
@@ -135,7 +133,7 @@ impl ExecutionEvidence {
                 let receipt = seal
                     .executions
                     .iter()
-                    .find(|receipt| receipt.run_id == reference.run_id)?;
+                    .find(|receipt| receipt.execution_id == reference.execution_id)?;
                 CheckedTeachingExample::from_observation(&receipt.observation).ok()
             })
             .collect()
@@ -240,10 +238,10 @@ impl Quality {
     }
     pub fn observed(
         seal: &SealedReview,
-        run_ids: &[RunArtifactId],
+        execution_ids: &[ExecutionId],
         teaching_tokens: u32,
     ) -> Result<Self, QualityError> {
-        let evidence = ExecutionEvidence::selected(seal, run_ids)?;
+        let evidence = ExecutionEvidence::selected(seal, execution_ids)?;
         let count = NonZeroU32::new(
             u32::try_from(evidence.observation_count(seal)?)
                 .map_err(|_| QualityError::EvidenceCount)?,
@@ -332,16 +330,18 @@ mod tests {
             scope: scope.clone(),
             logical_session: ids::logical("logical"),
             session_revision: 1,
-            run_id: ids::run("run"),
+            execution_id: ids::run("run"),
             plan_id: ids::plan("plan"),
             prompt_hash: ids::prompt("prompt"),
             execute_session: ids::execute("session"),
-            run_artifact: serde_json::json!({"complete":true}),
             source: program.program().source.clone(),
-            symbol_context: Default::default(),
+            teaching_plan: super::super::review_packet::TeachingPlan::Unavailable {
+                reason: super::super::review_packet::TeachingPlanUnavailable::PlanningFailed,
+            },
+
             compiled_plan: serde_json::json!({}),
             observation: program.observation(),
-            catalogue_requirements: Default::default(),
+            catalogue_requirements: crate::workflow_learning::catalogue_guidance::CatalogueRequirementEvidence::Unavailable { diagnostic: "fixture".into() },
             catalog_fingerprints: program.program().catalog_fingerprints.clone(),
         };
         (
@@ -363,8 +363,7 @@ mod tests {
     fn output_artifacts_count_as_one_program_observation() {
         let (program, mut seal) = seal();
         let mut second = seal.executions[0].clone();
-        second.run_id = ids::run("other-output");
-        second.run_artifact = serde_json::json!({"output":2});
+        second.execution_id = ids::run("other-output");
         seal.executions.push(second);
         let ids = vec![ids::run("run"), ids::run("other-output")];
         let quality = Quality::observed(&seal, &ids, 1).unwrap();
@@ -385,32 +384,13 @@ mod tests {
     }
 
     #[test]
-    fn differing_compilation_symbol_contexts_cannot_share_an_observation() {
+    fn differing_teaching_plans_cannot_share_an_observation() {
         let (_, mut seal) = seal();
-        let first_session =
-            crate::workflow_learning::teaching::tests::session(&["LangItem", "LangLine"]);
-        let second_session =
-            crate::workflow_learning::teaching::tests::session(&["LangLine", "LangItem"]);
-        let capture = |session: &crate::execute_session::ExecuteSession| {
-            let source = crate::workflow_learning::teaching::tests::source(session);
-            let bundle =
-                crate::plasm_dag::compile_python_program_checked(session, &source).unwrap();
-            crate::program_symbol_context::SavedProgramContext::from_compilation(
-                &bundle,
-                &seal.request.scope,
-                &ids::logical("logical"),
-                ids::execute("session").as_str(),
-            )
-        };
-        let first = capture(&first_session);
-        let second = capture(&second_session);
-        assert!(first.captured().is_some());
-        assert!(second.captured().is_some());
-        assert_ne!(first, second);
-        seal.executions[0].symbol_context = first;
         let mut other = seal.executions[0].clone();
-        other.run_id = ids::run("second-output");
-        other.symbol_context = second;
+        other.execution_id = ids::run("second-output");
+        other.teaching_plan = super::super::review_packet::TeachingPlan::Available {
+            text: "different plan".into(),
+        };
         seal.executions.push(other);
         assert!(
             Quality::observed(&seal, &[ids::run("run"), ids::run("second-output")], 1).is_err()
@@ -431,7 +411,7 @@ mod tests {
         assert!(!cheaper.strictly_better_than(&observed));
         assert!(Quality::observed(&seal, &[], 10).is_err());
         assert!(Quality::observed(&seal, &[ids::run("missing")], 10).is_err());
-        seal.executions[0].run_artifact = serde_json::json!({"changed":true});
+        seal.executions[0].source.push_str("# changed program");
         assert!(!observed.verified_by(&seal));
     }
     #[test]
@@ -463,7 +443,7 @@ mod tests {
             second.program().behavior_fingerprint()
         );
         let mut second_receipt = seal.executions[0].clone();
-        second_receipt.run_id = ids::run("second-run");
+        second_receipt.execution_id = ids::run("second-run");
         second_receipt.plan_id = ids::plan("second-plan");
         second_receipt.source = second.program().source.clone();
         second_receipt.observation = second.observation();

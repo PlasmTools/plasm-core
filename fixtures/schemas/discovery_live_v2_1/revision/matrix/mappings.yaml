@@ -1,0 +1,29 @@
+{
+  "gear_read": {
+    "method": "GET",
+    "path": [
+      {
+        "type": "literal",
+        "value": "gear_read"
+      }
+    ]
+  },
+  "ambient_read": {
+    "method": "GET",
+    "path": [
+      {
+        "type": "literal",
+        "value": "ambient_read"
+      }
+    ]
+  },
+  "invoice_read": {
+    "method": "GET",
+    "path": [
+      {
+        "type": "literal",
+        "value": "invoice_read"
+      }
+    ]
+  }
+}

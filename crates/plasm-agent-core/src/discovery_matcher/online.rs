@@ -3,6 +3,8 @@
 #[path = "online/additive_tests.rs"]
 mod additive_tests;
 mod connected;
+mod operation_selection;
+pub(crate) use operation_selection::select_operations_indexed;
 #[cfg(test)]
 #[path = "online/decision_diagnostic.rs"]
 mod decision_diagnostic;
@@ -37,7 +39,7 @@ use crate::discovery_store::{DiscoveryAuthorization, RetrievalReceipt};
 use plasm_core::{prerequisites::DeploymentBindings, CGS};
 
 pub(crate) const SEARCH_POLICY: &str =
-    "additive-connected-frontier-current-hybrid-evidence-1-judgment-3-attempts-16000-byte-packet-v19";
+    "additive-connected-frontier-current-hybrid-evidence-3-judgments-3-attempts-16000-byte-packet-v37";
 
 #[derive(Clone, Copy)]
 pub struct SearchContext<'a> {
@@ -60,6 +62,9 @@ pub enum DeferredReason {
     InputBytes,
     AcquisitionCycle,
     ReportedInputTokens,
+    OperationPending,
+    OperationUncertain,
+    ProviderUnavailable,
 }
 
 impl From<BudgetStop> for DeferredReason {
@@ -77,6 +82,31 @@ impl From<BudgetStop> for DeferredReason {
 pub struct DeferredCandidate {
     pub reference: CapabilityRef,
     pub reason: DeferredReason,
+}
+
+/// Preserve current-request recall order before bounding a deferred backlog.
+/// Graph-only nominations follow recalled candidates and confer no relevance.
+fn ordered_deferred(
+    deferred: BTreeMap<CapabilityRef, DeferredReason>,
+    recall: &RetrievalReceipt,
+) -> Vec<DeferredCandidate> {
+    let ranks: BTreeMap<_, _> = recall
+        .candidates
+        .iter()
+        .enumerate()
+        .map(|(rank, candidate)| (&candidate.reference, rank))
+        .collect();
+    let mut deferred: Vec<_> = deferred
+        .into_iter()
+        .map(|(reference, reason)| DeferredCandidate { reference, reason })
+        .collect();
+    deferred.sort_by_key(|candidate| {
+        ranks
+            .get(&candidate.reference)
+            .copied()
+            .unwrap_or(usize::MAX)
+    });
+    deferred
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -106,6 +136,31 @@ impl Default for SearchReceipt {
             reported_input_tokens: 0,
             missing_usage: 0,
         }
+    }
+}
+
+impl SearchReceipt {
+    pub fn has_unavailable_provider(&self) -> bool {
+        self.deferred
+            .iter()
+            .any(|candidate| matches!(candidate.reason, DeferredReason::ProviderUnavailable))
+    }
+
+    pub fn has_pending_operation_judgments(&self) -> bool {
+        self.deferred
+            .iter()
+            .any(|candidate| matches!(&candidate.reason, DeferredReason::OperationPending))
+    }
+
+    pub fn has_incomplete_operation_judgments(&self) -> bool {
+        self.deferred.iter().any(|candidate| {
+            matches!(
+                &candidate.reason,
+                DeferredReason::OperationPending
+                    | DeferredReason::OperationUncertain
+                    | DeferredReason::ProviderUnavailable
+            )
+        })
     }
 }
 
@@ -317,7 +372,7 @@ fn required_closure(
     Ok(closure)
 }
 
-fn packet_scope(
+pub(super) fn packet_scope(
     index: &CatalogueSearch,
     target: &CapabilityRef,
     route: &[Edge<CapabilityRef>],
@@ -496,16 +551,47 @@ where
 pub async fn select_retrieved<F, Fut>(
     context: SearchContext<'_>,
     recall: &RetrievalReceipt,
+    operations: operations::OperationSet,
     decide: F,
 ) -> Result<(RetrievalReceipt, CapabilityMatchReceipt, SearchReceipt), DiscoveryMatcherError>
 where
-    F: FnMut(IssuedBatch) -> Fut,
+    F: FnMut(operations::DecisionBatch) -> Fut,
     Fut: std::future::Future<Output = Result<String, DecisionProviderError>>,
 {
     let index = CatalogueSearch::new(context.catalogs, context.deployments, context.allowed)?;
-    select_recalled_indexed(context, &index, recall, decide, |_| async { Ok(()) }).await
+    let authorized = index.authorized_capabilities(context.allowed);
+    let extraction =
+        operations::ExtractionRequest::new("caller-provided", context.intent.current())?;
+    let scope = operations::MatrixScope::new(
+        "isolated-selection",
+        context.generation,
+        &authorized,
+        extraction.identity(),
+    )?;
+    let mut matrix = operations::OperationMatrix::new(
+        scope,
+        context.intent.current(),
+        operations,
+        &authorized,
+        recall
+            .candidates
+            .iter()
+            .map(|candidate| candidate.reference.clone())
+            .collect(),
+    )?;
+    select_operations_indexed(
+        context,
+        &index,
+        recall,
+        &mut matrix,
+        &BTreeMap::new(),
+        decide,
+        |_| async { Ok(()) },
+    )
+    .await
 }
 
+#[cfg(test)]
 pub(crate) async fn select_recalled_indexed<F, Fut, O, OFut>(
     context: SearchContext<'_>,
     index: &CatalogueSearch,
@@ -519,6 +605,15 @@ where
     O: FnMut(SearchProgress) -> OFut,
     OFut: std::future::Future<Output = Result<(), DecisionProviderError>>,
 {
+    validate_recall(context, index, recall)?;
+    select_admitted(context, index, recall, decide, observe).await
+}
+
+fn validate_recall(
+    context: SearchContext<'_>,
+    index: &CatalogueSearch,
+    recall: &RetrievalReceipt,
+) -> Result<(), DiscoveryMatcherError> {
     recall.validate(context.allowed)?;
     if recall.generation != context.generation {
         return Err(DiscoveryMatcherError::RetrievalGenerationMismatch);
@@ -535,9 +630,87 @@ where
             });
         }
     }
-    select_admitted(context, index, recall, decide, observe).await
+    Ok(())
 }
 
+/// Plan against the same connected graph as discovery, then schedule only
+/// operation pairs for admitted members. Pairs omitted for size remain
+/// pending in the matrix and are never interpreted as negative judgments.
+fn prepare_operation_wave(
+    context: SearchContext<'_>,
+    index: &CatalogueSearch,
+    recall: &RetrievalReceipt,
+    matrix: &mut operations::OperationMatrix,
+    deferred_priorities: &BTreeMap<CapabilityRef, usize>,
+) -> Result<(connected::Plan, Option<operations::DecisionBatch>), DiscoveryMatcherError> {
+    validate_recall(context, index, recall)?;
+    for reference in context.exposed {
+        if !context.allowed.permits(reference) || !index.candidates.contains_key(reference) {
+            return Err(DiscoveryMatcherError::InvalidWitness {
+                reference: reference.clone(),
+                part: "exposed capability authorization or catalogue identity",
+            });
+        }
+    }
+    let roots = recall
+        .candidates
+        .iter()
+        .map(|candidate| candidate.reference.clone())
+        .collect();
+    let mut plan =
+        connected::plan_recalled_with_deferred(index, context, roots, deferred_priorities)?;
+    let authorized = index
+        .candidates
+        .keys()
+        .filter(|reference| context.allowed.permits(reference))
+        .cloned()
+        .collect();
+    let mut admitted: Vec<_> = plan
+        .wave
+        .iter()
+        .map(|(reference, _)| reference.clone())
+        .collect();
+    matrix.add_candidates(&authorized, &admitted)?;
+    while !admitted.is_empty() {
+        for limit in (1..=request_packing::MAX_QUESTIONS).rev() {
+            let pairs = matrix.next_packet_for(&admitted, limit)?;
+            if pairs.is_empty() {
+                return Ok((plan, None));
+            }
+            let questions: Vec<_> = pairs
+                .into_iter()
+                .map(|(operation, capability)| operations::DecisionQuestion {
+                    operation,
+                    capability,
+                })
+                .collect();
+            match operations::DecisionBatch::from_graph(
+                context,
+                matrix.operations(),
+                matrix.scope(),
+                index,
+                &plan.wave,
+                &questions,
+            ) {
+                Ok(batch) => return Ok((plan, Some(batch))),
+                Err(operations::OperationError::DecisionPacketTooLarge { .. }) if limit > 1 => {
+                    continue
+                }
+                Err(operations::OperationError::DecisionPacketTooLarge { .. }) => {
+                    let reference = questions[0].capability.clone();
+                    plan.deferred
+                        .insert(reference.clone(), DeferredReason::InputBytes);
+                    admitted.retain(|candidate| candidate != &reference);
+                    break;
+                }
+                Err(error) => return Err(error.into()),
+            }
+        }
+    }
+    Ok((plan, None))
+}
+
+#[cfg(test)]
 async fn select_admitted<F, Fut, O, OFut>(
     context: SearchContext<'_>,
     index: &CatalogueSearch,
@@ -572,15 +745,12 @@ where
             });
         }
     }
-    let planned = connected::plan_recalled(
-        index,
-        context,
-        recall
-            .candidates
-            .iter()
-            .map(|c| c.reference.clone())
-            .collect(),
-    )?;
+    let all_roots = recall
+        .candidates
+        .iter()
+        .map(|candidate| candidate.reference.clone())
+        .collect();
+    let planned = connected::plan_recalled(index, context, all_roots)?;
     let mut wave = planned.wave;
     let mut routes = BTreeMap::<CapabilityRef, Vec<Edge<CapabilityRef>>>::new();
     let mut judged = BTreeMap::new();
@@ -835,11 +1005,11 @@ where
 }
 
 #[cfg(test)]
-mod tests {
+pub(super) mod tests {
     use super::*;
     use std::sync::{Arc, Mutex};
 
-    pub(super) fn fixture() -> BTreeMap<String, CGS> {
+    pub(crate) fn fixture() -> BTreeMap<String, CGS> {
         let mut cgs = plasm_core::loader::load_schema_dir(
             &std::path::Path::new(crate::test_manifest_dir())
                 .join("../../fixtures/schemas/discovery_reference_index"),

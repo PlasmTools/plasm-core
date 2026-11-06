@@ -9,6 +9,30 @@ pub struct TeachingOutput {
     pub row_type: plasm_core::value_contract::ValueContract,
 }
 
+impl TeachingOutput {
+    fn cardinality(&self) -> &'static str {
+        use plasm_core::plasm_monad::ResultShape;
+        match self.shape {
+            ResultShape::List => "list",
+            ResultShape::Single => "one",
+            ResultShape::MutationResult => "mutation result",
+            ResultShape::SideEffectAck => "side-effect acknowledgement",
+            ResultShape::Page => "page",
+            ResultShape::Artifact => "artifact",
+        }
+    }
+
+    pub fn summary(&self) -> String {
+        format!("{}: {}", self.step, self.cardinality())
+    }
+}
+
+impl std::fmt::Display for TeachingOutput {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}: {} {}", self.step, self.cardinality(), self.row_type)
+    }
+}
+
 fn catalog<'a>(
     session: &'a ExecuteSession,
     entry: &str,

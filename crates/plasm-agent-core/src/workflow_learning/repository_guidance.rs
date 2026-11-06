@@ -34,74 +34,84 @@ pub struct GuidanceSearch<'a> {
     pub limit: usize,
 }
 impl WorkflowRepository {
+    pub async fn guidance_is_current(
+        &self,
+        scope: &LibraryScope,
+        association: &CatalogueAssociation,
+    ) -> Result<bool> {
+        let mut connection = self.pool.acquire().await?;
+        Ok(sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM workflow_learning_catalogue_guidance WHERE tenant=$1 AND project=$2 AND family=$3 AND variant=$4 AND association=$5)")
+            .bind(&scope.tenant).bind(&scope.project).bind(&association.family).bind(&association.variant)
+            .bind(serde_json::to_value(association)?).fetch_one(&mut connection).await?)
+    }
     pub async fn export_review_artifacts(
         &self,
         scope: &LibraryScope,
     ) -> Result<Vec<FrozenReviewArtifacts>> {
         let mut connection = self.pool.acquire().await?;
-        let rows = sqlx::query("SELECT r.id,r.digest,r.seal,coalesce(g.associations,'[]'::jsonb) AS guidance,coalesce((SELECT jsonb_agg(jsonb_build_object('candidate_hash',p.candidate_hash,'candidate',p.candidate) ORDER BY p.candidate_hash) FROM workflow_learning_proposals p WHERE p.review_id=r.id),'[]'::jsonb) AS examples FROM workflow_learning_reviews r LEFT JOIN workflow_learning_guidance_batches g ON g.review_id=r.id WHERE r.tenant=$1 AND r.project=$2 AND (g.review_id IS NOT NULL OR EXISTS(SELECT 1 FROM workflow_learning_proposal_batches b WHERE b.review_id=r.id)) ORDER BY r.created_at,r.id")
+        let rows = sqlx::query("SELECT r.id,r.digest,r.seal,r.seal_content_digest,coalesce(g.associations,'[]'::jsonb) AS guidance,coalesce((SELECT jsonb_agg(jsonb_build_object('candidate_hash',p.candidate_hash,'candidate',p.candidate) ORDER BY p.candidate_hash) FROM workflow_learning_proposals p WHERE p.review_id=r.id),'[]'::jsonb) AS examples FROM workflow_learning_reviews r LEFT JOIN workflow_learning_guidance_batches g ON g.review_id=r.id WHERE r.tenant=$1 AND r.project=$2 AND (g.review_id IS NOT NULL OR EXISTS(SELECT 1 FROM workflow_learning_proposal_batches b WHERE b.review_id=r.id)) ORDER BY r.created_at,r.id")
             .bind(scope.tenant.clone()).bind(scope.project.clone()).fetch_all(&mut connection).await?;
-        rows.into_iter()
-            .map(|row| {
-                let id: Uuid = row.try_get("id")?;
-                let digest: String = row.try_get("digest")?;
-                let seal_value: serde_json::Value = row.try_get("seal")?;
-                let incompatible = || FrozenReviewArtifacts::Incompatible {
-                    review_ref: id,
-                    review_digest: digest.clone(),
-                    reason: ReviewInspectionIncompatibility::IncompatibleTeachingFormat,
-                };
-                if validate_seal_format(&seal_value).is_err() {
-                    return Ok(incompatible());
+        let mut output = Vec::with_capacity(rows.len());
+        for row in rows {
+            let id: Uuid = row.try_get("id")?;
+            let digest: String = row.try_get("digest")?;
+            let seal_value: serde_json::Value = row.try_get("seal")?;
+            let incompatible = || FrozenReviewArtifacts::Incompatible {
+                review_ref: id,
+                review_digest: digest.clone(),
+                reason: ReviewInspectionIncompatibility::IncompatibleTeachingFormat,
+            };
+            if validate_seal_format(&seal_value).is_err() {
+                output.push(incompatible());
+                continue;
+            }
+            let content_digest: String = row.try_get("seal_content_digest")?;
+            let seal = match hydrate_review(&mut connection, seal_value, &content_digest).await {
+                Ok(seal) => seal,
+                Err(_) => {
+                    output.push(incompatible());
+                    continue;
                 }
-                let seal: SealedReview = match serde_json::from_value(seal_value) {
-                    Ok(seal) => seal,
-                    Err(_) => return Ok(incompatible()),
-                };
-                if seal.request.scope != *scope {
+            };
+            if seal.request.scope != *scope {
+                return Err(RepositoryError::ImmutableConflict);
+            }
+            let guidance_value: serde_json::Value = row.try_get("guidance")?;
+            let guidance_digest =
+                plasm_core::catalog_discovery::content_hash(&serde_json::to_vec(&guidance_value)?);
+            let guidance: Vec<CatalogueAssociation> = serde_json::from_value(guidance_value)?;
+            for association in &guidance {
+                association.validate(&seal)?;
+            }
+            let examples_value: serde_json::Value = row.try_get("examples")?;
+            let mut examples = Vec::new();
+            for artifact in examples_value
+                .as_array()
+                .ok_or(RepositoryError::ImmutableConflict)?
+            {
+                let hash = artifact["candidate_hash"]
+                    .as_str()
+                    .ok_or(RepositoryError::ImmutableConflict)?;
+                let candidate: Candidate = serde_json::from_value(artifact["candidate"].clone())?;
+                if super::frozen::proposal_hash(&candidate)? != hash {
                     return Err(RepositoryError::ImmutableConflict);
                 }
-                let guidance_value: serde_json::Value = row.try_get("guidance")?;
-                let guidance_digest = plasm_core::catalog_discovery::content_hash(
-                    &serde_json::to_vec(&guidance_value)?,
-                );
-                let guidance: Vec<CatalogueAssociation> = serde_json::from_value(guidance_value)?;
-                for association in &guidance {
-                    association.validate(&seal)?;
-                }
-                let examples_value: serde_json::Value = row.try_get("examples")?;
-                let mut examples = Vec::new();
-                for artifact in examples_value
-                    .as_array()
-                    .ok_or(RepositoryError::ImmutableConflict)?
-                {
-                    let hash = artifact["candidate_hash"]
-                        .as_str()
-                        .ok_or(RepositoryError::ImmutableConflict)?;
-                    let candidate: Candidate =
-                        match serde_json::from_value(artifact["candidate"].clone()) {
-                            Ok(candidate) => candidate,
-                            Err(_) => return Ok(incompatible()),
-                        };
-                    if super::frozen::proposal_hash(&candidate)? != hash {
-                        return Err(RepositoryError::ImmutableConflict);
-                    }
-                    examples.push(super::frozen::FrozenProposalArtifact {
-                        review_ref: id,
-                        review_digest: digest.clone(),
-                        candidate_hash: hash.into(),
-                        candidate,
-                    });
-                }
-                Ok(FrozenReviewArtifacts::Compatible {
+                examples.push(super::frozen::FrozenProposalArtifact {
                     review_ref: id,
-                    review_digest: digest,
-                    examples,
-                    catalogue_guidance: guidance,
-                    catalogue_guidance_digest: guidance_digest,
-                })
-            })
-            .collect()
+                    review_digest: digest.clone(),
+                    candidate_hash: hash.into(),
+                    candidate,
+                });
+            }
+            output.push(FrozenReviewArtifacts::Compatible {
+                review_ref: id,
+                review_digest: digest,
+                examples,
+                catalogue_guidance: guidance,
+                catalogue_guidance_digest: guidance_digest,
+            });
+        }
+        Ok(output)
     }
 
     pub async fn has_active_learning(&self, scope: &LibraryScope) -> Result<bool> {
@@ -123,10 +133,12 @@ impl WorkflowRepository {
             ));
         }
         let mut tx = self.pool.begin().await?;
-        let seal: Option<serde_json::Value> = sqlx::query_scalar("SELECT seal FROM workflow_learning_reviews WHERE id=$1 AND fence=$2 AND state='leased' AND lease_until>clock_timestamp() FOR UPDATE")
+        self.lock_review_training(&mut tx, claim).await?;
+        let seal = sqlx::query("SELECT seal,seal_content_digest FROM workflow_learning_reviews WHERE id=$1 AND fence=$2 AND state='leased' AND lease_until>clock_timestamp() FOR UPDATE")
             .bind(claim.id).bind(claim.fence).fetch_optional(&mut tx.executor()).await?;
-        let seal: SealedReview =
-            serde_json::from_value(seal.ok_or(RepositoryError::LeaseConflict)?)?;
+        let seal = seal.ok_or(RepositoryError::LeaseConflict)?;
+        let digest: String = seal.try_get("seal_content_digest")?;
+        let seal = hydrate_review(&mut tx.executor(), seal.try_get("seal")?, &digest).await?;
         if seal != claim.seal {
             return Err(RepositoryError::ImmutableConflict);
         }
@@ -145,8 +157,10 @@ impl WorkflowRepository {
         if stored != payload {
             return Err(RepositoryError::ImmutableConflict);
         }
-        self.finish_in_transaction(tx, claim, candidates, policy, ProposalOrigin::Worker)
-            .await
+        self.finish_in_transaction(&mut tx, claim, candidates, policy, ProposalOrigin::Worker)
+            .await?;
+        tx.commit().await?;
+        Ok(())
     }
 
     pub async fn frozen_guidance(
@@ -170,6 +184,7 @@ impl WorkflowRepository {
         tx: &mut sqlx_tracing::Transaction<'_, sqlx::Postgres>,
         review: Uuid,
         seal: &SealedReview,
+        candidates: &[Candidate],
         publish: bool,
     ) -> Result<()> {
         let payload: Option<serde_json::Value> = sqlx::query_scalar(
@@ -182,6 +197,29 @@ impl WorkflowRepository {
             return Ok(());
         };
         let associations: Vec<CatalogueAssociation> = serde_json::from_value(payload)?;
+        // A partial selection may withhold an entire guidance association, but
+        // never rewrite its approved purpose or support set to make it fit.
+        let associations: Vec<_> = associations
+            .into_iter()
+            .filter(|association| {
+                association.evidence.keys().all(|run| {
+                    seal.executions
+                        .iter()
+                        .filter(|receipt| &receipt.execution_id == run)
+                        .any(|receipt| {
+                            super::super::teaching::CheckedTeachingExample::from_observation(
+                                &receipt.observation,
+                            )
+                            .is_ok_and(|program| {
+                                candidates.iter().any(|candidate| {
+                                    candidate.eligible(seal.assurance)
+                                        && candidate.checked_program() == Some(&program)
+                                })
+                            })
+                        })
+                })
+            })
+            .collect();
         self.publish_associations_in_transaction(
             tx,
             &seal.request.scope,
@@ -240,25 +278,40 @@ impl WorkflowRepository {
         query: GuidanceSearch<'_>,
     ) -> Result<Vec<CatalogueAssociation>> {
         let mut connection = self.pool.acquire().await?;
-        let rows: Vec<serde_json::Value> = sqlx::query_scalar("SELECT association FROM workflow_learning_catalogue_guidance WHERE tenant=$1 AND project=$2 AND association->>'embedding_profile'=$3 ORDER BY id LIMIT $4")
+        let rows: Vec<serde_json::Value> = sqlx::query_scalar("SELECT association FROM workflow_learning_catalogue_guidance WHERE tenant=$1 AND project=$2 ORDER BY (association->>'embedding_profile'=$3) DESC NULLS LAST, id LIMIT $4")
             .bind(scope.tenant.clone()).bind(scope.project.clone()).bind(query.profile.to_owned()).bind(self.tenant_cap).fetch_all(&mut connection).await?;
         let mut allowed = Vec::new();
         for row in rows {
             let association: CatalogueAssociation = serde_json::from_value(row)?;
-            if association
+            let profile_matches = association.embedding_profile == query.profile;
+            let catalogs_allowed = association
+                .requirements
+                .catalog_fingerprints()
+                .keys()
+                .all(|id| query.allowed.catalogs.contains(id));
+            let contracts_match = association
                 .requirements
                 .catalog_fingerprints()
                 .iter()
-                .all(|(id, hash)| {
-                    query.allowed.catalogs.contains(id)
-                        && query.catalog_fingerprints.get(id) == Some(hash)
-                })
-                && association
-                    .requirements
-                    .required_capabilities()
-                    .iter()
-                    .all(|cap| query.allowed.permits(cap))
-            {
+                .all(|(id, hash)| query.catalog_fingerprints.get(id) == Some(hash));
+            let authorized = association
+                .requirements
+                .required_capabilities()
+                .iter()
+                .all(|cap| query.allowed.permits(cap));
+            let reason = if !profile_matches {
+                "embedding_profile"
+            } else if !catalogs_allowed {
+                "catalogue_authorization"
+            } else if !contracts_match {
+                "catalogue_contract"
+            } else if !authorized {
+                "capability_authorization"
+            } else {
+                "eligible"
+            };
+            tracing::debug!(target: "plasm_agent::workflow_learning", family = %association.family, variant = %association.variant, reason, "catalogue guidance candidate screened");
+            if profile_matches && catalogs_allowed && contracts_match && authorized {
                 allowed.push(association);
             }
         }
@@ -277,22 +330,27 @@ impl WorkflowRepository {
                 embedding: Some(a.embedding.clone()),
             })
             .collect::<Vec<_>>();
-        Ok(index::rank(
+        let ranked = index::rank(
             query.intent,
             Some(query.embedding),
             &query.allowed.catalogs,
             None,
             &entries,
             query.limit.min(3),
-        )
-        .into_iter()
-        .filter_map(|rank| {
-            rank.id
-                .parse::<usize>()
-                .ok()
-                .and_then(|id| allowed.get(id).cloned())
-        })
-        .collect())
+        );
+        for (id, association) in allowed.iter().enumerate() {
+            let selected = ranked.iter().any(|item| item.id == id.to_string());
+            tracing::debug!(target: "plasm_agent::workflow_learning", family = %association.family, variant = %association.variant, selected, "catalogue guidance candidate ranked");
+        }
+        Ok(ranked
+            .into_iter()
+            .filter_map(|rank| {
+                rank.id
+                    .parse::<usize>()
+                    .ok()
+                    .and_then(|id| allowed.get(id).cloned())
+            })
+            .collect())
     }
 }
 

@@ -187,6 +187,36 @@ mod tests {
     }
 
     #[test]
+    fn training_selection_requires_owner_authentication_before_status_disclosure() {
+        let mut state = RunState::new();
+        state.screen = RunScreen::Runs;
+        let deps = test_deps(None);
+        update(&mut state, UiMsg::Key(key(KeyCode::Char('l'))), &deps);
+        assert!(matches!(state.mode, InputMode::TrainingSelect { .. }));
+        let logical = plasm_agent_core::session_identity::LogicalSessionId::new_v4();
+        let wire = plasm_agent_core::mcp_logical_ref::format_logical_session_wire_ref(logical);
+        for c in wire.chars() {
+            update(&mut state, UiMsg::Key(key(KeyCode::Char(c))), &deps);
+        }
+        update(&mut state, UiMsg::Key(key(KeyCode::Enter)), &deps);
+        assert!(matches!(
+            state.mode,
+            InputMode::TrainingOwner {
+                action: TrainingAction::Status,
+                ..
+            }
+        ));
+        assert!(state.training.is_none());
+        for c in "never-disclose-this-secret".chars() {
+            update(&mut state, UiMsg::Key(key(KeyCode::Char(c))), &deps);
+        }
+        assert!(!format!("{:?}", state.mode).contains("never-disclose"));
+        update(&mut state, UiMsg::Key(key(KeyCode::Esc)), &deps);
+        assert!(matches!(state.mode, InputMode::Normal));
+        assert!(state.training.is_none());
+    }
+
+    #[test]
     fn run_screen_wraps_left_and_right() {
         let mut state = RunState::new();
         let deps = test_deps(None);

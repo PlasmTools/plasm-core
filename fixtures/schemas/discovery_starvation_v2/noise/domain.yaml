@@ -1,0 +1,18 @@
+version: 1
+entry_id: noise
+http_backend: http://127.0.0.1:9
+auth: {scheme: none}
+values:
+  source: {type: string, description: Historical archive identifier.}
+entities:
+  Source:
+    id_field: value
+    description: Historical administrative archive.
+    fields:
+      value: {value_ref: source, required: true}
+capabilities:
+  archive:
+    entity: Source
+    kind: action
+    description: Archive historical rainfall records.
+    output: {type: side_effect, description: Archives an administrative record; does not prepare material or produce observations.}

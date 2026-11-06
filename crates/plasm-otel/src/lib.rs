@@ -169,6 +169,17 @@ fn init_metrics(resource: &Resource) -> Result<SdkMeterProvider, TelemetryInitEr
         .build())
 }
 
+/// Install the OTLP meter provider for an embedded host without taking ownership
+/// of its tracing subscriber. Call once, before creating any instruments.
+pub fn init_embedded_metrics(default_service_name: &str) -> Result<(), TelemetryInitError> {
+    if otel_disabled() || !metrics_enabled() {
+        return Ok(());
+    }
+    let provider = init_metrics(&build_resource(default_service_name))?;
+    global::set_meter_provider(provider);
+    Ok(())
+}
+
 fn init_console_only_with_writer<W>(
     make_writer: W,
     tui_capture: Option<TuiLogCallback>,

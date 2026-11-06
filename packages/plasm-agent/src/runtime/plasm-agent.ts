@@ -1,5 +1,4 @@
 import { DrainingLifecycle } from "./lifecycle.js";
-import { AgentExecutionFailure, failureObservationSchema } from "./execution-failure.js";
 import { readFile } from "node:fs/promises";
 import path from "node:path";
 
@@ -69,6 +68,9 @@ export interface AgentGenerateOptions {
   resetConversation?: boolean;
   onStepStart?: () => void | Promise<void>;
   onStepFinish?: (step: AgentStepEvent) => void | Promise<void>;
+  /** Observe host-owned workflow initialization without exposing it as a model tool call. */
+  onInitialContext?: (event: { intent: string; result: string }) => void | Promise<void>;
+  onProviderRequest?: (event: import("../telemetry/provider-completion.js").ProviderRequestEvent & { step: number }) => void;
   /**
    * Optional tool adapter. Observers must preserve result and error semantics.
    */
@@ -128,8 +130,14 @@ export class PlasmAgent {
     return this.lifecycle.close(() => this.runtime.close());
   }
 
-  async beginWorkflowReview(): Promise<import("./workflow-learning.js").WorkflowReviewSession> {
+  /** Stop admitting execution and settle accepted work without starting review. */
+  async finishExecution(): Promise<void> {
     await this.lifecycle.drain();
+    await this.runtime.finishExecution();
+  }
+
+  async beginWorkflowReview(): Promise<import("./workflow-learning.js").WorkflowReviewSession> {
+    await this.finishExecution();
     return this.runtime.beginWorkflowReview();
   }
 
@@ -292,25 +300,16 @@ export class PlasmAgent {
     // Host-owned bootstrap: preserve the task verbatim instead of asking the
     // execution model to invent an initial discovery call or decompose intent.
     if (!this.runtime.hasOpenWorkflow()) {
-      const initialize = tools.plasm_context?.execute;
-      if (!initialize) throw new Error("Initial context requires the plasm_context executor");
-      this.initialContext ??= Promise.resolve(initialize({
+      this.initialContext ??= this.runtime.plasmContext({
         intent: prompt,
-        session_mode: "new",
-      }, { toolCallId: "host-initial-context", messages, context: {} })).then((result) => {
-        if (typeof result !== "string") {
-          if (result && typeof result === "object" && "status" in result && result.status === "execution_failed" && "failure" in result) {
-            const observation = failureObservationSchema.parse(result);
-            throw new AgentExecutionFailure(observation.failure, observation.summary);
-          }
-          throw new Error("Initial context must return discovery text or a structured execution failure");
-        }
-        return result;
+        sessionMode: "new",
       }).catch((error: unknown) => {
         this.initialContext = undefined;
-        throw error;
+        const observation = failureObservation(error);
+        throw new AgentExecutionFailure(observation.failure, observation.summary);
       });
       const context = await this.initialContext;
+      await options.onInitialContext?.({ intent: prompt, result: context });
       messages = [...messages, {
         role: "user",
         content: `Host initialized plasm_context from the original task description. This is the actual discovery result. Continue this workflow using its logical_session_ref; use session_mode="extend" for further discovery.\n\n${context}`,
@@ -356,6 +355,8 @@ export class PlasmAgent {
       turnSequence: options.turnSequence,
       telemetry,
       onStepStart: options.onStepStart,
+      pollSessionUpdate: () => this.runtime.takeCompletedDiscovery(),
+      onProviderRequest: options.onProviderRequest,
       onStepFinish: async (step) => {
         await onStepFinish(step);
       },
@@ -386,3 +387,4 @@ export class PlasmAgent {
     };
   }
 }
+import { AgentExecutionFailure, failureObservation } from "./execution-failure.js";

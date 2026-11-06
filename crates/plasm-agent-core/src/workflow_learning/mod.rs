@@ -1,7 +1,9 @@
 //! Verified workflow learning. Provider proposals never bypass deterministic gates.
 pub mod archive;
 pub mod catalogue_guidance;
+pub mod deferred_recall;
 pub(crate) mod execution;
+pub mod filesystem_archive;
 mod identity;
 pub mod index;
 pub mod model;
@@ -13,16 +15,20 @@ mod quality;
 mod review;
 #[cfg(test)]
 pub(crate) mod test_identities;
-pub(crate) use review::ReviewSession;
+pub(crate) use review::{ReviewError, ReviewSession};
 pub mod repository;
+pub use repository::training;
+pub mod applicability;
+pub mod review_packet;
 pub mod serving;
+mod serving_projection;
 pub mod teaching;
 mod worker;
+pub use worker::RecallStage;
 
 use crate::execute_session::ExecuteSession;
 use crate::plasm_comp_bundle::PlasmCompBundle;
 use crate::plasm_plan_run::PlasmPlanRunResult;
-use crate::server_state::PlasmHostState;
 use model::{CompiledProgramId, ExecutionReceipt, LibraryScope, LogicalSessionId};
 use repository::WorkflowRepository;
 
@@ -34,6 +40,8 @@ pub struct CompletedExecution<'a> {
     pub source: &'a str,
     pub bundle: &'a PlasmCompBundle,
     pub output: &'a PlasmPlanRunResult,
+    pub execution_id: &'a str,
+    pub training_permit: &'a repository::training::TrainingEpochPermit,
 }
 use std::collections::BTreeMap;
 use std::sync::Arc;
@@ -43,6 +51,7 @@ use tokio::sync::OnceCell;
 pub enum LearningMode {
     Disabled,
     Shadow,
+    ShadowWithRecall,
     Reviewed,
     Serving,
 }
@@ -55,6 +64,10 @@ pub enum LearningError {
     ExecuteIdentity(#[from] crate::execute_path_ids::ExecuteSessionIdParseError),
     #[error(transparent)]
     Normalization(#[from] normalization::NormalizationError),
+    #[error("teaching applicability: {0}")]
+    Applicability(#[source] applicability::Error),
+    #[error("teaching recall timed out during {0}")]
+    RecallTimeout(RecallStage),
     #[error("workflow learning is disabled")]
     Disabled,
     #[error(transparent)]
@@ -75,12 +88,6 @@ pub enum LearningError {
     ProviderResponse(String),
     #[error("workflow evidence: {0}")]
     Evidence(String),
-    #[error("workflow artifact retrieval failed: {0}")]
-    ArtifactRetrieval(#[source] Box<crate::run_artifacts::RunArtifactError>),
-    #[error("workflow artifact decoding failed: {0}")]
-    ArtifactDecoding(#[source] Box<crate::run_artifacts::RunArtifactError>),
-    #[error("workflow collection restoration failed: {0}")]
-    CollectionRestoration(#[source] Box<plasm_core::collection_codec::CollectionFault>),
 }
 
 /// Lazy initialization keeps optional learning failures out of engine startup.
@@ -89,6 +96,7 @@ pub struct WorkflowLearning {
     database_url: Option<String>,
     repository: OnceCell<Arc<WorkflowRepository>>,
     worker: std::sync::atomic::AtomicBool,
+    pub deferred_recalls: Arc<deferred_recall::DeferredRecalls>,
 }
 
 impl Default for WorkflowLearning {
@@ -107,6 +115,7 @@ impl Default for WorkflowLearning {
             database_url,
             repository: OnceCell::new(),
             worker: false.into(),
+            deferred_recalls: Arc::default(),
         }
     }
 }
@@ -119,6 +128,7 @@ impl WorkflowLearning {
             database_url,
             repository: OnceCell::new(),
             worker: false.into(),
+            deferred_recalls: Arc::default(),
         }
     }
 
@@ -129,6 +139,7 @@ impl WorkflowLearning {
             database_url: None,
             repository: OnceCell::new_with(Some(repository)),
             worker: false.into(),
+            deferred_recalls: Arc::default(),
         }
     }
     pub async fn begin_execution(
@@ -136,7 +147,8 @@ impl WorkflowLearning {
         tenant: &str,
         logical: LogicalSessionId,
         id: &str,
-    ) -> Result<Option<LibraryScope>, LearningError> {
+    ) -> Result<Option<(LibraryScope, repository::training::TrainingEpochPermit)>, LearningError>
+    {
         if !self.enabled() {
             return Ok(None);
         }
@@ -147,8 +159,10 @@ impl WorkflowLearning {
         else {
             return Ok(None);
         };
-        repository.begin_execution(&scope, logical, id).await?;
-        Ok(Some(scope))
+        Ok(repository
+            .begin_execution(&scope, logical, id)
+            .await?
+            .map(|permit| (scope, permit)))
     }
 
     pub async fn finish_execution(
@@ -190,6 +204,22 @@ impl WorkflowLearning {
             .cloned()
     }
 
+    /// Open the existing ledger without applying migrations. The caller may
+    /// provide SELECT-only credentials; this method never initializes the
+    /// mutable repository or performs DDL.
+    pub async fn readonly_repository(&self) -> Result<WorkflowRepository, LearningError> {
+        if !self.enabled() {
+            return Err(LearningError::Disabled);
+        }
+        let url = self
+            .database_url
+            .as_deref()
+            .ok_or(LearningError::Disabled)?;
+        let repository = WorkflowRepository::connect(url).await?;
+        repository.validate_current_schema().await?;
+        Ok(repository)
+    }
+
     pub fn start_worker(self: &Arc<Self>) {
         if !self.enabled() || self.worker.swap(true, std::sync::atomic::Ordering::AcqRel) {
             return;
@@ -223,7 +253,6 @@ impl WorkflowLearning {
     /// Failure to retain evidence never changes the execution's result.
     pub async fn record_completed(
         &self,
-        host: &PlasmHostState,
         completed: CompletedExecution<'_>,
     ) -> Result<(), LearningError> {
         let CompletedExecution {
@@ -233,6 +262,8 @@ impl WorkflowLearning {
             source,
             bundle,
             output,
+            training_permit,
+            execution_id,
         } = completed;
         if !self.enabled() {
             return Ok(());
@@ -247,67 +278,43 @@ impl WorkflowLearning {
         let observation = teaching::ProgramObservation::from_execution(session, source, bundle);
         let catalogue_requirements =
             catalogue_guidance::CatalogueRequirementEvidence::from_compiled(session, bundle);
-        let symbol_context = crate::program_symbol_context::SavedProgramContext::from_compilation(
-            bundle,
-            &scope,
-            &logical_session,
-            execute_session,
-        );
+        if !matches!(
+            output.agent_outcome,
+            crate::plasm_plan_run::PlanAgentOutcome::Ready
+        ) {
+            return Err(LearningError::Evidence(
+                "execution did not complete successfully".into(),
+            ));
+        }
+        let teaching_plan = review_packet::TeachingPlan::capture(session, bundle).await;
         let mut catalogs = BTreeMap::new();
         for (entry, context) in &session.contexts_by_entry {
             catalogs.insert(entry.clone(), context.cgs.catalog_cgs_hash_hex());
         }
-        if let Some(captured) = symbol_context.captured() {
+        if let Some(captured) = bundle.compilation_symbols().captured() {
             catalogs = captured.catalog_fingerprints().clone();
         }
         let revision = session.core.tip_seq().await.0;
-        let mut recorded = std::collections::BTreeSet::new();
-        for reference in &output.code_plan_run_artifacts {
-            if !recorded.insert(reference.run_id.as_str()) {
-                continue;
-            }
-            let id = crate::run_artifacts::RunArtifactId::from_wire(&reference.run_id)
-                .ok_or_else(|| LearningError::Evidence("invalid run identifier".into()))?;
-            let payload = host
-                .run_artifacts
-                .get_payload_result(&session.prompt_hash, execute_session, id)
-                .await
-                .map_err(|e| LearningError::ArtifactRetrieval(Box::new(e)))?
-                .ok_or_else(|| LearningError::Evidence("run evidence missing".into()))?;
-            let document = crate::run_artifacts::parse_run_artifact_document_bytes(&payload.bytes)
-                .map_err(|e| LearningError::ArtifactDecoding(Box::new(e)))?;
-            if document.prompt_hash != session.prompt_hash
-                || document.session_id != execute_session
-                || document.run_id != reference.run_id
-                || document
-                    .recorded_collection()
-                    .map_err(|e| LearningError::CollectionRestoration(Box::new(e)))?
-                    .coverage()
-                    != plasm_runtime::ResultCoverage::Complete
-            {
-                return Err(LearningError::Evidence(
-                    "run evidence incomplete or belongs to another session".into(),
-                ));
-            }
-            repository
-                .record_execution(&ExecutionReceipt {
-                    scope: scope.clone(),
-                    logical_session,
-                    session_revision: revision,
-                    run_id: id,
-                    plan_id: CompiledProgramId::from_comp(&bundle.artifact().comp),
-                    prompt_hash: session.prompt_hash.parse()?,
-                    execute_session: execute_session.parse()?,
-                    run_artifact: serde_json::to_value(document)?,
-                    source: source.into(),
-                    compiled_plan: serde_json::to_value(&bundle.artifact().comp)?,
-                    catalog_fingerprints: catalogs.clone(),
-                    observation: observation.clone(),
-                    catalogue_requirements: catalogue_requirements.clone(),
-                    symbol_context: symbol_context.clone(),
-                })
-                .await?;
-        }
+        let attempt = uuid::Uuid::parse_str(execution_id)
+            .map_err(|_| LearningError::Evidence("invalid execution identity".into()))?;
+        let receipt = ExecutionReceipt {
+            scope: scope.clone(),
+            logical_session,
+            session_revision: revision,
+            execution_id: model::ExecutionId::from_attempt(attempt),
+            plan_id: CompiledProgramId::from_comp(&bundle.artifact().comp),
+            prompt_hash: session.prompt_hash.parse()?,
+            execute_session: execute_session.parse()?,
+            source: source.into(),
+            compiled_plan: serde_json::to_value(&bundle.artifact().comp)?,
+            teaching_plan,
+            catalog_fingerprints: catalogs,
+            observation,
+            catalogue_requirements,
+        };
+        repository
+            .record_execution_batch(&[receipt], training_permit, Some(execution_id))
+            .await?;
         Ok(())
     }
 }

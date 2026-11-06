@@ -59,13 +59,13 @@ const routingSchema = z.object({
     budget_retained: z.array(scopeBudgetRetention).max(0).optional(),
   }).strict(),
   search: z.object({
-    policy: z.literal("additive-connected-frontier-current-hybrid-evidence-1-judgment-3-attempts-16000-byte-packet-v19"),
+    policy: z.literal("additive-connected-frontier-current-hybrid-evidence-3-judgments-3-attempts-16000-byte-packet-v37"),
     exposed: z.array(capability),
     considered: z.array(capability),
     unexplored: z.array(capability),
     deferred: z.array(z.object({
       reference: capability,
-      reason: z.enum(["requests", "input_bytes", "acquisition_cycle", "reported_input_tokens"]),
+      reason: z.enum(["requests", "input_bytes", "acquisition_cycle", "reported_input_tokens", "operation_pending", "operation_uncertain", "provider_unavailable"]),
     }).strict()),
     requests: z.number().int().min(0).max(3),
     input_bytes: z.number().int().min(0).max(48000),
@@ -107,7 +107,8 @@ const routingSchema = z.object({
     || (routing.closure?.input_sources.length ?? 0) !== 0) {
     ctx.addIssue({code:"custom",path:["closure"],message:"closure must retain exactly the current relevant and uncertain capabilities"});
   }
-  if (Boolean(routing.recovery) !== (selected.length === 0 && routing.search.exposed.length === 0)) {
+  if (Boolean(routing.recovery) !== (selected.length === 0 && routing.search.exposed.length === 0
+    && routing.search.deferred.length === 0)) {
     ctx.addIssue({code:"custom",path:["recovery"],message:"empty-selection diagnostic contradicts relevance decisions"});
   }
   if (routing.recovery) {
@@ -130,12 +131,14 @@ const routingSchema = z.object({
     || (closure?.prerequisites.some(ref => unexplored.has(capabilityKey(ref))) ?? false)
     || new Set(routing.search.deferred.map(item => capabilityKey(item.reference))).size !== routing.search.deferred.length
     || routing.search.deferred.some(item => !unexplored.has(capabilityKey(item.reference))
-      && !(closure?.prerequisites.some(ref => capabilityKey(ref) === capabilityKey(item.reference)) ?? false))
+      && !(closure?.prerequisites.some(ref => capabilityKey(ref) === capabilityKey(item.reference)) ?? false)
+      && !((item.reason === "operation_pending" || item.reason === "operation_uncertain" || item.reason === "provider_unavailable")
+        && routing.retrieval.candidates.some(candidate => capabilityKey(candidate.reference) === capabilityKey(item.reference))))
     || routing.retrieval.candidates.some(candidate => !considered.has(capabilityKey(candidate.reference)))
     || routing.search.missing_usage > routing.search.requests
     || (routing.search.requests === 0 ? routing.search.input_bytes !== 0
       : routing.search.input_bytes === 0 || routing.search.input_bytes > routing.search.requests * 16000
-        || routing.search.input_bytes % routing.search.requests !== 0)
+        )
     || (closure?.prerequisites.some(ref => !considered.has(capabilityKey(ref))) ?? false)) {
     ctx.addIssue({code: "custom", path: ["search"], message: "bounded search accounting contradicts judged capabilities or required acquisitions"});
   }
@@ -152,11 +155,11 @@ export const routingPacketSchema = z.object({
   routing: routingSchema,
   teaching: z.object({ prompt: z.string(), declarations_changed: z.boolean(), delta_refs: z.array(z.string()) }).nullable(),
   workflow_examples: z.array(z.object({
-    example_ref: z.string().uuid(), purpose: z.string(), applicability: z.array(z.string()),
-    outputs: z.array(z.unknown()),
+    example_ref: z.string().uuid(), purpose: z.string(),
+    outputs: z.array(z.string()),
     assurance: z.enum(["agent_attested", "postcondition_verified"]),
   }).strict()).max(3).optional(),
-  workflow_recall: z.enum(["completed", "unavailable", "timed_out"]).optional(),
+  workflow_recall: z.enum(["completed", "pending", "unavailable", "timed_out"]).optional(),
 });
 export type RoutingPacket = z.infer<typeof routingPacketSchema>;
 export type PrerequisiteClosure = z.infer<typeof prerequisiteClosureSchema>;

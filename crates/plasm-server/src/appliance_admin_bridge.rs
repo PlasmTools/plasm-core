@@ -24,6 +24,10 @@ use crate::appliance_mcp_admin::{
 };
 use crate::appliance_oauth_admin::{self, AdminError, ApplianceOauthUpsert};
 
+#[path = "appliance_training_admin.rs"]
+mod training;
+pub use training::{OwnerSetupSecret, TrainingAction, TrainingJob, TrainingSnapshot};
+
 pub type AdminCorr = u64;
 
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
@@ -125,6 +129,10 @@ pub struct RefreshedUiData {
 }
 
 pub enum AdminJob {
+    Training {
+        corr: AdminCorr,
+        job: TrainingJob,
+    },
     RefreshFull {
         corr: AdminCorr,
     },
@@ -185,6 +193,11 @@ pub enum AdminJob {
 }
 
 pub enum AdminCompletion {
+    Training {
+        corr: AdminCorr,
+        result:
+            Result<TrainingSnapshot, plasm_agent_core::workflow_learning::training::TrainingError>,
+    },
     RefreshFull {
         corr: AdminCorr,
         data: RefreshedUiData,
@@ -458,6 +471,10 @@ async fn run_admin_job(
     job: AdminJob,
 ) {
     match job {
+        AdminJob::Training { corr, job } => {
+            let result = training::run(state, job).await;
+            send_completion(&comp_tx, AdminCompletion::Training { corr, result });
+        }
         AdminJob::RefreshFull { corr } => {
             let snapshot_data = refresh_full_snapshot(state.as_ref()).await;
             send_completion(

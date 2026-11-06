@@ -41,6 +41,14 @@ pub struct McpApiKeyProvisioned {
     pub api_key: String,
 }
 
+/// Verified credential identity. Configuration membership must not erase the
+/// particular credential that exercised a delegated permission.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct VerifiedMcpApiKey {
+    pub config_id: Uuid,
+    pub key_id: Uuid,
+}
+
 /// Fingerprint of one key, safe for public listing (no raw secret).
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct McpApiKeyListItem {
@@ -235,8 +243,8 @@ impl McpApiKeyRegistry {
         self.add_key(config_id, new_key_label).await
     }
 
-    /// Resolve `config_id` when the presented key matches a stored hash.
-    pub async fn verify_api_key(&self, raw: &str) -> Option<Uuid> {
+    /// Resolve the configuration and individual credential after verification.
+    pub async fn verify_api_key(&self, raw: &str) -> Option<VerifiedMcpApiKey> {
         let trimmed = raw.trim();
         if trimmed.is_empty() {
             return None;
@@ -251,7 +259,10 @@ impl McpApiKeyRegistry {
         let rbytes = self.storage.get_kv(&key_rec_key(key_id)).await.ok()??;
         let rec: KeyRecordV2 = serde_json::from_slice(&rbytes).ok()?;
         if rec.api_key == trimmed {
-            return Some(rec.config_id);
+            return Some(VerifiedMcpApiKey {
+                config_id: rec.config_id,
+                key_id,
+            });
         }
         None
     }
@@ -383,8 +394,20 @@ mod tests {
             .expect("rot");
         assert_ne!(out.api_key, a.api_key);
         assert_eq!(reg.verify_api_key(&a.api_key).await, None);
-        assert_eq!(reg.verify_api_key(&b.api_key).await, Some(cid));
-        assert_eq!(reg.verify_api_key(&out.api_key).await, Some(cid));
+        assert_eq!(
+            reg.verify_api_key(&b.api_key).await,
+            Some(VerifiedMcpApiKey {
+                config_id: cid,
+                key_id: b.key_id
+            })
+        );
+        assert_eq!(
+            reg.verify_api_key(&out.api_key).await,
+            Some(VerifiedMcpApiKey {
+                config_id: cid,
+                key_id: out.key_id
+            })
+        );
         let list = reg.list_api_keys(cid).await.expect("list");
         assert_eq!(list.len(), 2);
     }
@@ -397,8 +420,20 @@ mod tests {
         let a = reg.add_key(cid, "A".to_string()).await.expect("a");
         let b = reg.add_key(cid, "B".to_string()).await.expect("b");
         assert_ne!(a.api_key, b.api_key);
-        assert_eq!(reg.verify_api_key(&a.api_key).await, Some(cid));
-        assert_eq!(reg.verify_api_key(&b.api_key).await, Some(cid));
+        assert_eq!(
+            reg.verify_api_key(&a.api_key).await,
+            Some(VerifiedMcpApiKey {
+                config_id: cid,
+                key_id: a.key_id
+            })
+        );
+        assert_eq!(
+            reg.verify_api_key(&b.api_key).await,
+            Some(VerifiedMcpApiKey {
+                config_id: cid,
+                key_id: b.key_id
+            })
+        );
         let list = reg.list_api_keys(cid).await.expect("list");
         assert_eq!(list.len(), 2);
         assert_eq!(list[0].label.as_deref(), Some("A"));
@@ -428,7 +463,13 @@ mod tests {
             .await
             .expect("r");
         assert_eq!(reg.verify_api_key(&a.api_key).await, None);
-        assert_eq!(reg.verify_api_key(&c.api_key).await, Some(cid));
+        assert_eq!(
+            reg.verify_api_key(&c.api_key).await,
+            Some(VerifiedMcpApiKey {
+                config_id: cid,
+                key_id: c.key_id
+            })
+        );
         let list = reg.list_api_keys(cid).await.expect("list");
         assert_eq!(list.len(), 1);
         assert_eq!(list[0].label.as_deref(), Some("After rotation"));
@@ -454,7 +495,13 @@ mod tests {
         let b = reg.add_key(cid, "B".to_string()).await.expect("b");
         reg.revoke_one_api_key(cid, a.key_id).await.expect("r");
         assert_eq!(reg.verify_api_key(&a.api_key).await, None);
-        assert_eq!(reg.verify_api_key(&b.api_key).await, Some(cid));
+        assert_eq!(
+            reg.verify_api_key(&b.api_key).await,
+            Some(VerifiedMcpApiKey {
+                config_id: cid,
+                key_id: b.key_id
+            })
+        );
     }
 
     #[tokio::test]

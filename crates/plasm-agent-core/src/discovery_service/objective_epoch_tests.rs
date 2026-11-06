@@ -44,7 +44,7 @@ async fn objective_epoch_continuation_revision_and_replay() {
         let frontier = scope(&session, epoch);
         let key = request(&frontier, intent);
         let result = a
-            .route_frontier(&frontier, &key, &[], |visits| {
+            .route_frontier(&frontier, &key, &[], |visits, _, _| {
                 assert_eq!(visits.is_empty(), expected_visits == 0);
                 assert!(visits.values().all(|n| *n == expected_visits));
                 async {
@@ -60,7 +60,7 @@ async fn objective_epoch_continuation_revision_and_replay() {
             .await
             .unwrap();
         let replay = b
-            .route_frontier(&frontier, &key, &[], |_| async {
+            .route_frontier(&frontier, &key, &[], |_, _, _| async {
                 panic!("replay must not reserve budget or repeat judgment")
             })
             .await
@@ -106,7 +106,7 @@ async fn objective_epoch_late_completion_and_concurrent_duplicate() {
         let old = old.clone();
         let old_key = old_key.clone();
         tokio::spawn(async move {
-            a.route_frontier(&old, &old_key, &[], |_| async {
+            a.route_frontier(&old, &old_key, &[], |_, _, _| async {
                 assert!(
                     a.store
                         .reserve_selector_search(&format!("{old_key}:started"))
@@ -125,7 +125,7 @@ async fn objective_epoch_late_completion_and_concurrent_duplicate() {
     // New objective can complete while the obsolete objective is still running.
     tokio::time::timeout(
         std::time::Duration::from_secs(5),
-        b.route_frontier(&new, &new_key, &[], |visits| {
+        b.route_frontier(&new, &new_key, &[], |visits, _, _| {
             assert!(visits.is_empty());
             async {
                 assert!(
@@ -140,7 +140,7 @@ async fn objective_epoch_late_completion_and_concurrent_duplicate() {
     .await
     .unwrap()
     .unwrap();
-    let mut duplicate = Box::pin(b.route_frontier(&old, &old_key, &[], |_| async {
+    let mut duplicate = Box::pin(b.route_frontier(&old, &old_key, &[], |_, _, _| async {
         panic!("concurrent duplicate must not execute work")
     }));
     assert!(

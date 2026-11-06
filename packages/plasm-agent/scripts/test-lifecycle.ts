@@ -22,7 +22,7 @@ try {
   const archived = deferred<void>();
   const releaseArchive = deferred<void>();
   const events: string[] = [];
-  const engine: PlasmEngine = {
+  const engine: PlasmEngine = { takeCompletedTeaching: async () => "",
     loadCatalog: unused, activateDiscovery: unused, routeIntent: unused,
     synthesizeTeaching: unused, dryRun: unused, run: unused, introspectCatalog: unused,
     close: async () => { events.push("closed"); },
@@ -127,8 +127,21 @@ try {
   releasePlan.resolve();
   const completedRead = await acceptedPlan;
   assert.match(completedRead, /completed/, "accepted clean-read plan may finish its internal live run after admission closes");
-  assert.match(completedRead, /\*\*Executed reference:\*\* `pc1`/, "fused reads expose the real review identity for evidence binding");
+  assert.match(completedRead, /\*\*Completed review:\*\* `pc1` \(already executed; do not run it again\)/, "a completed review remains citable without inviting another run");
+  assert.ok(completedRead.startsWith("**Completed review:** `pc1`"), "review status precedes potentially long result tables");
   assert.equal(fusedRuns, 1, 'rendering the reference never executes the observation again');
   await fusedClose;
+  const pageRuntime = new AgentRuntime({ agentRoot: root, tenantScope: session.tenantScope, archive: null, hostTransport: null, engine: { ...engine, close: async () => {} } });
+  Reflect.set(pageRuntime, "workflowSession", session);
+  await assert.rejects(pageRuntime.plasmRun({ logicalSessionRef: session.logicalSessionRef, runRef: "? " }),
+    /No operation ran.*Never guess a reference/);
+  const page = await pageRuntime.plasmRun({ logicalSessionRef: session.logicalSessionRef, runRef: "pg1" });
+  assert.match(page, /\*\*Page delivered:\*\* `pg1`/);
+  assert.doesNotMatch(page, /Completed review/);
+  session.planCommits.push({ ref: "pc9", program: "source", at: new Date().toISOString(), writeCount: 1 });
+  const writeReceipt = await pageRuntime.plasmRun({ logicalSessionRef: session.logicalSessionRef, runRef: "pc9" });
+  assert.match(writeReceipt, /If all requested effects and conditions are established, finish/);
+  assert.doesNotMatch(completedRead, /any effect receipts/, "read completions do not imply write receipts");
+  await pageRuntime.close();
   console.log("PASS: turn and runtime admission, in-flight execution and persistence drain, idempotent close and preserved failures");
 } finally { await rm(root, { recursive: true, force: true }); }

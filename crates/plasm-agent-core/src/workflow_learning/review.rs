@@ -19,6 +19,9 @@ pub(crate) struct ReviewSession {
     pub prompt_hash: String,
     pub execute_session: String,
     pub subtasks: Vec<AchievedSubtask>,
+    pub actor: super::repository::training::TrustedTrainingActor,
+    pub expected_revision: u64,
+    pub idempotency_key: uuid::Uuid,
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -65,10 +68,20 @@ impl ReviewCommit for PendingReview<'_> {
         Ok(PendingReview::commit(self).await?)
     }
 }
-impl ReviewJournal for WorkflowRepository {
-    type Pending<'a> = PendingReview<'a>;
+struct AuthorizedReviewJournal<'a> {
+    repository: &'a WorkflowRepository,
+    authorization: super::repository::ReviewAuthorization,
+}
+impl ReviewJournal for AuthorizedReviewJournal<'_> {
+    type Pending<'a>
+        = PendingReview<'a>
+    where
+        Self: 'a;
     async fn prepare<'a>(&'a self, request: &ReviewRequest) -> Result<Self::Pending<'a>> {
-        Ok(self.prepare_review(request).await?)
+        Ok(self
+            .repository
+            .prepare_review(request, &self.authorization)
+            .await?)
     }
 }
 
@@ -93,8 +106,7 @@ impl ReviewGate for SessionReviewGate<'_> {
             .get_by_strs(&self.request.prompt_hash, &self.request.execute_session)
             .await
             .ok_or(ReviewError::IncompleteSession)?;
-        let logical = self
-            .host
+        self.host
             .logical_sessions
             .get(self.request.logical_session)
             .await
@@ -106,7 +118,15 @@ impl ReviewGate for SessionReviewGate<'_> {
             scope: self.request.scope.clone(),
             logical_session: self.request.logical_session,
             session_revision: session.core.tip_seq().await.0,
-            intent: logical.accumulated_intent,
+            // Session intent can predate consent. Only this explicit review's
+            // newly supplied subtask descriptions enter the learning seal.
+            intent: self
+                .request
+                .subtasks
+                .iter()
+                .map(|subtask| subtask.intent.as_str())
+                .collect::<Vec<_>>()
+                .join("; "),
             subtasks: self.request.subtasks.clone(),
         })
     }
@@ -169,7 +189,15 @@ impl WorkflowLearning {
             .repository()
             .await
             .map_err(|error| ReviewError::Learning(Box::new(error)))?;
-        publish_review(repository.as_ref(), &SessionReviewGate { host, request }).await
+        let journal = AuthorizedReviewJournal {
+            repository: repository.as_ref(),
+            authorization: super::repository::ReviewAuthorization {
+                actor: request.actor.clone(),
+                expected_revision: request.expected_revision,
+                idempotency_key: request.idempotency_key,
+            },
+        };
+        publish_review(&journal, &SessionReviewGate { host, request }).await
     }
 }
 

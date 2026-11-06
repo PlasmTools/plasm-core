@@ -20,6 +20,7 @@ def build_targets():
             "src/assets/**",
             "src/**/*.sql",
             "src/**/*.txt",
+            "src/**/*.html",
             "migrations/**",
         ]),
         crate_root = "src/lib.rs",

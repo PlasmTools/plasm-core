@@ -119,6 +119,7 @@ pub async fn seed_model_boundary(store: &DiscoveryStore, generation: &str, turns
             exposed: &[], visits: &Default::default(),
         },
         &recall,
+        plasm_agent_core::discovery_matcher::operations::OperationSet::from_excerpts(intent, &[intent.to_owned()]).unwrap(),
         |batch| async move {
         let body: Value = serde_json::from_str(batch.body()).unwrap();
         let answers: BTreeMap<_, _> = body["questions"]

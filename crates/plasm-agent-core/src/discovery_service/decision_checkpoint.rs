@@ -1,5 +1,6 @@
 //! Validated decision envelopes share ownership through durable completion.
-use crate::discovery_matcher::{self as matcher, DecisionProviderError, IssuedBatch};
+use crate::decision_codec::DecisionPacket;
+use crate::discovery_matcher::{self as matcher, DecisionProviderError};
 use crate::discovery_scheduling::DecisionLocks;
 use crate::discovery_store::DiscoveryStore;
 use tokio::sync::{Mutex, MutexGuard, OwnedMutexGuard};
@@ -48,12 +49,13 @@ impl<'a, C: DecisionCache> DecisionCheckpoint<'a, C> {
         }
     }
 
-    pub(crate) async fn receive<F, Fut>(
+    pub(crate) async fn receive<P, F, Fut>(
         &self,
-        issued: IssuedBatch,
+        issued: P,
         fetch: F,
     ) -> Result<String, DecisionProviderError>
     where
+        P: DecisionPacket,
         F: FnOnce() -> Fut,
         Fut: std::future::Future<Output = Result<String, DecisionProviderError>>,
     {
@@ -62,12 +64,15 @@ impl<'a, C: DecisionCache> DecisionCheckpoint<'a, C> {
         let mut pending = self.vacant_slot().await?;
         let owner = self.locks.claim(issued.cache_key()).await;
         if let Some(raw) = self.cache.load(issued.cache_key()).await? {
+            issued
+                .validate_response(&raw)
+                .map_err(|error| matcher::online::ReceivedResponseFailure::new(&raw, error))?;
             return Ok(raw);
         }
         let raw = fetch().await?;
-        matcher::decode_batch(&issued, &raw).map_err(|error| {
-            matcher::online::ReceivedResponseFailure::new(&raw, Box::new(error))
-        })?;
+        issued
+            .validate_response(&raw)
+            .map_err(|error| matcher::online::ReceivedResponseFailure::new(&raw, error))?;
         *pending = Some(PendingEnvelope {
             key: issued.cache_key().into(),
             raw: raw.clone(),

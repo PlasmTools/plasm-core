@@ -1,5 +1,46 @@
 //! Real compiler, PostgreSQL ledger and session publication with a scripted model.
 use super::*;
+
+#[tokio::test]
+async fn recall_budget_allows_sequential_stages_and_reports_the_expired_stage() {
+    let budget = RecallBudget::new(Duration::from_millis(250));
+    for stage in [RecallStage::Normalization, RecallStage::Embedding] {
+        budget
+            .run(
+                stage,
+                Duration::from_millis(100),
+                tokio::time::sleep(Duration::from_millis(20)),
+            )
+            .await
+            .unwrap();
+    }
+    let failure = budget
+        .run(
+            RecallStage::Applicability,
+            Duration::from_millis(10),
+            tokio::time::sleep(Duration::from_millis(40)),
+        )
+        .await
+        .unwrap_err();
+    assert!(matches!(
+        failure,
+        LearningError::RecallTimeout(RecallStage::Applicability)
+    ));
+
+    let exhausted = RecallBudget::new(Duration::from_millis(10));
+    let failure = exhausted
+        .run(
+            RecallStage::Search,
+            Duration::from_secs(1),
+            tokio::time::sleep(Duration::from_millis(40)),
+        )
+        .await
+        .unwrap_err();
+    assert!(matches!(
+        failure,
+        LearningError::RecallTimeout(RecallStage::Search)
+    ));
+}
 use crate::workflow_learning::{model::CompiledProgramId, test_identities as ids};
 
 /// The producer and consumer are separate real Node/NAPI processes. The only
@@ -84,34 +125,8 @@ async fn postgres_native_process_restart_promotes_and_fetches_checked_example() 
         claim.id.to_string()
     );
     for receipt in &claim.seal.executions {
-        let captured = receipt
-            .symbol_context
-            .captured()
-            .expect("compiler-owned saved ledger");
-        let ledger = plasm_core::PersistedSymbolLedger::decode(captured.ledger_bytes()).unwrap();
-        assert_eq!(ledger.entities.first().map(String::as_str), Some("Product"));
-        assert_eq!(
-            ledger.entity_catalog_entry_ids.first().map(String::as_str),
-            Some("matrix")
-        );
-        assert_eq!(
-            ledger.catalog_cgs_hashes.iter().collect::<BTreeMap<_, _>>(),
-            captured
-                .catalog_fingerprints()
-                .iter()
-                .collect::<BTreeMap<_, _>>()
-        );
-        let emitted = collected["symbol_contexts"]
-            .as_array()
-            .unwrap()
-            .iter()
-            .find(|item| item["run_id"] == receipt.run_id.to_wire())
-            .unwrap();
-        assert_eq!(
-            emitted["ledger_sha256"],
-            plasm_core::catalog_discovery::content_hash(captured.ledger_bytes()),
-            "durable seal preserves exact producer ledger bytes across process exit"
-        );
+        assert!(receipt.observation.available().is_some());
+        assert!(receipt.catalog_fingerprints.contains_key("matrix"));
     }
     let CurationBatch {
         examples: proposals,
@@ -162,7 +177,7 @@ async fn postgres_native_process_restart_promotes_and_fetches_checked_example() 
         .iter()
         .map(|item| item.candidate_hash.clone())
         .collect::<Vec<_>>();
-    repo.publish_frozen(&scope, claim.id, &hashes, "offline-native-proof")
+    repo.publish_training_fixture(&scope, claim.id, &hashes, "offline-native-proof")
         .await
         .unwrap();
     let examples = repo.list_eligible(&scope, 3).await.unwrap();
@@ -241,6 +256,30 @@ impl ProposalModel for RejectedModel<'_> {
 
 struct OfflineModel;
 impl ProposalModel for OfflineModel {
+    fn assess<'a>(
+        &'a self,
+        request: &'a super::super::applicability::Request,
+    ) -> futures_util::future::LocalBoxFuture<
+        'a,
+        Result<BTreeMap<String, super::super::applicability::Assessment>, LearningError>,
+    > {
+        Box::pin(async move {
+            Ok(request
+                .labels()
+                .iter()
+                .cloned()
+                .map(|label| {
+                    (
+                        label,
+                        super::super::applicability::Assessment {
+                            judgment: super::super::applicability::Judgment::SameTask,
+                            effect_alignment: super::super::applicability::EffectAlignment::Aligned,
+                        },
+                    )
+                })
+                .collect())
+        })
+    }
     fn embedding_profile(&self) -> String {
         "offline-matrix-3-v1".into()
     }
@@ -268,6 +307,85 @@ impl ProposalModel for OfflineModel {
         _: &'a NormalizedIntent,
     ) -> futures_util::future::LocalBoxFuture<'a, Result<Vec<f32>, LearningError>> {
         Box::pin(async { Ok(vec![1.0, 0.0, 0.0]) })
+    }
+}
+
+struct UnrelatedModel;
+
+struct SlowModel;
+impl ProposalModel for SlowModel {
+    fn embedding_profile(&self) -> String {
+        OfflineModel.embedding_profile()
+    }
+    fn normalize<'a>(
+        &'a self,
+        request: &'a NormalizationRequest,
+    ) -> futures_util::future::LocalBoxFuture<'a, NormalizationExchange> {
+        Box::pin(async move {
+            tokio::time::sleep(Duration::from_secs(6)).await;
+            OfflineModel.normalize(request).await
+        })
+    }
+    fn embed<'a>(
+        &'a self,
+        intent: &'a NormalizedIntent,
+    ) -> futures_util::future::LocalBoxFuture<'a, Result<Vec<f32>, LearningError>> {
+        OfflineModel.embed(intent)
+    }
+    fn assess<'a>(
+        &'a self,
+        request: &'a super::super::applicability::Request,
+    ) -> futures_util::future::LocalBoxFuture<
+        'a,
+        Result<BTreeMap<String, super::super::applicability::Assessment>, LearningError>,
+    > {
+        Box::pin(async move {
+            tokio::time::sleep(Duration::from_secs(6)).await;
+            OfflineModel.assess(request).await
+        })
+    }
+}
+
+impl ProposalModel for UnrelatedModel {
+    fn embedding_profile(&self) -> String {
+        OfflineModel.embedding_profile()
+    }
+    fn normalize<'a>(
+        &'a self,
+        request: &'a NormalizationRequest,
+    ) -> futures_util::future::LocalBoxFuture<'a, NormalizationExchange> {
+        OfflineModel.normalize(request)
+    }
+    fn embed<'a>(
+        &'a self,
+        intent: &'a NormalizedIntent,
+    ) -> futures_util::future::LocalBoxFuture<'a, Result<Vec<f32>, LearningError>> {
+        OfflineModel.embed(intent)
+    }
+    fn assess<'a>(
+        &'a self,
+        request: &'a super::super::applicability::Request,
+    ) -> futures_util::future::LocalBoxFuture<
+        'a,
+        Result<BTreeMap<String, super::super::applicability::Assessment>, LearningError>,
+    > {
+        Box::pin(async move {
+            Ok(request
+                .labels()
+                .iter()
+                .cloned()
+                .map(|label| {
+                    (
+                        label,
+                        super::super::applicability::Assessment {
+                            judgment: super::super::applicability::Judgment::Unrelated,
+                            effect_alignment:
+                                super::super::applicability::EffectAlignment::Unrequested,
+                        },
+                    )
+                })
+                .collect())
+        })
     }
 }
 
@@ -339,7 +457,7 @@ async fn postgres_review_to_checked_example_without_provider_calls() {
         tenant: "local-appliance".into(),
         project: "matrix".into(),
     };
-    repo.bind_session(&scope, ids::logical("logical"))
+    repo.bind_training_fixture(&scope, ids::logical("logical"))
         .await
         .unwrap();
     repo.begin_execution(&scope, ids::logical("logical"), "attempt")
@@ -351,13 +469,15 @@ async fn postgres_review_to_checked_example_without_provider_calls() {
         scope: scope.clone(),
         logical_session: ids::logical("logical"),
         session_revision: 1,
-        run_id: ids::run("fixture-run"),
+        execution_id: ids::run("fixture-run"),
         plan_id: CompiledProgramId::from_comp(&bundle.artifact().comp),
         prompt_hash: session.prompt_hash.parse().unwrap(),
         execute_session: ids::execute("fixture-execute"),
-        run_artifact: serde_json::json!({"fixture_completed":true}),
         source: source.clone(),
-        symbol_context: Default::default(),
+        teaching_plan: super::super::review_packet::TeachingPlan::Unavailable {
+            reason: super::super::review_packet::TeachingPlanUnavailable::PlanningFailed,
+        },
+
         catalogue_requirements:
             super::super::catalogue_guidance::CatalogueRequirementEvidence::Available(
                 super::super::teaching::ProgramCatalogueRequirements::from_compiled(
@@ -371,11 +491,10 @@ async fn postgres_review_to_checked_example_without_provider_calls() {
         ),
         catalog_fingerprints: teaching.catalog_fingerprints.clone(),
     };
-    repo.record_execution(&receipt).await.unwrap();
+    repo.record_training_fixture(&receipt).await.unwrap();
     let mut other_output = receipt.clone();
-    other_output.run_id = ids::run("fixture-other-output");
-    other_output.run_artifact = serde_json::json!({"fixture_completed":true,"output":2});
-    repo.record_execution(&other_output).await.unwrap();
+    other_output.execution_id = ids::run("fixture-other-output");
+    repo.record_training_fixture(&other_output).await.unwrap();
     let request = ReviewRequest {
         scope: scope.clone(),
         logical_session: ids::logical("logical"),
@@ -385,20 +504,20 @@ async fn postgres_review_to_checked_example_without_provider_calls() {
             AchievedSubtask {
                 intent: "Inspect one item".into(),
                 observed_outcome: "One complete item was returned".into(),
-                run_ids: vec![ids::run("fixture-run")],
+                execution_ids: vec![ids::run("fixture-run")],
             },
             AchievedSubtask {
                 intent: "Inspect another output".into(),
                 observed_outcome: "The second result completed".into(),
-                run_ids: vec![ids::run("fixture-other-output")],
+                execution_ids: vec![ids::run("fixture-other-output")],
             },
         ],
     };
-    assert!(repo.review(&request).await.is_err());
+    assert!(repo.review_training_fixture(&request).await.is_err());
     repo.finish_execution(&scope, ids::logical("logical"), "attempt", true)
         .await
         .unwrap();
-    let review = repo.review(&request).await.unwrap();
+    let review = repo.review_training_fixture(&request).await.unwrap();
     assert!(
         repo.claim_recorded_scoped(60, Some(&scope))
             .await
@@ -413,7 +532,7 @@ async fn postgres_review_to_checked_example_without_provider_calls() {
         &claim,
         0,
         NormalizationStage::Compare {
-            run_id: ids::run("not-in-seal")
+            execution_id: ids::run("not-in-seal")
         }
     )
     .is_err());
@@ -424,7 +543,7 @@ async fn postgres_review_to_checked_example_without_provider_calls() {
                 message: "fixture unsupported program remains in immutable receipt".into(),
             },
         );
-        execution.catalogue_requirements = Default::default();
+        execution.catalogue_requirements = crate::workflow_learning::catalogue_guidance::CatalogueRequirementEvidence::Unavailable { diagnostic: "fixture".into() };
     }
     assert!(candidates(&repo, &unobserved, &ForbiddenModel)
         .await
@@ -445,6 +564,7 @@ async fn postgres_review_to_checked_example_without_provider_calls() {
         },
         "inspect",
         InterpretationMaterial::default(),
+        None,
     )
     .await;
     assert!(matches!(
@@ -496,30 +616,26 @@ async fn postgres_review_to_checked_example_without_provider_calls() {
     .unwrap();
     assert!(repo.list_eligible(&scope, 3).await.unwrap().is_empty());
     let original_artifacts = repo.export_proposals(&scope).await.unwrap();
-    repo.approve_publication(&scope, review.id, "fixture-operator")
+    repo.approve_training_fixture(&scope, review.id, "fixture-operator")
         .await
         .unwrap();
-    let replay_claim = repo
+    assert!(repo
         .claim_recorded_scoped(60, Some(&scope))
         .await
         .unwrap()
-        .unwrap();
-    assert_eq!(replay_claim.id, review.id);
-    let replay = proposals_for_claim(&repo, &replay_claim, &ForbiddenModel)
-        .await
-        .unwrap();
-    repo.finish_with_guidance(
-        &replay_claim,
-        &replay.examples,
-        &replay.associations,
-        PublicationPolicy::Reviewed,
-    )
-    .await
-    .unwrap();
+        .is_none());
     assert_eq!(
         serde_json::to_value(&original_artifacts).unwrap(),
         serde_json::to_value(repo.export_proposals(&scope).await.unwrap()).unwrap()
     );
+    let catalogs = BTreeMap::from([(
+        "langmatrix".to_owned(),
+        plasm_core::loader::load_schema_dir(
+            &std::path::Path::new(crate::test_manifest_dir())
+                .join("../../fixtures/schemas/plasm_language_matrix"),
+        )
+        .unwrap(),
+    )]);
     let (examples, guidance) = recall_with_model(
         &repo,
         &scope,
@@ -527,20 +643,96 @@ async fn postgres_review_to_checked_example_without_provider_calls() {
         &crate::discovery_store::DiscoveryAuthorization::catalogs(BTreeSet::from([
             "langmatrix".into()
         ])),
-        &receipt.catalog_fingerprints,
+        &RecallCatalogue {
+            pins: &receipt.catalog_fingerprints,
+            graphs: &catalogs,
+        },
         &OfflineModel,
+        &RecallBudget::new(Duration::from_secs(30)),
     )
     .await
     .unwrap();
     assert_eq!(examples.len(), 1);
     assert!(!guidance.is_empty());
+    let mut altered = examples.clone();
+    altered[0].candidate.intent.purpose.push_str(" changed");
+    let checked = super::super::deferred_recall::validate_current(
+        &WorkflowLearning::with_test_repository(
+            LearningMode::Serving,
+            std::sync::Arc::new(repo.clone()),
+        ),
+        &scope,
+        (altered, guidance.clone()),
+    )
+    .await
+    .unwrap();
+    assert!(
+        checked.0.is_empty(),
+        "changed example revision must not be offered"
+    );
+    assert!(!checked.1.is_empty());
+    let (slow_examples, slow_guidance) = recall_with_model(
+        &repo,
+        &scope,
+        "Inspect one item",
+        &crate::discovery_store::DiscoveryAuthorization::catalogs(BTreeSet::from([
+            "langmatrix".into()
+        ])),
+        &RecallCatalogue {
+            pins: &receipt.catalog_fingerprints,
+            graphs: &catalogs,
+        },
+        &SlowModel,
+        &RecallBudget::new(Duration::from_secs(30)),
+    )
+    .await
+    .unwrap();
+    assert_eq!(slow_examples.len(), 1);
+    assert!(!slow_guidance.is_empty());
+    let timed_out = interpret(
+        &repo,
+        NormalizationContext::recall(scope.clone()),
+        &SlowModel,
+        "inspect",
+        InterpretationMaterial::default(),
+        Some(Duration::from_millis(10)),
+    )
+    .await;
+    assert!(matches!(
+        timed_out,
+        Err(LearningError::RecallTimeout(RecallStage::Normalization))
+    ));
+    assert!(repo
+        .normalization_audits(&scope, 100)
+        .await
+        .unwrap()
+        .iter()
+        .any(|audit| audit["state"] == "transport_failed"));
+    let (unrelated_examples, unrelated_guidance) = recall_with_model(
+        &repo,
+        &scope,
+        "A different task",
+        &crate::discovery_store::DiscoveryAuthorization::catalogs(BTreeSet::from([
+            "langmatrix".into()
+        ])),
+        &RecallCatalogue {
+            pins: &receipt.catalog_fingerprints,
+            graphs: &catalogs,
+        },
+        &UnrelatedModel,
+        &RecallBudget::new(Duration::from_secs(30)),
+    )
+    .await
+    .unwrap();
+    assert!(unrelated_examples.is_empty());
+    assert!(!unrelated_guidance.is_empty(), "a different whole-program purpose must not suppress authorized catalogue candidates before discovery judges their individual capabilities");
     // A different complete authored program in the same logical session is a
     // separate candidate, even when review intent uses the same vocabulary.
     let second_source = super::super::teaching::tests::source(&session);
     let second_bundle =
         crate::plasm_dag::compile_python_program_checked(&session, &second_source).unwrap();
     let mut second_program = receipt.clone();
-    second_program.run_id = ids::run("second-program-run");
+    second_program.execution_id = ids::run("second-program-run");
     second_program.plan_id = CompiledProgramId::from_comp(&second_bundle.artifact().comp);
     second_program.session_revision = 2;
     second_program.source = second_source.clone();
@@ -558,15 +750,15 @@ async fn postgres_review_to_checked_example_without_provider_calls() {
             )
             .unwrap(),
         );
-    repo.record_execution(&second_program).await.unwrap();
+    repo.record_training_fixture(&second_program).await.unwrap();
     let mut next_request = request.clone();
     next_request.session_revision += 1;
     next_request.subtasks.push(AchievedSubtask {
         intent: "Inspect a single result in another complete program".into(),
         observed_outcome: "A complete single result was returned".into(),
-        run_ids: vec![second_program.run_id],
+        execution_ids: vec![second_program.execution_id],
     });
-    repo.review(&next_request).await.unwrap();
+    repo.review_training_fixture(&next_request).await.unwrap();
     let next_claim = repo.claim_scoped(60, Some(&scope)).await.unwrap().unwrap();
     let conflicting = candidates(&repo, &next_claim, &ConflictingIntentModel)
         .await
@@ -611,6 +803,73 @@ async fn postgres_review_to_checked_example_without_provider_calls() {
     let allowed = crate::discovery_store::DiscoveryAuthorization::catalogs(BTreeSet::from([
         "langmatrix".into(),
     ]));
+    // An example can provide the first declaration wave to a session whose
+    // symbol ledger is empty. Build this fixture independently of the existing
+    // nonempty session below, so both serving cases remain covered.
+    let mut empty_session = (*host
+        .get_execute_session(&created.prompt_hash, &created.session)
+        .await
+        .unwrap())
+    .clone();
+    empty_session.entities.clear();
+    empty_session.python_teaching = Default::default();
+    empty_session.domain_revision = 0;
+    empty_session.teaching_exposure =
+        Some(plasm_core::TeachingExposureSession::new_with_intent_delta(
+            &empty_session.cgs,
+            "langmatrix",
+            &[],
+            Default::default(),
+        ));
+    let empty_session_id = crate::execute_path_ids::ExecuteSessionId::new_random().to_string();
+    let empty_key = crate::execute_session::SessionReuseKey {
+        tenant_scope: String::new(),
+        entry_id: "langmatrix".into(),
+        catalog_cgs_hash: empty_session.cgs.catalog_cgs_hash_hex(),
+        entities: vec![],
+        context_intent: Some("Inspect a result".into()),
+        principal: None,
+        logical_session_id: Some(empty_session_id.clone()),
+    };
+    host.store_execute_session(
+        empty_key,
+        created.prompt_hash.clone(),
+        empty_session_id.clone(),
+        empty_session,
+    )
+    .await
+    .unwrap();
+    assert!(host
+        .sessions
+        .get_by_strs(&created.prompt_hash, &empty_session_id)
+        .await
+        .is_some());
+    assert!(host
+        .execute_session_registry
+        .load_for_example(&created.prompt_hash, &empty_session_id)
+        .await
+        .unwrap()
+        .is_some());
+    let empty_prepared = super::super::serving::prepare_example_fetch(
+        &host,
+        &repo,
+        scope.clone(),
+        examples[0].id,
+        &created.prompt_hash,
+        &empty_session_id,
+        &allowed,
+    )
+    .await
+    .unwrap();
+    let first_wave =
+        super::super::serving::commit_example_fetch(&host, &repo, empty_prepared, &allowed)
+            .await
+            .unwrap();
+    assert!(!first_wave.source.is_empty());
+    assert!(
+        !first_wave.teaching_delta.is_empty(),
+        "the first fetch must teach its dependencies"
+    );
     let prepared = super::super::serving::prepare_example_fetch(
         &host,
         &repo,
@@ -689,6 +948,47 @@ fn candidate(identity: &str, tokens: u32, coverage: &[&str]) -> Candidate {
 }
 
 #[test]
+fn matching_purpose_and_coverage_do_not_prove_equivalent_behavior() {
+    let old = candidate("old", 20, &["read"]);
+    let stored = StoredExample {
+        id: uuid::Uuid::nil(),
+        candidate: old.clone(),
+    };
+    let mut intent = old.intent.clone();
+    intent.purpose = "  INSPECT  ".into();
+    assert!(ambiguous_new_family(
+        std::slice::from_ref(&stored),
+        &intent,
+        &old.catalog_fingerprints,
+        "different",
+        &old.coverage
+    ));
+    assert!(!ambiguous_new_family(
+        std::slice::from_ref(&stored),
+        &intent,
+        &old.catalog_fingerprints,
+        "old",
+        &old.coverage
+    ));
+    assert!(!ambiguous_new_family(
+        std::slice::from_ref(&stored),
+        &intent,
+        &old.catalog_fingerprints,
+        "different",
+        &["write".into()]
+    ));
+    let mut other = old.catalog_fingerprints.clone();
+    other.insert("other".into(), "different".into());
+    assert!(!ambiguous_new_family(
+        &[stored],
+        &intent,
+        &other,
+        "different",
+        &old.coverage
+    ));
+}
+
+#[test]
 fn selection_retains_best_and_complementary_contracts_independent_of_order() {
     let mut stronger = candidate("cheap", 20, &["read"]);
     stronger.quality.assurance = OutcomeAssurance::PostconditionVerified;
@@ -755,7 +1055,7 @@ fn selection_prefers_verified_assurance_before_token_cost() {
 }
 
 #[test]
-fn provider_failures_retry_only_transient_transport() {
+fn provider_failures_retry_transient_transport_and_truncation() {
     use plasm_runtime::provider_transport::ProviderTransportError;
     let rejected = |status| {
         LearningError::Provider(ProviderTransportError::ProviderRejected {
@@ -766,6 +1066,9 @@ fn provider_failures_retry_only_transient_transport() {
     };
     assert!(retryable(&rejected(429)));
     assert!(retryable(&rejected(503)));
+    assert!(retryable(&LearningError::Normalization(
+        NormalizationError::Truncated
+    )));
     assert!(!retryable(&rejected(401)));
     assert!(!retryable(&LearningError::ProviderResponse(
         "malformed proposal".into()
@@ -790,6 +1093,34 @@ fn provider_failures_retry_only_transient_transport() {
     assert!(!retryable(&LearningError::Repository(
         super::super::repository::RepositoryError::InvalidEvidence("missing receipt")
     )));
+}
+
+#[test]
+fn effect_contracts_are_pinned_and_missing_contracts_withhold_examples() {
+    let session = super::super::teaching::tests::session(&["LangItem", "LangLine"]);
+    let source = super::super::teaching::tests::source(&session);
+    let bundle = crate::plasm_dag::compile_python_program_checked(&session, &source).unwrap();
+    let mut program = TeachingProgram::from_compiled(&session, &source, &bundle).unwrap();
+    let mut cgs = plasm_core::loader::load_schema_dir(
+        &std::path::Path::new(crate::test_manifest_dir())
+            .join("../../fixtures/schemas/plasm_language_matrix"),
+    )
+    .unwrap();
+    let name = cgs.capabilities.keys().next().unwrap().clone();
+    let capability = cgs.capabilities.get_mut(&name).unwrap();
+    capability.kind = plasm_core::schema::CapabilityKind::Delete;
+    capability.description = "Delete a record".into();
+    program.required_capabilities = vec![plasm_core::prerequisites::CapabilityRef {
+        catalog: "langmatrix".into(),
+        capability: name.to_string(),
+    }];
+    let catalogs = BTreeMap::from([("langmatrix".to_owned(), cgs)]);
+    let effects = effect_contracts(&program, &catalogs).unwrap();
+    assert_eq!(effects.len(), 1);
+    assert_eq!(effects[0].kind, plasm_core::schema::CapabilityKind::Delete);
+    assert_eq!(effects[0].description, "Delete a record");
+    program.required_capabilities[0].capability = "missing".into();
+    assert!(effect_contracts(&program, &catalogs).is_none());
 }
 
 #[test]
@@ -899,7 +1230,10 @@ impl ProposalModel for WithheldSourceModel {
             input["observed_program"]["source"].is_null(),
             "known sensitive source is never sent to the model"
         );
-        assert!(input["catalogue_requirements"].is_object());
+        assert!(input["catalogue_definitions"].is_array());
+        assert!(input.get("catalogue_requirements").is_none());
+        assert!(!input.to_string().contains("observed_outcome"));
+        assert!(!input.to_string().contains("run_artifact"));
         OfflineModel.normalize(request)
     }
     fn embed<'a>(
@@ -942,35 +1276,36 @@ async fn postgres_sensitive_source_still_reaches_curation_and_independent_guidan
     let observation =
         super::super::teaching::ProgramObservation::from_execution(&session, &source, &bundle);
     assert!(observation.available().unwrap().model_source().is_none());
-    repo.bind_session(&scope, ids::logical("logical"))
+    repo.bind_training_fixture(&scope, ids::logical("logical"))
         .await
         .unwrap();
     repo.begin_execution(&scope, ids::logical("logical"), "attempt")
         .await
         .unwrap();
-    repo.record_execution(&ExecutionReceipt {
+    repo.record_training_fixture(&ExecutionReceipt {
         scope: scope.clone(),
         logical_session: ids::logical("logical"),
         session_revision: 1,
-        run_id: ids::run("sensitive-run"),
+        execution_id: ids::run("sensitive-run"),
         plan_id: CompiledProgramId::from_comp(&bundle.artifact().comp),
         prompt_hash: session.prompt_hash.parse().unwrap(),
         execute_session: ids::execute("execute"),
-        run_artifact: serde_json::json!({"fixture_completed":true}),
         source,
         compiled_plan: serde_json::to_value(&bundle.artifact().comp).unwrap(),
         observation,
         catalog_fingerprints: requirements.catalog_fingerprints().clone(),
         catalogue_requirements:
             super::super::catalogue_guidance::CatalogueRequirementEvidence::Available(requirements),
-        symbol_context: Default::default(),
+        teaching_plan: super::super::review_packet::TeachingPlan::Unavailable {
+            reason: super::super::review_packet::TeachingPlanUnavailable::PlanningFailed,
+        },
     })
     .await
     .unwrap();
     repo.finish_execution(&scope, ids::logical("logical"), "attempt", true)
         .await
         .unwrap();
-    repo.review(&ReviewRequest {
+    repo.review_training_fixture(&ReviewRequest {
         scope: scope.clone(),
         logical_session: ids::logical("logical"),
         session_revision: 1,
@@ -978,7 +1313,7 @@ async fn postgres_sensitive_source_still_reaches_curation_and_independent_guidan
         subtasks: vec![AchievedSubtask {
             intent: "create an item".into(),
             observed_outcome: "created item observed".into(),
-            run_ids: vec![ids::run("sensitive-run")],
+            execution_ids: vec![ids::run("sensitive-run")],
         }],
     })
     .await

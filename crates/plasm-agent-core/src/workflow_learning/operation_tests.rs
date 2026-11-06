@@ -85,7 +85,7 @@ async fn background_operation_seals_receipts(source: &str, multiple: bool) {
     let intent = "Inspect the first fixture item";
     let logical = host
         .logical_sessions
-        .mint_session("", intent)
+        .mint_session("", "private-pre-consent-intent")
         .await
         .unwrap();
     let opened = crate::http_execute::apply_capability_seeds(
@@ -115,7 +115,7 @@ async fn background_operation_seals_receipts(source: &str, multiple: bool) {
         .await
         .unwrap();
     let scope = super::scope(&session.tenant_scope, None);
-    repo.bind_session(&scope, logical.logical_session_id)
+    repo.bind_training_fixture(&scope, logical.logical_session_id)
         .await
         .unwrap();
     let bundle = crate::plasm_compile::compile_program(
@@ -154,7 +154,7 @@ async fn background_operation_seals_receipts(source: &str, multiple: bool) {
     let crate::run_delivery::HttpLiveRunOutcome::Accept { handle, .. } = outcome else {
         panic!("HTTP request must return background acceptance");
     };
-    let output = crate::mcp_run_await::await_operation_terminal(
+    let mut output = crate::mcp_run_await::await_operation_terminal(
         crate::mcp_run_await::TerminalAwaitContext {
             es: Arc::clone(&session),
             st: Arc::clone(&host),
@@ -174,21 +174,60 @@ async fn background_operation_seals_receipts(source: &str, multiple: bool) {
     )
     .await
     .unwrap();
-    assert!(
-        !output.code_plan_run_artifacts.is_empty(),
-        "actual execution must retain evidence"
-    );
+    // Completion evidence does not depend on materializing a result snapshot.
+    // Reuse the real successful operation result with its delivery references
+    // removed to exercise the capture boundary directly.
+    output.code_plan_run_artifacts.clear();
+    let bundle = crate::plasm_compile::compile_program(
+        &Default::default(),
+        None,
+        &session,
+        "operation_evidence",
+        source,
+    )
+    .await
+    .unwrap();
+    let attempt = uuid::Uuid::new_v4().to_string();
+    let (_, permit) = host
+        .workflow_learning
+        .begin_execution(&session.tenant_scope, logical.logical_session_id, &attempt)
+        .await
+        .unwrap()
+        .unwrap();
+    host.workflow_learning
+        .record_completed(super::CompletedExecution {
+            session: &session,
+            logical_session: logical.logical_session_id,
+            execute_session: &opened.session_id,
+            source,
+            bundle: &bundle,
+            output: &output,
+            training_permit: &permit,
+            execution_id: &attempt,
+        })
+        .await
+        .unwrap();
     assert!(session.open_live_operation_handles().is_empty());
-    let run_ids: Vec<_> = output
-        .code_plan_run_artifacts
-        .iter()
-        .map(|artifact| crate::run_artifacts::RunArtifactId::from_wire(&artifact.run_id).unwrap())
+    let execution_ids: Vec<_> = repo
+        .execution_index(&scope, logical.logical_session_id)
+        .await
+        .unwrap()
+        .into_iter()
+        .map(|item| item.execution_id)
         .collect();
+    assert_eq!(
+        execution_ids.len(),
+        2,
+        "each completed attempt has an execution identity"
+    );
     let sealed = host
         .workflow_learning
         .seal_review(
             &host,
             ReviewSession {
+                actor: crate::workflow_learning::repository::training::TrustedTrainingActor::trusted_host(scope.clone(), "fixture-host".into(), "fixture-host-key".into()).unwrap(),
+                expected_revision: repo.training_status(&scope, logical.logical_session_id).await.unwrap().revision,
+                idempotency_key: uuid::Uuid::new_v4(),
                 scope,
                 logical_session: logical.logical_session_id,
                 prompt_hash: opened.prompt_hash,
@@ -196,7 +235,7 @@ async fn background_operation_seals_receipts(source: &str, multiple: bool) {
                 subtasks: vec![AchievedSubtask {
                     intent: intent.into(),
                     observed_outcome: "Fixture item a was returned".into(),
-                    run_ids: run_ids.clone(),
+                    execution_ids: execution_ids.clone(),
                 }],
             },
         )
@@ -204,6 +243,10 @@ async fn background_operation_seals_receipts(source: &str, multiple: bool) {
         .unwrap();
     let claim = repo.claim(60).await.unwrap().unwrap();
     assert_eq!(claim.id, sealed.id);
+    assert_eq!(claim.seal.request.intent, intent);
+    assert!(!serde_json::to_string(&claim.seal)
+        .unwrap()
+        .contains("private-pre-consent-intent"));
     assert_eq!(claim.seal.assurance, OutcomeAssurance::AgentAttested);
     assert!(!claim.seal.executions.is_empty());
     if multiple {
@@ -230,12 +273,16 @@ async fn background_operation_seals_receipts(source: &str, multiple: bool) {
     }
     for receipt in claim.seal.executions {
         assert_eq!(receipt.source, source);
-        assert!(run_ids.contains(&receipt.run_id));
+        assert!(execution_ids.contains(&receipt.execution_id));
         assert!(receipt.compiled_plan.is_object());
-        assert!(receipt
-            .run_artifact
-            .to_string()
-            .contains("observed fixture item"));
+        assert!(matches!(
+            &receipt.teaching_plan,
+            super::review_packet::TeachingPlan::Available { .. }
+        ));
+        let encoded = serde_json::to_value(&receipt).unwrap();
+        assert!(encoded.get("run_artifact").is_none());
+        assert!(encoded.get("symbol_context").is_none());
+        assert!(!encoded.to_string().contains("observed fixture item"));
     }
     mock.abort();
     sqlx::query(&format!("DROP SCHEMA {schema} CASCADE"))

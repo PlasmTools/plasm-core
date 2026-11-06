@@ -93,6 +93,29 @@ impl<K: Ord + Clone> SearchBudget<K> {
         Ok(())
     }
 
+    /// Admit a distinct follow-up packet against the same turn budget.
+    /// Attempts, retries, bytes, and reported tokens remain cumulative.
+    pub fn reserve_followup(
+        &mut self,
+        members: impl IntoIterator<Item = K>,
+        body: &str,
+    ) -> Result<(), BudgetStop> {
+        if self.reported_input_tokens > MAX_REPORTED_INPUT_TOKENS {
+            return Err(BudgetStop::ReportedInputTokens);
+        }
+        if self.requests == 0 || self.requests >= MAX_ATTEMPTS {
+            return Err(BudgetStop::Requests);
+        }
+        let bytes = self.input_bytes.saturating_add(body.len());
+        if body.len() > MAX_INPUT_BYTES || bytes > MAX_TRANSMITTED_BYTES {
+            return Err(BudgetStop::InputBytes);
+        }
+        self.members.extend(members);
+        self.requests += 1;
+        self.input_bytes = bytes;
+        Ok(())
+    }
+
     pub fn members(&self) -> &BTreeSet<K> {
         &self.members
     }
@@ -117,6 +140,22 @@ impl<K: Ord + Clone> SearchBudget<K> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn distinct_followups_share_the_turn_attempt_and_byte_budget() {
+        let mut budget = SearchBudget::default();
+        budget.reserve([1], &["first"]).unwrap();
+        budget.reserve_followup([2], "different packet").unwrap();
+        budget.reserve_retry("different packet").unwrap();
+        assert_eq!(budget.requests(), 3);
+        assert_eq!(budget.members(), &BTreeSet::from([1, 2]));
+        let before = budget.clone();
+        assert_eq!(
+            budget.reserve_followup([3], "fourth"),
+            Err(BudgetStop::Requests)
+        );
+        assert_eq!(budget, before);
+    }
 
     #[test]
     fn retries_charge_full_packet_without_readmitting_a_judgment() {

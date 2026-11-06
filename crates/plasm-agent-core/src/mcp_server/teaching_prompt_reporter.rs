@@ -49,6 +49,7 @@ pub(crate) fn spawn_mcp_teaching_prompt_session_reporter(
 
         let mut interval = tokio::time::interval(Duration::from_secs(1));
         interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+        let mut notified = HashMap::<(String, String, uuid::Uuid), std::time::Instant>::new();
         loop {
             interval.tick().await;
             for pending in plasm.op_progress_hub.drain_mcp_pending() {
@@ -95,6 +96,7 @@ pub(crate) fn spawn_mcp_teaching_prompt_session_reporter(
                 peers.keys().cloned().collect()
             };
             let mut live_trace_keys: HashSet<String> = HashSet::new();
+            let mut attached = Vec::new();
             {
                 let g = session_states.read().await;
                 for tk in &current {
@@ -102,6 +104,69 @@ pub(crate) fn spawn_mcp_teaching_prompt_session_reporter(
                         let s = st_arc.lock().await;
                         for lid in s.logical_by_id.keys() {
                             live_trace_keys.insert(lid.clone());
+                            attached.push((tk.clone(), lid.clone()));
+                        }
+                    }
+                }
+            }
+            notified.retain(|(transport, logical, _), _| {
+                current.contains(transport) && live_trace_keys.contains(logical)
+            });
+            for (transport, logical) in attached {
+                if !plasm
+                    .workflow_learning
+                    .deferred_recalls
+                    .has_delivery(&logical, false)
+                {
+                    continue;
+                }
+                let Ok(uuid) = uuid::Uuid::parse_str(&logical) else {
+                    continue;
+                };
+                let Some(record) = plasm
+                    .logical_sessions
+                    .get(crate::session_identity::LogicalSessionId(uuid))
+                    .await
+                else {
+                    continue;
+                };
+                let Some(pin) = record.discovery_pin else {
+                    continue;
+                };
+                for (ticket, notice) in plasm
+                    .workflow_learning
+                    .deferred_recalls
+                    .supplemental_ready_tickets(
+                        &logical,
+                        record.intent_provenance.current(),
+                        &crate::workflow_learning::deferred_recall::intent_revision(
+                            &record.intent_provenance,
+                        ),
+                        &pin.generation,
+                        &pin.authorization,
+                    )
+                {
+                    let identity = (transport.clone(), logical.clone(), ticket);
+                    if notified
+                        .get(&identity)
+                        .is_some_and(|sent| sent.elapsed() < Duration::from_secs(30))
+                    {
+                        continue;
+                    }
+                    let peer = peers.read().await.get(&transport).cloned();
+                    if let Some(peer) = peer {
+                        let params = json!({"logical_session_ref": crate::mcp_logical_ref::format_logical_session_wire_ref_from_uuid(uuid), "state": notice.as_str(), "next": "Call plasm_context in extend mode with the same current intent."});
+                        if peer
+                            .send_notification(ServerNotification::CustomNotification(
+                                CustomNotification::new(
+                                    "notifications/plasm/discovery",
+                                    Some(params),
+                                ),
+                            ))
+                            .await
+                            .is_ok()
+                        {
+                            notified.insert(identity, std::time::Instant::now());
                         }
                     }
                 }

@@ -10,6 +10,49 @@ mod objective_epoch_tests;
 
 struct AcceptContribution(AtomicUsize);
 
+struct AcceptBusinessRead;
+
+#[async_trait::async_trait]
+impl plasm_runtime::provider_transport::ProviderTransport for AcceptBusinessRead {
+    async fn send(
+        &self,
+        body: &str,
+        _: &mut plasm_runtime::provider_transport::AttemptRecorder<'_>,
+    ) -> std::result::Result<
+        plasm_runtime::provider_transport::ProviderResponse,
+        plasm_runtime::provider_transport::ProviderTransportError,
+    > {
+        let body: serde_json::Value = serde_json::from_str(body).unwrap();
+        let answers: serde_json::Map<String, serde_json::Value> = body["questions"].as_object().unwrap().iter().map(|(key, question)| {
+            let instruction = question["instructions"].as_str().unwrap();
+            let witness = instruction.split("question_evidence.").nth(1).unwrap();
+            let (scope, tail) = witness.split_once(".capabilities.").unwrap();
+            let target = tail.split('`').next().unwrap();
+            let card = &body["state"]["question_evidence"][scope]["capabilities"][target];
+            let relevant = card.to_string().contains("Read business records");
+            let (choice, yes, no) = if relevant { ("relevant", 1.0, 0.0) } else { ("unrelated", 0.0, 1.0) };
+            (key.clone(), serde_json::json!({"type":"choice","choice":choice,"confidence":1.0,"probabilities":{"relevant":yes,"unrelated":no,"uncertain":0.0}}))
+        }).collect();
+        Ok(plasm_runtime::provider_transport::ProviderResponse { status: reqwest::StatusCode::OK, retry_after: None, body: serde_json::json!({"model":matcher::RELEVANCE_MODEL,"provider":"OpenAI","answers":answers}).to_string() })
+    }
+}
+
+struct AcceptOperation;
+
+#[async_trait::async_trait]
+impl matcher::operations::OperationExtractor for AcceptOperation {
+    async fn extract(
+        &self,
+        intent: &str,
+    ) -> std::result::Result<matcher::operations::OperationSet, matcher::operations::ExtractionError>
+    {
+        Ok(matcher::operations::OperationSet::from_excerpts(
+            intent,
+            &[intent.into()],
+        )?)
+    }
+}
+
 #[async_trait::async_trait]
 impl plasm_runtime::provider_transport::ProviderTransport for AcceptContribution {
     async fn send(
@@ -48,6 +91,9 @@ impl plasm_runtime::provider_transport::ProviderTransport for AcceptContribution
 async fn hybrid_service_admits_vector_only_candidate() {
     use plasm_core::catalog_discovery::{content_hash, EmbeddingProfile};
     use std::collections::{BTreeMap, BTreeSet};
+    if std::env::var_os("PLASM_DISCOVERY_OTEL_TEST").is_some() {
+        crate::init_embedded_metrics().unwrap();
+    }
     let url = std::env::var("PLASM_TEST_POSTGRES_URL").unwrap();
     let store = DiscoveryStore::connect(&url).await.unwrap();
     store.migrate().await.unwrap();
@@ -97,6 +143,7 @@ async fn hybrid_service_admits_vector_only_candidate() {
     assert_eq!(recall.lexical_count, 0);
     assert_eq!(recall.vector_count, 1);
     let mut service = DiscoveryService::cached_test_service(store);
+    service.operation_extractor = Arc::new(AcceptOperation);
     let transport = Arc::new(AcceptContribution(AtomicUsize::new(0)));
     service.transport = transport.clone();
     let provenance =
@@ -105,14 +152,17 @@ async fn hybrid_service_admits_vector_only_candidate() {
     let receipt = service
         .route_cached(&key, &[], || async {
             service
-                .route_uncached(
-                    &key,
-                    &generation,
-                    &provenance,
-                    &allowed,
-                    &[],
-                    &BTreeMap::new(),
-                )
+                .route_uncached(RouteWork {
+                    key: &key,
+                    session: &key,
+                    generation: &generation,
+                    provenance: &provenance,
+                    allowed: &allowed,
+                    exposed: &[],
+                    visits: &BTreeMap::new(),
+                    deferred_priorities: &BTreeMap::new(),
+                    operation_state: OperationFrontier::default(),
+                })
                 .await
         })
         .await
@@ -146,6 +196,82 @@ async fn hybrid_service_admits_vector_only_candidate() {
         serde_json::to_value(receipt).unwrap(),
         serde_json::to_value(reused).unwrap()
     );
+    if std::env::var_os("PLASM_DISCOVERY_OTEL_TEST").is_some() {
+        tokio::time::sleep(std::time::Duration::from_secs(2)).await;
+    }
+}
+
+#[tokio::test]
+#[ignore = "requires an isolated PLASM_TEST_POSTGRES_URL with pgvector"]
+async fn operation_selection_accounts_for_required_acquisitions() {
+    use plasm_core::catalog_discovery::{content_hash, EmbeddingProfile};
+    use std::collections::{BTreeMap, BTreeSet};
+    let url = std::env::var("PLASM_TEST_POSTGRES_URL").unwrap();
+    let store = DiscoveryStore::connect(&url).await.unwrap();
+    store.migrate().await.unwrap();
+    let catalog = crate::discovery_store::tests::prepared("operation-proof", 1);
+    let read = CapabilityRef {
+        catalog: "operation-proof".into(),
+        capability: "read".into(),
+    };
+    let source = CapabilityRef {
+        catalog: "operation-proof".into(),
+        capability: "acquire".into(),
+    };
+    let bindings = plasm_core::prerequisites::DeploymentBindings {
+        bindings: vec![plasm_core::prerequisites::DeploymentBinding {
+            consumer: read.clone(),
+            requirement: "scoped_access".into(),
+            provider_catalog: source.catalog.clone(),
+            provider: "value_source".into(),
+        }],
+    };
+    let generation = store
+        .import("operation-proof", vec![catalog], &bindings)
+        .await
+        .unwrap();
+    let intent = format!("xylovariance {}", uuid::Uuid::new_v4());
+    let profile = EmbeddingProfile::default();
+    let key = content_hash(&serde_json::to_vec(&(intent.as_str(), &profile)).unwrap());
+    let mut vector = vec![0.0; 1536];
+    vector[1] = 1.0;
+    let pool = sqlx::PgPool::connect(&url).await.unwrap();
+    sqlx::query("INSERT INTO discovery_intent_embeddings VALUES ($1,$2,$3::text::vector) ON CONFLICT DO NOTHING")
+        .bind(key).bind(serde_json::to_value(profile).unwrap()).bind(serde_json::to_string(&vector).unwrap()).execute(&pool).await.unwrap();
+    pool.close().await;
+    let allowed = DiscoveryAuthorization {
+        catalogs: BTreeSet::from([read.catalog.clone()]),
+        capabilities: BTreeMap::from([(
+            read.catalog.clone(),
+            BTreeSet::from([read.capability.clone(), source.capability.clone()]),
+        )]),
+    };
+    let mut service = DiscoveryService::cached_test_service(store);
+    service.operation_extractor = Arc::new(AcceptOperation);
+    service.transport = Arc::new(AcceptBusinessRead);
+    let provenance = crate::intent_provenance::IntentProvenance::from_turns([intent]).unwrap();
+    let request_key = uuid::Uuid::new_v4().to_string();
+    let receipt = service
+        .route_uncached(RouteWork {
+            key: &request_key,
+            session: &request_key,
+            generation: &generation,
+            provenance: &provenance,
+            allowed: &allowed,
+            exposed: &[],
+            visits: &BTreeMap::new(),
+            deferred_priorities: &BTreeMap::new(),
+            operation_state: OperationFrontier::default(),
+        })
+        .await
+        .unwrap();
+    let closure = receipt.closure.expect("relevant read must have a closure");
+    assert!(closure.prerequisites.contains(&source));
+    assert!(closure.prerequisites.iter().all(|reference| receipt
+        .search
+        .considered
+        .contains(reference)
+        && !receipt.search.unexplored.contains(reference)));
 }
 
 fn receipt() -> RoutingReceipt {
@@ -154,6 +280,383 @@ fn receipt() -> RoutingReceipt {
     ))
     .unwrap();
     serde_json::from_value(packet["routing"].clone()).unwrap()
+}
+
+#[test]
+fn deferred_backlog_is_scoped_idempotent_and_never_grants_relevance() {
+    use std::collections::BTreeSet;
+    let mut receipt = receipt();
+    receipt.authorization = DiscoveryAuthorization::catalogs(BTreeSet::from(["matrix".into()]));
+    let key =
+        deferred_backlog_key("session", "generation", &receipt.authorization, "model").unwrap();
+    assert_ne!(
+        key,
+        deferred_backlog_key("other", "generation", &receipt.authorization, "model").unwrap()
+    );
+    assert_ne!(
+        key,
+        deferred_backlog_key("session", "other", &receipt.authorization, "model").unwrap()
+    );
+    receipt.search.exposed.clear();
+    let deferred = CapabilityRef {
+        catalog: "matrix".into(),
+        capability: "deferred".into(),
+    };
+    let denied = CapabilityRef {
+        catalog: "other".into(),
+        capability: "denied".into(),
+    };
+    receipt.search.deferred = vec![
+        matcher::online::DeferredCandidate {
+            reference: deferred.clone(),
+            reason: matcher::online::DeferredReason::InputBytes,
+        },
+        matcher::online::DeferredCandidate {
+            reference: denied,
+            reason: matcher::online::DeferredReason::InputBytes,
+        },
+    ];
+    let mut backlog = DeferredBacklog::default();
+    backlog.observe(1, "old".into(), &receipt, "receipt-one".into());
+    assert!(backlog.priorities("old", &receipt.authorization).is_empty());
+    assert_eq!(
+        backlog
+            .priorities("new", &receipt.authorization)
+            .get(&deferred),
+        Some(&1)
+    );
+    backlog.observe(1, "old".into(), &receipt, "receipt-one".into());
+    assert_eq!(backlog.entries[0].age, 1);
+    backlog.observe(2, "new".into(), &receipt, "receipt-two".into());
+    assert_eq!(backlog.entries[0].age, 2);
+    backlog.observe(1, "old".into(), &receipt, "late".into());
+    assert_eq!(backlog.last_intent, "new");
+    assert_eq!(backlog.entries[0].age, 2);
+    assert!(backlog
+        .priorities(
+            "another",
+            &DiscoveryAuthorization::catalogs(BTreeSet::new())
+        )
+        .is_empty());
+    assert!(receipt
+        .matching
+        .matches
+        .iter()
+        .all(|judgment| judgment.capability_id != "deferred"));
+}
+
+#[test]
+fn partial_operation_answers_advance_fairness_without_becoming_judgments() {
+    use std::collections::BTreeSet;
+    let mut receipt = receipt();
+    receipt.authorization = DiscoveryAuthorization::catalogs(BTreeSet::from(["matrix".into()]));
+    receipt.matching.matches.clear();
+    let pending = CapabilityRef {
+        catalog: "matrix".into(),
+        capability: "partially_judged".into(),
+    };
+    let denied = CapabilityRef {
+        catalog: "other".into(),
+        capability: "unrelated".into(),
+    };
+    let mut frontier = SearchFrontier::default();
+    frontier.record(
+        "first",
+        &receipt,
+        &BTreeSet::from([pending.clone(), denied.clone()]),
+    );
+    assert_eq!(frontier.visits().get(&pending), Some(&1));
+    assert!(!frontier.visits().contains_key(&denied));
+    frontier.record("first", &receipt, &BTreeSet::from([pending.clone()]));
+    assert_eq!(frontier.visits().get(&pending), Some(&1));
+    assert!(receipt.matching.matches.is_empty());
+}
+
+#[test]
+fn supplemental_frontier_tracks_judged_candidates_once_and_is_scoped() {
+    use std::collections::BTreeSet;
+    let allowed = DiscoveryAuthorization::catalogs(BTreeSet::from(["matrix".into()]));
+    let narrowed = DiscoveryAuthorization::catalogs(BTreeSet::from(["other".into()]));
+    let key = supplemental_frontier_key("session-a", "generation", &allowed, "model").unwrap();
+    assert_ne!(
+        key,
+        supplemental_frontier_key("session-b", "generation", &allowed, "model").unwrap()
+    );
+    assert_ne!(
+        key,
+        supplemental_frontier_key("session-a", "other-generation", &allowed, "model").unwrap()
+    );
+    assert_ne!(
+        key,
+        supplemental_frontier_key("session-a", "generation", &narrowed, "model").unwrap()
+    );
+    let mut frontier = SearchFrontier::default();
+    let mut first = receipt();
+    for matched in &mut first.matching.matches {
+        matched.choice = matcher::MatchChoice::Unrelated;
+    }
+    frontier.record("first", &first, &Default::default());
+    assert!(!frontier.visits().is_empty());
+    frontier.record("first", &first, &Default::default());
+    assert!(frontier.visits().values().all(|count| *count == 1));
+    frontier.record("changed-intent", &first, &Default::default());
+    assert!(frontier.visits().values().all(|count| *count == 2));
+}
+
+#[test]
+fn new_frontier_records_unprepared_operation_state_explicitly() {
+    let state = SearchFrontier::default();
+    let wire = serde_json::to_value(&state).unwrap();
+    assert_eq!(wire["operation_state"]["state"], "awaiting_extraction");
+    let restored: SearchFrontier = serde_json::from_value(wire).unwrap();
+    assert!(matches!(
+        restored.operation_state,
+        OperationFrontier::AwaitingExtraction
+    ));
+}
+
+#[test]
+fn operation_frontier_reuses_only_the_same_request_and_preserves_old_state_on_revision() {
+    use crate::discovery_matcher::operations::{
+        ExtractionRequest, MatrixScope, OperationMatrix, OperationSet,
+    };
+    use std::collections::BTreeSet;
+    let intent = "Read the sensor and send a notice.";
+    let authorized = BTreeSet::from([CapabilityRef {
+        catalog: "matrix".into(),
+        capability: "read".into(),
+    }]);
+    let extraction = ExtractionRequest::new("fixture", intent).unwrap();
+    let scope =
+        MatrixScope::new("session", "generation", &authorized, extraction.identity()).unwrap();
+    let mut frontier = OperationFrontier::default();
+    assert!(matches!(
+        frontier.load(&scope, intent, &authorized),
+        Ok(OperationFrontierLoad::AwaitingExtraction)
+    ));
+    let operations =
+        OperationSet::from_excerpts(intent, &["Read the sensor".into(), "send a notice".into()])
+            .unwrap();
+    let matrix = OperationMatrix::new(
+        scope.clone(),
+        intent,
+        operations,
+        &authorized,
+        authorized.iter().cloned().collect(),
+    )
+    .unwrap();
+    frontier.commit(&scope, &matrix).unwrap();
+    assert!(matches!(
+        frontier.load(&scope, intent, &authorized),
+        Ok(OperationFrontierLoad::Resume(_))
+    ));
+
+    let changed_intent = "Read the sensor only.";
+    let changed_scope = MatrixScope::new(
+        "session",
+        "generation",
+        &authorized,
+        ExtractionRequest::new("fixture", changed_intent)
+            .unwrap()
+            .identity(),
+    )
+    .unwrap();
+    assert!(matches!(
+        frontier.load(&changed_scope, changed_intent, &authorized),
+        Ok(OperationFrontierLoad::ChangedRevision)
+    ));
+    assert!(
+        matches!(
+            frontier.load(&scope, intent, &authorized),
+            Ok(OperationFrontierLoad::Resume(_))
+        ),
+        "failed or pending extraction cannot overwrite the previous checkpoint"
+    );
+    let foreign = MatrixScope::new(
+        "other-session",
+        "generation",
+        &authorized,
+        extraction.identity(),
+    )
+    .unwrap();
+    assert!(matches!(
+        frontier.load(&foreign, intent, &authorized),
+        Err(crate::discovery_matcher::operations::OperationError::ScopeMismatch)
+    ));
+}
+
+#[tokio::test]
+#[ignore = "requires an isolated PLASM_TEST_POSTGRES_URL with discovery_selector_cache"]
+async fn replay_of_an_old_completion_cannot_roll_back_operation_revision() {
+    use crate::discovery_matcher::operations::{
+        ExtractionRequest, MatrixScope, OperationMatrix, OperationSet,
+    };
+    let url = std::env::var("PLASM_TEST_POSTGRES_URL").unwrap();
+    let store = DiscoveryStore::connect(&url).await.unwrap();
+    store.migrate().await.unwrap();
+    let service = DiscoveryService::cached_test_service(store);
+    let frontier_key = uuid::Uuid::new_v4().to_string();
+    let authorized = std::collections::BTreeSet::new();
+    let mut scopes = Vec::new();
+    let mut keys = Vec::new();
+    for intent in ["Read the sensor.", "Send a notice."] {
+        let key = uuid::Uuid::new_v4().to_string();
+        let scope = MatrixScope::new(
+            "session",
+            "generation",
+            &authorized,
+            ExtractionRequest::new("fixture", intent)
+                .unwrap()
+                .identity(),
+        )
+        .unwrap();
+        let operations = OperationSet::from_excerpts(intent, &[intent.into()]).unwrap();
+        let matrix =
+            OperationMatrix::new(scope.clone(), intent, operations, &authorized, vec![]).unwrap();
+        let mut next = OperationFrontier::default();
+        next.commit(&scope, &matrix).unwrap();
+        service
+            .store
+            .store_search_progress(
+                &format!("{key}:operations"),
+                &serde_json::to_string(&next).unwrap(),
+            )
+            .await
+            .unwrap();
+        service
+            .route_frontier(&frontier_key, &key, &[], |_, _, _| async { Ok(receipt()) })
+            .await
+            .unwrap();
+        scopes.push(scope);
+        keys.push(key);
+    }
+    service
+        .route_frontier(&frontier_key, &keys[0], &[], |_, _, _| async {
+            panic!("completed request must be cached")
+        })
+        .await
+        .unwrap();
+    let saved: SearchFrontier = serde_json::from_str(
+        &service
+            .store
+            .cached_selector_envelope(&frontier_key)
+            .await
+            .unwrap()
+            .unwrap(),
+    )
+    .unwrap();
+    assert!(matches!(
+        saved
+            .operation_state
+            .load(&scopes[1], "Send a notice.", &authorized),
+        Ok(OperationFrontierLoad::Resume(_))
+    ));
+}
+
+#[tokio::test]
+#[ignore = "requires an isolated PLASM_TEST_POSTGRES_URL with discovery_selector_cache"]
+async fn same_request_continues_once_per_changed_operation_checkpoint() {
+    use crate::discovery_matcher::operations::{
+        ExtractionRequest, MatrixScope, OperationMatrix, OperationSet,
+    };
+    let url = std::env::var("PLASM_TEST_POSTGRES_URL").unwrap();
+    let store = DiscoveryStore::connect(&url).await.unwrap();
+    store.migrate().await.unwrap();
+    let service = DiscoveryService::cached_test_service(store);
+    let frontier = uuid::Uuid::new_v4().to_string();
+    let key = uuid::Uuid::new_v4().to_string();
+    let intent = "Read the sensor.";
+    let authorized = std::collections::BTreeSet::from([CapabilityRef {
+        catalog: "matrix".into(),
+        capability: "read".into(),
+    }]);
+    let scope = MatrixScope::new(
+        "session",
+        "generation",
+        &authorized,
+        ExtractionRequest::new("fixture", intent)
+            .unwrap()
+            .identity(),
+    )
+    .unwrap();
+    let matrix = OperationMatrix::new(
+        scope.clone(),
+        intent,
+        OperationSet::from_excerpts(intent, &[intent.into()]).unwrap(),
+        &authorized,
+        authorized.iter().cloned().collect(),
+    )
+    .unwrap();
+    let mut state = OperationFrontier::default();
+    state.commit(&scope, &matrix).unwrap();
+    let state = serde_json::to_string(&state).unwrap();
+    service
+        .store
+        .store_search_progress(&format!("{key}:operations"), &state)
+        .await
+        .unwrap();
+    service
+        .route_frontier(&frontier, &key, &[], |_, _, effective| {
+            assert_eq!(effective, key);
+            async { Ok(receipt()) }
+        })
+        .await
+        .unwrap();
+    service
+        .route_frontier(&frontier, &key, &[], |_, _, effective| {
+            assert_ne!(effective, key);
+            let store = &service.store;
+            let state = &state;
+            async move {
+                store
+                    .store_search_progress(&format!("{effective}:operations"), state)
+                    .await
+                    .unwrap();
+                Ok(receipt())
+            }
+        })
+        .await
+        .unwrap();
+    service
+        .route_frontier(&frontier, &key, &[], |_, _, _| async {
+            panic!("unchanged checkpoint must reuse its completion")
+        })
+        .await
+        .unwrap();
+}
+
+#[tokio::test]
+#[ignore = "requires an isolated PLASM_TEST_POSTGRES_URL with discovery_selector_cache"]
+async fn supplemental_changed_intents_share_priority_without_reusing_judgment() {
+    let url = std::env::var("PLASM_TEST_POSTGRES_URL").unwrap();
+    DiscoveryStore::connect(&url)
+        .await
+        .unwrap()
+        .migrate()
+        .await
+        .unwrap();
+    let (service, _) = services().await;
+    let allowed =
+        DiscoveryAuthorization::catalogs(std::collections::BTreeSet::from(["matrix".into()]));
+    let session = uuid::Uuid::new_v4().to_string();
+    let frontier = supplemental_frontier_key(&session, "generation", &allowed, "fixture").unwrap();
+    for (suffix, expected) in [("first", 0), ("changed-intent", 1)] {
+        let key = format!("{session}-{suffix}");
+        service
+            .route_frontier(&frontier, &key, &[], |visits, _, _| async move {
+                assert_eq!(visits.is_empty(), expected == 0);
+                assert!(visits.values().all(|count| *count == expected));
+                let mut result = receipt();
+                if expected == 0 {
+                    for matched in &mut result.matching.matches {
+                        matched.choice = matcher::MatchChoice::Unrelated;
+                    }
+                }
+                Ok(result)
+            })
+            .await
+            .unwrap();
+    }
 }
 
 #[tokio::test]
@@ -187,7 +690,7 @@ async fn self_contained_requests_advance_frontier_but_exact_replays_do_not() {
         let calls = &calls;
         let reject = intent.current() == first.current();
         let actual = a
-            .route_frontier(&scope, &key, &[], |visits| async move {
+            .route_frontier(&scope, &key, &[], |visits, _, _| async move {
                 assert!(visits.values().all(|count| *count == expected_visits));
                 assert_eq!(visits.is_empty(), expected_visits == 0);
                 calls.fetch_add(1, Ordering::SeqCst);
@@ -202,7 +705,7 @@ async fn self_contained_requests_advance_frontier_but_exact_replays_do_not() {
             .await
             .unwrap();
         let replay = b
-            .route_frontier(&scope, &key, &[], |_| async {
+            .route_frontier(&scope, &key, &[], |_, _, _| async {
                 panic!("exact completed work must be reused across stores")
             })
             .await
@@ -227,7 +730,7 @@ async fn self_contained_requests_advance_frontier_but_exact_replays_do_not() {
     )
     .unwrap();
     recreated
-        .route_frontier(&scope, previous.as_ref().unwrap(), &[], |_| async {
+        .route_frontier(&scope, previous.as_ref().unwrap(), &[], |_, _, _| async {
             panic!("reconnecting must not replay completed work")
         })
         .await
@@ -248,7 +751,7 @@ async fn self_contained_requests_advance_frontier_but_exact_replays_do_not() {
         frontier_key("session", &generation, &allowed, "fixture", first.current()).unwrap();
     let old_key = search_key(&generation, &first, &allowed, "fixture", &[]).unwrap();
     recreated
-        .route_frontier(&old_scope, &old_key, &[], |_| async {
+        .route_frontier(&old_scope, &old_key, &[], |_, _, _| async {
             panic!("returning to a prior request must reuse its completion")
         })
         .await
@@ -267,7 +770,7 @@ async fn self_contained_requests_advance_frontier_but_exact_replays_do_not() {
     let returning = changed.derived(first.current().into()).unwrap();
     let returning_key = search_key(&generation, &returning, &allowed, "fixture", &[]).unwrap();
     recreated
-        .route_frontier(&old_scope, &returning_key, &[], |visits| async move {
+        .route_frontier(&old_scope, &returning_key, &[], |visits, _, _| async move {
             assert!(!visits.is_empty());
             assert!(
                 visits.values().all(|count| *count == 2),
@@ -348,7 +851,7 @@ async fn frontier_reuses_completion_once_and_survives_store_recreation() {
     let first = format!("{scope}:first");
     let second = format!("{scope}:second");
     let expected = receipt();
-    a.route_frontier(&scope, &first, &[], |visits| async move {
+    a.route_frontier(&scope, &first, &[], |visits, _, _| async move {
         assert!(visits.is_empty());
         Ok(receipt())
     })
@@ -363,16 +866,16 @@ async fn frontier_reuses_completion_once_and_survives_store_recreation() {
         )
         .await
         .unwrap();
-    b.route_frontier(&scope, &first, &[], |_| async {
+    b.route_frontier(&scope, &first, &[], |_, _, _| async {
         panic!("duplicate request must not spend work or advance again")
     })
     .await
     .unwrap();
     let mut expected_frontier = SearchFrontier::default();
-    expected_frontier.record(&first, &expected);
+    expected_frontier.record(&first, &expected, &Default::default());
     let expected_visits = expected_frontier.visits();
     assert!(!expected_visits.is_empty());
-    b.route_frontier(&scope, &second, &[], |visits| async move {
+    b.route_frontier(&scope, &second, &[], |visits, _, _| async move {
         assert_eq!(visits, expected_visits);
         Ok(receipt())
     })
@@ -402,7 +905,7 @@ async fn concurrent_frontier_turns_observe_prior_completion_without_double_spend
         let started = started.clone();
         let release = release.clone();
         tokio::spawn(async move {
-            a.route_frontier(&scope, &format!("{scope}:first"), &[], |_| async {
+            a.route_frontier(&scope, &format!("{scope}:first"), &[], |_, _, _| async {
                 started.notify_one();
                 release.notified().await;
                 Ok(receipt())
@@ -412,11 +915,13 @@ async fn concurrent_frontier_turns_observe_prior_completion_without_double_spend
     };
     started.notified().await;
     let next = format!("{scope}:next");
-    let mut follower = Box::pin(b.route_frontier(&scope, &next, &[], |visits| async move {
-        assert!(!visits.is_empty());
-        assert!(visits.values().all(|count| *count == 1));
-        Ok(receipt())
-    }));
+    let mut follower = Box::pin(
+        b.route_frontier(&scope, &next, &[], |visits, _, _| async move {
+            assert!(!visits.is_empty());
+            assert!(visits.values().all(|count| *count == 1));
+            Ok(receipt())
+        }),
+    );
     assert!(
         tokio::time::timeout(std::time::Duration::from_millis(100), &mut follower)
             .await
@@ -502,7 +1007,7 @@ async fn cancelled_or_failed_owner_releases_waiters_without_replaying_budget() {
             let started = started.clone();
             let release = release.clone();
             tokio::spawn(async move {
-                a.route_frontier(&format!("{key}:frontier"), &key, &[], |visits| {
+                a.route_frontier(&format!("{key}:frontier"), &key, &[], |visits, _, _| {
                     assert!(visits.is_empty());
                     async {
                         assert!(
@@ -523,7 +1028,7 @@ async fn cancelled_or_failed_owner_releases_waiters_without_replaying_budget() {
         };
         started.notified().await;
         let scope = format!("{key}:frontier");
-        let mut follower = Box::pin(b.route_frontier(&scope, &key, &[], |visits| {
+        let mut follower = Box::pin(b.route_frontier(&scope, &key, &[], |visits, _, _| {
             assert!(visits.is_empty());
             async {
                 assert!(

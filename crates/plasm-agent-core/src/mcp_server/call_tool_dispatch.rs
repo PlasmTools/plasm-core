@@ -110,6 +110,26 @@ async fn dispatch_plasm_mcp_call_tool_request_inner(
     );
 
     match params.name.as_ref() {
+        "plasm_training" => {
+            let started = Instant::now();
+            let owned = handler.clone();
+            let result = on_live_plan_stack(move || async move {
+                owned.handle_training_tool(&key, &runtime, &v).await
+            })
+            .await;
+            record_tool_result("plasm_training", &result, started);
+            Ok(result)
+        }
+        "plasm_training_candidates" => {
+            let started = Instant::now();
+            let owned = handler.clone();
+            let result = on_live_plan_stack(move || async move {
+                owned.handle_training_candidates(&key, &runtime, &v).await
+            })
+            .await;
+            record_tool_result("plasm_training_candidates", &result, started);
+            Ok(result)
+        }
         "plasm_review" | "plasm_example" => {
             let started = Instant::now();
             let owned = handler.clone();

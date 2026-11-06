@@ -9,10 +9,17 @@
  */
 export declare class PlasmEngine {
   configureWorkflowLearning(configJson: string): Promise<void>
+  /** Trusted host grant; does not activate training for any session. */
+  configureTraining(grantJson: string): Promise<void>
+  trainingStatus(logicalSessionId?: string | undefined | null): Promise<string>
+  sealTrainingEvaluation(logicalSessionId?: string | undefined | null): Promise<void>
+  trainingCommand(commandJson: string, logicalSessionId?: string | undefined | null): Promise<string>
+  trainingCandidates(commandJson: string, logicalSessionId?: string | undefined | null): Promise<string>
   /** Close solve admission while preserving review/evidence calls. */
-  drain(): Promise<void>
-  completedWorkflowRuns(logicalSessionId?: string | undefined | null): Promise<string>
-  readWorkflowEvidence(runId: string, logicalSessionId?: string | undefined | null): Promise<string>
+  drainSession(logicalSessionId: string): Promise<void>
+  releaseSession(logicalSessionId: string): Promise<void>
+  completedWorkflowExecutions(logicalSessionId?: string | undefined | null): Promise<string>
+  readTeachingProgram(executionId: string, logicalSessionId?: string | undefined | null): Promise<string>
   reviewWorkflow(requestJson: string, logicalSessionId?: string | undefined | null): Promise<string>
   fetchWorkflowExample(revisionRef: string, logicalSessionId?: string | undefined | null): Promise<string>
   /** Host-only corpus administration; not an agent tool. */
@@ -21,11 +28,11 @@ export declare class PlasmEngine {
   exportWorkflowProposals(): Promise<string>
   publishFrozenWorkflowReview(requestJson: string): Promise<string>
   /** Host-only task assessment, never a program-success assertion. */
-  recordWorkflowAssessment(assessmentJson: string): Promise<void>
-  exportWorkflowArchive(requestJson: string): Promise<string>
-  exportRetainedWorkflowArchive(digest: string): Promise<string>
+  exportWorkflowArchive(kind: string, destination: string): Promise<string>
+  authorizeImportedWorkflowReview(requestJson: string): Promise<void>
+  validateWorkflowArchive(source: string): Promise<string>
   /** Requires an activated catalogue generation and an explicit source policy. */
-  importWorkflowArchive(archiveJson: string, policyJson: string): Promise<string>
+  importWorkflowArchive(source: string, policyJson: string): Promise<string>
   /** Host-only normal serving validation in fresh pinned contexts; no execution. */
   verifyWorkflowLibrary(limit: number): Promise<string>
 
@@ -39,7 +46,8 @@ export declare class PlasmEngine {
    * Typed intent provenance with its current discovery need; selection runs
    * outside the execution mutex.
    */
-  routeIntent(intentProvenanceJson: string, logicalSessionId?: string | undefined | null): Promise<string>
+  routeIntent(intentProvenanceJson: string, logicalSessionId?: string | undefined | null, sessionClock?: string | undefined | null): Promise<string>
+  takeCompletedTeaching(logicalSessionId: string, includeExamples?: boolean): Promise<string>
   exposeSeeds(intent: string, seeds: Array<JsSeed>): Promise<JsTeachingResult>
   introspectCatalog(entryId: string): Promise<string>
   dryRun(program: string, logicalSessionId?: string | undefined | null): Promise<JsDryRunResult>

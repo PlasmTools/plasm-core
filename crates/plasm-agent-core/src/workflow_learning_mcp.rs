@@ -14,22 +14,32 @@ pub(crate) fn tools() -> Vec<Tool> {
     }
     let mut review = Tool::default();
     review.name = "plasm_review".into();
-    review.description=Some("Explicitly seal completed subtasks and observed outcomes for background workflow learning. Cite successful run IDs; missing or unresolved execution evidence is rejected. This is an agent-attested review, not a proof of user satisfaction.".into());
+    review.meta = Some(
+        json!({"ui":{"visibility":["app"]}})
+            .as_object()
+            .expect("review metadata")
+            .clone()
+            .into(),
+    );
+    review.description=Some("Explicitly seal completed subtasks and observed outcomes for background workflow learning. Cite successful execution IDs from plasm_training action executions; missing or unresolved execution evidence is rejected. This is an agent-attested review, not a proof of user satisfaction.".into());
     review.input_schema=Arc::new(json!({"type":"object","additionalProperties":false,
-        "required":["logical_session_ref","subtasks"],"properties":{
+        "required":["logical_session_ref","subtasks","expected_revision","idempotency_key"],"properties":{
             "logical_session_ref":{"type":"string"},
+            "expected_revision":{"type":"integer","minimum":0},"idempotency_key":{"type":"string","format":"uuid"},
             "subtasks":{"type":"array","minItems":1,"maxItems":16,"items":{"type":"object","additionalProperties":false,
-                "required":["intent","observed_outcome","run_ids"],"properties":{
+                "required":["intent","observed_outcome","execution_ids"],"properties":{
                     "intent":{"type":"string","minLength":1},"observed_outcome":{"type":"string","minLength":1},
-                    "run_ids":{"type":"array","minItems":1,"maxItems":32,"items":{"type":"string"}}
+                    "execution_ids":{"type":"array","minItems":1,"maxItems":32,"items":{"type":"string"}}
                 }}}
         }}).as_object().expect("schema object").clone());
+    let mut tools = crate::workflow_training_mcp::tools();
+    tools.push(review);
     if learning.mode != LearningMode::Serving {
-        return vec![review];
+        return tools;
     }
     let mut example = Tool::default();
     example.name = "plasm_example".into();
-    example.description=Some("Optionally retrieve a workflow example offered by discovery. Resolves minimal catalogue dependencies, binds current session symbols, and typechecks before returning Python and teaching. Does not execute the example.".into());
+    example.description=Some("Optionally fetch a teaching example offered by discovery. Adapt it to your task: distinguish relevant operations from unrelated effects and do not copy unrequested effects. Fetching checks the source and adds its required declarations to this session; examples do not authorize execution.".into());
     example.input_schema = Arc::new(
         json!({"type":"object","additionalProperties":false,
         "required":["logical_session_ref","example_ref"],"properties":{
@@ -39,7 +49,8 @@ pub(crate) fn tools() -> Vec<Tool> {
         .expect("schema object")
         .clone(),
     );
-    vec![review, example]
+    tools.push(example);
+    tools
 }
 
 #[derive(Deserialize)]
@@ -47,6 +58,8 @@ pub(crate) fn tools() -> Vec<Tool> {
 struct ReviewArgs {
     logical_session_ref: String,
     subtasks: Vec<AchievedSubtask>,
+    expected_revision: u64,
+    idempotency_key: uuid::Uuid,
 }
 
 impl PlasmMcpHandler {
@@ -101,12 +114,17 @@ impl PlasmMcpHandler {
             .ok_or_else(|| ToolFailure::rejected("execute session unavailable"))?;
         let session=self.plasm.sessions.get_by_strs(&binding.prompt_hash,&binding.session_id).await.ok_or_else(||ToolFailure::rejected("execute session is not resident; refresh it with plasm_context before review or example retrieval"))?;
         if name == "plasm_review" {
+            let actor = crate::workflow_training_mcp::caller_actor(
+                scope.clone(),
+                principal.as_ref(),
+                runtime,
+            )?;
             let args: ReviewArgs = serde_json::from_value(v.clone())
                 .map_err(|e| ToolFailure::rejected(e.to_string()))?;
             if args.logical_session_ref != wire
                 || args.subtasks.is_empty()
                 || args.subtasks.len() > 16
-                || args.subtasks.iter().any(|s| s.run_ids.len() > 32)
+                || args.subtasks.iter().any(|s| s.execution_ids.len() > 32)
             {
                 return Err(ToolFailure::rejected("review requires bounded subtasks and complete execution evidence without unresolved operations"));
             }
@@ -121,12 +139,20 @@ impl PlasmMcpHandler {
                         prompt_hash: binding.prompt_hash.clone(),
                         execute_session: binding.session_id.clone(),
                         subtasks: args.subtasks,
+                        actor,
+                        expected_revision: args.expected_revision,
+                        idempotency_key: args.idempotency_key,
                     },
                 )
                 .await
                 .map_err(|error| ToolFailure::rejected(error.to_string()))?;
             self.plasm.workflow_learning.start_worker();
-            return Ok(CallToolResult::success(vec![ContentBlock::text(serde_json::to_string(&json!({"review_ref":sealed.id,"evidence_digest":sealed.digest,"status":"queued","assurance":"agent_attested"})).expect("review JSON"))]));
+            return Ok(CallToolResult::success(vec![ContentBlock::text(
+                serde_json::to_string(
+                    &json!({"review_ref":sealed.id,"status":"queued","assurance":"agent_attested"}),
+                )
+                .expect("review JSON"),
+            )]));
         }
         if self.plasm.workflow_learning.mode != LearningMode::Serving {
             return Err(ToolFailure::rejected("workflow serving is not enabled"));
@@ -155,7 +181,7 @@ impl PlasmMcpHandler {
                 .await
                 .map_err(|e| ToolFailure::rejected(e.to_string()))?;
         Ok(CallToolResult::success(vec![ContentBlock::text(
-            serde_json::to_string(&served).map_err(|e| ToolFailure::rejected(e.to_string()))?,
+            served.agent_text(),
         )]))
     }
 }

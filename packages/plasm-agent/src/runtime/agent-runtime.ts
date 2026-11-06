@@ -36,17 +36,55 @@ import { createAgentStateStore } from "../state/define-state.js";
 import { DiscoveryQueue } from "./discovery-queue.js";
 import { formatRecordedOutputs, runOutputArtifactSchema } from "../tools/recorded-outputs.js";
 import { checkObligationEvidence, sameObligationPredicate, type ObligationVerification, type EvidenceCheck } from "../tools/obligation-evidence.js";
-import { workflowLearningConfigSchema, workflowReviewInputSchema, type WorkflowLearningConfig, type WorkflowReviewSession } from "./workflow-learning.js";
+import { workflowLearningConfigSchema, workflowReviewInputSchema, trainingHostConfigSchema, type TrainingCandidateAction, type TrainingHostConfig, type WorkflowLearningConfig, type WorkflowReviewInput, type WorkflowReviewSession } from "./workflow-learning.js";
 
 export type AgentArchiveStore = LocalArchiveStore | ProdArchiveStore;
 
+/** Owns one native engine across runtimes; each runtime owns its logical sessions. */
+export class AgentRuntimeHost {
+  readonly engine: PlasmEngine;
+  private users = 0;
+  private closing = false;
+  private closed?: Promise<void>;
+  private configuration?: { key: string; promise: Promise<boolean> };
+  private bootstrapState?: { key: string; promise: Promise<LoadedCatalog[]> };
+
+  constructor(engine: PlasmEngine = createEngine()) { this.engine = engine; }
+  acquire(): void {
+    if (this.closing) throw new Error("Agent host is closing or closed");
+    this.users++;
+  }
+  release(): void { this.users--; }
+  configure(key: string, operation: () => Promise<boolean>): Promise<boolean> {
+    if (this.configuration && this.configuration.key !== key) throw new Error("Shared agent host configuration differs");
+    return (this.configuration ??= { key, promise: operation() }).promise;
+  }
+  bootstrap(key: string, operation: () => Promise<LoadedCatalog[]>): Promise<LoadedCatalog[]> {
+    if (this.bootstrapState && this.bootstrapState.key !== key) throw new Error("Shared agent host catalogue configuration differs");
+    return (this.bootstrapState ??= { key, promise: operation() }).promise;
+  }
+  close(): Promise<void> {
+    if (this.users) throw new Error("Close all agent runtimes before closing their shared host");
+    this.closing = true;
+    return this.closed ??= this.engine.close();
+  }
+}
+
 export interface AgentRuntimeConfig {
   workflowLearning?: WorkflowLearningConfig;
+  /** Trusted application policy, separate from model-controlled session inputs. */
+  training?: TrainingHostConfig;
+  /** Trusted host classification. Evaluation sessions cannot enter training. */
+  trainingEvaluation?: boolean;
   agentRoot: string;
   /** Optional first intent supplied by the embedding workflow. */
   initialIntent?: string;
   tenantScope?: string;
+  /** Trusted fixed clock for this runtime's sessions, such as an isolated evaluation world. */
+  sessionClock?: string;
   engine?: PlasmEngine;
+  /** Trusted owner of a native engine shared by independent runtimes. */
+  host?: AgentRuntimeHost;
   /** Outbound HTTP for live `plasm_run`. Defaults to fetch + env bearer + Connect. Set `null` to validate-only. */
   hostTransport?: HostTransportFn | null;
   /** When false, skip local archive writes. Default true. */
@@ -208,50 +246,138 @@ export class AgentRuntime {
   private readonly lifecycle = new DrainingLifecycle();
   private readonly reviewLifecycle = new DrainingLifecycle();
   private readonly learningConfig: WorkflowLearningConfig;
+  private readonly trainingConfig?: TrainingHostConfig;
+  private readonly trainingEvaluation: boolean;
+  private readonly evaluationSeals = new Map<string, Promise<void>>();
+  private readonly sessionClock?: string;
+  private readonly host?: AgentRuntimeHost;
+  private trainingSetupUnavailable = false;
   private learningConfigured?: Promise<void>;
   private reviewSession?: Promise<WorkflowReviewSession>;
+  private executionFinished?: Promise<void>;
   private readonly learningSessions = new Map<string, string>();
 
   private configureLearning(): Promise<void> {
-    this.learningConfigured ??= this.engine.learning
-      ? this.engine.learning.configure(this.learningConfig)
-      : this.learningConfig.mode === "baseline" ? Promise.resolve()
-        : Promise.reject(new Error("Native engine does not support workflow learning"));
+    const configure = async () => {
+      const learning = this.engine.learning;
+      if (!learning) {
+        if (this.learningConfig.mode !== "baseline" || this.trainingConfig) throw new Error("Native engine does not support workflow learning");
+        return false;
+      }
+      await learning.configure(this.learningConfig);
+      if (this.trainingConfig) {
+        const { subject, credential, grant, idempotency_key } = this.trainingConfig;
+        const host = { subject, credential, grant, idempotency_key };
+        try { await learning.configureTraining(host); }
+        catch { return true; }
+      }
+      return false;
+    };
+    this.learningConfigured ??= (this.host
+      ? this.host.configure(JSON.stringify([this.learningConfig, this.trainingConfig]), configure)
+      : configure()).then(unavailable => { this.trainingSetupUnavailable = unavailable; });
     return this.learningConfigured;
   }
 
+  private async ensureEvaluationSealed(logicalSessionId: string): Promise<void> {
+    if (!this.trainingEvaluation || this.learningConfig.mode === "baseline") return;
+    if (!this.engine.learning) throw new Error("Evaluation training isolation unavailable");
+    let pending = this.evaluationSeals.get(logicalSessionId);
+    if (!pending) {
+      pending = this.engine.learning.sealTrainingEvaluation(logicalSessionId);
+      this.evaluationSeals.set(logicalSessionId, pending);
+    }
+    try {
+      await pending;
+    } catch (error) {
+      if (this.evaluationSeals.get(logicalSessionId) === pending) this.evaluationSeals.delete(logicalSessionId);
+      throw error;
+    }
+  }
+
   beginWorkflowReview(): Promise<WorkflowReviewSession> {
-    if (this.learningConfig.mode !== "collect") return Promise.reject(new Error("Workflow review requires collect mode"));
+    if (!this.trainingConfig) return Promise.reject(new Error("Workflow review requires explicit training delegation"));
     this.reviewSession ??= this.enterWorkflowReview();
     return this.reviewSession;
   }
 
+  /** Close execution admission and wait for already admitted work to settle. */
+  finishExecution(): Promise<void> {
+    this.executionFinished ??= (async () => {
+      await this.lifecycle.drain();
+      const learning = this.engine.learning;
+      if (learning) await Promise.all([...this.learningSessions.values()].map(id => learning.drainSession(id)));
+    })();
+    return this.executionFinished;
+  }
+
   private async enterWorkflowReview(): Promise<WorkflowReviewSession> {
-    await this.lifecycle.drain();
+    await this.finishExecution();
     await this.configureLearning();
     const learning = this.engine.learning;
     if (!learning) throw new Error("Native engine does not support workflow learning");
-    await learning.drain();
     const sessionId = (ref: string): string => {
       const id = this.learningSessions.get(logicalSessionRefSchema.parse(ref));
       if (!id) throw new Error("Review session does not belong to this runtime");
       return id;
     };
     return Object.freeze({
-      completedRuns: () => this.reviewLifecycle.run(async () => ({ sessions: await Promise.all(
+      completedExecutions: () => this.reviewLifecycle.run(async () => ({ sessions: await Promise.all(
         [...this.learningSessions].map(async ([ref, id]) => ({
-          ...await learning.completedRuns(id), logical_session_ref: logicalSessionRefSchema.parse(ref),
+          ...await learning.completedExecutions(id), logical_session_ref: logicalSessionRefSchema.parse(ref),
         })),
       ) })),
-      readEvidence: (ref: string, run: string) => this.reviewLifecycle.run(() => learning.readEvidence(sessionId(ref), run)),
+      readProgram: (ref: string, execution: string) => this.reviewLifecycle.run(() => learning.readProgram(sessionId(ref), execution)),
+      trainingStatus: (ref: string) => this.reviewLifecycle.run(() => learning.trainingStatus(sessionId(ref))),
       submitReview: (input: Parameters<WorkflowReviewSession["submitReview"]>[0]) => this.reviewLifecycle.run(() => {
         const checked = workflowReviewInputSchema.parse(input);
-        return learning.review(sessionId(checked.logical_session_ref), checked.subtasks);
+        return learning.review(sessionId(checked.logical_session_ref), checked.subtasks, checked.expected_revision, checked.idempotency_key);
       }),
     });
   }
 
-  workflowExampleServingEnabled(): boolean { return this.learningConfig.mode === "examples"; }
+  workflowExampleServingEnabled(): boolean { return this.learningConfig.mode === "examples" || (this.learningConfig.mode === "collect" && this.learningConfig.serveExamples === true); }
+
+  trainingControlsEnabled(): boolean { return this.trainingConfig !== undefined && !this.trainingEvaluation; }
+
+  plasmTraining(input: { logicalSessionRef: string; action: "status" | "executions" | "request" | "stop" | "resume"; expectedRevision?: number; idempotencyKey?: string }): Promise<string> {
+    return this.lifecycle.run(async () => {
+      if (!this.trainingControlsEnabled() || this.trainingSetupUnavailable || !this.engine.learning) throw new Error("Training authority unavailable");
+      const session = await this.requireSessionByRef(input.logicalSessionRef);
+      if (input.action === "executions") return JSON.stringify(await this.engine.learning.completedExecutions(session.logicalSessionId));
+      const status = input.action === "status" ? await this.engine.learning.trainingStatus(session.logicalSessionId) :
+        await this.engine.learning.trainingCommand(session.logicalSessionId, {
+          expected_revision: input.expectedRevision ?? -1, idempotency_key: input.idempotencyKey ?? "", command: { action: input.action },
+        });
+      const state = status.training_state;
+      const approvalUrl = state.state === "awaiting_authorization" && typeof state.request_ref === "string" && this.trainingConfig?.approvalBaseUrl
+        ? new URL(`/training/requests/${state.request_ref}`, this.trainingConfig.approvalBaseUrl).toString() : null;
+      return JSON.stringify({ logical_session_ref: session.logicalSessionRef, ...status, approval_url: approvalUrl });
+    });
+  }
+
+  plasmTrainingCandidates(input: { logicalSessionRef: string; command: TrainingCandidateAction }): Promise<string> {
+    return this.lifecycle.run(async () => {
+      if (!this.trainingControlsEnabled() || this.trainingSetupUnavailable || !this.engine.learning) throw new Error("Training authority unavailable");
+      const session = await this.requireSessionByRef(input.logicalSessionRef);
+      const result = await this.engine.learning.trainingCandidates(session.logicalSessionId, input.command);
+      if (typeof result === "object" && result !== null && "request_ref" in result && typeof result.request_ref === "string") {
+        const approval_url = this.trainingConfig?.approvalBaseUrl
+          ? new URL(`/training/requests/${result.request_ref}`, this.trainingConfig.approvalBaseUrl).toString() : null;
+        return JSON.stringify({ request: result, approval_url });
+      }
+      return JSON.stringify(result);
+    });
+  }
+
+  plasmReview(input: WorkflowReviewInput): Promise<string> {
+    return this.lifecycle.run(async () => {
+      if (!this.trainingControlsEnabled() || this.trainingSetupUnavailable || !this.engine.learning) throw new Error("Training authority unavailable");
+      const checked = workflowReviewInputSchema.parse(input);
+      const session = await this.requireSessionByRef(checked.logical_session_ref);
+      return JSON.stringify(await this.engine.learning.review(session.logicalSessionId, checked.subtasks, checked.expected_revision, checked.idempotency_key));
+    });
+  }
 
   plasmExample(input: { logicalSessionRef: string; revisionRef: string }): Promise<string> {
     const { logicalSessionRef, revisionRef } = input;
@@ -274,7 +400,9 @@ export class AgentRuntime {
       }
       await this.sessionManager.update(session);
       this.workflowSession = session;
-      return JSON.stringify(example);
+      const outputs = example.outputs.map(output => `- ${output}`).join("\n");
+      return [`Example ${example.example_id}`, `Program:\n${example.source}`, outputs && `Outputs:\n${outputs}`,
+        example.teaching_delta.trim() && `Required declarations:\n${example.teaching_delta.trim()}`].filter(Boolean).join("\n\n");
     });
   }
 
@@ -282,7 +410,15 @@ export class AgentRuntime {
   close(): Promise<void> {
     return this.lifecycle.close(async () => {
       await this.reviewSession?.catch(() => undefined);
-      await this.reviewLifecycle.close(() => this.engine.close());
+      await this.reviewLifecycle.close(async () => {
+        if (this.host) {
+          try {
+            if (!this.engine.learning && this.learningSessions.size) throw new Error("Shared engine cannot release sessions");
+            await Promise.all([...this.learningSessions.values()].map(id => this.engine.learning!.releaseSession(id)));
+          } finally { this.host.release(); }
+        }
+        else await this.engine.close();
+      });
     });
   }
 
@@ -307,6 +443,24 @@ export class AgentRuntime {
     return this.workflowSession != null;
   }
 
+  /** Deliver completed discovery at model-step boundaries without a new tool. */
+  async takeCompletedDiscovery(includeExamples = true): Promise<string> {
+    const session = this.workflowSession;
+    if (!session || (!this.workflowExampleServingEnabled() && this.learningConfig.mode !== "admission")) return "";
+    try {
+      const update = await this.engine.takeCompletedTeaching(session.logicalSessionId, includeExamples);
+      if (update) {
+        session.teachingPrompt = [session.teachingPrompt.trim(), update.trim()].filter(Boolean).join("\n\n");
+        try { await this.sessionManager.update(session); }
+        catch (error) { console.warn("Unable to persist completed discovery:", error); }
+      }
+      return update;
+    } catch (error) {
+      console.warn("Unable to retrieve completed discovery:", error);
+      return "";
+    }
+  }
+
   /** Successful `plasm_run` write-node count this process (fused 0w reads stay 0). */
   private committedWriteOps = 0;
 
@@ -324,9 +478,16 @@ export class AgentRuntime {
 
   constructor(config: AgentRuntimeConfig) {
     this.learningConfig = workflowLearningConfigSchema.parse(config.workflowLearning ?? { mode: "baseline" });
+    this.trainingConfig = config.training === undefined ? undefined : trainingHostConfigSchema.parse(config.training);
+    this.trainingEvaluation = config.trainingEvaluation ?? false;
+    this.sessionClock = config.sessionClock;
+    if (this.trainingEvaluation && this.trainingConfig) throw new Error("Evaluation sessions cannot receive training delegation");
+    if (this.trainingConfig && this.learningConfig.mode === "baseline") throw new Error("Training requires an enabled workflow library");
     this.agentRoot = path.resolve(config.agentRoot);
     this.initialProvenance = config.initialIntent === undefined ? undefined : deriveIntent(undefined, workflowIntentSchema.parse(config.initialIntent));
-    this.engine = config.engine ?? createEngine();
+    if (config.host && config.engine) throw new Error("Specify either an engine or a shared host");
+    this.host = config.host;
+    this.engine = this.host?.engine ?? config.engine ?? createEngine();
     this.hostTransport =
       config.hostTransport === null
         ? null
@@ -356,6 +517,7 @@ export class AgentRuntime {
     } else {
       this.archive = null;
     }
+    this.host?.acquire();
   }
 
   bootstrap(): Promise<LoadedCatalog[]> {
@@ -368,16 +530,18 @@ export class AgentRuntime {
       await this.archive.bootstrap();
     }
     await mkdir(this.artefactWorkspaceRoot, { recursive: true });
-    const loader = new FilesystemCatalogLoader();
-    const catalogs = await loader.discover(this.agentRoot);
-    for (const catalog of catalogs) {
-      await this.engine.loadCatalog(catalog);
-    }
     const bindingPath = process.env.PLASM_DISCOVERY_BINDINGS_PATH?.trim()
       ?? path.join(this.agentRoot, "catalogs", "deployment-bindings.json");
     const deploymentId = process.env.PLASM_DISCOVERY_DEPLOYMENT?.trim()
       || createHash("sha256").update(`${this.agentRoot}\0${this.sessionManager.tenant()}`).digest("hex");
-    await this.engine.activateDiscovery(deploymentId, await readFile(bindingPath, "utf8"));
+    const bindings = await readFile(bindingPath, "utf8");
+    const load = async () => {
+      const catalogs = await new FilesystemCatalogLoader().discover(this.agentRoot);
+      for (const catalog of catalogs) await this.engine.loadCatalog(catalog);
+      await this.engine.activateDiscovery(deploymentId, bindings);
+      return catalogs;
+    };
+    const catalogs = await (this.host ? this.host.bootstrap(JSON.stringify([this.agentRoot, deploymentId, bindings]), load) : load());
     this.loadedCatalogs = catalogs;
     return catalogs;
   }
@@ -420,18 +584,36 @@ export class AgentRuntime {
       if (mode === "new" && input.logicalSessionRef) {
         throw this.sessionInputFailure("invalid_context_input", "logical_session_ref belongs on session_mode extend");
       }
+      // Collect a finished wave before advancing the intent. Its admissions were
+      // judged for the previous request and must not be relabelled as the new one.
+      const previousDiscovery = existing
+        ? (await this.withCompletedTeaching("", existing.logicalSessionId, false)).trim()
+        : "";
       const provenance = deriveIntent(existing?.intentProvenance ?? this.initialProvenance, intent);
       const packet = await this.engine.routeIntent(
         provenance,
         existing?.logicalSessionId,
-      );
+        this.sessionClock,
+      ).catch((error: unknown) => {
+        if (!previousDiscovery) throw error;
+        const detail = error instanceof Error ? error.message : String(error);
+        throw new Error(`Completed discovery for the previous request:\n${previousDiscovery}\n\nCurrent discovery failed: ${detail}`, { cause: error });
+      });
       const { routing, teaching } = packet;
       if (packet.workflow_examples?.length && !this.workflowExampleServingEnabled()) {
         throw new Error("Native discovery disclosed examples in a mode that forbids them");
       }
       const examplesMarkdown = packet.workflow_examples?.length
-        ? `Optional workflow examples (fetch with plasm_example):\n${JSON.stringify(packet.workflow_examples)}`
-        : undefined;
+        ? `Optional workflow examples (fetch with plasm_example):\n${packet.workflow_examples.map(example => [
+          `- ${example.example_ref}: ${example.purpose}`,
+          ...example.outputs.map(value => `  - Returns ${value}`),
+          `  - Assurance: ${example.assurance.replaceAll("_", " ")}`,
+        ].join("\n")).join("\n")}`
+        : packet.workflow_recall === "pending"
+          ? "Optional teaching is being prepared and will appear on a later session response when ready."
+        : packet.workflow_recall === "timed_out" || packet.workflow_recall === "unavailable"
+          ? "Optional teaching examples are unavailable for this request; ordinary discovery continues."
+          : undefined;
       if (JSON.stringify(routing.intent_provenance) !== JSON.stringify(provenance)) throw new Error("Routing changed intent provenance");
       if (existing && (existing.logicalSessionId !== routing.pin_id
         || existing.registryGeneration !== routing.retrieval.generation)) {
@@ -447,6 +629,26 @@ export class AgentRuntime {
       await this.sessionManager.update(session);
       this.workflowSession = session;
       this.learningSessions.set(session.logicalSessionRef, session.logicalSessionId);
+      if (routing.closure?.business.length) await this.ensureEvaluationSealed(session.logicalSessionId);
+      let trainingMarkdown: string | undefined;
+      if (!existing && this.trainingConfig?.requestForNewSessions) {
+        const learning = this.engine.learning;
+        try {
+          if (!learning || this.trainingSetupUnavailable) throw new Error("training unavailable");
+          const status = await learning.trainingStatus(session.logicalSessionId);
+          const activated = await learning.trainingCommand(session.logicalSessionId, {
+            idempotency_key: randomUUID(), expected_revision: status.revision, command: { action: "request" },
+          });
+          trainingMarkdown = `**Training:** ${activated.training_state.state.replaceAll("_", " ")}.`;
+          if (activated.training_state.state === "awaiting_authorization" && typeof activated.training_state.request_ref === "string") {
+            trainingMarkdown += this.trainingConfig.approvalBaseUrl
+              ? ` Human approval: ${new URL(`/training/requests/${activated.training_state.request_ref}`, this.trainingConfig.approvalBaseUrl).toString()}`
+              : " Human approval is pending; this host has no approval URL configured.";
+          }
+        } catch {
+          trainingMarkdown = "**Training:** unavailable; this session continues without training capture. Earlier work cannot be backfilled.";
+        }
+      }
       const recoveryMarkdown = routingRecoveryMarkdown(routing);
       if (!routing.closure) {
         await this.recordToolTrace("tool", "plasm_context", started, {
@@ -458,6 +660,7 @@ export class AgentRuntime {
           recoveryMarkdown ?? "**plasm_context:** no relevant capabilities selected",
           `**logical_session_ref:** \`${session.logicalSessionRef}\``,
           ...(recoveryMarkdown ? [] : routingExplanationLines(routing.matching)),
+          trainingMarkdown,
           examplesMarkdown,
         ].filter(Boolean).join("\n\n");
       }
@@ -491,7 +694,9 @@ export class AgentRuntime {
         session.logicalSessionRef, teaching.prompt,
         !existing ? "initial" : teaching.declarations_changed ? "extended" : "unchanged",
       );
-      return [routing.intent_analysis, teachingMarkdown, recoveryMarkdown, examplesMarkdown].filter(Boolean).join("\n\n");
+      const response = [previousDiscovery && `Completed discovery for the previous request:\n${previousDiscovery}`,
+        routing.intent_analysis, teachingMarkdown, recoveryMarkdown, trainingMarkdown, examplesMarkdown].filter(Boolean).join("\n\n");
+      return this.withCompletedTeaching(response, session.logicalSessionId, !packet.workflow_examples?.length);
     });
   }
 
@@ -501,6 +706,7 @@ export class AgentRuntime {
 
   private async plasmAdmitted(input: PlasmPlanInput): Promise<string> {
     const session = await this.requireSessionByRef(input.logicalSessionRef);
+    await this.ensureEvaluationSealed(session.logicalSessionId);
     const entryId = session.seeds[0]?.api;
     const catalogCgsHash = entryId ? this.catalogHashForEntry(entryId) : undefined;
 
@@ -571,7 +777,7 @@ export class AgentRuntime {
           });
         }
 
-        return formatPlasmDryRunMarkdown(dry.summary, dry.planCommitRef);
+        return this.withCompletedTeaching(formatPlasmDryRunMarkdown(dry.summary, dry.planCommitRef), session.logicalSessionId);
       },
     );
   }
@@ -582,12 +788,13 @@ export class AgentRuntime {
 
   private async plasmRunAdmitted(input: PlasmRunInput): Promise<string> {
     const session = await this.requireSessionByRef(input.logicalSessionRef);
+    await this.ensureEvaluationSealed(session.logicalSessionId);
     if (!runReferenceSchema.safeParse(input.runRef).success) {
       throw new AgentExecutionFailure({
         cause: "program", recovery: "repair_program", code: "invalid_run_reference",
-        diagnostic: "Copy the reviewed commit reference from plasm or a continuation handle from plasm_run verbatim. Run artifact IDs identify observations, not executable plans.",
+        diagnostic: "No operation ran. Submit Python source to plasm, then copy its returned run_ref exactly; for more pages, copy the returned page handle. Never guess a reference.",
         node: null, occurrence_path: [], catalog_digest: null, effects: [], dispatches: [], effects_unresolved: false,
-      }, "Execution stopped: copy the reviewed run reference verbatim. Revise the program and plan again.");
+      }, "No operation ran. Submit Python source to plasm and use only the exact run_ref it returns, or a returned page handle. Never guess a reference.");
     }
     const entryId = session.seeds[0]?.api;
     const catalogCgsHash = entryId ? this.catalogHashForEntry(entryId) : undefined;
@@ -667,12 +874,34 @@ export class AgentRuntime {
             result.message,
             result.ok,
           );
-          return markdown + `\n\n**Executed reference:** \`${input.runRef}\`` + formatRecordedOutputs(artifacts);
+          const reviewReference = input.runRef.startsWith("pc")
+            ? result.ok
+              ? `**Completed review:** \`${input.runRef}\` (already executed; do not run it again)`
+              : `**Attempted review:** \`${input.runRef}\` (check the failure before further action)`
+            : `**Page delivered:** \`${input.runRef}\``;
+          const writeCount = session.planCommits.find((commit) => commit.ref === input.runRef)?.writeCount ?? 0;
+          const completion = result.ok && writeCount > 0
+            ? "\n\nUse the results and any effect receipts to assess the request. If all requested effects and conditions are established, finish; inspect state only for unresolved outcomes."
+            : "";
+          return this.withCompletedTeaching(reviewReference + completion + "\n\n" + markdown + formatRecordedOutputs(artifacts), session.logicalSessionId);
         } finally {
           if (!observationEnded) await this.endObservation(session.logicalSessionRef, observation);
         }
       },
     );
+  }
+
+  private async withCompletedTeaching(response: string, logicalSessionId: string, includeExamples = true): Promise<string> {
+    if (!this.workflowExampleServingEnabled() && this.learningConfig.mode !== "admission") return response;
+    try {
+      const teaching = this.workflowSession?.logicalSessionId === logicalSessionId
+        ? await this.takeCompletedDiscovery(includeExamples)
+        : await this.engine.takeCompletedTeaching(logicalSessionId, includeExamples);
+      return teaching ? `${response}\n\n${teaching}` : response;
+    } catch {
+      // Optional learning must never prevent ordinary execution.
+      return response;
+    }
   }
 
   private async materializeRunArtefact(runId: string, payload: unknown, logicalSessionRef: string): Promise<void> {

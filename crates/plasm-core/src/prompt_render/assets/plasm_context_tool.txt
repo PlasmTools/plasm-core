@@ -2,6 +2,4 @@ Returns incremental typed domain declarations, session symbols, prerequisite bin
 
 Use `session_mode: "new"` with the original intent once per workflow. Later discovery uses `session_mode: "extend"`, the same `logical_session_ref`, and a self-contained current request including relevant conditions and amendments. Prior requests remain audit/search state, not judgment context. Existing symbols retain their meaning. Intent does not select the session.
 
-Use available declarations and extend context when more capabilities are needed. Write provider and business calls as a Python Program, submit to `plasm`, and execute returned reviewed plans with `plasm_run`.
-
-Discovery does not read or refresh account data. Use already-declared reads in a Program to observe current data. Extend discovery for missing capabilities or a changed need; previous declarations and symbols remain available.
+Use declared reads in a Program to observe current account data; extend discovery for missing capabilities or a changed need.

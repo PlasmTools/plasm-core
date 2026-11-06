@@ -164,6 +164,29 @@ pub struct ServedExample {
     pub catalog_fingerprints: BTreeMap<String, String>,
 }
 
+impl ServedExample {
+    /// Agent-facing projection; compatibility pins and internal contracts stay in the receipt.
+    pub fn teaching_outputs(&self) -> Vec<String> {
+        self.outputs.iter().map(ToString::to_string).collect()
+    }
+
+    pub fn agent_text(&self) -> String {
+        let mut text = format!("Example {}\n\nProgram:\n{}", self.example_id, self.source);
+        let outputs = self.teaching_outputs();
+        if !outputs.is_empty() {
+            text.push_str("\n\nOutputs:\n");
+            for output in outputs {
+                text.push_str(&format!("- {output}\n"));
+            }
+        }
+        if !self.teaching_delta.trim().is_empty() {
+            text.push_str("\nRequired declarations:\n");
+            text.push_str(self.teaching_delta.trim());
+        }
+        text
+    }
+}
+
 /// The caller authenticates `scope` and session ownership. Authorization is the
 /// intersection of the current tenant policy and the logical session pin.
 pub async fn prepare_example_fetch(

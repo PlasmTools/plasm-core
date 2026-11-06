@@ -5,5 +5,3 @@ Compose dependent reads, computation and effects in one Program; split when new 
 `program`: Python source, not JSON. Submit one Program subclass with build(self) and explicit return. Do not copy declarations, instantiate it or call build. Session declarations arrive through plasm_context; the language reference follows.
 
 needs_fix: preserve selection criteria and repair the Python in the same logical session. Extend discovery only for missing capabilities.
-
-Failed/cancelled runs may have completed writes. Check recorded outcomes before further writes; an error response does not prove no change occurred. New programs do not resume or undo earlier runs.

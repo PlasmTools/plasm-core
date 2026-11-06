@@ -34,7 +34,7 @@ function malformedCalls(calls: readonly Call[], results: readonly Result[], tool
     const observed = failureObservationSchema.safeParse(result.output);
     if (!observed.success || observed.data.failure.code !== "program_syntax"
       || observed.data.failure.cause !== "program" || observed.data.failure.recovery !== "repair_program") return [];
-    return [{ ...identity, kind: "program_syntax", diagnostic: observed.data.summary }];
+    return [{ ...identity, kind: "program_syntax", diagnostic: observed.data.failure.diagnostic }];
   });
 }
 

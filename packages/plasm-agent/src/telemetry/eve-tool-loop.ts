@@ -13,7 +13,7 @@ import {
 
 import { successfulEvalTerminalInStep } from "../tools/format.js";
 import { transientProviderFailure } from "./provider-failure.js";
-import { withProviderCompletion } from "./provider-completion.js";
+import { withProviderCompletion, type ProviderRequestEvent } from "./provider-completion.js";
 import { ToolCallRecovery, type ToolCallRecoveryEvent } from "./tool-call-recovery.js";
 import { ensureOtelIntegration } from "../instrumentation.js";
 import {
@@ -84,7 +84,9 @@ export interface EveToolLoopOptions {
   turnSequence?: number;
   telemetry?: TelemetryOptions;
   onStepStart?: () => void | Promise<void>;
+  pollSessionUpdate?: () => Promise<string>;
   onStepFinish?: (step: AgentStepEvent) => void | Promise<void>;
+  onProviderRequest?: (event: ProviderRequestEvent & { step: number }) => void;
   modelOptions?: EveToolLoopModelOptions;
   /**
    * Optional wall-clock ceiling for one provider generation, ending at the
@@ -467,6 +469,8 @@ export async function runEveToolLoop(
 
   while (stepIndex < options.maxSteps) {
     await options.onStepStart?.();
+    const sessionUpdate = await options.pollSessionUpdate?.();
+    if (sessionUpdate) messages.push({ role: "user", content: sessionUpdate });
 
     const runtimeContext = buildEveRuntimeContext({
       sessionId,
@@ -520,7 +524,9 @@ export async function runEveToolLoop(
           // Transport retries precede any tool execution. Failed generations
           // additionally consume the existing step/provider-failure budgets.
           maxRetries: 2,
-          prepareStep: ({ model }) => ({ model: withProviderCompletion(model) }),
+          prepareStep: ({ model }) => ({ model: withProviderCompletion(model, options.onProviderRequest
+            ? event => options.onProviderRequest?.({ ...event, step: stepIndex + 1 })
+            : undefined) }),
           // The SDK step also awaits tools. End the generation deadline at
           // the terminated provider boundary, not step completion or tool start
           // (a provider may still be streaming other calls at that point).

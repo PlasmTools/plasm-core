@@ -9,6 +9,7 @@ enum Arm {
     Split,
     AlternatingFresh,
     AlternatingProgress,
+    DeferredNomination,
     ExplicitCorrect,
     RepeatedFalseRevision,
     MissedRevision,
@@ -21,6 +22,7 @@ enum Case {
     ExpensiveTarget,
     Equal,
     Changed,
+    ChangedSecond,
     Connected,
     SameRequest,
 }
@@ -41,6 +43,7 @@ fn frozen_capacity_progress_ablation() {
                 Case::ExpensiveTarget,
                 Case::Equal,
                 Case::Changed,
+                Case::ChangedSecond,
                 Case::Connected,
                 Case::SameRequest,
             ] {
@@ -50,8 +53,9 @@ fn frozen_capacity_progress_ablation() {
                     Arm::Split,
                     Arm::AlternatingFresh,
                     Arm::AlternatingProgress,
+                    Arm::DeferredNomination,
                 ] {
-                    measure(distractors, position, case, arm);
+                    let _ = measure(distractors, position, case, arm);
                 }
             }
         }
@@ -65,7 +69,7 @@ enum ObjectiveSignal {
 }
 
 fn objective_signal(arm: Arm, case: Case, turn: usize) -> ObjectiveSignal {
-    let changed = matches!(case, Case::Changed);
+    let changed = matches!(case, Case::Changed | Case::ChangedSecond);
     let revise = match arm {
         Arm::ExplicitCorrect => changed && turn == 0,
         Arm::RepeatedFalseRevision => true,
@@ -100,14 +104,26 @@ fn frozen_objective_revision_ablation() {
                     Arm::OneSpuriousRevision,
                     Arm::DelayedRevision,
                 ] {
-                    measure(distractors, position, case, arm);
+                    let _ = measure(distractors, position, case, arm);
                 }
             }
         }
     }
 }
 
-fn measure(distractors: usize, position: usize, case: Case, arm: Arm) {
+#[test]
+fn repeatedly_deferred_recalled_root_eventually_receives_capacity() {
+    assert_eq!(
+        measure(8, 1, Case::ExpensiveFirst, Arm::DeferredNomination),
+        Some(4)
+    );
+    assert_eq!(
+        measure(8, 1, Case::Connected, Arm::DeferredNomination),
+        Some(3)
+    );
+}
+
+fn measure(distractors: usize, position: usize, case: Case, arm: Arm) -> Option<usize> {
     let mut catalogs = fixture();
     let cgs = catalogs.get_mut("matrix").unwrap();
     let prototype = cgs.capabilities["opaque"].clone();
@@ -144,6 +160,8 @@ fn measure(distractors: usize, position: usize, case: Case, arm: Arm) {
     let mut first = None;
     let mut max_bytes = 0;
     let mut optional = 0;
+    let mut deferred_age = BTreeMap::<CapabilityRef, usize>::new();
+    let mut previous_intent = None;
     let texts = [
         "Inspect the specimens.",
         "Observe these specimens.",
@@ -156,15 +174,16 @@ fn measure(distractors: usize, position: usize, case: Case, arm: Arm) {
         if matches!(objective_signal(arm, case, turn), ObjectiveSignal::Revise) {
             session.clear();
         }
-        let current = if matches!(case, Case::Changed) {
-            "Calibrate the specimens; reversible adjustments are now permitted."
-        } else if matches!(case, Case::SameRequest) {
-            texts[0]
-        } else {
-            texts[turn]
-        };
+        let current =
+            if matches!(case, Case::Changed) || (matches!(case, Case::ChangedSecond) && turn > 0) {
+                "Calibrate the specimens; reversible adjustments are now permitted."
+            } else if matches!(case, Case::SameRequest) {
+                texts[0]
+            } else {
+                texts[turn]
+            };
         let intent = IntentProvenance::from_turns([current.into()]).unwrap();
-        let visits = if matches!(arm, Arm::Exact) {
+        let visits = if matches!(arm, Arm::Exact | Arm::DeferredNomination) {
             exact.entry(current.into()).or_default()
         } else {
             &mut session
@@ -222,11 +241,13 @@ fn measure(distractors: usize, position: usize, case: Case, arm: Arm) {
         let freshness = matches!(arm, Arm::Split)
             || (matches!(arm, Arm::AlternatingFresh) && turn % 2 == 0)
             || (matches!(arm, Arm::AlternatingProgress) && turn % 2 == 1);
+        let deferred_nomination = matches!(arm, Arm::DeferredNomination)
+            && previous_intent.is_some_and(|previous| previous != current);
         let experimental = matches!(
             arm,
             Arm::Split | Arm::AlternatingFresh | Arm::AlternatingProgress
-        );
-        if experimental {
+        ) || deferred_nomination;
+        if experimental && !deferred_nomination {
             let requested = if freshness {
                 Some(roots.remove(0))
             } else {
@@ -237,12 +258,30 @@ fn measure(distractors: usize, position: usize, case: Case, arm: Arm) {
                 roots.insert(0, root);
             }
         }
-        let plan = if experimental {
+        let plan = if deferred_nomination {
+            plan_recalled_with_deferred(&index, context, roots, &deferred_age)
+        } else if experimental {
             plan_ordered(&index, context, roots)
         } else {
             plan_recalled(&index, context, roots)
         }
         .unwrap();
+        deferred_age = plan
+            .deferred
+            .iter()
+            .filter(|(_, reason)| matches!(reason, DeferredReason::InputBytes))
+            .map(|(reference, _)| {
+                (
+                    reference.clone(),
+                    deferred_age
+                        .get(reference)
+                        .copied()
+                        .unwrap_or(0)
+                        .saturating_add(1),
+                )
+            })
+            .collect();
+        previous_intent = Some(current);
         let bytes = plan.issued.as_ref().unwrap().body().len();
         assert!(bytes <= search_budget::MAX_INPUT_BYTES);
         max_bytes = max_bytes.max(bytes);
@@ -252,7 +291,10 @@ fn measure(distractors: usize, position: usize, case: Case, arm: Arm) {
             .filter(|v| v["kind"] == "optional_path")
             .count();
         for (root, _) in plan.wave {
-            if root == target && first.is_none() {
+            if root == target
+                && first.is_none()
+                && (!matches!(case, Case::ChangedSecond) || turn > 0)
+            {
                 first = Some(turn + 1);
             }
             repeats += usize::from(!seen.insert(root.clone()));
@@ -260,4 +302,5 @@ fn measure(distractors: usize, position: usize, case: Case, arm: Arm) {
         }
     }
     println!("CAPACITY {distractors} {position} {case:?} {arm:?} first={first:?} unique={} repeats={repeats} optional={optional} max_bytes={max_bytes}",seen.len());
+    first
 }

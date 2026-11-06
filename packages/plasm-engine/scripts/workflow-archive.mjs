@@ -11,14 +11,14 @@ const require = createRequire(import.meta.url);
 const { PlasmEngine } = require('../runtime.cjs');
 const { values, positionals } = parseArgs({ allowPositionals: true, options: {
   limit: { type: 'string' }, config: { type: 'string' }, output: { type: 'string' }, audit: { type: 'string' },
-  request: { type: 'string' }, assessments: { type: 'string' }, digest: { type: 'string' },
+  request: { type: 'string' },
   archive: { type: 'string' }, policy: { type: 'string' },
   catalogs: { type: 'string' }, bindings: { type: 'string' }, deployment: { type: 'string' },
 } });
 const action = positionals[0];
 if (positionals.length !== 1 || !['export', 'import', 'verify'].includes(action)
     || !values.config || !values.output || !values.audit) {
-  throw new Error('Usage: plasm-workflow-archive export|import|verify --config FILE --output NEW_FILE --audit NEW_FILE [--request FILE --assessments FILE] [--archive FILE --policy FILE --catalogs FILE --bindings FILE --deployment ID]');
+  throw new Error('Usage: plasm-workflow-archive export|import|verify --config FILE --output NEW_PATH --audit NEW_FILE [--request FILE] [--archive DIRECTORY --policy FILE --catalogs FILE --bindings FILE --deployment ID]');
 }
 if (resolve(values.output) === resolve(values.audit)) throw new Error('Archive and audit destinations must differ');
 
@@ -58,27 +58,17 @@ async function record(value) {
   await audit.sync();
 }
 try {
-  output = await open(values.output, 'wx', 0o600);
+  if (action !== 'export') output = await open(values.output, 'wx', 0o600);
   await engine.configureWorkflowLearning(JSON.stringify({mode: 'collect', scope: config.scope, databaseUrl}));
   await record({event: 'archive_administration', action, scope: config.scope});
   if (action === 'export') {
-    if (Boolean(values.request) === Boolean(values.digest)) throw new Error('Export requires exactly one of --request or --digest');
-    if (values.digest && values.assessments) throw new Error('Retained export cannot attach assessments');
-    if (values.assessments) {
-      const assessments = JSON.parse(await readBounded(values.assessments));
-      if (!Array.isArray(assessments) || assessments.length > 10000) throw new Error('Invalid assessment batch');
-      for (const assessment of assessments) {
-        await engine.recordWorkflowAssessment(JSON.stringify(assessment));
-      }
-      await record({event: 'assessments_retained', count: assessments.length});
+    if (!values.request) throw new Error('Export requires --request');
+    const request = JSON.parse(await readBounded(values.request));
+    if (!request || Object.keys(request).join(',') !== 'kind' || !['private_collection', 'serving_library'].includes(request.kind)) {
+      throw new Error('Export request requires only the archive kind');
     }
-    const archive = values.digest
-      ? await engine.exportRetainedWorkflowArchive(values.digest)
-      : await engine.exportWorkflowArchive(await readBounded(values.request));
-    await output.writeFile(archive);
-    await output.sync();
-    const document = JSON.parse(archive);
-    await record({event: 'archive_exported', digest: document.digest, items: document.items.length});
+    const manifest = JSON.parse(await engine.exportWorkflowArchive(request.kind, resolve(values.output)));
+    await record({event: 'archive_exported', digest: manifest.digest, items: Object.keys(manifest.records).length});
   } else {
     if (!values.archive || (action === 'import' && !values.policy) || !values.catalogs || !values.bindings || !values.deployment) {
       throw new Error('Import requires --archive, --policy, --catalogs, --bindings and --deployment');
@@ -105,17 +95,15 @@ try {
       await engine.loadCatalog(catalog);
     }
     await engine.activateDiscovery(values.deployment, bindingBytes);
-    const archiveBytes = await readBounded(values.archive, 512 * 1024 * 1024);
     if (action === 'verify') {
       const limit = values.limit === undefined ? 32 : Number(values.limit);
       if (!Number.isInteger(limit) || limit < 1 || limit > 32) throw new Error('Verification limit must be 1..32');
-      const archive = JSON.parse(archiveBytes);
-      const retained = await engine.exportRetainedWorkflowArchive(archive.digest);
-      if (retained !== archiveBytes) throw new Error('Archive bytes differ from the retained target archive');
+      const archive = JSON.parse(await engine.validateWorkflowArchive(resolve(values.archive)));
+      const manifestBytes = await readBounded(resolve(values.archive, 'manifest.json'), 8 * 1024 * 1024);
       const checked = JSON.parse(await engine.verifyWorkflowLibrary(limit));
       const proof = {
         schema_version: 1, kind: 'workflow_serving_compatibility_v1',
-        archive_digest: archive.digest, archive_sha256: sha256(archiveBytes),
+        archive_digest: archive.digest, manifest_sha256: sha256(manifestBytes),
         catalogs_sha256: sha256(catalogBytes), bindings_sha256: sha256(bindingBytes),
         deployment: values.deployment, catalogs: fingerprints, report: checked,
       };
@@ -126,7 +114,7 @@ try {
         throw new Error('Library compatibility gate failed; bounded report retained');
       }
     } else {
-      const report = await engine.importWorkflowArchive(archiveBytes, await readBounded(values.policy));
+      const report = await engine.importWorkflowArchive(resolve(values.archive), await readBounded(values.policy));
       await output.writeFile(report + '\n');
       await output.sync();
       const parsed = JSON.parse(report);

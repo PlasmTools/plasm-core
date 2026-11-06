@@ -1,0 +1,92 @@
+version: 1
+entry_id: matrix
+http_backend: http://127.0.0.1:9
+auth: {scheme: none}
+values:
+  source: {type: string, description: Original material used to prepare a spectrum.}
+  prepared: {type: string, description: Prepared material consumed to produce a spectrum.}
+  result: {type: string, description: Spectrum observation.}
+entities:
+  Source:
+    id_field: value
+    description: Original material.
+    fields:
+      value: {value_ref: source, required: true}
+  Prepared:
+    id_field: value
+    description: Prepared material.
+    fields:
+      value: {value_ref: prepared, required: true}
+  Result:
+    id_field: value
+    description: Observed spectrum.
+    fields:
+      value: {value_ref: result, required: true}
+capabilities:
+  source_a:
+    entity: Source
+    kind: get
+    description: Read original material from the primary reservoir.
+    provides: [value]
+    output: {type: entity, entity_type: Source}
+  source_b:
+    entity: Source
+    kind: get
+    description: Read original material from the secondary reservoir.
+    provides: [value]
+    output: {type: entity, entity_type: Source}
+  prepare:
+    entity: Prepared
+    kind: create
+    description: Prepare original material for spectrum production without deleting originals.
+    arguments:
+      input_type:
+        type: object
+        fields:
+          - {name: material, value_ref: source, required: true}
+    output: {type: side_effect, description: Creates prepared material; read it to obtain its value.}
+  prepared_read:
+    entity: Prepared
+    kind: query
+    description: Read prepared material for spectrum production.
+    provides: [value]
+    output: {type: collection, entity_type: Prepared}
+  process:
+    entity: Result
+    kind: action
+    description: Produce the requested spectrum from prepared material.
+    arguments:
+      input_type:
+        type: object
+        fields:
+          - {name: material, value_ref: prepared, required: true}
+    provides: [value]
+    output: {type: entity, entity_type: Result}
+  inspect:
+    entity: Result
+    kind: action
+    description: Inspect telemetry and report its current condition without changing it.
+    provides: [value]
+    output: {type: entity, entity_type: Result}
+prerequisites:
+  contracts:
+    material_feed:
+      version: 1
+      inputs: {}
+      outputs: {material: source}
+  providers:
+    primary:
+      contract: material_feed
+      capability: source_a
+      outputs: {material: value}
+    secondary:
+      contract: material_feed
+      capability: source_b
+      outputs: {material: value}
+  requirements:
+    prepare:
+      - id: feed
+        contract: material_feed
+        bindings:
+          - input: {lane: arguments, path: [material]}
+            output: material

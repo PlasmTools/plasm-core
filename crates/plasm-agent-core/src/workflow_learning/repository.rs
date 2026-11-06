@@ -9,14 +9,21 @@ use super::model::*;
 use crate::traced_pg::PgPool;
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
-pub struct ExecutionRunSummary {
-    pub run_id: RunArtifactId,
-    pub plan_id: CompiledProgramId,
+pub struct ExecutionSummary {
+    pub execution_id: ExecutionId,
     pub session_revision: u64,
+}
+
+pub struct ReviewAuthorization {
+    pub actor: training::TrustedTrainingActor,
+    pub expected_revision: u64,
+    pub idempotency_key: Uuid,
 }
 
 #[derive(Debug, thiserror::Error)]
 pub enum RepositoryError {
+    #[error(transparent)]
+    Training(#[from] training::TrainingError),
     #[error("workflow learning database: {0}")]
     Database(#[from] sqlx::Error),
     #[error("workflow learning serialization: {0}")]
@@ -40,35 +47,24 @@ pub enum RepositoryError {
 }
 
 fn validate_seal_format(value: &serde_json::Value) -> std::result::Result<(), RepositoryError> {
-    let Some(receipts) = value
-        .get("executions")
-        .and_then(serde_json::Value::as_array)
-    else {
-        return Err(RepositoryError::IncompatibleTeachingFormat);
-    };
-    for receipt in receipts {
-        if receipt.get("observation").is_none()
-            || receipt.get("catalogue_requirements").is_none()
-            || (receipt
-                .pointer("/observation/state")
-                .and_then(serde_json::Value::as_str)
-                == Some("available")
-                && (receipt
-                    .pointer("/observation/value/program/format")
-                    .and_then(serde_json::Value::as_str)
-                    != Some("whole_program_example")
-                    || receipt
-                        .pointer("/observation/value/program/schema_version")
-                        .and_then(serde_json::Value::as_u64)
-                        != Some(u64::from(super::teaching::TEACHING_SCHEMA_VERSION))))
-        {
-            return Err(RepositoryError::IncompatibleTeachingFormat);
-        }
-    }
-    Ok(())
+    serde_json::from_value::<StoredReviewSeal>(value.clone())
+        .map(|_| ())
+        .map_err(|_| RepositoryError::IncompatibleTeachingFormat)
 }
 
 type Result<T> = std::result::Result<T, RepositoryError>;
+const SCHEMA_VERSION: i32 = 7;
+
+#[path = "review_storage.rs"]
+mod review_storage;
+pub(super) use review_storage::hydrate_review;
+
+#[path = "training.rs"]
+pub mod training;
+
+#[cfg(test)]
+#[path = "repository_test_support.rs"]
+mod training_test_support;
 
 #[path = "archive_repository.rs"]
 mod archive_repository;
@@ -76,7 +72,18 @@ use archive_repository::PublicationSupport;
 
 #[path = "repository_frozen.rs"]
 mod frozen;
-pub use frozen::{FrozenProposalArtifact, FrozenPublicationReceipt, FrozenPublicationRequest};
+pub use frozen::{
+    FrozenProposalArtifact, FrozenPublicationReceipt, FrozenPublicationRequest,
+    PublicationAuthority, TrainingCandidateDetail, TrainingCandidatePage, TrainingCandidateRef,
+    TrainingCandidateSummary,
+};
+
+#[path = "repository_decisions.rs"]
+mod decisions;
+pub use decisions::{
+    CandidateDecisionOutcome, PublicationDeferral, TrainingCandidateDecisionReceipt,
+    TrainingDecisionReceipt,
+};
 
 #[path = "normalization_audit.rs"]
 mod normalization_audit;
@@ -143,6 +150,11 @@ fn revision(value: u64) -> Result<i64> {
 }
 
 fn validate_review(request: &ReviewRequest) -> Result<()> {
+    if request.subtasks.len() > 16 || request.subtasks.iter().any(|s| s.execution_ids.len() > 32) {
+        return Err(RepositoryError::InvalidEvidence(
+            "review execution references exceed limits",
+        ));
+    }
     if request.scope.tenant.trim().is_empty()
         || request.scope.project.trim().is_empty()
         || request.intent.trim().is_empty()
@@ -150,7 +162,7 @@ fn validate_review(request: &ReviewRequest) -> Result<()> {
         || request.subtasks.iter().any(|s| {
             s.intent.trim().is_empty()
                 || s.observed_outcome.trim().is_empty()
-                || s.run_ids.is_empty()
+                || s.execution_ids.is_empty()
         })
     {
         return Err(RepositoryError::InvalidEvidence(
@@ -161,6 +173,33 @@ fn validate_review(request: &ReviewRequest) -> Result<()> {
 }
 
 impl WorkflowRepository {
+    /// Rechecked at provider boundaries and publication; a new epoch never
+    /// authorizes material from a stopped epoch.
+    pub(super) async fn lock_review_training(
+        &self,
+        tx: &mut sqlx_tracing::Transaction<'_, sqlx::Postgres>,
+        claim: &ClaimedReview,
+    ) -> Result<training::TrainingEpochPermit> {
+        let epoch: Option<Uuid> = sqlx::query_scalar("SELECT training_epoch FROM workflow_learning_reviews WHERE id=$1 AND tenant=$2 AND project=$3 AND logical_session=$4")
+            .bind(claim.id).bind(&claim.seal.request.scope.tenant).bind(&claim.seal.request.scope.project)
+            .bind(claim.seal.request.logical_session.to_string()).fetch_optional(&mut tx.executor()).await?.flatten();
+        Ok(training::lock_training_review(
+            tx,
+            &claim.seal.request.scope,
+            claim.seal.request.logical_session,
+            claim.id,
+            epoch.ok_or(training::TrainingError::Inactive)?,
+        )
+        .await?)
+    }
+
+    pub(super) async fn ensure_review_training(&self, claim: &ClaimedReview) -> Result<()> {
+        let mut tx = self.pool.begin().await?;
+        self.lock_review_training(&mut tx, claim).await?;
+        tx.commit().await?;
+        Ok(())
+    }
+
     pub async fn connect(url: &str) -> Result<Self> {
         let tenant_cap = match std::env::var("PLASM_WORKFLOW_LEARNING_TENANT_CAP") {
             Ok(value) => value
@@ -186,13 +225,91 @@ impl WorkflowRepository {
         sqlx::query("SELECT pg_advisory_xact_lock(709471032)")
             .execute(&mut tx.executor())
             .await?;
+        // One transaction per schema version, including the marker. Reconnecting
+        // replicas must not acquire DDL locks against live workflow transactions.
+        // Bump this version whenever any embedded schema changes.
+        sqlx::query("CREATE TABLE IF NOT EXISTS workflow_learning_schema_versions(version integer PRIMARY KEY,applied_at timestamptz NOT NULL DEFAULT clock_timestamp())")
+            .execute(&mut tx.executor()).await?;
+        let applied: bool = sqlx::query_scalar(
+            "SELECT EXISTS(SELECT 1 FROM workflow_learning_schema_versions WHERE version=$1)",
+        )
+        .bind(SCHEMA_VERSION)
+        .fetch_one(&mut tx.executor())
+        .await?;
+        if applied {
+            let highest: Option<i32> =
+                sqlx::query_scalar("SELECT max(version) FROM workflow_learning_schema_versions")
+                    .fetch_one(&mut tx.executor())
+                    .await?;
+            if highest != Some(SCHEMA_VERSION) {
+                return Err(RepositoryError::InvalidEvidence(
+                    "workflow learning schema is newer than this binary",
+                ));
+            }
+            tx.commit().await?;
+            return Ok(());
+        }
+        let prior: bool =
+            sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM workflow_learning_schema_versions)")
+                .fetch_one(&mut tx.executor())
+                .await?;
+        if prior {
+            return Err(RepositoryError::InvalidEvidence(
+                "workflow learning store uses an unsupported older schema; create a fresh store",
+            ));
+        }
+        let unversioned: bool =
+            sqlx::query_scalar("SELECT to_regclass('workflow_learning_receipts') IS NOT NULL")
+                .fetch_one(&mut tx.executor())
+                .await?;
+        if unversioned {
+            return Err(RepositoryError::InvalidEvidence(
+                "workflow learning store is unversioned; create a fresh store",
+            ));
+        }
         sqlx::raw_sql(include_str!("schema.sql"))
             .execute(&mut tx.executor())
             .await?;
         sqlx::raw_sql(include_str!("archive_schema.sql"))
             .execute(&mut tx.executor())
             .await?;
+        sqlx::raw_sql(include_str!("training_schema.sql"))
+            .execute(&mut tx.executor())
+            .await?;
+        sqlx::query(
+            "ALTER TABLE workflow_learning_receipts ALTER COLUMN program_digest SET NOT NULL",
+        )
+        .execute(&mut tx.executor())
+        .await?;
+        if !prior {
+            sqlx::query("ALTER TABLE workflow_learning_receipts ADD CONSTRAINT workflow_learning_receipts_program_fkey FOREIGN KEY(tenant,project,program_digest) REFERENCES workflow_learning_program_observations(tenant,project,digest)")
+            .execute(&mut tx.executor()).await?;
+        }
+        sqlx::query(
+            "ALTER TABLE workflow_learning_reviews ALTER COLUMN seal_content_digest SET NOT NULL",
+        )
+        .execute(&mut tx.executor())
+        .await?;
+        sqlx::query("INSERT INTO workflow_learning_schema_versions(version) VALUES($1)")
+            .bind(SCHEMA_VERSION)
+            .execute(&mut tx.executor())
+            .await?;
         tx.commit().await?;
+        Ok(())
+    }
+
+    /// Read-only guard for exporters; never migrates or acquires schema locks.
+    pub async fn validate_current_schema(&self) -> Result<()> {
+        let mut connection = self.pool.acquire().await?;
+        let version: Option<i32> =
+            sqlx::query_scalar("SELECT max(version) FROM workflow_learning_schema_versions")
+                .fetch_one(&mut connection)
+                .await?;
+        if version != Some(SCHEMA_VERSION) {
+            return Err(RepositoryError::InvalidEvidence(
+                "workflow learning schema is not current",
+            ));
+        }
         Ok(())
     }
 
@@ -237,13 +354,20 @@ impl WorkflowRepository {
         scope: &LibraryScope,
         logical_session: LogicalSessionId,
         id: &str,
-    ) -> Result<()> {
+    ) -> Result<Option<training::TrainingEpochPermit>> {
         if id.is_empty() {
             return Err(RepositoryError::InvalidEvidence(
                 "empty execution journal identity",
             ));
         }
         let mut tx = self.pool.begin().await?;
+        let permit = match training::lock_training_epoch(&mut tx, scope, logical_session).await {
+            Ok(permit) => permit,
+            Err(training::TrainingError::Inactive | training::TrainingError::Held) => {
+                return Ok(None)
+            }
+            Err(error) => return Err(error.into()),
+        };
         let bound: Option<String> = sqlx::query_scalar("SELECT project FROM workflow_learning_sessions WHERE tenant=$1 AND logical_session=$2 FOR UPDATE")
             .bind(&scope.tenant).bind(logical_session.to_string()).fetch_optional(&mut tx.executor()).await?;
         if bound.as_ref() != Some(&scope.project) {
@@ -251,13 +375,13 @@ impl WorkflowRepository {
                 "execution scope is unbound",
             ));
         }
-        let state: String = sqlx::query_scalar("INSERT INTO workflow_learning_execution_journal(tenant,project,logical_session,execution_id,state) VALUES($1,$2,$3,$4,'pending') ON CONFLICT(tenant,project,logical_session,execution_id) DO UPDATE SET state=workflow_learning_execution_journal.state RETURNING state")
-            .bind(&scope.tenant).bind(&scope.project).bind(logical_session.to_string()).bind(id).fetch_one(&mut tx.executor()).await?;
+        let state: String = sqlx::query_scalar("INSERT INTO workflow_learning_execution_journal(tenant,project,logical_session,execution_id,state,training_epoch) VALUES($1,$2,$3,$4,'pending',$5) ON CONFLICT(tenant,project,logical_session,execution_id) DO UPDATE SET state=workflow_learning_execution_journal.state WHERE workflow_learning_execution_journal.training_epoch=EXCLUDED.training_epoch RETURNING state")
+            .bind(&scope.tenant).bind(&scope.project).bind(logical_session.to_string()).bind(id).bind(permit.epoch_id()).fetch_one(&mut tx.executor()).await?;
         if state != "pending" {
             return Err(RepositoryError::ImmutableConflict);
         }
         tx.commit().await?;
-        Ok(())
+        Ok(Some(permit))
     }
 
     pub async fn finish_execution(
@@ -267,13 +391,39 @@ impl WorkflowRepository {
         id: &str,
         successful: bool,
     ) -> Result<()> {
-        let mut connection = self.pool.acquire().await?;
+        let mut tx = self.pool.begin().await?;
+        let epoch: Option<Uuid> = sqlx::query_scalar("SELECT training_epoch FROM workflow_learning_execution_journal WHERE tenant=$1 AND project=$2 AND logical_session=$3 AND execution_id=$4")
+            .bind(&scope.tenant).bind(&scope.project).bind(logical_session.to_string()).bind(id).fetch_optional(&mut tx.executor()).await?.flatten();
+        if successful {
+            training::validate_training_epoch(
+                &mut tx,
+                scope,
+                logical_session,
+                epoch.ok_or(training::TrainingError::Inactive)?,
+            )
+            .await?;
+        }
         let target = if successful { "complete" } else { "unknown" };
         let changed = sqlx::query("UPDATE workflow_learning_execution_journal SET state=$1 WHERE tenant=$2 AND project=$3 AND logical_session=$4 AND execution_id=$5 AND (state='pending' OR state=$1)")
-            .bind(target).bind(&scope.tenant).bind(&scope.project).bind(logical_session.to_string()).bind(id).execute(&mut connection).await?.rows_affected();
+            .bind(target).bind(&scope.tenant).bind(&scope.project).bind(logical_session.to_string()).bind(id).execute(&mut tx.executor()).await?.rows_affected();
         if changed != 1 {
             return Err(RepositoryError::ImmutableConflict);
         }
+        tx.commit().await?;
+        Ok(())
+    }
+
+    /// A successful business operation excluded by a consent boundary has no
+    /// training success receipt; it must not poison the next epoch's watermark.
+    pub(crate) async fn discard_execution(
+        &self,
+        scope: &LibraryScope,
+        logical: LogicalSessionId,
+        id: &str,
+    ) -> Result<()> {
+        let mut connection = self.pool.acquire().await?;
+        sqlx::query("UPDATE workflow_learning_execution_journal SET state='excluded' WHERE tenant=$1 AND project=$2 AND logical_session=$3 AND execution_id=$4 AND state IN ('pending','excluded')")
+            .bind(&scope.tenant).bind(&scope.project).bind(logical.to_string()).bind(id).execute(&mut connection).await?;
         Ok(())
     }
 
@@ -281,9 +431,9 @@ impl WorkflowRepository {
         &self,
         scope: &LibraryScope,
         logical: LogicalSessionId,
-    ) -> Result<Vec<ExecutionRunSummary>> {
+    ) -> Result<Vec<ExecutionSummary>> {
         let mut connection = self.pool.acquire().await?;
-        let rows: Vec<serde_json::Value> = sqlx::query_scalar("SELECT jsonb_build_object('run_id',run_id,'session_revision',session_revision,'plan_id',receipt->'plan_id') FROM workflow_learning_receipts WHERE tenant=$1 AND project=$2 AND logical_session=$3 ORDER BY session_revision,run_id LIMIT 1025")
+        let rows: Vec<serde_json::Value> = sqlx::query_scalar("SELECT jsonb_build_object('execution_id',execution_id,'session_revision',session_revision) FROM workflow_learning_receipts WHERE tenant=$1 AND project=$2 AND logical_session=$3 ORDER BY session_revision,execution_id LIMIT 1025")
             .bind(&scope.tenant).bind(&scope.project).bind(logical.to_string()).fetch_all(&mut connection).await?;
         if rows.len() > 1024 {
             return Err(RepositoryError::InvalidEvidence(
@@ -299,12 +449,12 @@ impl WorkflowRepository {
         &self,
         scope: &LibraryScope,
         logical: LogicalSessionId,
-        run: RunArtifactId,
+        run: ExecutionId,
     ) -> Result<ExecutionReceipt> {
         let mut connection = self.pool.acquire().await?;
-        let payload: serde_json::Value = sqlx::query_scalar("SELECT receipt FROM workflow_learning_receipts WHERE tenant=$1 AND project=$2 AND logical_session=$3 AND run_id=$4 ORDER BY session_revision DESC LIMIT 1")
+        let row = sqlx::query("SELECT r.session_revision,r.execution_id,r.receipt,r.program_digest,p.observation FROM workflow_learning_receipts r JOIN workflow_learning_program_observations p ON p.tenant=r.tenant AND p.project=r.project AND p.digest=r.program_digest WHERE r.tenant=$1 AND r.project=$2 AND r.logical_session=$3 AND r.execution_id=$4 ORDER BY r.session_revision DESC LIMIT 1")
             .bind(&scope.tenant).bind(&scope.project).bind(logical.to_string()).bind(run.to_wire()).fetch_optional(&mut connection).await?.ok_or(RepositoryError::Unavailable)?;
-        Ok(serde_json::from_value(payload)?)
+        review_storage::hydrate_row(scope, logical, row)
     }
 
     /// Bounded authoritative run index; callers cannot submit receipt bodies.
@@ -314,54 +464,86 @@ impl WorkflowRepository {
         logical: LogicalSessionId,
     ) -> Result<Vec<ExecutionReceipt>> {
         let mut connection = self.pool.acquire().await?;
-        let payloads: Vec<serde_json::Value> = sqlx::query_scalar("SELECT receipt FROM workflow_learning_receipts WHERE tenant=$1 AND project=$2 AND logical_session=$3 ORDER BY session_revision,run_id LIMIT 1024")
+        let rows = sqlx::query("SELECT r.session_revision,r.execution_id,r.receipt,r.program_digest,p.observation FROM workflow_learning_receipts r JOIN workflow_learning_program_observations p ON p.tenant=r.tenant AND p.project=r.project AND p.digest=r.program_digest WHERE r.tenant=$1 AND r.project=$2 AND r.logical_session=$3 ORDER BY r.session_revision,r.execution_id LIMIT 1024")
             .bind(&scope.tenant).bind(&scope.project).bind(logical.to_string()).fetch_all(&mut connection).await?;
-        payloads
-            .into_iter()
-            .map(|payload| serde_json::from_value(payload).map_err(RepositoryError::from))
+        rows.into_iter()
+            .map(|row| review_storage::hydrate_row(scope, logical, row))
             .collect()
     }
 
     /// Host-only path: caller must have verified completion and retained the full artifact.
-    pub async fn record_execution(&self, receipt: &ExecutionReceipt) -> Result<()> {
-        if self
-            .session_scope(&receipt.scope.tenant, receipt.logical_session)
-            .await?
-            .as_ref()
-            != Some(&receipt.scope)
-        {
-            return Err(RepositoryError::InvalidEvidence(
-                "execution session is not bound to this project",
-            ));
+    pub async fn record_execution(
+        &self,
+        receipt: &ExecutionReceipt,
+        permit: &training::TrainingEpochPermit,
+    ) -> Result<()> {
+        self.record_execution_batch(std::slice::from_ref(receipt), permit, None)
+            .await
+    }
+
+    pub(crate) async fn record_execution_batch(
+        &self,
+        receipts: &[ExecutionReceipt],
+        permit: &training::TrainingEpochPermit,
+        journal: Option<&str>,
+    ) -> Result<()> {
+        let first = receipts.first().ok_or(RepositoryError::InvalidEvidence(
+            "missing completed execution receipts",
+        ))?;
+        let mut tx = self.pool.begin().await?;
+        training::validate_training_epoch(
+            &mut tx,
+            &first.scope,
+            first.logical_session,
+            permit.epoch_id(),
+        )
+        .await?;
+        for receipt in receipts {
+            if receipt.scope != first.scope
+                || receipt.logical_session != first.logical_session
+                || receipt.source.trim().is_empty()
+                || receipt.catalog_fingerprints.is_empty()
+                || !receipt.compiled_plan.is_object()
+            {
+                return Err(RepositoryError::InvalidEvidence(
+                    "incomplete or mixed execution receipts",
+                ));
+            }
+            let program_digest = review_storage::store_program(&mut tx, receipt).await?;
+            let payload = serde_json::to_value(receipt.stored_fact())?;
+            let stored: Option<serde_json::Value>=sqlx::query_scalar("INSERT INTO workflow_learning_receipts(tenant,project,logical_session,session_revision,execution_id,receipt,training_epoch,program_digest) VALUES($1,$2,$3,$4,$5,$6,$7,$8) ON CONFLICT(tenant,project,logical_session,session_revision,execution_id) DO UPDATE SET receipt=workflow_learning_receipts.receipt WHERE workflow_learning_receipts.training_epoch=EXCLUDED.training_epoch AND workflow_learning_receipts.program_digest=EXCLUDED.program_digest RETURNING receipt")
+                .bind(&receipt.scope.tenant).bind(&receipt.scope.project).bind(receipt.logical_session.to_string()).bind(revision(receipt.session_revision)?).bind(receipt.execution_id.to_wire()).bind(&payload).bind(permit.epoch_id()).bind(&program_digest).fetch_optional(&mut tx.executor()).await?;
+            if stored.as_ref() != Some(&payload) {
+                return Err(RepositoryError::ImmutableConflict);
+            }
         }
-        if receipt.source.trim().is_empty()
-            || receipt.catalog_fingerprints.is_empty()
-            || !receipt.compiled_plan.is_object()
-            || !receipt.run_artifact.is_object()
-            || receipt.scope.tenant.is_empty()
-            || receipt.scope.project.is_empty()
-        {
-            return Err(RepositoryError::InvalidEvidence(
-                "incomplete successful execution receipt",
-            ));
+        if let Some(journal) = journal {
+            let changed=sqlx::query("UPDATE workflow_learning_execution_journal SET state='complete' WHERE tenant=$1 AND project=$2 AND logical_session=$3 AND execution_id=$4 AND training_epoch=$5 AND state IN ('pending','complete')")
+                .bind(&first.scope.tenant).bind(&first.scope.project).bind(first.logical_session.to_string()).bind(journal).bind(permit.epoch_id()).execute(&mut tx.executor()).await?.rows_affected();
+            if changed != 1 {
+                return Err(RepositoryError::ImmutableConflict);
+            }
         }
-        let payload = serde_json::to_value(receipt)?;
-        let mut connection = self.pool.acquire().await?;
-        let stored: serde_json::Value = sqlx::query_scalar("INSERT INTO workflow_learning_receipts(tenant,project,logical_session,session_revision,run_id,receipt) VALUES($1,$2,$3,$4,$5,$6) ON CONFLICT(tenant,project,logical_session,session_revision,run_id) DO UPDATE SET receipt=workflow_learning_receipts.receipt RETURNING receipt")
-            .bind(&receipt.scope.tenant).bind(&receipt.scope.project).bind(receipt.logical_session.to_string())
-            .bind(revision(receipt.session_revision)?).bind(receipt.run_id.to_wire()).bind(&payload)
-            .fetch_one(&mut connection).await?;
-        if stored != payload {
-            return Err(RepositoryError::ImmutableConflict);
-        }
+        tx.commit().await?;
         Ok(())
     }
 
-    pub async fn review(&self, request: &ReviewRequest) -> Result<ReviewHandle> {
-        self.prepare_review(request).await?.commit().await
+    pub async fn review(
+        &self,
+        request: &ReviewRequest,
+        authorization: &ReviewAuthorization,
+    ) -> Result<ReviewHandle> {
+        self.prepare_review(request, authorization)
+            .await?
+            .commit()
+            .await
     }
 
-    pub async fn prepare_review(&self, request: &ReviewRequest) -> Result<PendingReview<'_>> {
+    pub async fn prepare_review(
+        &self,
+        request: &ReviewRequest,
+        authorization: &ReviewAuthorization,
+    ) -> Result<PendingReview<'_>> {
         validate_review(request)?;
         if self
             .session_scope(&request.scope.tenant, request.logical_session)
@@ -374,26 +556,69 @@ impl WorkflowRepository {
             ));
         }
         let mut tx = self.pool.begin().await?;
+        let runs = request
+            .subtasks
+            .iter()
+            .flat_map(|subtask| subtask.execution_ids.iter().copied())
+            .collect::<BTreeSet<_>>()
+            .into_iter()
+            .collect::<Vec<_>>();
+        let permit = training::authorize_review_executions(
+            &mut tx,
+            &request.scope,
+            request.logical_session,
+            &authorization.actor,
+            authorization.expected_revision,
+            &runs,
+        )
+        .await?;
+        let command = serde_json::to_value(request)?;
+        let previous = sqlx::query("SELECT command,review_id,digest FROM workflow_training_review_commands WHERE tenant=$1 AND project=$2 AND logical_session=$3 AND actor=$4 AND credential=$5 AND idempotency_key=$6")
+            .bind(&request.scope.tenant).bind(&request.scope.project).bind(request.logical_session.to_string())
+            .bind(authorization.actor.subject()).bind(authorization.actor.credential()).bind(authorization.idempotency_key)
+            .fetch_optional(&mut tx.executor()).await?;
+        if let Some(previous) = previous {
+            if previous.try_get::<serde_json::Value, _>("command")? != command {
+                return Err(RepositoryError::ImmutableConflict);
+            }
+            return Ok(PendingReview {
+                handle: ReviewHandle {
+                    id: previous.try_get("review_id")?,
+                    digest: previous.try_get("digest")?,
+                },
+                transaction: tx,
+            });
+        }
         // Serialize review sealing with the start of every host execution.
         sqlx::query("SELECT project FROM workflow_learning_sessions WHERE tenant=$1 AND project=$2 AND logical_session=$3 FOR UPDATE")
             .bind(&request.scope.tenant).bind(&request.scope.project).bind(request.logical_session.to_string()).fetch_one(&mut tx.executor()).await?;
-        let unresolved: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM workflow_learning_execution_journal WHERE tenant=$1 AND project=$2 AND logical_session=$3 AND state<>'complete')")
-            .bind(&request.scope.tenant).bind(&request.scope.project).bind(request.logical_session.to_string()).fetch_one(&mut tx.executor()).await?;
+        let unresolved: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM workflow_learning_execution_journal WHERE tenant=$1 AND project=$2 AND logical_session=$3 AND training_epoch=$4 AND state IN ('pending','unknown'))")
+            .bind(&request.scope.tenant).bind(&request.scope.project).bind(request.logical_session.to_string()).bind(permit.epoch_id()).fetch_one(&mut tx.executor()).await?;
         if unresolved {
             return Err(RepositoryError::InvalidEvidence(
                 "session contains pending or unknown effects",
             ));
         }
-        let existing = sqlx::query("SELECT id,digest,seal FROM workflow_learning_reviews WHERE tenant=$1 AND project=$2 AND logical_session=$3 AND session_revision=$4")
+        let existing = sqlx::query("SELECT id,digest,seal,seal_content_digest FROM workflow_learning_reviews WHERE tenant=$1 AND project=$2 AND logical_session=$3 AND session_revision=$4")
             .bind(&request.scope.tenant).bind(&request.scope.project).bind(request.logical_session.to_string())
             .bind(revision(request.session_revision)?).fetch_optional(&mut tx.executor()).await?;
         if let Some(row) = existing {
             let payload: serde_json::Value = row.try_get("seal")?;
+            let seal_digest: String = row.try_get("seal_content_digest")?;
+            if plasm_core::catalog_discovery::content_hash(&serde_json::to_vec(&payload)?)
+                != seal_digest
+            {
+                return Err(RepositoryError::ImmutableConflict);
+            }
             validate_seal_format(&payload)?;
-            let previous: SealedReview = serde_json::from_value(payload)?;
+            let previous: StoredReviewSeal = serde_json::from_value(payload)?;
             if previous.request != *request {
                 return Err(RepositoryError::ImmutableConflict);
             }
+            sqlx::query("INSERT INTO workflow_training_review_commands(tenant,project,logical_session,actor,credential,idempotency_key,command,review_id,digest) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9)")
+                .bind(&request.scope.tenant).bind(&request.scope.project).bind(request.logical_session.to_string())
+                .bind(authorization.actor.subject()).bind(authorization.actor.credential()).bind(authorization.idempotency_key)
+                .bind(&command).bind(row.try_get::<Uuid,_>("id")?).bind(row.try_get::<String,_>("digest")?).execute(&mut tx.executor()).await?;
             return Ok(PendingReview {
                 handle: ReviewHandle {
                     id: row.try_get("id")?,
@@ -405,34 +630,38 @@ impl WorkflowRepository {
         let wanted: BTreeSet<_> = request
             .subtasks
             .iter()
-            .flat_map(|s| s.run_ids.iter())
+            .flat_map(|s| s.execution_ids.iter())
             .collect();
         let mut executions: Vec<ExecutionReceipt> = Vec::new();
-        for run_id in wanted {
-            let receipt: Option<serde_json::Value> = sqlx::query_scalar("SELECT receipt FROM workflow_learning_receipts WHERE tenant=$1 AND project=$2 AND logical_session=$3 AND session_revision<=$4 AND run_id=$5 ORDER BY session_revision DESC LIMIT 1")
+        for execution_id in wanted {
+            let row = sqlx::query("SELECT r.session_revision,r.execution_id,r.receipt,r.program_digest,p.observation FROM workflow_learning_receipts r JOIN workflow_learning_program_observations p ON p.tenant=r.tenant AND p.project=r.project AND p.digest=r.program_digest WHERE r.tenant=$1 AND r.project=$2 AND r.logical_session=$3 AND r.session_revision<=$4 AND r.execution_id=$5 AND r.training_epoch=$6 ORDER BY r.session_revision DESC LIMIT 1")
                 .bind(&request.scope.tenant).bind(&request.scope.project).bind(request.logical_session.to_string())
-                .bind(revision(request.session_revision)?).bind(run_id.to_wire()).fetch_optional(&mut tx.executor()).await?;
-            let receipt = receipt.ok_or(RepositoryError::InvalidEvidence(
+                .bind(revision(request.session_revision)?).bind(execution_id.to_wire()).bind(permit.epoch_id()).fetch_optional(&mut tx.executor()).await?;
+            let row = row.ok_or(RepositoryError::InvalidEvidence(
                 "run not recorded as successfully completed in this scope/session",
             ))?;
-            executions.push(serde_json::from_value(receipt)?);
+            executions.push(review_storage::hydrate_row(
+                &request.scope,
+                request.logical_session,
+                row,
+            )?);
         }
         executions.sort_by(|left, right| {
             left.session_revision
                 .cmp(&right.session_revision)
-                .then(left.run_id.cmp(&right.run_id))
+                .then(left.execution_id.cmp(&right.execution_id))
         });
         let seal = SealedReview {
             request: request.clone(),
             executions,
             assurance: OutcomeAssurance::AgentAttested,
         };
-        let payload = serde_json::to_value(&seal)?;
+        let payload = serde_json::to_value(StoredReviewSeal::from_review(&seal)?)?;
         let digest = format!("{:x}", Sha256::digest(serde_json::to_vec(&payload)?));
-        let row = sqlx::query("INSERT INTO workflow_learning_reviews(id,tenant,project,logical_session,session_revision,digest,seal) VALUES($1,$2,$3,$4,$5,$6,$7) ON CONFLICT(tenant,project,logical_session,session_revision) DO UPDATE SET digest=workflow_learning_reviews.digest RETURNING id,digest")
+        let row = sqlx::query("INSERT INTO workflow_learning_reviews(id,tenant,project,logical_session,session_revision,digest,seal,training_epoch,seal_content_digest) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$6) ON CONFLICT(tenant,project,logical_session,session_revision) DO UPDATE SET digest=workflow_learning_reviews.digest RETURNING id,digest")
             .bind(Uuid::new_v4()).bind(&request.scope.tenant).bind(&request.scope.project)
             .bind(request.logical_session.to_string()).bind(revision(request.session_revision)?).bind(&digest)
-            .bind(payload).fetch_one(&mut tx.executor()).await?;
+            .bind(payload).bind(permit.epoch_id()).fetch_one(&mut tx.executor()).await?;
         if row.try_get::<String, _>("digest")? != digest {
             return Err(RepositoryError::ImmutableConflict);
         }
@@ -440,6 +669,18 @@ impl WorkflowRepository {
             id: row.try_get("id")?,
             digest,
         };
+        training::bind_released_review(
+            &mut tx,
+            &request.scope,
+            request.logical_session,
+            handle.id,
+            &permit,
+        )
+        .await?;
+        sqlx::query("INSERT INTO workflow_training_review_commands(tenant,project,logical_session,actor,credential,idempotency_key,command,review_id,digest) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9)")
+            .bind(&request.scope.tenant).bind(&request.scope.project).bind(request.logical_session.to_string())
+            .bind(authorization.actor.subject()).bind(authorization.actor.credential()).bind(authorization.idempotency_key)
+            .bind(command).bind(handle.id).bind(&handle.digest).execute(&mut tx.executor()).await?;
         Ok(PendingReview {
             handle,
             transaction: tx,
@@ -480,16 +721,25 @@ impl WorkflowRepository {
         // SKIP LOCKED avoids waiting on a publisher committing its transaction.
         sqlx::query("WITH expired AS (SELECT id FROM workflow_learning_reviews WHERE state='leased' AND lease_until<=clock_timestamp() AND ($1::text IS NULL OR (tenant=$1 AND project=$2)) AND (NOT $3 OR EXISTS(SELECT 1 FROM workflow_learning_proposal_batches b WHERE b.review_id=workflow_learning_reviews.id)) FOR UPDATE SKIP LOCKED) UPDATE workflow_learning_reviews r SET state=CASE WHEN r.attempts+1<3 THEN 'queued' ELSE 'failed' END,attempts=r.attempts+1,next_attempt=clock_timestamp()+make_interval(secs=>15.0*power(2.0,least(r.attempts,2))),failure_reason='worker lease expired' FROM expired WHERE r.id=expired.id")
             .bind(scope.map(|s|s.tenant.as_str())).bind(scope.map(|s|s.project.as_str())).bind(recorded_only).execute(&mut connection).await?;
-        let row = sqlx::query("WITH next AS (SELECT id FROM workflow_learning_reviews WHERE attempts<3 AND next_attempt<=clock_timestamp() AND state='queued' AND ($2::text IS NULL OR (tenant=$2 AND project=$3)) AND (NOT $4 OR EXISTS(SELECT 1 FROM workflow_learning_proposal_batches b WHERE b.review_id=workflow_learning_reviews.id)) ORDER BY next_attempt,created_at,id FOR UPDATE SKIP LOCKED LIMIT 1) UPDATE workflow_learning_reviews r SET state='leased',fence=r.fence+1,lease_until=clock_timestamp()+make_interval(secs=>$1::double precision) FROM next WHERE r.id=next.id RETURNING r.id,r.fence,r.seal")
+        let row = sqlx::query("WITH next AS (SELECT id FROM workflow_learning_reviews r WHERE attempts<3 AND next_attempt<=clock_timestamp() AND state='queued' AND ($2::text IS NULL OR (tenant=$2 AND project=$3)) AND (EXISTS(SELECT 1 FROM workflow_training_epochs e JOIN workflow_training_grants g ON g.id=e.grant_id WHERE e.id=r.training_epoch AND e.tenant=r.tenant AND e.project=r.project AND NOT e.held AND NOT g.revoked AND g.revision=e.grant_revision AND g.expires_at>clock_timestamp()) OR EXISTS(SELECT 1 FROM workflow_training_releases rel JOIN workflow_training_grants g ON g.id=rel.grant_id WHERE rel.review_id=r.id AND rel.tenant=r.tenant AND rel.project=r.project AND NOT rel.revoked AND NOT g.revoked AND rel.grant_revision=g.revision AND g.expires_at>clock_timestamp())) AND (NOT $4 OR EXISTS(SELECT 1 FROM workflow_learning_proposal_batches b WHERE b.review_id=r.id)) ORDER BY next_attempt,created_at,id FOR UPDATE SKIP LOCKED LIMIT 1) UPDATE workflow_learning_reviews r SET state='leased',fence=r.fence+1,lease_until=clock_timestamp()+make_interval(secs=>$1::double precision) FROM next WHERE r.id=next.id RETURNING r.id,r.fence,r.seal")
             .bind(f64::from(lease_seconds)).bind(scope.map(|s|s.tenant.as_str())).bind(scope.map(|s|s.project.as_str())).bind(recorded_only).fetch_optional(&mut connection).await?;
-        row.map(|row| {
-            Ok(ClaimedReview {
-                id: row.try_get("id")?,
-                fence: row.try_get("fence")?,
-                seal: serde_json::from_value(row.try_get("seal")?)?,
-            })
-        })
-        .transpose()
+        match row {
+            Some(row) => {
+                let id: Uuid = row.try_get("id")?;
+                let digest: String = sqlx::query_scalar(
+                    "SELECT seal_content_digest FROM workflow_learning_reviews WHERE id=$1",
+                )
+                .bind(id)
+                .fetch_one(&mut connection)
+                .await?;
+                Ok(Some(ClaimedReview {
+                    id,
+                    fence: row.try_get("fence")?,
+                    seal: hydrate_review(&mut connection, row.try_get("seal")?, &digest).await?,
+                }))
+            }
+            None => Ok(None),
+        }
     }
 
     pub(super) async fn promotion_counts(
@@ -528,41 +778,6 @@ impl WorkflowRepository {
         Ok(())
     }
 
-    /// Trusted operator API. Approval is scoped, immutable, audited, and causes
-    /// revalidation of the original seal; it never publishes directly.
-    pub async fn approve_publication(
-        &self,
-        scope: &LibraryScope,
-        review_id: Uuid,
-        actor: &str,
-    ) -> Result<()> {
-        if actor.trim().is_empty() {
-            return Err(RepositoryError::InvalidEvidence(
-                "approval actor is required",
-            ));
-        }
-        let mut tx = self.pool.begin().await?;
-        let row = sqlx::query("SELECT state,seal FROM workflow_learning_reviews WHERE id=$1 AND tenant=$2 AND project=$3 FOR UPDATE")
-            .bind(review_id).bind(&scope.tenant).bind(&scope.project).fetch_optional(&mut tx.executor()).await?
-            .ok_or(RepositoryError::ApprovalUnavailable)?;
-        validate_seal_format(&row.try_get::<serde_json::Value, _>("seal")?)?;
-        let state: String = row.try_get("state")?;
-        let approved: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM workflow_learning_publication_approvals WHERE review_id=$1 AND tenant=$2 AND project=$3)")
-            .bind(review_id).bind(&scope.tenant).bind(&scope.project).fetch_one(&mut tx.executor()).await?;
-        if approved {
-            return Ok(());
-        }
-        if state != "awaiting_approval" {
-            return Err(RepositoryError::ApprovalUnavailable);
-        }
-        sqlx::query("INSERT INTO workflow_learning_publication_approvals(review_id,tenant,project,actor) VALUES($1,$2,$3,$4)")
-            .bind(review_id).bind(&scope.tenant).bind(&scope.project).bind(actor).execute(&mut tx.executor()).await?;
-        sqlx::query("UPDATE workflow_learning_reviews SET state='queued',next_attempt=clock_timestamp() WHERE id=$1")
-            .bind(review_id).execute(&mut tx.executor()).await?;
-        tx.commit().await?;
-        Ok(())
-    }
-
     pub async fn portfolio_version(
         &self,
         scope: &LibraryScope,
@@ -582,19 +797,16 @@ impl WorkflowRepository {
         candidates: &[Candidate],
         policy: PublicationPolicy,
     ) -> Result<()> {
-        self.finish_in_transaction(
-            self.pool.begin().await?,
-            claim,
-            candidates,
-            policy,
-            ProposalOrigin::Worker,
-        )
-        .await
+        let mut tx = self.pool.begin().await?;
+        self.finish_in_transaction(&mut tx, claim, candidates, policy, ProposalOrigin::Worker)
+            .await?;
+        tx.commit().await?;
+        Ok(())
     }
 
     async fn finish_in_transaction(
         &self,
-        mut tx: sqlx_tracing::Transaction<'_, sqlx::Postgres>,
+        tx: &mut sqlx_tracing::Transaction<'_, sqlx::Postgres>,
         claim: &ClaimedReview,
         candidates: &[Candidate],
         policy: PublicationPolicy,
@@ -605,16 +817,23 @@ impl WorkflowRepository {
                 "review candidate batch exceeds 32",
             ));
         }
-        let seal: Option<serde_json::Value> = sqlx::query_scalar("SELECT seal FROM workflow_learning_reviews WHERE id=$1 AND fence=$2 AND state='leased' AND lease_until>clock_timestamp() FOR UPDATE")
+        let training = self.lock_review_training(tx, claim).await?;
+        let seal = sqlx::query("SELECT seal,seal_content_digest FROM workflow_learning_reviews WHERE id=$1 AND fence=$2 AND state='leased' AND lease_until>clock_timestamp() FOR UPDATE")
             .bind(claim.id).bind(claim.fence).fetch_optional(&mut tx.executor()).await?;
-        let seal: SealedReview =
-            serde_json::from_value(seal.ok_or(RepositoryError::LeaseConflict)?)?;
+        let seal = seal.ok_or(RepositoryError::LeaseConflict)?;
+        let digest: String = seal.try_get("seal_content_digest")?;
+        let seal = hydrate_review(&mut tx.executor(), seal.try_get("seal")?, &digest).await?;
         let scope = &seal.request.scope;
         if matches!(origin, ProposalOrigin::Worker) {
-            frozen::record_proposals(&mut tx, claim.id, candidates).await?;
+            frozen::record_proposals(tx, claim.id, candidates).await?;
         }
-        let approved: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM workflow_learning_publication_approvals WHERE review_id=$1 AND tenant=$2 AND project=$3)")
-            .bind(claim.id).bind(&scope.tenant).bind(&scope.project).fetch_one(&mut tx.executor()).await?;
+        let approved = matches!(origin, ProposalOrigin::FrozenReplay);
+        let policy = match (policy, training.publication_policy()) {
+            (PublicationPolicy::Automatic, training::PublicationPolicy::HumanReviewed) => {
+                PublicationPolicy::Reviewed
+            }
+            (policy, _) => policy,
+        };
         let publish = policy.permits_publication(approved);
         sqlx::query(
             "INSERT INTO workflow_learning_tenants(tenant) VALUES($1) ON CONFLICT DO NOTHING",
@@ -626,10 +845,18 @@ impl WorkflowRepository {
             .bind(&scope.tenant)
             .fetch_one(&mut tx.executor())
             .await?;
-        self.publish_guidance_in_transaction(&mut tx, claim.id, &seal, publish)
+        self.publish_guidance_in_transaction(tx, claim.id, &seal, candidates, publish)
             .await?;
+        if publish && matches!(policy, PublicationPolicy::Automatic) {
+            let hashes = candidates
+                .iter()
+                .map(frozen::proposal_hash)
+                .collect::<Result<Vec<_>>>()?;
+            sqlx::query("INSERT INTO workflow_training_automatic_decisions(review_id,grant_id,candidate_hashes) VALUES($1,$2,$3) ON CONFLICT(review_id) DO NOTHING")
+                .bind(claim.id).bind(training.grant_id()).bind(serde_json::to_value(hashes)?).execute(&mut tx.executor()).await?;
+        }
         self.publish_candidates_in_transaction(
-            &mut tx,
+            tx,
             scope,
             &seal,
             candidates,
@@ -639,6 +866,7 @@ impl WorkflowRepository {
         )
         .await?;
         // Recheck real time after locks and all writes; expiry rolls back the whole publication.
+        self.lock_review_training(tx, claim).await?;
         let finished_state = if policy == PublicationPolicy::Reviewed && !approved {
             "awaiting_approval"
         } else {
@@ -649,7 +877,6 @@ impl WorkflowRepository {
         if changed != 1 {
             return Err(RepositoryError::LeaseConflict);
         }
-        tx.commit().await?;
         Ok(())
     }
 
@@ -691,6 +918,55 @@ impl WorkflowRepository {
                 return Err(RepositoryError::InvalidEvidence(
                     "non-finite candidate embedding",
                 ));
+            }
+            // The tenant publication lock is held by all publication entrypoints.
+            // An identical checked teaching program may have been assigned a
+            // different semantic family by an earlier proposal in this batch or
+            // by a concurrent review. Attach its evidence to the active example.
+            let mut conflicting_identity = false;
+            if publish && candidate.verified_by(seal) {
+                let duplicates = sqlx::query("SELECT id,candidate FROM workflow_learning_examples WHERE tenant=$1 AND project=$2 AND variant=$3 AND identity=$4 AND state='active' ORDER BY created_at,id")
+                    .bind(&scope.tenant).bind(&scope.project).bind(&candidate.variant).bind(&candidate.identity)
+                    .fetch_all(&mut tx.executor()).await?;
+                let mut duplicate_id = None;
+                for row in duplicates {
+                    let existing: Candidate = serde_json::from_value(row.try_get("candidate")?)?;
+                    if existing.checked_program() == candidate.checked_program()
+                        && existing.catalog_fingerprints == candidate.catalog_fingerprints
+                        && existing.behavior_fingerprint() == candidate.behavior_fingerprint()
+                    {
+                        duplicate_id = Some(row.try_get::<Uuid, _>("id")?);
+                        break;
+                    }
+                    conflicting_identity = true;
+                }
+                if let Some(id) = duplicate_id {
+                    support.attach_example(tx, id).await?;
+                    continue;
+                }
+            }
+            // Recheck ambiguity under the publication lock. Separate workers
+            // may both have compared against an empty portfolio before either
+            // commits; an identical purpose and coverage are not evidence that
+            // differing programs are equivalent or justify separate families.
+            let mut ambiguous_cross_family = conflicting_identity;
+            if publish && candidate.verified_by(seal) && !ambiguous_cross_family {
+                let rows = sqlx::query("SELECT candidate FROM workflow_learning_examples WHERE tenant=$1 AND project=$2 AND variant=$3 AND family<>$4 AND identity<>$5 AND state='active'")
+                    .bind(&scope.tenant).bind(&scope.project).bind(&candidate.variant).bind(&candidate.family).bind(&candidate.identity)
+                    .fetch_all(&mut tx.executor()).await?;
+                let purpose = super::index::normalize(&candidate.intent.purpose);
+                let coverage: BTreeSet<_> = candidate.coverage.iter().collect();
+                for row in rows {
+                    let existing: Candidate = serde_json::from_value(row.try_get("candidate")?)?;
+                    if existing.checked_program().is_some()
+                        && existing.catalog_fingerprints == candidate.catalog_fingerprints
+                        && existing.coverage.iter().collect::<BTreeSet<_>>() == coverage
+                        && super::index::normalize(&existing.intent.purpose) == purpose
+                    {
+                        ambiguous_cross_family = true;
+                        break;
+                    }
+                }
             }
             let family_key = (candidate.family.clone(), candidate.variant.clone());
             if let Some(expected) = families.get(&family_key) {
@@ -747,7 +1023,12 @@ impl WorkflowRepository {
             };
             let mut state = "candidate";
             let mut victim: Option<(Uuid, &Quality)> = None;
-            if can_activate && publish && candidate.verified_by(seal) {
+            if can_activate
+                && publish
+                && candidate.verified_by(seal)
+                && !conflicting_identity
+                && (!ambiguous_cross_family || approved)
+            {
                 let coverage: BTreeSet<_> = candidate.coverage.iter().collect();
                 for (id, old) in &active {
                     if old.coverage.iter().collect::<BTreeSet<_>>() == coverage
@@ -789,10 +1070,10 @@ impl WorkflowRepository {
                 let id = Uuid::new_v4();
                 sqlx::query("INSERT INTO workflow_learning_examples(id,tenant,project,family,variant,identity,candidate,state,reason) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9)")
                     .bind(id).bind(&scope.tenant).bind(&scope.project).bind(&candidate.family).bind(&candidate.variant)
-                    .bind(&candidate.identity).bind(serde_json::to_value(candidate)?).bind(state).bind(candidate.diagnostic().map(|d|d.message.as_str())).execute(&mut tx.executor()).await?;
+                    .bind(&candidate.identity).bind(serde_json::to_value(candidate)?).bind(state).bind(candidate.diagnostic().map(|d|d.message.as_str()).or(ambiguous_cross_family.then_some("similar purpose and coverage across families require semantic review"))).execute(&mut tx.executor()).await?;
                 id
             };
-            if candidate.verified_by(seal) {
+            if candidate.verified_by(seal) && !conflicting_identity {
                 support.attach_example(tx, id).await?;
             }
         }

@@ -212,7 +212,7 @@ export {
 } from "./instrumentation.js";
 export type { AgentInstrumentationOptions } from "./instrumentation.js";
 
-export { AgentRuntime } from "./runtime/agent-runtime.js";
+export { AgentRuntime, AgentRuntimeHost } from "./runtime/agent-runtime.js";
 export type {
   AgentArchiveStore,
   AgentRuntimeConfig,
@@ -363,4 +363,5 @@ export type {
   ProgramBuilderOptions,
   ProgramBuilderProvenance,
 } from "./stubs/program-builder.js";
-export type { WorkflowLearningConfig, WorkflowReviewSession, WorkflowReviewInput, WorkflowReviewReceipt, CompletedRunIndex } from "./runtime/workflow-learning.js";
+export type { WorkflowLearningConfig, WorkflowReviewSession, WorkflowReviewInput, WorkflowReviewReceipt, CompletedExecutionIndex } from "./runtime/workflow-learning.js";
+export type { TrainingHostConfig, TrainingStatus, TrainingCandidateReference, TrainingCandidateAction } from "./runtime/workflow-learning.js";

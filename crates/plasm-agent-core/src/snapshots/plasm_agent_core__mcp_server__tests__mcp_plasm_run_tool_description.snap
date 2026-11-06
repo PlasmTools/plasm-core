@@ -5,7 +5,7 @@ expression: "plasm_core::prompt_render::PLASM_RUN_TOOL_DESCRIPTION"
 ---
 **Run Plasm**: `logical_session_ref` + `run_ref` from a reviewed Python plan, or a continuation handle returned by an earlier run. This executes real API operations.
 
-Call only after `plasm` returns a run_ref for a mutation or review gate, or to continue paging. Clean read-only `plasm` calls already execute; do not execute them again.
+Send Python source to `plasm`, never to `plasm_run`. Call `plasm_run` only with the exact run_ref returned by `plasm` or a returned page handle; never guess a reference. Clean read-only `plasm` calls already execute; do not execute them again.
 
 Each reviewed commit authorizes one execution. Once started, that run_ref cannot dispatch again. A deliberate repeat requires a fresh plan review and its new run_ref. If a reference is missing, expired or mismatched, submit the program to `plasm` again. Preserve the logical session and selection criteria.
 

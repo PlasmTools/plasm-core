@@ -37,6 +37,15 @@ pub(crate) trait PendingEvidenceJournal {
     async fn record<'e>(&self, evidence: Self::Evidence<'e>) -> Result<(), Self::Error>;
     async fn complete(self) -> Result<(), Self::Error>;
     async fn fail(self) -> Result<(), Self::Error>;
+    fn excluded(_error: &Self::Error) -> bool {
+        false
+    }
+    async fn discard(self) -> Result<(), Self::Error>
+    where
+        Self: Sized,
+    {
+        self.fail().await
+    }
 }
 
 /// Dropping a ticket (panic, worker loss, cancellation) leaves the durable
@@ -58,7 +67,12 @@ impl<P: PendingEvidenceJournal> ExecutionLearningTicket<P> {
         let JournalAdmission::Recording(pending) = self.admission else {
             return Ok(());
         };
-        pending.record(evidence).await?;
+        if let Err(error) = pending.record(evidence).await {
+            if P::excluded(&error) {
+                return pending.discard().await;
+            }
+            return Err(error);
+        }
         pending.complete().await
     }
 
@@ -90,6 +104,7 @@ pub(crate) struct PendingPostgresEvidenceJournal<'a> {
     context: PostgresEvidenceJournal<'a>,
     scope: LibraryScope,
     watermark: ExecutionWatermark,
+    training_permit: super::repository::training::TrainingEpochPermit,
 }
 
 impl<'a> PostgresEvidenceJournal<'a> {
@@ -121,6 +136,14 @@ impl<'a> EvidenceJournal for PostgresEvidenceJournal<'a> {
 
     async fn begin(self) -> Result<JournalAdmission<Self::Pending>, Self::Error> {
         let attempt = self.attempt.0.to_string();
+        let Some((scope, training_permit)) = self
+            .host
+            .workflow_learning
+            .begin_execution(&self.session.tenant_scope, self.logical, &attempt)
+            .await?
+        else {
+            return Ok(JournalAdmission::Unrecordable);
+        };
         let watermark = match self
             .host
             .execute_session_registry
@@ -132,28 +155,14 @@ impl<'a> EvidenceJournal for PostgresEvidenceJournal<'a> {
                 return Err(error.into());
             }
         };
-        match self
-            .host
-            .workflow_learning
-            .begin_execution(&self.session.tenant_scope, self.logical, &attempt)
-            .await
-        {
-            Ok(Some(scope)) => Ok(JournalAdmission::Recording(
-                PendingPostgresEvidenceJournal {
-                    context: self,
-                    scope,
-                    watermark,
-                },
-            )),
-            Ok(None) => {
-                tracing::warn!(target: "plasm_agent::workflow_learning", "execution has no bound evidence scope; watermark remains unresolved");
-                Ok(JournalAdmission::Unrecordable)
-            }
-            Err(error) => {
-                tracing::warn!(target: "plasm_agent::workflow_learning", %error, "execution evidence journal unavailable; watermark remains unresolved");
-                Ok(JournalAdmission::Unrecordable)
-            }
-        }
+        Ok(JournalAdmission::Recording(
+            PendingPostgresEvidenceJournal {
+                context: self,
+                scope,
+                watermark,
+                training_permit,
+            },
+        ))
     }
 }
 
@@ -167,33 +176,22 @@ impl PendingEvidenceJournal for PendingPostgresEvidenceJournal<'_> {
         context
             .host
             .workflow_learning
-            .record_completed(
-                context.host,
-                CompletedExecution {
-                    session: context.session,
-                    logical_session: context.logical,
-                    execute_session: context.execute_session,
-                    source: bundle.source().unwrap_or_default(),
-                    bundle,
-                    output,
-                },
-            )
+            .record_completed(CompletedExecution {
+                session: context.session,
+                logical_session: context.logical,
+                execute_session: context.execute_session,
+                source: bundle.source().unwrap_or_default(),
+                bundle,
+                output,
+                training_permit: &self.training_permit,
+                execution_id: &context.attempt.0.to_string(),
+            })
             .await?;
         Ok(())
     }
 
     async fn complete(self) -> Result<(), Self::Error> {
         let context = &self.context;
-        context
-            .host
-            .workflow_learning
-            .finish_execution(
-                &self.scope,
-                context.logical,
-                &context.attempt.0.to_string(),
-                true,
-            )
-            .await?;
         context
             .host
             .execute_session_registry
@@ -220,6 +218,41 @@ impl PendingEvidenceJournal for PendingPostgresEvidenceJournal<'_> {
             .await
             .map_err(ExecutionLearningError::from)
     }
+
+    fn excluded(error: &Self::Error) -> bool {
+        matches!(
+            error,
+            ExecutionLearningError::Journal(LearningError::Repository(
+                super::repository::RepositoryError::Training(
+                    super::repository::training::TrainingError::Inactive
+                        | super::repository::training::TrainingError::Held
+                        | super::repository::training::TrainingError::GrantUnavailable
+                )
+            ))
+        )
+    }
+
+    async fn discard(self) -> Result<(), Self::Error> {
+        let context = &self.context;
+        context
+            .host
+            .workflow_learning
+            .repository()
+            .await?
+            .discard_execution(&self.scope, context.logical, &context.attempt.0.to_string())
+            .await
+            .map_err(LearningError::from)?;
+        context
+            .host
+            .execute_session_registry
+            .complete_learning_execution(
+                &context.session.prompt_hash,
+                context.execute_session,
+                self.watermark.0,
+            )
+            .await?;
+        Ok(())
+    }
 }
 
 /// One evidence protocol for server operations and native engine execution.
@@ -238,19 +271,18 @@ where
     {
         return execution.await;
     }
-    let ticket =
-        match PostgresEvidenceJournal::for_operation(host, session, execute_session).await {
-            Some(journal) => Some(ExecutionLearningTicket::begin(journal).await.map_err(
-                |error| {
-                    plasm_runtime::ExecutionFailure::new(
-                        plasm_runtime::FailureCause::Runtime,
-                        "session_evidence_checkpoint_unavailable",
-                        error.to_string(),
-                    )
-                },
-            )?),
-            None => None,
-        };
+    let ticket = match PostgresEvidenceJournal::for_operation(host, session, execute_session).await
+    {
+        Some(journal) => match ExecutionLearningTicket::begin(journal).await {
+            Ok(ticket) => Some(ticket),
+            Err(error) => {
+                tracing::warn!(target: "plasm_agent::workflow_learning", %error,
+                    "training capture unavailable; ordinary execution continues");
+                None
+            }
+        },
+        None => None,
+    };
     let result = execution.await;
     if let Some(ticket) = ticket {
         let evidence = match &result {

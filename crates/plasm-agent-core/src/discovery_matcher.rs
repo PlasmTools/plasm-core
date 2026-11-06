@@ -4,6 +4,7 @@ pub(crate) mod catalogue_search;
 mod decisions;
 pub mod evidence;
 pub mod online;
+pub mod operations;
 mod request_packing;
 mod search_budget;
 mod search_graph;
@@ -26,6 +27,8 @@ pub(crate) type DecisionProviderError = Box<dyn std::error::Error + Send + Sync 
 
 #[derive(Debug, Error)]
 pub enum DiscoveryMatcherError {
+    #[error(transparent)]
+    Operation(#[from] operations::OperationError),
     #[error("discovery recall is invalid")]
     Retrieval(#[from] crate::discovery_store::RetrievalValidationError),
     #[error("discovery recall belongs to a different generation")]
@@ -211,6 +214,21 @@ impl IssuedBatch {
     }
     pub fn cache_key(&self) -> &str {
         &self.cache_key
+    }
+}
+
+impl crate::decision_codec::DecisionPacket for IssuedBatch {
+    fn cache_key(&self) -> &str {
+        &self.cache_key
+    }
+
+    fn validate_response(
+        &self,
+        raw: &str,
+    ) -> Result<(), Box<dyn std::error::Error + Send + Sync + 'static>> {
+        decode_batch(self, raw)
+            .map(|_| ())
+            .map_err(|error| Box::new(error) as _)
     }
 }
 /// An issued question owns its exact semantic document and local result identity.
@@ -431,7 +449,7 @@ fn issue_scope(
     };
     let body = RelevanceCodec::encode(&decisions::Request {
         model,
-        state: &state,
+        state: decisions::State::Graph(&state),
         questions: BTreeMap::from([(
             key.clone(),
             decisions::Question {

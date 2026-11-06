@@ -302,6 +302,12 @@ impl ExecutionFailure {
     pub fn diagnostic(&self) -> &str {
         &self.diagnostic
     }
+
+    /// Add host-owned context without changing the failure's recovery authority or evidence.
+    pub fn with_diagnostic_context(mut self, context: &str) -> Self {
+        self.0.diagnostic = format!("{context} {}", self.0.diagnostic);
+        self
+    }
     pub fn at(mut self, node: impl Into<String>, occurrence_path: Vec<usize>) -> Self {
         if self.node.is_none() {
             self.node = Some(node.into());

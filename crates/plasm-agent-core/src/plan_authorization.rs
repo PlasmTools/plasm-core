@@ -217,12 +217,39 @@ pub async fn execute_authorized<T>(
             tracing::error!(%error, %reference, "execution authorization remains consumed; terminal label persistence unconfirmed");
         }
     }
-    result
+    result.map_err(|failure| identify_consumed_review(failure, reference))
+}
+
+fn identify_consumed_review(
+    failure: ExecutionFailure,
+    reference: &PlanCommitRef,
+) -> ExecutionFailure {
+    failure.with_diagnostic_context(&format!(
+        "Review `{reference}` has been used and cannot run again."
+    ))
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn failed_claimed_review_identifies_consumed_reference_and_preserves_failure() {
+        let failure = ExecutionFailure::new(
+            FailureCause::Upstream,
+            "provider_rejection",
+            "Provider rejected the operation",
+        );
+        let observed = identify_consumed_review(failure, &PlanCommitRef::mint(4));
+        assert_eq!(observed.cause, FailureCause::Upstream);
+        assert_eq!(observed.code, "provider_rejection");
+        assert!(observed
+            .diagnostic()
+            .contains("Review `pc4` has been used and cannot run again"));
+        assert!(observed
+            .diagnostic()
+            .contains("Provider rejected the operation"));
+    }
 
     #[test]
     fn consumed_authorization_recovery_matrix() {

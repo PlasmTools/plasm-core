@@ -4,9 +4,8 @@ use std::collections::BTreeMap;
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
-pub use super::identity::CompiledProgramId;
+pub use super::identity::{CompiledProgramId, ExecutionId};
 pub use crate::execute_path_ids::{ExecuteSessionId, PromptHashHex};
-pub use crate::run_artifacts::RunArtifactId;
 pub use crate::session_identity::LogicalSessionId;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -22,38 +21,173 @@ pub struct ExecutionReceipt {
     pub scope: LibraryScope,
     pub logical_session: LogicalSessionId,
     pub session_revision: u64,
-    pub run_id: RunArtifactId,
+    pub execution_id: ExecutionId,
     pub plan_id: CompiledProgramId,
     pub prompt_hash: PromptHashHex,
     pub execute_session: ExecuteSessionId,
-    pub run_artifact: serde_json::Value,
     pub source: String,
     pub compiled_plan: serde_json::Value,
+    pub teaching_plan: super::review_packet::TeachingPlan,
     pub observation: super::teaching::ProgramObservation,
     pub catalogue_requirements: super::catalogue_guidance::CatalogueRequirementEvidence,
-    #[serde(
-        default,
-        skip_serializing_if = "crate::program_symbol_context::SavedProgramContext::is_historical_missing"
-    )]
-    pub symbol_context: crate::program_symbol_context::SavedProgramContext,
     pub catalog_fingerprints: BTreeMap<String, String>,
 }
 
-impl ExecutionReceipt {
-    /// Validate a saved whole program under its original symbols for host repair.
-    /// This does not issue a new successful execution receipt or publication authority.
-    pub async fn recompile_for_repair(
-        &self,
-        scope: &LibraryScope,
-        session: &crate::execute_session::ExecuteSession,
-    ) -> Result<
-        crate::plasm_comp_bundle::PlasmCompBundle,
-        crate::program_symbol_context::SymbolContextError,
-    > {
-        if &self.scope != scope {
-            return Err(crate::program_symbol_context::SymbolContextError::Identity);
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(try_from = "String", into = "String")]
+pub struct ReceiptDigest(String);
+impl TryFrom<String> for ReceiptDigest {
+    type Error = &'static str;
+    fn try_from(value: String) -> Result<Self, Self::Error> {
+        if value.len() != 64
+            || !value
+                .bytes()
+                .all(|c| c.is_ascii_digit() || (b'a'..=b'f').contains(&c))
+        {
+            return Err("invalid receipt digest");
         }
-        self.symbol_context.recompile(self, session).await
+        Ok(Self(value))
+    }
+}
+impl From<ReceiptDigest> for String {
+    fn from(value: ReceiptDigest) -> Self {
+        value.0
+    }
+}
+impl ReceiptDigest {
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+    pub(super) fn from_bytes(bytes: &[u8]) -> Self {
+        Self(plasm_core::catalog_discovery::content_hash(bytes))
+    }
+}
+impl ExecutionReceipt {
+    pub fn evidence_digest(&self) -> Result<ReceiptDigest, serde_json::Error> {
+        Ok(ReceiptDigest::from_bytes(&serde_json::to_vec(self)?))
+    }
+}
+
+/// Program data shared by all execution facts for the same exact observation.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ProgramEvidence {
+    pub source: ProgramEvidenceSource,
+    pub compiled_plan: serde_json::Value,
+    pub teaching_plan: super::review_packet::TeachingPlan,
+    pub catalogue_requirements: super::catalogue_guidance::CatalogueRequirementEvidence,
+    pub catalog_fingerprints: BTreeMap<String, String>,
+}
+
+/// Normally the source is carried only by the compiler observation. Mismatched
+/// historic data remains explicit for repair instead of silently losing bytes.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "state", rename_all = "snake_case")]
+pub enum ProgramEvidenceSource {
+    Available {
+        observation: Box<super::teaching::ObservedTeachingSource>,
+    },
+    Unavailable {
+        source: String,
+        diagnostic: super::teaching::ObservationDiagnostic,
+    },
+    Conflicting {
+        source: String,
+        observation: Box<super::teaching::ObservedTeachingSource>,
+    },
+}
+
+/// Lightweight run-specific fact; the program itself is stored once by digest.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct StoredExecutionFact {
+    pub plan_id: CompiledProgramId,
+    pub prompt_hash: PromptHashHex,
+    pub execute_session: ExecuteSessionId,
+}
+
+impl ExecutionReceipt {
+    pub fn program_evidence(&self) -> ProgramEvidence {
+        ProgramEvidence {
+            source: match &self.observation {
+                super::teaching::ProgramObservation::Available(observation)
+                    if observation.program().source == self.source =>
+                {
+                    ProgramEvidenceSource::Available {
+                        observation: observation.clone(),
+                    }
+                }
+                super::teaching::ProgramObservation::Available(observation) => {
+                    ProgramEvidenceSource::Conflicting {
+                        source: self.source.clone(),
+                        observation: observation.clone(),
+                    }
+                }
+                super::teaching::ProgramObservation::Unavailable(diagnostic) => {
+                    ProgramEvidenceSource::Unavailable {
+                        source: self.source.clone(),
+                        diagnostic: diagnostic.clone(),
+                    }
+                }
+            },
+            compiled_plan: self.compiled_plan.clone(),
+            teaching_plan: self.teaching_plan.clone(),
+            catalogue_requirements: self.catalogue_requirements.clone(),
+            catalog_fingerprints: self.catalog_fingerprints.clone(),
+        }
+    }
+    pub fn stored_fact(&self) -> StoredExecutionFact {
+        StoredExecutionFact {
+            plan_id: self.plan_id.clone(),
+            prompt_hash: self.prompt_hash.clone(),
+            execute_session: self.execute_session.clone(),
+        }
+    }
+    pub fn hydrate(
+        scope: LibraryScope,
+        logical_session: LogicalSessionId,
+        session_revision: u64,
+        execution_id: ExecutionId,
+        fact: StoredExecutionFact,
+        program: ProgramEvidence,
+    ) -> Self {
+        let (source, observation) = match program.source {
+            ProgramEvidenceSource::Available { observation } => (
+                observation.program().source.clone(),
+                super::teaching::ProgramObservation::Available(observation),
+            ),
+            ProgramEvidenceSource::Unavailable { source, diagnostic } => (
+                source,
+                super::teaching::ProgramObservation::Unavailable(diagnostic),
+            ),
+            ProgramEvidenceSource::Conflicting {
+                source,
+                observation,
+            } => (
+                source,
+                super::teaching::ProgramObservation::Available(observation),
+            ),
+        };
+        Self {
+            scope,
+            logical_session,
+            session_revision,
+            execution_id,
+            plan_id: fact.plan_id,
+            prompt_hash: fact.prompt_hash,
+            execute_session: fact.execute_session,
+            source,
+            compiled_plan: program.compiled_plan,
+            teaching_plan: program.teaching_plan,
+            observation,
+            catalogue_requirements: program.catalogue_requirements,
+            catalog_fingerprints: program.catalog_fingerprints,
+        }
+    }
+}
+impl ProgramEvidence {
+    pub fn digest(&self) -> Result<ReceiptDigest, serde_json::Error> {
+        Ok(ReceiptDigest::from_bytes(&serde_json::to_vec(self)?))
     }
 }
 
@@ -61,7 +195,7 @@ impl ExecutionReceipt {
 pub struct AchievedSubtask {
     pub intent: String,
     pub observed_outcome: String,
-    pub run_ids: Vec<RunArtifactId>,
+    pub execution_ids: Vec<ExecutionId>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -103,6 +237,46 @@ pub struct SealedReview {
     pub request: ReviewRequest,
     pub executions: Vec<ExecutionReceipt>,
     pub assurance: OutcomeAssurance,
+}
+
+/// Durable seal contains scoped facts, not copies of their program observations.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ExecutionReceiptRef {
+    pub session_revision: u64,
+    pub execution_id: ExecutionId,
+    pub evidence_digest: ReceiptDigest,
+    pub program_digest: ReceiptDigest,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct StoredReviewSeal {
+    pub request: ReviewRequest,
+    pub executions: Vec<ExecutionReceiptRef>,
+    pub assurance: OutcomeAssurance,
+}
+
+impl StoredReviewSeal {
+    pub fn from_review(review: &SealedReview) -> Result<Self, serde_json::Error> {
+        let executions = review
+            .executions
+            .iter()
+            .map(|receipt| {
+                Ok(ExecutionReceiptRef {
+                    session_revision: receipt.session_revision,
+                    execution_id: receipt.execution_id,
+                    evidence_digest: receipt.evidence_digest()?,
+                    program_digest: receipt.program_evidence().digest()?,
+                })
+            })
+            .collect::<Result<Vec<_>, serde_json::Error>>()?;
+        Ok(Self {
+            request: review.request.clone(),
+            executions,
+            assurance: review.assurance,
+        })
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

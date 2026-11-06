@@ -141,6 +141,8 @@ impl From<plasm_core::catalog_discovery::CatalogDiscoveryError> for DiscoverySto
 
 #[derive(Debug, thiserror::Error, PartialEq, Eq)]
 pub enum RetrievalValidationError {
+    #[error("retrieval receipts refer to different catalogue generations")]
+    GenerationMismatch,
     #[error("retrieval channel exceeds its admission bound")]
     ChannelBoundExceeded,
     #[error("retrieval channel contains a duplicate candidate identity")]
@@ -356,6 +358,73 @@ fn union_candidates(
 }
 
 impl RetrievalReceipt {
+    /// Interleave the ranked request and operation recalls without allowing a
+    /// broad request to consume the entire candidate budget. Identity and
+    /// document agreement are checked before any result can enter the union.
+    pub(crate) fn interleave(
+        generation: &str,
+        receipts: Vec<Self>,
+        allowed: &DiscoveryAuthorization,
+    ) -> std::result::Result<Self, RetrievalValidationError> {
+        let mut sources = Vec::with_capacity(receipts.len());
+        let mut lexical_truncated = false;
+        let mut vector_truncated = false;
+        for receipt in receipts {
+            if receipt.generation != generation {
+                return Err(RetrievalValidationError::GenerationMismatch);
+            }
+            receipt.validate(allowed)?;
+            lexical_truncated |= receipt.lexical_truncated;
+            vector_truncated |= receipt.vector_truncated;
+            sources.push(receipt.candidates.into_iter());
+        }
+        let mut candidates: Vec<RetrievedCapability> = Vec::new();
+        let mut seen = BTreeMap::new();
+        loop {
+            let mut advanced = false;
+            for source in &mut sources {
+                let Some(candidate) = source.next() else {
+                    continue;
+                };
+                advanced = true;
+                if let Some(&position) = seen.get(&candidate.id) {
+                    let existing: &mut RetrievedCapability = &mut candidates[position];
+                    if existing.reference != candidate.reference
+                        || existing.document != candidate.document
+                    {
+                        return Err(RetrievalValidationError::ChannelDocumentMismatch);
+                    }
+                    existing.admissions.extend(candidate.admissions);
+                } else if candidates.len() < CANDIDATE_LIMIT {
+                    seen.insert(candidate.id.clone(), candidates.len());
+                    candidates.push(candidate);
+                } else {
+                    lexical_truncated = true;
+                    vector_truncated = true;
+                }
+            }
+            if !advanced {
+                break;
+            }
+        }
+        let result = Self {
+            generation: generation.into(),
+            lexical_count: candidates
+                .iter()
+                .filter(|c| c.admissions.contains("lexical"))
+                .count(),
+            vector_count: candidates
+                .iter()
+                .filter(|c| c.admissions.contains("vector"))
+                .count(),
+            candidates,
+            lexical_truncated,
+            vector_truncated,
+        };
+        result.validate(allowed)?;
+        Ok(result)
+    }
+
     /// Validate the admission boundary independently of downstream selection.
     pub fn validate(
         &self,
@@ -730,16 +799,37 @@ impl DiscoveryStore {
         allowed: &DiscoveryAuthorization,
         frontier: &RecallFrontier,
     ) -> Result<RetrievalReceipt> {
-        if intent.trim().is_empty() {
+        let mut receipts = self
+            .retrieve_many(generation, &[intent], allowed, frontier)
+            .await?;
+        Ok(receipts.remove(0))
+    }
+
+    /// Embed uncached queries together and run their authorized searches in parallel.
+    pub(crate) async fn retrieve_many(
+        &self,
+        generation: &str,
+        intents: &[&str],
+        allowed: &DiscoveryAuthorization,
+        frontier: &RecallFrontier,
+    ) -> Result<Vec<RetrievalReceipt>> {
+        if intents.iter().any(|intent| intent.trim().is_empty()) {
             return Err(DiscoveryStoreError::EmptyIntent);
         }
         let profile = EmbeddingProfile::default();
-        let cache_key = content_hash(&serde_json::to_vec(&(intent, &profile))?);
-        let cached: Option<String> = sqlx::query_scalar("SELECT embedding::text FROM discovery_intent_embeddings WHERE cache_key=$1 AND profile=$2")
-            .bind(&cache_key).bind(serde_json::to_value(&profile)?).fetch_optional(&mut *self.pool.acquire().await?).await?;
-        let vector = if let Some(cached) = cached {
-            cached
-        } else {
+        let profile_json = serde_json::to_value(&profile)?;
+        let mut vectors = Vec::with_capacity(intents.len());
+        let mut missing = Vec::new();
+        for intent in intents {
+            let key = content_hash(&serde_json::to_vec(&(intent, &profile))?);
+            let cached: Option<String> = sqlx::query_scalar("SELECT embedding::text FROM discovery_intent_embeddings WHERE cache_key=$1 AND profile=$2")
+                .bind(&key).bind(&profile_json).fetch_optional(&mut *self.pool.acquire().await?).await?;
+            if cached.is_none() {
+                missing.push((vectors.len(), key, (*intent).to_owned()));
+            }
+            vectors.push(cached);
+        }
+        if !missing.is_empty() {
             let directory = std::env::var_os("PLASM_DISCOVERY_REJECTION_DIR")
                 .filter(|s| !s.is_empty())
                 .map(Into::into);
@@ -747,20 +837,31 @@ impl DiscoveryStore {
                 "query_embedding",
                 directory,
             );
-            let vectors = plasm_catalog::embeddings::EmbeddingClient::from_env()?
-                .embed(&[intent.to_owned()], |event| receipts.record(event))
+            let inputs: Vec<_> = missing
+                .iter()
+                .map(|(_, _, intent)| intent.clone())
+                .collect();
+            let embeddings = plasm_catalog::embeddings::EmbeddingClient::from_env()?
+                .embed(&inputs, |event| receipts.record(event))
                 .await?;
-            let vector = vector_literal(
-                vectors
-                    .first()
-                    .ok_or(DiscoveryStoreError::MissingIntentEmbedding)?,
-            )?;
-            sqlx::query("INSERT INTO discovery_intent_embeddings VALUES ($1,$2,$3::text::vector) ON CONFLICT DO NOTHING")
-                .bind(&cache_key).bind(serde_json::to_value(&profile)?).bind(&vector).execute(&mut *self.pool.acquire().await?).await?;
-            vector
-        };
-        self.retrieve_vector(generation, intent, &vector, allowed, frontier)
-            .await
+            if embeddings.len() != missing.len() {
+                return Err(DiscoveryStoreError::MissingIntentEmbedding);
+            }
+            for ((position, key, _), embedding) in missing.into_iter().zip(embeddings) {
+                let vector = vector_literal(&embedding)?;
+                sqlx::query("INSERT INTO discovery_intent_embeddings VALUES ($1,$2,$3::text::vector) ON CONFLICT DO NOTHING")
+                    .bind(&key).bind(&profile_json).bind(&vector).execute(&mut *self.pool.acquire().await?).await?;
+                vectors[position] = Some(vector);
+            }
+        }
+        let vectors = vectors
+            .into_iter()
+            .collect::<Option<Vec<_>>>()
+            .ok_or(DiscoveryStoreError::MissingIntentEmbedding)?;
+        futures::future::try_join_all(intents.iter().zip(vectors.iter()).map(|(intent, vector)| {
+            self.retrieve_vector(generation, intent, vector, allowed, frontier)
+        }))
+        .await
     }
 
     pub async fn cached_selector_envelope(&self, cache_key: &str) -> Result<Option<String>> {
@@ -896,7 +997,42 @@ pub(crate) mod tests {
         c.id = format!("candidate{id:03}");
         c.reference.capability = format!("read{id}");
         c.document.capability = c.reference.capability.clone();
+        c.document.text_hash = content_hash(c.document.text.as_bytes());
         c
+    }
+
+    #[test]
+    fn operation_recall_interleaves_bounded_authorized_sources() {
+        let broad: Vec<_> = (0..CANDIDATE_LIMIT).map(union_fixture).collect();
+        let specific = union_fixture(CANDIDATE_LIMIT + 1);
+        let allowed =
+            DiscoveryAuthorization::catalogs(BTreeSet::from([specific.reference.catalog.clone()]));
+        let receipt = |candidates| RetrievalReceipt {
+            generation: "generation".into(),
+            candidates,
+            lexical_count: 0,
+            vector_count: 0,
+            lexical_truncated: false,
+            vector_truncated: false,
+        };
+        let result = RetrievalReceipt::interleave(
+            "generation",
+            vec![receipt(broad), receipt(vec![specific.clone()])],
+            &allowed,
+        )
+        .unwrap();
+        assert_eq!(result.candidates.len(), CANDIDATE_LIMIT);
+        assert_eq!(result.candidates[1].reference, specific.reference);
+        assert!(result.lexical_truncated && result.vector_truncated);
+        assert!(matches!(
+            RetrievalReceipt::interleave("other", vec![receipt(vec![specific.clone()])], &allowed),
+            Err(RetrievalValidationError::GenerationMismatch)
+        ));
+        let denied = DiscoveryAuthorization::catalogs(BTreeSet::new());
+        assert!(matches!(
+            RetrievalReceipt::interleave("generation", vec![receipt(vec![specific])], &denied),
+            Err(RetrievalValidationError::UnauthorizedCandidate)
+        ));
     }
 
     #[test]
@@ -1449,6 +1585,51 @@ pub(crate) mod tests {
 
     #[tokio::test]
     #[ignore = "requires an isolated PLASM_TEST_POSTGRES_URL with pgvector"]
+    async fn postgres_operation_queries_have_independent_authorized_rankings() {
+        let store = DiscoveryStore::connect(&std::env::var("PLASM_TEST_POSTGRES_URL").unwrap())
+            .await
+            .unwrap();
+        store.migrate().await.unwrap();
+        let mut deployment = bindings();
+        deployment
+            .bindings
+            .retain(|binding| binding.consumer.catalog == "matrix");
+        let generation = store
+            .import(
+                "operation-query-contract",
+                vec![prepared("matrix", 1)],
+                &deployment,
+            )
+            .await
+            .unwrap();
+        let intents = [
+            "Obscure individual read",
+            "Obscure sensor calibration operation",
+        ];
+        for (index, intent) in intents.iter().enumerate() {
+            let profile = EmbeddingProfile::default();
+            let key = content_hash(&serde_json::to_vec(&(intent, &profile)).unwrap());
+            let mut vector = vec![0.0; 1536];
+            vector[1 - index] = 1.0;
+            sqlx::query("INSERT INTO discovery_intent_embeddings VALUES ($1,$2,$3::text::vector) ON CONFLICT DO NOTHING")
+                .bind(key).bind(serde_json::to_value(profile).unwrap()).bind(vector_literal(&vector).unwrap())
+                .execute(&mut *store.pool.acquire().await.unwrap()).await.unwrap();
+        }
+        let allowed = DiscoveryAuthorization::catalogs(BTreeSet::from(["matrix".into()]));
+        let receipts = store
+            .retrieve_many(&generation, &intents, &allowed, &RecallFrontier::default())
+            .await
+            .unwrap();
+        assert_eq!(receipts.len(), 2);
+        for receipt in &receipts {
+            receipt.validate(&allowed).unwrap();
+        }
+        assert_eq!(receipts[0].candidates[0].reference.capability, "read");
+        assert_ne!(receipts[1].candidates[0].reference.capability, "read");
+    }
+
+    #[tokio::test]
+    #[ignore = "requires an isolated PLASM_TEST_POSTGRES_URL with pgvector"]
     async fn postgres_union_routes_every_candidate_through_paged_judgment() {
         let store = DiscoveryStore::connect(&std::env::var("PLASM_TEST_POSTGRES_URL").unwrap())
             .await
@@ -1506,7 +1687,7 @@ pub(crate) mod tests {
         let evidence = crate::discovery_matcher::evidence::CatalogEvidence::from_catalogs(
             &retrieval,
             &catalogs,
-            &Default::default(),
+            &bindings,
             &|r| allowed.permits(r),
         )
         .unwrap();

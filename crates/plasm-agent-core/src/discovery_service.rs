@@ -2,6 +2,7 @@
 
 use crate::discovery_scheduling as scheduling;
 pub(crate) mod decision_checkpoint;
+mod metrics;
 use plasm_core::prerequisites::{
     prerequisite_closure, CapabilityRef, PrerequisiteClosure, PrerequisiteError,
 };
@@ -17,11 +18,173 @@ pub use crate::discovery_recovery::{CatalogAppDescription, DiscoveryRecovery, RE
 
 type Result<T> = std::result::Result<T, DiscoveryServiceError>;
 
+/// Scheduling evidence only: no model judgments or permissions cross intents.
+#[derive(Default, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct DeferredBacklog {
+    revision: usize,
+    last_intent: String,
+    last_receipt: String,
+    entries: Vec<DeferredBacklogEntry>,
+}
+
+#[derive(Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct DeferredBacklogEntry {
+    reference: CapabilityRef,
+    age: usize,
+}
+
+impl DeferredBacklog {
+    fn priorities(
+        &self,
+        intent: &str,
+        allowed: &DiscoveryAuthorization,
+    ) -> std::collections::BTreeMap<CapabilityRef, usize> {
+        if self.last_intent == intent {
+            return Default::default();
+        }
+        self.entries
+            .iter()
+            .filter(|entry| allowed.permits(&entry.reference))
+            .map(|entry| (entry.reference.clone(), entry.age))
+            .collect()
+    }
+
+    fn observe(
+        &mut self,
+        revision: usize,
+        intent: String,
+        receipt: &RoutingReceipt,
+        receipt_id: String,
+    ) {
+        if revision < self.revision || self.last_receipt == receipt_id {
+            return;
+        }
+        let old: std::collections::BTreeMap<_, _> = self
+            .entries
+            .iter()
+            .map(|entry| (entry.reference.clone(), entry.age))
+            .collect();
+        self.entries = receipt
+            .search
+            .deferred
+            .iter()
+            .filter(|item| {
+                matches!(item.reason, matcher::online::DeferredReason::InputBytes)
+                    && receipt.authorization.permits(&item.reference)
+                    && !receipt.search.exposed.contains(&item.reference)
+            })
+            .take(crate::discovery_store::CANDIDATE_LIMIT)
+            .map(|item| DeferredBacklogEntry {
+                reference: item.reference.clone(),
+                age: old
+                    .get(&item.reference)
+                    .copied()
+                    .unwrap_or(0)
+                    .saturating_add(1),
+            })
+            .collect();
+        self.last_intent = intent;
+        self.last_receipt = receipt_id;
+        self.revision = revision;
+    }
+}
+
+fn deferred_backlog_key(
+    session: &str,
+    generation: &str,
+    allowed: &DiscoveryAuthorization,
+    model: &str,
+) -> Result<String> {
+    Ok(plasm_core::catalog_discovery::content_hash(
+        &serde_json::to_vec(&(
+            "deferred-backlog",
+            matcher::online::SEARCH_POLICY,
+            session,
+            generation,
+            allowed,
+            model,
+        ))?,
+    ))
+}
+
 /// Completed searches advance priority once within a self-contained request.
 /// No negative relevance decisions are applied to exposure or permissions.
-#[derive(Default, Serialize, Deserialize)]
+#[derive(Default, Clone, Serialize, Deserialize)]
 struct SearchFrontier {
     completed: std::collections::BTreeMap<String, std::collections::BTreeSet<CapabilityRef>>,
+    operation_state: OperationFrontier,
+    active_request: Option<String>,
+}
+
+/// A session frontier never treats absent extraction as an empty operation set.
+/// The prepared state is scoped and revalidated by `OperationMatrix::restore`.
+#[derive(Default, Clone, Serialize, Deserialize)]
+#[serde(tag = "state", content = "checkpoint", rename_all = "snake_case")]
+enum OperationFrontier {
+    #[default]
+    AwaitingExtraction,
+    Prepared(Box<matcher::operations::MatrixCheckpoint>),
+}
+
+/// Extraction failures leave the previous revision intact. A changed request
+/// requires new semantic proposals; it never inherits prior operation answers.
+enum OperationFrontierLoad {
+    AwaitingExtraction,
+    ChangedRevision,
+    Resume(Box<matcher::operations::OperationMatrix>),
+}
+
+impl OperationFrontier {
+    fn answered_pairs(
+        &self,
+    ) -> std::collections::BTreeSet<(matcher::operations::OperationId, CapabilityRef)> {
+        match self {
+            Self::AwaitingExtraction => Default::default(),
+            Self::Prepared(checkpoint) => checkpoint.answered_pairs(),
+        }
+    }
+
+    fn load(
+        &self,
+        scope: &matcher::operations::MatrixScope,
+        intent: &str,
+        authorized: &std::collections::BTreeSet<CapabilityRef>,
+    ) -> std::result::Result<OperationFrontierLoad, matcher::operations::OperationError> {
+        match self {
+            Self::AwaitingExtraction => Ok(OperationFrontierLoad::AwaitingExtraction),
+            Self::Prepared(checkpoint) => {
+                if !checkpoint.scope().same_host_scope(scope) {
+                    return Err(matcher::operations::OperationError::ScopeMismatch);
+                }
+                if checkpoint.scope() != scope {
+                    return Ok(OperationFrontierLoad::ChangedRevision);
+                }
+                Ok(OperationFrontierLoad::Resume(Box::new(
+                    matcher::operations::OperationMatrix::restore(
+                        scope,
+                        intent,
+                        authorized,
+                        checkpoint.as_ref().clone(),
+                    )?,
+                )))
+            }
+        }
+    }
+
+    fn commit(
+        &mut self,
+        scope: &matcher::operations::MatrixScope,
+        matrix: &matcher::operations::OperationMatrix,
+    ) -> std::result::Result<(), matcher::operations::OperationError> {
+        let checkpoint = matrix.checkpoint();
+        if checkpoint.scope() != scope {
+            return Err(matcher::operations::OperationError::ScopeMismatch);
+        }
+        *self = Self::Prepared(Box::new(checkpoint));
+        Ok(())
+    }
 }
 
 impl SearchFrontier {
@@ -35,9 +198,14 @@ impl SearchFrontier {
         visits
     }
 
-    fn record(&mut self, key: &str, receipt: &RoutingReceipt) {
+    fn record(
+        &mut self,
+        key: &str,
+        receipt: &RoutingReceipt,
+        answered: &std::collections::BTreeSet<CapabilityRef>,
+    ) {
         self.completed.entry(key.to_owned()).or_insert_with(|| {
-            receipt
+            let mut visited: std::collections::BTreeSet<_> = receipt
                 .retrieval
                 .candidates
                 .iter()
@@ -49,7 +217,14 @@ impl SearchFrontier {
                         .any(|m| m.capability_id == candidate.id)
                 })
                 .map(|candidate| candidate.reference.clone())
-                .collect()
+                .collect();
+            visited.extend(
+                answered
+                    .iter()
+                    .filter(|reference| receipt.authorization.permits(reference))
+                    .cloned(),
+            );
+            visited
         });
     }
 }
@@ -70,6 +245,27 @@ fn frontier_key(
             allowed,
             model,
             current,
+        ))?,
+    ))
+}
+
+/// Supplemental requests share a visit frontier within the authorized session,
+/// even as the agent refines its wording. Visits affect ordering only; every
+/// admitted capability is judged again for the current intent.
+fn supplemental_frontier_key(
+    session: &str,
+    generation: &str,
+    allowed: &DiscoveryAuthorization,
+    model: &str,
+) -> Result<String> {
+    Ok(plasm_core::catalog_discovery::content_hash(
+        &serde_json::to_vec(&(
+            "supplemental-frontier",
+            matcher::online::SEARCH_POLICY,
+            session,
+            generation,
+            allowed,
+            model,
         ))?,
     ))
 }
@@ -161,6 +357,10 @@ pub enum DiscoveryServiceError {
     ExposedCapabilityUnauthorized,
     #[error("an exposed capability is absent from the pinned generation")]
     ExposedCapabilityMissing,
+    #[error("supplemental frontier requires supplemental discovery")]
+    ExpectedSupplementalLane,
+    #[error("supplemental discovery generation does not match the session pin")]
+    SupplementalGenerationMismatch,
     #[error("declared prerequisite closure contains an unauthorized capability")]
     UnauthorizedClosure,
     #[error(
@@ -179,6 +379,10 @@ pub enum DiscoveryServiceError {
     Retrieval(#[from] crate::discovery_store::RetrievalValidationError),
     #[error(transparent)]
     Matcher(Box<matcher::DiscoveryMatcherError>),
+    #[error(transparent)]
+    Operation(#[from] matcher::operations::OperationError),
+    #[error(transparent)]
+    OperationExtraction(#[from] matcher::operations::ExtractionError),
     #[error(transparent)]
     ProviderTransport(#[from] plasm_runtime::provider_transport::ProviderTransportError),
     #[error(transparent)]
@@ -223,12 +427,33 @@ pub struct RouteTurn<'a> {
     pub expires_at: std::time::SystemTime,
 }
 
+struct RouteWork<'a> {
+    key: &'a str,
+    session: &'a str,
+    generation: &'a str,
+    provenance: &'a crate::intent_provenance::IntentProvenance,
+    allowed: &'a DiscoveryAuthorization,
+    exposed: &'a [CapabilityRef],
+    visits: &'a std::collections::BTreeMap<CapabilityRef, usize>,
+    deferred_priorities: &'a std::collections::BTreeMap<CapabilityRef, usize>,
+    operation_state: OperationFrontier,
+}
+
 pub struct DiscoveryService {
     store: DiscoveryStore,
     transport: std::sync::Arc<dyn plasm_runtime::provider_transport::ProviderTransport>,
     match_model: String,
+    operation_model: String,
+    operation_extractor: std::sync::Arc<dyn matcher::operations::OperationExtractor>,
     rejection_dir: Option<std::path::PathBuf>,
     guided_capabilities: std::collections::BTreeSet<CapabilityRef>,
+    lane: DiscoveryLane,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+enum DiscoveryLane {
+    Ordinary,
+    Supplemental,
 }
 
 impl DiscoveryService {
@@ -248,8 +473,25 @@ impl DiscoveryService {
                 ),
             ),
             match_model: matcher::RELEVANCE_MODEL.into(),
+            operation_model: "openai/gpt-6-luna".into(),
+            operation_extractor: std::sync::Arc::new(
+                matcher::operations::ProviderOperationExtractor::new(
+                    "openai/gpt-6-luna",
+                    std::sync::Arc::new(
+                        plasm_runtime::provider_transport::ReqwestProviderTransport::new(
+                            reqwest::Client::builder()
+                                .proxy(reqwest::Proxy::all("http://127.0.0.1:1").unwrap())
+                                .build()
+                                .unwrap(),
+                            "https://openrouter.ai/api/v1/chat/completions",
+                            "no-provider-calls-permitted",
+                        ),
+                    ),
+                ),
+            ),
             rejection_dir: None,
             guided_capabilities: Default::default(),
+            lane: DiscoveryLane::Ordinary,
         }
     }
     pub fn from_env(store: DiscoveryStore) -> Result<Self> {
@@ -258,8 +500,24 @@ impl DiscoveryService {
         if api_key.trim().is_empty() {
             return Err(DiscoveryServiceError::EmptyApiKey);
         }
+        let operation_model = std::env::var("PLASM_DISCOVERY_OPERATION_MODEL")
+            .unwrap_or_else(|_| "openai/gpt-6-luna".into());
+        let operation_extractor =
+            std::sync::Arc::new(matcher::operations::ProviderOperationExtractor::new(
+                operation_model.clone(),
+                std::sync::Arc::new(scheduling::ScheduledProviderTransport(std::sync::Arc::new(
+                    plasm_runtime::provider_transport::ReqwestProviderTransport::new(
+                        reqwest::Client::builder()
+                            .timeout(std::time::Duration::from_secs(45))
+                            .build()?,
+                        "https://openrouter.ai/api/v1/chat/completions",
+                        api_key.clone(),
+                    ),
+                ))),
+            ));
         Ok(Self {
             guided_capabilities: Default::default(),
+            lane: DiscoveryLane::Ordinary,
             rejection_dir: std::env::var_os("PLASM_DISCOVERY_REJECTION_DIR")
                 .filter(|value| !value.is_empty())
                 .map(std::path::PathBuf::from),
@@ -277,14 +535,15 @@ impl DiscoveryService {
             )),
             match_model: std::env::var("PLASM_DISCOVERY_CAPABILITY_MATCH_MODEL")
                 .unwrap_or_else(|_| matcher::RELEVANCE_MODEL.into()),
+            operation_model,
+            operation_extractor,
         })
     }
 
-    /// Nominate reviewed catalogue dependencies for ordinary authorized admission.
-    pub fn with_catalogue_guidance(
-        mut self,
-        capabilities: impl IntoIterator<Item = CapabilityRef>,
-    ) -> Self {
+    /// Run guidance in its own bounded matcher packet, without consuming the
+    /// ordinary discovery packet's capacity or changing session exposure.
+    pub fn supplemental(mut self, capabilities: impl IntoIterator<Item = CapabilityRef>) -> Self {
+        self.lane = DiscoveryLane::Supplemental;
         self.guided_capabilities = capabilities.into_iter().take(32).collect();
         self
     }
@@ -314,47 +573,79 @@ impl DiscoveryService {
                 .await?;
             request.new_generation.to_owned()
         };
+        let policy_models = format!("{}:{}", self.match_model, self.operation_model);
+        let intent_id = plasm_core::catalog_discovery::content_hash(
+            request.intent_provenance.current().as_bytes(),
+        );
+        let backlog_key =
+            deferred_backlog_key(&pin_id, &generation, request.allowed, &policy_models)?;
+        let backlog: DeferredBacklog =
+            match self.store.cached_selector_envelope(&backlog_key).await? {
+                Some(saved) => serde_json::from_str(&saved)?,
+                None => DeferredBacklog::default(),
+            };
+        let deferred_priorities = if self.lane == DiscoveryLane::Ordinary {
+            backlog.priorities(&intent_id, request.allowed)
+        } else {
+            Default::default()
+        };
         let frontier_key = frontier_key(
             &pin_id,
             &generation,
             request.allowed,
-            &self.match_model,
+            &policy_models,
             request.intent_provenance.current(),
         )?;
         let search = search_key(
             &generation,
             request.intent_provenance,
             request.allowed,
-            &self.match_model,
+            &policy_models,
             request.exposed,
         )?;
-        let key = if self.guided_capabilities.is_empty() {
-            plasm_core::catalog_discovery::content_hash(
-                format!("{frontier_key}:{search}").as_bytes(),
-            )
+        let base_key =
+            if self.guided_capabilities.is_empty() && self.lane == DiscoveryLane::Ordinary {
+                plasm_core::catalog_discovery::content_hash(
+                    format!("{frontier_key}:{search}").as_bytes(),
+                )
+            } else {
+                plasm_core::catalog_discovery::content_hash(&serde_json::to_vec(&(
+                    &frontier_key,
+                    &search,
+                    &self.guided_capabilities,
+                    self.lane,
+                ))?)
+            };
+        let key = if deferred_priorities.is_empty() {
+            base_key
         } else {
-            plasm_core::catalog_discovery::content_hash(&serde_json::to_vec(&(
-                &frontier_key,
-                &search,
-                &self.guided_capabilities,
-            ))?)
+            let ranks: Vec<_> = deferred_priorities.iter().collect();
+            plasm_core::catalog_discovery::content_hash(&serde_json::to_vec(&(base_key, ranks))?)
         };
         let mut receipt = self
-            .route_frontier(&frontier_key, &key, request.exposed, |visits| {
-                let key = &key;
-                let generation = &generation;
-                async move {
-                    self.route_uncached(
-                        key,
-                        generation,
-                        request.intent_provenance,
-                        request.allowed,
-                        request.exposed,
-                        &visits,
-                    )
-                    .await
-                }
-            })
+            .route_frontier(
+                &frontier_key,
+                &key,
+                request.exposed,
+                |visits, operation_state, effective_key| {
+                    let generation = &generation;
+                    let session = &pin_id;
+                    async move {
+                        self.route_uncached(RouteWork {
+                            key: &effective_key,
+                            session,
+                            generation,
+                            provenance: request.intent_provenance,
+                            allowed: request.allowed,
+                            exposed: request.exposed,
+                            visits: &visits,
+                            deferred_priorities: &deferred_priorities,
+                            operation_state,
+                        })
+                        .await
+                    }
+                },
+            )
             .await?;
         receipt.pin_id = pin_id;
         self.store
@@ -364,6 +655,29 @@ impl DiscoveryService {
                 request.logical_session.is_some(),
             )
             .await?;
+        if self.lane == DiscoveryLane::Ordinary {
+            let receipt_id =
+                plasm_core::catalog_discovery::content_hash(&serde_json::to_vec(&receipt)?);
+            self.store
+                .with_selector_search(&backlog_key, || async {
+                    let mut latest: DeferredBacklog =
+                        match self.store.cached_selector_envelope(&backlog_key).await? {
+                            Some(saved) => serde_json::from_str(&saved)?,
+                            None => DeferredBacklog::default(),
+                        };
+                    latest.observe(
+                        request.intent_provenance.turns().count(),
+                        intent_id,
+                        &receipt,
+                        receipt_id,
+                    );
+                    self.store
+                        .store_search_progress(&backlog_key, &serde_json::to_string(&latest)?)
+                        .await?;
+                    Ok::<_, DiscoveryServiceError>(())
+                })
+                .await??;
+        }
         Ok(receipt)
     }
 
@@ -379,26 +693,83 @@ impl DiscoveryService {
         if !exposed.iter().all(|reference| allowed.permits(reference)) {
             return Err(DiscoveryServiceError::ExposedCapabilityUnauthorized);
         }
-        let base = search_key(generation, provenance, allowed, &self.match_model, exposed)?;
-        let key = if self.guided_capabilities.is_empty() {
+        let policy_models = format!("{}:{}", self.match_model, self.operation_model);
+        let base = search_key(generation, provenance, allowed, &policy_models, exposed)?;
+        let key = if self.guided_capabilities.is_empty() && self.lane == DiscoveryLane::Ordinary {
             base
         } else {
             plasm_core::catalog_discovery::content_hash(&serde_json::to_vec(&(
                 base,
                 &self.guided_capabilities,
+                self.lane,
             ))?)
         };
         self.route_cached(&key, exposed, || async {
-            self.route_uncached(
-                &key,
+            self.route_uncached(RouteWork {
+                key: &key,
+                session: &key,
                 generation,
                 provenance,
                 allowed,
                 exposed,
-                &Default::default(),
-            )
+                visits: &Default::default(),
+                deferred_priorities: &Default::default(),
+                operation_state: OperationFrontier::default(),
+            })
             .await
         })
+        .await
+    }
+
+    /// Advance the session's supplemental frontier without committing a new
+    /// conversational intent. Each ticket is judged independently; only prior
+    /// visit counts are shared between turns.
+    pub async fn route_supplemental_turn(
+        &self,
+        session: &str,
+        ticket: uuid::Uuid,
+        generation: &str,
+        provenance: &crate::intent_provenance::IntentProvenance,
+        allowed: &DiscoveryAuthorization,
+        exposed: &[CapabilityRef],
+    ) -> Result<RoutingReceipt> {
+        if self.lane != DiscoveryLane::Supplemental {
+            return Err(DiscoveryServiceError::ExpectedSupplementalLane);
+        }
+        if self.store.pinned_generation(session).await? != generation {
+            return Err(DiscoveryServiceError::SupplementalGenerationMismatch);
+        }
+        if !exposed.iter().all(|reference| allowed.permits(reference)) {
+            return Err(DiscoveryServiceError::ExposedCapabilityUnauthorized);
+        }
+        let policy_models = format!("{}:{}", self.match_model, self.operation_model);
+        let frontier = supplemental_frontier_key(session, generation, allowed, &policy_models)?;
+        let request = search_key(generation, provenance, allowed, &policy_models, exposed)?;
+        let key = plasm_core::catalog_discovery::content_hash(&serde_json::to_vec(&(
+            &frontier,
+            request,
+            &self.guided_capabilities,
+            ticket,
+        ))?);
+        self.route_frontier(
+            &frontier,
+            &key,
+            exposed,
+            |visits, operation_state, effective_key| async move {
+                self.route_uncached(RouteWork {
+                    key: &effective_key,
+                    session,
+                    generation,
+                    provenance,
+                    allowed,
+                    exposed,
+                    visits: &visits,
+                    deferred_priorities: &Default::default(),
+                    operation_state,
+                })
+                .await
+            },
+        )
         .await
     }
 
@@ -410,12 +781,18 @@ impl DiscoveryService {
         work: F,
     ) -> Result<RoutingReceipt>
     where
-        F: FnOnce(std::collections::BTreeMap<CapabilityRef, usize>) -> Fut,
+        F: FnOnce(
+            std::collections::BTreeMap<CapabilityRef, usize>,
+            OperationFrontier,
+            String,
+        ) -> Fut,
         Fut: std::future::Future<Output = Result<RoutingReceipt>>,
     {
         // One request-frontier owner, not nested database leases. A duplicate completion
         // can repair a failed frontier write without repeating provider work.
+        let wait_started = std::time::Instant::now();
         let _same_request = self.store.pending_decisions.claim(frontier_key).await;
+        metrics::record(metrics::Stage::FrontierLockWait, wait_started.elapsed());
         self.store
             .with_selector_search(frontier_key, || async {
                 let mut frontier: SearchFrontier =
@@ -424,8 +801,48 @@ impl DiscoveryService {
                         None => SearchFrontier::default(),
                     };
                 let visits = frontier.visits();
-                let receipt = self.route_owned(key, exposed, || work(visits)).await?;
-                frontier.record(key, &receipt);
+                let prior_pairs = frontier.operation_state.answered_pairs();
+                let historical_replay = frontier.active_request.as_deref() != Some(key)
+                    && frontier.completed.contains_key(key);
+                let effective_key = if frontier.active_request.as_deref() == Some(key)
+                    && matches!(&frontier.operation_state, OperationFrontier::Prepared(_))
+                {
+                    plasm_core::catalog_discovery::content_hash(&serde_json::to_vec(&(
+                        "operation-continuation-v1",
+                        key,
+                        &frontier.operation_state,
+                    ))?)
+                } else {
+                    key.to_owned()
+                };
+                let receipt = self
+                    .route_owned(&effective_key, exposed, || {
+                        work(
+                            visits,
+                            frontier.operation_state.clone(),
+                            effective_key.clone(),
+                        )
+                    })
+                    .await?;
+                if !historical_replay && !frontier.completed.contains_key(&effective_key) {
+                    if let Some(saved) = self
+                        .store
+                        .cached_selector_envelope(&format!("{effective_key}:operations"))
+                        .await?
+                    {
+                        frontier.operation_state = serde_json::from_str(&saved)?;
+                    }
+                }
+                if !historical_replay {
+                    frontier.active_request = Some(key.to_owned());
+                }
+                let answered = frontier
+                    .operation_state
+                    .answered_pairs()
+                    .difference(&prior_pairs)
+                    .map(|(_, capability)| capability.clone())
+                    .collect();
+                frontier.record(&effective_key, &receipt, &answered);
                 self.store
                     .store_search_progress(frontier_key, &serde_json::to_string(&frontier)?)
                     .await?;
@@ -444,7 +861,9 @@ impl DiscoveryService {
         F: FnOnce() -> Fut,
         Fut: std::future::Future<Output = Result<RoutingReceipt>>,
     {
+        let wait_started = std::time::Instant::now();
         let _same_search = self.store.pending_decisions.claim(key).await;
+        metrics::record(metrics::Stage::SearchLockWait, wait_started.elapsed());
         self.store
             .with_selector_search(key, || async { self.route_owned(key, exposed, work).await })
             .await?
@@ -478,22 +897,27 @@ impl DiscoveryService {
         Ok(receipt)
     }
 
-    async fn route_uncached(
-        &self,
-        key: &str,
-        generation: &str,
-        provenance: &crate::intent_provenance::IntentProvenance,
-        allowed: &DiscoveryAuthorization,
-        exposed: &[CapabilityRef],
-        visits: &std::collections::BTreeMap<CapabilityRef, usize>,
-    ) -> Result<RoutingReceipt> {
+    async fn route_uncached(&self, work: RouteWork<'_>) -> Result<RoutingReceipt> {
+        let RouteWork {
+            key,
+            session,
+            generation,
+            provenance,
+            allowed,
+            exposed,
+            visits,
+            deferred_priorities,
+            mut operation_state,
+        } = work;
         if !exposed.iter().all(|r| allowed.permits(r)) {
             return Err(DiscoveryServiceError::ExposedCapabilityUnauthorized);
         }
+        let stage_started = std::time::Instant::now();
         let (catalogs, bindings) = self
             .store
             .load_discovery_generation(generation, allowed)
             .await?;
+        metrics::record(metrics::Stage::CatalogueLoad, stage_started.elapsed());
         if !exposed.iter().all(|r| {
             catalogs
                 .get(&r.catalog)
@@ -504,6 +928,7 @@ impl DiscoveryService {
         let index_key = plasm_core::catalog_discovery::content_hash(&serde_json::to_vec(&(
             generation, allowed,
         ))?);
+        let stage_started = std::time::Instant::now();
         let cached_index = self
             .store
             .search_index
@@ -527,6 +952,7 @@ impl DiscoveryService {
                 index
             }
         };
+        metrics::record(metrics::Stage::IndexLookupOrBuild, stage_started.elapsed());
         // Validate the pinned catalogue and authorization before durable admission.
         // Once admitted, interruption must not silently repeat provider work.
         if !self
@@ -546,15 +972,6 @@ impl DiscoveryService {
             return Err(DiscoveryServiceError::SearchAlreadyStarted);
         }
         let progress_key = format!("{key}:progress");
-        let mut recall = self
-            .store
-            .retrieve(
-                generation,
-                provenance.current(),
-                allowed,
-                &crate::discovery_store::RecallFrontier::from_state(exposed, visits),
-            )
-            .await?;
         let references = self
             .guided_capabilities
             .iter()
@@ -566,66 +983,176 @@ impl DiscoveryService {
             })
             .cloned()
             .collect();
-        if !self.guided_capabilities.is_empty() {
-            let (examples, _) =
-                index.evidence(generation, &references, &catalogs, &bindings, allowed)?;
-            let mut nominated = examples.candidates;
-            for candidate in &mut nominated {
-                candidate.admissions.insert("workflow_guidance".into());
+        let authorized = index.authorized_capabilities(allowed);
+        let extraction = matcher::operations::ExtractionRequest::new(
+            &self.operation_model,
+            provenance.current(),
+        )?;
+        let scope = matcher::operations::MatrixScope::new(
+            session,
+            generation,
+            &authorized,
+            extraction.identity(),
+        )?;
+        let mut matrix = match operation_state.load(&scope, provenance.current(), &authorized)? {
+            OperationFrontierLoad::Resume(matrix) => *matrix,
+            OperationFrontierLoad::AwaitingExtraction | OperationFrontierLoad::ChangedRevision => {
+                let started = std::time::Instant::now();
+                let operations = self.operation_extractor.extract(provenance.current()).await;
+                metrics::record_extraction(started.elapsed(), operations.is_ok());
+                matcher::operations::OperationMatrix::new(
+                    scope.clone(),
+                    provenance.current(),
+                    operations?,
+                    &authorized,
+                    Vec::new(),
+                )?
             }
-            for candidate in recall.candidates {
-                if !nominated.iter().any(|c| c.reference == candidate.reference) {
-                    nominated.push(candidate);
+        };
+        let stage_started = std::time::Instant::now();
+        let recall = match self.lane {
+            DiscoveryLane::Ordinary => {
+                let frontier = crate::discovery_store::RecallFrontier::from_state(exposed, visits);
+                let queries = std::iter::once(provenance.current())
+                    .chain(
+                        matrix
+                            .operations()
+                            .operations()
+                            .iter()
+                            .map(|operation| operation.text()),
+                    )
+                    .collect::<std::collections::BTreeSet<_>>();
+                let mut ordered = vec![provenance.current()];
+                ordered.extend(
+                    queries
+                        .into_iter()
+                        .filter(|query| *query != provenance.current()),
+                );
+                let receipts = self
+                    .store
+                    .retrieve_many(generation, &ordered, allowed, &frontier)
+                    .await?;
+                let mut ranks = std::collections::BTreeMap::new();
+                for operation in matrix.operations().operations() {
+                    let index = ordered
+                        .iter()
+                        .position(|query| *query == operation.text())
+                        .expect("each operation has a retrieval query");
+                    for (rank, candidate) in receipts[index].candidates.iter().enumerate() {
+                        ranks.insert((operation.id().clone(), candidate.reference.clone()), rank);
+                    }
                 }
+                matrix.set_recall_ranks(&authorized, ranks)?;
+                crate::discovery_store::RetrievalReceipt::interleave(generation, receipts, allowed)
+                    .map_err(crate::discovery_store::DiscoveryStoreError::from)?
             }
-            nominated.truncate(crate::discovery_store::CANDIDATE_LIMIT);
-            recall.candidates = nominated;
-        }
-        let checkpoint = decision_checkpoint::DecisionCheckpoint::new(
-            &self.store,
-            &self.store.pending_decisions,
+            DiscoveryLane::Supplemental => {
+                index
+                    .evidence(generation, &references, &catalogs, &bindings, allowed)?
+                    .0
+            }
+        };
+        metrics::record(metrics::Stage::Recall, stage_started.elapsed());
+        let stage_started = std::time::Instant::now();
+        let (retrieval, matching, search) = if recall.candidates.is_empty() {
+            let search = matcher::online::SearchReceipt {
+                exposed: exposed.iter().cloned().collect(),
+                unexplored: authorized
+                    .iter()
+                    .filter(|reference| !exposed.contains(reference))
+                    .cloned()
+                    .collect(),
+                ..Default::default()
+            };
+            (
+                recall,
+                CapabilityMatchReceipt {
+                    matches: Vec::new(),
+                    budget_retained: Vec::new(),
+                },
+                search,
+            )
+        } else {
+            let checkpoint = decision_checkpoint::DecisionCheckpoint::new(
+                &self.store,
+                &self.store.pending_decisions,
+            );
+            let mut attempt = 0;
+            let result = matcher::online::select_operations_indexed(
+                matcher::online::SearchContext {
+                    visits,
+                    model: &self.match_model,
+                    intent: provenance,
+                    generation,
+                    catalogs: &catalogs,
+                    deployments: &bindings,
+                    allowed,
+                    exposed,
+                },
+                &index,
+                &recall,
+                &mut matrix,
+                deferred_priorities,
+                |issued| {
+                    attempt += 1;
+                    let attempt = attempt;
+                    let checkpoint = &checkpoint;
+                    async move {
+                        checkpoint
+                            .receive(issued.clone(), || async {
+                                let provider_started = std::time::Instant::now();
+                                let result =
+                                    self.contribution_response(issued.body(), attempt).await;
+                                metrics::record(
+                                    metrics::Stage::DecisionProvider,
+                                    provider_started.elapsed(),
+                                );
+                                result.map_err(|error| {
+                                    Box::new(error) as matcher::DecisionProviderError
+                                })
+                            })
+                            .await
+                    }
+                },
+                |progress| {
+                    let key = &progress_key;
+                    let checkpoint = &checkpoint;
+                    async move {
+                        checkpoint.persist().await?;
+                        self.store
+                            .store_search_progress(key, &serde_json::to_string(&progress)?)
+                            .await?;
+                        Ok(())
+                    }
+                },
+            )
+            .await?;
+            operation_state.commit(&scope, &matrix)?;
+            self.store
+                .store_search_progress(
+                    &format!("{key}:operations"),
+                    &serde_json::to_string(&operation_state)?,
+                )
+                .await?;
+            result
+        };
+        metrics::record(
+            metrics::Stage::SelectionIncludingProviderAndCheckpoints,
+            stage_started.elapsed(),
         );
-        let mut attempt = 0;
-        let (retrieval, matching, search) = matcher::online::select_recalled_indexed(
-            matcher::online::SearchContext {
-                visits,
-                model: &self.match_model,
-                intent: provenance,
-                generation,
-                catalogs: &catalogs,
-                deployments: &bindings,
-                allowed,
-                exposed,
-            },
-            &index,
-            &recall,
-            |issued| {
-                attempt += 1;
-                let attempt = attempt;
-                let checkpoint = &checkpoint;
-                async move {
-                    checkpoint
-                        .receive(issued.clone(), || async {
-                            self.contribution_response(issued.body(), attempt)
-                                .await
-                                .map_err(|error| Box::new(error) as matcher::DecisionProviderError)
-                        })
-                        .await
-                }
-            },
-            |progress| {
-                let key = &progress_key;
-                let checkpoint = &checkpoint;
-                async move {
-                    checkpoint.persist().await?;
-                    self.store
-                        .store_search_progress(key, &serde_json::to_string(&progress)?)
-                        .await?;
-                    Ok(())
-                }
-            },
-        )
-        .await?;
+        for reference in &self.guided_capabilities {
+            let candidate = retrieval
+                .candidates
+                .iter()
+                .find(|candidate| &candidate.reference == reference);
+            let decision = candidate.and_then(|candidate| {
+                matching
+                    .matches
+                    .iter()
+                    .find(|item| item.capability_id == candidate.id)
+            });
+            tracing::debug!(target: "plasm_agent::workflow_learning", catalog = %reference.catalog, capability = %reference.capability, already_exposed = exposed.contains(reference), retrieved = candidate.is_some(), considered = search.considered.contains(reference), deferred = ?search.deferred.iter().find(|item| &item.reference == reference).map(|item| &item.reason), decision = ?decision.map(|item| &item.choice), "supplemental capability discovery decision");
+        }
         let business = matching.selected(&retrieval);
         let closure = if !business.is_empty() || !exposed.is_empty() {
             let references = catalogs.iter().map(|(id, cgs)| (id.clone(), cgs)).collect();
@@ -640,7 +1167,7 @@ impl DiscoveryService {
         };
         validate_closure_authorization(closure.as_ref(), allowed)?;
         // No additions to an existing surface is not an unmatched workflow.
-        let recovery = if business.is_empty() && exposed.is_empty() {
+        let recovery = if business.is_empty() && exposed.is_empty() && search.deferred.is_empty() {
             Some(DiscoveryRecovery::from_unmatched(
                 &matching,
                 &retrieval,
@@ -650,12 +1177,19 @@ impl DiscoveryService {
         } else {
             None
         };
+        let intent_analysis = if search.has_unavailable_provider() {
+            "**Capability discovery:** a later assessment was unavailable; earlier verified contributions remain available."
+        } else if search.has_pending_operation_judgments() {
+            "**Capability discovery:** additional candidates remain unassessed. Use declared operations if they satisfy the task, or extend the session to assess more."
+        } else if search.has_incomplete_operation_judgments() {
+            "**Capability discovery:** some candidate contributions remain uncertain."
+        } else {
+            "**Capability contribution** (bounded online search; unvisited capabilities remain unexplored):"
+        };
         Ok(RoutingReceipt {
             intent_provenance: provenance.clone(),
             authorization: allowed.clone(),
-            intent_analysis:
-                "**Capability contribution** (bounded online search; unvisited capabilities remain unexplored):"
-                    .to_owned(),
+            intent_analysis: intent_analysis.to_owned(),
             intent: provenance.current().to_owned(),
             pin_id: String::new(),
             retrieval,
@@ -739,6 +1273,31 @@ mod concurrency_tests;
 mod tests {
     use super::*;
     use std::collections::BTreeSet;
+
+    #[test]
+    fn nominated_guidance_requires_individual_discovery_judgment() {
+        let packet: serde_json::Value = serde_json::from_str(include_str!(
+            "../../../fixtures/discovery/partial-routing.json"
+        ))
+        .unwrap();
+        let mut routing: RoutingReceipt =
+            serde_json::from_value(packet["routing"].clone()).unwrap();
+        routing.retrieval.candidates.truncate(1);
+        let candidate = &routing.retrieval.candidates[0];
+        let mut decision = CapabilityMatchReceipt {
+            matches: vec![matcher::CapabilityIntentMatch {
+                capability_id: candidate.id.clone(),
+                choice: matcher::MatchChoice::Unrelated,
+            }],
+            budget_retained: Vec::new(),
+        };
+        assert!(decision.selected(&routing.retrieval).is_empty());
+        decision.matches[0].choice = matcher::MatchChoice::Relevant;
+        assert_eq!(
+            decision.selected(&routing.retrieval),
+            vec![candidate.reference.clone()]
+        );
+    }
 
     #[test]
     fn retain_retrieved_candidates_does_not_bypass_authorization() {

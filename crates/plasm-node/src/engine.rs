@@ -346,22 +346,313 @@ impl AgentEngine {
         Ok(())
     }
 
-    pub async fn completed_workflow_runs(&self) -> Result<String> {
-        if self.workflow_config.mode() != NativeLearningMode::Collect {
+    pub async fn completed_workflow_executions(&self) -> Result<String> {
+        if self.workflow_config.mode() == NativeLearningMode::Baseline {
             return Err(NativeLearningError::Mode.into());
         }
         match &self.host {
             Some(host) => Ok(serde_json::to_string(
                 &self
                     .workflow_config
-                    .completed_runs(host, &self.session_id, &self.intent)
+                    .completed_executions(host, &self.session_id, &self.intent)
                     .await?,
             )?),
-            None => Ok(serde_json::json!({"intent":self.intent,"runs":[]}).to_string()),
+            None => Ok(serde_json::json!({"intent":self.intent,"executions":[]}).to_string()),
         }
     }
 
-    pub async fn read_workflow_evidence(&self, run_id: &str) -> Result<String> {
+    /// Session lifecycle commands use the same durable authority as HTTP/MCP.
+    pub async fn training_command(
+        &self,
+        actor: &plasm_agent_core::workflow_learning::training::TrustedTrainingActor,
+        command: &plasm_agent_core::workflow_learning::training::TrainingCommandEnvelope,
+    ) -> Result<String> {
+        let host = self
+            .host
+            .as_ref()
+            .ok_or(AgentEngineError::WorkflowEvidenceMissing)?;
+        let session = self
+            .execute_session
+            .as_ref()
+            .ok_or(AgentEngineError::WorkflowEvidenceMissing)?;
+        self.workflow_config
+            .register(
+                host,
+                session,
+                &self.session_id,
+                self.execute_session_id.as_str(),
+                &self.intent_turns,
+            )
+            .await?;
+        let scope = self.workflow_config.scope()?;
+        if actor.scope() != &scope {
+            return Err(NativeLearningError::Training(
+                plasm_agent_core::workflow_learning::training::TrainingError::Denied,
+            )
+            .into());
+        }
+        let logical = plasm_agent_core::session_identity::LogicalSessionId::parse(&self.session_id)
+            .map_err(NativeLearningError::from)?;
+        let repository = host
+            .workflow_learning
+            .repository()
+            .await
+            .map_err(NativeLearningError::from)?;
+        repository
+            .bind_session(&scope, logical)
+            .await
+            .map_err(NativeLearningError::from)?;
+        // The trusted embedding host owns this engine and fixes its sole actor before session creation.
+        repository
+            .bind_training_controller(actor, logical)
+            .await
+            .map_err(NativeLearningError::from)?;
+        let status = repository
+            .training_command(actor, logical, command)
+            .await
+            .map_err(NativeLearningError::from)?;
+        Ok(serde_json::to_string(&status)?)
+    }
+
+    pub async fn training_status(&self) -> Result<String> {
+        let host = self
+            .host
+            .as_ref()
+            .ok_or(AgentEngineError::WorkflowEvidenceMissing)?;
+        let session = self
+            .execute_session
+            .as_ref()
+            .ok_or(AgentEngineError::WorkflowEvidenceMissing)?;
+        self.workflow_config
+            .register(
+                host,
+                session,
+                &self.session_id,
+                self.execute_session_id.as_str(),
+                &self.intent_turns,
+            )
+            .await?;
+        let logical = plasm_agent_core::session_identity::LogicalSessionId::parse(&self.session_id)
+            .map_err(NativeLearningError::from)?;
+        let repository = host
+            .workflow_learning
+            .repository()
+            .await
+            .map_err(NativeLearningError::from)?;
+        let scope = self.workflow_config.scope()?;
+        repository
+            .bind_session(&scope, logical)
+            .await
+            .map_err(NativeLearningError::from)?;
+        let status = repository
+            .training_status(&scope, logical)
+            .await
+            .map_err(NativeLearningError::from)?;
+        Ok(serde_json::to_string(&status)?)
+    }
+
+    /// A trusted evaluation host seals the session before any program executes.
+    pub async fn seal_training_evaluation(&self) -> Result<()> {
+        use plasm_agent_core::workflow_learning::training::{
+            TrainingSessionPurpose, TrustedTrainingActor,
+        };
+        let host = self
+            .host
+            .as_ref()
+            .ok_or(AgentEngineError::WorkflowEvidenceMissing)?;
+        let session = self
+            .execute_session
+            .as_ref()
+            .ok_or(AgentEngineError::WorkflowEvidenceMissing)?;
+        self.workflow_config
+            .register(
+                host,
+                session,
+                &self.session_id,
+                self.execute_session_id.as_str(),
+                &self.intent_turns,
+            )
+            .await?;
+        let logical = plasm_agent_core::session_identity::LogicalSessionId::parse(&self.session_id)
+            .map_err(NativeLearningError::from)?;
+        let scope = self.workflow_config.scope()?;
+        let actor = TrustedTrainingActor::trusted_host(
+            scope.clone(),
+            "evaluation-host".into(),
+            "evaluation-host".into(),
+        )
+        .map_err(NativeLearningError::from)?;
+        let repository = host
+            .workflow_learning
+            .repository()
+            .await
+            .map_err(NativeLearningError::from)?;
+        repository
+            .bind_session(&scope, logical)
+            .await
+            .map_err(NativeLearningError::from)?;
+        repository
+            .bind_training_session(&actor, logical, TrainingSessionPurpose::Evaluation)
+            .await
+            .map_err(NativeLearningError::from)?;
+        Ok(())
+    }
+
+    pub async fn training_candidates(
+        &self,
+        actor: &plasm_agent_core::workflow_learning::training::TrustedTrainingActor,
+        input: &str,
+    ) -> Result<String> {
+        use plasm_agent_core::workflow_learning::{
+            repository::TrainingCandidateRef, training::TrainingCandidateSelection,
+        };
+        #[derive(serde::Deserialize)]
+        #[serde(tag = "action", rename_all = "snake_case", deny_unknown_fields)]
+        enum Command {
+            List {
+                limit: u32,
+                after: Option<TrainingCandidateRef>,
+            },
+            Read {
+                reference: TrainingCandidateRef,
+            },
+            RequestDecision {
+                expected_revision: u64,
+                idempotency_key: String,
+                selection: Vec<TrainingCandidateSelection>,
+            },
+            RequestStatus {
+                request_ref: String,
+            },
+            RequestRelease {
+                expected_revision: u64,
+                idempotency_key: String,
+                review_refs: Vec<String>,
+            },
+            RequestExecutionRelease {
+                expected_revision: u64,
+                idempotency_key: String,
+                execution_ids: Vec<plasm_agent_core::workflow_learning::model::ExecutionId>,
+            },
+        }
+        let command: Command = serde_json::from_str(input)?;
+        let host = self
+            .host
+            .as_ref()
+            .ok_or(AgentEngineError::WorkflowEvidenceMissing)?;
+        let logical = plasm_agent_core::session_identity::LogicalSessionId::parse(&self.session_id)
+            .map_err(NativeLearningError::from)?;
+        let repository = host
+            .workflow_learning
+            .repository()
+            .await
+            .map_err(NativeLearningError::from)?;
+        repository
+            .check_training_controller(actor, logical)
+            .await
+            .map_err(NativeLearningError::from)?;
+        let value = match command {
+            Command::List { limit, after } => serde_json::to_value(
+                repository
+                    .list_training_candidates(actor.scope(), logical, after.as_ref(), limit)
+                    .await
+                    .map_err(NativeLearningError::from)?,
+            )?,
+            Command::Read { reference } => {
+                let owner = repository
+                    .training_candidate_session(actor.scope(), &reference)
+                    .await
+                    .map_err(NativeLearningError::from)?;
+                if owner != logical {
+                    return Err(NativeLearningError::Training(
+                        plasm_agent_core::workflow_learning::training::TrainingError::Unavailable,
+                    )
+                    .into());
+                }
+                serde_json::to_value(
+                    repository
+                        .read_training_candidate(actor.scope(), &reference)
+                        .await
+                        .map_err(NativeLearningError::from)?
+                        .agent_view(),
+                )?
+            }
+            Command::RequestDecision {
+                expected_revision,
+                idempotency_key,
+                selection,
+            } => serde_json::to_value(
+                repository
+                    .request_candidate_decision(
+                        actor,
+                        logical,
+                        expected_revision,
+                        idempotency_key.parse().map_err(NativeLearningError::from)?,
+                        selection,
+                    )
+                    .await
+                    .map_err(NativeLearningError::from)?,
+            )?,
+            Command::RequestStatus { request_ref } => {
+                let request = repository
+                    .read_training_request(
+                        actor,
+                        request_ref.parse().map_err(NativeLearningError::from)?,
+                    )
+                    .await
+                    .map_err(NativeLearningError::from)?;
+                if request.logical_session != logical {
+                    return Err(NativeLearningError::Training(
+                        plasm_agent_core::workflow_learning::training::TrainingError::Unavailable,
+                    )
+                    .into());
+                }
+                serde_json::to_value(request)?
+            }
+            Command::RequestRelease {
+                expected_revision,
+                idempotency_key,
+                review_refs,
+            } => {
+                let ids = review_refs
+                    .iter()
+                    .map(|id| id.parse())
+                    .collect::<std::result::Result<Vec<_>, _>>()
+                    .map_err(NativeLearningError::from)?;
+                serde_json::to_value(
+                    repository
+                        .request_training_release(
+                            actor,
+                            logical,
+                            expected_revision,
+                            idempotency_key.parse().map_err(NativeLearningError::from)?,
+                            ids,
+                        )
+                        .await
+                        .map_err(NativeLearningError::from)?,
+                )?
+            }
+            Command::RequestExecutionRelease {
+                expected_revision,
+                idempotency_key,
+                execution_ids,
+            } => serde_json::to_value(
+                repository
+                    .request_training_execution_release(
+                        actor,
+                        logical,
+                        expected_revision,
+                        idempotency_key.parse().map_err(NativeLearningError::from)?,
+                        execution_ids,
+                    )
+                    .await
+                    .map_err(NativeLearningError::from)?,
+            )?,
+        };
+        Ok(serde_json::to_string(&value)?)
+    }
+
+    pub async fn read_teaching_program(&self, execution_id: &str) -> Result<String> {
         let host = self
             .host
             .as_ref()
@@ -369,16 +660,22 @@ impl AgentEngine {
         Ok(serde_json::to_string(
             &self
                 .workflow_config
-                .read_evidence(host, &self.session_id, run_id)
+                .read_teaching_program(host, &self.session_id, execution_id)
                 .await?,
         )?)
     }
 
-    pub async fn review_workflow(&mut self, request: &str) -> Result<String> {
+    pub async fn review_workflow(
+        &mut self,
+        request: &str,
+        actor: plasm_agent_core::workflow_learning::training::TrustedTrainingActor,
+    ) -> Result<String> {
         #[derive(serde::Deserialize)]
         #[serde(deny_unknown_fields)]
         struct Review {
             subtasks: Vec<plasm_agent_core::workflow_learning::model::AchievedSubtask>,
+            expected_revision: u64,
+            idempotency_key: String,
         }
         let request: Review = serde_json::from_str(request)?;
         let host = self
@@ -407,7 +704,15 @@ impl AgentEngine {
                     session,
                     &self.session_id,
                     self.execute_session_id.as_str(),
-                    request.subtasks,
+                    plasm_agent_core::workflow_learning::native::NativeReview {
+                        subtasks: request.subtasks,
+                        actor,
+                        expected_revision: request.expected_revision,
+                        idempotency_key: request
+                            .idempotency_key
+                            .parse()
+                            .map_err(NativeLearningError::from)?,
+                    },
                 )
                 .await?,
         )?)
@@ -512,9 +817,12 @@ impl AgentEngine {
         self.execute_session = Some((*updated).clone());
         served.teaching_delta = self.render_teaching_delta(&[])?;
         #[derive(serde::Serialize)]
-        struct NativeServedExample {
-            #[serde(flatten)]
-            example: plasm_agent_core::workflow_learning::serving::ServedExample,
+        struct NativeServedExample<'a> {
+            example_id: String,
+            source: &'a str,
+            teaching_delta: &'a str,
+            domain_revision: u32,
+            outputs: Vec<String>,
             delta_refs: Vec<String>,
         }
         let delta_refs = self
@@ -524,7 +832,11 @@ impl AgentEngine {
             .map(|(entry, entity)| format!("{entry}:{entity}"))
             .collect();
         Ok(serde_json::to_string(&NativeServedExample {
-            example: served,
+            example_id: served.example_id.to_string(),
+            source: &served.source,
+            teaching_delta: &served.teaching_delta,
+            domain_revision: served.domain_revision,
+            outputs: served.teaching_outputs(),
             delta_refs,
         })?)
     }
@@ -728,6 +1040,19 @@ impl AgentEngine {
 
     pub fn discovery_pin(&self) -> Option<&DiscoverySessionPin> {
         self.discovery_pin.as_ref()
+    }
+
+    /// Retain the authoritative discovery history even when a bounded wave
+    /// exposes no capability; optional teaching can still open the session.
+    pub(crate) fn retain_unexposed_intent(
+        &mut self,
+        provenance: &plasm_agent_core::intent_provenance::IntentProvenance,
+    ) {
+        self.intent_turns = provenance.turns().map(str::to_owned).collect();
+        self.intent = self.intent_turns.join("\n");
+        if let Some(session) = &mut self.execute_session {
+            session.context_intent = Some(self.intent.clone());
+        }
     }
 
     pub fn exposed_capabilities(&self) -> Vec<plasm_core::prerequisites::CapabilityRef> {
@@ -1143,7 +1468,7 @@ impl AgentEngine {
                     }),
                 )),
             );
-            let live_result = if self.workflow_config.mode() == NativeLearningMode::Collect {
+            let live_result = if self.workflow_config.mode() != NativeLearningMode::Baseline {
                 plasm_agent_core::workflow_learning::native::observe_execution(
                     &host,
                     &es,
@@ -1322,11 +1647,32 @@ impl AgentEngine {
     }
 
     fn build_execute_session(&self) -> Result<ExecuteSession> {
-        let exposure = self
-            .exposure
-            .as_ref()
-            .ok_or(AgentEngineError::TeachingExposureMissing)?;
-        self.build_execute_session_for(&self.capabilities, exposure, &self.intent)
+        if let Some(exposure) = &self.exposure {
+            return self.build_execute_session_for(&self.capabilities, exposure, &self.intent);
+        }
+        if !self.capabilities.is_empty() {
+            return Err(AgentEngineError::TeachingExposureMissing);
+        }
+        // A logical session can exist before discovery has exposed any symbols.
+        // Seed an empty ledger from an authorized pinned catalogue so a checked
+        // example may provide the first catalogue wave without granting access.
+        let (primary_api, cgs) = self
+            .catalogs
+            .iter()
+            .filter(|(entry, _)| {
+                self.discovery_pin
+                    .as_ref()
+                    .is_none_or(|pin| pin.authorization.catalogs.contains(*entry))
+            })
+            .min_by(|(left, _), (right, _)| left.cmp(right))
+            .ok_or(AgentEngineError::NoCatalogsLoaded)?;
+        let exposure = TeachingExposureSession::new_with_intent_delta(
+            cgs,
+            primary_api,
+            &[],
+            Default::default(),
+        );
+        self.build_execute_session_for_primary(primary_api.clone(), &exposure, &self.intent)
     }
 
     fn build_execute_session_for(
@@ -1463,6 +1809,82 @@ mod tests {
     };
     use std::path::PathBuf;
     use std::sync::Arc;
+
+    async fn opt_in_training(
+        engine: &AgentEngine,
+    ) -> plasm_agent_core::workflow_learning::training::TrustedTrainingActor {
+        opt_in_training_with_policy(engine, false).await
+    }
+
+    pub(super) async fn opt_in_training_with_policy(
+        engine: &AgentEngine,
+        automatic: bool,
+    ) -> plasm_agent_core::workflow_learning::training::TrustedTrainingActor {
+        use plasm_agent_core::workflow_learning::training::{
+            TrainingCommand, TrainingCommandEnvelope, TrainingGrantSpec, TrustedTrainingActor,
+        };
+        let scope = engine.workflow_config.scope().unwrap();
+        let logical =
+            plasm_agent_core::session_identity::LogicalSessionId::parse(&engine.session_id)
+                .unwrap();
+        let repository = engine
+            .host
+            .as_ref()
+            .unwrap()
+            .workflow_learning
+            .repository()
+            .await
+            .unwrap();
+        repository.bind_session(&scope, logical).await.unwrap();
+        let owner = TrustedTrainingActor::trusted_host(
+            scope.clone(),
+            "fixture-host".into(),
+            "fixture-control".into(),
+        )
+        .unwrap();
+        let actor = TrustedTrainingActor::authenticated(
+            scope,
+            "fixture-agent".into(),
+            "fixture-credential".into(),
+        )
+        .unwrap();
+        repository
+            .bind_training_controller(&actor, logical)
+            .await
+            .unwrap();
+        let grant:TrainingGrantSpec=serde_json::from_value(serde_json::json!({
+            "grantee":"fixture-agent","credential":"fixture-credential",
+            "actions":if automatic {vec!["capture","review","publish_automatically"]}else{vec!["capture","review"]},"expires_at":"2099-01-01T00:00:00Z",
+            "publication_policy":{"policy":if automatic {"delegated_automatic"}else{"human_reviewed"}},
+            "target":{"scope":"session","logical_session":logical}
+        })).unwrap();
+        repository
+            .install_training_grant(
+                &owner,
+                plasm_agent_core::session_identity::LogicalSessionId::new_v4().0,
+                grant,
+            )
+            .await
+            .unwrap();
+        engine
+            .training_command(
+                &actor,
+                &TrainingCommandEnvelope {
+                    idempotency_key: plasm_agent_core::session_identity::LogicalSessionId::new_v4()
+                        .0,
+                    expected_revision: 0,
+                    command: TrainingCommand::Request,
+                },
+            )
+            .await
+            .unwrap();
+        actor
+    }
+
+    pub(super) fn review_request(subtasks: serde_json::Value) -> serde_json::Value {
+        serde_json::json!({"subtasks":subtasks,"expected_revision":1,
+            "idempotency_key":plasm_agent_core::session_identity::LogicalSessionId::new_v4().to_string()})
+    }
 
     #[tokio::test]
     async fn archive_validation_context_does_not_open_or_expose_a_user_session() {
@@ -1777,6 +2199,27 @@ mod tests {
         }
     }
 
+    #[tokio::test]
+    async fn empty_completed_executions_use_the_shared_contract() {
+        let mut engine = AgentEngine::new(Arc::new(Default::default()));
+        engine
+            .configure_workflow_learning(NativeLearningConfig::Collect(
+                plasm_agent_core::workflow_learning::native::NativeLibraryConfig {
+                    scope: plasm_agent_core::workflow_learning::model::LibraryScope {
+                        tenant: "test".into(),
+                        project: "test".into(),
+                    },
+                    database_url: "postgresql://unused".into(),
+                    serve_examples: false,
+                },
+            ))
+            .unwrap();
+        let value: serde_json::Value =
+            serde_json::from_str(&engine.completed_workflow_executions().await.unwrap()).unwrap();
+        assert_eq!(value["executions"], serde_json::json!([]));
+        assert!(value.get("runs").is_none());
+    }
+
     pub(super) fn tiny_engine() -> (AgentEngine, CatalogInfo) {
         tiny_engine_with_pool(Arc::new(Default::default()))
     }
@@ -1800,6 +2243,52 @@ mod tests {
             ),
             info,
         )
+    }
+
+    #[test]
+    fn empty_logical_session_has_a_symbol_free_authorized_execution_ledger() {
+        let (mut engine, _) = tiny_engine();
+        let provenance = plasm_agent_core::intent_provenance::IntentProvenance::from_turns([
+            "Find an example".to_owned(),
+        ])
+        .unwrap();
+        engine.retain_unexposed_intent(&provenance);
+        let session = engine.ensure_execute_session().unwrap();
+        assert!(session.entities.is_empty());
+        assert!(session
+            .teaching_exposure
+            .as_ref()
+            .unwrap()
+            .entities
+            .is_empty());
+        assert_eq!(session.context_intent.as_deref(), Some("Find an example"));
+        assert!(
+            engine.exposure.is_none(),
+            "creating a session must not expose a catalogue"
+        );
+
+        let (mut denied, _) = tiny_engine();
+        denied.discovery_pin = Some(DiscoverySessionPin {
+            generation: "fixture".into(),
+            pin_id: denied.session_id.clone(),
+            authorization: plasm_agent_core::discovery_store::DiscoveryAuthorization::catalogs(
+                ["another-catalog".into()].into(),
+            ),
+        });
+        assert!(matches!(
+            denied.ensure_execute_session(),
+            Err(AgentEngineError::NoCatalogsLoaded)
+        ));
+        assert!(denied.execute_session.is_none());
+
+        let (mut inconsistent, _) = tiny_engine();
+        inconsistent
+            .capabilities
+            .push(("matrix".into(), "Product".into()));
+        assert!(matches!(
+            inconsistent.ensure_execute_session(),
+            Err(AgentEngineError::TeachingExposureMissing)
+        ));
     }
 
     #[tokio::test]
@@ -1988,6 +2477,7 @@ mod tests {
                         project: "offline".into(),
                     },
                     database_url: "postgresql://127.0.0.1:1/unavailable".into(),
+                    serve_examples: false,
                 },
             ))
             .unwrap();
@@ -2370,6 +2860,7 @@ mod tests {
                     project: "offline".into(),
                 },
                 database_url: url,
+                serve_examples: false,
             },
         );
         engine.configure_workflow_learning(config.clone()).unwrap();
@@ -2384,6 +2875,24 @@ mod tests {
             .await
             .unwrap();
         let source = "class Inspect(Program):\n    def build(self):\n        return e1.query()\n";
+        let ordinary = engine.dry_run(source).await.unwrap();
+        assert!(
+            engine
+                .run_plan_live(
+                    &ordinary.plan_commit_ref,
+                    Arc::new(MockProductListTransport)
+                )
+                .await
+                .unwrap()
+                .ok
+        );
+        let ordinary_runs: serde_json::Value =
+            serde_json::from_str(&engine.completed_workflow_executions().await.unwrap()).unwrap();
+        assert!(
+            ordinary_runs["executions"].as_array().unwrap().is_empty(),
+            "host collection capability must not imply session consent"
+        );
+        let actor = opt_in_training(&engine).await;
         let dry = engine.dry_run(source).await.unwrap();
         assert!(dry.fused_clean_read);
         let transport = Arc::new(MockProductListTransport);
@@ -2423,21 +2932,37 @@ mod tests {
             .unwrap();
         assert!(result.ok, "{}", result.message);
         let index: serde_json::Value =
-            serde_json::from_str(&engine.completed_workflow_runs().await.unwrap()).unwrap();
-        let runs = index["runs"].as_array().unwrap();
+            serde_json::from_str(&engine.completed_workflow_executions().await.unwrap()).unwrap();
+        let runs = index["executions"].as_array().unwrap();
         assert!(!runs.is_empty());
-        let run_id = runs[0]["run_id"].as_str().unwrap();
+        let execution_id = runs[0]["execution_id"].as_str().unwrap();
         let receipt: serde_json::Value =
-            serde_json::from_str(&engine.read_workflow_evidence(run_id).await.unwrap()).unwrap();
-        assert_eq!(receipt["source"], source.trim());
-        assert_eq!(receipt["scope"]["tenant"], config.scope().unwrap().tenant);
-        let review = serde_json::json!({"subtasks":[{"intent":"Inspect fixture products","observed_outcome":"Observed fixture product p1","run_ids":[run_id]}]});
-        let sealed: serde_json::Value =
-            serde_json::from_str(&engine.review_workflow(&review.to_string()).await.unwrap())
+            serde_json::from_str(&engine.read_teaching_program(execution_id).await.unwrap())
                 .unwrap();
+        assert_eq!(receipt["program"]["source"], source.trim());
+        assert_eq!(receipt["program"]["plan"]["state"], "available");
+        assert!(!receipt["program"]["plan"]["text"]
+            .as_str()
+            .unwrap()
+            .is_empty());
+        let review = review_request(
+            serde_json::json!([{"intent":"Inspect fixture products","observed_outcome":"Observed fixture product p1","execution_ids":[execution_id]}]),
+        );
+        let sealed: serde_json::Value = serde_json::from_str(
+            &engine
+                .review_workflow(&review.to_string(), actor.clone())
+                .await
+                .unwrap(),
+        )
+        .unwrap();
         assert!(sealed["review_ref"].is_string());
-        let invalid = serde_json::json!({"subtasks":[{"intent":"Unobserved","observed_outcome":"No evidence","run_ids":["missing"]}]});
-        assert!(engine.review_workflow(&invalid.to_string()).await.is_err());
+        let invalid = review_request(
+            serde_json::json!([{"intent":"Unobserved","observed_outcome":"No evidence","execution_ids":["missing"]}]),
+        );
+        assert!(engine
+            .review_workflow(&invalid.to_string(), actor)
+            .await
+            .is_err());
         let repository = config.learning().repository().await.unwrap();
         let session_id = engine.session_id.clone();
         engine.python_pool.close().await;
@@ -2651,6 +3176,7 @@ mod tests {
                     },
                     // Exposure must not attempt a connection to the optional learning store.
                     database_url: "postgresql://127.0.0.1:1/unavailable".into(),
+                    serve_examples: false,
                 },
             ))
             .unwrap();
@@ -3032,6 +3558,7 @@ mod tests {
                             project: "offline".into(),
                         },
                         database_url,
+                        serve_examples: false,
                     },
                 ))
                 .unwrap();
@@ -3047,6 +3574,11 @@ mod tests {
             .await
             .unwrap();
         let dispatches = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let training_actor = if collecting {
+            Some(opt_in_training(&engine).await)
+        } else {
+            None
+        };
         let dry = engine
             .dry_run(&format!(
                 "class Read(Program):\n    def build(self):\n        return {expression}\n"
@@ -3122,16 +3654,21 @@ mod tests {
         );
         if collecting {
             let index: serde_json::Value =
-                serde_json::from_str(&engine.completed_workflow_runs().await.unwrap()).unwrap();
-            let runs = index["runs"].as_array().unwrap();
-            assert_eq!(runs.len(), 1, "pages must never create program receipts");
-            let review = serde_json::json!({"subtasks":[{
-                "intent":"List fixture rows", "observed_outcome":"Observed all 88 rows",
-                "run_ids":[runs[0]["run_id"]]
-            }]});
-            let sealed: serde_json::Value =
-                serde_json::from_str(&engine.review_workflow(&review.to_string()).await.unwrap())
+                serde_json::from_str(&engine.completed_workflow_executions().await.unwrap())
                     .unwrap();
+            let runs = index["executions"].as_array().unwrap();
+            assert_eq!(runs.len(), 1, "pages must never create program receipts");
+            let review = review_request(serde_json::json!([{
+                "intent":"List fixture rows", "observed_outcome":"Observed all 88 rows",
+                "execution_ids":[runs[0]["execution_id"]]
+            }]));
+            let sealed: serde_json::Value = serde_json::from_str(
+                &engine
+                    .review_workflow(&review.to_string(), training_actor.unwrap())
+                    .await
+                    .unwrap(),
+            )
+            .unwrap();
             assert!(
                 sealed["review_ref"].is_string(),
                 "page delivery left unresolved evidence"

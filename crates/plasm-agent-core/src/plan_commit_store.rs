@@ -69,7 +69,7 @@ impl std::fmt::Display for PlanCommitVerifyError {
         match self {
             Self::Unknown { commit_ref } => write!(
                 f,
-                "unknown plan_commit_ref `{commit_ref}` — call `plasm` dry-run again"
+                "No operation ran. `{commit_ref}` was not issued for this session. Submit Python source to `plasm` and use only the exact `run_ref` it returns; never guess a reference."
             ),
             Self::Expired { commit_ref } => write!(
                 f,
@@ -552,6 +552,12 @@ mod tests {
             assert_eq!(result.is_err(), failure);
             if let Err(error) = result {
                 assert!(error.to_string().contains("first effect completed"));
+                assert!(error.diagnostic().contains(&format!(
+                    "Review `{reference}` has been used and cannot run again"
+                )));
+                assert!(crate::agent_presentation::render_failure(&error)
+                    .into_string()
+                    .contains(&format!("Review `{reference}` has been used")));
             }
             es.restore_persisted_plan_commits(&stale.records, stale.next_sequence);
             let duplicate = execute_authorized(&es, &host, Some(&reference), async {
@@ -610,7 +616,7 @@ mod tests {
             Ok(())
         })
         .await;
-        assert!(result.unwrap_err().to_string().contains("Indeterminate"));
+        assert!(result.unwrap_err().to_string().contains("indeterminate"));
         assert_eq!(effects.load(Ordering::SeqCst), before);
         // Paging and explicitly fresh direct executions are not reviewed-token replays.
         for _ in 0..2 {
@@ -693,6 +699,8 @@ mod tests {
         let pc = es.mint_plan_commit_ref();
         let err = verify_plan_commit_id(&es, &pc, PlanCommitId::from_canonical_bytes([0u8; 32]))
             .expect_err("unknown");
+        assert!(err.to_string().contains("No operation ran"));
+        assert!(err.to_string().contains("never guess a reference"));
         assert!(matches!(err, PlanCommitVerifyError::Unknown { .. }));
 
         let record = rehydrate_record(

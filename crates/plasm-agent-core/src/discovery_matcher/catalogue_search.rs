@@ -109,6 +109,16 @@ fn embedded_observations(cap: &CapabilitySchema, cgs: &CGS) -> String {
 }
 
 impl CatalogueSearch {
+    pub(crate) fn authorized_capabilities(
+        &self,
+        authorization: &DiscoveryAuthorization,
+    ) -> BTreeSet<CapabilityRef> {
+        self.candidates
+            .keys()
+            .filter(|reference| authorization.permits(reference))
+            .cloned()
+            .collect()
+    }
     pub fn new(
         catalogs: &BTreeMap<String, CGS>,
         _deployments: &DeploymentBindings,

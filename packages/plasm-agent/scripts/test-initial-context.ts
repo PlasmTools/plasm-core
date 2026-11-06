@@ -8,7 +8,7 @@ import { PlasmAgent } from "../src/runtime/plasm-agent.js";
 import type { PlasmEngine } from "../src/engine/napi-binding.js";
 
 const unused = async (): Promise<never> => { throw new Error("unexpected engine call"); };
-const engine: PlasmEngine = {
+const engine: PlasmEngine = { takeCompletedTeaching: async () => "",
   close: async () => {},
   loadCatalog: unused, activateDiscovery: unused, routeIntent: unused,
   synthesizeTeaching: unused, dryRun: unused, runPlan: unused, run: unused,
@@ -40,12 +40,13 @@ try {
     agent.runtime.hasOpenWorkflow = () => opened;
     agent.runtime.plasmContext = async (input) => {
       initialized++;
-      assert.deepEqual(input, {intent: task, sessionMode: "new", logicalSessionRef: undefined});
+      assert.deepEqual(input, {intent: task, sessionMode: "new"});
       opened = true;
       return context;
     };
     let observed = 0;
-    const first = await agent.generate(task, {wrapTools: (tools) => {
+    let hostObservation: { intent: string; result: string } | undefined;
+    const first = await agent.generate(task, {onInitialContext: event => { hostObservation = event; }, wrapTools: (tools) => {
       const contextTool = tools.plasm_context!;
       const execute = contextTool.execute!;
       return {...tools, plasm_context: {...contextTool, execute: async (input, options) => {
@@ -54,7 +55,8 @@ try {
         return execute(input, options);
       }}};
     }});
-    assert.equal(observed, 1, "host initialization preserves the normal observer path");
+    assert.equal(observed, 0, "host initialization does not invoke the model-facing continuation tool");
+    assert.deepEqual(hostObservation, { intent: task, result: context });
     assert.equal(initialized, 1);
     assert.equal(model.doStreamCalls.length, 1);
     assert.equal(first.toolCount, 0, "host bootstrap is not a model-authored tool call");

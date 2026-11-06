@@ -3,7 +3,7 @@
 use std::collections::BTreeMap;
 
 use rmcp::model::{Tool, ToolAnnotations};
-use serde_json::Map;
+use serde_json::{json, Map};
 
 use crate::mcp_delivery::McpDeliveryProfile;
 use crate::mcp_run_markdown::ArtifactAccessMode;
@@ -35,6 +35,8 @@ pub(crate) fn plasm_tools(artifact_access: ArtifactAccessMode, ui_apps_enabled: 
     let structured_ui_lane = delivery.emits_structured_ui();
     let attach_ui_meta = delivery.attaches_ui_meta();
     let mut context_props = BTreeMap::new();
+    context_props.insert("training".into(), json!({"type":"object","additionalProperties":false,"required":["intent","idempotency_key"],"properties":{"intent":{"const":"request"},"idempotency_key":{"type":"string","format":"uuid"}}}).as_object().expect("training creation schema").clone());
+
     context_props.insert(
         "session_mode".into(),
         json_schema_non_empty_string_type(
@@ -91,7 +93,18 @@ pub(crate) fn plasm_tools(artifact_access: ArtifactAccessMode, ui_apps_enabled: 
             model
         });
         model.icons = None;
-        model.meta = None;
+        model.meta =
+            if attach_ui_meta && crate::workflow_learning::WorkflowLearning::default().enabled() {
+                Some(
+                    serde_json::json!({"ui":{"resourceUri":crate::mcp_app::TRAINING.uri}})
+                        .as_object()
+                        .expect("training UI metadata")
+                        .clone()
+                        .into(),
+                )
+            } else {
+                None
+            };
         model.output_schema = None;
         model
     }];

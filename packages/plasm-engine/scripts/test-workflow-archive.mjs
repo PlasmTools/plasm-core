@@ -27,17 +27,14 @@ for (const config of [source, target]) {
 }
 const directory = await mkdtemp(join(tmpdir(), 'plasm-archive-cli-'));
 const cli = fileURLToPath(new URL('./workflow-archive.mjs', import.meta.url));
-const protocol = createHash('sha256').update('offline archive CLI integration v1').digest('hex');
 const attempt = `offline-${randomUUID()}`;
-const task = 'abstract-unattempted-task';
-const group = 'abstract-unattempted-group';
 async function json(name, value) {
   const path = join(directory, name);
   await writeFile(path, JSON.stringify(value), { flag: 'wx', mode: 0o600 });
   return path;
 }
 async function invoke(action, config, name, args) {
-  const output = join(directory, `${name}.json`);
+  const output = join(directory, action === 'export' ? name : `${name}.json`);
   const audit = join(directory, `${name}.audit.jsonl`);
   const result = spawnSync(process.execPath, [cli, action, '--config', config,
     '--output', output, '--audit', audit, ...args], {
@@ -49,38 +46,32 @@ async function invoke(action, config, name, args) {
     stderr: result.stderr, error: result.error?.message,
   }), { flag: 'wx', mode: 0o600 });
   assert.equal(result.status, 0, `CLI ${name} failed; private diagnostics: ${directory}`);
-  assert.equal((await stat(output)).mode & 0o777, 0o600);
+  assert.equal((await stat(output)).mode & 0o777, action === 'export' ? 0o700 : 0o600);
   assert.equal((await stat(audit)).mode & 0o777, 0o600);
-  return { output, value: JSON.parse(await readFile(output, 'utf8')) };
+  return { output, value: JSON.parse(await readFile(action === 'export' ? join(output, 'manifest.json') : output, 'utf8')) };
 }
-const request = await json('request.json', {
-  kind: 'private_collection', collection: {
-    protocol_digest: protocol, tasks: [{ task_id: task, group_id: group }],
-  },
-});
-const assessments = await json('assessments.json', [{
-  attempt_id: attempt, task_id: task, group_id: group, logical_sessions: [],
-  protocol_digest: protocol, assessor: 'offline-cli-fixture-v1',
-  outcome: { status: 'unavailable', reason: 'not_attempted' },
-}]);
-const exported = await invoke('export', sourcePath, 'export', ['--request', request, '--assessments', assessments]);
-assert.equal(exported.value.items.length, 1, 'Source fixture must be isolated and empty before this test');
-assert.equal(exported.value.items[0].record.kind, 'assessment');
-assert.equal(exported.value.items[0].record.assessment.outcome.status, 'unavailable');
-const originalBytes = await readFile(exported.output);
+const request = await json('request.json', {kind: 'private_collection'});
+const exported = await invoke('export', sourcePath, 'export', ['--request', request]);
+assert.equal(exported.value.version, 2);
+assert.ok(Object.keys(exported.value.records).length > 0, 'Source fixture must contain workflow evidence');
+assert.ok(Object.values(exported.value.records).some(item => item.kind === 'observation'));
+assert.ok(Object.values(exported.value.records).some(item => item.kind === 'review'));
+const originalBytes = await readFile(join(exported.output, 'manifest.json'));
+for (const item of Object.values(exported.value.records)) {
+  const bytes = await readFile(join(exported.output, 'objects', item.digest.slice(0, 2), item.digest));
+  assert.equal(bytes.length, item.size);
+  assert.equal(createHash('sha256').update(bytes).digest('hex'), item.digest);
+}
 const policy = await json('policy.json', {
-  expected_digest: exported.value.digest, source_scope: exported.value.manifest.source_scope,
-  excluded_tasks: [], excluded_groups: [],
+  expected_digest: exported.value.digest, source_scope: exported.value.source_scope,
 });
 const importArgs = ['--archive', exported.output, '--policy', policy,
   '--catalogs', catalogs, '--bindings', bindings, '--deployment', `archive-proof-${attempt}`];
 const imported = await invoke('import', targetPath, 'import', importArgs);
-assert.deepEqual(imported.value.items.map(item => item.disposition.status), ['retained_observation']);
+assert.ok(imported.value.items.length > 0);
 const repeated = await invoke('import', targetPath, 'reimport', importArgs);
-assert.deepEqual(repeated.value.items.map(item => item.disposition.status), ['duplicate']);
-assert.deepEqual(await readFile(exported.output), originalBytes, 'Import must not mutate source archive bytes');
-const retained = await invoke('export', targetPath, 'retained-export', ['--digest', exported.value.digest]);
-assert.deepEqual(await readFile(retained.output), originalBytes, 'Retained export must preserve exact source archive bytes');
+assert.ok(repeated.value.items.every(item => item.disposition.status === 'duplicate'));
+assert.deepEqual(await readFile(join(exported.output, 'manifest.json')), originalBytes, 'Import must not mutate source archive');
 // These prepared databases/schemas are exclusive fixtures, so whole-table counts also
 // detect accidental fabrication under an unexpected scope.
 const query = `SELECT json_build_object('receipts',(SELECT count(*) FROM workflow_learning_receipts),'reviews',(SELECT count(*) FROM workflow_learning_reviews),'archives',(SELECT count(*) FROM workflow_learning_archives))`;
@@ -106,4 +97,4 @@ await writeFile(join(directory, 'database-inspection.process.json'), JSON.string
 assert.equal(count.status, 0, 'Fixture database inspection failed');
 assert.deepEqual(JSON.parse(count.stdout), { receipts: 0, reviews: 0, archives: 1 });
 console.log(JSON.stringify({ result: 'passed', directory, archive_digest: exported.value.digest,
-  assertions: ['private-unavailable-assessment', 'real-cli-import', 'idempotent-reimport', 'immutable-source', 'exact-retained-roundtrip', 'no-local-execution-or-review'] }));
+  assertions: ['content-addressed-evidence', 'real-cli-import', 'idempotent-reimport', 'immutable-source', 'no-local-execution-or-review'] }));

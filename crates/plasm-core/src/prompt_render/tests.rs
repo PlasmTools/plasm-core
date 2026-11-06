@@ -2205,7 +2205,7 @@ fn plasm_tool_prefix_preserves_python_admission_and_review() {
             "missing early protocol instruction: {required}"
         );
     }
-    assert!(full.contains("completed writes"));
+    assert!(super::PLASM_RUN_TOOL_DESCRIPTION.contains("completed writes"));
     assert!(full.contains("same logical session"));
 }
 

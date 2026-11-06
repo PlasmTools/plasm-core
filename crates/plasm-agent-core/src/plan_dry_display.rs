@@ -576,6 +576,28 @@ pub fn render_plan_dry_compact_text(
     out
 }
 
+/// The compiler's planned operations for semantic teaching, without policy or scoring.
+pub(crate) fn render_teaching_plan(view: &PlanDryCompactView) -> String {
+    let mut out = String::new();
+    for step in &view.steps {
+        let op = match &step.op {
+            PlanDryOp::Derive { summary, .. } | PlanDryOp::Data { summary } => summary.clone(),
+            PlanDryOp::Python { input, .. } => compact_python(input.as_deref()),
+            other => render_plan_dry_op(other),
+        };
+        if step.uses.is_empty() {
+            let _ = writeln!(out, "{}: {op}", step.id);
+        } else {
+            let _ = writeln!(out, "{}: {op} ← {}", step.id, step.uses.join(", "));
+        }
+    }
+    let _ = writeln!(out, "{}", view.return_label);
+    if view.show_execution_order_footer {
+        let _ = writeln!(out, "Actions execute in source order.");
+    }
+    out
+}
+
 /// Operator-facing step title for synthetic IR nodes (not tuned `read_1`/`compute_2` labels).
 pub(crate) fn human_ux_headline_for_op(op: &PlanDryOp) -> String {
     match op {
@@ -1494,6 +1516,44 @@ mod tests {
     use plasm_core::{CgsContext, TeachingExposureSession};
     use std::collections::BTreeMap;
     use std::sync::Arc;
+
+    #[test]
+    fn teaching_plan_retains_order_and_dependencies_without_policy_scoring() {
+        let view = PlanDryCompactView {
+            verdict: PlanDryVerdict::Review,
+            node_count: 2,
+            read_count: 1,
+            write_count: 1,
+            return_label: "returns: result".into(),
+            show_execution_order_footer: true,
+            deny_line: Some("policy denial".into()),
+            warnings: Some("risk score".into()),
+            steps: vec![
+                PlanDryStep {
+                    ordinal: 1,
+                    id: "guard".into(),
+                    synthetic: false,
+                    op: PlanDryOp::Data {
+                        summary: "filter amount < 25".into(),
+                    },
+                    uses: vec![],
+                },
+                PlanDryStep {
+                    ordinal: 2,
+                    id: "pay".into(),
+                    synthetic: false,
+                    op: PlanDryOp::Data {
+                        summary: "action send payment".into(),
+                    },
+                    uses: vec!["guard".into()],
+                },
+            ],
+        };
+        let text = render_teaching_plan(&view);
+        assert_eq!(text, "guard: filter amount < 25\npay: action send payment ← guard\nreturns: result\nActions execute in source order.\n");
+        assert!(!text.contains("policy denial"));
+        assert!(!text.contains("risk score"));
+    }
 
     #[test]
     fn resource_lifecycle_teaching_retains_source_registration_and_unknown_readiness() {

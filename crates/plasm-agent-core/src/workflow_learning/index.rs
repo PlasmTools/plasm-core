@@ -11,7 +11,7 @@ pub struct NormalizedIntent {
     pub aliases: Vec<String>,
 }
 
-fn normalize(text: &str) -> String {
+pub(super) fn normalize(text: &str) -> String {
     text.split_whitespace()
         .collect::<Vec<_>>()
         .join(" ")

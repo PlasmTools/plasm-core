@@ -1,0 +1,101 @@
+{
+  "version": 1,
+  "entry_id": "matrix",
+  "http_backend": "http://127.0.0.1:9",
+  "auth": {
+    "scheme": "none"
+  },
+  "values": {
+    "humidity": {
+      "type": "string",
+      "description": "Current greenhouse relative humidity."
+    },
+    "sound": {
+      "type": "string",
+      "description": "Current machinery sound pressure."
+    },
+    "invoice": {
+      "type": "string",
+      "description": "Accounting invoice number identifying a billed service."
+    }
+  },
+  "entities": {
+    "Humidity": {
+      "id_field": "value",
+      "description": "Current greenhouse relative humidity.",
+      "fields": {
+        "value": {
+          "value_ref": "humidity",
+          "required": true
+        }
+      }
+    },
+    "Sound": {
+      "id_field": "value",
+      "description": "Current machinery sound pressure.",
+      "fields": {
+        "value": {
+          "value_ref": "sound",
+          "required": true
+        }
+      }
+    },
+    "Invoice": {
+      "id_field": "value",
+      "description": "Accounting invoice number identifying a billed service.",
+      "fields": {
+        "value": {
+          "value_ref": "invoice",
+          "required": true
+        }
+      }
+    }
+  },
+  "capabilities": {
+    "humidity_read": {
+      "entity": "Humidity",
+      "kind": "get",
+      "description": "Read greenhouse relative humidity.",
+      "receiver": {
+        "kind": "none"
+      },
+      "provides": [
+        "value"
+      ],
+      "output": {
+        "type": "entity",
+        "entity_type": "Humidity"
+      }
+    },
+    "sound_read": {
+      "entity": "Sound",
+      "kind": "get",
+      "description": "Read machinery sound pressure.",
+      "receiver": {
+        "kind": "none"
+      },
+      "provides": [
+        "value"
+      ],
+      "output": {
+        "type": "entity",
+        "entity_type": "Sound"
+      }
+    },
+    "invoice_read": {
+      "entity": "Invoice",
+      "kind": "get",
+      "description": "Read accounting invoice numbers for billed services.",
+      "receiver": {
+        "kind": "none"
+      },
+      "provides": [
+        "value"
+      ],
+      "output": {
+        "type": "entity",
+        "entity_type": "Invoice"
+      }
+    }
+  }
+}

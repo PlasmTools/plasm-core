@@ -2,6 +2,41 @@
 use super::*;
 use crate::discovery_matcher::online::tests::fixture;
 
+#[test]
+fn deferred_recalled_root_precedes_optional_consumer_but_not_current_lead() {
+    let catalogs = fixture();
+    let deployments = Default::default();
+    let allowed = DiscoveryAuthorization::catalogs(BTreeSet::from(["matrix".into()]));
+    let index = CatalogueSearch::new(&catalogs, &deployments, &allowed).unwrap();
+    let reference = |capability: &str| CapabilityRef {
+        catalog: "matrix".into(),
+        capability: capability.into(),
+    };
+    let intent = IntentProvenance::from_turns(["Inspect and prepare the sample.".into()]).unwrap();
+    let exposed = [reference("source_read")];
+    let visits = BTreeMap::new();
+    let context = SearchContext {
+        model: RELEVANCE_MODEL,
+        intent: &intent,
+        generation: "fixture",
+        catalogs: &catalogs,
+        deployments: &deployments,
+        allowed: &allowed,
+        exposed: &exposed,
+        visits: &visits,
+    };
+    let lead = reference("opaque");
+    let deferred = reference("prepare");
+    let order = order_recalled(
+        &index,
+        context,
+        vec![lead.clone(), reference("process"), deferred.clone()],
+        &BTreeMap::from([(deferred.clone(), 4)]),
+    );
+    assert_eq!(order[0], lead);
+    assert_eq!(order[1], deferred);
+}
+
 fn allocate(previous_visits: usize, width: usize) -> Plan {
     let catalogs = fixture();
     let deployments = Default::default();

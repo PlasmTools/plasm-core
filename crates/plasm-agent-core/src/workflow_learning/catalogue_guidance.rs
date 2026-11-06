@@ -1,7 +1,7 @@
 //! Reviewed catalogue associations are independent of example disclosure eligibility.
 use super::{
     index::NormalizedIntent,
-    model::{CompiledProgramId, RunArtifactId, SealedReview},
+    model::{CompiledProgramId, ExecutionId, SealedReview},
     normalization::FamilyMatch,
     repository::RepositoryError,
     teaching::ProgramCatalogueRequirements,
@@ -14,13 +14,6 @@ use std::collections::BTreeMap;
 pub enum CatalogueRequirementEvidence {
     Available(ProgramCatalogueRequirements),
     Unavailable { diagnostic: String },
-}
-impl Default for CatalogueRequirementEvidence {
-    fn default() -> Self {
-        Self::Unavailable {
-            diagnostic: "historical receipt has no compiled catalogue witness".into(),
-        }
-    }
 }
 impl CatalogueRequirementEvidence {
     pub fn from_compiled(
@@ -51,13 +44,13 @@ pub struct CatalogueAssociation {
     pub(super) embedding: Vec<f32>,
     pub(super) embedding_profile: String,
     pub(super) requirements: ProgramCatalogueRequirements,
-    pub(super) evidence: BTreeMap<RunArtifactId, String>,
+    pub(super) evidence: BTreeMap<ExecutionId, String>,
     pub(super) confirmed: bool,
 }
 impl CatalogueAssociation {
     pub fn from_review(
         seal: &SealedReview,
-        run_ids: &[RunArtifactId],
+        execution_ids: &[ExecutionId],
         intent: NormalizedIntent,
         family: FamilyMatch,
         embedding: Vec<f32>,
@@ -66,7 +59,7 @@ impl CatalogueAssociation {
         let selected: Vec<_> = seal
             .executions
             .iter()
-            .filter(|receipt| run_ids.contains(&receipt.run_id))
+            .filter(|receipt| execution_ids.contains(&receipt.execution_id))
             .collect();
         let observations =
             super::quality::program_observations(selected.iter().copied()).map_err(|_| {
@@ -74,7 +67,7 @@ impl CatalogueAssociation {
                     "catalogue association requires one consistent program observation",
                 )
             })?;
-        if observations.len() != 1 || selected.len() != run_ids.len() {
+        if observations.len() != 1 || selected.len() != execution_ids.len() {
             return Err(RepositoryError::InvalidEvidence(
                 "catalogue association requires exact cited program receipts",
             ));
@@ -90,8 +83,8 @@ impl CatalogueAssociation {
             .into_iter()
             .map(|receipt| {
                 Ok((
-                    receipt.run_id,
-                    plasm_core::catalog_discovery::content_hash(&serde_json::to_vec(receipt)?),
+                    receipt.execution_id,
+                    receipt.evidence_digest()?.as_str().to_owned(),
                 ))
             })
             .collect::<Result<BTreeMap<_, _>, RepositoryError>>()?;
@@ -160,14 +153,17 @@ impl CatalogueAssociation {
             ));
         }
         for (run, digest) in &self.evidence {
-            let receipt = seal.executions.iter().find(|r| &r.run_id == run).ok_or(
-                RepositoryError::InvalidEvidence("association receipt absent from seal"),
-            )?;
+            let receipt = seal
+                .executions
+                .iter()
+                .find(|r| &r.execution_id == run)
+                .ok_or(RepositoryError::InvalidEvidence(
+                    "association receipt absent from seal",
+                ))?;
             if receipt.scope != seal.request.scope
                 || receipt.logical_session != seal.request.logical_session
                 || receipt.catalogue_requirements.available() != Some(&self.requirements)
-                || plasm_core::catalog_discovery::content_hash(&serde_json::to_vec(receipt)?)
-                    != *digest
+                || receipt.evidence_digest()?.as_str() != digest
                 || plasm_core::catalog_discovery::content_hash(receipt.source.as_bytes())
                     != self.requirements.source_sha256()
                 || plasm_core::catalog_discovery::content_hash(&serde_json::to_vec(

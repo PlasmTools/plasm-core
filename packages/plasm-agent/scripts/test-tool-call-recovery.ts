@@ -10,6 +10,7 @@ import { ToolCallRecovery } from "../src/telemetry/tool-call-recovery.js";
 import { toolValidationFeedback } from "../src/telemetry/tool-validation-feedback.js";
 import { createTaskLedgerTool, TaskLedgerStore, emptyTaskLedger } from "../src/tools/task-ledger.js";
 
+
 // Evidence grammar must be provider-visible and recoverable without echoing rejected bytes.
 {
   const store = new TaskLedgerStore();
@@ -101,7 +102,7 @@ for (const input of ['{"answer":"PRIVATE_REJECTED_VALUE"}', '{"logical_session_r
 
 const malformed = "class Read(Program):\n    def build(self):\n        return e1.query()\n</parameter\n<tool_call>";
 const valid = "# </parameter> is legal in a comment\nclass Read(Program):\n    def build(self):\n        return e1.query()\n";
-const failure = { cause: "program", recovery: "repair_program", code: "program_syntax", diagnostic: "syntax error", node: null,
+const failure = { cause: "program", recovery: "repair_program", code: "program_syntax", diagnostic: "Python syntax at line 4, column 1: expected a valid statement", node: null,
   occurrence_path: [], catalog_digest: null, effects: [], dispatches: [], effects_unresolved: false };
 
 // A lost provider result or execution exception cannot grant a second dispatch.
@@ -222,6 +223,7 @@ for (const repaired of [true, false]) {
           assert(!text.includes("rejectedInput"));
           assert(!text.includes("<tool_call>"), "rejected source bytes must not contaminate regeneration");
           assert(text.includes("line 4, column 1"));
+          assert(!text.includes("Recorded failure details"), "an effect-free syntax correction does not repeat a failure ledger");
         } else assert(!text.includes("Regenerate arguments"), "repaired call leaves temporary repair context");
       }
       return { stream: new ReadableStream({ start(controller) {

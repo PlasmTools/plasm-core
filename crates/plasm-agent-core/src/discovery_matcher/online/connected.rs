@@ -15,6 +15,8 @@ struct BundlePriority {
     reference: CapabilityRef,
 }
 const MAX_VARIANTS: usize = 64;
+/// Once overdue, current-request recall breaks ties between deferred roots.
+const DEFERRED_PRIORITY_LIMIT: usize = 3;
 
 #[cfg(test)]
 mod allocation_progress_tests;
@@ -26,8 +28,11 @@ mod capacity_tests;
 mod recorded_cost_tests;
 
 struct LocalPacket {
+    #[cfg(test)]
     scope: witnesses::Scope,
+    #[cfg(test)]
     question: Question,
+    #[cfg(test)]
     members: BTreeSet<CapabilityRef>,
     prepared: request_packing::PreparedLocal,
 }
@@ -48,7 +53,9 @@ fn allocation_slot(
 pub(super) struct Plan {
     pub wave: Vec<(CapabilityRef, Route)>,
     pub deferred: BTreeMap<CapabilityRef, DeferredReason>,
+    #[cfg(test)]
     pub issued: Option<IssuedBatch>,
+    #[cfg(test)]
     pub members: BTreeSet<CapabilityRef>,
     #[cfg(test)]
     pub diagnostic: Vec<serde_json::Value>,
@@ -159,7 +166,7 @@ fn body_size(
         }
         let identity = (key.clone(), path.clone());
         if let std::collections::btree_map::Entry::Vacant(entry) = cache.entry(identity) {
-            let (scope, question, members) = packet_scope(index, key, path, context)?;
+            let (scope, _question, _members) = packet_scope(index, key, path, context)?;
             let prepared = request_packing::PreparedLocal::for_scope(
                 context.model,
                 context.intent,
@@ -167,9 +174,12 @@ fn body_size(
                 &scope,
             )?;
             entry.insert(LocalPacket {
+                #[cfg(test)]
                 scope,
-                question,
-                members,
+                #[cfg(test)]
+                question: _question,
+                #[cfg(test)]
+                members: _members,
                 prepared,
             });
         }
@@ -187,13 +197,19 @@ pub(super) fn root_order(
     index: &CatalogueSearch,
     context: SearchContext<'_>,
 ) -> Vec<CapabilityRef> {
-    order_recalled(index, context, index.ranking.rank(context.intent.current()))
+    order_recalled(
+        index,
+        context,
+        index.ranking.rank(context.intent.current()),
+        &BTreeMap::new(),
+    )
 }
 
-fn order_recalled(
+pub(super) fn order_recalled(
     index: &CatalogueSearch,
     context: SearchContext<'_>,
     mut order: Vec<CapabilityRef>,
+    deferred: &BTreeMap<CapabilityRef, usize>,
 ) -> Vec<CapabilityRef> {
     // Exposure is not execution or relevance, but a declared producer can
     // nominate its direct consumer for judgment. Supplier-only traversal loses
@@ -226,11 +242,20 @@ fn order_recalled(
             context.visits.get(key).copied().unwrap_or(0),
             if Some(key) == requested.as_ref() {
                 0
-            } else if consumers.contains(key) {
+            } else if ranked.contains(key) && deferred.contains_key(key) {
                 1
-            } else {
+            } else if consumers.contains(key) {
                 2
+            } else {
+                3
             },
+            std::cmp::Reverse(
+                deferred
+                    .get(key)
+                    .copied()
+                    .unwrap_or(0)
+                    .min(DEFERRED_PRIORITY_LIMIT),
+            ),
         )
     });
     order
@@ -244,13 +269,48 @@ pub(super) fn plan(
     plan_recalled(index, context, index.ranking.rank(context.intent.current()))
 }
 
+#[cfg(test)]
 pub(super) fn plan_recalled(
     index: &CatalogueSearch,
     context: SearchContext<'_>,
     roots: Vec<CapabilityRef>,
 ) -> Result<Plan, DiscoveryMatcherError> {
-    let order = order_recalled(index, context, roots);
+    let order = order_recalled(index, context, roots, &BTreeMap::new());
     plan_ordered(index, context, order)
+}
+
+pub(super) fn plan_recalled_with_deferred(
+    index: &CatalogueSearch,
+    context: SearchContext<'_>,
+    roots: Vec<CapabilityRef>,
+    deferred: &BTreeMap<CapabilityRef, usize>,
+) -> Result<Plan, DiscoveryMatcherError> {
+    let recalled: BTreeSet<_> = roots.iter().cloned().collect();
+    let order = order_recalled(index, context, roots, deferred);
+    let plan = plan_ordered(index, context, order.clone())?;
+    // A leading request candidate can occupy nearly the whole packet. A
+    // currently recalled candidate that repeatedly could not share its packet
+    // must eventually get a turn, rather than accumulating deferrals forever.
+    let blocked = order
+        .iter()
+        .find(|key| {
+            recalled.contains(*key)
+                && deferred.get(*key).copied().unwrap_or(0) >= DEFERRED_PRIORITY_LIMIT
+                && matches!(plan.deferred.get(*key), Some(DeferredReason::InputBytes))
+                && !plan.wave.iter().any(|(member, _)| member == *key)
+        })
+        .cloned();
+    let Some(blocked) = blocked else {
+        return Ok(plan);
+    };
+    let mut retry = vec![blocked.clone()];
+    retry.extend(order.into_iter().filter(|key| key != &blocked));
+    let alternate = plan_ordered(index, context, retry)?;
+    if alternate.wave.iter().any(|(member, _)| member == &blocked) {
+        Ok(alternate)
+    } else {
+        Ok(plan)
+    }
 }
 
 // Separate ordering from exact packet construction for controlled scheduling
@@ -446,6 +506,7 @@ pub(super) fn plan_ordered(
     )? {
         members.extend([edge.source, edge.consumer]);
     }
+    #[cfg(test)]
     let local = proposed
         .iter()
         .filter(|(key, _)| !context.exposed.contains(key))
@@ -465,19 +526,27 @@ pub(super) fn plan_ordered(
             )
         })
         .collect::<Result<Vec<_>, _>>()?;
+    #[cfg(test)]
     let issued = request_packing::connected(local)?;
     // An existing declaration may anchor an acquisition path that cannot fit.
     // Deferring that expansion does not defer the declaration already exposed.
     deferred.retain(|key, _| !context.exposed.contains(key));
+    let mut wave: Vec<_> = proposed
+        .into_iter()
+        .filter(|(key, _)| !context.exposed.contains(key))
+        .collect();
+    // A bundle is assembled in a map for graph closure, but the operation
+    // scheduler must see recalled roots in the planner's priority order.
+    // Otherwise catalogue identifiers silently decide ties between questions.
+    wave.sort_by_key(|(key, _)| ranks.get(key).copied().unwrap_or(usize::MAX));
     Ok(Plan {
         #[cfg(test)]
         diagnostic,
-        wave: proposed
-            .into_iter()
-            .filter(|(key, _)| !context.exposed.contains(key))
-            .collect(),
+        wave,
         deferred,
+        #[cfg(test)]
         issued,
+        #[cfg(test)]
         members,
     })
 }

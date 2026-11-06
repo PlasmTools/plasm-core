@@ -59,7 +59,7 @@ console.log("PASS: generated Python calls, Get arguments, mutation receivers, co
 
 const { createProgramBuilder } = await import("../src/stubs/program-builder.js");
 let envelope: unknown = {rows: [{id: 3}]};
-const engine: import("../src/engine/napi-binding.js").PlasmEngine = {
+const engine: import("../src/engine/napi-binding.js").PlasmEngine = { takeCompletedTeaching: async () => "",
   async close() {},
   async loadCatalog() {},
   async synthesizeTeaching() { return {prompt: "", deltaRefs: []}; },

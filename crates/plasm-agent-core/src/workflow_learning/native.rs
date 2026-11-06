@@ -29,6 +29,8 @@ pub struct NativeLibraryConfig {
     pub scope: LibraryScope,
     #[serde(rename = "databaseUrl")]
     pub database_url: String,
+    #[serde(default, rename = "serveExamples")]
+    pub serve_examples: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -44,6 +46,8 @@ pub enum NativeLearningConfig {
 #[derive(Debug, thiserror::Error)]
 pub enum NativeLearningError {
     #[error(transparent)]
+    Training(#[from] super::training::TrainingError),
+    #[error(transparent)]
     RunIdentity(#[from] crate::run_artifacts::RunArtifactWireError),
     #[error("invalid workflow learning configuration: {0}")]
     Configuration(&'static str),
@@ -57,6 +61,8 @@ pub enum NativeLearningError {
     Learning(#[from] super::LearningError),
     #[error(transparent)]
     Archive(#[from] super::archive::ArchiveError),
+    #[error(transparent)]
+    FilesystemArchive(#[from] super::filesystem_archive::FilesystemArchiveError),
     #[error(transparent)]
     Review(#[from] super::review::ReviewError),
     #[error(transparent)]
@@ -76,6 +82,10 @@ pub enum NativeLearningError {
 }
 
 impl NativeLearningConfig {
+    pub fn serves_examples(&self) -> bool {
+        matches!(self, Self::Examples(_))
+            || matches!(self, Self::Collect(config) if config.serve_examples)
+    }
     pub fn mode(&self) -> NativeLearningMode {
         match self {
             Self::Baseline => NativeLearningMode::Baseline,
@@ -115,6 +125,9 @@ impl NativeLearningConfig {
         Arc::new(WorkflowLearning::configured(
             match self.mode() {
                 NativeLearningMode::Baseline => LearningMode::Disabled,
+                NativeLearningMode::Collect if self.serves_examples() => {
+                    LearningMode::ShadowWithRecall
+                }
                 NativeLearningMode::Collect => LearningMode::Shadow,
                 NativeLearningMode::Admission | NativeLearningMode::Examples => {
                     LearningMode::Serving
@@ -214,31 +227,31 @@ impl NativeLearningConfig {
         Ok(())
     }
 
-    pub async fn completed_runs(
+    pub async fn completed_executions(
         &self,
         host: &PlasmHostState,
         logical: &str,
         intent: &str,
     ) -> Result<serde_json::Value, NativeLearningError> {
-        if self.mode() != NativeLearningMode::Collect {
+        if self.mode() == NativeLearningMode::Baseline {
             return Err(NativeLearningError::Mode);
         }
-        let runs = host
+        let executions = host
             .workflow_learning
             .repository()
             .await?
             .execution_index(&self.scope()?, LogicalSessionId::parse(logical)?)
             .await?;
-        Ok(serde_json::json!({"intent":intent,"runs":runs}))
+        Ok(serde_json::json!({"intent":intent,"executions":executions}))
     }
 
-    pub async fn read_evidence(
+    pub async fn read_teaching_program(
         &self,
         host: &PlasmHostState,
         logical: &str,
-        run_id: &str,
+        execution_id: &str,
     ) -> Result<serde_json::Value, NativeLearningError> {
-        if self.mode() != NativeLearningMode::Collect {
+        if self.mode() == NativeLearningMode::Baseline {
             return Err(NativeLearningError::Mode);
         }
         let receipt = host
@@ -248,16 +261,16 @@ impl NativeLearningConfig {
             .execution_receipt(
                 &self.scope()?,
                 LogicalSessionId::parse(logical)?,
-                run_id.parse::<crate::run_artifacts::RunArtifactWire>()?.0,
+                super::model::ExecutionId::from_wire(execution_id).ok_or(
+                    NativeLearningError::Configuration("invalid execution identity"),
+                )?,
             )
             .await?;
-        let value = serde_json::to_value(receipt)?;
-        if serde_json::to_vec(&value)?.len() > 1_048_576 {
-            return Err(NativeLearningError::Configuration(
-                "immutable receipt exceeds the 1 MiB evidence read limit",
-            ));
-        }
-        Ok(value)
+        super::review_packet::ReviewPacket::with_plan(&receipt, receipt.teaching_plan.text())
+            .encode()?
+            .ok_or(NativeLearningError::Configuration(
+                "complete program review packet exceeds 64 KiB; retained for later review",
+            ))
     }
 
     pub async fn review(
@@ -266,9 +279,9 @@ impl NativeLearningConfig {
         session: &ExecuteSession,
         logical: &str,
         execute_session: &str,
-        subtasks: Vec<AchievedSubtask>,
+        review: NativeReview,
     ) -> Result<serde_json::Value, NativeLearningError> {
-        if self.mode() != NativeLearningMode::Collect {
+        if self.mode() == NativeLearningMode::Baseline {
             return Err(NativeLearningError::Mode);
         }
         let handle = host
@@ -280,11 +293,14 @@ impl NativeLearningConfig {
                     logical_session: LogicalSessionId::parse(logical)?,
                     prompt_hash: session.prompt_hash.clone(),
                     execute_session: execute_session.to_owned(),
-                    subtasks,
+                    subtasks: review.subtasks,
+                    actor: review.actor,
+                    expected_revision: review.expected_revision,
+                    idempotency_key: review.idempotency_key,
                 },
             )
             .await?;
-        Ok(serde_json::json!({"review_ref":handle.id.to_string(),"digest":handle.digest}))
+        Ok(serde_json::json!({"review_ref":handle.id.to_string(),"status":"queued"}))
     }
 
     pub async fn fetch(
@@ -295,7 +311,7 @@ impl NativeLearningConfig {
         revision: &str,
         allowed: &crate::discovery_store::DiscoveryAuthorization,
     ) -> Result<super::serving::ServedExample, NativeLearningError> {
-        if self.mode() != NativeLearningMode::Examples {
+        if !self.serves_examples() {
             return Err(NativeLearningError::Mode);
         }
         let repository = host.workflow_learning.repository().await?;
@@ -310,5 +326,31 @@ impl NativeLearningConfig {
         )
         .await?;
         Ok(super::serving::commit_example_fetch(host, &repository, prepared, allowed).await?)
+    }
+}
+
+pub struct NativeReview {
+    pub subtasks: Vec<AchievedSubtask>,
+    pub actor: super::training::TrustedTrainingActor,
+    pub expected_revision: u64,
+    pub idempotency_key: uuid::Uuid,
+}
+
+#[cfg(test)]
+mod online_collection_tests {
+    use super::*;
+
+    #[test]
+    fn collection_recall_does_not_enable_automatic_publication() {
+        let config = NativeLearningConfig::Collect(NativeLibraryConfig {
+            scope: LibraryScope {
+                tenant: "tenant".into(),
+                project: "project".into(),
+            },
+            database_url: "postgresql://localhost/fixture".into(),
+            serve_examples: true,
+        });
+        assert!(config.serves_examples());
+        assert_eq!(config.learning().mode, LearningMode::ShadowWithRecall);
     }
 }

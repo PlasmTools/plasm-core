@@ -15,6 +15,32 @@ fn envelope(proposal: serde_json::Value) -> String {
     serde_json::json!({"choices":[{"message":{"role":"assistant","content":proposal.to_string()}}],"usage":{"prompt_tokens":17,"completion_tokens":9}}).to_string()
 }
 #[test]
+fn family_labels_are_resolved_only_after_request_validation() {
+    let mut value = proposal();
+    value["family"] = serde_json::json!({"kind":"existing", "family":"known"});
+    let validated = request().decode(&envelope(value)).unwrap();
+    let labels =
+        std::collections::BTreeMap::from([("known".to_string(), "durable-family".to_string())]);
+    let resolved = validated.resolve_family_labels(&labels).unwrap();
+    assert!(
+        matches!(resolved.family(), FamilyMatch::Existing { family } if family.as_str() == "durable-family")
+    );
+}
+#[test]
+fn length_limited_normalization_is_reported_as_truncation() {
+    let request = request();
+    let raw = serde_json::json!({"choices":[{"finish_reason":"length","message":{"content":"{\"intent\":\"unfinished"}}]}).to_string();
+    let error = request.decode(&raw).unwrap_err();
+    assert!(error.to_string().contains("truncated"), "{error}");
+    assert!(matches!(error, NormalizationError::Truncated));
+    assert_eq!(error.diagnostic(), NormalizationDiagnostic::Truncated);
+    let valid_prefix = serde_json::json!({"choices":[{"finish_reason":"length","message":{"content":proposal().to_string()}}]}).to_string();
+    assert!(matches!(
+        request.decode(&valid_prefix),
+        Err(NormalizationError::Truncated)
+    ));
+}
+#[test]
 fn strict_normalization_schema_matches_domain_bounds_and_family_alternatives() {
     let request = request();
     assert_eq!(
@@ -22,6 +48,7 @@ fn strict_normalization_schema_matches_domain_bounds_and_family_alternatives() {
         "https://openrouter.ai/api/v1/chat/completions"
     );
     let body: serde_json::Value = serde_json::from_str(request.body()).unwrap();
+    assert_eq!(body["max_tokens"], OUTPUT_TOKEN_LIMIT);
     assert_eq!(body["model"], "openai/gpt-6-luna");
     assert_eq!(body["response_format"]["type"], "json_schema");
     assert_eq!(body["response_format"]["json_schema"]["strict"], true);

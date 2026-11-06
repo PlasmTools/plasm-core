@@ -75,7 +75,7 @@ try {
   assert.match(String(rejected), /write rejected/);
   assert.deepEqual(store.record, before, "invalid resolution rejects the whole update, including new open work");
   const unused = async (): Promise<never> => { throw new Error("no engine execution permitted"); };
-  const engine: PlasmEngine = { close: async () => {}, loadCatalog: unused, activateDiscovery: unused,
+  const engine: PlasmEngine = { takeCompletedTeaching: async () => "", close: async () => {}, loadCatalog: unused, activateDiscovery: unused,
     routeIntent: unused, synthesizeTeaching: unused, dryRun: unused, run: unused, runPlan: unused, introspectCatalog: unused };
   const runtime = new AgentRuntime({ agentRoot: root, tenantScope: "test", engine, hostTransport: null });
   const manager: unknown = Reflect.get(runtime, "sessionManager");

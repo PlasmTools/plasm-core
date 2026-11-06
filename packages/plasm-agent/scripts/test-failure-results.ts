@@ -20,6 +20,16 @@ const runtime = {
 };
 const options = {toolCallId: "fixture", messages: [], context: {}};
 const tools = createPlasmTools(runtime);
+{
+  const parseFailure = executionFailureSchema.parse({cause: "program", recovery: "repair_program", code: "program_syntax",
+    diagnostic: "Expected an indented block", node: null, occurrence_path: [], catalog_digest: null,
+    effects: [], dispatches: [], effects_unresolved: false});
+  const parseTools = createPlasmTools({...runtime, plasm: async () => { throw new AgentExecutionFailure(parseFailure, "needs_fix · parse\n\nExpected an indented block"); }});
+  const result = await parseTools.plasm!.execute!({logical_session_ref: "l_AAAAAAAAQACAAAAAAAAAAQ", program: "class P(Program):\n    # incomplete"}, options);
+  const text = plasmModelOutput({output: result}).value;
+  assert.equal((text.match(/Expected an indented block/g) ?? []).length, 1);
+  assert.doesNotMatch(text, /Recorded failure details/);
+}
 const output = await tools.plasm_run!.execute!({logical_session_ref: "l_AAAAAAAAQACAAAAAAAAAAQ", run_ref: "pc0"}, options);
 const visible = plasmModelOutput({output}).value;
 assert.match(visible, /status 422: Already set/);
@@ -64,7 +74,7 @@ for (const recovery of ["repair_program", "obtain_authorization", "reconcile_eff
     const matrixTools = createPlasmTools({plasmContext: fail, plasm: fail, plasmRun: fail,
       recordExecutionFailure: async (_name, evidence) => { recorded++; assert.deepEqual(evidence, small); },
     });
-    const args = name === "plasm_context" ? {session_mode: "new", intent: "Observe abstract records"}
+    const args = name === "plasm_context" ? {session_mode: "extend", logical_session_ref: "l_AAAAAAAAQACAAAAAAAAAAQ", intent: "Observe abstract records"}
       : name === "plasm" ? {logical_session_ref: "l_AAAAAAAAQACAAAAAAAAAAQ", program: "abstract program"}
       : {logical_session_ref: "l_AAAAAAAAQACAAAAAAAAAAQ", run_ref: "pc0"};
     const result = failureObservationSchema.parse(await matrixTools[name]!.execute!(args, options));
@@ -86,7 +96,7 @@ const successTools = createPlasmTools({plasmContext: async () => "declarations",
   plasm: async () => "review pc0", plasmRun: async () => "observed rows",
   recordExecutionFailure: async () => { assert.fail("success recorded as failure"); },
 });
-assert.equal(await successTools.plasm_context!.execute!({session_mode: "new", intent: "Read records"}, options), "declarations");
+assert.equal(await successTools.plasm_context!.execute!({session_mode: "extend", logical_session_ref: "l_AAAAAAAAQACAAAAAAAAAAQ", intent: "Read records"}, options), "declarations");
 assert.equal(await successTools.plasm!.execute!({logical_session_ref: "l_AAAAAAAAQACAAAAAAAAAAQ", program: "abstract"}, options), "review pc0");
 assert.equal(await successTools.plasm_run!.execute!({logical_session_ref: "l_AAAAAAAAQACAAAAAAAAAAQ", run_ref: "pc0"}, options), "observed rows");
 const readFailure = new FailureResults();

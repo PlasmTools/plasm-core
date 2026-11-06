@@ -38,6 +38,8 @@ assert.equal(product.includes("submit_answer"), false, "non-eval liturgy must no
 assert.doesNotMatch(product, /Python source text, not JSON data/, "program syntax belongs to the tool description");
 
 const evalLiturgy = buildDefaultSystemLiturgy({ includeEvalTerminals: true });
+assert.match(evalLiturgy, /successful execution receipts.*confirmed effects/i);
+assert.match(evalLiturgy, /do not repeat.*confirmed/i);
 assert.equal(
   evalLiturgy.includes(EVAL_TERMINAL_COMPLETION),
   true,
@@ -56,7 +58,8 @@ assert.equal(
 assert.match(evalLiturgy, /complete_task/);
 assert.match(evalLiturgy, /submit_answer/);
 assert.match(evalLiturgy, /no reportable value/);
-assert.ok(product.includes(WORKFLOW_INITIALIZATION_SLOT));
+assert.ok(product.includes(EVAL_WORKFLOW_INITIALIZATION));
+assert.ok(!product.includes(WORKFLOW_INITIALIZATION_SLOT));
 assert.ok(evalLiturgy.includes(EVAL_WORKFLOW_INITIALIZATION));
 assert.ok(!evalLiturgy.includes(WORKFLOW_INITIALIZATION_SLOT), "host initialization must replace new-session instruction");
 assert.doesNotMatch(evalLiturgy, /session_mode: "new"/);

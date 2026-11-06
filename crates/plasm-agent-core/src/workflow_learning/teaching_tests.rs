@@ -613,6 +613,11 @@ fn catalogue_semantic_context_is_literal_neutral_but_keeps_contract_differences(
     cap.inputs.input_validation.allow_null = true;
     let changed = session_with_schema(&["LangItem"], Arc::new(cgs));
     let changed = requirements(&changed, "item-a");
+    let semantic_text = changed.capability_contracts()[0].teaching_text();
+    assert!(semantic_text.contains("Reads from the provider-owned restricted corpus"));
+    assert!(semantic_text.contains("input permits null"));
+    assert!(!semantic_text.contains("catalog_hash"));
+    assert!(!semantic_text.contains("catalog_fingerprints"));
     assert_ne!(first.capability_contracts(), changed.capability_contracts());
     assert!(
         changed.capability_contracts()[0]

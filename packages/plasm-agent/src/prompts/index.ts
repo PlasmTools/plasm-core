@@ -54,8 +54,13 @@ export type SystemLiturgyOptions = {
  * Named completion-contract slot in `initialize_workflow.txt`.
  * Overlay replaces this exact paragraph — never the first paragraph by index.
  */
+const RECEIPT_COMPLETION =
+  "Successful execution receipts are evidence of their confirmed effects. " +
+  "Do not repeat a confirmed write or reread solely to reconfirm it; inspect state when a requested condition or an effect remains unresolved. ";
+
 export const WORKFLOW_COMPLETION_SLOT =
   "Plan from the current requirement, taught symbols and observed results. " +
+  RECEIPT_COMPLETION +
   "Stop with no tool call when observations establish every requested effect. " +
   "Intermediate results alone are not completion.";
 
@@ -67,6 +72,7 @@ export const WORKFLOW_COMPLETION_SLOT =
  */
 export const EVAL_TERMINAL_COMPLETION =
   "Plan from the current requirement, taught symbols and observed results. " +
+  RECEIPT_COMPLETION +
   "After observations establish every requested effect, end through complete_task " +
   "when the instruction asked for no reportable value, or submit_answer with that " +
   "value when it did. Writing a value into an app or sending it to another person is an effect, not an answer to the requester. A request to return a single number, amount, count, name, or other " +
@@ -147,10 +153,8 @@ export function buildDefaultSystemLiturgy(options: SystemLiturgyOptions = {}): s
   let workflow = options.includeEvalTerminals
     ? overlayWorkflowCompletion(workflowAsset, EVAL_TERMINAL_COMPLETION)
     : workflowAsset;
-  if (options.includeEvalTerminals) {
-    workflow = overlayNamedSlot(workflow, WORKFLOW_INITIALIZATION_SLOT,
-      EVAL_WORKFLOW_INITIALIZATION, "WORKFLOW_INITIALIZATION_SLOT");
-  }
+  workflow = overlayNamedSlot(workflow, WORKFLOW_INITIALIZATION_SLOT,
+    EVAL_WORKFLOW_INITIALIZATION, "WORKFLOW_INITIALIZATION_SLOT");
   if (options.includeTaskLedger) {
     workflow = overlayNamedSlot(
       workflow,

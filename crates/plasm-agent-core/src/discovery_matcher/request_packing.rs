@@ -8,7 +8,7 @@ use std::collections::BTreeMap;
 mod connected_size;
 pub(super) use connected_size::{connected_size, PreparedLocal};
 
-const MAX_QUESTIONS: usize = 4;
+pub(super) const MAX_QUESTIONS: usize = 4;
 
 #[derive(Clone, Deserialize, Serialize, PartialEq)]
 struct Context {
@@ -127,6 +127,7 @@ fn factor(group: &[LocalRequest]) -> Result<String, DiscoveryMatcherError> {
 
 /// One connected request. Definitions are stored once, but every question names
 /// only its own evidence. Equal names with different definitions remain distinct.
+#[cfg(test)]
 fn connected_body(group: &[LocalRequest]) -> Result<String, DiscoveryMatcherError> {
     let mut definitions = BTreeMap::<String, Value>::new();
     let mut definition_ids = BTreeMap::<(String, String, String), String>::new();
@@ -230,6 +231,7 @@ fn connected_context(
 
 /// Admission checks the complete serialized body. Never split a connected set
 /// into additional provider requests or discard a definition to fit a budget.
+#[cfg(test)]
 pub(super) fn connected(
     batches: Vec<IssuedBatch>,
 ) -> Result<Option<IssuedBatch>, DiscoveryMatcherError> {
@@ -242,6 +244,7 @@ pub(super) fn connected(
     Ok(Some(merged))
 }
 
+#[cfg(test)]
 fn connected_request_body(
     batches: &[IssuedBatch],
 ) -> Result<Option<String>, DiscoveryMatcherError> {

@@ -59,6 +59,7 @@ pub mod http_oauth_link;
 pub mod http_outbound_secrets;
 pub mod http_problem_util;
 mod http_traces;
+mod http_training;
 pub mod incoming_auth;
 pub mod incoming_auth_device;
 pub mod input_field_cli;
@@ -243,6 +244,7 @@ mod tool_model;
 pub mod trace_hub;
 pub(crate) mod trace_hub_metrics;
 pub mod trace_sink_emit;
+mod training_ui;
 mod web_connected_account_notify;
 pub mod wire_protocol;
 pub mod workflow_learning;
@@ -252,9 +254,16 @@ mod workflow_mcp;
 pub mod workflow_program_template;
 pub mod workflow_readiness;
 pub mod workflow_registry;
+mod workflow_training_mcp;
+mod workflow_training_wire;
 pub mod workflow_view_model;
 
 pub use crate::cli_builder::AgentCliSurface;
+
+/// Initialize OTLP metrics for an embedded host without installing a tracing subscriber.
+pub fn init_embedded_metrics() -> Result<(), plasm_otel::TelemetryInitError> {
+    plasm_otel::init_embedded_metrics("plasm-agent")
+}
 
 /// Dotenv + telemetry init shared with `plasm-repl` and other front binaries.
 pub fn init_agent_runtime() -> Result<(), Box<dyn std::error::Error>> {

@@ -90,6 +90,12 @@ pub struct RunArgs {
 
 #[derive(Debug, Args)]
 pub struct ContextArgs {
+    #[arg(
+        long,
+        value_name = "UUID",
+        help = "Explicitly request training on a new session using this idempotency key"
+    )]
+    pub training_request: Option<uuid::Uuid>,
     #[arg(long, help = "New routed server session and local mirror")]
     pub new: bool,
 
@@ -109,9 +115,14 @@ pub struct ContextArgs {
 pub enum ContextArgsError {
     #[error("context requires --intent (-i)")]
     IntentRequired,
+    #[error("--training-request requires --new; use training request for an existing session")]
+    TrainingRequiresNew,
 }
 
 pub fn validate_context_args(args: &ContextArgs) -> Result<(), ContextArgsError> {
+    if args.training_request.is_some() && !args.new {
+        return Err(ContextArgsError::TrainingRequiresNew);
+    }
     if args
         .intent
         .as_deref()
@@ -142,6 +153,11 @@ pub struct Cli {
 
 #[derive(Debug, Subcommand)]
 pub enum Cmd {
+    #[command(about = "Control opt-in training and inspect teaching candidates")]
+    Training {
+        #[command(subcommand)]
+        cmd: TrainingCmd,
+    },
     #[command(about = "Configure local profile and optional platform sign-in")]
     Init {
         #[arg(
@@ -190,6 +206,53 @@ pub enum Cmd {
     Evidence {
         #[command(subcommand)]
         cmd: EvidenceCmd,
+    },
+}
+
+#[derive(Debug, Args)]
+pub struct TrainingMutationArgs {
+    #[arg(long, help = "Logical session reference returned by the server")]
+    pub session: String,
+    #[arg(long)]
+    pub expected_revision: u64,
+    #[arg(long, help = "Stable UUID for retries of this exact command")]
+    pub idempotency_key: uuid::Uuid,
+}
+
+#[derive(Debug, Subcommand)]
+pub enum TrainingCmd {
+    Status {
+        #[arg(long)]
+        session: String,
+    },
+    Request(TrainingMutationArgs),
+    Stop(TrainingMutationArgs),
+    Resume(TrainingMutationArgs),
+    Review {
+        #[arg(long)]
+        session: String,
+        #[arg(long)]
+        file: PathBuf,
+    },
+    Candidates {
+        #[arg(long)]
+        session: String,
+        #[arg(long, default_value_t = 16, value_parser = clap::value_parser!(u32).range(1..=32))]
+        limit: u32,
+    },
+    #[command(about = "Request authenticated human decisions for selected candidate revisions")]
+    Decide {
+        #[arg(long)]
+        file: PathBuf,
+    },
+    #[command(about = "Request release of named held contributions under current authority")]
+    ReleaseRuns {
+        #[arg(long)]
+        file: PathBuf,
+    },
+    Release {
+        #[arg(long)]
+        file: PathBuf,
     },
 }
 

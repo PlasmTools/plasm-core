@@ -1,6 +1,244 @@
 use super::*;
 use crate::workflow_learning::test_identities as ids;
 
+async fn fixture_seal(repo: &WorkflowRepository, value: serde_json::Value) -> Result<SealedReview> {
+    let digest = plasm_core::catalog_discovery::content_hash(&serde_json::to_vec(&value)?);
+    hydrate_review(&mut repo.pool.acquire().await?, value, &digest).await
+}
+
+#[tokio::test]
+async fn unversioned_store_is_rejected_before_schema_changes(
+) -> std::result::Result<(), Box<dyn std::error::Error>> {
+    let Ok(url) = std::env::var("PLASM_TEST_POSTGRES_URL") else {
+        return Ok(());
+    };
+    let admin = sqlx::PgPool::connect(&url).await?;
+    let schema = format!("workflow_unversioned_{}", Uuid::new_v4().simple());
+    sqlx::query(&format!("CREATE SCHEMA {schema}"))
+        .execute(&admin)
+        .await?;
+    sqlx::query(&format!(
+        "CREATE TABLE {schema}.workflow_learning_receipts(original text NOT NULL)"
+    ))
+    .execute(&admin)
+    .await?;
+    sqlx::query(&format!(
+        "INSERT INTO {schema}.workflow_learning_receipts VALUES ('preserved')"
+    ))
+    .execute(&admin)
+    .await?;
+    let separator = if url.contains('?') { '&' } else { '?' };
+    let scoped = format!("{url}{separator}options=-csearch_path%3D{schema}");
+    let repo = WorkflowRepository::connect(&scoped).await?;
+    assert!(matches!(
+        repo.migrate().await,
+        Err(RepositoryError::InvalidEvidence(
+            "workflow learning store is unversioned; create a fresh store"
+        ))
+    ));
+    let value: String = sqlx::query_scalar(&format!(
+        "SELECT original FROM {schema}.workflow_learning_receipts"
+    ))
+    .fetch_one(&admin)
+    .await?;
+    assert_eq!(value, "preserved");
+    let exists: Option<String> = sqlx::query_scalar("SELECT to_regclass($1)::text")
+        .bind(format!("{schema}.workflow_learning_schema_versions"))
+        .fetch_one(&admin)
+        .await?;
+    assert!(
+        exists.is_none(),
+        "failed migration must roll back its version table"
+    );
+    drop(repo);
+    sqlx::query(&format!("DROP SCHEMA {schema} CASCADE"))
+        .execute(&admin)
+        .await?;
+    Ok(())
+}
+
+#[tokio::test]
+async fn archive_preflight_schema_validation_is_read_only_and_fails_closed(
+) -> std::result::Result<(), Box<dyn std::error::Error>> {
+    let Ok(url) = std::env::var("PLASM_TEST_POSTGRES_URL") else {
+        return Ok(());
+    };
+    let suffix = Uuid::new_v4().simple().to_string();
+    let schema = format!("workflow_preflight_{suffix}");
+    let role = format!("workflow_reader_{suffix}");
+    let admin = sqlx::PgPool::connect(&url).await?;
+    sqlx::query(&format!("CREATE SCHEMA {schema}"))
+        .execute(&admin)
+        .await?;
+    sqlx::query(&format!("CREATE ROLE {role} NOLOGIN"))
+        .execute(&admin)
+        .await?;
+    sqlx::query(&format!("GRANT USAGE ON SCHEMA {schema} TO {role}"))
+        .execute(&admin)
+        .await?;
+    let separator = if url.contains('?') { '&' } else { '?' };
+    let scoped_url = format!("{url}{separator}options=-csearch_path%3D{schema}%20-crole%3D{role}");
+    let reader = WorkflowRepository::connect(&scoped_url).await?;
+    assert!(
+        reader.validate_current_schema().await.is_err(),
+        "missing schema must fail without creating it"
+    );
+    sqlx::query(&format!(
+        "CREATE TABLE {schema}.workflow_learning_schema_versions(version integer PRIMARY KEY)"
+    ))
+    .execute(&admin)
+    .await?;
+    sqlx::query(&format!(
+        "GRANT SELECT ON {schema}.workflow_learning_schema_versions TO {role}"
+    ))
+    .execute(&admin)
+    .await?;
+    sqlx::query(&format!(
+        "INSERT INTO {schema}.workflow_learning_schema_versions(version) VALUES($1)"
+    ))
+    .bind(SCHEMA_VERSION - 1)
+    .execute(&admin)
+    .await?;
+    assert!(
+        reader.validate_current_schema().await.is_err(),
+        "old schema must fail without upgrading"
+    );
+    sqlx::query(&format!(
+        "INSERT INTO {schema}.workflow_learning_schema_versions(version) VALUES($1)"
+    ))
+    .bind(SCHEMA_VERSION)
+    .execute(&admin)
+    .await?;
+    reader.validate_current_schema().await?;
+    let mut connection = reader.pool.acquire().await?;
+    let can_create: bool =
+        sqlx::query_scalar("SELECT has_schema_privilege(current_user,$1,'CREATE')")
+            .bind(&schema)
+            .fetch_one(&mut connection)
+            .await?;
+    assert!(
+        !can_create,
+        "validation must succeed for a SELECT-only role"
+    );
+    drop(connection);
+    drop(reader);
+    sqlx::query(&format!("DROP SCHEMA {schema} CASCADE"))
+        .execute(&admin)
+        .await?;
+    sqlx::query(&format!("DROP ROLE {role}"))
+        .execute(&admin)
+        .await?;
+    Ok(())
+}
+
+#[tokio::test]
+async fn current_schema_startup_does_not_lock_live_evidence_tables(
+) -> std::result::Result<(), Box<dyn std::error::Error>> {
+    let Ok(url) = std::env::var("PLASM_TEST_POSTGRES_URL") else {
+        return Ok(());
+    };
+    let repo = WorkflowRepository::connect(&url).await?;
+    let (left, right) = tokio::join!(repo.migrate(), repo.migrate());
+    left?;
+    right?;
+    let mut live = repo.pool.begin().await?;
+    sqlx::query("LOCK TABLE workflow_learning_receipts IN ACCESS SHARE MODE")
+        .execute(&mut live.executor())
+        .await?;
+    tokio::time::timeout(std::time::Duration::from_secs(2), repo.migrate()).await??;
+    live.rollback().await?;
+    let count: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM workflow_learning_schema_versions WHERE version=(SELECT max(version) FROM workflow_learning_schema_versions)",
+    )
+    .fetch_one(&mut repo.pool.acquire().await?)
+    .await?;
+    assert_eq!(count, 1);
+    Ok(())
+}
+
+#[tokio::test]
+async fn training_capture_is_prospective_and_stop_fences_inflight_work(
+) -> std::result::Result<(), Box<dyn std::error::Error>> {
+    let Ok(url) = std::env::var("PLASM_TEST_POSTGRES_URL") else {
+        return Ok(());
+    };
+    let repo = WorkflowRepository::connect(&url).await?;
+    repo.migrate().await?;
+    let scope = LibraryScope {
+        tenant: Uuid::new_v4().to_string(),
+        project: "capture-boundaries".into(),
+    };
+    let logical = LogicalSessionId::new_v4();
+    repo.bind_session(&scope, logical).await?;
+    assert!(repo
+        .begin_execution(&scope, logical, "ordinary")
+        .await?
+        .is_none());
+    let count: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM workflow_learning_execution_journal WHERE tenant=$1",
+    )
+    .bind(&scope.tenant)
+    .fetch_one(&mut repo.pool.acquire().await?)
+    .await?;
+    assert_eq!(count, 0);
+    repo.bind_training_fixture(&scope, logical).await?;
+    let permit = repo
+        .begin_execution(&scope, logical, "authorized")
+        .await?
+        .expect("explicit training consent");
+    let actor = training::TrustedTrainingActor::trusted_host(
+        scope.clone(),
+        "fixture-host".into(),
+        "fixture-host-key".into(),
+    )?;
+    let status = repo.training_status(&scope, logical).await?;
+    repo.training_command(
+        &actor,
+        logical,
+        &training::TrainingCommandEnvelope {
+            expected_revision: status.revision,
+            idempotency_key: Uuid::new_v4(),
+            command: training::TrainingCommand::Stop,
+        },
+    )
+    .await?;
+    let mut tx = repo.pool.begin().await?;
+    assert!(
+        training::validate_training_epoch(&mut tx, &scope, logical, permit.epoch_id())
+            .await
+            .is_err()
+    );
+    tx.rollback().await?;
+    assert!(repo
+        .begin_execution(&scope, logical, "stopped")
+        .await?
+        .is_none());
+    let status = repo.training_status(&scope, logical).await?;
+    repo.training_command(
+        &actor,
+        logical,
+        &training::TrainingCommandEnvelope {
+            expected_revision: status.revision,
+            idempotency_key: Uuid::new_v4(),
+            command: training::TrainingCommand::Resume,
+        },
+    )
+    .await?;
+    let resumed = repo
+        .begin_execution(&scope, logical, "resumed")
+        .await?
+        .expect("resumed capture");
+    assert_ne!(permit.epoch_id(), resumed.epoch_id());
+    let mut tx = repo.pool.begin().await?;
+    assert!(
+        training::validate_training_epoch(&mut tx, &scope, logical, permit.epoch_id())
+            .await
+            .is_err()
+    );
+    tx.rollback().await?;
+    Ok(())
+}
+
 fn quality() -> Quality {
     Quality::unassessed(OutcomeAssurance::AgentAttested, 1)
 }
@@ -14,13 +252,13 @@ async fn publish_test_candidate(
 ) -> std::result::Result<(), Box<dyn std::error::Error>> {
     let mut request = request.clone();
     request.session_revision = revision;
-    let handle = repo.review(&request).await?;
+    let handle = repo.review_training_fixture(&request).await?;
     let seal: serde_json::Value = sqlx::query_scalar("UPDATE workflow_learning_reviews SET state='leased',fence=1,lease_until=clock_timestamp()+interval '60 seconds' WHERE id=$1 RETURNING seal")
         .bind(handle.id).fetch_one(&mut repo.pool.acquire().await?).await?;
     let claim = ClaimedReview {
         id: handle.id,
         fence: 1,
-        seal: serde_json::from_value(seal)?,
+        seal: fixture_seal(repo, seal).await?,
     };
     candidate.expected_family_version = repo
         .portfolio_version(&request.scope, &candidate.family, &candidate.variant)
@@ -73,14 +311,47 @@ fn reviews_require_outcomes_and_receipt_references() {
         subtasks: vec![AchievedSubtask {
             intent: "work".into(),
             observed_outcome: "".into(),
-            run_ids: vec![ids::run("r")],
+            execution_ids: vec![ids::run("r")],
         }],
     };
     assert!(validate_review(&request).is_err());
     request.subtasks[0].observed_outcome = "observed result".into();
     assert!(validate_review(&request).is_ok());
-    request.subtasks[0].run_ids.clear();
+    request.subtasks[0].execution_ids.clear();
     assert!(validate_review(&request).is_err());
+}
+
+#[test]
+fn direct_review_admission_rejects_unhydratable_reference_counts() {
+    let subtask = AchievedSubtask {
+        intent: "inspect".into(),
+        observed_outcome: "completed".into(),
+        execution_ids: vec![ids::run("execution")],
+    };
+    let mut request = ReviewRequest {
+        scope: LibraryScope {
+            tenant: "tenant".into(),
+            project: "project".into(),
+        },
+        logical_session: ids::logical("session"),
+        session_revision: 1,
+        intent: "inspect".into(),
+        subtasks: vec![subtask.clone(); 16],
+    };
+    assert!(validate_review(&request).is_ok());
+    request.subtasks.push(subtask);
+    assert!(matches!(
+        validate_review(&request),
+        Err(RepositoryError::InvalidEvidence(_))
+    ));
+    request.subtasks.truncate(1);
+    request.subtasks[0].execution_ids = (0..32).map(|n| ids::run(&format!("{n}"))).collect();
+    assert!(validate_review(&request).is_ok());
+    request.subtasks[0].execution_ids.push(ids::run("extra"));
+    assert!(matches!(
+        validate_review(&request),
+        Err(RepositoryError::InvalidEvidence(_))
+    ));
 }
 
 #[test]
@@ -133,28 +404,30 @@ async fn postgres_workflow_seals_and_fences() -> std::result::Result<(), Box<dyn
         project: "test".into(),
     };
     let session = LogicalSessionId::new_v4();
-    repo.bind_session(&scope, session).await?;
+    repo.bind_training_fixture(&scope, session).await?;
     let mut receipt = ExecutionReceipt {
         scope: scope.clone(),
         logical_session: session,
         session_revision: 1,
-        run_id: ids::run("run"),
+        execution_id: ids::run("run"),
         plan_id: ids::plan("plan"),
         prompt_hash: ids::prompt("prompt"),
         execute_session: ids::execute("execute"),
-        run_artifact: serde_json::json!({"observed": true}),
         source: "class Read(Program): pass".into(),
-        symbol_context: Default::default(),
-        catalogue_requirements: Default::default(),
+        teaching_plan: super::super::review_packet::TeachingPlan::Unavailable {
+            reason: super::super::review_packet::TeachingPlanUnavailable::PlanningFailed,
+        },
+
+        catalogue_requirements: crate::workflow_learning::catalogue_guidance::CatalogueRequirementEvidence::Unavailable { diagnostic: "fixture".into() },
         compiled_plan: serde_json::json!({"typed": true}),
         observation: super::super::teaching::tests::checked_fixture().observation(),
         catalog_fingerprints: [("matrix".into(), "hash".into())].into(),
     };
-    repo.record_execution(&receipt).await?;
-    repo.record_execution(&receipt).await?;
+    repo.record_training_fixture(&receipt).await?;
+    repo.record_training_fixture(&receipt).await?;
     receipt.source.push_str(" changed");
     assert!(matches!(
-        repo.record_execution(&receipt).await,
+        repo.record_training_fixture(&receipt).await,
         Err(RepositoryError::ImmutableConflict)
     ));
     let request = ReviewRequest {
@@ -165,23 +438,23 @@ async fn postgres_workflow_seals_and_fences() -> std::result::Result<(), Box<dyn
         subtasks: vec![AchievedSubtask {
             intent: "read".into(),
             observed_outcome: "row read".into(),
-            run_ids: vec![ids::run("run")],
+            execution_ids: vec![ids::run("run")],
         }],
     };
     repo.begin_execution(&scope, request.logical_session, "attempt")
         .await?;
     assert!(matches!(
-        repo.review(&request).await,
+        repo.review_training_fixture(&request).await,
         Err(RepositoryError::InvalidEvidence(_))
     ));
     repo.finish_execution(&scope, request.logical_session, "attempt", true)
         .await?;
-    let first = repo.review(&request).await?;
-    assert_eq!(first.id, repo.review(&request).await?.id);
+    let first = repo.review_training_fixture(&request).await?;
+    assert_eq!(first.id, repo.review_training_fixture(&request).await?.id);
     let mut changed = request.clone();
     changed.intent = "different".into();
     assert!(matches!(
-        repo.review(&changed).await,
+        repo.review_training_fixture(&changed).await,
         Err(RepositoryError::ImmutableConflict)
     ));
     let seal: serde_json::Value = sqlx::query_scalar("UPDATE workflow_learning_reviews SET state='leased',fence=1,lease_until=clock_timestamp()+interval '60 seconds' WHERE id=$1 RETURNING seal")
@@ -189,7 +462,7 @@ async fn postgres_workflow_seals_and_fences() -> std::result::Result<(), Box<dyn
     let mut claim = ClaimedReview {
         id: first.id,
         fence: 0,
-        seal: serde_json::from_value(seal)?,
+        seal: fixture_seal(&repo, seal).await?,
     };
     assert!(matches!(
         repo.finish(&claim, &[], PublicationPolicy::Automatic).await,
@@ -384,13 +657,13 @@ async fn postgres_workflow_seals_and_fences() -> std::result::Result<(), Box<dyn
     for revision in [2, 3] {
         let mut next = request.clone();
         next.session_revision = revision;
-        let handle = repo.review(&next).await?;
+        let handle = repo.review_training_fixture(&next).await?;
         let seal: serde_json::Value = sqlx::query_scalar("UPDATE workflow_learning_reviews SET state='leased',fence=1,lease_until=clock_timestamp()+interval '60 seconds' WHERE id=$1 RETURNING seal")
             .bind(handle.id).fetch_one(&mut repo.pool.acquire().await?).await?;
         let claimed = ClaimedReview {
             id: handle.id,
             fence: 1,
-            seal: serde_json::from_value(seal)?,
+            seal: fixture_seal(&repo, seal).await?,
         };
         let mut candidate = active[0].candidate.clone();
         candidate.family = format!("racing-family-{revision}");
@@ -444,7 +717,7 @@ async fn postgres_workflow_seals_and_fences() -> std::result::Result<(), Box<dyn
     repo.tenant_cap = 1001;
     let mut approval_request = request.clone();
     approval_request.session_revision = 20;
-    let approval_review = repo.review(&approval_request).await?;
+    let approval_review = repo.review_training_fixture(&approval_request).await?;
     let approval_claim = repo
         .claim_scoped(60, Some(&scope))
         .await?
@@ -468,33 +741,21 @@ async fn postgres_workflow_seals_and_fences() -> std::result::Result<(), Box<dyn
     assert_eq!("awaiting_approval", awaiting);
     assert!(repo.claim_scoped(60, Some(&scope)).await?.is_none());
     assert!(matches!(
-        repo.approve_publication(&unrelated_scope, approval_review.id, "operator")
+        repo.approve_training_fixture(&unrelated_scope, approval_review.id, "operator")
             .await,
-        Err(RepositoryError::ApprovalUnavailable)
+        Err(RepositoryError::InvalidEvidence(_))
     ));
-    repo.approve_publication(&scope, approval_review.id, "operator-123")
+    repo.approve_training_fixture(&scope, approval_review.id, "operator-123")
         .await?;
-    repo.approve_publication(&scope, approval_review.id, "operator-456")
+    repo.approve_training_fixture(&scope, approval_review.id, "operator-123")
         .await?;
-    let actor: String = sqlx::query_scalar(
-        "SELECT actor FROM workflow_learning_publication_approvals WHERE review_id=$1",
-    )
-    .bind(approval_review.id)
-    .fetch_one(&mut repo.pool.acquire().await?)
-    .await?;
+    let actor: String =
+        sqlx::query_scalar("SELECT actor FROM workflow_training_publications WHERE review_id=$1")
+            .bind(approval_review.id)
+            .fetch_one(&mut repo.pool.acquire().await?)
+            .await?;
     assert_eq!("operator-123", actor);
-    let approved_claim = repo
-        .claim_scoped(60, Some(&scope))
-        .await?
-        .expect("approved job");
-    assert!(approved_claim.fence > approval_claim.fence);
-    approval_candidate.expected_family_version = 1;
-    repo.finish(
-        &approved_claim,
-        &[approval_candidate],
-        PublicationPolicy::Reviewed,
-    )
-    .await?;
+    assert!(repo.claim_scoped(60, Some(&scope)).await?.is_none());
     let approved_active: i64 = sqlx::query_scalar("SELECT count(*) FROM workflow_learning_examples WHERE tenant=$1 AND family='operator-reviewed' AND state='active'")
         .bind(&scope.tenant).fetch_one(&mut repo.pool.acquire().await?).await?;
     assert_eq!(1, approved_active);
@@ -502,7 +763,7 @@ async fn postgres_workflow_seals_and_fences() -> std::result::Result<(), Box<dyn
     // Retryable provider errors have durable due times and a three-failure cap.
     let mut retry_request = request.clone();
     retry_request.session_revision = 21;
-    let retry_review = repo.review(&retry_request).await?;
+    let retry_review = repo.review_training_fixture(&retry_request).await?;
     for failure in 1..=3 {
         let retry_claim = repo
             .claim_scoped(60, Some(&scope))
@@ -531,7 +792,7 @@ async fn postgres_workflow_seals_and_fences() -> std::result::Result<(), Box<dyn
     }
     let mut expiry_request = request.clone();
     expiry_request.session_revision = 22;
-    let expiry_review = repo.review(&expiry_request).await?;
+    let expiry_review = repo.review_training_fixture(&expiry_request).await?;
     let expired_claim = repo
         .claim_scoped(60, Some(&scope))
         .await?
@@ -571,7 +832,7 @@ async fn postgres_workflow_seals_and_fences() -> std::result::Result<(), Box<dyn
     // Preparing a seal must not expose a claimable job before the session gate commits.
     let mut pending_request = request.clone();
     pending_request.session_revision = 23;
-    let pending = repo.prepare_review(&pending_request).await?;
+    let pending = repo.prepare_training_fixture(&pending_request).await?;
     let uncommitted_id = pending.handle.id;
     let invisible: i64 =
         sqlx::query_scalar("SELECT count(*) FROM workflow_learning_reviews WHERE id=$1")
@@ -582,7 +843,7 @@ async fn postgres_workflow_seals_and_fences() -> std::result::Result<(), Box<dyn
     assert!(repo.claim_scoped(60, Some(&scope)).await?.is_none());
     drop(pending);
     let handle = repo
-        .prepare_review(&pending_request)
+        .prepare_training_fixture(&pending_request)
         .await?
         .commit()
         .await?;
@@ -623,9 +884,92 @@ async fn postgres_workflow_seals_and_fences() -> std::result::Result<(), Box<dyn
         vec!["complementary-0", "complementary-1", "complementary-2"],
         selected
     );
+    // Identical verified programs from one review must not occupy separate
+    // families merely because normalization assigned different names.
+    repo.tenant_cap = 1100;
+    let mut duplicate_request = request.clone();
+    duplicate_request.session_revision = 25;
+    repo.review_training_fixture(&duplicate_request).await?;
+    let duplicate_claim = repo
+        .claim_scoped(60, Some(&scope))
+        .await?
+        .expect("duplicate job");
+    let mut first = active[0].candidate.clone();
+    first.family = "duplicate-a".into();
+    first.identity = "cross-family-identity".into();
+    first.intent.purpose = "cross-family duplicate fixture".into();
+    first.expected_family_version = 0;
+    let mut second = first.clone();
+    second.family = "duplicate-b".into();
+    repo.finish(
+        &duplicate_claim,
+        &[first, second],
+        PublicationPolicy::Automatic,
+    )
+    .await?;
+    let count: i64 = sqlx::query_scalar("SELECT count(*) FROM workflow_learning_examples WHERE tenant=$1 AND project=$2 AND identity='cross-family-identity' AND state='active'")
+        .bind(&scope.tenant).bind(&scope.project).fetch_one(&mut repo.pool.acquire().await?).await?;
+    assert_eq!(count, 1);
+    let support_count: i64 = sqlx::query_scalar("SELECT count(*) FROM workflow_learning_support s JOIN workflow_learning_examples e ON e.id=s.example_id WHERE s.review_id=$1 AND e.identity='cross-family-identity'")
+        .bind(duplicate_claim.id).fetch_one(&mut repo.pool.acquire().await?).await?;
+    assert_eq!(support_count, 1);
+    let mut duplicate_races = Vec::new();
+    for revision in [26, 27] {
+        let mut next = request.clone();
+        next.session_revision = revision;
+        let handle = repo.review_training_fixture(&next).await?;
+        let seal: serde_json::Value = sqlx::query_scalar("UPDATE workflow_learning_reviews SET state='leased',fence=1,lease_until=clock_timestamp()+interval '60 seconds' WHERE id=$1 RETURNING seal")
+            .bind(handle.id).fetch_one(&mut repo.pool.acquire().await?).await?;
+        let claim = ClaimedReview {
+            id: handle.id,
+            fence: 1,
+            seal: fixture_seal(&repo, seal).await?,
+        };
+        let mut candidate = active[0].candidate.clone();
+        candidate.family = format!("duplicate-race-{revision}");
+        candidate.identity = "cross-family-race".into();
+        candidate.intent.purpose = "concurrent duplicate fixture".into();
+        candidate.expected_family_version = 0;
+        let publisher = repo.clone();
+        duplicate_races.push(tokio::spawn(async move {
+            publisher
+                .finish(&claim, &[candidate], PublicationPolicy::Automatic)
+                .await
+        }));
+    }
+    for race in duplicate_races {
+        race.await??;
+    }
+    let count: i64 = sqlx::query_scalar("SELECT count(*) FROM workflow_learning_examples WHERE tenant=$1 AND project=$2 AND identity='cross-family-race' AND state='active'")
+        .bind(&scope.tenant).bind(&scope.project).fetch_one(&mut repo.pool.acquire().await?).await?;
+    assert_eq!(count, 1);
+    let supports: i64 = sqlx::query_scalar("SELECT count(*) FROM workflow_learning_support s JOIN workflow_learning_examples e ON e.id=s.example_id WHERE e.tenant=$1 AND e.project=$2 AND e.identity='cross-family-race'")
+        .bind(&scope.tenant).bind(&scope.project).fetch_one(&mut repo.pool.acquire().await?).await?;
+    assert_eq!(supports, 2);
+    let mut ambiguous_request = request.clone();
+    ambiguous_request.session_revision = 28;
+    repo.review_training_fixture(&ambiguous_request).await?;
+    let ambiguous_claim = repo
+        .claim_scoped(60, Some(&scope))
+        .await?
+        .expect("ambiguous job");
+    let mut ambiguous = active[0].candidate.clone();
+    ambiguous.family = "similar-new-family".into();
+    ambiguous.identity = "similar-different-program".into();
+    ambiguous.intent.purpose = "concurrent duplicate fixture".into();
+    ambiguous.expected_family_version = 0;
+    repo.finish(&ambiguous_claim, &[ambiguous], PublicationPolicy::Automatic)
+        .await?;
+    let (state, reason): (String, Option<String>) = sqlx::query_as("SELECT state,reason FROM workflow_learning_examples WHERE tenant=$1 AND project=$2 AND identity='similar-different-program'")
+        .bind(&scope.tenant).bind(&scope.project).fetch_one(&mut repo.pool.acquire().await?).await?;
+    assert_eq!(state, "candidate");
+    assert_eq!(
+        reason.as_deref(),
+        Some("similar purpose and coverage across families require semantic review")
+    );
     let mut conflict_request = request.clone();
     conflict_request.session_revision = 24;
-    repo.review(&conflict_request).await?;
+    repo.review_training_fixture(&conflict_request).await?;
     let conflict_claim = repo
         .claim_scoped(60, Some(&scope))
         .await?
@@ -650,7 +994,7 @@ async fn postgres_workflow_seals_and_fences() -> std::result::Result<(), Box<dyn
     repo.finish_execution(&scope, request.logical_session, "failed-attempt", false)
         .await?;
     assert!(matches!(
-        repo.review(&request).await,
+        repo.review_training_fixture(&request).await,
         Err(RepositoryError::InvalidEvidence(_))
     ));
     assert!(matches!(
@@ -693,6 +1037,15 @@ async fn postgres_workflow_seals_and_fences() -> std::result::Result<(), Box<dyn
         .bind(&scope.tenant)
         .execute(&mut connection)
         .await?;
+    sqlx::query("DELETE FROM workflow_training_review_commands WHERE tenant=$1")
+        .bind(&scope.tenant)
+        .execute(&mut connection)
+        .await?;
+    sqlx::query("DELETE FROM workflow_training_publications WHERE tenant=$1")
+        .bind(&scope.tenant)
+        .execute(&mut connection)
+        .await?;
+    sqlx::query("DELETE FROM workflow_training_automatic_decisions WHERE review_id IN (SELECT id FROM workflow_learning_reviews WHERE tenant=$1)").bind(&scope.tenant).execute(&mut connection).await?;
     sqlx::query("DELETE FROM workflow_learning_reviews WHERE tenant=$1")
         .bind(&scope.tenant)
         .execute(&mut connection)
@@ -720,25 +1073,307 @@ fn unassessed_quality_abstains_before_cost_comparison() {
 }
 
 #[test]
-fn review_format_requires_current_nominal_symbol_authority() {
-    let current = serde_json::json!({"executions":[{
-        "observation":{"state":"available","value":{"program":{
-            "format":"whole_program_example",
-            "schema_version":crate::workflow_learning::teaching::TEACHING_SCHEMA_VERSION
-        }}},
-        "catalogue_requirements":{"state":"unavailable","diagnostic":"fixture"}
-    }]});
+fn review_format_requires_typed_immutable_execution_and_program_references() {
+    let current = serde_json::to_value(StoredReviewSeal {
+        request: ReviewRequest {
+            scope: LibraryScope {
+                tenant: "tenant".into(),
+                project: "project".into(),
+            },
+            logical_session: ids::logical("logical"),
+            session_revision: 1,
+            intent: "inspect".into(),
+            subtasks: vec![],
+        },
+        executions: vec![ExecutionReceiptRef {
+            session_revision: 1,
+            execution_id: ids::run("run"),
+            evidence_digest: ReceiptDigest::from_bytes(b"fact"),
+            program_digest: ReceiptDigest::from_bytes(b"program"),
+        }],
+        assurance: OutcomeAssurance::AgentAttested,
+    })
+    .unwrap();
     validate_seal_format(&current).unwrap();
     for version in [
         serde_json::json!(1),
-        serde_json::json!("2"),
+        serde_json::json!("not-a-digest"),
         serde_json::Value::Null,
     ] {
         let mut stale = current.clone();
-        stale["executions"][0]["observation"]["value"]["program"]["schema_version"] = version;
+        stale["executions"][0]["program_digest"] = version;
         assert!(matches!(
             validate_seal_format(&stale),
             Err(RepositoryError::IncompatibleTeachingFormat)
         ));
     }
+}
+
+// Exercises the persisted imported-support graph through two archive hops. This
+// fixture inserts already-adopted records; authorization and publication are
+// covered by the separate import tests.
+#[tokio::test]
+async fn imported_support_reexports_across_two_hops_without_review_claims(
+) -> std::result::Result<(), Box<dyn std::error::Error>> {
+    fn assert_no_result_or_grade(value: &serde_json::Value) {
+        match value {
+            serde_json::Value::Object(fields) => {
+                for (key, nested) in fields {
+                    assert!(
+                        !matches!(key.as_str(), "run_artifact" | "ledger_bytes" | "task_grade"),
+                        "archive contains forbidden field {key}"
+                    );
+                    assert_no_result_or_grade(nested);
+                }
+            }
+            serde_json::Value::Array(items) => items.iter().for_each(assert_no_result_or_grade),
+            _ => {}
+        }
+    }
+    use super::super::{
+        archive::ArchiveKind,
+        filesystem_archive::{Reader, Record},
+    };
+    let Ok(url) = std::env::var("PLASM_ARCHIVE_GRAPH_TEST_URL") else {
+        return Ok(());
+    };
+    let repo = WorkflowRepository::connect(&url).await?;
+    repo.migrate().await?;
+    let nonce = Uuid::new_v4();
+    let source = LibraryScope {
+        tenant: format!("graph-source-{nonce}"),
+        project: "test".into(),
+    };
+    let session = LogicalSessionId::new_v4();
+    repo.bind_training_fixture(&source, session).await?;
+    let fixture_dir = std::path::PathBuf::from(crate::test_manifest_dir())
+        .join("../../fixtures/schemas/plasm_language_matrix");
+    let mut bound_cgs = plasm_core::loader::load_schema_dir(&fixture_dir)?;
+    bound_cgs.bind_registry_entry_id("langmatrix");
+    let bound_cgs = std::sync::Arc::new(bound_cgs);
+    let mut session_fixture = crate::test_support::session_fixtures::ExecuteSessionFixture::new()
+        .entry_id("langmatrix")
+        .entities(vec!["LangItem".to_owned()])
+        .build(bound_cgs.clone());
+    session_fixture.teaching_exposure = Some(plasm_core::TeachingExposureSession::new(
+        &bound_cgs,
+        "langmatrix",
+        &["LangItem"],
+    ));
+    let source_text = super::super::teaching::tests::source(&session_fixture);
+    let bundle = crate::plasm_dag::compile_python_program_checked(&session_fixture, &source_text)?;
+    let checked = super::super::teaching::CheckedTeachingExample::from_execution(
+        &session_fixture,
+        &source_text,
+        &bundle,
+    )
+    .await?;
+    let receipt = ExecutionReceipt {
+        scope: source.clone(),
+        logical_session: session,
+        session_revision: 1,
+        execution_id: ids::run("archive-graph-fixture"),
+        plan_id: ids::plan("archive-graph-fixture"),
+        prompt_hash: ids::prompt("archive-graph-fixture"),
+        execute_session: ids::execute("archive-graph-fixture"),
+        source: checked.program().source.clone(),
+        compiled_plan: serde_json::json!({}),
+        teaching_plan: super::super::review_packet::TeachingPlan::Unavailable {
+            reason: super::super::review_packet::TeachingPlanUnavailable::PlanningFailed,
+        },
+        observation: checked.observation(),
+        catalogue_requirements: crate::workflow_learning::catalogue_guidance::CatalogueRequirementEvidence::Unavailable { diagnostic: "fixture".into() },
+        catalog_fingerprints: checked.program().catalog_fingerprints.clone(),
+    };
+    repo.record_training_fixture(&receipt).await?;
+    let sibling_text = source_text.replace(
+        ".query()",
+        ".query().where(lambda row: row.id == row.title)",
+    );
+    let sibling_bundle =
+        crate::plasm_dag::compile_python_program_checked(&session_fixture, &sibling_text)?;
+    let sibling = super::super::teaching::CheckedTeachingExample::from_execution(
+        &session_fixture,
+        &sibling_text,
+        &sibling_bundle,
+    )
+    .await?;
+    let sibling_source = sibling.program().source.clone();
+    let mut sibling_receipt = receipt.clone();
+    sibling_receipt.execution_id = ids::run("archive-graph-sibling");
+    sibling_receipt.plan_id = ids::plan("archive-graph-sibling");
+    sibling_receipt.source = sibling_source.clone();
+    sibling_receipt.observation = sibling.observation();
+    sibling_receipt.catalog_fingerprints = sibling.program().catalog_fingerprints.clone();
+    repo.record_training_fixture(&sibling_receipt).await?;
+    let request = ReviewRequest {
+        scope: source.clone(),
+        logical_session: session,
+        session_revision: 1,
+        intent: "private sibling intent".into(),
+        subtasks: vec![AchievedSubtask {
+            intent: "private sibling claim".into(),
+            observed_outcome: "private sibling outcome".into(),
+            execution_ids: vec![receipt.execution_id, sibling_receipt.execution_id],
+        }],
+    };
+    repo.begin_execution(&source, session, "archive-graph-fixture")
+        .await?;
+    repo.finish_execution(&source, session, "archive-graph-fixture", true)
+        .await?;
+    let candidate = Candidate {
+        intent: super::super::index::NormalizedIntent {
+            purpose: "read".into(),
+            facets: vec![],
+            aliases: vec![],
+        },
+        embedding: vec![1.0],
+        embedding_profile: "fixture".into(),
+        family: "read".into(),
+        variant: "matrix".into(),
+        identity: "shape".into(),
+        coverage: vec!["read".into()],
+        quality: quality(),
+        catalog_fingerprints: checked.program().catalog_fingerprints.clone(),
+        state: CandidateState::Verified {
+            evidence: VerifiedProgram::observed(checked, OutcomeAssurance::AgentAttested),
+        },
+        expected_family_version: 0,
+    };
+    publish_test_candidate(&repo, &request, 1, candidate, true).await?;
+    let scopes = [
+        LibraryScope {
+            tenant: format!("graph-b-{nonce}"),
+            project: "test".into(),
+        },
+        LibraryScope {
+            tenant: format!("graph-c-{nonce}"),
+            project: "test".into(),
+        },
+    ];
+    let root = std::env::var_os("PLASM_ARCHIVE_GRAPH_TEST_OUTPUT")
+        .map(std::path::PathBuf::from)
+        .unwrap_or_else(|| std::env::temp_dir().join(format!("plasm-graph-test-{nonce}")));
+    std::fs::create_dir(&root)?;
+    let catalogue_dir = root.join("catalogues");
+    std::fs::create_dir(&catalogue_dir)?;
+    let cgs = bound_cgs.as_ref();
+    let recipes = serde_json::to_vec(&plasm_compile::compile_cgs_capability_templates(cgs)?)?;
+    let profile = plasm_core::catalog_discovery::EmbeddingProfile::default();
+    let discovery = plasm_core::catalog_discovery::CatalogDiscoveryArtifact {
+        entry_id: "langmatrix".into(),
+        cgs_hash: cgs.catalog_cgs_hash_hex(),
+        renderer_version: plasm_core::catalog_discovery::DISCOVERY_RENDERER_VERSION,
+        capabilities: plasm_core::catalog_discovery::capability_documents(cgs)?
+            .into_iter()
+            .enumerate()
+            .map(|(index, document)| {
+                let mut embedding = vec![0.0; profile.dimensions];
+                embedding[index % profile.dimensions] = 1.0;
+                plasm_core::catalog_discovery::EmbeddedCapability {
+                    document,
+                    embedding,
+                }
+            })
+            .collect(),
+        profile: profile.clone(),
+        prerequisites: cgs.prerequisites.clone(),
+    };
+    discovery.validate(cgs)?;
+    let discovery = serde_json::to_vec(&discovery)?;
+    let manifest = plasm_core::catalog_il::CatalogManifest {
+        format_version: 3,
+        entry_id: "langmatrix".into(),
+        version: cgs.version,
+        cgs_hash: cgs.catalog_cgs_hash_hex(),
+        label: "Graph fixture".into(),
+        tags: vec![],
+        cgs_json: "langmatrix.cgs.json".into(),
+        recipes_json: "langmatrix.recipes.json".into(),
+        recipes_hash: plasm_core::catalog_discovery::content_hash(&recipes),
+        discovery_json: "langmatrix.discovery.json".into(),
+        discovery_hash: plasm_core::catalog_discovery::content_hash(&discovery),
+        embedding_profile: profile,
+    };
+    std::fs::write(
+        catalogue_dir.join("langmatrix.cgs.json"),
+        serde_json::to_vec(cgs)?,
+    )?;
+    std::fs::write(catalogue_dir.join("langmatrix.recipes.json"), recipes)?;
+    std::fs::write(catalogue_dir.join("langmatrix.discovery.json"), discovery)?;
+    std::fs::write(
+        catalogue_dir.join("langmatrix.manifest.json"),
+        serde_json::to_vec_pretty(&manifest)?,
+    )?;
+    let source_path = root.join("source");
+    repo.export_filesystem_archive(&source, &source_path, ArchiveKind::ServingLibrary)
+        .await?;
+    let mut current = source_path;
+    for (hop, scope) in scopes.iter().enumerate() {
+        let reader = Reader::open(&current)?;
+        let (source_identity, source_candidate) = reader
+            .manifest()
+            .records
+            .keys()
+            .find_map(|identity| match reader.read_record(identity).ok()? {
+                Record::Example {
+                    revision_id,
+                    candidate,
+                    state: super::super::filesystem_archive::StoredExampleState::Active,
+                    ..
+                } => Some((format!("example:{revision_id}"), candidate)),
+                _ => None,
+            })
+            .ok_or("no active example in fixture")?;
+        let source_ref = reader
+            .manifest()
+            .records
+            .get(&source_identity)
+            .ok_or("missing item")?;
+        let example_id = Uuid::new_v4();
+        let mut tx = repo.pool.begin().await?;
+        sqlx::query("INSERT INTO workflow_learning_examples(id,tenant,project,family,variant,identity,candidate,state) VALUES($1,$2,$3,$4,$5,$6,$7,'active')")
+            .bind(example_id).bind(&scope.tenant).bind(&scope.project).bind(&source_candidate.family).bind(&source_candidate.variant).bind(&source_candidate.identity).bind(serde_json::to_value(&source_candidate)?).execute(&mut tx.executor()).await?;
+        sqlx::query("INSERT INTO workflow_learning_archives(tenant,project,digest,document) VALUES($1,$2,$3,$4)")
+            .bind(&scope.tenant).bind(&scope.project).bind(&reader.manifest().digest).bind(serde_json::to_value(reader.manifest())?).execute(&mut tx.executor()).await?;
+        for (identity, reference) in &reader.manifest().records {
+            let record = reader.read_record(identity)?;
+            sqlx::query("INSERT INTO workflow_learning_archive_items(tenant,project,archive_digest,item_digest,identity,source_scope,record,disposition) VALUES($1,$2,$3,$4,$5,$6,$7,$8)")
+                .bind(&scope.tenant).bind(&scope.project).bind(&reader.manifest().digest).bind(&reference.digest).bind(identity).bind(serde_json::to_value(&reader.manifest().source_scope)?).bind(serde_json::to_value(record)?).bind(serde_json::json!({"state":"retained_observation"})).execute(&mut tx.executor()).await?;
+        }
+        sqlx::query("INSERT INTO workflow_learning_archive_example_support(example_id,tenant,project,archive_digest,item_digest) VALUES($1,$2,$3,$4,$5)")
+            .bind(example_id).bind(&scope.tenant).bind(&scope.project).bind(&reader.manifest().digest).bind(&source_ref.digest).execute(&mut tx.executor()).await?;
+        tx.commit().await?;
+        let private_path = root.join(format!("private-hop-{hop}"));
+        repo.export_filesystem_archive(scope, &private_path, ArchiveKind::PrivateCollection)
+            .await?;
+        let private = Reader::open(&private_path)?;
+        for identity in private.manifest().records.keys() {
+            let record = private.read_record(identity)?;
+            assert_no_result_or_grade(&serde_json::to_value(&record)?);
+        }
+        let path = root.join(format!("hop-{hop}"));
+        repo.export_filesystem_archive(scope, &path, ArchiveKind::ServingLibrary)
+            .await?;
+        let projected = Reader::open(&path)?;
+        let mut count = 0;
+        for identity in projected.manifest().records.keys() {
+            let record = projected.read_record(identity)?;
+            assert_no_result_or_grade(&serde_json::to_value(&record)?);
+            let serialized = serde_json::to_string(&record)?;
+            assert!(!serialized.contains("private sibling"));
+            assert!(!serialized.contains(&serde_json::to_string(&sibling_source)?));
+            match record {
+                Record::SelectedReview { .. } => count += 1,
+                Record::Review { .. } => return Err("complete review leaked".into()),
+                _ => {}
+            }
+        }
+        assert!(count > 0);
+        current = path;
+    }
+    if std::env::var_os("PLASM_ARCHIVE_GRAPH_TEST_OUTPUT").is_none() {
+        std::fs::remove_dir_all(root)?;
+    }
+    Ok(())
 }

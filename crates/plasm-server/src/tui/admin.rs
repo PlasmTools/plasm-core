@@ -86,6 +86,24 @@ pub(crate) fn apply_admin_completion(
     comp: AdminCompletion,
 ) {
     match comp {
+        AdminCompletion::Training { corr, result } => {
+            if state.resources.admin.finish_inline(corr).is_some() {
+                match result {
+                    Ok(snapshot) => {
+                        state.training = Some(snapshot);
+                        set_notice(state, RunNotice::new(NoticeSeverity::Success, "Training status refreshed", "The selected session state was read under authenticated owner authority."));
+                    }
+                    Err(error) => set_notice(
+                        state,
+                        RunNotice::new(
+                            NoticeSeverity::Error,
+                            "Training control rejected",
+                            error.to_string(),
+                        ),
+                    ),
+                }
+            }
+        }
         AdminCompletion::RefreshFull { corr, data } => {
             if state.resources.admin.finish_refresh(corr) {
                 apply_refreshed_ui_data(state, data);

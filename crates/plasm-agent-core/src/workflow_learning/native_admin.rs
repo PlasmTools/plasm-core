@@ -35,8 +35,10 @@ pub async fn drain_promotion(
     scope: &LibraryScope,
     timeout: Duration,
 ) -> Result<PromotionDrain, LearningError> {
-    if learning.mode != LearningMode::Shadow
-        || timeout.is_zero()
+    if !matches!(
+        learning.mode,
+        LearningMode::Shadow | LearningMode::ShadowWithRecall
+    ) || timeout.is_zero()
         || timeout > Duration::from_secs(3600)
     {
         return Err(LearningError::Evidence(
