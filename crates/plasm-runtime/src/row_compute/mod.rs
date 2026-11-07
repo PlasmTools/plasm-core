@@ -1,6 +1,5 @@
 //! Typed row execution over borrowed Plasm values.
 
-mod adapter;
 mod aggregate;
 mod eval;
 mod expression;
@@ -8,7 +7,6 @@ mod rows;
 #[cfg(test)]
 use plasm_core::ValueRow;
 
-pub use adapter::ValueRowEngine;
 pub use eval::{eval_compute_ops, ComputeEvalOutcome};
 
 // JSON fixture notation is decoded once at test ingress, never in computation.
@@ -178,6 +176,37 @@ mod contract_tests {
         assert!(malformed.validate_correspondence(rows.len()).is_err());
         malformed.occurrences.push(Some(rows.len()));
         assert!(malformed.validate_correspondence(rows.len()).is_err());
+    }
+
+    #[test]
+    fn whole_pipeline_contract_is_checked_before_reading_any_input() {
+        let contract = ValueContract::record(
+            [(
+                "score".into(),
+                ValueContract::scalar(plasm_core::FieldType::Integer),
+            )]
+            .into(),
+            Default::default(),
+        );
+        let ops = [
+            ComputeOp::Sort {
+                key: FieldPath::from_dotted("score").unwrap(),
+                descending: false,
+            },
+            ComputeOp::Project {
+                fields: [(
+                    OutputName::new("result").unwrap(),
+                    FieldPath::from_dotted("absent").unwrap(),
+                )]
+                .into(),
+            },
+        ];
+        for rows in [vec![], vec![row!({})]] {
+            assert!(matches!(
+                eval_compute_ops(&ops, &rows, &contract),
+                Err(plasm_core::RowComputeError::Contract(_))
+            ));
+        }
     }
     proptest::proptest! {
         #[test]

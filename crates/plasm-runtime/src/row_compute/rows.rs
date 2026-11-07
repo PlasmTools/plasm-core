@@ -260,7 +260,7 @@ mod borrowing_tests {
     use super::super::{eval::apply_stored_plan, fixture_contract, row};
     use super::*;
     use plasm_core::{
-        fold_compute_ops, CollectCardinality, ComputeOp, FieldPath, FrameId, OutputName, StepId,
+        fold_compute_ops, CollectCardinality, ComputeOp, FieldPath, OutputName, StepId,
     };
 
     #[test]
@@ -286,7 +286,6 @@ mod borrowing_tests {
         ];
         let plan = fold_compute_ops(
             &ops,
-            FrameId::new(1),
             StepId::new("borrow").unwrap(),
             CollectCardinality::List,
         )
@@ -322,7 +321,6 @@ mod borrowing_tests {
         };
         let plan = fold_compute_ops(
             &[op],
-            FrameId::new(1),
             StepId::new("select").unwrap(),
             CollectCardinality::List,
         )

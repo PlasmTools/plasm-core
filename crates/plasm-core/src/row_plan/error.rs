@@ -1,6 +1,5 @@
 //! Typed row-compute errors — no stringly engine failures.
 
-use crate::identity::EntityName;
 use crate::money::{CrossCurrencyError, MoneyError};
 use crate::plasm_monad::ArithOp;
 use thiserror::Error;
@@ -52,8 +51,6 @@ pub enum RowComputeError {
     #[error(transparent)]
     Schema(#[from] FrameSchemaError),
     #[error(transparent)]
-    Collect(#[from] CollectError),
-    #[error(transparent)]
     Expr(#[from] crate::plasm_monad::WithExprError),
     #[error(transparent)]
     Predicate(#[from] RowFilterError),
@@ -69,8 +66,6 @@ pub enum RowComputeError {
     Atom(#[from] crate::plasm_monad::PlanAtomError),
     #[error(transparent)]
     StepId(#[from] crate::plasm_monad::StepIdError),
-    #[error(transparent)]
-    Scan(#[from] ScanError),
     #[error(transparent)]
     Fusion(#[from] FusionError),
 }
@@ -142,31 +137,11 @@ pub enum RowCorrespondenceError {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Error)]
-pub enum CollectError {
-    #[error("collect is only legal at a program-return, page, invoke-arg, or render barrier")]
-    CollectNotAtBarrier,
-    #[error("render row cap exceeded: got {got}, max {max}")]
-    RenderRowCap { got: usize, max: usize },
-    #[error("silent page exhaust is forbidden")]
-    PageExhaustSilent,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Error)]
 pub enum RowFilterError {
     #[error("row filter requires at least one predicate")]
     Empty,
     #[error("row filter cannot be rewritten as a catalog filter")]
     CrossPlanePushdown,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Error)]
-pub enum ScanError {
-    #[error("unbound frame")]
-    UnboundFrame,
-    #[error("fixture scan `{0}` is not loaded")]
-    MissingFixture(u64),
-    #[error("entity `{0}` is not in the graph snapshot")]
-    MissingGraphEntity(EntityName),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Error)]

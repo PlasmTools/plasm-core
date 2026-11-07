@@ -680,33 +680,6 @@ fn client_side_predicate_matches_entity(
     }
 }
 
-/// Collect fanout branch deltas and merge into session materialization (single writer).
-pub struct FanoutCoordinator<'a> {
-    mat: &'a mut SessionMaterialization,
-}
-
-impl<'a> FanoutCoordinator<'a> {
-    pub fn new(mat: &'a mut SessionMaterialization) -> Self {
-        Self { mat }
-    }
-
-    pub fn reader(&self) -> EntityGraphSnapshot {
-        self.mat.snapshot()
-    }
-
-    pub fn responses(&self) -> &SessionResponseStore {
-        &self.mat.responses
-    }
-
-    pub fn merge_entities(&mut self, entities: Vec<CachedEntity>) -> Result<usize, RuntimeError> {
-        self.mat.merge_graph(entities)
-    }
-
-    pub fn mat_mut(&mut self) -> &mut SessionMaterialization {
-        self.mat
-    }
-}
-
 /// Bridge for tests that still use [`MemoryReplayStore`].
 pub fn replay_store_lookup(
     store: &MemoryReplayStore,

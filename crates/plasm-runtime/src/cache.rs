@@ -1,4 +1,4 @@
-//! Materialized entity graph for execute sessions: [`GraphCache`], [`CachedEntity`], [`CacheStore`].
+//! Materialized entity graph for execute sessions: [`GraphCache`] and [`CachedEntity`].
 //!
 //! # Cache invariants (semi-formal)
 //!
@@ -457,32 +457,6 @@ impl CachedEntity {
             }
         }
         changed
-    }
-}
-
-/// Cache abstraction for execution ([`GraphCache`] is the default in-memory store).
-pub trait CacheStore {
-    fn get(&self, reference: &Ref) -> Option<&CachedEntity>;
-    fn insert(&mut self, entity: CachedEntity) -> Result<bool, RuntimeError>;
-    fn merge(&mut self, entities: Vec<CachedEntity>) -> Result<usize, RuntimeError>;
-    fn remove(&mut self, reference: &Ref) -> Option<CachedEntity>;
-}
-
-impl CacheStore for GraphCache {
-    fn get(&self, reference: &Ref) -> Option<&CachedEntity> {
-        GraphCache::get(self, reference)
-    }
-
-    fn insert(&mut self, entity: CachedEntity) -> Result<bool, RuntimeError> {
-        GraphCache::insert(self, entity)
-    }
-
-    fn merge(&mut self, entities: Vec<CachedEntity>) -> Result<usize, RuntimeError> {
-        GraphCache::merge(self, entities)
-    }
-
-    fn remove(&mut self, reference: &Ref) -> Option<CachedEntity> {
-        GraphCache::remove(self, reference)
     }
 }
 

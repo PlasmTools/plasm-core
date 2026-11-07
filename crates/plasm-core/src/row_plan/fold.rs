@@ -6,13 +6,12 @@ use super::collect::{CollectCardinality, CollectReason, RenderCollectSpec};
 use super::error::{FrameSchemaError, FusionError, RowComputeError};
 use super::expr::ProjectSpec;
 use super::filter::RowFilter;
-use super::ids::{FrameId, RowNodeId, SurfaceMeaningId};
+use super::ids::{RowNodeId, SurfaceMeaningId};
 use super::plan::{Pipeline, PlanNode, RowPlan, TypedAggregate};
 
 /// Fold a linear Map-spine `ComputeOp` chain. `Render` is a collect barrier, not a node.
 pub fn fold_compute_ops(
     ops: &[ComputeOp],
-    source: FrameId,
     step: StepId,
     cardinality: CollectCardinality,
 ) -> Result<RowPlan, RowComputeError> {
@@ -48,13 +47,7 @@ pub fn fold_compute_ops(
             other => pipeline.push(id, plan_node_from_compute(other)?)?,
         }
     }
-    Ok(RowPlan::new(
-        source,
-        pipeline,
-        collect,
-        cardinality,
-        meaning,
-    )?)
+    Ok(RowPlan::new(pipeline, collect, cardinality, meaning)?)
 }
 
 pub fn plan_node_from_compute(op: &ComputeOp) -> Result<PlanNode, RowComputeError> {

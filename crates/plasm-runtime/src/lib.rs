@@ -94,7 +94,6 @@
 //! ## Traits
 //!
 //! - [`ExprExecutor`](crate::ExprExecutor): abstract expression execution (implemented by [`ExecutionEngine`](crate::ExecutionEngine)).
-//! - [`CacheStore`](crate::CacheStore): pluggable entity cache (implemented by [`GraphCache`](crate::GraphCache)).
 
 pub mod api_error_detail;
 pub mod auth;
@@ -207,7 +206,7 @@ pub use live_run_telemetry::{
     with_live_run_telemetry, LiveRunTelemetry,
 };
 pub use materialization::{
-    CacheDecision, CacheTelemetry, EntityGraphSnapshot, ExecutionCacheConsult, FanoutCoordinator,
+    CacheDecision, CacheTelemetry, EntityGraphSnapshot, ExecutionCacheConsult,
     MaterializedRowSource, SessionMaterialization, SessionResponseStore, StoredResponse,
 };
 pub use mockserver::*;
@@ -219,7 +218,7 @@ pub use oauth_client::{
 pub use oauth_token_debug::TokenEndpointResponseSummary;
 pub use query_index::{QueryCacheKey, QueryIndex, QueryObservation};
 pub use replay::*;
-pub use row_compute::{eval_compute_ops, ComputeEvalOutcome, ValueRowEngine};
+pub use row_compute::{eval_compute_ops, ComputeEvalOutcome};
 pub use row_predicate::BoundRowPredicate;
 pub use runtime_error_render::step_error_from_runtime;
 pub use session_graph_cache::MutexGraphCacheSession;

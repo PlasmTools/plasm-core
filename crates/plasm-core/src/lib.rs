@@ -316,10 +316,8 @@ pub use row_membership::{
 };
 pub use row_plan::{
     fold_compute_ops, parse_with_body, CatalogFilter, CollectCardinality, CollectReason,
-    CollectRows, CollectedFrame, CompileRowPlan, EnginePlanId, FrameId, FrameShape, IngestBatch,
-    IngestRows, PlanNode, PlasmFrameSchema, PredicateCompileError, ProjectSpec, RowComputeEngine,
-    RowComputeError, RowCorrespondenceError, RowFilter, RowPlan, ScanError, ScanSource,
-    TypedAggregate,
+    CollectedFrame, FrameShape, PlanNode, PlasmFrameSchema, PredicateCompileError, ProjectSpec,
+    RowComputeError, RowCorrespondenceError, RowFilter, RowPlan, TypedAggregate,
 };
 pub use row_predicate::{
     entity_def_for_row_predicate, parse_row_predicate_list, row_predicate_from_expr,

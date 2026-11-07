@@ -1,4 +1,4 @@
-//! Opaque identifiers for frames, fused nodes, and engine handles.
+//! Opaque identifiers for fused nodes and surface meaning.
 //!
 //! None of these appear on hashed [`crate::PlasmComp`].
 
@@ -26,28 +26,8 @@ macro_rules! u64_id {
 }
 
 u64_id! {
-    /// Session-local ingested frame.
-    FrameId
-}
-
-u64_id! {
     /// Node inside a fused [`super::RowPlan`] pipeline.
     RowNodeId
-}
-
-u64_id! {
-    /// Adapter-private compiled plan handle. Never stored on `PlasmComp`.
-    EnginePlanId
-}
-
-u64_id! {
-    /// Language-matrix / unit-test scan.
-    FixtureScanId
-}
-
-u64_id! {
-    /// Graph-backed scan (hot snapshot identity).
-    GraphSnapshotId
 }
 
 u64_id! {

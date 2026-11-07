@@ -32,7 +32,6 @@ pub fn eval_compute_ops(
     contract: &plasm_core::value_contract::ValueContract,
 ) -> Result<ComputeEvalOutcome, plasm_core::RowComputeError> {
     let step = StepId::new("row")?;
-    use plasm_core::{CollectRows, CompileRowPlan, IngestRows};
     let schema = plasm_core::PlasmFrameSchema::new(
         plasm_core::row_plan::FrameShape::Remapped {
             reason: plasm_core::row_plan::RemapReason::Derive,
@@ -40,14 +39,17 @@ pub fn eval_compute_ops(
         contract.clone(),
     )
     .map_err(plasm_core::RowComputeError::Schema)?;
-    let mut engine = super::ValueRowEngine::new();
-    let frame = engine.ingest(
-        &plasm_core::ScanSource::Inline { schema },
-        plasm_core::IngestBatch { rows },
-    )?;
-    let plan = fold_compute_ops(ops, frame, step, CollectCardinality::List)?;
-    let compiled = engine.compile(&plan)?;
-    let collected = engine.collect(compiled, plan.collect().clone())?;
+    let plan = fold_compute_ops(ops, step, CollectCardinality::List)?;
+    let prepared = PreparedRowPlan::new(&plan, schema.contract())?;
+    let mut state = super::rows::ingest_rows(rows, schema.contract());
+    state.shape = schema.shape().clone();
+    prepared.apply(&mut state)?;
+    let collected = plasm_core::CollectedFrame {
+        rows: super::rows::collect_rows(&state),
+        occurrences: state.rows.iter().map(|row| row.1).collect(),
+        schema: plasm_core::PlasmFrameSchema::new(state.shape, state.contract)
+            .map_err(plasm_core::RowComputeError::Schema)?,
+    };
     collected
         .validate_correspondence(rows.len())
         .map_err(plasm_core::RowComputeError::Correspondence)?;
@@ -65,28 +67,52 @@ pub fn eval_compute_ops(
     }
 }
 
+struct PreparedRowPlan<'a> {
+    plan: &'a RowPlan,
+    outputs: Vec<plasm_core::value_contract::ValueContract>,
+}
+
+impl<'a> PreparedRowPlan<'a> {
+    fn new(
+        plan: &'a RowPlan,
+        input: &plasm_core::value_contract::ValueContract,
+    ) -> Result<Self, plasm_core::RowComputeError> {
+        let mut contract = input.clone();
+        let mut outputs = Vec::with_capacity(plan.nodes().len());
+        for (_, node) in plan.nodes().iter() {
+            contract = plasm_core::row_plan::contracts::output_contract(&contract, node)
+                .map_err(plasm_core::RowComputeError::Contract)?;
+            outputs.push(contract.clone());
+        }
+        Ok(Self { plan, outputs })
+    }
+
+    fn apply(self, state: &mut FrameState<'_>) -> Result<(), plasm_core::RowComputeError> {
+        let now = Utc::now();
+        for ((_, node), output) in self.plan.nodes().iter().zip(self.outputs) {
+            apply_node(node, state, now)?;
+            state.contract = output;
+            use plasm_core::row_plan::{FrameShape, RemapReason};
+            let reason = match node {
+                PlanNode::Project(_) => Some(RemapReason::Project),
+                PlanNode::GroupBy { .. } => Some(RemapReason::GroupBy),
+                PlanNode::Aggregate { .. } => Some(RemapReason::Aggregate),
+                _ => None,
+            };
+            if let Some(reason) = reason {
+                state.shape = FrameShape::Remapped { reason };
+            }
+        }
+        Ok(())
+    }
+}
+
+#[cfg(test)]
 pub(super) fn apply_stored_plan(
     plan: &RowPlan,
     state: &mut FrameState<'_>,
 ) -> Result<(), plasm_core::RowComputeError> {
-    let now = Utc::now();
-    for (_, node) in plan.nodes().iter() {
-        let output = plasm_core::row_plan::contracts::output_contract(&state.contract, node)
-            .map_err(plasm_core::RowComputeError::Contract)?;
-        apply_node(node, state, now)?;
-        state.contract = output;
-        use plasm_core::row_plan::{FrameShape, RemapReason};
-        let reason = match node {
-            PlanNode::Project(_) => Some(RemapReason::Project),
-            PlanNode::GroupBy { .. } => Some(RemapReason::GroupBy),
-            PlanNode::Aggregate { .. } => Some(RemapReason::Aggregate),
-            _ => None,
-        };
-        if let Some(reason) = reason {
-            state.shape = FrameShape::Remapped { reason };
-        }
-    }
-    Ok(())
+    PreparedRowPlan::new(plan, &state.contract)?.apply(state)
 }
 fn apply_node(
     node: &PlanNode,
