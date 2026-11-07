@@ -12,6 +12,115 @@ use std::sync::{
 
 struct NextUrlPages;
 
+struct ScopedRows(Mutex<Vec<Option<Value>>>);
+
+#[async_trait]
+impl HttpTransport for ScopedRows {
+    async fn send_compiled_http(
+        &self,
+        _: &str,
+        request: &CompiledRequest,
+        _: Option<ResolvedAuth>,
+    ) -> Result<(serde_json::Value, Option<String>), RuntimeError> {
+        self.0.lock().unwrap().push(request.query.clone());
+        Ok((serde_json::json!([{"id":"a"},{"id":"b"},{"id":"c"}]), None))
+    }
+    async fn get_json_absolute(
+        &self,
+        _: &str,
+        _: Option<ResolvedAuth>,
+    ) -> Result<(serde_json::Value, Option<String>), RuntimeError> {
+        panic!("unexpected absolute request")
+    }
+}
+
+#[tokio::test]
+async fn internal_query_preserves_scope_and_row_disjunction_with_and_without_pagination() {
+    let mut cgs = load_schema_dir(
+        &std::path::PathBuf::from(crate::test_manifest_dir())
+            .join("../../fixtures/schemas/scoped_query_matrix"),
+    )
+    .unwrap();
+    let transport = Arc::new(ScopedRows(Mutex::new(Vec::new())));
+    let engine = ExecutionEngine::new_with_transport(
+        ExecutionConfig {
+            base_url: Some("http://fixture".into()),
+            hydrate: false,
+            ..Default::default()
+        },
+        transport.clone(),
+        None,
+    );
+    let mut query = QueryExpr::filtered(
+        "Member",
+        Predicate::and(vec![
+            Predicate::eq("cohort_id", 7_i64),
+            Predicate::or(vec![Predicate::eq("id", "a"), Predicate::eq("id", "b")]),
+        ]),
+    );
+    query.capability_name = Some("member_query".into());
+    for paginated in [false, true] {
+        let template = &mut cgs
+            .capabilities
+            .get_mut("member_query")
+            .unwrap()
+            .mapping
+            .as_mut()
+            .unwrap()
+            .template
+            .0;
+        if paginated {
+            template["pagination"] = serde_json::json!({"strategy":"page_number","params":{"page_index":{"counter":0},"page_limit":{"fixed":20,"role":"page_size"}}});
+        }
+        let mut mat = SessionMaterialization::new();
+        let result = ExecutionEngine::run_in_execute_task_scopes(
+            "http://fixture".into(),
+            None,
+            None,
+            None,
+            None,
+            ExecuteOptions::for_catalog(&cgs)
+                .unwrap()
+                .compiled_catalog
+                .unwrap(),
+            None,
+            None,
+            engine.execute_query(
+                &query,
+                &cgs,
+                &mut mat,
+                ExecutionMode::Live,
+                StreamConsumeOpts {
+                    fetch_all: true,
+                    ..Default::default()
+                },
+                &ViewAmbientContext::default(),
+            ),
+        )
+        .await
+        .unwrap();
+        let ids: std::collections::BTreeSet<_> = result
+            .entities()
+            .iter()
+            .map(|row| row.reference.primary_slot_str())
+            .collect();
+        assert_eq!(
+            ids,
+            std::collections::BTreeSet::from(["a".to_string(), "b".to_string()]),
+            "paginated={paginated}"
+        );
+    }
+    let requests = transport.0.lock().unwrap();
+    assert_eq!(requests.len(), 2);
+    for request in requests.iter() {
+        let Some(Value::Object(query)) = request else {
+            panic!("query missing")
+        };
+        assert_eq!(query.get("cohort_id"), Some(&Value::Integer(7)));
+        assert!(!query.contains_key("id"));
+    }
+}
+
 struct RepeatingUrlPages(AtomicUsize);
 
 #[async_trait]

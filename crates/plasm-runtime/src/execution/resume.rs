@@ -88,6 +88,9 @@ impl ExecutionEngine {
             config,
             ..
         } = resume;
+        let residual = plasm_compile::predicate_compiler::resolve_query(&query, cgs)
+            .map_err(|source| RuntimeError::CompilationError { source })?
+            .residual;
         self.paginated_query_stream(
             query,
             cgs,
@@ -97,6 +100,7 @@ impl ExecutionEngine {
             config,
             env,
             capability,
+            residual,
             consume,
             Some(state),
             opts.graph_page_spill.clone(),

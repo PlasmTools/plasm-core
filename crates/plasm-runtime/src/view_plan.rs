@@ -195,53 +195,6 @@ fn eval_view_condition(
     }
 }
 
-pub fn predicate_scope_map(predicate: &Predicate) -> Result<IndexMap<String, Value>, RuntimeError> {
-    let mut acc: IndexMap<String, Vec<Value>> = IndexMap::new();
-    collect_predicate_vars(predicate, &mut acc);
-    let mut scope = IndexMap::new();
-    for (field, mut values) in acc {
-        match values.len() {
-            0 => {}
-            1 => {
-                scope.insert(field, values.remove(0));
-            }
-            _ => {
-                scope.insert(field, Value::Array(values));
-            }
-        }
-    }
-    Ok(scope)
-}
-
-fn collect_predicate_vars(predicate: &Predicate, acc: &mut IndexMap<String, Vec<Value>>) {
-    let mut pending = vec![predicate];
-    while let Some(predicate) = pending.pop() {
-        match predicate {
-            Predicate::Comparison { field, op, value } => {
-                let rhs = value.to_value();
-                match op {
-                    plasm_core::CompOp::In | plasm_core::CompOp::Contains => match &rhs {
-                        Value::Array(arr) => {
-                            acc.entry(field.clone())
-                                .or_default()
-                                .extend(arr.iter().cloned());
-                        }
-                        other => {
-                            acc.entry(field.clone()).or_default().push(other.clone());
-                        }
-                    },
-                    _ => {
-                        acc.entry(field.clone()).or_default().clear();
-                        acc.entry(field.clone()).or_default().push(rhs);
-                    }
-                }
-            }
-            Predicate::And { args } | Predicate::Or { args } => pending.extend(args.iter().rev()),
-            _ => {}
-        }
-    }
-}
-
 pub fn scope_from_get_reference(
     view_ent: &EntityDef,
     get: &GetExpr,
@@ -668,6 +621,7 @@ pub(crate) fn derive_view_query_scope(
     view_name: &str,
     query: &QueryExpr,
     cgs: &CGS,
+    bindings: &IndexMap<String, Value>,
 ) -> Result<IndexMap<String, Value>, RuntimeError> {
     let view = cgs.views.get(view_name).ok_or_else(|| {
         RuntimeError::ViewPlan(crate::ViewPlanError::UnknownView {
@@ -684,7 +638,7 @@ pub(crate) fn derive_view_query_scope(
         ));
     }
     match &query.predicate {
-        Some(pred) => predicate_scope_map(pred),
+        Some(_) => Ok(bindings.clone()),
         None if view.scope.iter().all(|s| !s.required || s.inject.is_some()) => Ok(IndexMap::new()),
         None => Err(RuntimeError::ViewPlan(
             crate::ViewPlanError::ScopePredicateRequired {

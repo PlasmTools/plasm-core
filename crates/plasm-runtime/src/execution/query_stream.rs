@@ -180,24 +180,11 @@ impl ExecutionEngine {
                 });
             }
         }
-        let filter = compile_query_dispatch(query, cgs)?;
-        let capability = resolve_query_capability(query, cgs)?;
-        let mut env = CmlEnv::new();
-        if let Some(f) = &filter {
-            let json_val = f.to_json();
-            env.insert("filter".to_string(), json_to_plasm_value(&json_val));
-        }
-        if let Some(pred) = &query.predicate {
-            extract_predicate_vars(pred, &mut env);
-        }
-        normalize_cml_env_inputs(&mut env, cgs, capability)?;
-        plasm_core::apply_entity_ref_scope_splat(&mut env, cgs, capability)?;
-        if let Some(proj) = &query.projection {
-            env.insert(
-                "projection".to_string(),
-                Value::Array(proj.iter().map(|s| Value::String(s.clone())).collect()),
-            );
-        }
+        let prepared = super::query_prepare::prepare(query, cgs)?;
+        let capability = prepared.capability;
+        let env = prepared.env;
+        let residual = prepared.residual;
+        let bindings = prepared.bindings;
         let capability_template = compiled_capability_template(capability)?;
         if let CapabilityTemplate::View(vt) = &capability_template {
             let view_name = vt.view.clone();
@@ -208,6 +195,7 @@ impl ExecutionEngine {
                     self,
                     view_name.as_str(),
                     &query,
+                    &bindings,
                     cgs,
                     mat,
                     mode,
@@ -228,13 +216,23 @@ impl ExecutionEngine {
                 pconf.clone(),
                 env.clone(),
                 capability,
+                residual,
                 consume,
                 None,
                 graph_page_spill,
             );
         }
 
-        self.non_paginated_query_stream(query, cgs, mat, mode, capability, capability_template, env)
+        self.non_paginated_query_stream(
+            query,
+            cgs,
+            mat,
+            mode,
+            capability,
+            capability_template,
+            env,
+            residual,
+        )
     }
     #[allow(clippy::too_many_arguments)]
     fn cross_entity_query_stream<'a>(
@@ -269,6 +267,7 @@ impl ExecutionEngine {
         capability: &'a CapabilitySchema,
         capability_template: CapabilityTemplate,
         env: CmlEnv,
+        residual: Option<Predicate>,
     ) -> Result<QueryStream<'a>, RuntimeError> {
         let compiled = compile_operation_dispatch(&capability_template, &env)?;
         let query = query.clone();
@@ -371,16 +370,8 @@ impl ExecutionEngine {
             res.entities = entities;
             res.stats.network_requests += extra_net;
 
-            if let Some(pred) = &query.predicate {
-                if let Some(entity_def) = cgs.get_entity(&query.entity) {
-                    let cap_params = capability_param_names(&capability);
-                    if let Some(entity_pred) =
-                        entity_field_predicate(pred, entity_def, Some(&cap_params))
-                    {
-                        res.entities =
-                            filter_entities_by_predicate(res.entities, &entity_pred, cgs)?;
-                    }
-                }
+            if let Some(pred) = &residual {
+                res.entities = filter_entities_by_predicate(res.entities, pred, cgs)?;
             }
 
             let collection = if partial_mcp {
@@ -410,6 +401,7 @@ impl ExecutionEngine {
         pconf: PaginationConfig,
         env: CmlEnv,
         capability: &'a CapabilitySchema,
+        residual: Option<Predicate>,
         consume: StreamConsumeOpts,
         resume_state: Option<PaginationLoopState>,
         graph_page_spill: Option<crate::graph_page_spill::GraphPageSpillHandle>,
@@ -499,14 +491,8 @@ impl ExecutionEngine {
         )?;
         let collector =
             crate::paginated_collect::PageCollector::new(&consume, cgs, query.entity.as_str())?;
-        let cap_params = capability_param_names(&capability);
-        let predicate = query
-            .predicate
+        let predicate = residual
             .as_ref()
-            .and_then(|pred| {
-                cgs.get_entity(&query.entity)
-                    .and_then(|entity| entity_field_predicate(pred, entity, Some(&cap_params)))
-            })
             .map(|pred| {
                 super::predicates::PreparedEntityPredicate::new(cgs, query.entity.as_str(), &pred)
             })

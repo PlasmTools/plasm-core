@@ -2,14 +2,6 @@
 
 use super::*;
 
-/// Resolve the capability that backs a [`QueryExpr`] (delegates to [`plasm_core::resolve_query_capability`]).
-pub(crate) fn resolve_query_capability<'a>(
-    query: &'a QueryExpr,
-    cgs: &'a CGS,
-) -> Result<&'a CapabilitySchema, RuntimeError> {
-    resolve_query_capability_core(query, cgs).map_err(RuntimeError::QueryResolution)
-}
-
 /// Canonical HTTP execute session coordinates supplied by the host (`plasm` HTTP/MCP).
 ///
 /// These match `/execute/:prompt_hash/:session` path validation and must **not** be confused
@@ -244,11 +236,4 @@ pub(crate) fn compile_operation_dispatch(
     env: &CmlEnv,
 ) -> Result<CompiledOperation, RuntimeError> {
     compile_operation(template, env).map_err(|e| RuntimeError::CmlError { source: e })
-}
-
-pub(crate) fn compile_query_dispatch(
-    query: &QueryExpr,
-    cgs: &CGS,
-) -> Result<Option<BackendFilter>, RuntimeError> {
-    compile_query(query, cgs).map_err(|e| RuntimeError::CompilationError { source: e })
 }

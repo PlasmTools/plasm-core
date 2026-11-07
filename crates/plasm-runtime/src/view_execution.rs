@@ -208,12 +208,13 @@ pub(crate) async fn execute_view_query(
     engine: &ExecutionEngine,
     view_name: &str,
     query: &QueryExpr,
+    bindings: &IndexMap<String, plasm_core::Value>,
     cgs: &CGS,
     cache: &mut SessionMaterialization,
     mode: ExecutionMode,
     ambient: &ViewAmbientContext,
 ) -> Result<ExecutionResult, RuntimeError> {
-    let scope = derive_view_query_scope(view_name, query, cgs)?;
+    let scope = derive_view_query_scope(view_name, query, cgs, bindings)?;
     execute_view_scoped(engine, view_name, scope, cgs, cache, mode, ambient).await
 }
 

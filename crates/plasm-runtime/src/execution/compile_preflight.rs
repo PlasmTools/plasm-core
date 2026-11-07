@@ -350,29 +350,15 @@ fn preflight_compile_query(
     compiled: &plasm_compile::CompiledCatalog,
     ambient: &ViewAmbientContext,
 ) -> Result<Option<PreparedViewPreflight>, RuntimeError> {
-    let filter = compile_query_dispatch(query, cgs)?;
-    let capability = resolve_query_capability(query, cgs)?;
-    let mut env = CmlEnv::new();
-    if let Some(f) = &filter {
-        let json_val = f.to_json();
-        env.insert("filter".to_string(), json_to_plasm_value(&json_val));
-    }
-    if let Some(pred) = &query.predicate {
-        extract_predicate_vars(pred, &mut env);
-    }
-    normalize_cml_env_inputs(&mut env, cgs, capability)?;
-    plasm_core::apply_entity_ref_scope_splat(&mut env, cgs, capability)?;
-    if let Some(proj) = &query.projection {
-        env.insert(
-            "projection".to_string(),
-            Value::Array(proj.iter().map(|s| Value::String(s.clone())).collect()),
-        );
-    }
+    plasm_core::type_check_query(query, cgs)?;
+    let prepared = super::query_prepare::prepare(query, cgs)?;
+    let capability = prepared.capability;
+    let env = prepared.env;
     let capability_template = compiled.capability(capability.name.as_str())?.clone();
     if let CapabilityTemplate::View(vt) = &capability_template {
         return Ok(Some(PreparedViewPreflight {
             name: vt.view.to_string(),
-            scope: derive_view_query_scope(vt.view.as_str(), query, cgs)?,
+            scope: derive_view_query_scope(vt.view.as_str(), query, cgs, &prepared.bindings)?,
             ambient: ambient.clone(),
         }));
     }
