@@ -11,6 +11,28 @@ fn execution_mode_label(mode: ExecutionMode) -> &'static str {
 }
 
 impl ExecutionEngine {
+    /// Dispatch one already-compiled mutation under its original entity,
+    /// operation and optional request-identity scopes.
+    async fn dispatch_compiled_mutation(
+        &self,
+        compiled: &CompiledOperation,
+        entity: &str,
+        operation: OperationIdentity,
+        identity: Option<&super::request_identity::RequestIdentity>,
+    ) -> Result<(serde_json::Value, Option<String>), RuntimeError> {
+        let dispatch = with_dispatch_entity(
+            Some(entity),
+            super::mutation_evidence::with_mutation_identity(
+                operation,
+                self.execute_operation_full(compiled),
+            ),
+        );
+        match identity {
+            Some(identity) => identity.scope(dispatch).await,
+            None => dispatch.await,
+        }
+    }
+
     /// Execute a create expression (no target ID — creates a new resource)
     pub(crate) async fn execute_create(
         &self,
@@ -42,17 +64,17 @@ impl ExecutionEngine {
         match mode {
             ExecutionMode::Live => {
                 ensure_mutating_operation(&compiled, "create")?;
-                let http_res = with_dispatch_entity(
-                    Some(create.entity.as_str()),
-                    super::mutation_evidence::with_mutation_identity(
+                let http_res = self
+                    .dispatch_compiled_mutation(
+                        &compiled,
+                        create.entity.as_str(),
                         OperationIdentity {
                             entry_id: create.catalog_entry_id.as_deref().unwrap_or("").into(),
                             capability: create.capability.to_string(),
                         },
-                        self.execute_operation_full(&compiled),
-                    ),
-                )
-                .await;
+                        None,
+                    )
+                    .await;
                 let (response, _) = match http_res {
                     Ok(v) => v,
                     Err(e) => {
@@ -161,17 +183,17 @@ impl ExecutionEngine {
         match mode {
             ExecutionMode::Live => {
                 ensure_mutating_operation(&compiled, "delete")?;
-                let (response, _) = with_dispatch_entity(
-                    Some(delete.target.entity_type.as_str()),
-                    super::mutation_evidence::with_mutation_identity(
+                let (response, _) = self
+                    .dispatch_compiled_mutation(
+                        &compiled,
+                        delete.target.entity_type.as_str(),
                         OperationIdentity {
                             entry_id: delete.catalog_entry_id.as_deref().unwrap_or("").into(),
                             capability: delete.capability.to_string(),
                         },
-                        self.execute_operation_full(&compiled),
-                    ),
-                )
-                .await?;
+                        None,
+                    )
+                    .await?;
                 preflight_fibery_command_envelope(&response)?;
 
                 // Remove from cache if present
@@ -272,20 +294,17 @@ impl ExecutionEngine {
                     None
                 };
                 let request_key = request_identity.as_ref().map(|identity| identity.key());
-                let dispatch = with_dispatch_entity(
-                    Some(invoke.target.entity_type.as_str()),
-                    super::mutation_evidence::with_mutation_identity(
+                let http_res = self
+                    .dispatch_compiled_mutation(
+                        &compiled,
+                        invoke.target.entity_type.as_str(),
                         OperationIdentity {
                             entry_id: invoke.catalog_entry_id.as_deref().unwrap_or("").into(),
                             capability: invoke.capability.to_string(),
                         },
-                        self.execute_operation_full(&compiled),
-                    ),
-                );
-                let http_res = match &request_identity {
-                    Some(identity) => identity.scope(dispatch).await,
-                    None => dispatch.await,
-                };
+                        request_identity.as_ref(),
+                    )
+                    .await;
                 let (response, _) = match http_res {
                     Ok(v) => v,
                     Err(e) => {
