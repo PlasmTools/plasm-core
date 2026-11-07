@@ -1,4 +1,4 @@
-version: 14
+version: 15
 entry_id: simple_note
 auth:
   scheme: none
@@ -470,7 +470,7 @@ values:
     description: Account-holder password for this service.
   nv_access_token:
     type: string
-    description: Bearer access token from login.
+    description: Simple Note login session token; use for Simple Note operations.
   nv_note_id:
     type: integer
     description: Identifies the note to read or act on.
@@ -520,21 +520,21 @@ prerequisites:
         account: prerequisite_account_name
       outputs:
         password: nv_password
-    appworld.session:
+    appworld.simple_note.session:
       version: 1
       inputs: {}
       outputs:
         token: nv_access_token
   providers:
     session:
-      contract: appworld.session
+      contract: appworld.simple_note.session
       capability: login
       outputs:
         token: access_token
   requirements:
     account_get:
     - id: session
-      contract: appworld.session
+      contract: appworld.simple_note.session
       bindings:
       - input:
           lane: scope
@@ -543,7 +543,7 @@ prerequisites:
         output: token
     account_update:
     - id: session
-      contract: appworld.session
+      contract: appworld.simple_note.session
       bindings:
       - input:
           lane: payload
@@ -552,7 +552,7 @@ prerequisites:
         output: token
     account_delete:
     - id: session
-      contract: appworld.session
+      contract: appworld.simple_note.session
       bindings:
       - input:
           lane: payload
@@ -582,7 +582,7 @@ prerequisites:
         output: password
     logout:
     - id: session
-      contract: appworld.session
+      contract: appworld.simple_note.session
       bindings:
       - input:
           lane: payload
@@ -591,7 +591,7 @@ prerequisites:
         output: token
     note_query:
     - id: session
-      contract: appworld.session
+      contract: appworld.simple_note.session
       bindings:
       - input:
           lane: selection
@@ -600,7 +600,7 @@ prerequisites:
         output: token
     note_get:
     - id: session
-      contract: appworld.session
+      contract: appworld.simple_note.session
       bindings:
       - input:
           lane: arguments
@@ -609,7 +609,7 @@ prerequisites:
         output: token
     note_create:
     - id: session
-      contract: appworld.session
+      contract: appworld.simple_note.session
       bindings:
       - input:
           lane: payload
@@ -618,7 +618,7 @@ prerequisites:
         output: token
     note_update:
     - id: session
-      contract: appworld.session
+      contract: appworld.simple_note.session
       bindings:
       - input:
           lane: payload
@@ -627,7 +627,7 @@ prerequisites:
         output: token
     note_append_content:
     - id: session
-      contract: appworld.session
+      contract: appworld.simple_note.session
       bindings:
       - input:
           lane: payload
@@ -636,7 +636,7 @@ prerequisites:
         output: token
     note_delete:
     - id: session
-      contract: appworld.session
+      contract: appworld.simple_note.session
       bindings:
       - input:
           lane: payload

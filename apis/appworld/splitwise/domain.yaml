@@ -1,4 +1,4 @@
-version: 27
+version: 28
 entry_id: splitwise
 auth:
   scheme: none
@@ -2034,7 +2034,7 @@ values:
     description: Account-holder password for this service.
   nv_access_token:
     type: string
-    description: Bearer access token from login.
+    description: Splitwise login session token; use for Splitwise operations.
   nv_file_access_token:
     type: string
     description: Bearer token authorizing the file-path argument, distinct from this service's login token.
@@ -2175,21 +2175,26 @@ prerequisites:
         account: prerequisite_account_name
       outputs:
         password: nv_password
-    appworld.session:
+    appworld.splitwise.session:
       version: 1
       inputs: {}
       outputs:
         token: nv_access_token
+    appworld.file_system.session:
+      version: 1
+      inputs: {}
+      outputs:
+        token: nv_file_access_token
   providers:
     session:
-      contract: appworld.session
+      contract: appworld.splitwise.session
       capability: login
       outputs:
         token: access_token
   requirements:
     balance_summary_get:
     - id: session
-      contract: appworld.session
+      contract: appworld.splitwise.session
       bindings:
       - input:
           lane: arguments
@@ -2197,7 +2202,7 @@ prerequisites:
         output: token
     expense_comment_get:
     - id: session
-      contract: appworld.session
+      contract: appworld.splitwise.session
       bindings:
       - input:
           lane: arguments
@@ -2206,7 +2211,7 @@ prerequisites:
         output: token
     payment_comment_get:
     - id: session
-      contract: appworld.session
+      contract: appworld.splitwise.session
       bindings:
       - input:
           lane: arguments
@@ -2215,7 +2220,7 @@ prerequisites:
         output: token
     notification_count:
     - id: session
-      contract: appworld.session
+      contract: appworld.splitwise.session
       bindings:
       - input:
           lane: arguments
@@ -2224,7 +2229,7 @@ prerequisites:
         output: token
     account_get:
     - id: session
-      contract: appworld.session
+      contract: appworld.splitwise.session
       bindings:
       - input:
           lane: scope
@@ -2233,7 +2238,7 @@ prerequisites:
         output: token
     account_update:
     - id: session
-      contract: appworld.session
+      contract: appworld.splitwise.session
       bindings:
       - input:
           lane: payload
@@ -2242,7 +2247,7 @@ prerequisites:
         output: token
     account_delete:
     - id: session
-      contract: appworld.session
+      contract: appworld.splitwise.session
       bindings:
       - input:
           lane: payload
@@ -2272,7 +2277,7 @@ prerequisites:
         output: password
     logout:
     - id: session
-      contract: appworld.session
+      contract: appworld.splitwise.session
       bindings:
       - input:
           lane: payload
@@ -2281,7 +2286,7 @@ prerequisites:
         output: token
     group_query:
     - id: session
-      contract: appworld.session
+      contract: appworld.splitwise.session
       bindings:
       - input:
           lane: selection
@@ -2290,7 +2295,7 @@ prerequisites:
         output: token
     group_get:
     - id: session
-      contract: appworld.session
+      contract: appworld.splitwise.session
       bindings:
       - input:
           lane: arguments
@@ -2299,7 +2304,7 @@ prerequisites:
         output: token
     group_create:
     - id: session
-      contract: appworld.session
+      contract: appworld.splitwise.session
       bindings:
       - input:
           lane: payload
@@ -2308,7 +2313,7 @@ prerequisites:
         output: token
     group_update:
     - id: session
-      contract: appworld.session
+      contract: appworld.splitwise.session
       bindings:
       - input:
           lane: payload
@@ -2317,7 +2322,7 @@ prerequisites:
         output: token
     group_delete:
     - id: session
-      contract: appworld.session
+      contract: appworld.splitwise.session
       bindings:
       - input:
           lane: payload
@@ -2326,7 +2331,7 @@ prerequisites:
         output: token
     group_add_member:
     - id: session
-      contract: appworld.session
+      contract: appworld.splitwise.session
       bindings:
       - input:
           lane: payload
@@ -2335,7 +2340,7 @@ prerequisites:
         output: token
     group_remove_member:
     - id: session
-      contract: appworld.session
+      contract: appworld.splitwise.session
       bindings:
       - input:
           lane: payload
@@ -2344,7 +2349,7 @@ prerequisites:
         output: token
     group_exit:
     - id: session
-      contract: appworld.session
+      contract: appworld.splitwise.session
       bindings:
       - input:
           lane: payload
@@ -2353,7 +2358,7 @@ prerequisites:
         output: token
     group_undelete:
     - id: session
-      contract: appworld.session
+      contract: appworld.splitwise.session
       bindings:
       - input:
           lane: payload
@@ -2362,7 +2367,7 @@ prerequisites:
         output: token
     group_accept_invitation:
     - id: session
-      contract: appworld.session
+      contract: appworld.splitwise.session
       bindings:
       - input:
           lane: payload
@@ -2371,7 +2376,7 @@ prerequisites:
         output: token
     group_regenerate_invitation:
     - id: session
-      contract: appworld.session
+      contract: appworld.splitwise.session
       bindings:
       - input:
           lane: payload
@@ -2380,7 +2385,7 @@ prerequisites:
         output: token
     expense_query:
     - id: session
-      contract: appworld.session
+      contract: appworld.splitwise.session
       bindings:
       - input:
           lane: selection
@@ -2389,7 +2394,7 @@ prerequisites:
         output: token
     expense_get:
     - id: session
-      contract: appworld.session
+      contract: appworld.splitwise.session
       bindings:
       - input:
           lane: arguments
@@ -2398,7 +2403,7 @@ prerequisites:
         output: token
     expense_create:
     - id: session
-      contract: appworld.session
+      contract: appworld.splitwise.session
       bindings:
       - input:
           lane: payload
@@ -2406,7 +2411,7 @@ prerequisites:
           - access_token
         output: token
     - id: file_session
-      contract: appworld.session
+      contract: appworld.file_system.session
       bindings:
       - input:
           lane: payload
@@ -2414,7 +2419,7 @@ prerequisites:
         output: token
     expense_update:
     - id: session
-      contract: appworld.session
+      contract: appworld.splitwise.session
       bindings:
       - input:
           lane: payload
@@ -2423,7 +2428,7 @@ prerequisites:
         output: token
     expense_delete:
     - id: session
-      contract: appworld.session
+      contract: appworld.splitwise.session
       bindings:
       - input:
           lane: payload
@@ -2432,7 +2437,7 @@ prerequisites:
         output: token
     expense_undelete:
     - id: session
-      contract: appworld.session
+      contract: appworld.splitwise.session
       bindings:
       - input:
           lane: payload
@@ -2441,7 +2446,7 @@ prerequisites:
         output: token
     expense_attach_receipt:
     - id: session
-      contract: appworld.session
+      contract: appworld.splitwise.session
       bindings:
       - input:
           lane: payload
@@ -2449,7 +2454,7 @@ prerequisites:
           - access_token
         output: token
     - id: file_session
-      contract: appworld.session
+      contract: appworld.file_system.session
       bindings:
       - input:
           lane: payload
@@ -2458,7 +2463,7 @@ prerequisites:
         output: token
     expense_delete_receipt:
     - id: session
-      contract: appworld.session
+      contract: appworld.splitwise.session
       bindings:
       - input:
           lane: payload
@@ -2467,7 +2472,7 @@ prerequisites:
         output: token
     expense_receipt_download:
     - id: session
-      contract: appworld.session
+      contract: appworld.splitwise.session
       bindings:
       - input:
           lane: payload
@@ -2475,7 +2480,7 @@ prerequisites:
           - access_token
         output: token
     - id: file_session
-      contract: appworld.session
+      contract: appworld.file_system.session
       bindings:
       - input:
           lane: payload
@@ -2484,7 +2489,7 @@ prerequisites:
         output: token
     payment_query:
     - id: session
-      contract: appworld.session
+      contract: appworld.splitwise.session
       bindings:
       - input:
           lane: selection
@@ -2493,7 +2498,7 @@ prerequisites:
         output: token
     payment_get:
     - id: session
-      contract: appworld.session
+      contract: appworld.splitwise.session
       bindings:
       - input:
           lane: arguments
@@ -2502,7 +2507,7 @@ prerequisites:
         output: token
     payment_create:
     - id: session
-      contract: appworld.session
+      contract: appworld.splitwise.session
       bindings:
       - input:
           lane: payload
@@ -2510,7 +2515,7 @@ prerequisites:
           - access_token
         output: token
     - id: file_session
-      contract: appworld.session
+      contract: appworld.file_system.session
       bindings:
       - input:
           lane: payload
@@ -2518,7 +2523,7 @@ prerequisites:
         output: token
     payment_delete:
     - id: session
-      contract: appworld.session
+      contract: appworld.splitwise.session
       bindings:
       - input:
           lane: payload
@@ -2527,7 +2532,7 @@ prerequisites:
         output: token
     payment_update:
     - id: session
-      contract: appworld.session
+      contract: appworld.splitwise.session
       bindings:
       - input:
           lane: payload
@@ -2536,7 +2541,7 @@ prerequisites:
         output: token
     payment_undelete:
     - id: session
-      contract: appworld.session
+      contract: appworld.splitwise.session
       bindings:
       - input:
           lane: payload
@@ -2545,7 +2550,7 @@ prerequisites:
         output: token
     payment_attach_receipt:
     - id: session
-      contract: appworld.session
+      contract: appworld.splitwise.session
       bindings:
       - input:
           lane: payload
@@ -2553,7 +2558,7 @@ prerequisites:
           - access_token
         output: token
     - id: file_session
-      contract: appworld.session
+      contract: appworld.file_system.session
       bindings:
       - input:
           lane: payload
@@ -2562,7 +2567,7 @@ prerequisites:
         output: token
     payment_delete_receipt:
     - id: session
-      contract: appworld.session
+      contract: appworld.splitwise.session
       bindings:
       - input:
           lane: payload
@@ -2571,7 +2576,7 @@ prerequisites:
         output: token
     payment_receipt_download:
     - id: session
-      contract: appworld.session
+      contract: appworld.splitwise.session
       bindings:
       - input:
           lane: payload
@@ -2579,7 +2584,7 @@ prerequisites:
           - access_token
         output: token
     - id: file_session
-      contract: appworld.session
+      contract: appworld.file_system.session
       bindings:
       - input:
           lane: payload
@@ -2588,7 +2593,7 @@ prerequisites:
         output: token
     settle_up:
     - id: session
-      contract: appworld.session
+      contract: appworld.splitwise.session
       bindings:
       - input:
           lane: payload
@@ -2597,7 +2602,7 @@ prerequisites:
         output: token
     expense_comment_query:
     - id: session
-      contract: appworld.session
+      contract: appworld.splitwise.session
       bindings:
       - input:
           lane: selection
@@ -2606,7 +2611,7 @@ prerequisites:
         output: token
     expense_comment_create:
     - id: session
-      contract: appworld.session
+      contract: appworld.splitwise.session
       bindings:
       - input:
           lane: payload
@@ -2615,7 +2620,7 @@ prerequisites:
         output: token
     expense_comment_update:
     - id: session
-      contract: appworld.session
+      contract: appworld.splitwise.session
       bindings:
       - input:
           lane: payload
@@ -2624,7 +2629,7 @@ prerequisites:
         output: token
     expense_comment_delete:
     - id: session
-      contract: appworld.session
+      contract: appworld.splitwise.session
       bindings:
       - input:
           lane: payload
@@ -2633,7 +2638,7 @@ prerequisites:
         output: token
     payment_comment_query:
     - id: session
-      contract: appworld.session
+      contract: appworld.splitwise.session
       bindings:
       - input:
           lane: selection
@@ -2642,7 +2647,7 @@ prerequisites:
         output: token
     payment_comment_create:
     - id: session
-      contract: appworld.session
+      contract: appworld.splitwise.session
       bindings:
       - input:
           lane: payload
@@ -2651,7 +2656,7 @@ prerequisites:
         output: token
     payment_comment_update:
     - id: session
-      contract: appworld.session
+      contract: appworld.splitwise.session
       bindings:
       - input:
           lane: payload
@@ -2660,7 +2665,7 @@ prerequisites:
         output: token
     payment_comment_delete:
     - id: session
-      contract: appworld.session
+      contract: appworld.splitwise.session
       bindings:
       - input:
           lane: payload
@@ -2669,7 +2674,7 @@ prerequisites:
         output: token
     notification_query:
     - id: session
-      contract: appworld.session
+      contract: appworld.splitwise.session
       bindings:
       - input:
           lane: selection
@@ -2678,7 +2683,7 @@ prerequisites:
         output: token
     activity_query:
     - id: session
-      contract: appworld.session
+      contract: appworld.splitwise.session
       bindings:
       - input:
           lane: selection
@@ -2687,7 +2692,7 @@ prerequisites:
         output: token
     notification_delete:
     - id: session
-      contract: appworld.session
+      contract: appworld.splitwise.session
       bindings:
       - input:
           lane: payload
@@ -2696,7 +2701,7 @@ prerequisites:
         output: token
     notification_mark:
     - id: session
-      contract: appworld.session
+      contract: appworld.splitwise.session
       bindings:
       - input:
           lane: payload
@@ -2705,7 +2710,7 @@ prerequisites:
         output: token
     notification_delete_all:
     - id: session
-      contract: appworld.session
+      contract: appworld.splitwise.session
       bindings:
       - input:
           lane: payload
@@ -2714,7 +2719,7 @@ prerequisites:
         output: token
     notification_mark_all:
     - id: session
-      contract: appworld.session
+      contract: appworld.splitwise.session
       bindings:
       - input:
           lane: payload
@@ -2723,7 +2728,7 @@ prerequisites:
         output: token
     user_search:
     - id: session
-      contract: appworld.session
+      contract: appworld.splitwise.session
       bindings:
       - input:
           lane: selection
@@ -2732,7 +2737,7 @@ prerequisites:
         output: token
     balance_get:
     - id: session
-      contract: appworld.session
+      contract: appworld.splitwise.session
       bindings:
       - input:
           lane: arguments
@@ -2741,7 +2746,7 @@ prerequisites:
         output: token
     peer_balance_query:
     - id: session
-      contract: appworld.session
+      contract: appworld.splitwise.session
       bindings:
       - input:
           lane: selection
@@ -2750,7 +2755,7 @@ prerequisites:
         output: token
     person_balance_get:
     - id: session
-      contract: appworld.session
+      contract: appworld.splitwise.session
       bindings:
       - input:
           lane: arguments
@@ -2759,7 +2764,7 @@ prerequisites:
         output: token
     group_balance_get:
     - id: session
-      contract: appworld.session
+      contract: appworld.splitwise.session
       bindings:
       - input:
           lane: arguments

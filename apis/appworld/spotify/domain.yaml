@@ -1,4 +1,4 @@
-version: 40
+version: 41
 entry_id: spotify
 auth:
   scheme: none
@@ -3157,7 +3157,7 @@ values:
     description: Account-holder password for this service.
   nv_access_token:
     type: string
-    description: Bearer access token from login.
+    description: Spotify login session token; use for Spotify operations.
   nv_file_access_token:
     type: string
     description: Bearer token authorizing the file-path argument, distinct from this service's login token.
@@ -3298,11 +3298,16 @@ prerequisites:
         account: prerequisite_account_name
       outputs:
         password: nv_password
-    appworld.session:
+    appworld.spotify.session:
       version: 1
       inputs: {}
       outputs:
         token: nv_access_token
+    appworld.file_system.session:
+      version: 1
+      inputs: {}
+      outputs:
+        token: nv_file_access_token
     appworld.payment_card:
       version: 1
       inputs: {}
@@ -3315,14 +3320,14 @@ prerequisites:
         cvv_number: nv_cvv
   providers:
     session:
-      contract: appworld.session
+      contract: appworld.spotify.session
       capability: login
       outputs:
         token: access_token
   requirements:
     user_search:
     - id: session
-      contract: appworld.session
+      contract: appworld.spotify.session
       bindings:
       - input:
           lane: selection
@@ -3330,7 +3335,7 @@ prerequisites:
         output: token
     song_review_get:
     - id: session
-      contract: appworld.session
+      contract: appworld.spotify.session
       bindings:
       - input:
           lane: arguments
@@ -3339,7 +3344,7 @@ prerequisites:
         output: token
     album_review_get:
     - id: session
-      contract: appworld.session
+      contract: appworld.spotify.session
       bindings:
       - input:
           lane: arguments
@@ -3348,7 +3353,7 @@ prerequisites:
         output: token
     playlist_review_get:
     - id: session
-      contract: appworld.session
+      contract: appworld.spotify.session
       bindings:
       - input:
           lane: arguments
@@ -3357,7 +3362,7 @@ prerequisites:
         output: token
     payment_card_get:
     - id: session
-      contract: appworld.session
+      contract: appworld.spotify.session
       bindings:
       - input:
           lane: arguments
@@ -3366,7 +3371,7 @@ prerequisites:
         output: token
     song_review_query:
     - id: session
-      contract: appworld.session
+      contract: appworld.spotify.session
       bindings:
       - input:
           lane: scope
@@ -3375,7 +3380,7 @@ prerequisites:
         output: token
     album_review_query:
     - id: session
-      contract: appworld.session
+      contract: appworld.spotify.session
       bindings:
       - input:
           lane: scope
@@ -3384,7 +3389,7 @@ prerequisites:
         output: token
     playlist_review_query:
     - id: session
-      contract: appworld.session
+      contract: appworld.spotify.session
       bindings:
       - input:
           lane: scope
@@ -3393,7 +3398,7 @@ prerequisites:
         output: token
     song_membership_get:
     - id: session
-      contract: appworld.session
+      contract: appworld.spotify.session
       bindings:
       - input:
           lane: arguments
@@ -3402,7 +3407,7 @@ prerequisites:
         output: token
     album_membership_get:
     - id: session
-      contract: appworld.session
+      contract: appworld.spotify.session
       bindings:
       - input:
           lane: arguments
@@ -3411,7 +3416,7 @@ prerequisites:
         output: token
     playlist_membership_get:
     - id: session
-      contract: appworld.session
+      contract: appworld.spotify.session
       bindings:
       - input:
           lane: arguments
@@ -3420,7 +3425,7 @@ prerequisites:
         output: token
     artist_membership_get:
     - id: session
-      contract: appworld.session
+      contract: appworld.spotify.session
       bindings:
       - input:
           lane: arguments
@@ -3429,7 +3434,7 @@ prerequisites:
         output: token
     account_get:
     - id: session
-      contract: appworld.session
+      contract: appworld.spotify.session
       bindings:
       - input:
           lane: scope
@@ -3438,7 +3443,7 @@ prerequisites:
         output: token
     account_update:
     - id: session
-      contract: appworld.session
+      contract: appworld.spotify.session
       bindings:
       - input:
           lane: payload
@@ -3447,7 +3452,7 @@ prerequisites:
         output: token
     account_delete:
     - id: session
-      contract: appworld.session
+      contract: appworld.spotify.session
       bindings:
       - input:
           lane: payload
@@ -3477,7 +3482,7 @@ prerequisites:
         output: password
     logout:
     - id: session
-      contract: appworld.session
+      contract: appworld.spotify.session
       bindings:
       - input:
           lane: payload
@@ -3486,7 +3491,7 @@ prerequisites:
         output: token
     song_get:
     - id: session
-      contract: appworld.session
+      contract: appworld.spotify.session
       bindings:
       - input:
           lane: arguments
@@ -3495,7 +3500,7 @@ prerequisites:
         output: token
     song_like:
     - id: session
-      contract: appworld.session
+      contract: appworld.spotify.session
       bindings:
       - input:
           lane: payload
@@ -3504,7 +3509,7 @@ prerequisites:
         output: token
     song_unlike:
     - id: session
-      contract: appworld.session
+      contract: appworld.spotify.session
       bindings:
       - input:
           lane: payload
@@ -3513,7 +3518,7 @@ prerequisites:
         output: token
     downloaded_song_query:
     - id: session
-      contract: appworld.session
+      contract: appworld.spotify.session
       bindings:
       - input:
           lane: selection
@@ -3522,7 +3527,7 @@ prerequisites:
         output: token
     song_download:
     - id: session
-      contract: appworld.session
+      contract: appworld.spotify.session
       bindings:
       - input:
           lane: payload
@@ -3531,7 +3536,7 @@ prerequisites:
         output: token
     song_undownload:
     - id: session
-      contract: appworld.session
+      contract: appworld.spotify.session
       bindings:
       - input:
           lane: payload
@@ -3540,7 +3545,7 @@ prerequisites:
         output: token
     album_get:
     - id: session
-      contract: appworld.session
+      contract: appworld.spotify.session
       bindings:
       - input:
           lane: arguments
@@ -3549,7 +3554,7 @@ prerequisites:
         output: token
     album_like:
     - id: session
-      contract: appworld.session
+      contract: appworld.spotify.session
       bindings:
       - input:
           lane: payload
@@ -3558,7 +3563,7 @@ prerequisites:
         output: token
     album_unlike:
     - id: session
-      contract: appworld.session
+      contract: appworld.spotify.session
       bindings:
       - input:
           lane: payload
@@ -3567,7 +3572,7 @@ prerequisites:
         output: token
     artist_get:
     - id: session
-      contract: appworld.session
+      contract: appworld.spotify.session
       bindings:
       - input:
           lane: arguments
@@ -3576,7 +3581,7 @@ prerequisites:
         output: token
     artist_follow:
     - id: session
-      contract: appworld.session
+      contract: appworld.spotify.session
       bindings:
       - input:
           lane: payload
@@ -3585,7 +3590,7 @@ prerequisites:
         output: token
     artist_unfollow:
     - id: session
-      contract: appworld.session
+      contract: appworld.spotify.session
       bindings:
       - input:
           lane: payload
@@ -3594,7 +3599,7 @@ prerequisites:
         output: token
     playlist_get:
     - id: session
-      contract: appworld.session
+      contract: appworld.spotify.session
       bindings:
       - input:
           lane: arguments
@@ -3603,7 +3608,7 @@ prerequisites:
         output: token
     playlist_create:
     - id: session
-      contract: appworld.session
+      contract: appworld.spotify.session
       bindings:
       - input:
           lane: payload
@@ -3612,7 +3617,7 @@ prerequisites:
         output: token
     playlist_update:
     - id: session
-      contract: appworld.session
+      contract: appworld.spotify.session
       bindings:
       - input:
           lane: payload
@@ -3621,7 +3626,7 @@ prerequisites:
         output: token
     playlist_delete:
     - id: session
-      contract: appworld.session
+      contract: appworld.spotify.session
       bindings:
       - input:
           lane: payload
@@ -3630,7 +3635,7 @@ prerequisites:
         output: token
     playlist_add_song:
     - id: session
-      contract: appworld.session
+      contract: appworld.spotify.session
       bindings:
       - input:
           lane: payload
@@ -3639,7 +3644,7 @@ prerequisites:
         output: token
     playlist_remove_song:
     - id: session
-      contract: appworld.session
+      contract: appworld.spotify.session
       bindings:
       - input:
           lane: payload
@@ -3648,7 +3653,7 @@ prerequisites:
         output: token
     playlist_like:
     - id: session
-      contract: appworld.session
+      contract: appworld.spotify.session
       bindings:
       - input:
           lane: payload
@@ -3657,7 +3662,7 @@ prerequisites:
         output: token
     playlist_unlike:
     - id: session
-      contract: appworld.session
+      contract: appworld.spotify.session
       bindings:
       - input:
           lane: payload
@@ -3666,7 +3671,7 @@ prerequisites:
         output: token
     player_current_wire:
     - id: session
-      contract: appworld.session
+      contract: appworld.spotify.session
       bindings:
       - input:
           lane: arguments
@@ -3675,7 +3680,7 @@ prerequisites:
         output: token
     library_query:
     - id: session
-      contract: appworld.session
+      contract: appworld.spotify.session
       bindings:
       - input:
           lane: selection
@@ -3683,7 +3688,7 @@ prerequisites:
         output: token
     player_current:
     - id: session
-      contract: appworld.session
+      contract: appworld.spotify.session
       bindings:
       - input:
           lane: arguments
@@ -3692,7 +3697,7 @@ prerequisites:
         output: token
     player_play:
     - id: session
-      contract: appworld.session
+      contract: appworld.spotify.session
       bindings:
       - input:
           lane: payload
@@ -3701,7 +3706,7 @@ prerequisites:
         output: token
     player_pause:
     - id: session
-      contract: appworld.session
+      contract: appworld.spotify.session
       bindings:
       - input:
           lane: payload
@@ -3710,7 +3715,7 @@ prerequisites:
         output: token
     player_previous:
     - id: session
-      contract: appworld.session
+      contract: appworld.spotify.session
       bindings:
       - input:
           lane: payload
@@ -3719,7 +3724,7 @@ prerequisites:
         output: token
     player_next:
     - id: session
-      contract: appworld.session
+      contract: appworld.spotify.session
       bindings:
       - input:
           lane: payload
@@ -3728,7 +3733,7 @@ prerequisites:
         output: token
     player_queue:
     - id: session
-      contract: appworld.session
+      contract: appworld.spotify.session
       bindings:
       - input:
           lane: selection
@@ -3737,7 +3742,7 @@ prerequisites:
         output: token
     player_queue_add:
     - id: session
-      contract: appworld.session
+      contract: appworld.spotify.session
       bindings:
       - input:
           lane: payload
@@ -3746,7 +3751,7 @@ prerequisites:
         output: token
     player_queue_clear:
     - id: session
-      contract: appworld.session
+      contract: appworld.spotify.session
       bindings:
       - input:
           lane: payload
@@ -3755,7 +3760,7 @@ prerequisites:
         output: token
     player_queue_remove:
     - id: session
-      contract: appworld.session
+      contract: appworld.spotify.session
       bindings:
       - input:
           lane: payload
@@ -3764,7 +3769,7 @@ prerequisites:
         output: token
     player_move_song:
     - id: session
-      contract: appworld.session
+      contract: appworld.spotify.session
       bindings:
       - input:
           lane: payload
@@ -3773,7 +3778,7 @@ prerequisites:
         output: token
     player_seek:
     - id: session
-      contract: appworld.session
+      contract: appworld.spotify.session
       bindings:
       - input:
           lane: payload
@@ -3782,7 +3787,7 @@ prerequisites:
         output: token
     player_loop:
     - id: session
-      contract: appworld.session
+      contract: appworld.spotify.session
       bindings:
       - input:
           lane: payload
@@ -3791,7 +3796,7 @@ prerequisites:
         output: token
     player_shuffle:
     - id: session
-      contract: appworld.session
+      contract: appworld.spotify.session
       bindings:
       - input:
           lane: payload
@@ -3800,7 +3805,7 @@ prerequisites:
         output: token
     player_volume_get:
     - id: session
-      contract: appworld.session
+      contract: appworld.spotify.session
       bindings:
       - input:
           lane: arguments
@@ -3809,7 +3814,7 @@ prerequisites:
         output: token
     player_volume_set:
     - id: session
-      contract: appworld.session
+      contract: appworld.spotify.session
       bindings:
       - input:
           lane: payload
@@ -3818,7 +3823,7 @@ prerequisites:
         output: token
     liked_song_query:
     - id: session
-      contract: appworld.session
+      contract: appworld.spotify.session
       bindings:
       - input:
           lane: selection
@@ -3827,7 +3832,7 @@ prerequisites:
         output: token
     liked_song_get:
     - id: session
-      contract: appworld.session
+      contract: appworld.spotify.session
       bindings:
       - input:
           lane: arguments
@@ -3836,7 +3841,7 @@ prerequisites:
         output: token
     song_library_query:
     - id: session
-      contract: appworld.session
+      contract: appworld.spotify.session
       bindings:
       - input:
           lane: selection
@@ -3845,7 +3850,7 @@ prerequisites:
         output: token
     song_library_add:
     - id: session
-      contract: appworld.session
+      contract: appworld.spotify.session
       bindings:
       - input:
           lane: payload
@@ -3854,7 +3859,7 @@ prerequisites:
         output: token
     song_library_remove:
     - id: session
-      contract: appworld.session
+      contract: appworld.spotify.session
       bindings:
       - input:
           lane: payload
@@ -3863,7 +3868,7 @@ prerequisites:
         output: token
     album_library_query:
     - id: session
-      contract: appworld.session
+      contract: appworld.spotify.session
       bindings:
       - input:
           lane: selection
@@ -3872,7 +3877,7 @@ prerequisites:
         output: token
     album_library_add:
     - id: session
-      contract: appworld.session
+      contract: appworld.spotify.session
       bindings:
       - input:
           lane: payload
@@ -3881,7 +3886,7 @@ prerequisites:
         output: token
     album_library_remove:
     - id: session
-      contract: appworld.session
+      contract: appworld.spotify.session
       bindings:
       - input:
           lane: payload
@@ -3890,7 +3895,7 @@ prerequisites:
         output: token
     playlist_library_query:
     - id: session
-      contract: appworld.session
+      contract: appworld.spotify.session
       bindings:
       - input:
           lane: selection
@@ -3899,7 +3904,7 @@ prerequisites:
         output: token
     liked_playlist_query:
     - id: session
-      contract: appworld.session
+      contract: appworld.spotify.session
       bindings:
       - input:
           lane: selection
@@ -3908,7 +3913,7 @@ prerequisites:
         output: token
     liked_album_query:
     - id: session
-      contract: appworld.session
+      contract: appworld.spotify.session
       bindings:
       - input:
           lane: selection
@@ -3917,7 +3922,7 @@ prerequisites:
         output: token
     following_artist_query:
     - id: session
-      contract: appworld.session
+      contract: appworld.spotify.session
       bindings:
       - input:
           lane: selection
@@ -3926,7 +3931,7 @@ prerequisites:
         output: token
     song_review_create:
     - id: session
-      contract: appworld.session
+      contract: appworld.spotify.session
       bindings:
       - input:
           lane: payload
@@ -3935,7 +3940,7 @@ prerequisites:
         output: token
     song_review_update:
     - id: session
-      contract: appworld.session
+      contract: appworld.spotify.session
       bindings:
       - input:
           lane: payload
@@ -3944,7 +3949,7 @@ prerequisites:
         output: token
     song_review_delete:
     - id: session
-      contract: appworld.session
+      contract: appworld.spotify.session
       bindings:
       - input:
           lane: payload
@@ -3953,7 +3958,7 @@ prerequisites:
         output: token
     album_review_create:
     - id: session
-      contract: appworld.session
+      contract: appworld.spotify.session
       bindings:
       - input:
           lane: payload
@@ -3962,7 +3967,7 @@ prerequisites:
         output: token
     album_review_update:
     - id: session
-      contract: appworld.session
+      contract: appworld.spotify.session
       bindings:
       - input:
           lane: payload
@@ -3971,7 +3976,7 @@ prerequisites:
         output: token
     album_review_delete:
     - id: session
-      contract: appworld.session
+      contract: appworld.spotify.session
       bindings:
       - input:
           lane: payload
@@ -3980,7 +3985,7 @@ prerequisites:
         output: token
     playlist_review_create:
     - id: session
-      contract: appworld.session
+      contract: appworld.spotify.session
       bindings:
       - input:
           lane: payload
@@ -3989,7 +3994,7 @@ prerequisites:
         output: token
     playlist_review_update:
     - id: session
-      contract: appworld.session
+      contract: appworld.spotify.session
       bindings:
       - input:
           lane: payload
@@ -3998,7 +4003,7 @@ prerequisites:
         output: token
     playlist_review_delete:
     - id: session
-      contract: appworld.session
+      contract: appworld.spotify.session
       bindings:
       - input:
           lane: payload
@@ -4007,7 +4012,7 @@ prerequisites:
         output: token
     payment_card_query:
     - id: session
-      contract: appworld.session
+      contract: appworld.spotify.session
       bindings:
       - input:
           lane: selection
@@ -4016,7 +4021,7 @@ prerequisites:
         output: token
     payment_card_create:
     - id: session
-      contract: appworld.session
+      contract: appworld.spotify.session
       bindings:
       - input:
           lane: payload
@@ -4040,7 +4045,7 @@ prerequisites:
         output: cvv_number
     payment_card_update:
     - id: session
-      contract: appworld.session
+      contract: appworld.spotify.session
       bindings:
       - input:
           lane: payload
@@ -4049,7 +4054,7 @@ prerequisites:
         output: token
     payment_card_delete:
     - id: session
-      contract: appworld.session
+      contract: appworld.spotify.session
       bindings:
       - input:
           lane: payload
@@ -4058,7 +4063,7 @@ prerequisites:
         output: token
     premium_subscription_query:
     - id: session
-      contract: appworld.session
+      contract: appworld.spotify.session
       bindings:
       - input:
           lane: selection
@@ -4067,7 +4072,7 @@ prerequisites:
         output: token
     premium_subscribe:
     - id: session
-      contract: appworld.session
+      contract: appworld.spotify.session
       bindings:
       - input:
           lane: payload
@@ -4076,7 +4081,7 @@ prerequisites:
         output: token
     premium_subscription_receipt:
     - id: session
-      contract: appworld.session
+      contract: appworld.spotify.session
       bindings:
       - input:
           lane: payload
@@ -4084,7 +4089,7 @@ prerequisites:
           - access_token
         output: token
     - id: file_session
-      contract: appworld.session
+      contract: appworld.file_system.session
       bindings:
       - input:
           lane: payload

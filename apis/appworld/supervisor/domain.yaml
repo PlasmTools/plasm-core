@@ -77,7 +77,7 @@ entities:
         description: Postal code of this named location.
   PaymentCard:
     id_field: card_number
-    description: Payment card details on the supervisor profile, usable as input to card registration. Not a service-local saved card ID; presence and expiry do not establish sufficient funds.
+    description: Payment card details on the supervisor profile, usable as input to card registration. The expiry month is inclusive through its last day; compare (expiry_year, expiry_month) with the current environment year and month. Not a service-local saved card ID; presence and expiry do not establish sufficient funds.
     fields:
       owner_name:
         required: true

@@ -1,4 +1,4 @@
-version: 20
+version: 21
 entry_id: phone
 auth:
   scheme: none
@@ -973,7 +973,7 @@ values:
     description: Account-holder password for this service.
   nv_access_token:
     type: string
-    description: Bearer access token from login.
+    description: Phone login session token; use for Phone operations.
   nv_phone:
     type: e164
     description: Phone number in the service's stored spelling; exact lookups do not add a country prefix.
@@ -1075,21 +1075,21 @@ prerequisites:
         account: prerequisite_account_name
       outputs:
         password: nv_password
-    appworld.session:
+    appworld.phone.session:
       version: 1
       inputs: {}
       outputs:
         token: nv_access_token
   providers:
     session:
-      contract: appworld.session
+      contract: appworld.phone.session
       capability: login
       outputs:
         token: access_token
   requirements:
     voice_message_get:
     - id: session
-      contract: appworld.session
+      contract: appworld.phone.session
       bindings:
       - input:
           lane: arguments
@@ -1098,7 +1098,7 @@ prerequisites:
         output: token
     account_get:
     - id: session
-      contract: appworld.session
+      contract: appworld.phone.session
       bindings:
       - input:
           lane: scope
@@ -1107,7 +1107,7 @@ prerequisites:
         output: token
     account_update:
     - id: session
-      contract: appworld.session
+      contract: appworld.phone.session
       bindings:
       - input:
           lane: payload
@@ -1116,7 +1116,7 @@ prerequisites:
         output: token
     account_delete:
     - id: session
-      contract: appworld.session
+      contract: appworld.phone.session
       bindings:
       - input:
           lane: payload
@@ -1146,7 +1146,7 @@ prerequisites:
         output: password
     logout:
     - id: session
-      contract: appworld.session
+      contract: appworld.phone.session
       bindings:
       - input:
           lane: payload
@@ -1155,7 +1155,7 @@ prerequisites:
         output: token
     contact_query:
     - id: session
-      contract: appworld.session
+      contract: appworld.phone.session
       bindings:
       - input:
           lane: selection
@@ -1164,7 +1164,7 @@ prerequisites:
         output: token
     contact_create:
     - id: session
-      contract: appworld.session
+      contract: appworld.phone.session
       bindings:
       - input:
           lane: payload
@@ -1173,7 +1173,7 @@ prerequisites:
         output: token
     contact_update:
     - id: session
-      contract: appworld.session
+      contract: appworld.phone.session
       bindings:
       - input:
           lane: payload
@@ -1182,7 +1182,7 @@ prerequisites:
         output: token
     contact_delete:
     - id: session
-      contract: appworld.session
+      contract: appworld.phone.session
       bindings:
       - input:
           lane: payload
@@ -1191,7 +1191,7 @@ prerequisites:
         output: token
     alarm_query:
     - id: session
-      contract: appworld.session
+      contract: appworld.phone.session
       bindings:
       - input:
           lane: selection
@@ -1200,7 +1200,7 @@ prerequisites:
         output: token
     alarm_get:
     - id: session
-      contract: appworld.session
+      contract: appworld.phone.session
       bindings:
       - input:
           lane: arguments
@@ -1209,7 +1209,7 @@ prerequisites:
         output: token
     alarm_create:
     - id: session
-      contract: appworld.session
+      contract: appworld.phone.session
       bindings:
       - input:
           lane: payload
@@ -1218,7 +1218,7 @@ prerequisites:
         output: token
     alarm_update:
     - id: session
-      contract: appworld.session
+      contract: appworld.phone.session
       bindings:
       - input:
           lane: payload
@@ -1227,7 +1227,7 @@ prerequisites:
         output: token
     alarm_delete:
     - id: session
-      contract: appworld.session
+      contract: appworld.phone.session
       bindings:
       - input:
           lane: payload
@@ -1236,7 +1236,7 @@ prerequisites:
         output: token
     text_message_query:
     - id: session
-      contract: appworld.session
+      contract: appworld.phone.session
       bindings:
       - input:
           lane: selection
@@ -1245,7 +1245,7 @@ prerequisites:
         output: token
     text_message_get:
     - id: session
-      contract: appworld.session
+      contract: appworld.phone.session
       bindings:
       - input:
           lane: arguments
@@ -1254,7 +1254,7 @@ prerequisites:
         output: token
     text_message_send:
     - id: session
-      contract: appworld.session
+      contract: appworld.phone.session
       bindings:
       - input:
           lane: payload
@@ -1263,7 +1263,7 @@ prerequisites:
         output: token
     text_message_delete:
     - id: session
-      contract: appworld.session
+      contract: appworld.phone.session
       bindings:
       - input:
           lane: payload
@@ -1272,7 +1272,7 @@ prerequisites:
         output: token
     voice_message_query:
     - id: session
-      contract: appworld.session
+      contract: appworld.phone.session
       bindings:
       - input:
           lane: selection
@@ -1281,7 +1281,7 @@ prerequisites:
         output: token
     voice_message_send:
     - id: session
-      contract: appworld.session
+      contract: appworld.phone.session
       bindings:
       - input:
           lane: payload
@@ -1290,7 +1290,7 @@ prerequisites:
         output: token
     voice_message_delete:
     - id: session
-      contract: appworld.session
+      contract: appworld.phone.session
       bindings:
       - input:
           lane: payload
@@ -1299,7 +1299,7 @@ prerequisites:
         output: token
     date_time_get:
     - id: session
-      contract: appworld.session
+      contract: appworld.phone.session
       bindings:
       - input:
           lane: arguments
@@ -1308,7 +1308,7 @@ prerequisites:
         output: token
     contact_relationship_query:
     - id: session
-      contract: appworld.session
+      contract: appworld.phone.session
       bindings:
       - input:
           lane: selection

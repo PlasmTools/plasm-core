@@ -1,4 +1,4 @@
-version: 18
+version: 19
 entry_id: gmail
 auth:
   scheme: none
@@ -1348,7 +1348,7 @@ values:
     description: Account-holder password for this service.
   nv_access_token:
     type: string
-    description: Bearer access token from login.
+    description: Gmail login session token; use for Gmail operations.
   nv_file_access_token:
     type: string
     description: Bearer token authorizing the file-path argument, distinct from this service's login token.
@@ -1412,14 +1412,19 @@ prerequisites:
         account: prerequisite_account_name
       outputs:
         password: nv_password
-    appworld.session:
+    appworld.gmail.session:
       version: 1
       inputs: {}
       outputs:
         token: nv_access_token
+    appworld.file_system.session:
+      version: 1
+      inputs: {}
+      outputs:
+        token: nv_file_access_token
   providers:
     session:
-      contract: appworld.session
+      contract: appworld.gmail.session
       capability: login
       outputs:
         token: access_token
@@ -1447,7 +1452,7 @@ prerequisites:
         output: password
     logout:
     - id: session
-      contract: appworld.session
+      contract: appworld.gmail.session
       bindings:
       - input:
           lane: payload
@@ -1456,7 +1461,7 @@ prerequisites:
         output: token
     account_get:
     - id: session
-      contract: appworld.session
+      contract: appworld.gmail.session
       bindings:
       - input:
           lane: arguments
@@ -1465,7 +1470,7 @@ prerequisites:
         output: token
     account_update:
     - id: session
-      contract: appworld.session
+      contract: appworld.gmail.session
       bindings:
       - input:
           lane: payload
@@ -1474,7 +1479,7 @@ prerequisites:
         output: token
     account_delete:
     - id: session
-      contract: appworld.session
+      contract: appworld.gmail.session
       bindings:
       - input:
           lane: payload
@@ -1483,7 +1488,7 @@ prerequisites:
         output: token
     email_thread_unsnooze:
     - id: session
-      contract: appworld.session
+      contract: appworld.gmail.session
       bindings:
       - input:
           lane: payload
@@ -1491,7 +1496,7 @@ prerequisites:
         output: token
     email_thread_snooze:
     - id: session
-      contract: appworld.session
+      contract: appworld.gmail.session
       bindings:
       - input:
           lane: payload
@@ -1499,7 +1504,7 @@ prerequisites:
         output: token
     account_set_status:
     - id: session
-      contract: appworld.session
+      contract: appworld.gmail.session
       bindings:
       - input:
           lane: payload
@@ -1507,7 +1512,7 @@ prerequisites:
         output: token
     label_search:
     - id: session
-      contract: appworld.session
+      contract: appworld.gmail.session
       bindings:
       - input:
           lane: selection
@@ -1515,7 +1520,7 @@ prerequisites:
         output: token
     email_thread_query:
     - id: session
-      contract: appworld.session
+      contract: appworld.gmail.session
       bindings:
       - input:
           lane: selection
@@ -1524,7 +1529,7 @@ prerequisites:
         output: token
     email_thread_get:
     - id: session
-      contract: appworld.session
+      contract: appworld.gmail.session
       bindings:
       - input:
           lane: arguments
@@ -1533,7 +1538,7 @@ prerequisites:
         output: token
     email_thread_delete:
     - id: session
-      contract: appworld.session
+      contract: appworld.gmail.session
       bindings:
       - input:
           lane: payload
@@ -1542,7 +1547,7 @@ prerequisites:
         output: token
     email_thread_mark_read:
     - id: session
-      contract: appworld.session
+      contract: appworld.gmail.session
       bindings:
       - input:
           lane: payload
@@ -1551,7 +1556,7 @@ prerequisites:
         output: token
     email_thread_mark_unread:
     - id: session
-      contract: appworld.session
+      contract: appworld.gmail.session
       bindings:
       - input:
           lane: payload
@@ -1560,7 +1565,7 @@ prerequisites:
         output: token
     email_thread_star:
     - id: session
-      contract: appworld.session
+      contract: appworld.gmail.session
       bindings:
       - input:
           lane: payload
@@ -1569,7 +1574,7 @@ prerequisites:
         output: token
     email_thread_unstar:
     - id: session
-      contract: appworld.session
+      contract: appworld.gmail.session
       bindings:
       - input:
           lane: payload
@@ -1578,7 +1583,7 @@ prerequisites:
         output: token
     email_thread_archive:
     - id: session
-      contract: appworld.session
+      contract: appworld.gmail.session
       bindings:
       - input:
           lane: payload
@@ -1587,7 +1592,7 @@ prerequisites:
         output: token
     email_thread_unarchive:
     - id: session
-      contract: appworld.session
+      contract: appworld.gmail.session
       bindings:
       - input:
           lane: payload
@@ -1596,7 +1601,7 @@ prerequisites:
         output: token
     email_get:
     - id: session
-      contract: appworld.session
+      contract: appworld.gmail.session
       bindings:
       - input:
           lane: arguments
@@ -1605,7 +1610,7 @@ prerequisites:
         output: token
     email_send:
     - id: session
-      contract: appworld.session
+      contract: appworld.gmail.session
       bindings:
       - input:
           lane: payload
@@ -1613,7 +1618,7 @@ prerequisites:
           - access_token
         output: token
     - id: file_session
-      contract: appworld.session
+      contract: appworld.file_system.session
       bindings:
       - input:
           lane: payload
@@ -1621,7 +1626,7 @@ prerequisites:
         output: token
     email_reply:
     - id: session
-      contract: appworld.session
+      contract: appworld.gmail.session
       bindings:
       - input:
           lane: payload
@@ -1629,7 +1634,7 @@ prerequisites:
           - access_token
         output: token
     - id: file_session
-      contract: appworld.session
+      contract: appworld.file_system.session
       bindings:
       - input:
           lane: payload
@@ -1637,7 +1642,7 @@ prerequisites:
         output: token
     email_delete_in_thread:
     - id: session
-      contract: appworld.session
+      contract: appworld.gmail.session
       bindings:
       - input:
           lane: payload
@@ -1646,7 +1651,7 @@ prerequisites:
         output: token
     draft_query:
     - id: session
-      contract: appworld.session
+      contract: appworld.gmail.session
       bindings:
       - input:
           lane: selection
@@ -1655,7 +1660,7 @@ prerequisites:
         output: token
     draft_get:
     - id: session
-      contract: appworld.session
+      contract: appworld.gmail.session
       bindings:
       - input:
           lane: arguments
@@ -1664,7 +1669,7 @@ prerequisites:
         output: token
     draft_create:
     - id: session
-      contract: appworld.session
+      contract: appworld.gmail.session
       bindings:
       - input:
           lane: payload
@@ -1672,7 +1677,7 @@ prerequisites:
           - access_token
         output: token
     - id: file_session
-      contract: appworld.session
+      contract: appworld.file_system.session
       bindings:
       - input:
           lane: payload
@@ -1680,7 +1685,7 @@ prerequisites:
         output: token
     draft_update:
     - id: session
-      contract: appworld.session
+      contract: appworld.gmail.session
       bindings:
       - input:
           lane: payload
@@ -1689,7 +1694,7 @@ prerequisites:
         output: token
     draft_delete:
     - id: session
-      contract: appworld.session
+      contract: appworld.gmail.session
       bindings:
       - input:
           lane: payload
@@ -1698,7 +1703,7 @@ prerequisites:
         output: token
     draft_send:
     - id: session
-      contract: appworld.session
+      contract: appworld.gmail.session
       bindings:
       - input:
           lane: payload
@@ -1706,7 +1711,7 @@ prerequisites:
           - access_token
         output: token
     - id: file_session
-      contract: appworld.session
+      contract: appworld.file_system.session
       bindings:
       - input:
           lane: payload
@@ -1714,7 +1719,7 @@ prerequisites:
         output: token
     category_sizes_get:
     - id: session
-      contract: appworld.session
+      contract: appworld.gmail.session
       bindings:
       - input:
           lane: arguments
@@ -1723,7 +1728,7 @@ prerequisites:
         output: token
     email_thread_label:
     - id: session
-      contract: appworld.session
+      contract: appworld.gmail.session
       bindings:
       - input:
           lane: payload
@@ -1732,7 +1737,7 @@ prerequisites:
         output: token
     email_thread_unlabel:
     - id: session
-      contract: appworld.session
+      contract: appworld.gmail.session
       bindings:
       - input:
           lane: payload
@@ -1741,7 +1746,7 @@ prerequisites:
         output: token
     email_thread_mark_spam:
     - id: session
-      contract: appworld.session
+      contract: appworld.gmail.session
       bindings:
       - input:
           lane: payload
@@ -1750,7 +1755,7 @@ prerequisites:
         output: token
     email_thread_mark_not_spam:
     - id: session
-      contract: appworld.session
+      contract: appworld.gmail.session
       bindings:
       - input:
           lane: payload
@@ -1759,7 +1764,7 @@ prerequisites:
         output: token
     email_forward:
     - id: session
-      contract: appworld.session
+      contract: appworld.gmail.session
       bindings:
       - input:
           lane: payload
@@ -1768,7 +1773,7 @@ prerequisites:
         output: token
     email_thread_forward:
     - id: session
-      contract: appworld.session
+      contract: appworld.gmail.session
       bindings:
       - input:
           lane: payload
@@ -1777,7 +1782,7 @@ prerequisites:
         output: token
     attachment_download:
     - id: session
-      contract: appworld.session
+      contract: appworld.gmail.session
       bindings:
       - input:
           lane: payload
@@ -1785,7 +1790,7 @@ prerequisites:
           - access_token
         output: token
     - id: file_session
-      contract: appworld.session
+      contract: appworld.file_system.session
       bindings:
       - input:
           lane: payload
@@ -1794,7 +1799,7 @@ prerequisites:
         output: token
     draft_attachment_upload:
     - id: session
-      contract: appworld.session
+      contract: appworld.gmail.session
       bindings:
       - input:
           lane: payload
@@ -1802,7 +1807,7 @@ prerequisites:
           - access_token
         output: token
     - id: file_session
-      contract: appworld.session
+      contract: appworld.file_system.session
       bindings:
       - input:
           lane: payload
@@ -1811,7 +1816,7 @@ prerequisites:
         output: token
     draft_attachment_remove:
     - id: session
-      contract: appworld.session
+      contract: appworld.gmail.session
       bindings:
       - input:
           lane: payload

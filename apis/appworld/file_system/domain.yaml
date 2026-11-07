@@ -1,4 +1,4 @@
-version: 19
+version: 20
 entry_id: file_system
 auth:
   scheme: none
@@ -774,7 +774,7 @@ values:
     description: Account-holder password for this service.
   nv_access_token:
     type: string
-    description: Bearer access token from login.
+    description: File System login session token; use for File System operations.
   nv_path:
     type: string
     description: Full file or directory path, such as /home/user/documents/report.csv or ~/documents/report.csv. A home-relative path must include the file or directory name.
@@ -818,21 +818,21 @@ prerequisites:
         account: prerequisite_account_name
       outputs:
         password: nv_password
-    appworld.session:
+    appworld.file_system.session:
       version: 1
       inputs: {}
       outputs:
         token: nv_access_token
   providers:
     session:
-      contract: appworld.session
+      contract: appworld.file_system.session
       capability: login
       outputs:
         token: access_token
   requirements:
     account_get:
     - id: session
-      contract: appworld.session
+      contract: appworld.file_system.session
       bindings:
       - input:
           lane: scope
@@ -841,7 +841,7 @@ prerequisites:
         output: token
     account_update:
     - id: session
-      contract: appworld.session
+      contract: appworld.file_system.session
       bindings:
       - input:
           lane: payload
@@ -850,7 +850,7 @@ prerequisites:
         output: token
     account_delete:
     - id: session
-      contract: appworld.session
+      contract: appworld.file_system.session
       bindings:
       - input:
           lane: payload
@@ -880,7 +880,7 @@ prerequisites:
         output: password
     logout:
     - id: session
-      contract: appworld.session
+      contract: appworld.file_system.session
       bindings:
       - input:
           lane: payload
@@ -889,7 +889,7 @@ prerequisites:
         output: token
     directory_query:
     - id: session
-      contract: appworld.session
+      contract: appworld.file_system.session
       bindings:
       - input:
           lane: selection
@@ -898,7 +898,7 @@ prerequisites:
         output: token
     directory_create:
     - id: session
-      contract: appworld.session
+      contract: appworld.file_system.session
       bindings:
       - input:
           lane: payload
@@ -907,7 +907,7 @@ prerequisites:
         output: token
     directory_delete:
     - id: session
-      contract: appworld.session
+      contract: appworld.file_system.session
       bindings:
       - input:
           lane: payload
@@ -916,7 +916,7 @@ prerequisites:
         output: token
     directory_exists:
     - id: session
-      contract: appworld.session
+      contract: appworld.file_system.session
       bindings:
       - input:
           lane: payload
@@ -925,7 +925,7 @@ prerequisites:
         output: token
     directory_copy:
     - id: session
-      contract: appworld.session
+      contract: appworld.file_system.session
       bindings:
       - input:
           lane: payload
@@ -934,7 +934,7 @@ prerequisites:
         output: token
     directory_move:
     - id: session
-      contract: appworld.session
+      contract: appworld.file_system.session
       bindings:
       - input:
           lane: payload
@@ -943,7 +943,7 @@ prerequisites:
         output: token
     directory_compress:
     - id: session
-      contract: appworld.session
+      contract: appworld.file_system.session
       bindings:
       - input:
           lane: payload
@@ -952,7 +952,7 @@ prerequisites:
         output: token
     file_query:
     - id: session
-      contract: appworld.session
+      contract: appworld.file_system.session
       bindings:
       - input:
           lane: selection
@@ -961,7 +961,7 @@ prerequisites:
         output: token
     file_get:
     - id: session
-      contract: appworld.session
+      contract: appworld.file_system.session
       bindings:
       - input:
           lane: arguments
@@ -970,7 +970,7 @@ prerequisites:
         output: token
     file_create:
     - id: session
-      contract: appworld.session
+      contract: appworld.file_system.session
       bindings:
       - input:
           lane: payload
@@ -979,7 +979,7 @@ prerequisites:
         output: token
     file_update:
     - id: session
-      contract: appworld.session
+      contract: appworld.file_system.session
       bindings:
       - input:
           lane: payload
@@ -988,7 +988,7 @@ prerequisites:
         output: token
     file_delete:
     - id: session
-      contract: appworld.session
+      contract: appworld.file_system.session
       bindings:
       - input:
           lane: payload
@@ -997,7 +997,7 @@ prerequisites:
         output: token
     file_exists:
     - id: session
-      contract: appworld.session
+      contract: appworld.file_system.session
       bindings:
       - input:
           lane: payload
@@ -1006,7 +1006,7 @@ prerequisites:
         output: token
     file_copy:
     - id: session
-      contract: appworld.session
+      contract: appworld.file_system.session
       bindings:
       - input:
           lane: payload
@@ -1015,7 +1015,7 @@ prerequisites:
         output: token
     file_move:
     - id: session
-      contract: appworld.session
+      contract: appworld.file_system.session
       bindings:
       - input:
           lane: payload
@@ -1024,7 +1024,7 @@ prerequisites:
         output: token
     file_decompress:
     - id: session
-      contract: appworld.session
+      contract: appworld.file_system.session
       bindings:
       - input:
           lane: payload

@@ -1,4 +1,4 @@
-version: 26
+version: 27
 entry_id: amazon
 auth:
   scheme: none
@@ -2448,7 +2448,7 @@ values:
     description: Account-holder password for this service.
   nv_access_token:
     type: string
-    description: Bearer access token from login.
+    description: Amazon login session token; use for Amazon operations.
   nv_file_access_token:
     type: string
     description: Bearer token authorizing the file-path argument, distinct from this service's login token.
@@ -2577,11 +2577,16 @@ prerequisites:
         account: prerequisite_account_name
       outputs:
         password: nv_password
-    appworld.session:
+    appworld.amazon.session:
       version: 1
       inputs: {}
       outputs:
         token: nv_access_token
+    appworld.file_system.session:
+      version: 1
+      inputs: {}
+      outputs:
+        token: nv_file_access_token
     appworld.payment_card:
       version: 1
       inputs: {}
@@ -2594,14 +2599,14 @@ prerequisites:
         cvv_number: nv_cvv
   providers:
     session:
-      contract: appworld.session
+      contract: appworld.amazon.session
       capability: login
       outputs:
         token: access_token
   requirements:
     product_rating_distribution_get:
     - id: session
-      contract: appworld.session
+      contract: appworld.amazon.session
       bindings:
       - input:
           lane: arguments
@@ -2609,7 +2614,7 @@ prerequisites:
         output: token
     product_last_purchase_get:
     - id: session
-      contract: appworld.session
+      contract: appworld.amazon.session
       bindings:
       - input:
           lane: arguments
@@ -2617,7 +2622,7 @@ prerequisites:
         output: token
     product_recommendations_query:
     - id: session
-      contract: appworld.session
+      contract: appworld.amazon.session
       bindings:
       - input:
           lane: selection
@@ -2625,7 +2630,7 @@ prerequisites:
         output: token
     product_history_query:
     - id: session
-      contract: appworld.session
+      contract: appworld.amazon.session
       bindings:
       - input:
           lane: selection
@@ -2633,7 +2638,7 @@ prerequisites:
         output: token
     product_purchases_query:
     - id: session
-      contract: appworld.session
+      contract: appworld.amazon.session
       bindings:
       - input:
           lane: selection
@@ -2641,7 +2646,7 @@ prerequisites:
         output: token
     history_clear:
     - id: session
-      contract: appworld.session
+      contract: appworld.amazon.session
       bindings:
       - input:
           lane: payload
@@ -2649,7 +2654,7 @@ prerequisites:
         output: token
     history_add_product:
     - id: session
-      contract: appworld.session
+      contract: appworld.amazon.session
       bindings:
       - input:
           lane: payload
@@ -2657,7 +2662,7 @@ prerequisites:
         output: token
     history_remove_product:
     - id: session
-      contract: appworld.session
+      contract: appworld.amazon.session
       bindings:
       - input:
           lane: payload
@@ -2665,7 +2670,7 @@ prerequisites:
         output: token
     history_set_tracking:
     - id: session
-      contract: appworld.session
+      contract: appworld.amazon.session
       bindings:
       - input:
           lane: payload
@@ -2694,7 +2699,7 @@ prerequisites:
         output: password
     logout:
     - id: session
-      contract: appworld.session
+      contract: appworld.amazon.session
       bindings:
       - input:
           lane: payload
@@ -2703,7 +2708,7 @@ prerequisites:
         output: token
     profile_get:
     - id: session
-      contract: appworld.session
+      contract: appworld.amazon.session
       bindings:
       - input:
           lane: selection
@@ -2712,7 +2717,7 @@ prerequisites:
         output: token
     account_get:
     - id: session
-      contract: appworld.session
+      contract: appworld.amazon.session
       bindings:
       - input:
           lane: arguments
@@ -2721,7 +2726,7 @@ prerequisites:
         output: token
     account_update:
     - id: session
-      contract: appworld.session
+      contract: appworld.amazon.session
       bindings:
       - input:
           lane: payload
@@ -2730,7 +2735,7 @@ prerequisites:
         output: token
     account_delete:
     - id: session
-      contract: appworld.session
+      contract: appworld.amazon.session
       bindings:
       - input:
           lane: payload
@@ -2739,7 +2744,7 @@ prerequisites:
         output: token
     product_query:
     - id: session
-      contract: appworld.session
+      contract: appworld.amazon.session
       bindings:
       - input:
           lane: selection
@@ -2748,7 +2753,7 @@ prerequisites:
         output: token
     product_get:
     - id: session
-      contract: appworld.session
+      contract: appworld.amazon.session
       bindings:
       - input:
           lane: arguments
@@ -2757,7 +2762,7 @@ prerequisites:
         output: token
     seller_query:
     - id: session
-      contract: appworld.session
+      contract: appworld.amazon.session
       bindings:
       - input:
           lane: selection
@@ -2766,7 +2771,7 @@ prerequisites:
         output: token
     seller_get:
     - id: session
-      contract: appworld.session
+      contract: appworld.amazon.session
       bindings:
       - input:
           lane: arguments
@@ -2775,7 +2780,7 @@ prerequisites:
         output: token
     product_type_query:
     - id: session
-      contract: appworld.session
+      contract: appworld.amazon.session
       bindings:
       - input:
           lane: selection
@@ -2784,7 +2789,7 @@ prerequisites:
         output: token
     product_feature_choices_get:
     - id: session
-      contract: appworld.session
+      contract: appworld.amazon.session
       bindings:
       - input:
           lane: arguments
@@ -2793,7 +2798,7 @@ prerequisites:
         output: token
     cart_get:
     - id: session
-      contract: appworld.session
+      contract: appworld.amazon.session
       bindings:
       - input:
           lane: arguments
@@ -2802,7 +2807,7 @@ prerequisites:
         output: token
     cart_item_query:
     - id: session
-      contract: appworld.session
+      contract: appworld.amazon.session
       bindings:
       - input:
           lane: selection
@@ -2811,7 +2816,7 @@ prerequisites:
         output: token
     wish_list_query:
     - id: session
-      contract: appworld.session
+      contract: appworld.amazon.session
       bindings:
       - input:
           lane: selection
@@ -2820,7 +2825,7 @@ prerequisites:
         output: token
     wish_list_add:
     - id: session
-      contract: appworld.session
+      contract: appworld.amazon.session
       bindings:
       - input:
           lane: payload
@@ -2829,7 +2834,7 @@ prerequisites:
         output: token
     wish_list_update_quantity:
     - id: session
-      contract: appworld.session
+      contract: appworld.amazon.session
       bindings:
       - input:
           lane: payload
@@ -2838,7 +2843,7 @@ prerequisites:
         output: token
     wish_list_remove:
     - id: session
-      contract: appworld.session
+      contract: appworld.amazon.session
       bindings:
       - input:
           lane: payload
@@ -2847,7 +2852,7 @@ prerequisites:
         output: token
     wish_list_clear:
     - id: session
-      contract: appworld.session
+      contract: appworld.amazon.session
       bindings:
       - input:
           lane: payload
@@ -2856,7 +2861,7 @@ prerequisites:
         output: token
     cart_move_to_wish_list:
     - id: session
-      contract: appworld.session
+      contract: appworld.amazon.session
       bindings:
       - input:
           lane: payload
@@ -2865,7 +2870,7 @@ prerequisites:
         output: token
     wish_list_move_to_cart:
     - id: session
-      contract: appworld.session
+      contract: appworld.amazon.session
       bindings:
       - input:
           lane: payload
@@ -2874,7 +2879,7 @@ prerequisites:
         output: token
     cart_add_product:
     - id: session
-      contract: appworld.session
+      contract: appworld.amazon.session
       bindings:
       - input:
           lane: payload
@@ -2883,7 +2888,7 @@ prerequisites:
         output: token
     cart_update_quantity:
     - id: session
-      contract: appworld.session
+      contract: appworld.amazon.session
       bindings:
       - input:
           lane: payload
@@ -2892,7 +2897,7 @@ prerequisites:
         output: token
     cart_remove_product:
     - id: session
-      contract: appworld.session
+      contract: appworld.amazon.session
       bindings:
       - input:
           lane: payload
@@ -2901,7 +2906,7 @@ prerequisites:
         output: token
     cart_clear:
     - id: session
-      contract: appworld.session
+      contract: appworld.amazon.session
       bindings:
       - input:
           lane: payload
@@ -2910,7 +2915,7 @@ prerequisites:
         output: token
     cart_apply_promo:
     - id: session
-      contract: appworld.session
+      contract: appworld.amazon.session
       bindings:
       - input:
           lane: payload
@@ -2919,7 +2924,7 @@ prerequisites:
         output: token
     cart_remove_promo:
     - id: session
-      contract: appworld.session
+      contract: appworld.amazon.session
       bindings:
       - input:
           lane: payload
@@ -2928,7 +2933,7 @@ prerequisites:
         output: token
     cart_add_gift_wrap:
     - id: session
-      contract: appworld.session
+      contract: appworld.amazon.session
       bindings:
       - input:
           lane: payload
@@ -2937,7 +2942,7 @@ prerequisites:
         output: token
     cart_remove_gift_wrap:
     - id: session
-      contract: appworld.session
+      contract: appworld.amazon.session
       bindings:
       - input:
           lane: payload
@@ -2946,7 +2951,7 @@ prerequisites:
         output: token
     order_query:
     - id: session
-      contract: appworld.session
+      contract: appworld.amazon.session
       bindings:
       - input:
           lane: selection
@@ -2955,7 +2960,7 @@ prerequisites:
         output: token
     order_get:
     - id: session
-      contract: appworld.session
+      contract: appworld.amazon.session
       bindings:
       - input:
           lane: arguments
@@ -2964,7 +2969,7 @@ prerequisites:
         output: token
     order_place:
     - id: session
-      contract: appworld.session
+      contract: appworld.amazon.session
       bindings:
       - input:
           lane: payload
@@ -2973,7 +2978,7 @@ prerequisites:
         output: token
     order_receipt_download:
     - id: session
-      contract: appworld.session
+      contract: appworld.amazon.session
       bindings:
       - input:
           lane: payload
@@ -2981,7 +2986,7 @@ prerequisites:
           - access_token
         output: token
     - id: file_session
-      contract: appworld.session
+      contract: appworld.file_system.session
       bindings:
       - input:
           lane: payload
@@ -2990,7 +2995,7 @@ prerequisites:
         output: token
     address_query:
     - id: session
-      contract: appworld.session
+      contract: appworld.amazon.session
       bindings:
       - input:
           lane: selection
@@ -2999,7 +3004,7 @@ prerequisites:
         output: token
     address_create:
     - id: session
-      contract: appworld.session
+      contract: appworld.amazon.session
       bindings:
       - input:
           lane: payload
@@ -3008,7 +3013,7 @@ prerequisites:
         output: token
     address_delete:
     - id: session
-      contract: appworld.session
+      contract: appworld.amazon.session
       bindings:
       - input:
           lane: payload
@@ -3017,7 +3022,7 @@ prerequisites:
         output: token
     address_update:
     - id: session
-      contract: appworld.session
+      contract: appworld.amazon.session
       bindings:
       - input:
           lane: payload
@@ -3026,7 +3031,7 @@ prerequisites:
         output: token
     payment_card_query:
     - id: session
-      contract: appworld.session
+      contract: appworld.amazon.session
       bindings:
       - input:
           lane: selection
@@ -3035,7 +3040,7 @@ prerequisites:
         output: token
     payment_card_get:
     - id: session
-      contract: appworld.session
+      contract: appworld.amazon.session
       bindings:
       - input:
           lane: arguments
@@ -3044,7 +3049,7 @@ prerequisites:
         output: token
     payment_card_create:
     - id: session
-      contract: appworld.session
+      contract: appworld.amazon.session
       bindings:
       - input:
           lane: payload
@@ -3068,7 +3073,7 @@ prerequisites:
         output: cvv_number
     payment_card_update:
     - id: session
-      contract: appworld.session
+      contract: appworld.amazon.session
       bindings:
       - input:
           lane: payload
@@ -3077,7 +3082,7 @@ prerequisites:
         output: token
     payment_card_delete:
     - id: session
-      contract: appworld.session
+      contract: appworld.amazon.session
       bindings:
       - input:
           lane: payload
@@ -3086,7 +3091,7 @@ prerequisites:
         output: token
     product_review_query:
     - id: session
-      contract: appworld.session
+      contract: appworld.amazon.session
       bindings:
       - input:
           lane: selection
@@ -3095,7 +3100,7 @@ prerequisites:
         output: token
     product_review_create:
     - id: session
-      contract: appworld.session
+      contract: appworld.amazon.session
       bindings:
       - input:
           lane: payload
@@ -3104,7 +3109,7 @@ prerequisites:
         output: token
     product_review_update:
     - id: session
-      contract: appworld.session
+      contract: appworld.amazon.session
       bindings:
       - input:
           lane: payload
@@ -3113,7 +3118,7 @@ prerequisites:
         output: token
     product_review_delete:
     - id: session
-      contract: appworld.session
+      contract: appworld.amazon.session
       bindings:
       - input:
           lane: payload
@@ -3122,7 +3127,7 @@ prerequisites:
         output: token
     product_return_query:
     - id: session
-      contract: appworld.session
+      contract: appworld.amazon.session
       bindings:
       - input:
           lane: selection
@@ -3131,7 +3136,7 @@ prerequisites:
         output: token
     product_return_get:
     - id: session
-      contract: appworld.session
+      contract: appworld.amazon.session
       bindings:
       - input:
           lane: arguments
@@ -3140,7 +3145,7 @@ prerequisites:
         output: token
     product_return_create:
     - id: session
-      contract: appworld.session
+      contract: appworld.amazon.session
       bindings:
       - input:
           lane: payload
@@ -3149,7 +3154,7 @@ prerequisites:
         output: token
     return_deliverer_query:
     - id: session
-      contract: appworld.session
+      contract: appworld.amazon.session
       bindings:
       - input:
           lane: selection
@@ -3158,7 +3163,7 @@ prerequisites:
         output: token
     prime_plan_get:
     - id: session
-      contract: appworld.session
+      contract: appworld.amazon.session
       bindings:
       - input:
           lane: arguments
@@ -3167,7 +3172,7 @@ prerequisites:
         output: token
     prime_subscription_query:
     - id: session
-      contract: appworld.session
+      contract: appworld.amazon.session
       bindings:
       - input:
           lane: selection
@@ -3176,7 +3181,7 @@ prerequisites:
         output: token
     prime_subscribe:
     - id: session
-      contract: appworld.session
+      contract: appworld.amazon.session
       bindings:
       - input:
           lane: payload
@@ -3185,7 +3190,7 @@ prerequisites:
         output: token
     prime_subscription_receipt_download:
     - id: session
-      contract: appworld.session
+      contract: appworld.amazon.session
       bindings:
       - input:
           lane: payload
@@ -3193,7 +3198,7 @@ prerequisites:
           - access_token
         output: token
     - id: file_session
-      contract: appworld.session
+      contract: appworld.file_system.session
       bindings:
       - input:
           lane: payload
@@ -3202,7 +3207,7 @@ prerequisites:
         output: token
     product_question_query:
     - id: session
-      contract: appworld.session
+      contract: appworld.amazon.session
       bindings:
       - input:
           lane: selection
@@ -3211,7 +3216,7 @@ prerequisites:
         output: token
     product_question_create:
     - id: session
-      contract: appworld.session
+      contract: appworld.amazon.session
       bindings:
       - input:
           lane: payload
@@ -3220,7 +3225,7 @@ prerequisites:
         output: token
     product_question_update:
     - id: session
-      contract: appworld.session
+      contract: appworld.amazon.session
       bindings:
       - input:
           lane: payload
@@ -3229,7 +3234,7 @@ prerequisites:
         output: token
     product_question_delete:
     - id: session
-      contract: appworld.session
+      contract: appworld.amazon.session
       bindings:
       - input:
           lane: payload
@@ -3238,7 +3243,7 @@ prerequisites:
         output: token
     product_question_answer_query:
     - id: session
-      contract: appworld.session
+      contract: appworld.amazon.session
       bindings:
       - input:
           lane: selection
@@ -3247,7 +3252,7 @@ prerequisites:
         output: token
     product_question_answer_create:
     - id: session
-      contract: appworld.session
+      contract: appworld.amazon.session
       bindings:
       - input:
           lane: payload
@@ -3256,7 +3261,7 @@ prerequisites:
         output: token
     product_question_answer_update:
     - id: session
-      contract: appworld.session
+      contract: appworld.amazon.session
       bindings:
       - input:
           lane: payload
@@ -3265,7 +3270,7 @@ prerequisites:
         output: token
     product_question_answer_delete:
     - id: session
-      contract: appworld.session
+      contract: appworld.amazon.session
       bindings:
       - input:
           lane: payload

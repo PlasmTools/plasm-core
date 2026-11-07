@@ -1,4 +1,4 @@
-version: 19
+version: 20
 entry_id: todoist
 auth:
   scheme: none
@@ -1804,7 +1804,7 @@ values:
     description: Account-holder password for this service.
   nv_access_token:
     type: string
-    description: Bearer access token from login.
+    description: Todoist login session token; use for Todoist operations.
   nv_file_access_token:
     type: string
     description: Bearer token authorizing the file-path argument, distinct from this service's login token.
@@ -1926,21 +1926,26 @@ prerequisites:
         account: prerequisite_account_name
       outputs:
         password: nv_password
-    appworld.session:
+    appworld.todoist.session:
       version: 1
       inputs: {}
       outputs:
         token: nv_access_token
+    appworld.file_system.session:
+      version: 1
+      inputs: {}
+      outputs:
+        token: nv_file_access_token
   providers:
     session:
-      contract: appworld.session
+      contract: appworld.todoist.session
       capability: login
       outputs:
         token: access_token
   requirements:
     label_get:
     - id: session
-      contract: appworld.session
+      contract: appworld.todoist.session
       bindings:
       - input:
           lane: arguments
@@ -1949,7 +1954,7 @@ prerequisites:
         output: token
     section_update:
     - id: session
-      contract: appworld.session
+      contract: appworld.todoist.session
       bindings:
       - input:
           lane: payload
@@ -1958,7 +1963,7 @@ prerequisites:
         output: token
     label_update:
     - id: session
-      contract: appworld.session
+      contract: appworld.todoist.session
       bindings:
       - input:
           lane: payload
@@ -1967,7 +1972,7 @@ prerequisites:
         output: token
     sub_task_update:
     - id: session
-      contract: appworld.session
+      contract: appworld.todoist.session
       bindings:
       - input:
           lane: payload
@@ -1976,7 +1981,7 @@ prerequisites:
         output: token
     project_invite_send:
     - id: session
-      contract: appworld.session
+      contract: appworld.todoist.session
       bindings:
       - input:
           lane: payload
@@ -1985,7 +1990,7 @@ prerequisites:
         output: token
     project_collaborator_remove:
     - id: session
-      contract: appworld.session
+      contract: appworld.todoist.session
       bindings:
       - input:
           lane: payload
@@ -1994,7 +1999,7 @@ prerequisites:
         output: token
     notification_count:
     - id: session
-      contract: appworld.session
+      contract: appworld.todoist.session
       bindings:
       - input:
           lane: arguments
@@ -2003,7 +2008,7 @@ prerequisites:
         output: token
     account_get:
     - id: session
-      contract: appworld.session
+      contract: appworld.todoist.session
       bindings:
       - input:
           lane: scope
@@ -2012,7 +2017,7 @@ prerequisites:
         output: token
     account_update:
     - id: session
-      contract: appworld.session
+      contract: appworld.todoist.session
       bindings:
       - input:
           lane: payload
@@ -2021,7 +2026,7 @@ prerequisites:
         output: token
     account_delete:
     - id: session
-      contract: appworld.session
+      contract: appworld.todoist.session
       bindings:
       - input:
           lane: payload
@@ -2051,7 +2056,7 @@ prerequisites:
         output: password
     logout:
     - id: session
-      contract: appworld.session
+      contract: appworld.todoist.session
       bindings:
       - input:
           lane: payload
@@ -2060,7 +2065,7 @@ prerequisites:
         output: token
     project_query:
     - id: session
-      contract: appworld.session
+      contract: appworld.todoist.session
       bindings:
       - input:
           lane: selection
@@ -2069,7 +2074,7 @@ prerequisites:
         output: token
     project_get:
     - id: session
-      contract: appworld.session
+      contract: appworld.todoist.session
       bindings:
       - input:
           lane: arguments
@@ -2078,7 +2083,7 @@ prerequisites:
         output: token
     project_create:
     - id: session
-      contract: appworld.session
+      contract: appworld.todoist.session
       bindings:
       - input:
           lane: payload
@@ -2087,7 +2092,7 @@ prerequisites:
         output: token
     project_update:
     - id: session
-      contract: appworld.session
+      contract: appworld.todoist.session
       bindings:
       - input:
           lane: payload
@@ -2096,7 +2101,7 @@ prerequisites:
         output: token
     project_delete:
     - id: session
-      contract: appworld.session
+      contract: appworld.todoist.session
       bindings:
       - input:
           lane: payload
@@ -2105,7 +2110,7 @@ prerequisites:
         output: token
     task_query:
     - id: session
-      contract: appworld.session
+      contract: appworld.todoist.session
       bindings:
       - input:
           lane: selection
@@ -2114,7 +2119,7 @@ prerequisites:
         output: token
     task_get:
     - id: session
-      contract: appworld.session
+      contract: appworld.todoist.session
       bindings:
       - input:
           lane: arguments
@@ -2123,7 +2128,7 @@ prerequisites:
         output: token
     task_create:
     - id: session
-      contract: appworld.session
+      contract: appworld.todoist.session
       bindings:
       - input:
           lane: payload
@@ -2132,7 +2137,7 @@ prerequisites:
         output: token
     task_update:
     - id: session
-      contract: appworld.session
+      contract: appworld.todoist.session
       bindings:
       - input:
           lane: payload
@@ -2141,7 +2146,7 @@ prerequisites:
         output: token
     task_delete:
     - id: session
-      contract: appworld.session
+      contract: appworld.todoist.session
       bindings:
       - input:
           lane: payload
@@ -2150,7 +2155,7 @@ prerequisites:
         output: token
     task_assign:
     - id: session
-      contract: appworld.session
+      contract: appworld.todoist.session
       bindings:
       - input:
           lane: payload
@@ -2159,7 +2164,7 @@ prerequisites:
         output: token
     label_query:
     - id: session
-      contract: appworld.session
+      contract: appworld.todoist.session
       bindings:
       - input:
           lane: selection
@@ -2168,7 +2173,7 @@ prerequisites:
         output: token
     label_create:
     - id: session
-      contract: appworld.session
+      contract: appworld.todoist.session
       bindings:
       - input:
           lane: payload
@@ -2177,7 +2182,7 @@ prerequisites:
         output: token
     label_delete:
     - id: session
-      contract: appworld.session
+      contract: appworld.todoist.session
       bindings:
       - input:
           lane: payload
@@ -2186,7 +2191,7 @@ prerequisites:
         output: token
     task_add_label:
     - id: session
-      contract: appworld.session
+      contract: appworld.todoist.session
       bindings:
       - input:
           lane: payload
@@ -2195,7 +2200,7 @@ prerequisites:
         output: token
     task_remove_label:
     - id: session
-      contract: appworld.session
+      contract: appworld.todoist.session
       bindings:
       - input:
           lane: payload
@@ -2204,7 +2209,7 @@ prerequisites:
         output: token
     section_query:
     - id: session
-      contract: appworld.session
+      contract: appworld.todoist.session
       bindings:
       - input:
           lane: selection
@@ -2213,7 +2218,7 @@ prerequisites:
         output: token
     section_create:
     - id: session
-      contract: appworld.session
+      contract: appworld.todoist.session
       bindings:
       - input:
           lane: payload
@@ -2222,7 +2227,7 @@ prerequisites:
         output: token
     section_delete:
     - id: session
-      contract: appworld.session
+      contract: appworld.todoist.session
       bindings:
       - input:
           lane: payload
@@ -2231,7 +2236,7 @@ prerequisites:
         output: token
     task_comment_query:
     - id: session
-      contract: appworld.session
+      contract: appworld.todoist.session
       bindings:
       - input:
           lane: selection
@@ -2240,7 +2245,7 @@ prerequisites:
         output: token
     task_comment_get:
     - id: session
-      contract: appworld.session
+      contract: appworld.todoist.session
       bindings:
       - input:
           lane: arguments
@@ -2249,7 +2254,7 @@ prerequisites:
         output: token
     task_comment_create:
     - id: session
-      contract: appworld.session
+      contract: appworld.todoist.session
       bindings:
       - input:
           lane: payload
@@ -2257,7 +2262,7 @@ prerequisites:
           - access_token
         output: token
     - id: file_session
-      contract: appworld.session
+      contract: appworld.file_system.session
       bindings:
       - input:
           lane: payload
@@ -2265,7 +2270,7 @@ prerequisites:
         output: token
     task_comment_update:
     - id: session
-      contract: appworld.session
+      contract: appworld.todoist.session
       bindings:
       - input:
           lane: payload
@@ -2274,7 +2279,7 @@ prerequisites:
         output: token
     task_comment_delete:
     - id: session
-      contract: appworld.session
+      contract: appworld.todoist.session
       bindings:
       - input:
           lane: payload
@@ -2283,7 +2288,7 @@ prerequisites:
         output: token
     task_comment_upload_attachment:
     - id: session
-      contract: appworld.session
+      contract: appworld.todoist.session
       bindings:
       - input:
           lane: payload
@@ -2291,7 +2296,7 @@ prerequisites:
           - access_token
         output: token
     - id: file_session
-      contract: appworld.session
+      contract: appworld.file_system.session
       bindings:
       - input:
           lane: payload
@@ -2300,7 +2305,7 @@ prerequisites:
         output: token
     task_comment_delete_attachment:
     - id: session
-      contract: appworld.session
+      contract: appworld.todoist.session
       bindings:
       - input:
           lane: payload
@@ -2309,7 +2314,7 @@ prerequisites:
         output: token
     task_comment_download_attachment:
     - id: session
-      contract: appworld.session
+      contract: appworld.todoist.session
       bindings:
       - input:
           lane: payload
@@ -2317,7 +2322,7 @@ prerequisites:
           - access_token
         output: token
     - id: file_session
-      contract: appworld.session
+      contract: appworld.file_system.session
       bindings:
       - input:
           lane: payload
@@ -2326,7 +2331,7 @@ prerequisites:
         output: token
     sub_task_query:
     - id: session
-      contract: appworld.session
+      contract: appworld.todoist.session
       bindings:
       - input:
           lane: selection
@@ -2335,7 +2340,7 @@ prerequisites:
         output: token
     sub_task_create:
     - id: session
-      contract: appworld.session
+      contract: appworld.todoist.session
       bindings:
       - input:
           lane: payload
@@ -2344,7 +2349,7 @@ prerequisites:
         output: token
     sub_task_delete:
     - id: session
-      contract: appworld.session
+      contract: appworld.todoist.session
       bindings:
       - input:
           lane: payload
@@ -2353,7 +2358,7 @@ prerequisites:
         output: token
     user_query:
     - id: session
-      contract: appworld.session
+      contract: appworld.todoist.session
       bindings:
       - input:
           lane: selection
@@ -2362,7 +2367,7 @@ prerequisites:
         output: token
     project_invite_accept:
     - id: session
-      contract: appworld.session
+      contract: appworld.todoist.session
       bindings:
       - input:
           lane: payload
@@ -2371,7 +2376,7 @@ prerequisites:
         output: token
     project_invite_delete:
     - id: session
-      contract: appworld.session
+      contract: appworld.todoist.session
       bindings:
       - input:
           lane: payload
@@ -2380,7 +2385,7 @@ prerequisites:
         output: token
     notification_query:
     - id: session
-      contract: appworld.session
+      contract: appworld.todoist.session
       bindings:
       - input:
           lane: selection
@@ -2389,7 +2394,7 @@ prerequisites:
         output: token
     notification_delete:
     - id: session
-      contract: appworld.session
+      contract: appworld.todoist.session
       bindings:
       - input:
           lane: payload
@@ -2398,7 +2403,7 @@ prerequisites:
         output: token
     notification_mark:
     - id: session
-      contract: appworld.session
+      contract: appworld.todoist.session
       bindings:
       - input:
           lane: payload
@@ -2407,7 +2412,7 @@ prerequisites:
         output: token
     notification_delete_all:
     - id: session
-      contract: appworld.session
+      contract: appworld.todoist.session
       bindings:
       - input:
           lane: payload
@@ -2416,7 +2421,7 @@ prerequisites:
         output: token
     notification_mark_all:
     - id: session
-      contract: appworld.session
+      contract: appworld.todoist.session
       bindings:
       - input:
           lane: payload
