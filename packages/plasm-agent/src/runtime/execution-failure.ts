@@ -52,6 +52,13 @@ export const executionFailureSchema = z.object({
     operation: z.object({ entry_id: z.string(), capability: z.string() }).strict(),
     request_fingerprint: z.string(), status: z.enum(["unresolved", "response_received", "rejected_without_effect"]),
   }).strict()),
+  effect_selections: z.array(z.object({
+    collection: collectionReferenceSchema,
+    coverage: z.enum(["complete", "partial", "unknown"]),
+    count: z.number().int().nonnegative(),
+    scope_path: z.array(z.string()),
+    occurrence_path: z.array(z.number().int().nonnegative()),
+  }).strict()).optional(),
   effects_unresolved: z.boolean(),
   // Original provider envelope is evidence, never recovery authority.
   mcp_tool_result: jsonValueSchema.optional(),

@@ -144,6 +144,8 @@ for (const scenario of cases) {
     assert.equal(recorded.length, 1, "the native failure must be recorded exactly once");
     assert.equal(recorded[0]!.effects_unresolved, false);
     assert.ok(recorded[0]!.dispatches.some(d => d.status === "rejected_without_effect"));
+    assert.ok(recorded[0]!.effect_selections?.some(selection => selection.count === 4),
+      "failure carries native accounting for the original selection");
     assert.equal(rows[0]?.description, "item-0");
     assert.ok(rows.every(row => !["item-1", "item-2", "item-3"].includes(row.description)));
     assert.equal(posts, scenario.intervening === "write" ? 3 : 2);

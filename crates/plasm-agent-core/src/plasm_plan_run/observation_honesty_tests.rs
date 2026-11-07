@@ -544,7 +544,20 @@ async fn known_rejection_leaves_the_selected_suffix_unattempted() {
     assert_eq!(
         accounting(&two),
         accounting(&three),
-        "the failure does not report the undispatched suffix"
+        "attempted-effect receipts alone do not report the undispatched suffix"
+    );
+    assert!(two
+        .effect_selections
+        .iter()
+        .any(|selection| selection.count == 3));
+    assert!(three
+        .effect_selections
+        .iter()
+        .any(|selection| selection.count == 4));
+    let selection_wire = serde_json::to_string(&three.effect_selections).unwrap();
+    assert!(
+        !selection_wire.contains("item-0"),
+        "selection evidence must not expose row values"
     );
     assert_eq!(
         two.dispatches
@@ -643,6 +656,10 @@ fn export_effect_fixture(output: &std::path::Path) {
 async fn first_selected_effect_can_be_rejected_without_any_applied_effect() {
     let failure = Box::pin(ordered_fanout_case(4, 0, true, false)).await;
     assert!(!failure.effects_unresolved);
+    assert!(failure
+        .effect_selections
+        .iter()
+        .any(|selection| selection.count == 4));
     assert!(failure.effects.iter().all(|effect| effect.completed == 0));
     assert!(failure
         .dispatches

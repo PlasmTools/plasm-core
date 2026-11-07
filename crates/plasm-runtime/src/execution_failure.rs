@@ -41,6 +41,19 @@ pub struct InputBudgetEvidence {
     pub input: String,
 }
 
+/// Public accounting for a scoped selection, without its rows or operands.
+/// The collection identity is producer provenance, not a membership commitment;
+/// this evidence does not authorize repair or establish the exact selected rows.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct EffectSelectionEvidence {
+    pub collection: plasm_core::collection_codec::CollectionIdentity,
+    pub coverage: plasm_core::collection_codec::ResultCoverage,
+    pub count: usize,
+    pub scope_path: Vec<String>,
+    pub occurrence_path: Vec<usize>,
+}
+
 /// Compiler-owned evidence; presentation text never selects these variants.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
@@ -140,6 +153,8 @@ pub struct ExecutionFailureDetails {
     pub input_occurrence: Option<crate::OperationInvocationAddress>,
     pub effects: Vec<EffectReceipt>,
     pub dispatches: Vec<crate::MutationDispatch>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub effect_selections: Vec<EffectSelectionEvidence>,
     /// A failure after dispatch is not evidence that no effect occurred.
     pub effects_unresolved: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -280,6 +295,7 @@ impl ExecutionFailure {
             input_occurrence: None,
             effects: Vec::new(),
             dispatches: Vec::new(),
+            effect_selections: Vec::new(),
             effects_unresolved: false,
             input_budget: None,
             program_rejection: None,
@@ -329,6 +345,17 @@ impl ExecutionFailure {
     pub fn with_catalog(mut self, digest: &str) -> Self {
         if self.catalog_digest.is_none() {
             self.catalog_digest = Some(digest.to_owned());
+        }
+        self
+    }
+    /// Attach selection accounting when a mutation was dispatched or completed,
+    /// or when effects are unresolved. This grants no repair authority.
+    pub fn with_effect_selection(mut self, evidence: EffectSelectionEvidence) -> Self {
+        if self.effects_unresolved
+            || !self.dispatches.is_empty()
+            || self.effects.iter().any(|effect| effect.completed > 0)
+        {
+            self.effect_selections.push(evidence);
         }
         self
     }
@@ -398,6 +425,7 @@ impl ExecutionFailure {
         }
         self.effects.append(&mut other.effects);
         self.dispatches.append(&mut other.dispatches);
+        self.effect_selections.append(&mut other.effect_selections);
         self.effects_unresolved |= other.effects_unresolved;
         if self.effects_unresolved
             || self
@@ -746,6 +774,42 @@ impl std::error::Error for ExecutionFailure {}
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn selection_evidence_requires_mutation_and_survives_failure_merge() {
+        use plasm_core::collection_codec::{CollectionIdentity, ResultCoverage};
+        let selection = EffectSelectionEvidence {
+            collection: CollectionIdentity {
+                catalog: [1; 32],
+                expression: [2; 32],
+                epoch: 3,
+            },
+            coverage: ResultCoverage::Partial,
+            count: 4,
+            scope_path: vec!["map".into()],
+            occurrence_path: vec![2],
+        };
+        let pure = ExecutionFailure::new(FailureCause::Program, "invalid", "no dispatch")
+            .with_effect_selection(selection.clone());
+        assert!(pure.effect_selections.is_empty());
+
+        let mut dispatched = ExecutionFailure::new(FailureCause::Upstream, "rejected", "fixture");
+        dispatched.dispatches.push(crate::MutationDispatch {
+            resolved_effect: None,
+            operation: crate::execution::OperationIdentity {
+                entry_id: "matrix".into(),
+                capability: "write".into(),
+            },
+            request_fingerprint: "fixture".into(),
+            status: crate::MutationDispatchStatus::RejectedWithoutEffect,
+        });
+        let merged = pure.merge(dispatched.with_effect_selection(selection.clone()));
+        assert_eq!(merged.effect_selections, vec![selection]);
+        let wire = serde_json::to_value(&merged).unwrap();
+        assert_eq!(wire["effect_selections"][0]["coverage"], "partial");
+        let restored: ExecutionFailure = serde_json::from_value(wire).unwrap();
+        assert_eq!(restored.effect_selections, merged.effect_selections);
+    }
 
     #[test]
     fn catalogue_rejection_requires_exact_response_and_one_dispatch() {

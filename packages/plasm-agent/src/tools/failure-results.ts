@@ -20,6 +20,9 @@ export class FailureResults {
       const input = failure.input_occurrence;
       lines.push(`Failed input${sourceScope(input.scope_path)}: ${input.source_identity ?? "identity unavailable"}; item path [${input.occurrence_path.join("/")}] (zero-based nested iteration indices).`);
     }
+    for (const selection of failure.effect_selections ?? []) {
+      lines.push(`Input selection${sourceScope(selection.scope_path)}: ${selection.count} materialized occurrences; source coverage ${selection.coverage}. This count does not establish that every selected operation ran.`);
+    }
     for (const effect of failure.effects) {
       const matchingDispatches = failure.dispatches.filter(dispatch => dispatch.operation.entry_id === effect.entry_id && dispatch.operation.capability === effect.capability);
       const knownRejection = effect.failed === 1 && matchingDispatches.length === 1 && matchingDispatches[0]?.status === "rejected_without_effect" && !failure.effects_unresolved;

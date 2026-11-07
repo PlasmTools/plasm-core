@@ -100,6 +100,16 @@ assert.equal(await successTools.plasm_context!.execute!({session_mode: "extend",
 assert.equal(await successTools.plasm!.execute!({logical_session_ref: "l_AAAAAAAAQACAAAAAAAAAAQ", program: "abstract"}, options), "review pc0");
 assert.equal(await successTools.plasm_run!.execute!({logical_session_ref: "l_AAAAAAAAQACAAAAAAAAAAQ", run_ref: "pc0"}, options), "observed rows");
 const readFailure = new FailureResults();
+{
+  const record = executionFailureSchema.parse({...failure, effect_selections: [{
+    collection: {catalog: Array(32).fill(1), expression: Array(32).fill(2), epoch: 3},
+    coverage: "partial", count: 4, scope_path: ["selected"], occurrence_path: [],
+  }]});
+  const details = readFailure.read(readFailure.record(record), 0);
+  assert.match(details, /4 materialized occurrences; source coverage partial/);
+  assert.match(details, /does not establish that every selected operation ran/);
+  assert.doesNotMatch(details, /catalog|expression|epoch/);
+}
 const lookupRef = readFailure.record({...failure, effects: [], input_occurrence: undefined,
   diagnostic: "Lookup rejected: account does not exist"});
 const lookupDetails = readFailure.read(lookupRef, 0);

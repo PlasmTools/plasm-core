@@ -542,7 +542,17 @@ pub(super) async fn materialize(
         evidence,
     ))
     }.await;
-    execution.map_err(|failure| failure.with_effects(&operations))
+    execution.map_err(|failure| {
+        failure.with_effects(&operations).with_effect_selection(
+            plasm_runtime::execution_failure::EffectSelectionEvidence {
+                collection: source.result.collection.membership().identity().clone(),
+                coverage: source.result.collection.coverage(),
+                count: source.result.count(),
+                scope_path,
+                occurrence_path: ctx.occurrence_path.clone(),
+            },
+        )
+    })
 }
 
 /// A run-wide ceiling shared by all root, sibling and nested map occurrences.
