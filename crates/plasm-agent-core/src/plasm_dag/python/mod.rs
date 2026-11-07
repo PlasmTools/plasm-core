@@ -301,7 +301,7 @@ struct Lower<'a> {
     return_check: Option<(Box<PyExpr>, plasm_core::value_contract::ValueContract)>,
     serial: usize,
     frame: LexicalFrame,
-    static_sequences: BTreeMap<String, Vec<PyExpr>>,
+    static_sequences: BTreeMap<String, Vec<static_iteration::StaticItem>>,
     value_depth: usize,
     static_expansions: usize,
     spans: BTreeMap<String, serde_json::Value>,
