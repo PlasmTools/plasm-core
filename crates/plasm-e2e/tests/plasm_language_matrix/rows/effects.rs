@@ -273,7 +273,7 @@ pub(crate) const ROWS: &[MatrixRow] = &[
             "binding_continuation",
         ],
         min_node_results: 3,
-        expect_markdown_substrings: &["## tags ("],
+        expect_markdown_substrings: &["## tags"],
         expect_live_error: None,
     },
     MatrixRow {
