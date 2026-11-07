@@ -1,7 +1,9 @@
 //! Store shared definitions once with explicit question-local evidence scopes.
 use super::{witnesses, DiscoveryMatcherError, IssuedBatch};
 use plasm_core::catalog_discovery::content_hash;
-use serde::{Deserialize, Serialize};
+#[cfg(test)]
+use serde::Deserialize;
+use serde::Serialize;
 use serde_json::Value;
 use std::collections::BTreeMap;
 
@@ -10,14 +12,16 @@ pub(super) use connected_size::{connected_size, PreparedLocal};
 
 pub(super) const MAX_QUESTIONS: usize = 4;
 
-#[derive(Clone, Deserialize, Serialize, PartialEq)]
+#[derive(Clone, Serialize, PartialEq)]
+#[cfg_attr(test, derive(Deserialize))]
 struct Context {
     rule: String,
     discovery_need: String,
     outcome: String,
 }
 
-#[derive(Clone, Deserialize, Serialize)]
+#[derive(Clone, Serialize)]
+#[cfg_attr(test, derive(Deserialize))]
 struct Evidence {
     capabilities: witnesses::OrderedCards,
     types: witnesses::ProjectedDefinitions,
@@ -26,16 +30,18 @@ struct Evidence {
     bindings: Vec<Value>,
 }
 
-#[derive(Deserialize)]
-#[serde(deny_unknown_fields)]
+#[derive(Clone)]
+#[cfg_attr(test, derive(Deserialize))]
+#[cfg_attr(test, serde(deny_unknown_fields))]
 struct LocalState {
-    #[serde(flatten)]
+    #[cfg_attr(test, serde(flatten))]
     context: Context,
-    #[serde(flatten)]
+    #[cfg_attr(test, serde(flatten))]
     evidence: Evidence,
 }
 
-#[derive(Clone, Deserialize, Serialize)]
+#[derive(Clone, Serialize)]
+#[cfg_attr(test, derive(Deserialize))]
 #[serde(deny_unknown_fields)]
 struct Question {
     #[serde(rename = "type")]
@@ -44,12 +50,79 @@ struct Question {
     criteria: BTreeMap<String, String>,
 }
 
-#[derive(Deserialize)]
-#[serde(deny_unknown_fields)]
+#[derive(Clone)]
+#[cfg_attr(test, derive(Deserialize))]
+#[cfg_attr(test, serde(deny_unknown_fields))]
 struct LocalRequest {
     model: String,
     state: LocalState,
     questions: BTreeMap<String, Question>,
+}
+
+/// An individually admitted packet retains the typed evidence used to encode it
+/// until grouping is finished. Only the finalized wire packet escapes.
+pub(super) struct PreparedLocalBatch {
+    issued: IssuedBatch,
+    request: LocalRequest,
+}
+
+impl PreparedLocalBatch {
+    pub(super) fn new(
+        issued: IssuedBatch,
+        model: &str,
+        state: super::SharedEvidence<'_>,
+        questions: BTreeMap<String, super::decisions::Question>,
+    ) -> Self {
+        Self {
+            issued,
+            request: LocalRequest {
+                model: model.to_owned(),
+                state: LocalState {
+                    context: Context {
+                        rule: state.rule.to_owned(),
+                        discovery_need: state.discovery_need.to_owned(),
+                        outcome: state.outcome.to_owned(),
+                    },
+                    evidence: Evidence {
+                        capabilities: state.capabilities,
+                        types: state.types,
+                        type_refs: state.type_refs,
+                        bindings: state.bindings,
+                    },
+                },
+                questions: questions
+                    .into_iter()
+                    .map(|(id, question)| {
+                        (
+                            id,
+                            Question {
+                                kind: question.kind.to_owned(),
+                                instructions: question.instructions,
+                                criteria: question
+                                    .criteria
+                                    .into_iter()
+                                    .map(|(key, value)| (key.to_owned(), value.to_owned()))
+                                    .collect(),
+                            },
+                        )
+                    })
+                    .collect(),
+            },
+        }
+    }
+
+    #[cfg(test)]
+    pub(super) fn into_issued(self) -> IssuedBatch {
+        self.issued
+    }
+
+    /// Test fixtures may edit raw packet JSON to exercise malformed and divergent
+    /// inputs; production never reconstructs a request from its encoded body.
+    #[cfg(test)]
+    fn from_fixture(issued: IssuedBatch) -> Result<Self, DiscoveryMatcherError> {
+        let request = serde_json::from_str(&issued.body).map_err(DiscoveryMatcherError::Packing)?;
+        Ok(Self { issued, request })
+    }
 }
 
 #[derive(Serialize)]
@@ -235,10 +308,27 @@ fn connected_context(
 pub(super) fn connected(
     batches: Vec<IssuedBatch>,
 ) -> Result<Option<IssuedBatch>, DiscoveryMatcherError> {
+    let prepared = batches
+        .into_iter()
+        .map(PreparedLocalBatch::from_fixture)
+        .collect::<Result<Vec<_>, _>>()?;
+    connected_prepared(prepared)
+}
+
+#[cfg(test)]
+pub(super) fn connected_prepared(
+    batches: Vec<PreparedLocalBatch>,
+) -> Result<Option<IssuedBatch>, DiscoveryMatcherError> {
     let Some(body) = connected_request_body(&batches)? else {
         return Ok(None);
     };
-    let mut merged = finish(batches, Some(body));
+    let mut merged = finish(
+        batches
+            .into_iter()
+            .map(PreparedLocalBatch::into_issued)
+            .collect(),
+        Some(body),
+    );
     merged.cache_key =
         content_hash(format!("decisions-connected-references-v13\n{}", merged.body).as_bytes());
     Ok(Some(merged))
@@ -246,15 +336,12 @@ pub(super) fn connected(
 
 #[cfg(test)]
 fn connected_request_body(
-    batches: &[IssuedBatch],
+    batches: &[PreparedLocalBatch],
 ) -> Result<Option<String>, DiscoveryMatcherError> {
     if batches.is_empty() {
         return Ok(None);
     }
-    let requests: Vec<LocalRequest> = batches
-        .iter()
-        .map(|batch| serde_json::from_str(&batch.body).map_err(DiscoveryMatcherError::Packing))
-        .collect::<Result<_, _>>()?;
+    let requests: Vec<LocalRequest> = batches.iter().map(|batch| batch.request.clone()).collect();
     if requests.iter().any(|request| {
         request.model != requests[0].model || request.state.context != requests[0].state.context
     }) {
@@ -278,14 +365,18 @@ fn finish(group: Vec<IssuedBatch>, body: Option<String>) -> IssuedBatch {
     merged
 }
 
-pub(super) fn pack(batches: Vec<IssuedBatch>) -> Result<Vec<IssuedBatch>, DiscoveryMatcherError> {
+pub(super) fn pack(
+    batches: Vec<PreparedLocalBatch>,
+) -> Result<Vec<IssuedBatch>, DiscoveryMatcherError> {
     let mut output = Vec::new();
     let mut group: Vec<IssuedBatch> = Vec::new();
     let mut requests: Vec<LocalRequest> = Vec::new();
     let mut body = None;
-    for batch in batches {
-        let request: LocalRequest =
-            serde_json::from_str(&batch.body).map_err(DiscoveryMatcherError::Packing)?;
+    for PreparedLocalBatch {
+        issued: batch,
+        request,
+    } in batches
+    {
         if requests.first().is_some_and(|first| {
             first.model != request.model || first.state.context != request.state.context
         }) || group.len() == MAX_QUESTIONS
@@ -318,4 +409,16 @@ pub(super) fn pack(batches: Vec<IssuedBatch>) -> Result<Vec<IssuedBatch>, Discov
         output.push(finish(group, body));
     }
     Ok(output)
+}
+
+#[cfg(test)]
+pub(super) fn pack_fixture(
+    batches: Vec<IssuedBatch>,
+) -> Result<Vec<IssuedBatch>, DiscoveryMatcherError> {
+    pack(
+        batches
+            .into_iter()
+            .map(PreparedLocalBatch::from_fixture)
+            .collect::<Result<Vec<_>, _>>()?,
+    )
 }

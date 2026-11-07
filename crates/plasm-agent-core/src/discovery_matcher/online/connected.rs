@@ -527,7 +527,7 @@ pub(super) fn plan_ordered(
         })
         .collect::<Result<Vec<_>, _>>()?;
     #[cfg(test)]
-    let issued = request_packing::connected(local)?;
+    let issued = request_packing::connected_prepared(local)?;
     // An existing declaration may anchor an acquisition path that cannot fit.
     // Deferring that expansion does not defer the declaration already exposed.
     deferred.retain(|key, _| !context.exposed.contains(key));

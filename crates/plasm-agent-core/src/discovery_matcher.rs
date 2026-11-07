@@ -170,6 +170,10 @@ pub struct PreparedSelection {
     batches: Vec<IssuedBatch>,
     budget_retained: Vec<ScopeBudgetRetention>,
 }
+struct PreparedLocalSelection {
+    batches: Vec<request_packing::PreparedLocalBatch>,
+    budget_retained: Vec<ScopeBudgetRetention>,
+}
 impl PreparedSelection {
     pub fn batches(&self) -> &[IssuedBatch] {
         &self.batches
@@ -260,7 +264,11 @@ pub(crate) fn issue_batches(
             byte_limit: budget.byte_limit,
         });
     }
-    Ok(prepared.batches)
+    Ok(prepared
+        .batches
+        .into_iter()
+        .map(request_packing::PreparedLocalBatch::into_issued)
+        .collect())
 }
 
 pub fn prepare_selection(
@@ -269,9 +277,11 @@ pub fn prepare_selection(
     retrieval: &RetrievalReceipt,
     catalog_evidence: &CatalogEvidence,
 ) -> Result<PreparedSelection, DiscoveryMatcherError> {
-    let mut prepared = prepare_local_selection(model, intent, retrieval, catalog_evidence)?;
-    prepared.batches = request_packing::pack(prepared.batches)?;
-    Ok(prepared)
+    let prepared = prepare_local_selection(model, intent, retrieval, catalog_evidence)?;
+    Ok(PreparedSelection {
+        batches: request_packing::pack(prepared.batches)?,
+        budget_retained: prepared.budget_retained,
+    })
 }
 
 fn prepare_local_selection(
@@ -279,7 +289,7 @@ fn prepare_local_selection(
     intent: &IntentProvenance,
     retrieval: &RetrievalReceipt,
     catalog_evidence: &CatalogEvidence,
-) -> Result<PreparedSelection, DiscoveryMatcherError> {
+) -> Result<PreparedLocalSelection, DiscoveryMatcherError> {
     if model.trim().is_empty() {
         return Err(DiscoveryMatcherError::MissingModel);
     }
@@ -336,7 +346,7 @@ fn prepare_local_selection(
         .map(|(i, reference)| (reference.clone(), format!("c{i}")))
         .collect();
     let definitions = witnesses::value(&catalog_evidence.definitions)?;
-    let mut prepared = PreparedSelection {
+    let mut prepared = PreparedLocalSelection {
         batches: Vec::new(),
         budget_retained: Vec::new(),
     };
@@ -405,7 +415,7 @@ fn issue_local_batch(
     catalog: &CatalogEvidence,
     ids: &BTreeMap<CapabilityRef, String>,
     definitions: &serde_json::Value,
-) -> Result<IssuedBatch, DiscoveryMatcherError> {
+) -> Result<request_packing::PreparedLocalBatch, DiscoveryMatcherError> {
     let scope = witnesses::project(&question.reference, catalog, ids, definitions)?;
     issue_projected_batch(model, intent, question, _evidence, ids, scope)
 }
@@ -417,7 +427,7 @@ fn issue_projected_batch(
     _evidence: &std::sync::Arc<Vec<Question>>,
     ids: &BTreeMap<CapabilityRef, String>,
     scope: witnesses::Scope,
-) -> Result<IssuedBatch, DiscoveryMatcherError> {
+) -> Result<request_packing::PreparedLocalBatch, DiscoveryMatcherError> {
     issue_scope(model, intent, question, _evidence, ids, scope, true)
 }
 
@@ -433,7 +443,7 @@ fn issue_scope(
     ids: &BTreeMap<CapabilityRef, String>,
     scope: witnesses::Scope,
     admit_local: bool,
-) -> Result<IssuedBatch, DiscoveryMatcherError> {
+) -> Result<request_packing::PreparedLocalBatch, DiscoveryMatcherError> {
     let id = ids
         .get(&question.reference)
         .ok_or(DiscoveryMatcherError::MissingAnswer)?;
@@ -447,7 +457,7 @@ fn issue_scope(
         type_refs: scope.references,
         bindings: scope.bindings,
     };
-    let body = RelevanceCodec::encode(&decisions::Request {
+    let wire = decisions::Request {
         model,
         state: decisions::State::Graph(&state),
         questions: BTreeMap::from([(
@@ -458,8 +468,8 @@ fn issue_scope(
                 criteria: CRITERIA.into_iter().collect(),
             },
         )]),
-    })
-    .map_err(DiscoveryMatcherError::Encode)?;
+    };
+    let body = RelevanceCodec::encode(&wire).map_err(DiscoveryMatcherError::Encode)?;
     if admit_local
         && (scope.count > witnesses::MAX_CAPABILITIES || body.len() > witnesses::MAX_BYTES)
     {
@@ -471,7 +481,7 @@ fn issue_scope(
             byte_limit: witnesses::MAX_BYTES,
         });
     }
-    Ok(IssuedBatch {
+    let issued = IssuedBatch {
         cache_key: content_hash(format!("decisions-compact-witnesses-v10\\n{body}").as_bytes()),
         body,
         model: model.into(),
@@ -480,7 +490,11 @@ fn issue_scope(
         questions: vec![question.clone()],
         #[cfg(test)]
         evidence: _evidence.clone(),
-    })
+    };
+    let decisions::Request { questions, .. } = wire;
+    Ok(request_packing::PreparedLocalBatch::new(
+        issued, model, state, questions,
+    ))
 }
 
 /// Pending local questions and accepted judgments; no partial selection.
@@ -705,6 +719,7 @@ mod tests {
     mod budget_retention;
     mod compact;
     mod intent_scope;
+    mod packet_frozen;
     mod prefix;
     mod reference_index;
     mod scheduling;
@@ -1349,11 +1364,12 @@ mod tests {
         other.id = "second".into();
         other.reference.capability = "second".into();
         retrieval.candidates.push(other);
-        let expected_body =
-            request_packing::pack(issue_batches(RELEVANCE_MODEL, &intent, &retrieval).unwrap())
-                .unwrap()[0]
-                .body
-                .clone();
+        let expected_body = request_packing::pack_fixture(
+            issue_batches(RELEVANCE_MODEL, &intent, &retrieval).unwrap(),
+        )
+        .unwrap()[0]
+            .body
+            .clone();
         let seen = Arc::new(Mutex::new(Vec::new()));
         let captured = seen.clone();
         let router = axum::Router::new().route(

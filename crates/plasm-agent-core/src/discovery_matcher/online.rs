@@ -487,7 +487,7 @@ fn packet(
         scope,
         false,
     )?;
-    Ok((issued, members))
+    Ok((issued.into_issued(), members))
 }
 
 /// No fixed task panels or execution effects. Bounded identical transport retries

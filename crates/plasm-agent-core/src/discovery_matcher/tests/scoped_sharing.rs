@@ -10,7 +10,15 @@ fn locals() -> (RetrievalReceipt, CatalogEvidence, Vec<IssuedBatch>) {
             .unwrap();
     let local = prepare_local_selection(RELEVANCE_MODEL, &intent, &retrieval, &evidence).unwrap();
     assert!(local.budget_retained.is_empty());
-    (retrieval, evidence, local.batches)
+    (
+        retrieval,
+        evidence,
+        local
+            .batches
+            .into_iter()
+            .map(request_packing::PreparedLocalBatch::into_issued)
+            .collect(),
+    )
 }
 
 #[test]
@@ -110,7 +118,7 @@ fn reconstruct(
 #[test]
 fn packed_questions_reconstruct_exact_composition_and_opaque_scopes() {
     let (_, _, local) = locals();
-    let packed = request_packing::pack(local.clone()).unwrap();
+    let packed = request_packing::pack_fixture(local.clone()).unwrap();
     assert!(packed.len() < local.len());
     assert!(
         packed.iter().map(|p| p.body.len()).sum::<usize>()
@@ -149,7 +157,7 @@ fn singleton_context_changes_and_provider_model_keep_exact_bytes() {
     let (_, _, local) = locals();
     let first = local[0].clone();
     assert_eq!(
-        request_packing::pack(vec![first.clone()]).unwrap()[0].body,
+        request_packing::pack_fixture(vec![first.clone()]).unwrap()[0].body,
         first.body
     );
     for field in ["outcome", "discovery_need", "rule"] {
@@ -157,7 +165,7 @@ fn singleton_context_changes_and_provider_model_keep_exact_bytes() {
         let mut body: serde_json::Value = serde_json::from_str(&second.body).unwrap();
         body["state"][field] = json!("Explicitly revised context");
         second.body = body.to_string();
-        let packed = request_packing::pack(vec![first.clone(), second.clone()]).unwrap();
+        let packed = request_packing::pack_fixture(vec![first.clone(), second.clone()]).unwrap();
         assert_eq!(packed.len(), 2);
         assert_eq!(packed[0].body, first.body);
         assert_eq!(packed[1].body, second.body);
@@ -167,7 +175,7 @@ fn singleton_context_changes_and_provider_model_keep_exact_bytes() {
 #[test]
 fn packed_results_remain_exactly_covered_and_cached_receipts_agree() {
     let (retrieval, _, local) = locals();
-    let packed = request_packing::pack(local).unwrap();
+    let packed = request_packing::pack_fixture(local).unwrap();
     let mut pages = SelectionPages::new(packed.clone());
     let mut answers = Vec::new();
     for batch in &packed {
@@ -223,7 +231,7 @@ fn changed_wire_shapes_fail_before_any_evidence_can_be_lost() {
         }
         batches[0].body = wire.to_string();
         assert!(matches!(
-            request_packing::pack(batches),
+            request_packing::pack_fixture(batches),
             Err(DiscoveryMatcherError::Packing(_))
         ));
     }
@@ -279,7 +287,7 @@ fn conflicting_definitions_nulls_and_absence_remain_question_local() {
         };
         batch.body = wire.to_string();
     }
-    let packed = request_packing::pack(batches.clone()).unwrap();
+    let packed = request_packing::pack_fixture(batches.clone()).unwrap();
     assert_eq!(packed.len(), 1);
     let packet: serde_json::Value = serde_json::from_str(&packed[0].body).unwrap();
     assert!(packet["state"]["types"]["values"]
@@ -313,7 +321,7 @@ fn byte_limit_and_no_savings_keep_singleton_bytes_and_complete_answers() {
         if description.starts_with('\\') {
             assert!(batches.iter().map(|b| b.body.len()).sum::<usize>() < witnesses::MAX_BYTES / 2);
         }
-        let packed = request_packing::pack(batches.clone()).unwrap();
+        let packed = request_packing::pack_fixture(batches.clone()).unwrap();
         assert_eq!(packed.len(), 2);
         for (before, after) in batches.iter().zip(&packed) {
             assert_eq!(before.body, after.body);
