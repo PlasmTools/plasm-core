@@ -201,6 +201,9 @@ impl LivePlanRunPool {
             .name("plasm-live-run".into())
             .stack_size(stack_size)
             .spawn(move || {
+                // A cancelled caller drops `done_rx`, but cannot stop this worker.
+                // Keep its admission permit until the worker itself exits.
+                let _permit = permit;
                 let out = std::panic::catch_unwind(AssertUnwindSafe(|| rt.block_on(f())));
                 let result = match out {
                     Ok(Ok(v)) => Ok(v),
@@ -213,7 +216,6 @@ impl LivePlanRunPool {
             })
             .map_err(LivePlanRunError::Spawn)?;
         let result = done_rx.await.map_err(|_| LivePlanRunError::ResultDropped)?;
-        drop(permit);
         result
     }
 }
@@ -254,6 +256,56 @@ mod tests {
             panic!("expected worker panic");
         };
         assert_eq!(*payload.into_inner().downcast::<u32>().unwrap(), 42);
+    }
+
+    #[tokio::test]
+    async fn cancelled_caller_does_not_release_running_worker_permit() {
+        let pool = Arc::new(LivePlanRunPool {
+            stack_size: live_plan_run_stack_bytes(),
+            permits: Arc::new(Semaphore::new(1)),
+        });
+        let (started_tx, started_rx) = oneshot::channel();
+        let (release_tx, release_rx) = oneshot::channel();
+        let first_pool = Arc::clone(&pool);
+        let first = tokio::spawn(async move {
+            first_pool
+                .run_local(move || async move {
+                    let _ = started_tx.send(());
+                    let _ = release_rx.await;
+                })
+                .await
+        });
+        started_rx.await.expect("first worker started");
+        first.abort();
+        let _ = first.await;
+        assert_eq!(pool.permits.available_permits(), 0);
+
+        let (second_started_tx, mut second_started_rx) = oneshot::channel();
+        let second_pool = Arc::clone(&pool);
+        let second = tokio::spawn(async move {
+            second_pool
+                .run_local(move || async move {
+                    let _ = second_started_tx.send(());
+                })
+                .await
+        });
+        tokio::task::yield_now().await;
+        assert!(matches!(
+            second_started_rx.try_recv(),
+            Err(oneshot::error::TryRecvError::Empty)
+        ));
+        release_tx.send(()).expect("first worker still running");
+        tokio::time::timeout(std::time::Duration::from_secs(5), second_started_rx)
+            .await
+            .expect("second worker admitted after first exits")
+            .expect("second worker started");
+        second.await.unwrap().unwrap();
+        let permit =
+            tokio::time::timeout(std::time::Duration::from_secs(5), pool.permits.acquire())
+                .await
+                .expect("worker released its permit")
+                .unwrap();
+        drop(permit);
     }
 
     #[test]
