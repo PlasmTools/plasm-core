@@ -1,0 +1,962 @@
+[
+  {
+    "id": "local_alternatives/neutral/0",
+    "topology": "local_alternatives",
+    "profile": "neutral",
+    "count": 0,
+    "request": "Produce the requested spectrum and inspect telemetry. Preserve original material.",
+    "labels": {
+      "matrix/source_a": "relevant",
+      "matrix/source_b": "relevant",
+      "matrix/inspect": "relevant",
+      "matrix/prepare": "relevant",
+      "matrix/prepared_read": "relevant",
+      "matrix/process": "relevant"
+    },
+    "outcomes": [
+      {
+        "id": "spectrum",
+        "alternatives": [
+          [
+            "matrix/source_a",
+            "matrix/prepare",
+            "matrix/prepared_read",
+            "matrix/process"
+          ],
+          [
+            "matrix/source_b",
+            "matrix/prepare",
+            "matrix/prepared_read",
+            "matrix/process"
+          ]
+        ]
+      },
+      {
+        "id": "telemetry",
+        "alternatives": [
+          [
+            "matrix/inspect"
+          ]
+        ]
+      }
+    ],
+    "noise_label": "unrelated",
+    "provider": "primary"
+  },
+  {
+    "id": "local_alternatives/neutral/100",
+    "topology": "local_alternatives",
+    "profile": "neutral",
+    "count": 100,
+    "request": "Produce the requested spectrum and inspect telemetry. Preserve original material.",
+    "labels": {
+      "matrix/source_a": "relevant",
+      "matrix/source_b": "relevant",
+      "matrix/inspect": "relevant",
+      "matrix/prepare": "relevant",
+      "matrix/prepared_read": "relevant",
+      "matrix/process": "relevant"
+    },
+    "outcomes": [
+      {
+        "id": "spectrum",
+        "alternatives": [
+          [
+            "matrix/source_a",
+            "matrix/prepare",
+            "matrix/prepared_read",
+            "matrix/process"
+          ],
+          [
+            "matrix/source_b",
+            "matrix/prepare",
+            "matrix/prepared_read",
+            "matrix/process"
+          ]
+        ]
+      },
+      {
+        "id": "telemetry",
+        "alternatives": [
+          [
+            "matrix/inspect"
+          ]
+        ]
+      }
+    ],
+    "noise_label": "unrelated",
+    "provider": "primary"
+  },
+  {
+    "id": "local_alternatives/neutral/1000",
+    "topology": "local_alternatives",
+    "profile": "neutral",
+    "count": 1000,
+    "request": "Produce the requested spectrum and inspect telemetry. Preserve original material.",
+    "labels": {
+      "matrix/source_a": "relevant",
+      "matrix/source_b": "relevant",
+      "matrix/inspect": "relevant",
+      "matrix/prepare": "relevant",
+      "matrix/prepared_read": "relevant",
+      "matrix/process": "relevant"
+    },
+    "outcomes": [
+      {
+        "id": "spectrum",
+        "alternatives": [
+          [
+            "matrix/source_a",
+            "matrix/prepare",
+            "matrix/prepared_read",
+            "matrix/process"
+          ],
+          [
+            "matrix/source_b",
+            "matrix/prepare",
+            "matrix/prepared_read",
+            "matrix/process"
+          ]
+        ]
+      },
+      {
+        "id": "telemetry",
+        "alternatives": [
+          [
+            "matrix/inspect"
+          ]
+        ]
+      }
+    ],
+    "noise_label": "unrelated",
+    "provider": "primary"
+  },
+  {
+    "id": "local_alternatives/neutral/10000",
+    "topology": "local_alternatives",
+    "profile": "neutral",
+    "count": 10000,
+    "request": "Produce the requested spectrum and inspect telemetry. Preserve original material.",
+    "labels": {
+      "matrix/source_a": "relevant",
+      "matrix/source_b": "relevant",
+      "matrix/inspect": "relevant",
+      "matrix/prepare": "relevant",
+      "matrix/prepared_read": "relevant",
+      "matrix/process": "relevant"
+    },
+    "outcomes": [
+      {
+        "id": "spectrum",
+        "alternatives": [
+          [
+            "matrix/source_a",
+            "matrix/prepare",
+            "matrix/prepared_read",
+            "matrix/process"
+          ],
+          [
+            "matrix/source_b",
+            "matrix/prepare",
+            "matrix/prepared_read",
+            "matrix/process"
+          ]
+        ]
+      },
+      {
+        "id": "telemetry",
+        "alternatives": [
+          [
+            "matrix/inspect"
+          ]
+        ]
+      }
+    ],
+    "noise_label": "unrelated",
+    "provider": "primary"
+  },
+  {
+    "id": "local_alternatives/near_topic/0",
+    "topology": "local_alternatives",
+    "profile": "near_topic",
+    "count": 0,
+    "request": "Produce the requested spectrum and inspect telemetry. Preserve original material.",
+    "labels": {
+      "matrix/source_a": "relevant",
+      "matrix/source_b": "relevant",
+      "matrix/inspect": "relevant",
+      "matrix/prepare": "relevant",
+      "matrix/prepared_read": "relevant",
+      "matrix/process": "relevant"
+    },
+    "outcomes": [
+      {
+        "id": "spectrum",
+        "alternatives": [
+          [
+            "matrix/source_a",
+            "matrix/prepare",
+            "matrix/prepared_read",
+            "matrix/process"
+          ],
+          [
+            "matrix/source_b",
+            "matrix/prepare",
+            "matrix/prepared_read",
+            "matrix/process"
+          ]
+        ]
+      },
+      {
+        "id": "telemetry",
+        "alternatives": [
+          [
+            "matrix/inspect"
+          ]
+        ]
+      }
+    ],
+    "noise_label": "unrelated",
+    "provider": "primary"
+  },
+  {
+    "id": "local_alternatives/near_topic/100",
+    "topology": "local_alternatives",
+    "profile": "near_topic",
+    "count": 100,
+    "request": "Produce the requested spectrum and inspect telemetry. Preserve original material.",
+    "labels": {
+      "matrix/source_a": "relevant",
+      "matrix/source_b": "relevant",
+      "matrix/inspect": "relevant",
+      "matrix/prepare": "relevant",
+      "matrix/prepared_read": "relevant",
+      "matrix/process": "relevant"
+    },
+    "outcomes": [
+      {
+        "id": "spectrum",
+        "alternatives": [
+          [
+            "matrix/source_a",
+            "matrix/prepare",
+            "matrix/prepared_read",
+            "matrix/process"
+          ],
+          [
+            "matrix/source_b",
+            "matrix/prepare",
+            "matrix/prepared_read",
+            "matrix/process"
+          ]
+        ]
+      },
+      {
+        "id": "telemetry",
+        "alternatives": [
+          [
+            "matrix/inspect"
+          ]
+        ]
+      }
+    ],
+    "noise_label": "unrelated",
+    "provider": "primary"
+  },
+  {
+    "id": "local_alternatives/near_topic/1000",
+    "topology": "local_alternatives",
+    "profile": "near_topic",
+    "count": 1000,
+    "request": "Produce the requested spectrum and inspect telemetry. Preserve original material.",
+    "labels": {
+      "matrix/source_a": "relevant",
+      "matrix/source_b": "relevant",
+      "matrix/inspect": "relevant",
+      "matrix/prepare": "relevant",
+      "matrix/prepared_read": "relevant",
+      "matrix/process": "relevant"
+    },
+    "outcomes": [
+      {
+        "id": "spectrum",
+        "alternatives": [
+          [
+            "matrix/source_a",
+            "matrix/prepare",
+            "matrix/prepared_read",
+            "matrix/process"
+          ],
+          [
+            "matrix/source_b",
+            "matrix/prepare",
+            "matrix/prepared_read",
+            "matrix/process"
+          ]
+        ]
+      },
+      {
+        "id": "telemetry",
+        "alternatives": [
+          [
+            "matrix/inspect"
+          ]
+        ]
+      }
+    ],
+    "noise_label": "unrelated",
+    "provider": "primary"
+  },
+  {
+    "id": "local_alternatives/near_topic/10000",
+    "topology": "local_alternatives",
+    "profile": "near_topic",
+    "count": 10000,
+    "request": "Produce the requested spectrum and inspect telemetry. Preserve original material.",
+    "labels": {
+      "matrix/source_a": "relevant",
+      "matrix/source_b": "relevant",
+      "matrix/inspect": "relevant",
+      "matrix/prepare": "relevant",
+      "matrix/prepared_read": "relevant",
+      "matrix/process": "relevant"
+    },
+    "outcomes": [
+      {
+        "id": "spectrum",
+        "alternatives": [
+          [
+            "matrix/source_a",
+            "matrix/prepare",
+            "matrix/prepared_read",
+            "matrix/process"
+          ],
+          [
+            "matrix/source_b",
+            "matrix/prepare",
+            "matrix/prepared_read",
+            "matrix/process"
+          ]
+        ]
+      },
+      {
+        "id": "telemetry",
+        "alternatives": [
+          [
+            "matrix/inspect"
+          ]
+        ]
+      }
+    ],
+    "noise_label": "unrelated",
+    "provider": "primary"
+  },
+  {
+    "id": "cross_primary/neutral/0",
+    "topology": "cross_primary",
+    "profile": "neutral",
+    "count": 0,
+    "request": "Produce the requested spectrum and inspect telemetry. Preserve original material.",
+    "labels": {
+      "materials/source_a": "relevant",
+      "materials/source_b": "relevant",
+      "engine/prepared_read": "relevant",
+      "engine/prepare": "relevant",
+      "engine/process": "relevant",
+      "engine/inspect": "relevant"
+    },
+    "outcomes": [
+      {
+        "id": "spectrum",
+        "alternatives": [
+          [
+            "materials/source_a",
+            "engine/prepare",
+            "engine/prepared_read",
+            "engine/process"
+          ]
+        ]
+      },
+      {
+        "id": "telemetry",
+        "alternatives": [
+          [
+            "engine/inspect"
+          ]
+        ]
+      }
+    ],
+    "noise_label": "unrelated",
+    "provider": "primary"
+  },
+  {
+    "id": "cross_primary/neutral/100",
+    "topology": "cross_primary",
+    "profile": "neutral",
+    "count": 100,
+    "request": "Produce the requested spectrum and inspect telemetry. Preserve original material.",
+    "labels": {
+      "materials/source_a": "relevant",
+      "materials/source_b": "relevant",
+      "engine/prepared_read": "relevant",
+      "engine/prepare": "relevant",
+      "engine/process": "relevant",
+      "engine/inspect": "relevant"
+    },
+    "outcomes": [
+      {
+        "id": "spectrum",
+        "alternatives": [
+          [
+            "materials/source_a",
+            "engine/prepare",
+            "engine/prepared_read",
+            "engine/process"
+          ]
+        ]
+      },
+      {
+        "id": "telemetry",
+        "alternatives": [
+          [
+            "engine/inspect"
+          ]
+        ]
+      }
+    ],
+    "noise_label": "unrelated",
+    "provider": "primary"
+  },
+  {
+    "id": "cross_primary/neutral/1000",
+    "topology": "cross_primary",
+    "profile": "neutral",
+    "count": 1000,
+    "request": "Produce the requested spectrum and inspect telemetry. Preserve original material.",
+    "labels": {
+      "materials/source_a": "relevant",
+      "materials/source_b": "relevant",
+      "engine/prepared_read": "relevant",
+      "engine/prepare": "relevant",
+      "engine/process": "relevant",
+      "engine/inspect": "relevant"
+    },
+    "outcomes": [
+      {
+        "id": "spectrum",
+        "alternatives": [
+          [
+            "materials/source_a",
+            "engine/prepare",
+            "engine/prepared_read",
+            "engine/process"
+          ]
+        ]
+      },
+      {
+        "id": "telemetry",
+        "alternatives": [
+          [
+            "engine/inspect"
+          ]
+        ]
+      }
+    ],
+    "noise_label": "unrelated",
+    "provider": "primary"
+  },
+  {
+    "id": "cross_primary/neutral/10000",
+    "topology": "cross_primary",
+    "profile": "neutral",
+    "count": 10000,
+    "request": "Produce the requested spectrum and inspect telemetry. Preserve original material.",
+    "labels": {
+      "materials/source_a": "relevant",
+      "materials/source_b": "relevant",
+      "engine/prepared_read": "relevant",
+      "engine/prepare": "relevant",
+      "engine/process": "relevant",
+      "engine/inspect": "relevant"
+    },
+    "outcomes": [
+      {
+        "id": "spectrum",
+        "alternatives": [
+          [
+            "materials/source_a",
+            "engine/prepare",
+            "engine/prepared_read",
+            "engine/process"
+          ]
+        ]
+      },
+      {
+        "id": "telemetry",
+        "alternatives": [
+          [
+            "engine/inspect"
+          ]
+        ]
+      }
+    ],
+    "noise_label": "unrelated",
+    "provider": "primary"
+  },
+  {
+    "id": "cross_primary/near_topic/0",
+    "topology": "cross_primary",
+    "profile": "near_topic",
+    "count": 0,
+    "request": "Produce the requested spectrum and inspect telemetry. Preserve original material.",
+    "labels": {
+      "materials/source_a": "relevant",
+      "materials/source_b": "relevant",
+      "engine/prepared_read": "relevant",
+      "engine/prepare": "relevant",
+      "engine/process": "relevant",
+      "engine/inspect": "relevant"
+    },
+    "outcomes": [
+      {
+        "id": "spectrum",
+        "alternatives": [
+          [
+            "materials/source_a",
+            "engine/prepare",
+            "engine/prepared_read",
+            "engine/process"
+          ]
+        ]
+      },
+      {
+        "id": "telemetry",
+        "alternatives": [
+          [
+            "engine/inspect"
+          ]
+        ]
+      }
+    ],
+    "noise_label": "unrelated",
+    "provider": "primary"
+  },
+  {
+    "id": "cross_primary/near_topic/100",
+    "topology": "cross_primary",
+    "profile": "near_topic",
+    "count": 100,
+    "request": "Produce the requested spectrum and inspect telemetry. Preserve original material.",
+    "labels": {
+      "materials/source_a": "relevant",
+      "materials/source_b": "relevant",
+      "engine/prepared_read": "relevant",
+      "engine/prepare": "relevant",
+      "engine/process": "relevant",
+      "engine/inspect": "relevant"
+    },
+    "outcomes": [
+      {
+        "id": "spectrum",
+        "alternatives": [
+          [
+            "materials/source_a",
+            "engine/prepare",
+            "engine/prepared_read",
+            "engine/process"
+          ]
+        ]
+      },
+      {
+        "id": "telemetry",
+        "alternatives": [
+          [
+            "engine/inspect"
+          ]
+        ]
+      }
+    ],
+    "noise_label": "unrelated",
+    "provider": "primary"
+  },
+  {
+    "id": "cross_primary/near_topic/1000",
+    "topology": "cross_primary",
+    "profile": "near_topic",
+    "count": 1000,
+    "request": "Produce the requested spectrum and inspect telemetry. Preserve original material.",
+    "labels": {
+      "materials/source_a": "relevant",
+      "materials/source_b": "relevant",
+      "engine/prepared_read": "relevant",
+      "engine/prepare": "relevant",
+      "engine/process": "relevant",
+      "engine/inspect": "relevant"
+    },
+    "outcomes": [
+      {
+        "id": "spectrum",
+        "alternatives": [
+          [
+            "materials/source_a",
+            "engine/prepare",
+            "engine/prepared_read",
+            "engine/process"
+          ]
+        ]
+      },
+      {
+        "id": "telemetry",
+        "alternatives": [
+          [
+            "engine/inspect"
+          ]
+        ]
+      }
+    ],
+    "noise_label": "unrelated",
+    "provider": "primary"
+  },
+  {
+    "id": "cross_primary/near_topic/10000",
+    "topology": "cross_primary",
+    "profile": "near_topic",
+    "count": 10000,
+    "request": "Produce the requested spectrum and inspect telemetry. Preserve original material.",
+    "labels": {
+      "materials/source_a": "relevant",
+      "materials/source_b": "relevant",
+      "engine/prepared_read": "relevant",
+      "engine/prepare": "relevant",
+      "engine/process": "relevant",
+      "engine/inspect": "relevant"
+    },
+    "outcomes": [
+      {
+        "id": "spectrum",
+        "alternatives": [
+          [
+            "materials/source_a",
+            "engine/prepare",
+            "engine/prepared_read",
+            "engine/process"
+          ]
+        ]
+      },
+      {
+        "id": "telemetry",
+        "alternatives": [
+          [
+            "engine/inspect"
+          ]
+        ]
+      }
+    ],
+    "noise_label": "unrelated",
+    "provider": "primary"
+  },
+  {
+    "id": "cross_secondary/neutral/0",
+    "topology": "cross_secondary",
+    "profile": "neutral",
+    "count": 0,
+    "request": "Produce the requested spectrum and inspect telemetry. Preserve original material.",
+    "labels": {
+      "materials/source_a": "relevant",
+      "materials/source_b": "relevant",
+      "engine/prepared_read": "relevant",
+      "engine/prepare": "relevant",
+      "engine/process": "relevant",
+      "engine/inspect": "relevant"
+    },
+    "outcomes": [
+      {
+        "id": "spectrum",
+        "alternatives": [
+          [
+            "materials/source_b",
+            "engine/prepare",
+            "engine/prepared_read",
+            "engine/process"
+          ]
+        ]
+      },
+      {
+        "id": "telemetry",
+        "alternatives": [
+          [
+            "engine/inspect"
+          ]
+        ]
+      }
+    ],
+    "noise_label": "unrelated",
+    "provider": "secondary"
+  },
+  {
+    "id": "cross_secondary/neutral/100",
+    "topology": "cross_secondary",
+    "profile": "neutral",
+    "count": 100,
+    "request": "Produce the requested spectrum and inspect telemetry. Preserve original material.",
+    "labels": {
+      "materials/source_a": "relevant",
+      "materials/source_b": "relevant",
+      "engine/prepared_read": "relevant",
+      "engine/prepare": "relevant",
+      "engine/process": "relevant",
+      "engine/inspect": "relevant"
+    },
+    "outcomes": [
+      {
+        "id": "spectrum",
+        "alternatives": [
+          [
+            "materials/source_b",
+            "engine/prepare",
+            "engine/prepared_read",
+            "engine/process"
+          ]
+        ]
+      },
+      {
+        "id": "telemetry",
+        "alternatives": [
+          [
+            "engine/inspect"
+          ]
+        ]
+      }
+    ],
+    "noise_label": "unrelated",
+    "provider": "secondary"
+  },
+  {
+    "id": "cross_secondary/neutral/1000",
+    "topology": "cross_secondary",
+    "profile": "neutral",
+    "count": 1000,
+    "request": "Produce the requested spectrum and inspect telemetry. Preserve original material.",
+    "labels": {
+      "materials/source_a": "relevant",
+      "materials/source_b": "relevant",
+      "engine/prepared_read": "relevant",
+      "engine/prepare": "relevant",
+      "engine/process": "relevant",
+      "engine/inspect": "relevant"
+    },
+    "outcomes": [
+      {
+        "id": "spectrum",
+        "alternatives": [
+          [
+            "materials/source_b",
+            "engine/prepare",
+            "engine/prepared_read",
+            "engine/process"
+          ]
+        ]
+      },
+      {
+        "id": "telemetry",
+        "alternatives": [
+          [
+            "engine/inspect"
+          ]
+        ]
+      }
+    ],
+    "noise_label": "unrelated",
+    "provider": "secondary"
+  },
+  {
+    "id": "cross_secondary/neutral/10000",
+    "topology": "cross_secondary",
+    "profile": "neutral",
+    "count": 10000,
+    "request": "Produce the requested spectrum and inspect telemetry. Preserve original material.",
+    "labels": {
+      "materials/source_a": "relevant",
+      "materials/source_b": "relevant",
+      "engine/prepared_read": "relevant",
+      "engine/prepare": "relevant",
+      "engine/process": "relevant",
+      "engine/inspect": "relevant"
+    },
+    "outcomes": [
+      {
+        "id": "spectrum",
+        "alternatives": [
+          [
+            "materials/source_b",
+            "engine/prepare",
+            "engine/prepared_read",
+            "engine/process"
+          ]
+        ]
+      },
+      {
+        "id": "telemetry",
+        "alternatives": [
+          [
+            "engine/inspect"
+          ]
+        ]
+      }
+    ],
+    "noise_label": "unrelated",
+    "provider": "secondary"
+  },
+  {
+    "id": "cross_secondary/near_topic/0",
+    "topology": "cross_secondary",
+    "profile": "near_topic",
+    "count": 0,
+    "request": "Produce the requested spectrum and inspect telemetry. Preserve original material.",
+    "labels": {
+      "materials/source_a": "relevant",
+      "materials/source_b": "relevant",
+      "engine/prepared_read": "relevant",
+      "engine/prepare": "relevant",
+      "engine/process": "relevant",
+      "engine/inspect": "relevant"
+    },
+    "outcomes": [
+      {
+        "id": "spectrum",
+        "alternatives": [
+          [
+            "materials/source_b",
+            "engine/prepare",
+            "engine/prepared_read",
+            "engine/process"
+          ]
+        ]
+      },
+      {
+        "id": "telemetry",
+        "alternatives": [
+          [
+            "engine/inspect"
+          ]
+        ]
+      }
+    ],
+    "noise_label": "unrelated",
+    "provider": "secondary"
+  },
+  {
+    "id": "cross_secondary/near_topic/100",
+    "topology": "cross_secondary",
+    "profile": "near_topic",
+    "count": 100,
+    "request": "Produce the requested spectrum and inspect telemetry. Preserve original material.",
+    "labels": {
+      "materials/source_a": "relevant",
+      "materials/source_b": "relevant",
+      "engine/prepared_read": "relevant",
+      "engine/prepare": "relevant",
+      "engine/process": "relevant",
+      "engine/inspect": "relevant"
+    },
+    "outcomes": [
+      {
+        "id": "spectrum",
+        "alternatives": [
+          [
+            "materials/source_b",
+            "engine/prepare",
+            "engine/prepared_read",
+            "engine/process"
+          ]
+        ]
+      },
+      {
+        "id": "telemetry",
+        "alternatives": [
+          [
+            "engine/inspect"
+          ]
+        ]
+      }
+    ],
+    "noise_label": "unrelated",
+    "provider": "secondary"
+  },
+  {
+    "id": "cross_secondary/near_topic/1000",
+    "topology": "cross_secondary",
+    "profile": "near_topic",
+    "count": 1000,
+    "request": "Produce the requested spectrum and inspect telemetry. Preserve original material.",
+    "labels": {
+      "materials/source_a": "relevant",
+      "materials/source_b": "relevant",
+      "engine/prepared_read": "relevant",
+      "engine/prepare": "relevant",
+      "engine/process": "relevant",
+      "engine/inspect": "relevant"
+    },
+    "outcomes": [
+      {
+        "id": "spectrum",
+        "alternatives": [
+          [
+            "materials/source_b",
+            "engine/prepare",
+            "engine/prepared_read",
+            "engine/process"
+          ]
+        ]
+      },
+      {
+        "id": "telemetry",
+        "alternatives": [
+          [
+            "engine/inspect"
+          ]
+        ]
+      }
+    ],
+    "noise_label": "unrelated",
+    "provider": "secondary"
+  },
+  {
+    "id": "cross_secondary/near_topic/10000",
+    "topology": "cross_secondary",
+    "profile": "near_topic",
+    "count": 10000,
+    "request": "Produce the requested spectrum and inspect telemetry. Preserve original material.",
+    "labels": {
+      "materials/source_a": "relevant",
+      "materials/source_b": "relevant",
+      "engine/prepared_read": "relevant",
+      "engine/prepare": "relevant",
+      "engine/process": "relevant",
+      "engine/inspect": "relevant"
+    },
+    "outcomes": [
+      {
+        "id": "spectrum",
+        "alternatives": [
+          [
+            "materials/source_b",
+            "engine/prepare",
+            "engine/prepared_read",
+            "engine/process"
+          ]
+        ]
+      },
+      {
+        "id": "telemetry",
+        "alternatives": [
+          [
+            "engine/inspect"
+          ]
+        ]
+      }
+    ],
+    "noise_label": "unrelated",
+    "provider": "secondary"
+  }
+]

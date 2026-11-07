@@ -1,0 +1,68 @@
+{
+  "purpose": "Diagnostic development cases only; never production teaching or a generalization score.",
+  "families": [
+    {
+      "id": "activation",
+      "entity": "Profile",
+      "intent": "Activate profile Delta. Leave all other profiles inactive.",
+      "prepared_intent": "Activate profile Delta. Leave all other profiles inactive. First arrange the staging group to contain only Delta, then activate the staging group.",
+      "collection": "Configuration profiles; active profiles control devices, staged profiles await activation.",
+      "operations": [
+        ["activate", "action", "Activate every profile in the staging group. Does not select a subset of that group. Profiles outside the group are unchanged.", "relevant"],
+        ["stage", "action", "Replace the staging group's membership with the supplied profile identities. Does not activate profiles.", "relevant"],
+        ["inspect", "get", "Read the current configuration and activation state of a profile by identity.", "relevant"],
+        ["erase", "action", "Permanently erase every profile. Does not activate any profile.", "unrelated"],
+        ["weather", "get", "Read the outdoor temperature forecast for a supplied city.", "unrelated"],
+        ["history", "get", "Read a profile's historical activation records.", null],
+        ["rename", "action", "Rename a profile without changing its activation state.", null],
+        ["backup", "action", "Copy all profile configurations to a backup archive without activating them.", null],
+        ["devices", "get", "List devices associated with a profile.", null],
+        ["versions", "get", "List previous versions of a profile configuration.", null],
+        ["export", "get", "Export a profile configuration as text.", null],
+        ["validate", "get", "Check a profile configuration for invalid values.", null]
+      ]
+    },
+    {
+      "id": "publication",
+      "entity": "Revision",
+      "intent": "Publish revision R of document D. Keep all other draft revisions unpublished.",
+      "prepared_intent": "Publish revision R of document D. Keep all other draft revisions unpublished. First arrange the release set to contain only revision R, then publish the release set.",
+      "collection": "Document revisions; drafts are unpublished, released revisions are publicly readable.",
+      "operations": [
+        ["publish", "action", "Publish every draft revision in the release set. Does not select a subset of that set. Drafts outside the set remain unpublished.", "relevant"],
+        ["stage", "action", "Replace release-set membership with the supplied revision identities. Does not publish revisions.", "relevant"],
+        ["inspect", "get", "Read a document revision and its publication state by identity.", "relevant"],
+        ["erase", "action", "Permanently delete every document revision without publishing anything.", "unrelated"],
+        ["weather", "get", "Read the outdoor temperature forecast for a supplied city.", "unrelated"],
+        ["history", "get", "Read a revision's editing history.", null],
+        ["rename", "action", "Change a document title without publishing any revisions.", null],
+        ["backup", "action", "Back up all revisions into a private archive without publishing them.", null],
+        ["authors", "get", "List the authors of a document.", null],
+        ["versions", "get", "List a document's revisions.", null],
+        ["export", "get", "Export a revision's text without publishing it.", null],
+        ["validate", "get", "Check a revision for broken references.", null]
+      ]
+    },
+    {
+      "id": "delivery",
+      "entity": "Notice",
+      "intent": "Deliver notice N to recipient R and nobody else.",
+      "prepared_intent": "Deliver notice N to recipient R and nobody else. First arrange the recipient group to contain only R, then deliver notice N to that group.",
+      "collection": "Notices can be delivered to recipient groups; group membership is independently editable.",
+      "operations": [
+        ["deliver", "action", "Deliver the supplied notice to every member of the selected recipient group. Does not select a subset of that group. People outside the group receive nothing.", "relevant"],
+        ["stage", "action", "Replace recipient-group membership with the supplied recipient identities. Does not deliver notices.", "relevant"],
+        ["inspect", "get", "Read a notice by identity.", "relevant"],
+        ["erase", "action", "Permanently delete every notice without delivering anything.", "unrelated"],
+        ["weather", "get", "Read the outdoor temperature forecast for a supplied city.", "unrelated"],
+        ["history", "get", "Read the delivery history of a notice.", null],
+        ["rename", "action", "Rename a recipient group without delivering notices.", null],
+        ["backup", "action", "Back up all notices without delivering them.", null],
+        ["recipients", "get", "List members of a recipient group.", null],
+        ["versions", "get", "List the previous versions of a notice.", null],
+        ["export", "get", "Export a notice as text without delivering it.", null],
+        ["validate", "get", "Check a notice for invalid links.", null]
+      ]
+    }
+  ]
+}

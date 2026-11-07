@@ -1,0 +1,215 @@
+[
+  {
+    "id": "observation",
+    "catalogs": [
+      "matrix"
+    ],
+    "phases": [
+      {
+        "request": "Read the reservoir liquid depth. Preserve the reservoir state.",
+        "labels": {
+          "matrix/depth_read": "relevant",
+          "matrix/invoice_read": "unrelated"
+        },
+        "paths": [
+          [
+            "matrix/depth_read"
+          ]
+        ]
+      }
+    ],
+    "binding": null
+  },
+  {
+    "id": "chain",
+    "catalogs": [
+      "matrix"
+    ],
+    "phases": [
+      {
+        "request": "Emboss a finished plate from blank material while preserving the original material.",
+        "labels": {
+          "matrix/blank_read": "relevant",
+          "matrix/pattern_prepare": "relevant",
+          "matrix/plate_emboss": "relevant",
+          "matrix/invoice_read": "unrelated"
+        },
+        "paths": [
+          [
+            "matrix/blank_read",
+            "matrix/pattern_prepare",
+            "matrix/plate_emboss"
+          ]
+        ]
+      }
+    ],
+    "binding": null
+  },
+  {
+    "id": "suppliers",
+    "catalogs": [
+      "matrix"
+    ],
+    "phases": [
+      {
+        "request": "Validate the sensor using a calibration certificate from either register.",
+        "labels": {
+          "matrix/certificate_primary": "relevant",
+          "matrix/certificate_secondary": "relevant",
+          "matrix/sensor_validate": "relevant",
+          "matrix/paint_read": "unrelated"
+        },
+        "paths": [
+          [
+            "matrix/certificate_primary",
+            "matrix/sensor_validate"
+          ],
+          [
+            "matrix/certificate_secondary",
+            "matrix/sensor_validate"
+          ]
+        ]
+      }
+    ],
+    "binding": null
+  },
+  {
+    "id": "federation",
+    "catalogs": [
+      "supply",
+      "lab"
+    ],
+    "phases": [
+      {
+        "request": "Calibrate the spectrometer with a reference sample.",
+        "labels": {
+          "supply/sample_read": "relevant",
+          "lab/calibrate": "relevant",
+          "lab/invoice_read": "unrelated"
+        },
+        "paths": [
+          [
+            "supply/sample_read",
+            "lab/calibrate"
+          ]
+        ]
+      }
+    ],
+    "binding": {
+      "consumer": "lab/calibrate",
+      "requirement": "reference",
+      "provider_catalog": "supply",
+      "provider": "reference"
+    }
+  },
+  {
+    "id": "independent",
+    "catalogs": [
+      "matrix"
+    ],
+    "phases": [
+      {
+        "request": "Read greenhouse humidity and machinery sound pressure without changing either environment.",
+        "labels": {
+          "matrix/humidity_read": "relevant",
+          "matrix/sound_read": "relevant",
+          "matrix/invoice_read": "unrelated"
+        },
+        "paths": [
+          [
+            "matrix/humidity_read"
+          ],
+          [
+            "matrix/sound_read"
+          ]
+        ]
+      }
+    ],
+    "binding": null
+  },
+  {
+    "id": "conditional",
+    "catalogs": [
+      "matrix"
+    ],
+    "phases": [
+      {
+        "request": "Export the survey observations to a durable file. If durable export is unavailable, produce a transient preview instead. Do not change the observations.",
+        "labels": {
+          "matrix/survey_read": "relevant",
+          "matrix/survey_export": "relevant",
+          "matrix/survey_preview": "relevant",
+          "matrix/invoice_read": "unrelated"
+        },
+        "paths": [
+          [
+            "matrix/survey_read",
+            "matrix/survey_export"
+          ],
+          [
+            "matrix/survey_read",
+            "matrix/survey_preview"
+          ]
+        ]
+      }
+    ],
+    "binding": null
+  },
+  {
+    "id": "opaque",
+    "catalogs": [
+      "matrix"
+    ],
+    "phases": [
+      {
+        "request": "Read current pump vibration and discover whether the configured routine could contribute. Its readiness and effect are unknown; do not execute changes.",
+        "labels": {
+          "matrix/vibration_read": "relevant",
+          "matrix/routine_apply": "uncertain",
+          "matrix/invoice_read": "unrelated"
+        },
+        "paths": [
+          [
+            "matrix/vibration_read"
+          ]
+        ]
+      }
+    ],
+    "binding": null
+  },
+  {
+    "id": "revision",
+    "catalogs": [
+      "matrix"
+    ],
+    "phases": [
+      {
+        "request": "Read gearbox rotational speed.",
+        "labels": {
+          "matrix/gear_read": "relevant",
+          "matrix/ambient_read": "unrelated",
+          "matrix/invoice_read": "unrelated"
+        },
+        "paths": [
+          [
+            "matrix/gear_read"
+          ]
+        ]
+      },
+      {
+        "request": "The gearbox request is complete. Now read room air temperature; do not change any settings.",
+        "labels": {
+          "matrix/gear_read": "unrelated",
+          "matrix/ambient_read": "relevant",
+          "matrix/invoice_read": "unrelated"
+        },
+        "paths": [
+          [
+            "matrix/ambient_read"
+          ]
+        ]
+      }
+    ],
+    "binding": null
+  }
+]
