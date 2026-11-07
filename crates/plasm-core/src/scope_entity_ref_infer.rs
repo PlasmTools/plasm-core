@@ -298,6 +298,7 @@ mod tests {
         let name = registry_test_util::object_input_field_from_values(cgs, "fx_str", "name", true);
         let sha = registry_test_util::object_input_field_from_values(cgs, "fx_str", "sha", true);
         CapabilitySchema {
+            no_effect_rejections: Vec::new(),
             name: CapabilityName::from("repo_branch_create"),
             description: String::new(),
             kind: CapabilityKind::Create,

@@ -35,6 +35,7 @@ impl HttpTransport for Transport {
             let attempt = store.attempts;
             store.attempts += 1;
             if attempt == self.fail_at {
+                plasm_runtime::execution::record_transport_response_received();
                 return Err(RuntimeError::RequestError {
                     source: plasm_runtime::RequestFailure::HttpStatus(Box::new(
                         plasm_runtime::HttpStatusFailure::without_request(
@@ -245,14 +246,25 @@ async fn ordered_fanout_case(count: usize, fail_at: usize) {
     assert!(result.effects_unresolved);
 }
 
-async fn case(count: usize, fail_at: usize) {
-    let cgs = Arc::new(
-        load_schema_dir(
-            &std::path::PathBuf::from(crate::test_manifest_dir())
-                .join("../../fixtures/schemas/partial_write_relation_matrix"),
-        )
-        .unwrap(),
-    );
+async fn case(count: usize, fail_at: usize, known_rejection: bool) {
+    let mut cgs = load_schema_dir(
+        &std::path::PathBuf::from(crate::test_manifest_dir())
+            .join("../../fixtures/schemas/partial_write_relation_matrix"),
+    )
+    .unwrap();
+    if known_rejection {
+        cgs.capabilities
+            .get_mut("pwexpense_create")
+            .unwrap()
+            .no_effect_rejections
+            .push(plasm_core::schema::NoEffectRejection {
+                status: 422,
+                detail: plasm_core::schema::RejectionDetail::Exact {
+                    value: "fixture 422".into(),
+                },
+            });
+    }
+    let cgs = Arc::new(cgs);
     let registry = CgsRegistry::from_pairs(vec![("matrix".into(), "Matrix".into(), vec![], cgs)]);
     let store = Arc::new(Mutex::new(Store::default()));
     let engine = ExecutionEngine::new_with_transport(
@@ -344,6 +356,16 @@ async fn case(count: usize, fail_at: usize) {
         return;
     }
     let error = result.expect_err("plan should abort at injected failure");
+    if known_rejection {
+        assert!(
+            error
+                .dispatches
+                .iter()
+                .any(|d| d.status == plasm_runtime::MutationDispatchStatus::RejectedWithoutEffect),
+            "{error:?}"
+        );
+        assert!(!error.effects_unresolved, "{error:?}");
+    }
     assert_eq!(
         error.effects.iter().map(|ack| ack.completed).sum::<usize>(),
         fail_at,
@@ -419,7 +441,7 @@ proptest! {
  #[test]
  fn oph_real_plan_abort_preserves_backend_prefix(count in 1usize..6, fail_seed in 0usize..6) {
   let rt = tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap();
-  rt.block_on(Box::pin(case(count, fail_seed % count)));
+  rt.block_on(Box::pin(case(count, fail_seed % count, false)));
  }
 }
 
@@ -434,7 +456,17 @@ proptest! {
 
 #[tokio::test]
 async fn successful_plan_publishes_unreturned_write_receipts() {
-    Box::pin(case(3, usize::MAX)).await;
+    Box::pin(case(3, usize::MAX, false)).await;
+}
+
+#[tokio::test]
+async fn declared_rejection_preserves_prior_completed_effects() {
+    Box::pin(case(2, 1, true)).await;
+}
+
+#[tokio::test]
+async fn declared_rejection_before_any_write_is_known_no_effect() {
+    Box::pin(case(1, 0, true)).await;
 }
 
 #[tokio::test]

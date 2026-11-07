@@ -81,6 +81,7 @@ mod tests {
 
     fn test_capability() -> CapabilitySchema {
         CapabilitySchema {
+            no_effect_rejections: Vec::new(),
             name: "update_account".into(),
             description: String::new(),
             kind: CapabilityKind::Update,

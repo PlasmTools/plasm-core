@@ -219,6 +219,7 @@ mod tests {
             )]);
 
         cgs.add_capability(CapabilitySchema {
+            no_effect_rejections: Vec::new(),
             name: "request_query".into(),
             description: String::new(),
             kind: CapabilityKind::Query,
@@ -250,6 +251,7 @@ mod tests {
         .unwrap();
 
         cgs.add_capability(CapabilitySchema {
+            no_effect_rejections: Vec::new(),
             name: "request_get".into(),
             description: String::new(),
             kind: CapabilityKind::Get,

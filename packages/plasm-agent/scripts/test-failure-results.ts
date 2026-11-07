@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { createPlasmTools } from "../src/tools/plasm-tools.js";
-import { AgentExecutionFailure, executionFailureSchema, failureObservationSchema, plasmModelOutput } from "../src/runtime/execution-failure.js";
+import { AgentExecutionFailure, executionFailureSchema, failureObservationSchema, plasmModelOutput, terminalExecutionFailure } from "../src/runtime/execution-failure.js";
 import { FailureResults } from "../src/tools/failure-results.js";
 
 const failure = executionFailureSchema.parse({
@@ -114,6 +114,20 @@ for (const status of ["unresolved", "response_received"] as const) {
   assert.match(details, /Check the resulting state before retrying/);
   assert.match(details, /do not count it as another completed operation/);
   assert.ok(!details.includes("occurrence []") && !details.includes("effect receipt"));
+}
+{
+  const record = executionFailureSchema.parse({...failure, recovery: "replan_after_rejection", effects: [], input_occurrence: undefined,
+    effects_unresolved: false, dispatches: [{operation: {entry_id: "matrix", capability: "write"}, request_fingerprint: "opaque", status: "rejected_without_effect"}]});
+  const details = readFailure.read(readFailure.record(record), 0);
+  assert.match(details, /rejected this invocation without effect/);
+  assert.doesNotMatch(details, /Some state changes remain unknown/);
+  assert.equal(terminalExecutionFailure([{toolName: "plasm_run", output: {status: "execution_failed", failure: record, summary: "rejected"}}]), undefined);
+  const withReceipt = executionFailureSchema.parse({...record, effects: [{entry_id: "matrix", capability: "write", completed: 0, failed: 1, occurrences: []}]});
+  assert.doesNotMatch(readFailure.read(readFailure.record(withReceipt), 0), /Failed calls may still have changed state/);
+  const partial = executionFailureSchema.parse({...record, recovery: "reconcile_effects", effects: [{entry_id: "matrix", capability: "login", completed: 1, failed: 0, occurrences: []}]});
+  const partialText = readFailure.read(readFailure.record(partial), 0);
+  assert.match(partialText, /A prior effect completed/);
+  assert.doesNotMatch(partialText, /unknown changes|state changes remain unknown/);
 }
 await assert.rejects(async () => createPlasmTools({...runtime}).plasm_failure!.execute!({failure_ref: ref, offset: 0}, options), /unknown or expired/);
 await assert.rejects(async () => tools.plasm_failure!.execute!({failure_ref: ref, offset: 10000}, options), /outside/);

@@ -4,6 +4,8 @@ use thiserror::Error;
 /// HTTP response evidence; external API detail is data, not a fabricated fault message.
 #[derive(Debug, Clone)]
 pub struct HttpStatusFailure {
+    /// Fingerprint of the mutation whose response produced this failure.
+    pub mutation_request_fingerprint: Option<String>,
     pub method: String,
     pub url: String,
     pub status: u16,
@@ -59,6 +61,7 @@ impl HttpStatusFailure {
 
     pub fn without_request(status: u16, detail: String) -> Self {
         Self {
+            mutation_request_fingerprint: None,
             method: String::new(),
             url: String::new(),
             status,
@@ -215,6 +218,7 @@ mod tests {
     #[test]
     fn boxed_status_preserves_evidence_sources_and_upstream_category() {
         let evidence = HttpStatusFailure {
+            mutation_request_fingerprint: None,
             method: "POST".into(),
             url: "https://example.test/records".into(),
             status: 429,

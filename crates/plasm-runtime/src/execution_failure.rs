@@ -20,6 +20,7 @@ pub enum RecoveryDisposition {
     RepairProgram,
     ObtainAuthorization,
     ReconcileEffects,
+    ReplanAfterRejection,
     Stop,
 }
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -148,6 +149,10 @@ pub struct ExecutionFailureDetails {
     /// Original MCP tool failure envelope, kept as data rather than instructions.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub mcp_tool_result: Option<serde_json::Value>,
+    /// Transient response evidence used for matching the owning catalogue's
+    /// rejection contract. Never serialized into agent-visible failures.
+    #[serde(skip)]
+    provider_rejection: Option<(u16, String, String)>,
     /// Agent-visible diagnostic prose; never grants recovery authority.
     diagnostic: String,
 }
@@ -279,6 +284,7 @@ impl ExecutionFailure {
             input_budget: None,
             program_rejection: None,
             mcp_tool_result: None,
+            provider_rejection: None,
             diagnostic: diagnostic.into(),
         }))
     }
@@ -291,7 +297,12 @@ impl ExecutionFailure {
         if self.recovery != RecoveryDisposition::ReconcileEffects {
             return None;
         }
-        if self.effects_unresolved || !self.dispatches.is_empty() {
+        if self.effects_unresolved
+            || self
+                .dispatches
+                .iter()
+                .any(|d| d.status != crate::MutationDispatchStatus::RejectedWithoutEffect)
+        {
             Some("Some dispatched effects have an unknown outcome. Reconcile them before retrying; this execution did not roll back.")
         } else if self.effects.iter().any(|effect| effect.completed > 0) {
             Some("A prior effect completed. Check its receipt before retrying; this execution did not roll back.")
@@ -373,6 +384,13 @@ impl ExecutionFailure {
     }
     /// Drain concurrent failures without dropping any branch's effect evidence.
     pub fn merge(mut self, mut other: Self) -> Self {
+        // A second failure can carry an independent stop condition. A known
+        // rejection must not grant recovery authority to that other failure.
+        if self.recovery == RecoveryDisposition::ReplanAfterRejection
+            && other.recovery != RecoveryDisposition::ReplanAfterRejection
+        {
+            self.recovery = RecoveryDisposition::Stop;
+        }
         if self.recovery == RecoveryDisposition::RepairProgram
             && other.recovery != RecoveryDisposition::RepairProgram
         {
@@ -382,7 +400,10 @@ impl ExecutionFailure {
         self.dispatches.append(&mut other.dispatches);
         self.effects_unresolved |= other.effects_unresolved;
         if self.effects_unresolved
-            || !self.dispatches.is_empty()
+            || self
+                .dispatches
+                .iter()
+                .any(|d| d.status != crate::MutationDispatchStatus::RejectedWithoutEffect)
             || self.effects.iter().any(|e| e.completed > 0)
         {
             self.recovery = RecoveryDisposition::ReconcileEffects;
@@ -390,12 +411,43 @@ impl ExecutionFailure {
         self
     }
     pub fn with_dispatches(mut self, dispatches: Vec<crate::MutationDispatch>) -> Self {
-        if !dispatches.is_empty() {
+        if dispatches
+            .iter()
+            .any(|d| d.status != crate::MutationDispatchStatus::RejectedWithoutEffect)
+        {
             self.effects_unresolved = true;
             self.recovery = RecoveryDisposition::ReconcileEffects;
-            self.dispatches.extend(dispatches);
+        } else if !dispatches.is_empty()
+            && !self.effects_unresolved
+            && !self.effects.iter().any(|effect| effect.completed > 0)
+            && self.cause == FailureCause::Upstream
+        {
+            self.recovery = RecoveryDisposition::ReplanAfterRejection;
         }
+        self.dispatches.extend(dispatches);
         self
+    }
+
+    /// Establish no effect only for an unambiguously attributed single
+    /// invocation whose complete provider response matches its contract.
+    pub fn classify_no_effect_rejection(
+        &self,
+        contracts: &[plasm_core::schema::NoEffectRejection],
+        dispatches: &mut [crate::MutationDispatch],
+    ) {
+        let (Some((status, detail, fingerprint)), [dispatch]) =
+            (&self.provider_rejection, dispatches)
+        else {
+            return;
+        };
+        if dispatch.status == crate::MutationDispatchStatus::ResponseReceived
+            && dispatch.request_fingerprint == *fingerprint
+            && contracts
+                .iter()
+                .any(|contract| contract.matches(*status, detail))
+        {
+            dispatch.status = crate::MutationDispatchStatus::RejectedWithoutEffect;
+        }
     }
 }
 impl From<crate::RuntimeError> for ExecutionFailure {
@@ -646,6 +698,19 @@ impl From<crate::RuntimeError> for ExecutionFailure {
             | HydrationGet { .. } => error.to_string(),
         };
         let mut failure = Self::new(cause, code, diagnostic);
+        if let RequestError {
+            source: crate::RequestFailure::HttpStatus(response),
+            ..
+        } = &error
+        {
+            if let Some(fingerprint) = &response.mutation_request_fingerprint {
+                failure.provider_rejection = Some((
+                    response.status,
+                    response.detail.clone(),
+                    fingerprint.clone(),
+                ));
+            }
+        }
         if let Mcp(source) = &error {
             if let crate::mcp_execution::McpExecutionError::ToolFailure { result, .. } =
                 source.as_ref()
@@ -681,6 +746,94 @@ impl std::error::Error for ExecutionFailure {}
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn catalogue_rejection_requires_exact_response_and_one_dispatch() {
+        use plasm_core::schema::{NoEffectRejection, RejectionDetail};
+        let rule = NoEffectRejection {
+            status: 422,
+            detail: RejectionDetail::DecimalAmount {
+                prefix: "Your Venmo balance does not have $".into(),
+                suffix: " to make this transaction.".into(),
+            },
+        };
+        assert!(!rule.matches(
+            401,
+            "Your Venmo balance does not have $250.00 to make this transaction."
+        ));
+        assert!(!rule.matches(422, "Your Venmo balance does not have $250.00 to make this transaction. A later effect occurred."));
+        assert!(!rule.matches(
+            422,
+            "Your Venmo balance does not have $unknown to make this transaction."
+        ));
+        let mut response = crate::HttpStatusFailure::without_request(
+            422,
+            "Your Venmo balance does not have $250.00 to make this transaction.".into(),
+        );
+        response.mutation_request_fingerprint = Some("request".into());
+        let failure = ExecutionFailure::from(crate::RuntimeError::RequestError {
+            source: crate::RequestFailure::HttpStatus(Box::new(response)),
+            attempts: 1,
+            status: Some(422),
+            body: None,
+        });
+        let dispatch = crate::MutationDispatch {
+            resolved_effect: None,
+            operation: crate::OperationIdentity {
+                entry_id: "test".into(),
+                capability: "pay".into(),
+            },
+            request_fingerprint: "request".into(),
+            status: crate::MutationDispatchStatus::ResponseReceived,
+        };
+        let mut one = vec![dispatch.clone()];
+        failure.classify_no_effect_rejection(std::slice::from_ref(&rule), &mut one);
+        assert_eq!(
+            one[0].status,
+            crate::MutationDispatchStatus::RejectedWithoutEffect
+        );
+        let classified = failure.clone().with_dispatches(one);
+        assert!(!classified.effects_unresolved);
+        let merged = classified.clone().merge(ExecutionFailure::new(
+            FailureCause::Runtime,
+            "other",
+            "unrelated failure",
+        ));
+        assert_eq!(merged.recovery, RecoveryDisposition::Stop);
+        assert_eq!(
+            classified.recovery,
+            RecoveryDisposition::ReplanAfterRejection
+        );
+        let wire = serde_json::to_string(&classified).unwrap();
+        assert!(
+            !wire.contains("provider_rejection"),
+            "transient response-matching data must not be serialized"
+        );
+        let mut ambiguous = vec![dispatch.clone(), dispatch.clone()];
+        failure.classify_no_effect_rejection(std::slice::from_ref(&rule), &mut ambiguous);
+        assert!(ambiguous
+            .iter()
+            .all(|d| d.status == crate::MutationDispatchStatus::ResponseReceived));
+        let mut unrelated = vec![crate::MutationDispatch {
+            request_fingerprint: "different".into(),
+            ..dispatch.clone()
+        }];
+        failure.classify_no_effect_rejection(std::slice::from_ref(&rule), &mut unrelated);
+        assert_eq!(
+            unrelated[0].status,
+            crate::MutationDispatchStatus::ResponseReceived
+        );
+        let mut no_response = vec![crate::MutationDispatch {
+            status: crate::MutationDispatchStatus::Unresolved,
+            ..dispatch
+        }];
+        failure.classify_no_effect_rejection(&[rule], &mut no_response);
+        assert_eq!(
+            no_response[0].status,
+            crate::MutationDispatchStatus::Unresolved
+        );
+        assert!(failure.with_dispatches(no_response).effects_unresolved);
+    }
     #[test]
     fn mcp_mapping_diagnostics_survive_wire_without_remote_content_or_retry_authority() {
         use crate::mcp_execution::McpExecutionError;

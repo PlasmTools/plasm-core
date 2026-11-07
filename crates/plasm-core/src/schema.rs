@@ -927,6 +927,65 @@ pub struct CapabilitySchema {
     /// successful mutating response (e.g. pay on a mutation shell updating read-model cards).
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub invalidates_entities: Vec<String>,
+    /// Provider-declared rejection conditions that establish that this
+    /// individual invocation made no change. Other responses remain unknown.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub no_effect_rejections: Vec<NoEffectRejection>,
+}
+
+/// A catalogue assertion about one rejected invocation, never an HTTP-wide rule.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct NoEffectRejection {
+    pub status: u16,
+    pub detail: RejectionDetail,
+}
+
+/// Matches an exact provider detail or a detail containing one decimal amount.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
+pub enum RejectionDetail {
+    Exact { value: String },
+    DecimalAmount { prefix: String, suffix: String },
+}
+
+impl NoEffectRejection {
+    pub fn is_valid(&self) -> bool {
+        (400..500).contains(&self.status)
+            && match &self.detail {
+                RejectionDetail::Exact { value } => !value.trim().is_empty(),
+                RejectionDetail::DecimalAmount { prefix, suffix } => {
+                    !prefix.trim().is_empty() && !suffix.trim().is_empty()
+                }
+            }
+    }
+    pub fn matches(&self, status: u16, detail: &str) -> bool {
+        if !self.is_valid() || status != self.status {
+            return false;
+        }
+        match &self.detail {
+            RejectionDetail::Exact { value } => !value.is_empty() && detail == value,
+            RejectionDetail::DecimalAmount { prefix, suffix } => {
+                if prefix.is_empty() || suffix.is_empty() {
+                    return false;
+                }
+                let Some(amount) = detail
+                    .strip_prefix(prefix)
+                    .and_then(|s| s.strip_suffix(suffix))
+                else {
+                    return false;
+                };
+                let mut parts = amount.split('.');
+                let integer = parts.next().unwrap_or_default();
+                let fraction = parts.next();
+                !integer.is_empty()
+                    && integer.bytes().all(|b| b.is_ascii_digit())
+                    && fraction
+                        .is_none_or(|f| !f.is_empty() && f.bytes().all(|b| b.is_ascii_digit()))
+                    && parts.next().is_none()
+            }
+        }
+    }
 }
 
 /// The type of operation this capability performs.
@@ -2887,6 +2946,25 @@ impl CGS {
 
     /// Validate all cross-references in this schema (includes expression-teaching surface).
     pub fn validate(&self) -> Result<(), SchemaError> {
+        for (name, capability) in &self.capabilities {
+            if capability
+                .no_effect_rejections
+                .iter()
+                .any(|rule| !rule.is_valid())
+                || (!capability.no_effect_rejections.is_empty()
+                    && !matches!(
+                        capability.kind,
+                        CapabilityKind::Create
+                            | CapabilityKind::Update
+                            | CapabilityKind::Delete
+                            | CapabilityKind::Action
+                    ))
+            {
+                return Err(SchemaError::InvalidNoEffectRejection {
+                    capability: name.to_string(),
+                });
+            }
+        }
         self.prerequisites
             .validate(self)
             .map_err(|source| SchemaError::PrerequisiteInvalid { source })?;
@@ -6415,6 +6493,7 @@ impl CapabilitySchema {
     #[doc(hidden)]
     pub fn minimal_test() -> Self {
         Self {
+            no_effect_rejections: Vec::new(),
             name: CapabilityName::from("test_cap"),
             description: String::new(),
             kind: CapabilityKind::Action,
@@ -6931,6 +7010,7 @@ mod list_capability_cardinality_tests {
             serde_json::json!({"method": "GET", "path": [{"type": "literal", "value": "x"}]});
         for name in query_names {
             cgs.add_capability(CapabilitySchema {
+                no_effect_rejections: Vec::new(),
                 name: (*name).into(),
                 description: String::new(),
                 kind: CapabilityKind::Query,
@@ -6998,6 +7078,7 @@ mod list_capability_cardinality_tests {
             wire_array_element_key: None,
         };
         cgs.add_capability(CapabilitySchema {
+            no_effect_rejections: Vec::new(),
             name: "item_search".into(),
             description: String::new(),
             kind: CapabilityKind::Search,
@@ -7107,6 +7188,7 @@ mod list_capability_cardinality_tests {
             serde_json::json!({"method": "GET", "path": [{"type": "literal", "value": "s"}]});
         for name in ["item_search_a", "item_search_b"] {
             cgs.add_capability(CapabilitySchema {
+                no_effect_rejections: Vec::new(),
                 name: name.into(),
                 description: String::new(),
                 kind: CapabilityKind::Search,

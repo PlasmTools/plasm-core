@@ -172,6 +172,7 @@ mod tests {
 
     fn make_query_cap(params: Vec<InputFieldSchema>) -> CapabilitySchema {
         CapabilitySchema {
+            no_effect_rejections: Vec::new(),
             name: "thing_query".into(),
             description: String::new(),
             kind: CapabilityKind::Query,
@@ -198,6 +199,7 @@ mod tests {
 
     fn no_params_cap() -> CapabilitySchema {
         CapabilitySchema {
+            no_effect_rejections: Vec::new(),
             name: "index_query".into(),
             description: String::new(),
             kind: CapabilityKind::Query,

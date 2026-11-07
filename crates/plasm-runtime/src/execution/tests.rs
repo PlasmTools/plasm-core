@@ -199,6 +199,7 @@ fn create_test_cgs() -> CGS {
 
     // Add query capability
     let query_capability = CapabilitySchema {
+        no_effect_rejections: Vec::new(),
         name: "query_accounts".into(),
         description: String::new(),
         kind: CapabilityKind::Query,
@@ -234,6 +235,7 @@ fn create_test_cgs() -> CGS {
 
     // Add get capability
     let get_capability = CapabilitySchema {
+        no_effect_rejections: Vec::new(),
         name: "get_account".into(),
         description: String::new(),
         kind: CapabilityKind::Get,
@@ -327,6 +329,7 @@ fn cgs_with_unary_entity_ref_scope_query() -> (CGS, CapabilitySchema) {
     })
     .expect("workspace resource");
     let cap = CapabilitySchema {
+        no_effect_rejections: Vec::new(),
         name: "managed_resource_query".into(),
         description: String::new(),
         kind: CapabilityKind::Query,

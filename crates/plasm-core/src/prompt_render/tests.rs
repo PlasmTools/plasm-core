@@ -3530,6 +3530,7 @@ fn prompt_stats_fixture_cgs() -> CGS {
     let tmpl = serde_json::json!({"method": "GET", "path": [{"type": "literal", "value": "x"}]});
     for (name, domain) in [("book_query", "Book"), ("shelf_query", "Shelf")] {
         cgs.add_capability(CapabilitySchema {
+            no_effect_rejections: Vec::new(),
             name: name.into(),
             description: String::new(),
             kind: CapabilityKind::Query,
@@ -3658,6 +3659,7 @@ fn p_slot_redefinition_fixture_cgs(id_desc_a: &str, id_desc_b: &str) -> CGS {
         .unwrap();
         let cap_name: String = format!("{}_get", name.to_lowercase());
         cgs.add_capability(CapabilitySchema {
+            no_effect_rejections: Vec::new(),
             name: cap_name.into(),
             description: String::new(),
             kind: CapabilityKind::Get,

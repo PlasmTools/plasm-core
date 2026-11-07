@@ -799,6 +799,7 @@ mod tests {
         .expect("resource");
         cgs
             .add_capability(CapabilitySchema {
+                no_effect_rejections: Vec::new(),
                 name: "note_query".into(),
                 description: String::new(),
                 kind: CapabilityKind::Query,
@@ -905,6 +906,7 @@ mod tests {
         })
         .expect("resource");
         cgs.add_capability(CapabilitySchema {
+            no_effect_rejections: Vec::new(),
             name: "spell_get".into(),
             description: String::new(),
             kind: CapabilityKind::Query,
@@ -1157,6 +1159,7 @@ mod tests {
         .expect("resource");
         cgs
             .add_capability(CapabilitySchema {
+                no_effect_rejections: Vec::new(),
                 name: "file_get".into(),
                 description: String::new(),
                 kind: CapabilityKind::Get,

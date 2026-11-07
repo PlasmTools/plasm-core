@@ -1,5 +1,17 @@
 # CGS & CML Reference
 
+## Provider rejection contracts
+
+An effect capability may declare `no_effect_rejections` only when the provider
+guarantees that the particular invocation made no change for the complete
+matched response. Use a 4xx status and either `detail: {kind: exact, value: "…"}`
+or `detail: {kind: decimal_amount, prefix: "…", suffix: "…"}`. The latter
+matches only a decimal number between nonempty, exact text fragments. Verify the
+provider's actual semantics before authoring a rule; a 4xx status or a received
+response alone does not prove that no effect occurred. Other responses remain
+unknown. A rejection says nothing about earlier completed or other concurrent
+effects in the same program.
+
 This is the canonical OSS reference for authoring Plasm API catalogs. The compiler and runtime crates are the ground truth (`crates/plasm-core`, `crates/plasm-cml`, `crates/plasm-compile`, `crates/plasm-runtime`); this file exists to keep agents and humans aligned on doctrine.
 
 ## MCP response selection

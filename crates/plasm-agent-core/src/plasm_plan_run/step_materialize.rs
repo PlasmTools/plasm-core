@@ -228,7 +228,26 @@ pub(crate) async fn materialize_executable_plan_step(
         Ok(mat) => mat,
         Err(error) => {
             let mut failure = error.at(qualified_step.clone(), ctx.occurrence_path.clone());
-            failure = failure.with_dispatches(occurrence.mutation_journal().snapshot());
+            let mut dispatches = occurrence.mutation_journal().snapshot();
+            if let [dispatch] = dispatches.as_slice() {
+                if let Some(capability) = ctx
+                    .es
+                    .contexts_by_entry
+                    .get(&dispatch.operation.entry_id)
+                    .and_then(|context| {
+                        context
+                            .cgs
+                            .capabilities
+                            .get(dispatch.operation.capability.as_str())
+                    })
+                {
+                    failure.classify_no_effect_rejection(
+                        &capability.no_effect_rejections,
+                        &mut dispatches,
+                    );
+                }
+            }
+            failure = failure.with_dispatches(dispatches);
             failure = failure.with_catalog(&ctx.es.catalog_cgs_hash);
             occurrence.fail(failure.to_string());
             return Err(failure);

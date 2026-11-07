@@ -332,6 +332,7 @@ mod tests {
 
     fn idempotent_cap() -> CapabilitySchema {
         CapabilitySchema {
+            no_effect_rejections: Vec::new(),
             name: CapabilityName::from("workitem_create_idempotent"),
             description: String::new(),
             kind: CapabilityKind::Action,

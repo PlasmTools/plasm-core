@@ -15,6 +15,8 @@ pub enum MutationDispatchStatus {
     Unresolved,
     /// The transport received a response. Status, decoding and effects are separate.
     ResponseReceived,
+    /// A catalogue contract matched this particular provider rejection.
+    RejectedWithoutEffect,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

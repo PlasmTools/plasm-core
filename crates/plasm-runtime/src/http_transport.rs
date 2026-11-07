@@ -1007,6 +1007,7 @@ pub fn evaluate_parsed_response(parsed: HttpParsedResponse) -> HttpAttemptResult
         (!empty_body).then_some(detail.as_str()),
     );
     let failure = crate::HttpStatusFailure {
+        mutation_request_fingerprint: None,
         method: method.to_owned(),
         url,
         status,

@@ -327,6 +327,7 @@ mod tests {
         .unwrap();
 
         cgs.add_capability(CapabilitySchema {
+            no_effect_rejections: Vec::new(),
             name: "pet_query".into(),
             description: String::new(),
             kind: CapabilityKind::Query,
@@ -359,6 +360,7 @@ mod tests {
 }).unwrap();
 
         cgs.add_capability(CapabilitySchema {
+            no_effect_rejections: Vec::new(),
             name: "order_query".into(),
             description: String::new(),
             kind: CapabilityKind::Query,

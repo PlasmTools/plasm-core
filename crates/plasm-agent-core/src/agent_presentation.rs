@@ -173,6 +173,7 @@ fn render_failure_with_limit(
             // A received response is already explained by the diagnostic and
             // does not establish an additional completed or failed operation.
             MutationDispatchStatus::ResponseReceived => continue,
+            MutationDispatchStatus::RejectedWithoutEffect => "rejected without effect",
         };
         *dispatches
             .entry((
@@ -195,8 +196,11 @@ fn render_failure_with_limit(
         match failure.recovery {
             RecoveryDisposition::RepairProgram => "Revise the program and plan again.",
             RecoveryDisposition::ObtainAuthorization => "Obtain authorization before another run.",
-            RecoveryDisposition::ReconcileEffects => {
-                "Check completed and unresolved effects before another run; this run did not roll back."
+            RecoveryDisposition::ReconcileEffects => failure
+                .recovery_instructions()
+                .unwrap_or("Check the previous execution before another run."),
+            RecoveryDisposition::ReplanAfterRejection => {
+                "This invocation was rejected without effect. Consider another authorized plan."
             }
             RecoveryDisposition::Stop => "Stop this execution.",
         }
@@ -209,6 +213,61 @@ fn render_failure_with_limit(
 mod tests {
     use super::*;
     use proptest::prelude::*;
+
+    #[test]
+    fn confirmed_rejection_is_visible_without_claiming_unknown_effects() {
+        let failure = plasm_runtime::ExecutionFailure::new(
+            plasm_runtime::FailureCause::Upstream,
+            "upstream_rejection",
+            "Insufficient funds",
+        )
+        .with_dispatches(vec![plasm_runtime::MutationDispatch {
+            resolved_effect: None,
+            operation: plasm_runtime::OperationIdentity {
+                entry_id: "test".into(),
+                capability: "pay".into(),
+            },
+            request_fingerprint: "fingerprint".into(),
+            status: plasm_runtime::MutationDispatchStatus::RejectedWithoutEffect,
+        }]);
+        let rendered = render_failure(&failure).to_string();
+        assert!(rendered.contains("rejected without effect"), "{rendered}");
+        assert!(
+            !rendered.contains("Some effects remain unresolved"),
+            "{rendered}"
+        );
+    }
+
+    #[test]
+    fn completed_effect_and_known_rejection_do_not_claim_unknown_changes() {
+        let mut failure = plasm_runtime::ExecutionFailure::new(
+            plasm_runtime::FailureCause::Upstream,
+            "upstream_rejection",
+            "Declined",
+        );
+        failure.recovery = plasm_runtime::RecoveryDisposition::ReconcileEffects;
+        failure.effects.push(plasm_runtime::execution_failure::EffectReceipt {
+            resolved_effects: vec![],
+            entry_id: "test".into(),
+            capability: "login".into(),
+            completed: 1,
+            failed: 0,
+            occurrences: vec![],
+        });
+        failure = failure.with_dispatches(vec![plasm_runtime::MutationDispatch {
+            resolved_effect: None,
+            operation: plasm_runtime::OperationIdentity {
+                entry_id: "test".into(),
+                capability: "pay".into(),
+            },
+            request_fingerprint: "fingerprint".into(),
+            status: plasm_runtime::MutationDispatchStatus::RejectedWithoutEffect,
+        }]);
+        let rendered = render_failure(&failure).to_string();
+        assert!(rendered.contains("A prior effect completed"), "{rendered}");
+        assert!(!rendered.contains("unknown"), "{rendered}");
+        assert!(!rendered.contains("unresolved"), "{rendered}");
+    }
 
     #[test]
     fn rejected_input_is_visible_even_without_a_failed_receipt() {

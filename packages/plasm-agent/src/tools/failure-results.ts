@@ -21,7 +21,9 @@ export class FailureResults {
       lines.push(`Failed input${sourceScope(input.scope_path)}: ${input.source_identity ?? "identity unavailable"}; item path [${input.occurrence_path.join("/")}] (zero-based nested iteration indices).`);
     }
     for (const effect of failure.effects) {
-      lines.push(`${effect.entry_id}/${effect.capability}: ${effect.completed} completed; ${effect.failed} failed.${effect.failed ? " Failed calls may still have changed state." : ""}`);
+      const matchingDispatches = failure.dispatches.filter(dispatch => dispatch.operation.entry_id === effect.entry_id && dispatch.operation.capability === effect.capability);
+      const knownRejection = effect.failed === 1 && matchingDispatches.length === 1 && matchingDispatches[0]?.status === "rejected_without_effect" && !failure.effects_unresolved;
+      lines.push(`${effect.entry_id}/${effect.capability}: ${effect.completed} completed; ${effect.failed} failed.${effect.failed && !knownRejection ? " Failed calls may still have changed state." : ""}`);
       for (const occurrence of effect.occurrences) {
         lines.push(`${effect.entry_id}/${effect.capability} — ${occurrence.status} — item path [${occurrence.occurrence_path.join("/")}] — ${occurrence.source_identity ?? "identity unavailable"}${sourceScope(occurrence.scope_path)}`);
       }
@@ -29,13 +31,20 @@ export class FailureResults {
     for (const dispatch of failure.dispatches) {
       const origin = dispatch.resolved_effect?.origin;
       const coordinate = origin?.occurrence_path.length ? ` at item path [${origin.occurrence_path.join("/")}]` : "";
-      lines.push(`${dispatch.operation.entry_id}/${dispatch.operation.capability}${coordinate}: ${dispatch.status === "unresolved" ? "request sent; no response recorded" : "response received"}. This request record does not establish whether state changed; do not count it as another completed operation.`);
+      if (dispatch.status === "rejected_without_effect") {
+        lines.push(`${dispatch.operation.entry_id}/${dispatch.operation.capability}${coordinate}: provider rejected this invocation without effect under its catalogue contract.`);
+      } else {
+        lines.push(`${dispatch.operation.entry_id}/${dispatch.operation.capability}${coordinate}: ${dispatch.status === "unresolved" ? "request sent; no response recorded" : "response received"}. This request record does not establish whether state changed; do not count it as another completed operation.`);
+      }
     }
     if (failure.effects_unresolved) lines.push("Some state changes remain unknown. Check the resulting state before retrying them.");
     const next: Record<ExecutionFailure["recovery"], string> = {
       repair_program: "Correct the program before trying again.",
       obtain_authorization: "Obtain the required authorization before trying again.",
-      reconcile_effects: "Check completed and unknown changes before further writes.",
+      reconcile_effects: failure.effects_unresolved || failure.dispatches.some(dispatch => dispatch.status !== "rejected_without_effect")
+        ? "Check completed and unknown changes before further writes."
+        : "A prior effect completed. Check its receipt before further writes; this execution did not roll back.",
+      replan_after_rejection: "This invocation was rejected without effect. Consider another authorized plan.",
       stop: "Stop execution and resolve the reported blocker before continuing.",
     };
     lines.push(next[failure.recovery]);

@@ -875,6 +875,7 @@ mod tests {
 
         // query_accounts: paginated index with a declared `region` filter parameter
         cgs.add_capability(CapabilitySchema {
+            no_effect_rejections: Vec::new(),
             name: "query_accounts".into(),
             description: String::new(),
             kind: CapabilityKind::Query,
@@ -925,6 +926,7 @@ mod tests {
 
         // query_contacts: role filter parameter (enables contacts relation filter)
         cgs.add_capability(CapabilitySchema {
+            no_effect_rejections: Vec::new(),
             name: "query_contacts".into(),
             description: String::new(),
             kind: CapabilityKind::Query,
@@ -1158,6 +1160,7 @@ mod tests {
         .unwrap();
 
         cgs.add_capability(CapabilitySchema {
+            no_effect_rejections: Vec::new(),
             name: "balance_get".into(),
             description: String::new(),
             kind: CapabilityKind::Get,
@@ -1298,6 +1301,7 @@ mod tests {
         .unwrap();
 
         cgs.add_capability(CapabilitySchema {
+            no_effect_rejections: Vec::new(),
             name: "order_get".into(),
             description: String::new(),
             kind: CapabilityKind::Get,
@@ -1323,6 +1327,7 @@ mod tests {
         }).unwrap();
 
         cgs.add_capability(CapabilitySchema {
+            no_effect_rejections: Vec::new(),
             name: "pet_get".into(),
             description: String::new(),
             kind: CapabilityKind::Get,
@@ -1355,6 +1360,7 @@ mod tests {
         let mut cgs = test_cgs_with_entity_ref();
 
         cgs.add_capability(CapabilitySchema {
+            no_effect_rejections: Vec::new(),
             name: "order_query".into(),
             description: String::new(),
             kind: CapabilityKind::Query,

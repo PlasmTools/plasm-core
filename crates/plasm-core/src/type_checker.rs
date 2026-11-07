@@ -1255,6 +1255,7 @@ mod tests {
         .unwrap();
 
         let get_pet = CapabilitySchema {
+            no_effect_rejections: Vec::new(),
             name: "pet_get".into(),
             description: String::new(),
             kind: CapabilityKind::Get,
@@ -1282,6 +1283,7 @@ mod tests {
         cgs.add_capability(get_pet).unwrap();
 
         let get_order = CapabilitySchema {
+            no_effect_rejections: Vec::new(),
             name: "order_get".into(),
             description: String::new(),
             kind: CapabilityKind::Get,

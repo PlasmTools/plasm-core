@@ -4617,6 +4617,7 @@ mod tests {
         })
         .unwrap();
         cgs.add_capability(CapabilitySchema {
+            no_effect_rejections: Vec::new(),
             name: "widget_get".into(),
             description: String::new(),
             kind: CapabilityKind::Get,

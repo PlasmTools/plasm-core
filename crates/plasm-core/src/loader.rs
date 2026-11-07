@@ -90,6 +90,8 @@ pub enum SchemaLoadError {
 
 #[derive(Debug, thiserror::Error)]
 pub enum SchemaAssemblyError {
+    #[error("capability {capability} has an invalid no-effect rejection contract")]
+    InvalidNoEffectRejection { capability: String },
     #[error("values[{value_ref}]: string_semantics is retired")]
     RemovedStringSemantics { value_ref: String },
     #[error("values[{value_ref}]: value_format is retired")]
@@ -547,6 +549,8 @@ pub struct DomainRelation {
 pub struct DomainCapability {
     #[serde(default)]
     pub description: String,
+    #[serde(default)]
+    pub no_effect_rejections: Vec<crate::schema::NoEffectRejection>,
     pub kind: String,
     pub entity: String,
     /// Domain receiver; never inferred from a CML path, body, or transport.
@@ -1263,6 +1267,14 @@ fn assemble_cgs_core(
     );
 
     for (cap_name, cap) in &domain.capabilities {
+        if cap.no_effect_rejections.iter().any(|rule| !rule.is_valid())
+            || (!cap.no_effect_rejections.is_empty()
+                && !matches!(cap.kind.as_str(), "create" | "update" | "delete" | "action"))
+        {
+            return Err(SchemaAssemblyError::InvalidNoEffectRejection {
+                capability: cap_name.clone(),
+            });
+        }
         let kind = parse_capability_kind(&cap.kind);
 
         let (mapping, derived) = if let Some(derive) = &cap.derive {
@@ -1321,6 +1333,7 @@ fn assemble_cgs_core(
         let inputs = capability_inputs_from_domain(cap_name, cap, &cgs.values)?;
 
         let capability = CapabilitySchema {
+            no_effect_rejections: cap.no_effect_rejections.clone(),
             name: CapabilityName::from(cap_name.clone()),
             description: cap.description.clone(),
             kind,
