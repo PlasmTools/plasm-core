@@ -66,6 +66,16 @@ impl ProviderTransportError {
                 retry_after,
                 ..
             } if transient(status.as_u16()) => *retry_after,
+            Self::ProviderRejected {
+                status,
+                message,
+                retry_after,
+            } if *status == reqwest::StatusCode::PAYMENT_REQUIRED
+                && message.to_ascii_lowercase().contains("available credits")
+                && message.to_ascii_lowercase().contains("in-flight requests") =>
+            {
+                *retry_after
+            }
             Self::Request(error) if request_retryable(error) => None,
             Self::ResponseBody {
                 status,

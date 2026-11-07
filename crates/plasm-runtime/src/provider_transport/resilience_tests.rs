@@ -2,6 +2,18 @@ use super::*;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 
+#[test]
+fn only_explicit_in_flight_credit_reservation_rejections_retry() {
+    let rejection = |message: &str| ProviderTransportError::ProviderRejected {
+        status: reqwest::StatusCode::PAYMENT_REQUIRED,
+        message: message.into(),
+        retry_after: None,
+    };
+    assert!(rejection("This request would exceed your available credits given your current in-flight requests. Retry after in-flight requests settle, or add credits.").retry_delay(0).is_some());
+    assert!(rejection("Insufficient credits").retry_delay(0).is_none());
+    assert!(rejection("Payment required").retry_delay(0).is_none());
+}
+
 struct StallThenRespond {
     calls: AtomicUsize,
     bodies: Mutex<Vec<String>>,
