@@ -564,6 +564,15 @@ async fn known_rejection_leaves_the_selected_suffix_unattempted() {
 }
 
 #[tokio::test]
+async fn first_selected_effect_can_be_rejected_without_any_applied_effect() {
+    let failure = Box::pin(ordered_fanout_case(4, 0, true, false)).await;
+    assert!(!failure.effects_unresolved);
+    assert!(failure.effects.iter().all(|effect| effect.completed == 0));
+    assert!(failure.dispatches.iter().any(|dispatch| dispatch.status
+        == plasm_runtime::MutationDispatchStatus::RejectedWithoutEffect));
+}
+
+#[tokio::test]
 async fn successful_plan_publishes_unreturned_write_receipts() {
     Box::pin(case(3, usize::MAX, false)).await;
 }
