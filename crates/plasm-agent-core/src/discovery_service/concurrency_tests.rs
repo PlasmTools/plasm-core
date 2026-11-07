@@ -260,6 +260,372 @@ impl plasm_runtime::provider_transport::ProviderTransport for AcceptBusinessRead
 
 struct AcceptOperation;
 
+struct DelayedContribution {
+    packets: std::sync::Mutex<Vec<String>>,
+}
+
+#[tokio::test]
+#[ignore = "requires an isolated PLASM_TEST_POSTGRES_URL with discovery_selector_cache"]
+async fn decision_fill_ownership_is_keyed_and_released_on_cancellation() {
+    let (a, b) = services().await;
+    let key = uuid::Uuid::new_v4().to_string();
+    let other = format!("{key}-other");
+    let first = a.store.searches().claim_decision(&key).await.unwrap();
+    let distinct = tokio::time::timeout(
+        std::time::Duration::from_secs(2),
+        a.store.searches().claim_decision(&other),
+    )
+    .await
+    .unwrap()
+    .unwrap();
+    let repo = b.store.searches();
+    assert!(tokio::time::timeout(
+        std::time::Duration::from_millis(100),
+        repo.claim_decision(&key)
+    )
+    .await
+    .is_err());
+    let spare_a = format!("{key}-spare-a");
+    let spare_b = format!("{key}-spare-b");
+    let spare_a = tokio::time::timeout(
+        std::time::Duration::from_secs(2),
+        repo.claim_decision(&spare_a),
+    )
+    .await
+    .unwrap()
+    .unwrap();
+    let spare_b = tokio::time::timeout(
+        std::time::Duration::from_secs(2),
+        repo.claim_decision(&spare_b),
+    )
+    .await
+    .expect("cancelled waiter must release its admission promptly")
+    .unwrap();
+    drop((spare_a, spare_b));
+    let waiting = repo.claim_decision(&key);
+    tokio::pin!(waiting);
+    assert!(
+        tokio::time::timeout(std::time::Duration::from_millis(100), &mut waiting)
+            .await
+            .is_err()
+    );
+    assert!(b.store.searches().decision(&key).await.unwrap().is_none());
+    drop(first);
+    let next = tokio::time::timeout(std::time::Duration::from_secs(2), &mut waiting)
+        .await
+        .unwrap()
+        .unwrap();
+    drop(next);
+    drop(distinct);
+    tokio::time::timeout(
+        std::time::Duration::from_secs(2),
+        a.store.searches().claim_decision(&key),
+    )
+    .await
+    .unwrap()
+    .unwrap();
+}
+
+#[tokio::test]
+#[ignore = "subprocess helper; requires an isolated PLASM_TEST_POSTGRES_URL"]
+async fn subprocess_decision_fill_owner() {
+    let Ok(key) = std::env::var("PLASM_DISCOVERY_TEST_DECISION_KEY") else {
+        return;
+    };
+    let url = std::env::var("PLASM_TEST_POSTGRES_URL").unwrap();
+    let store = DiscoveryStore::connect(&url).await.unwrap();
+    let _owner = store.searches().claim_decision(&key).await.unwrap();
+    let pool = sqlx::PgPool::connect(&url).await.unwrap();
+    sqlx::query("INSERT INTO discovery_selector_cache (cache_key,envelope) VALUES ($1,'ready')")
+        .bind(format!("{key}-ready"))
+        .execute(&pool)
+        .await
+        .unwrap();
+    tokio::time::sleep(std::time::Duration::from_secs(10)).await;
+}
+
+#[tokio::test]
+#[ignore = "requires an isolated PLASM_TEST_POSTGRES_URL and subprocess execution"]
+async fn decision_fill_owner_is_released_when_another_process_dies() {
+    let (service, _) = services().await;
+    let key = uuid::Uuid::new_v4().to_string();
+    let mut child = std::process::Command::new(std::env::current_exe().unwrap())
+        .arg("--ignored")
+        .arg("--exact")
+        .arg("discovery_service::concurrency_tests::subprocess_decision_fill_owner")
+        .env("PLASM_DISCOVERY_TEST_DECISION_KEY", &key)
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::inherit())
+        .spawn()
+        .unwrap();
+    let pool = sqlx::PgPool::connect(&std::env::var("PLASM_TEST_POSTGRES_URL").unwrap())
+        .await
+        .unwrap();
+    tokio::time::timeout(std::time::Duration::from_secs(8), async {
+        loop {
+            let ready: bool = sqlx::query_scalar(
+                "SELECT EXISTS(SELECT 1 FROM discovery_selector_cache WHERE cache_key=$1)",
+            )
+            .bind(format!("{key}-ready"))
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+            if ready {
+                break;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+        }
+    })
+    .await
+    .expect("child must acquire decision ownership");
+    let repo = service.store.searches();
+    assert!(tokio::time::timeout(
+        std::time::Duration::from_millis(150),
+        repo.claim_decision(&key)
+    )
+    .await
+    .is_err());
+    child.kill().unwrap();
+    child.wait().unwrap();
+    tokio::time::timeout(std::time::Duration::from_secs(5), repo.claim_decision(&key))
+        .await
+        .unwrap()
+        .unwrap();
+    pool.close().await;
+}
+
+#[tokio::test]
+#[ignore = "requires an isolated PLASM_TEST_POSTGRES_URL with permission to terminate its own backend"]
+async fn lost_decision_fill_owner_cannot_publish_a_stale_response() {
+    let (service, _) = services().await;
+    let key = uuid::Uuid::new_v4().to_string();
+    let mut stale = service.store.searches().claim_decision(&key).await.unwrap();
+    let pid = stale.backend_pid().await.unwrap();
+    let pool = sqlx::PgPool::connect(&std::env::var("PLASM_TEST_POSTGRES_URL").unwrap())
+        .await
+        .unwrap();
+    let killed: bool = sqlx::query_scalar("SELECT pg_terminate_backend($1)")
+        .bind(pid)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert!(killed);
+    assert!(stale.persist(&key, "stale").await.is_err());
+    drop(stale);
+    assert!(service
+        .store
+        .searches()
+        .decision(&key)
+        .await
+        .unwrap()
+        .is_none());
+    let mut owner = service.store.searches().claim_decision(&key).await.unwrap();
+    owner.persist(&key, "canonical").await.unwrap();
+    assert_eq!(
+        service
+            .store
+            .searches()
+            .decision(&key)
+            .await
+            .unwrap()
+            .as_deref(),
+        Some("canonical")
+    );
+    pool.close().await;
+}
+
+#[tokio::test]
+#[ignore = "requires an isolated PLASM_TEST_POSTGRES_URL with discovery_selector_cache"]
+async fn full_frontier_and_decision_admission_leaves_room_for_persistence() {
+    let (service, _) = services().await;
+    let entered = Arc::new(tokio::sync::Barrier::new(5));
+    let release = Arc::new(tokio::sync::Semaphore::new(0));
+    let mut tasks = tokio::task::JoinSet::new();
+    for _ in 0..4 {
+        let service = service.clone();
+        let entered = entered.clone();
+        let release = release.clone();
+        tasks.spawn(async move {
+            let key = uuid::Uuid::new_v4().to_string();
+            service
+                .store
+                .searches()
+                .with_frontier(FrontierKey(&key), || async {
+                    entered.wait().await;
+                    let _permit = release.acquire().await.unwrap();
+                })
+                .await
+                .unwrap();
+        });
+    }
+    tokio::time::timeout(std::time::Duration::from_secs(5), entered.wait())
+        .await
+        .unwrap();
+    let first_key = uuid::Uuid::new_v4().to_string();
+    let second_key = uuid::Uuid::new_v4().to_string();
+    let mut first = service
+        .store
+        .searches()
+        .claim_decision(&first_key)
+        .await
+        .unwrap();
+    let second = service
+        .store
+        .searches()
+        .claim_decision(&second_key)
+        .await
+        .unwrap();
+    tokio::time::timeout(
+        std::time::Duration::from_secs(3),
+        first.persist(&first_key, "validated"),
+    )
+    .await
+    .expect("checkpoint needs a free pooled connection")
+    .unwrap();
+    assert_eq!(
+        service
+            .store
+            .searches()
+            .decision(&first_key)
+            .await
+            .unwrap()
+            .as_deref(),
+        Some("validated")
+    );
+    drop((first, second));
+    release.add_permits(4);
+    while let Some(task) = tasks.join_next().await {
+        task.unwrap();
+    }
+}
+
+#[async_trait::async_trait]
+impl plasm_runtime::provider_transport::ProviderTransport for DelayedContribution {
+    async fn send(
+        &self,
+        body: &str,
+        _: &mut plasm_runtime::provider_transport::AttemptRecorder<'_>,
+    ) -> std::result::Result<
+        plasm_runtime::provider_transport::ProviderResponse,
+        plasm_runtime::provider_transport::ProviderTransportError,
+    > {
+        self.packets.lock().unwrap().push(body.to_owned());
+        tokio::time::sleep(std::time::Duration::from_millis(600)).await;
+        let request: serde_json::Value = serde_json::from_str(body).unwrap();
+        let answers: serde_json::Map<_, _> = request["questions"].as_object().unwrap().keys().map(|key| (key.clone(), serde_json::json!({"type":"choice","choice":"relevant","confidence":1.0,"probabilities":{"relevant":1.0,"uncertain":0.0,"unrelated":0.0}}))).collect();
+        Ok(plasm_runtime::provider_transport::ProviderResponse { status: reqwest::StatusCode::OK, retry_after: None, body: serde_json::json!({"model":matcher::RELEVANCE_MODEL,"provider":"OpenAI","answers":answers}).to_string() })
+    }
+}
+
+#[tokio::test]
+#[ignore = "requires an isolated PLASM_TEST_POSTGRES_URL with pgvector"]
+async fn ordinary_and_supplemental_frontiers_share_one_decision_fill() {
+    use plasm_core::catalog_discovery::{content_hash, EmbeddingProfile};
+    use std::collections::{BTreeMap, BTreeSet};
+    let url = std::env::var("PLASM_TEST_POSTGRES_URL").unwrap();
+    let first = DiscoveryStore::connect(&url).await.unwrap();
+    first.migrate().await.unwrap();
+    let second = DiscoveryStore::connect(&url).await.unwrap();
+    let catalog = crate::discovery_store::tests::prepared("overlap-proof", 1);
+    let bindings = plasm_core::prerequisites::DeploymentBindings {
+        bindings: vec![plasm_core::prerequisites::DeploymentBinding {
+            consumer: CapabilityRef {
+                catalog: "overlap-proof".into(),
+                capability: "read".into(),
+            },
+            requirement: "scoped_access".into(),
+            provider_catalog: "overlap-proof".into(),
+            provider: "value_source".into(),
+        }],
+    };
+    let generation = first
+        .import("overlap-proof", vec![catalog], &bindings)
+        .await
+        .unwrap();
+    let reference = CapabilityRef {
+        catalog: "overlap-proof".into(),
+        capability: "create".into(),
+    };
+    let allowed = DiscoveryAuthorization {
+        catalogs: BTreeSet::from([reference.catalog.clone()]),
+        capabilities: BTreeMap::from([(
+            reference.catalog.clone(),
+            BTreeSet::from([reference.capability.clone()]),
+        )]),
+    };
+    let intent = format!("xylovariance {}", uuid::Uuid::new_v4());
+    let profile = EmbeddingProfile::default();
+    let embedding_key = content_hash(&serde_json::to_vec(&(intent.as_str(), &profile)).unwrap());
+    let mut vector = vec![0.0; 1536];
+    vector[0] = 1.0;
+    let pool = sqlx::PgPool::connect(&url).await.unwrap();
+    sqlx::query("INSERT INTO discovery_intent_embeddings VALUES ($1,$2,$3::text::vector)")
+        .bind(embedding_key)
+        .bind(serde_json::to_value(profile).unwrap())
+        .bind(serde_json::to_string(&vector).unwrap())
+        .execute(&pool)
+        .await
+        .unwrap();
+    let session = uuid::Uuid::new_v4().to_string();
+    first
+        .pin_generation(
+            &session,
+            &generation,
+            chrono::Utc::now() + chrono::Duration::hours(1),
+        )
+        .await
+        .unwrap();
+    let provider = Arc::new(DelayedContribution {
+        packets: std::sync::Mutex::new(Vec::new()),
+    });
+    let mut ordinary = DiscoveryService::cached_test_service(first);
+    ordinary.operation_extractor = Arc::new(AcceptOperation);
+    ordinary.transport = provider.clone();
+    let mut supplemental = DiscoveryService::cached_test_service(second).supplemental([reference]);
+    supplemental.operation_extractor = Arc::new(AcceptOperation);
+    supplemental.transport = provider.clone();
+    let provenance = crate::intent_provenance::IntentProvenance::from_turns([intent]).unwrap();
+    ordinary
+        .store
+        .commit_discovery_progress(&session, &provenance, false)
+        .await
+        .unwrap();
+    let turn = RouteTurn {
+        new_generation: &generation,
+        intent_provenance: &provenance,
+        logical_session: Some(&session),
+        allowed: &allowed,
+        exposed: &[],
+        expires_at: std::time::SystemTime::now() + std::time::Duration::from_secs(3600),
+    };
+    let (a, b) = tokio::join!(
+        ordinary.route_turn(turn),
+        supplemental.route_supplemental_turn(
+            &session,
+            uuid::Uuid::new_v4(),
+            &generation,
+            &provenance,
+            &allowed,
+            &[]
+        )
+    );
+    let a = a.unwrap();
+    let b = b.unwrap();
+    assert_eq!(a.search.exposed, b.search.exposed);
+    let packets = provider.packets.lock().unwrap();
+    if packets.len() > 1 {
+        assert_eq!(
+            packets[0], packets[1],
+            "the two actual frontiers must issue an identical decision packet"
+        );
+    }
+    assert_eq!(
+        packets.len(),
+        1,
+        "concurrent frontiers must share one durable fill"
+    );
+}
+
 #[async_trait::async_trait]
 impl matcher::operations::OperationExtractor for AcceptOperation {
     async fn extract(

@@ -182,6 +182,15 @@ impl SearchRepository<'_> {
     pub(crate) async fn decision(&self, key: &str) -> Result<Option<String>, DiscoveryStoreError> {
         self.load_raw(key).await
     }
+
+    /// Keep the returned owner alive through validation and durable insertion.
+    pub(crate) async fn claim_decision(
+        &self,
+        key: &str,
+    ) -> Result<super::DecisionLease, DiscoveryStoreError> {
+        self.store.pool.claim_decision(key).await
+    }
+    #[cfg(test)]
     pub(crate) async fn record_decision(
         &self,
         key: &str,

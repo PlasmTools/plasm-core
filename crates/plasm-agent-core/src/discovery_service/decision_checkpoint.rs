@@ -11,33 +11,52 @@ struct UnpersistedDecision;
 
 #[async_trait::async_trait]
 pub(crate) trait DecisionCache: Sync {
+    type Owner: Send;
+    async fn claim(&self, key: &str) -> Result<Self::Owner, DecisionProviderError>;
     async fn load(&self, key: &str) -> Result<Option<String>, DecisionProviderError>;
-    async fn save(&self, key: &str, raw: &str) -> Result<(), DecisionProviderError>;
+    async fn save(
+        &self,
+        key: &str,
+        raw: &str,
+        owner: &mut Self::Owner,
+    ) -> Result<(), DecisionProviderError>;
 }
 
 #[async_trait::async_trait]
 impl DecisionCache for DiscoveryStore {
+    type Owner = crate::discovery_store::DecisionLease;
+
+    async fn claim(&self, key: &str) -> Result<Self::Owner, DecisionProviderError> {
+        Ok(self.searches().claim_decision(key).await?)
+    }
+
     async fn load(&self, key: &str) -> Result<Option<String>, DecisionProviderError> {
         Ok(self.searches().decision(key).await?)
     }
 
-    async fn save(&self, key: &str, raw: &str) -> Result<(), DecisionProviderError> {
-        Ok(self.searches().record_decision(key, raw).await?)
+    async fn save(
+        &self,
+        key: &str,
+        raw: &str,
+        owner: &mut Self::Owner,
+    ) -> Result<(), DecisionProviderError> {
+        Ok(owner.persist(key, raw).await?)
     }
 }
 
-pub(crate) struct DecisionCheckpoint<'a, C> {
+pub(crate) struct DecisionCheckpoint<'a, C: DecisionCache> {
     cache: &'a C,
     locks: &'a DecisionLocks,
-    pending: Mutex<Option<PendingEnvelope>>,
+    pending: Mutex<Option<PendingEnvelope<C::Owner>>>,
 }
 
-struct PendingEnvelope {
+struct PendingEnvelope<O> {
     key: String,
     raw: String,
     // Retain cache-fill ownership until the write completes, including failures
     // and cancellation. Another search must not duplicate the in-flight fill.
     _owner: OwnedMutexGuard<()>,
+    durable_owner: O,
 }
 
 impl<'a, C: DecisionCache> DecisionCheckpoint<'a, C> {
@@ -63,6 +82,7 @@ impl<'a, C: DecisionCache> DecisionCheckpoint<'a, C> {
         // may own that same lock, so checking afterwards could deadlock.
         let mut pending = self.vacant_slot().await?;
         let owner = self.locks.claim(issued.cache_key()).await;
+        let durable_owner = self.cache.claim(issued.cache_key()).await?;
         if let Some(raw) = self.cache.load(issued.cache_key()).await? {
             issued
                 .validate_response(&raw)
@@ -77,13 +97,14 @@ impl<'a, C: DecisionCache> DecisionCheckpoint<'a, C> {
             key: issued.cache_key().into(),
             raw: raw.clone(),
             _owner: owner,
+            durable_owner,
         });
         Ok(raw)
     }
 
     async fn vacant_slot(
         &self,
-    ) -> Result<MutexGuard<'_, Option<PendingEnvelope>>, DecisionProviderError> {
+    ) -> Result<MutexGuard<'_, Option<PendingEnvelope<C::Owner>>>, DecisionProviderError> {
         let pending = self.pending.lock().await;
         if pending.is_some() {
             return Err(Box::new(UnpersistedDecision));
@@ -95,9 +116,12 @@ impl<'a, C: DecisionCache> DecisionCheckpoint<'a, C> {
         // Receipt persistence is part of the durable search checkpoint, outside
         // the provider deadline. Never report success before this write succeeds.
         // Holding the guard through the await also makes cancellation release it.
-        if let Some(pending) = self.pending.lock().await.take() {
+        if let Some(mut pending) = self.pending.lock().await.take() {
             let started = std::time::Instant::now();
-            let result = self.cache.save(&pending.key, &pending.raw).await;
+            let result = self
+                .cache
+                .save(&pending.key, &pending.raw, &mut pending.durable_owner)
+                .await;
             tracing::debug!(
                 elapsed_ms = started.elapsed().as_millis() as u64,
                 success = result.is_ok(),
@@ -118,11 +142,20 @@ mod tests {
 
     #[async_trait::async_trait]
     impl DecisionCache for StalledCache {
+        type Owner = ();
+        async fn claim(&self, _: &str) -> Result<Self::Owner, DecisionProviderError> {
+            Ok(())
+        }
         async fn load(&self, _: &str) -> Result<Option<String>, DecisionProviderError> {
             Ok(None)
         }
 
-        async fn save(&self, _: &str, _: &str) -> Result<(), DecisionProviderError> {
+        async fn save(
+            &self,
+            _: &str,
+            _: &str,
+            _: &mut Self::Owner,
+        ) -> Result<(), DecisionProviderError> {
             std::future::pending().await
         }
     }
@@ -135,6 +168,7 @@ mod tests {
             key: "abstract".into(),
             raw: "validated response".into(),
             _owner: locks.claim("abstract").await,
+            durable_owner: (),
         });
         let Err(error) = checkpoint.vacant_slot().await else {
             panic!("unpersisted decision must retain its slot");
@@ -152,6 +186,7 @@ mod tests {
             key: "abstract".into(),
             raw: "validated response".into(),
             _owner: locks.claim("abstract").await,
+            durable_owner: (),
         });
         {
             let write = checkpoint.persist();

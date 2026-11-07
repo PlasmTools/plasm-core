@@ -3,6 +3,7 @@
 
 use sqlx::{
     pool::PoolConnection, postgres::PgPoolOptions, Connection, PgConnection, PgPool, Postgres,
+    Transaction,
 };
 use std::{
     ops::{Deref, DerefMut},
@@ -15,6 +16,7 @@ pub(super) struct DiscoveryDatabase {
     pool: PgPool,
     admission: Arc<Semaphore>,
     search_admission: Arc<Semaphore>,
+    decision_admission: Arc<Semaphore>,
 }
 
 impl DiscoveryDatabase {
@@ -30,7 +32,49 @@ impl DiscoveryDatabase {
             admission: Arc::new(Semaphore::new(capacity)),
             // Search owners must leave connections for checkpoints and completion.
             search_admission: Arc::new(Semaphore::new(capacity / 2)),
+            // Frontier owners occupy up to half the pool; retain room for writes.
+            decision_admission: Arc::new(Semaphore::new((capacity / 4).max(1))),
         })
+    }
+
+    pub(super) async fn claim_decision(
+        &self,
+        key: &str,
+    ) -> Result<DecisionLease, super::DiscoveryStoreError> {
+        let slot = self
+            .decision_admission
+            .clone()
+            .acquire_owned()
+            .await
+            .map_err(super::DiscoveryStoreError::Admission)?;
+        let permit = self
+            .admission
+            .clone()
+            .acquire_owned()
+            .await
+            .map_err(super::DiscoveryStoreError::Admission)?;
+        let transaction = self.pool.begin().await?;
+        let mut lease = DecisionLease {
+            transaction: Some(transaction),
+            permit: Some(permit),
+            slot: Some(slot),
+        };
+        // A blocking advisory-lock query cannot be cancelled by dropping its
+        // future: PostgreSQL would keep the connection occupied until the other
+        // owner finishes. Short nonblocking attempts make cancellation release it.
+        loop {
+            let acquired: bool = sqlx::query_scalar(
+                "SELECT pg_try_advisory_xact_lock(hashtextextended($1, 80453272))",
+            )
+            .bind(key)
+            .fetch_one(&mut **lease.transaction.as_mut().expect("active decision lease"))
+            .await?;
+            if acquired {
+                break;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(25)).await;
+        }
+        Ok(lease)
     }
 
     pub(super) async fn with_search_lock<F, Fut, T>(
@@ -73,6 +117,58 @@ impl DiscoveryDatabase {
             connection,
             permit: Some(permit),
         })
+    }
+}
+
+/// Owns a cross-replica decision fill until its envelope has been persisted.
+pub(crate) struct DecisionLease {
+    transaction: Option<Transaction<'static, Postgres>>,
+    permit: Option<OwnedSemaphorePermit>,
+    slot: Option<OwnedSemaphorePermit>,
+}
+
+impl DecisionLease {
+    #[cfg(test)]
+    pub(crate) async fn backend_pid(&mut self) -> Result<i32, super::DiscoveryStoreError> {
+        Ok(sqlx::query_scalar("SELECT pg_backend_pid()")
+            .fetch_one(&mut **self.transaction.as_mut().expect("active decision lease"))
+            .await?)
+    }
+
+    /// Commit the envelope on the lock-owning connection. Losing that
+    /// connection cannot publish a response after ownership has expired.
+    pub(crate) async fn persist(
+        &mut self,
+        key: &str,
+        raw: &str,
+    ) -> Result<(), super::DiscoveryStoreError> {
+        sqlx::query("INSERT INTO discovery_selector_cache (cache_key, envelope) VALUES ($1,$2) ON CONFLICT (cache_key) DO NOTHING")
+            .bind(key).bind(raw)
+            .execute(&mut **self.transaction.as_mut().expect("active decision lease"))
+            .await?;
+        self.transaction
+            .take()
+            .expect("active decision lease")
+            .commit()
+            .await?;
+        Ok(())
+    }
+}
+
+impl Drop for DecisionLease {
+    fn drop(&mut self) {
+        let transaction = self.transaction.take();
+        let permit = self.permit.take();
+        let slot = self.slot.take();
+        tokio::spawn(async move {
+            if let Some(transaction) = transaction {
+                if let Err(error) = transaction.rollback().await {
+                    tracing::warn!(%error, "discovery decision lease rollback failed");
+                }
+            }
+            drop(permit);
+            drop(slot);
+        });
     }
 }
 
@@ -121,6 +217,7 @@ mod tests {
                 .unwrap(),
             admission: Arc::new(Semaphore::new(1)),
             search_admission: Arc::new(Semaphore::new(0)),
+            decision_admission: Arc::new(Semaphore::new(1)),
         };
         db.admission.close();
         let error = match db.acquire().await {

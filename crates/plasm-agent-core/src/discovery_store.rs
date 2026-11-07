@@ -16,6 +16,7 @@ use sqlx::{Connection, Row};
 
 mod database;
 mod search_repository;
+pub(crate) use database::DecisionLease;
 use database::DiscoveryDatabase;
 pub(crate) use search_repository::{BacklogKey, FrontierKey, SearchAdmission, SearchKey};
 use std::collections::{BTreeMap, BTreeSet};

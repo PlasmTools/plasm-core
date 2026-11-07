@@ -30,10 +30,19 @@ async fn exercise_response_checkpoint(fail_first: bool, fail_write: bool, delay_
     }
     #[async_trait::async_trait]
     impl DecisionCache for SlowCache {
+        type Owner = ();
+        async fn claim(&self, _: &str) -> Result<Self::Owner, DecisionProviderError> {
+            Ok(())
+        }
         async fn load(&self, _: &str) -> Result<Option<String>, DecisionProviderError> {
             Ok(self.saved.lock().unwrap().clone())
         }
-        async fn save(&self, _: &str, raw: &str) -> Result<(), DecisionProviderError> {
+        async fn save(
+            &self,
+            _: &str,
+            raw: &str,
+            _: &mut Self::Owner,
+        ) -> Result<(), DecisionProviderError> {
             tokio::time::sleep(std::time::Duration::from_secs(self.delay_secs)).await;
             if self.fail_write {
                 return Err(Box::new(std::io::Error::other(

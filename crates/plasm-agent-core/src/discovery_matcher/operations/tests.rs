@@ -80,10 +80,19 @@ struct MemoryDecisionCache(tokio::sync::Mutex<BTreeMap<String, String>>);
 
 #[async_trait::async_trait]
 impl crate::discovery_service::decision_checkpoint::DecisionCache for MemoryDecisionCache {
+    type Owner = ();
+    async fn claim(&self, _: &str) -> Result<Self::Owner, super::super::DecisionProviderError> {
+        Ok(())
+    }
     async fn load(&self, key: &str) -> Result<Option<String>, super::super::DecisionProviderError> {
         Ok(self.0.lock().await.get(key).cloned())
     }
-    async fn save(&self, key: &str, raw: &str) -> Result<(), super::super::DecisionProviderError> {
+    async fn save(
+        &self,
+        key: &str,
+        raw: &str,
+        _: &mut Self::Owner,
+    ) -> Result<(), super::super::DecisionProviderError> {
         self.0.lock().await.insert(key.into(), raw.into());
         Ok(())
     }
