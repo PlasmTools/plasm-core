@@ -72,14 +72,29 @@ impl HttpTransport for Transport {
     }
 }
 
-async fn ordered_fanout_case(count: usize, fail_at: usize) {
-    let cgs = Arc::new(
-        load_schema_dir(
-            &std::path::PathBuf::from(crate::test_manifest_dir())
-                .join("../../fixtures/schemas/partial_write_relation_matrix"),
-        )
-        .unwrap(),
-    );
+async fn ordered_fanout_case(
+    count: usize,
+    fail_at: usize,
+    known_rejection: bool,
+) -> plasm_runtime::ExecutionFailure {
+    let mut cgs = load_schema_dir(
+        &std::path::PathBuf::from(crate::test_manifest_dir())
+            .join("../../fixtures/schemas/partial_write_relation_matrix"),
+    )
+    .unwrap();
+    if known_rejection {
+        cgs.capabilities
+            .get_mut("pwexpense_create")
+            .unwrap()
+            .no_effect_rejections
+            .push(plasm_core::schema::NoEffectRejection {
+                status: 422,
+                detail: plasm_core::schema::RejectionDetail::Exact {
+                    value: "fixture 422".into(),
+                },
+            });
+    }
+    let cgs = Arc::new(cgs);
     let registry = CgsRegistry::from_pairs(vec![("matrix".into(), "Matrix".into(), vec![], cgs)]);
     let store = Arc::new(Mutex::new(Store {
         source_rows: (0..count)
@@ -183,14 +198,24 @@ async fn ordered_fanout_case(count: usize, fail_at: usize) {
         assert!(!delivered.has_more);
     }
     let program = "src = e1{group_id=\"source\"}\nselected = src | select description\ncreated = selected => e1.m1(group_id=\"dest\", description=_.description)\ncreated";
-    let bundle = crate::plasm_compile::compile_plasm_expression(
-        host.engine.prompt_pipeline(),
-        Some(host.sessions.symbol_map_cross_cache()),
-        &session,
-        program,
-        program,
-    )
-    .unwrap();
+    let bundle = if known_rejection {
+        let symbols = session.teaching_exposure.as_ref().unwrap().to_symbol_map();
+        let entity = symbols.entity_sym_for("matrix", "PwExpense");
+        let create = symbols.method_sym_for("matrix", "PwExpense", "create");
+        let source = format!("class Observe(Program):\n    def build(self):\n        source = {entity}.query(group_id=\"source\")\n        return source.flat_map(lambda row: {entity}.{create}(group_id=\"dest\", description=row.description))\n");
+        crate::plasm_compile::compile_python_program(&session, &source)
+            .await
+            .unwrap()
+    } else {
+        crate::plasm_compile::compile_plasm_expression(
+            host.engine.prompt_pipeline(),
+            Some(host.sessions.symbol_map_cross_cache()),
+            &session,
+            program,
+            program,
+        )
+        .unwrap()
+    };
     let result = Box::pin(ExecutePipeline::run_program(
         &session,
         &host,
@@ -231,7 +256,11 @@ async fn ordered_fanout_case(count: usize, fail_at: usize) {
     assert_eq!(result.cause, plasm_runtime::FailureCause::Upstream);
     assert_eq!(
         result.recovery,
-        plasm_runtime::RecoveryDisposition::ReconcileEffects
+        if known_rejection && fail_at == 0 {
+            plasm_runtime::RecoveryDisposition::ReplanAfterRejection
+        } else {
+            plasm_runtime::RecoveryDisposition::ReconcileEffects
+        }
     );
     let receipts: Vec<_> = result
         .effects
@@ -242,8 +271,22 @@ async fn ordered_fanout_case(count: usize, fail_at: usize) {
         receipts.iter().map(|ack| ack.completed).sum::<usize>(),
         fail_at
     );
-    assert_eq!(receipts.iter().map(|ack| ack.failed).sum::<usize>(), 1);
-    assert!(result.effects_unresolved);
+    assert_eq!(
+        receipts.iter().map(|ack| ack.failed).sum::<usize>(),
+        usize::from(!known_rejection),
+        "Python scoped failures carry the rejection in dispatch evidence"
+    );
+    if known_rejection {
+        assert!(
+            !result.effects_unresolved,
+            "the rejected dispatch has a known no-effect outcome: {result:?}"
+        );
+        assert!(result.dispatches.iter().any(|dispatch| dispatch.status
+            == plasm_runtime::MutationDispatchStatus::RejectedWithoutEffect));
+    } else {
+        assert!(result.effects_unresolved);
+    }
+    result
 }
 
 async fn case(count: usize, fail_at: usize, known_rejection: bool) {
@@ -450,8 +493,41 @@ proptest! {
  #[test]
  fn oph_mutating_fanout_preserves_effects_on_system_failure(count in 1usize..6, fail_seed in 0usize..6) {
   let rt = tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap();
-  rt.block_on(Box::pin(ordered_fanout_case(count, fail_seed % count)));
+  rt.block_on(Box::pin(ordered_fanout_case(count, fail_seed % count, false)));
  }
+}
+
+#[tokio::test]
+async fn known_rejection_leaves_the_selected_suffix_unattempted() {
+    let two = Box::pin(ordered_fanout_case(3, 1, true)).await;
+    let three = Box::pin(ordered_fanout_case(4, 1, true)).await;
+    let accounting = |failure: &plasm_runtime::ExecutionFailure| {
+        failure
+            .effects
+            .iter()
+            .map(|effect| (effect.completed, effect.failed, effect.occurrences.clone()))
+            .collect::<Vec<_>>()
+    };
+    assert_eq!(
+        accounting(&two),
+        accounting(&three),
+        "the failure does not report the undispatched suffix"
+    );
+    assert_eq!(
+        two.dispatches
+            .iter()
+            .map(|dispatch| dispatch.status)
+            .collect::<Vec<_>>(),
+        three
+            .dispatches
+            .iter()
+            .map(|dispatch| dispatch.status)
+            .collect::<Vec<_>>(),
+        "dispatch statuses also omit the undispatched suffix"
+    );
+    if let Some(path) = std::env::var_os("PLASM_EFFECT_OBSERVATION_PATH") {
+        std::fs::write(path, serde_json::to_vec(&three).unwrap()).unwrap();
+    }
 }
 
 #[tokio::test]
@@ -471,5 +547,5 @@ async fn declared_rejection_before_any_write_is_known_no_effect() {
 
 #[tokio::test]
 async fn materialized_collection_over_default_page_retains_all_writes() {
-    Box::pin(ordered_fanout_case(31, 30)).await;
+    Box::pin(ordered_fanout_case(31, 30, false)).await;
 }

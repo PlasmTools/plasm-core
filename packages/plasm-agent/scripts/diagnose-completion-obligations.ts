@@ -3,13 +3,14 @@
  * --observe: print all verdicts without failing (diagnostic inventory only).
  */
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import { MockLanguageModelV3 } from "ai/test";
 import { AgentExecutionFailure, executionFailureSchema } from "../src/runtime/execution-failure.js";
 import { createPlasmTools } from "../src/tools/plasm-tools.js";
 import { createHarnessTools } from "../src/tools/harness-tools.js";
 import { runEveToolLoop } from "../src/telemetry/eve-tool-loop.js";
 
-const failure = executionFailureSchema.parse({
+const syntheticFailure = {
   cause: "upstream", recovery: "reconcile_effects", code: "upstream_rejection",
   diagnostic: "One invocation rejected after an earlier invocation completed",
   node: "write", occurrence_path: [1], catalog_digest: null,
@@ -19,7 +20,9 @@ const failure = executionFailureSchema.parse({
       {scope_path: ["write"], occurrence_path: [1], source_index: 1, source_identity: "Item/b", status: "failed"},
     ]}],
   dispatches: [], effects_unresolved: false,
-});
+};
+const nativePath = process.env.PLASM_EFFECT_OBSERVATION_PATH;
+const failure = executionFailureSchema.parse(nativePath ? JSON.parse(readFileSync(nativePath, "utf8")) : syntheticFailure);
 // Known outcomes are not the same as a completed selection: b failed and later
 // members were never visited. Do not gate solely on effects_unresolved.
 const session = "l_AAAAAAAAQACAAAAAAAAAAQ";
