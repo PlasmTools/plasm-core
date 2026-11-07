@@ -141,6 +141,37 @@ pub fn selected_capability_surface(
         // RA-12: Get/Query/Search `[…]` is the full authored field set, not `provides`.
         // Mutators still teach that write's `provides`. Identity stays bindable either way.
         admit_teaching_entity_fields(cgs, cap, entity, &entity_key, &mut surface);
+        // Embedded rows are part of the selected Get response, not another
+        // capability. Expose their typed navigation without granting a target
+        // query, a sibling operation, or an implicit source Get.
+        if cap.kind == CapabilityKind::Get {
+            for (relation_name, relation) in &entity.relations {
+                if !matches!(
+                    relation.materialize,
+                    Some(crate::schema::RelationMaterialization::FromParentGet { .. })
+                ) {
+                    continue;
+                }
+                let Some(target) = cgs.entities.get(relation.target_resource.as_str()) else {
+                    continue;
+                };
+                let target_key = ExposureEntityKey {
+                    entry_id: entry_id.into(),
+                    entity: relation.target_resource.clone(),
+                };
+                surface.entities.insert(target_key.clone());
+                surface.slots.insert(ExposureSlotKey::Relation {
+                    source: entity_key.clone(),
+                    relation: relation_name.clone(),
+                });
+                for field in CGS::default_ordered_entity_field_names(target) {
+                    surface.slots.insert(ExposureSlotKey::EntityField {
+                        entity: target_key.clone(),
+                        field: field.into(),
+                    });
+                }
+            }
+        }
         if let Some(output) = &cap.output_schema {
             let output_names: Vec<&str> = match &output.output_type {
                 crate::schema::OutputType::Entity { entity_type }
@@ -214,12 +245,12 @@ mod tests {
             .find(|c| c.domain.as_str() == "LangItem" && c.kind == CapabilityKind::Get)
             .unwrap();
         let delta = selected_capability_surface(&cgs, "fixture", &[read.name.to_string()]).unwrap();
-        assert!(!delta
+        assert!(delta
             .required
             .entities
             .iter()
             .any(|e| e.entity.as_str() == "LangSummary"));
-        assert!(!delta.required.slots.iter().any(|s| matches!(s, ExposureSlotKey::Relation { source, relation } if source.entity.as_str() == "LangItem" && relation.as_str() == "summary")));
+        assert!(delta.required.slots.iter().any(|s| matches!(s, ExposureSlotKey::Relation { source, relation } if source.entity.as_str() == "LangItem" && relation.as_str() == "summary")));
         assert_eq!(capability_names(&delta), vec![read.name.as_str()]);
     }
     fn plasm_core_fixture_load(path: &std::path::Path) -> CGS {

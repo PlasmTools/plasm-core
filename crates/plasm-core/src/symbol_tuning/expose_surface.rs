@@ -16,14 +16,36 @@ use super::{
 /// Seeds always survive even without capability rows.
 fn prune_bare_surface_entities_without_capabilities(
     surface: &mut ExposureSurface,
+    cgs: &CGS,
     catalog_entry_id: &str,
     seed_names: &BTreeSet<&str>,
 ) {
+    let relation_targets: BTreeSet<_> = surface
+        .slots
+        .iter()
+        .filter_map(|slot| {
+            let super::ExposureSlotKey::Relation { source, relation } = slot else {
+                return None;
+            };
+            if source.entry_id != catalog_entry_id {
+                return None;
+            }
+            let target = cgs
+                .entities
+                .get(source.entity.as_str())?
+                .relations
+                .get(relation.as_str())?;
+            Some(target.target_resource.clone())
+        })
+        .collect();
     surface.entities.retain(|ek| {
         if ek.entry_id != catalog_entry_id {
             return true;
         }
         if seed_names.contains(ek.entity.as_str()) {
+            return true;
+        }
+        if relation_targets.contains(&ek.entity) {
             return true;
         }
         surface
@@ -105,6 +127,7 @@ impl TeachingExposureSession {
         let seed_names: BTreeSet<&str> = entity_names_in_order.iter().copied().collect();
         prune_bare_surface_entities_without_capabilities(
             &mut self.surface,
+            owning_cgs.as_ref(),
             catalog_entry_id,
             &seed_names,
         );
@@ -120,7 +143,17 @@ impl TeachingExposureSession {
             }
         }
         // Relation-target mutator closure may expose entities with capabilities; give them e#.
-        for ename in capability_bearing_extra_entities(&self.surface, catalog_entry_id) {
+        let mut extra = capability_bearing_extra_entities(&self.surface, catalog_entry_id);
+        extra.extend(
+            self.surface
+                .entities
+                .iter()
+                .filter(|e| e.entry_id == catalog_entry_id)
+                .map(|e| e.entity.to_string()),
+        );
+        extra.sort();
+        extra.dedup();
+        for ename in extra {
             if assign_surface_entity_e(self, owning_cgs.as_ref(), catalog_entry_id, ename.as_str())
             {
                 entities_added += 1;
@@ -138,6 +171,32 @@ mod tests {
         capability_exposure::selected_capability_surface,
         prompt_render::python::{prepare_python_teaching_wave, PythonTeachingState},
     };
+
+    #[test]
+    fn selected_get_exposes_embedded_relation_without_target_capability() {
+        let cgs = Arc::new(
+            crate::loader::load_schema_dir(
+                &std::path::Path::new(crate::test_manifest_dir())
+                    .join("../../fixtures/schemas/from_parent_get_nav"),
+            )
+            .unwrap(),
+        );
+        let delta =
+            selected_capability_surface(&cgs, "matrix", &["parent_item_get".into()]).unwrap();
+        let exposure =
+            TeachingExposureSession::new_with_intent_delta(&cgs, "matrix", &["ParentItem"], delta);
+        assert!(exposure.qualified_entity_symbol("matrix", "Tag").is_some());
+        assert_eq!(exposure.exposed_relation_symbol_rows().len(), 1);
+        assert!(!exposure
+            .surface
+            .capabilities
+            .iter()
+            .any(|cap| cap.capability.as_str() == "tag_query"));
+        let card =
+            prepare_python_teaching_wave(&exposure, &PythonTeachingState::default()).unwrap();
+        assert!(card.declarations.contains("Tag"), "{}", card.declarations);
+        assert!(card.declarations.contains("color"), "{}", card.declarations);
+    }
 
     #[test]
     fn split_endpoint_waves_teach_the_same_relation_as_joint_exposure() {
@@ -174,7 +233,10 @@ mod tests {
                 &[first_entity],
                 select(&[first]),
             );
-            assert!(split.exposed_relation_symbol_rows().is_empty());
+            assert_eq!(
+                split.exposed_relation_symbol_rows().len(),
+                usize::from(first == "parent_item_get")
+            );
             let before =
                 prepare_python_teaching_wave(&split, &PythonTeachingState::default()).unwrap();
             let original_entities = split.to_symbol_map().exposed_entity_symbol_rows();
@@ -189,7 +251,10 @@ mod tests {
             let relations = split.exposed_relation_symbol_rows();
             assert_eq!(relations.len(), 1);
             let after = prepare_python_teaching_wave(&split, &before.next_state).unwrap();
-            assert!(after.declarations.contains(&relations[0].symbol));
+            assert!(
+                before.declarations.contains(&relations[0].symbol)
+                    || after.declarations.contains(&relations[0].symbol)
+            );
             for original in original_entities {
                 assert!(split
                     .to_symbol_map()
@@ -226,7 +291,14 @@ mod tests {
             TeachingExposureSession::new_with_intent_delta(&cgs, "left", &["ParentItem"], first);
         let second = selected_capability_surface(&cgs, "right", &["tag_query".into()]).unwrap();
         exposure.expose_surface(&[&cgs], cgs.clone(), "right", &["Tag"], second);
-        assert!(exposure.exposed_relation_symbol_rows().is_empty());
+        let relations = exposure.exposed_relation_symbol_rows();
+        assert_eq!(relations.len(), 1);
+        assert_eq!(relations[0].entry_id, "left");
+        assert_eq!(relations[0].target_entity, "Tag");
+        assert_ne!(
+            exposure.qualified_entity_symbol("left", "Tag"),
+            exposure.qualified_entity_symbol("right", "Tag")
+        );
         assert_eq!(exposure.surface.capabilities.len(), 2);
     }
 }

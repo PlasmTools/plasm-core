@@ -1192,6 +1192,7 @@ fn expand_wave_emits_parent_relation_edge_for_langitem_summary() {
     let mut exp =
         TeachingExposureSession::new_with_intent_delta(&cgs, "langmatrix", &["LangItem"], delta1);
     let slots_before = exp.surface.slots.clone();
+    let entities_before = exp.to_symbol_map().exposed_entity_symbol_rows().len();
     let cgs_arc = std::sync::Arc::new(cgs.clone());
     let delta2 = crate::capability_exposure::explicit_entity_capability_surface(
         &cgs,
@@ -1200,11 +1201,11 @@ fn expand_wave_emits_parent_relation_edge_for_langitem_summary() {
     )
     .expect("explicit fixture capability exposure");
     exp.expose_surface(&[&cgs], cgs_arc, "langmatrix", &["LangSummary"], delta2);
-    let added = exp.qualified_entities_since(1);
+    let added = exp.qualified_entities_since(entities_before);
     let new_relation_slots = exp.relation_edge_delta_slots(&slots_before, &added);
     exp.admit_relation_edge_slots_for_render(&[&cgs], &new_relation_slots);
     assert!(
-        new_relation_slots.iter().any(|slot| {
+        slots_before.iter().any(|slot| {
             matches!(
                 slot,
                 ExposureSlotKey::Relation {
@@ -1213,7 +1214,7 @@ fn expand_wave_emits_parent_relation_edge_for_langitem_summary() {
                 } if source.entity.as_str() == "LangItem" && relation.as_str() == "summary"
             )
         }),
-        "expand should add LangItem.summary relation slot"
+        "selected parent Get should expose the embedded summary relation"
     );
     let delta = pipeline.render_teaching_exposure_delta_with_edges(
         &cgs,
@@ -1222,13 +1223,10 @@ fn expand_wave_emits_parent_relation_edge_for_langitem_summary() {
         &new_relation_slots,
         None,
     );
+    assert!(!new_relation_slots.iter().any(|slot| matches!(slot, ExposureSlotKey::Relation { source, relation } if source.entity.as_str() == "LangItem" && relation.as_str() == "summary")));
     assert!(
-        delta.contains("relation e1 → e2"),
-        "delta should teach parent hop: {delta}"
-    );
-    assert!(
-        delta.contains(".r"),
-        "delta should include opaque relation symbol: {delta}"
+        !delta.contains("summary · Summary object embedded"),
+        "already taught relation must not be repeated: {delta}"
     );
 }
 
