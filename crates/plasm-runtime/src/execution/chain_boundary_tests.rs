@@ -62,11 +62,16 @@ paging_handle: None,
 source: ExecutionSource::Cache,
 stats: Default::default(),
 request_fingerprints: vec![],
-operations: OperationLedger::empty(),
+operations: OperationLedger::from_ack(crate::OperationAck {
+    entry_id: "matrix".into(), capability: "create".into(), entity: "SavedNote".into(),
+    logical_invocations: 1, completed: 1, failed: 0, source: ExecutionSource::Live,
+    description: "created parent".into(), outcomes: vec![], resolved_effects: vec![],
+}),
 };
             let compiled = Arc::new(plasm_compile::compile_cgs_capability_templates(&cgs).unwrap());
             let result = super::super::EXECUTION_COMPILED_CATALOG.scope(compiled, engine.execute_chain_via_get_bindings(&source, cgs.get_entity("SavedNote").unwrap(), "Note".into(), &"note_get".into(), &IndexMap::from([("note_id".into(),"note_id".into())]), &cgs, &mut mat, ExecutionMode::Live)).await.unwrap();
             assert_eq!(result.entities().iter().map(|row| row.reference.primary_slot_str().parse::<i64>().unwrap()).collect::<Vec<_>>(), ids);
+            assert_eq!(result.operations, source.operations, "parent receipt must not be repeated per child");
         });
     }
 }

@@ -547,7 +547,7 @@ impl ExecutionEngine {
                 ..Default::default()
             },
             request_fingerprints: Vec::new(),
-            operations: OperationLedger::empty(),
+            operations: source_result.operations.clone(),
         })
     }
 
@@ -669,7 +669,7 @@ impl ExecutionEngine {
             },
             stats: merged_stats,
             request_fingerprints: Vec::new(),
-            operations: OperationLedger::empty(),
+            operations: source_result.operations.clone(),
         })
     }
 
@@ -1072,7 +1072,7 @@ impl ExecutionEngine {
                 ..Default::default()
             },
             request_fingerprints: Vec::new(),
-            operations: OperationLedger::empty(),
+            operations: source_result.operations.clone(),
         })
     }
 
@@ -1219,7 +1219,7 @@ impl ExecutionEngine {
                 ..Default::default()
             },
             request_fingerprints: Vec::new(),
-            operations: OperationLedger::empty(),
+            operations: source_result.operations.clone(),
         })
     }
 }
