@@ -322,7 +322,7 @@ impl Capture<'_, '_> {
                 }
             }
         }
-        let field = matches!(expr, PyExpr::Attribute(attr) if state.lower.expression_owner(&attr.value).is_some())
+        let field = matches!(expr, PyExpr::Attribute(attr) if state.lower.expression_owner(&attr.value).is_some() || state.lower.immediate_host_dependency(&attr.value))
             && placement != ExpressionPlacement::Host;
         let deferred = placement != ExpressionPlacement::PythonValue;
         let bound = matches!(expr, PyExpr::Name(name) if name.ctx == ruff_python_ast::ExprContext::Load && state.lower.state.contains(state.lower.scoped_binding(name.id.as_str())));

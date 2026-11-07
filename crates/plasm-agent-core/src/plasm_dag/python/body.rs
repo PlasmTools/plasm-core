@@ -710,6 +710,8 @@ impl Lower<'_> {
                 ..
             }
         );
+        // A bounded rowset remains a collection when captured as a value;
+        // its cardinality proof permits explicit field extraction separately.
         inputs.insert(
             node.clone(),
             PlanDataInput {
@@ -722,12 +724,6 @@ impl Lower<'_> {
                     || record
                     || (self.recorded_outputs.contains_key(&node)
                         && self.state.get(&node).is_some_and(|node| node.singleton))
-                    || super::super::binding_contract(&self.state, &node).is_some_and(|contract| {
-                        matches!(
-                            contract.row_cardinality,
-                            RowCardinalityProof::BoundedSingleton { .. }
-                        )
-                    })
                     || ((is_compute || scalar)
                         && super::super::binding_contract(&self.state, &node)
                             .is_some_and(|c| c.row_cardinality.permits_scalar_field_extract()))
