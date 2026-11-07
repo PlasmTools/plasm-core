@@ -332,10 +332,10 @@ fn preflight_compile_leaf(
                 return preflight_compile_create(create, cgs, compiled).map(|_| None)
             }
             Expr::Delete(delete) => {
-                return preflight_compile_delete(delete, cgs, compiled).map(|_| None)
+                return preflight_compile_delete(delete, cgs, compiled, mat).map(|_| None)
             }
             Expr::Invoke(invoke) => {
-                return preflight_compile_invoke(invoke, cgs, compiled).map(|_| None)
+                return preflight_compile_invoke(invoke, cgs, compiled, mat).map(|_| None)
             }
             Expr::Page(_) | Expr::Wait(_) | Expr::Cancel(_) | Expr::TeachingValue { .. } => {
                 return Ok(None)
@@ -415,140 +415,34 @@ fn preflight_compile_create(
     cgs: &CGS,
     compiled: &plasm_compile::CompiledCatalog,
 ) -> Result<(), RuntimeError> {
-    let capability = cgs
-        .get_capability(create.capability.as_str())
-        .ok_or_else(|| RuntimeError::CapabilityNotFound {
-            capability: create.capability.to_string(),
-            entity: create.entity.to_string(),
-        })?;
-    let capability_template = compiled.capability(capability.name.as_str())?.clone();
-    let payload = if let Some(schema) = &capability.inputs.payload {
-        InvokeInputPayload::lift(&create.input.to_value(), &schema.input_type, cgs)
-    } else {
-        create.input.clone()
-    };
-    let input = match capability.inputs.payload.as_ref() {
-        Some(schema) => plasm_core::normalize_structured_string_inputs(
-            payload.to_value(),
-            &schema.input_type,
-            cgs,
-        ),
-        None => payload.to_value(),
-    };
-    let input = plasm_core::prepare_create_capability_input(capability, create, input, cgs);
-    let mut env = CmlEnv::new();
-    env.insert("input".to_string(), input.clone());
-    if let Value::Object(ref map) = input {
-        for (k, v) in map {
-            env.insert(k.clone(), v.clone());
-        }
-    }
-    normalize_cml_env_inputs(&mut env, cgs, capability)?;
-    plasm_core::apply_entity_ref_scope_splat(&mut env, cgs, capability)?;
+    let (capability, mut env) = super::mutation_prepare::create(create, cgs)?;
+    let template = compiled.capability(capability.name.as_str())?;
     apply_preflight_compile_stubs(&mut env, capability, cgs);
     merge_plasm_execute_session_env(&mut env);
-    compile_operation_dispatch(&capability_template, &env).map(|_| ())
+    compile_operation_dispatch(template, &env).map(|_| ())
 }
 
 fn preflight_compile_delete(
     delete: &plasm_core::DeleteExpr,
     cgs: &CGS,
     compiled: &plasm_compile::CompiledCatalog,
+    mat: &SessionMaterialization,
 ) -> Result<(), RuntimeError> {
-    let capability = cgs
-        .get_capability(delete.capability.as_str())
-        .ok_or_else(|| RuntimeError::CapabilityNotFound {
-            capability: delete.capability.to_string(),
-            entity: delete.target.entity_type.to_string(),
-        })?;
-    let capability_template = compiled.capability(capability.name.as_str())?.clone();
-    let input_for_env = targeted_call_input(delete, capability, cgs);
-    let mut env = CmlEnv::new();
-    let target_ent = cgs
-        .get_entity(delete.target.entity_type.as_str())
-        .ok_or_else(|| RuntimeError::EntityUnknown {
-            entity: delete.target.entity_type.to_string(),
-        })?;
-    populate_template_path_env(
-        &mut env,
-        capability,
-        &delete.target,
-        plasm_core::IdentityProjectionCtx::Entity(target_ent),
-        input_for_env.as_ref(),
-    )?;
-    if let Some(input) = input_for_env {
-        env.insert("input".to_string(), input);
-    }
-    normalize_cml_env_inputs(&mut env, cgs, capability)?;
-    plasm_core::apply_entity_ref_scope_splat(&mut env, cgs, capability)?;
+    let (capability, _, mut env) = super::mutation_prepare::targeted(delete, cgs, mat)?;
+    let template = compiled.capability(capability.name.as_str())?;
     merge_plasm_execute_session_env(&mut env);
-    compile_operation_dispatch(&capability_template, &env).map(|_| ())
+    compile_operation_dispatch(template, &env).map(|_| ())
 }
 
 fn preflight_compile_invoke(
     invoke: &InvokeExpr,
     cgs: &CGS,
     compiled: &plasm_compile::CompiledCatalog,
+    mat: &SessionMaterialization,
 ) -> Result<(), RuntimeError> {
-    let capability = cgs
-        .get_capability(invoke.capability.as_str())
-        .ok_or_else(|| RuntimeError::CapabilityNotFound {
-            capability: invoke.capability.to_string(),
-            entity: invoke.target.entity_type.to_string(),
-        })?;
-    let capability_template = compiled.capability(capability.name.as_str())?.clone();
-    let input_for_env = targeted_call_input(invoke, capability, cgs);
-    let mut env = CmlEnv::new();
-    let target_ent = cgs
-        .get_entity(invoke.target.entity_type.as_str())
-        .ok_or_else(|| RuntimeError::EntityUnknown {
-            entity: invoke.target.entity_type.to_string(),
-        })?;
-    populate_template_path_env(
-        &mut env,
-        capability,
-        &invoke.target,
-        plasm_core::IdentityProjectionCtx::Entity(target_ent),
-        input_for_env.as_ref(),
-    )?;
-    if let Some(input) = &input_for_env {
-        env.insert("input".to_string(), input.clone());
-    }
-    normalize_cml_env_inputs(&mut env, cgs, capability)?;
-    plasm_core::apply_entity_ref_scope_splat(&mut env, cgs, capability)?;
-    merge_entity_id_from_into_input_env(&mut env, Some(target_ent), capability);
+    let (capability, _, mut env) = super::mutation_prepare::invoke(invoke, cgs, mat)?;
+    let template = compiled.capability(capability.name.as_str())?;
     apply_preflight_compile_stubs(&mut env, capability, cgs);
     merge_plasm_execute_session_env(&mut env);
-    compile_operation_dispatch(&capability_template, &env).map(|_| ())
-}
-
-pub(super) fn targeted_call_input(
-    invoke: &impl plasm_core::expr::TargetedCall,
-    capability: &plasm_core::CapabilitySchema,
-    cgs: &CGS,
-) -> Option<Value> {
-    let raw = match invoke.input() {
-        None => Value::Object(indexmap::IndexMap::new()),
-        Some(input) => {
-            let payload = if let Some(schema) = &capability.inputs.payload {
-                InvokeInputPayload::lift(&input.to_value(), &schema.input_type, cgs)
-            } else {
-                input.clone()
-            };
-            match capability.inputs.payload.as_ref() {
-                Some(schema) => plasm_core::normalize_structured_string_inputs(
-                    payload.to_value(),
-                    &schema.input_type,
-                    cgs,
-                ),
-                None => payload.to_value(),
-            }
-        }
-    };
-    let effective = plasm_core::prepare_targeted_capability_input(capability, invoke, raw, cgs);
-    if invoke.input().is_none() && effective.as_object().is_some_and(|m| m.is_empty()) {
-        None
-    } else {
-        Some(effective)
-    }
+    compile_operation_dispatch(template, &env).map(|_| ())
 }

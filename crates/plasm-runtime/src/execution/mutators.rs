@@ -19,43 +19,8 @@ impl ExecutionEngine {
         mat: &mut SessionMaterialization,
         mode: ExecutionMode,
     ) -> Result<ExecutionResult, RuntimeError> {
-        let capability = cgs
-            .get_capability(create.capability.as_str())
-            .ok_or_else(|| RuntimeError::CapabilityNotFound {
-                capability: create.capability.to_string(),
-                entity: create.entity.to_string(),
-            })?;
-
+        let (capability, mut env) = super::mutation_prepare::create(create, cgs)?;
         let capability_template = compiled_capability_template(capability)?;
-
-        let payload = if let Some(schema) = &capability.inputs.payload {
-            InvokeInputPayload::lift(&create.input.to_value(), &schema.input_type, cgs)
-        } else {
-            create.input.clone()
-        };
-
-        let input = match capability.inputs.payload.as_ref() {
-            Some(schema) => plasm_core::normalize_structured_string_inputs(
-                payload.to_value(),
-                &schema.input_type,
-                cgs,
-            ),
-            None => payload.to_value(),
-        };
-
-        let input = plasm_core::prepare_create_capability_input(capability, create, input, cgs);
-
-        let mut env = CmlEnv::new();
-        env.insert("input".to_string(), input.clone());
-        if let Value::Object(ref map) = input {
-            // Full input overlay: path/query/body vars resolve from the same object (no
-            // separate path-var harvest — that duplicated this loop).
-            for (k, v) in map {
-                env.insert(k.clone(), v.clone());
-            }
-        }
-        normalize_cml_env_inputs(&mut env, cgs, capability)?;
-        plasm_core::apply_entity_ref_scope_splat(&mut env, cgs, capability)?;
 
         apply_preflight_steps(self, capability, cgs, mat, mode, &mut env, None, true).await?;
 
@@ -186,39 +151,8 @@ impl ExecutionEngine {
         mat: &mut SessionMaterialization,
         mode: ExecutionMode,
     ) -> Result<ExecutionResult, RuntimeError> {
-        let capability = cgs
-            .get_capability(delete.capability.as_str())
-            .ok_or_else(|| RuntimeError::CapabilityNotFound {
-                capability: delete.capability.to_string(),
-                entity: delete.target.entity_type.to_string(),
-            })?;
-
+        let (capability, _, mut env) = super::mutation_prepare::targeted(delete, cgs, mat)?;
         let capability_template = compiled_capability_template(capability)?;
-
-        let mut env = CmlEnv::new();
-        let target_ent = cgs
-            .get_entity(delete.target.entity_type.as_str())
-            .ok_or_else(|| RuntimeError::EntityUnknown {
-                entity: delete.target.entity_type.to_string(),
-            })?;
-        let input_for_env = super::compile_preflight::targeted_call_input(delete, capability, cgs);
-        let mut overlay_map = mat.capability_params_for(&delete.target);
-        if let Some(Value::Object(input)) = &input_for_env {
-            overlay_map.extend(input.clone());
-        }
-        let session_overlay = (!overlay_map.is_empty()).then(|| Value::Object(overlay_map));
-        populate_template_path_env(
-            &mut env,
-            capability,
-            &delete.target,
-            plasm_core::IdentityProjectionCtx::Entity(target_ent),
-            session_overlay.as_ref(),
-        )?;
-        if let Some(input) = input_for_env {
-            env.insert("input".to_string(), input);
-        }
-        normalize_cml_env_inputs(&mut env, cgs, capability)?;
-        plasm_core::apply_entity_ref_scope_splat(&mut env, cgs, capability)?;
 
         merge_plasm_execute_session_env(&mut env);
 
@@ -293,50 +227,8 @@ impl ExecutionEngine {
         mat: &mut SessionMaterialization,
         mode: ExecutionMode,
     ) -> Result<ExecutionResult, RuntimeError> {
-        let capability = cgs
-            .get_capability(invoke.capability.as_str())
-            .ok_or_else(|| RuntimeError::CapabilityNotFound {
-                capability: invoke.capability.to_string(),
-                entity: invoke.target.entity_type.to_string(),
-            })?;
-
+        let (capability, _, mut env) = super::mutation_prepare::invoke(invoke, cgs, mat)?;
         let capability_template = compiled_capability_template(capability)?;
-
-        let target_ent = cgs
-            .get_entity(invoke.target.entity_type.as_str())
-            .ok_or_else(|| RuntimeError::EntityUnknown {
-                entity: invoke.target.entity_type.to_string(),
-            })?;
-
-        let input_for_env = super::compile_preflight::targeted_call_input(invoke, capability, cgs);
-
-        let mut env = CmlEnv::new();
-        let mut overlay_map = mat.capability_params_for(&invoke.target);
-        if let Some(Value::Object(input)) = &input_for_env {
-            for (k, v) in input {
-                overlay_map.insert(k.clone(), v.clone());
-            }
-        } else if let Some(input) = &input_for_env {
-            // Non-object invoke payloads still flow via the dedicated `input` env key below.
-            let _ = input;
-        }
-        let overlay = (!overlay_map.is_empty()).then(|| Value::Object(overlay_map));
-        populate_template_path_env(
-            &mut env,
-            capability,
-            &invoke.target,
-            plasm_core::IdentityProjectionCtx::Entity(target_ent),
-            overlay.as_ref(),
-        )?;
-
-        // Aggregate `input` for body: { type: var, name: input }. Object field keys were
-        // already merged into overlay above — do not splat them a second time.
-        if let Some(input) = &input_for_env {
-            env.insert("input".to_string(), input.clone());
-        }
-        normalize_cml_env_inputs(&mut env, cgs, capability)?;
-        plasm_core::apply_entity_ref_scope_splat(&mut env, cgs, capability)?;
-        merge_entity_id_from_into_input_env(&mut env, Some(target_ent), capability);
 
         apply_preflight_steps(
             self,

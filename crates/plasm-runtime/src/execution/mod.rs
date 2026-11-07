@@ -48,6 +48,7 @@ mod chain;
 mod collection;
 mod compile_preflight;
 mod coverage;
+mod mutation_prepare;
 #[cfg(test)]
 pub(crate) use collection::test_collection;
 pub use collection::{ExecutionCollection, PayloadResidency, RowMaterialization};
