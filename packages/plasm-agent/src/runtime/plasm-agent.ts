@@ -70,6 +70,8 @@ export interface AgentGenerateOptions {
   onStepFinish?: (step: AgentStepEvent) => void | Promise<void>;
   /** Observe host-owned workflow initialization without exposing it as a model tool call. */
   onInitialContext?: (event: { intent: string; result: string }) => void | Promise<void>;
+  /** Measure initial discovery without putting its timing in model context. */
+  onInitialContextTiming?: (event: { durationMs: number; outcome: "success" | "error" }) => void;
   onProviderRequest?: (event: import("../telemetry/provider-completion.js").ProviderRequestEvent & { step: number }) => void;
   /**
    * Optional tool adapter. Observers must preserve result and error semantics.
@@ -300,6 +302,7 @@ export class PlasmAgent {
     // Host-owned bootstrap: preserve the task verbatim instead of asking the
     // execution model to invent an initial discovery call or decompose intent.
     if (!this.runtime.hasOpenWorkflow()) {
+      const contextStarted = performance.now();
       this.initialContext ??= this.runtime.plasmContext({
         intent: prompt,
         sessionMode: "new",
@@ -308,7 +311,14 @@ export class PlasmAgent {
         const observation = failureObservation(error);
         throw new AgentExecutionFailure(observation.failure, observation.summary);
       });
-      const context = await this.initialContext;
+      let context: string;
+      try {
+        context = await this.initialContext;
+      } catch (error) {
+        try { options.onInitialContextTiming?.({ durationMs: performance.now() - contextStarted, outcome: "error" }); } catch { /* Observability must not affect execution. */ }
+        throw error;
+      }
+      try { options.onInitialContextTiming?.({ durationMs: performance.now() - contextStarted, outcome: "success" }); } catch { /* Observability must not affect execution. */ }
       await options.onInitialContext?.({ intent: prompt, result: context });
       messages = [...messages, {
         role: "user",

@@ -46,7 +46,8 @@ try {
     };
     let observed = 0;
     let hostObservation: { intent: string; result: string } | undefined;
-    const first = await agent.generate(task, {onInitialContext: event => { hostObservation = event; }, wrapTools: (tools) => {
+    const timings: Array<{ durationMs: number; outcome: string }> = [];
+    const first = await agent.generate(task, {onInitialContext: event => { hostObservation = event; }, onInitialContextTiming: event => { timings.push(event); }, wrapTools: (tools) => {
       const contextTool = tools.plasm_context!;
       const execute = contextTool.execute!;
       return {...tools, plasm_context: {...contextTool, execute: async (input, options) => {
@@ -58,6 +59,9 @@ try {
     assert.equal(observed, 0, "host initialization does not invoke the model-facing continuation tool");
     assert.deepEqual(hostObservation, { intent: task, result: context });
     assert.equal(initialized, 1);
+    assert.equal(timings.length, 1);
+    assert.equal(timings[0]?.outcome, "success");
+    assert.ok((timings[0]?.durationMs ?? -1) >= 0);
     assert.equal(model.doStreamCalls.length, 1);
     assert.equal(first.toolCount, 0, "host bootstrap is not a model-authored tool call");
     assert.equal(first.stopReason, "unterminated");
@@ -68,12 +72,14 @@ try {
   const model = new MockLanguageModelV3({doStream: unused});
   const failing = new PlasmAgent({agentRoot: root, model, engine, hostTransport: null, archiveEnabled: false, telemetry: false});
   failing.runtime.plasmContext = async () => { throw new Error("bootstrap unavailable"); };
-  await assert.rejects(failing.generate("Task"), (error: unknown) => {
+  const failures: string[] = [];
+  await assert.rejects(failing.generate("Task", {onInitialContextTiming: event => { failures.push(event.outcome); }}), (error: unknown) => {
     assert.ok(error instanceof AgentExecutionFailure);
     assert.equal(error.failure.diagnostic, "bootstrap unavailable");
     assert.equal(error.failure.recovery, "stop");
     return true;
   });
+  assert.deepEqual(failures, ["error"]);
   assert.equal(failureObservation(new Error("repair_program: retry this write")).failure.recovery, "stop", "diagnostic prose cannot grant recovery authority");
   const structured = failureObservation(new Error("original service diagnostic")).failure;
   failing.runtime.plasmContext = async () => { throw new AgentExecutionFailure(structured, "Execution stopped: original service diagnostic. Stop this execution."); };
