@@ -116,10 +116,15 @@ impl ProposalModel for ConfiguredProvider {
                 let client = reqwest::Client::builder()
                     .timeout(std::time::Duration::from_secs(90))
                     .build()?;
-                let transport = plasm_runtime::provider_transport::ReqwestProviderTransport::new(
-                    client,
-                    request.endpoint(),
-                    key,
+                let transport = crate::discovery_scheduling::ScheduledProviderTransport::new(
+                    std::sync::Arc::new(
+                        plasm_runtime::provider_transport::ReqwestProviderTransport::new(
+                            client,
+                            request.endpoint(),
+                            key,
+                        ),
+                    ),
+                    crate::discovery_scheduling::Workload::LearningNormalization,
                 );
                 Ok(plasm_runtime::provider_transport::request_attempt(
                     &transport,
@@ -162,10 +167,15 @@ impl ProposalModel for ConfiguredProvider {
             let client = reqwest::Client::builder()
                 .timeout(std::time::Duration::from_secs(8))
                 .build()?;
-            let transport = plasm_runtime::provider_transport::ReqwestProviderTransport::new(
-                client,
-                crate::discovery_matcher::RELEVANCE_ENDPOINT,
-                key,
+            let transport = crate::discovery_scheduling::ScheduledProviderTransport::new(
+                std::sync::Arc::new(
+                    plasm_runtime::provider_transport::ReqwestProviderTransport::new(
+                        client,
+                        crate::discovery_matcher::RELEVANCE_ENDPOINT,
+                        key,
+                    ),
+                ),
+                crate::discovery_scheduling::Workload::LearningApplicability,
             );
             let raw = plasm_runtime::provider_transport::request_provider(
                 &transport,
@@ -310,6 +320,22 @@ async fn interpret(
 }
 
 async fn embed(intent: &NormalizedIntent) -> Result<Vec<f32>, LearningError> {
+    let wait = crate::discovery_scheduling::PhaseTimer::start(
+        crate::discovery_scheduling::Workload::LearningEmbedding,
+        crate::discovery_scheduling::Phase::PermitWait,
+    );
+    let _permit = crate::discovery_scheduling::provider_permit().await;
+    wait.complete(true);
+    let service = crate::discovery_scheduling::PhaseTimer::start(
+        crate::discovery_scheduling::Workload::LearningEmbedding,
+        crate::discovery_scheduling::Phase::ProviderService,
+    );
+    let result = embed_with_permit(intent).await;
+    service.complete(result.is_ok());
+    result
+}
+
+async fn embed_with_permit(intent: &NormalizedIntent) -> Result<Vec<f32>, LearningError> {
     let client =
         plasm_catalog::embeddings::EmbeddingClient::from_env().map_err(LearningError::from)?;
     let text = format!("{} {}", intent.purpose, intent.facets.join(" "));

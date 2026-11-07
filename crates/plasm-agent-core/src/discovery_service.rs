@@ -506,15 +506,18 @@ impl DiscoveryService {
         let operation_extractor =
             std::sync::Arc::new(matcher::operations::ProviderOperationExtractor::new(
                 operation_model.clone(),
-                std::sync::Arc::new(scheduling::ScheduledProviderTransport(std::sync::Arc::new(
-                    plasm_runtime::provider_transport::ReqwestProviderTransport::new(
-                        reqwest::Client::builder()
-                            .timeout(std::time::Duration::from_secs(45))
-                            .build()?,
-                        "https://openrouter.ai/api/v1/chat/completions",
-                        api_key.clone(),
+                std::sync::Arc::new(scheduling::ScheduledProviderTransport::new(
+                    std::sync::Arc::new(
+                        plasm_runtime::provider_transport::ReqwestProviderTransport::new(
+                            reqwest::Client::builder()
+                                .timeout(std::time::Duration::from_secs(45))
+                                .build()?,
+                            "https://openrouter.ai/api/v1/chat/completions",
+                            api_key.clone(),
+                        ),
                     ),
-                ))),
+                    scheduling::Workload::OperationExtraction,
+                )),
             ));
         Ok(Self {
             guided_capabilities: Default::default(),
@@ -523,7 +526,7 @@ impl DiscoveryService {
                 .filter(|value| !value.is_empty())
                 .map(std::path::PathBuf::from),
             store,
-            transport: std::sync::Arc::new(scheduling::ScheduledProviderTransport(
+            transport: std::sync::Arc::new(scheduling::ScheduledProviderTransport::new(
                 std::sync::Arc::new(
                     plasm_runtime::provider_transport::ReqwestProviderTransport::new(
                         reqwest::Client::builder()
@@ -533,6 +536,7 @@ impl DiscoveryService {
                         api_key,
                     ),
                 ),
+                scheduling::Workload::DiscoveryDecision,
             )),
             match_model: std::env::var("PLASM_DISCOVERY_CAPABILITY_MATCH_MODEL")
                 .unwrap_or_else(|_| matcher::RELEVANCE_MODEL.into()),
@@ -551,6 +555,15 @@ impl DiscoveryService {
 
     /// Shared new/extend state machine; hosts supply authenticated scope and expiry.
     pub async fn route_turn(&self, request: RouteTurn<'_>) -> Result<RoutingReceipt> {
+        let key = request
+            .logical_session
+            .map(str::to_owned)
+            .unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
+        let budget = self.store.provider_budgets.for_session(&key).await;
+        scheduling::in_session(budget, self.route_turn_inner(request)).await
+    }
+
+    async fn route_turn_inner(&self, request: RouteTurn<'_>) -> Result<RoutingReceipt> {
         let pin_id = request
             .logical_session
             .map(str::to_owned)
@@ -730,6 +743,25 @@ impl DiscoveryService {
     /// conversational intent. Each ticket is judged independently; only prior
     /// visit counts are shared between turns.
     pub async fn route_supplemental_turn(
+        &self,
+        session: &str,
+        ticket: uuid::Uuid,
+        generation: &str,
+        provenance: &crate::intent_provenance::IntentProvenance,
+        allowed: &DiscoveryAuthorization,
+        exposed: &[CapabilityRef],
+    ) -> Result<RoutingReceipt> {
+        let budget = self.store.provider_budgets.for_session(session).await;
+        scheduling::in_session(
+            budget,
+            self.route_supplemental_turn_inner(
+                session, ticket, generation, provenance, allowed, exposed,
+            ),
+        )
+        .await
+    }
+
+    async fn route_supplemental_turn_inner(
         &self,
         session: &str,
         ticket: uuid::Uuid,

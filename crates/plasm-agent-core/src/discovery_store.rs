@@ -266,6 +266,7 @@ pub struct DiscoveryStore {
     pool: DiscoveryDatabase,
     // Store clones (including short-lived Node route services) share cache fills.
     pub(crate) pending_decisions: std::sync::Arc<crate::discovery_scheduling::DecisionLocks>,
+    pub(crate) provider_budgets: std::sync::Arc<crate::discovery_scheduling::SessionBudgets>,
     pub(crate) search_index: SharedCatalogueSearchCache,
 }
 
@@ -521,6 +522,7 @@ impl DiscoveryStore {
         Ok(Self {
             pool,
             pending_decisions: Default::default(),
+            provider_budgets: Default::default(),
             search_index: Default::default(),
         })
     }
