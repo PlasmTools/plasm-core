@@ -76,6 +76,7 @@ async fn ordered_fanout_case(
     count: usize,
     fail_at: usize,
     known_rejection: bool,
+    unrelated_write: bool,
 ) -> plasm_runtime::ExecutionFailure {
     let mut cgs = load_schema_dir(
         &std::path::PathBuf::from(crate::test_manifest_dir())
@@ -246,13 +247,15 @@ async fn ordered_fanout_case(
         "same-session read must expose every successful fanout write"
     );
 
-    let store = store.lock().unwrap();
-    assert_eq!(
-        store.attempts,
-        fail_at + 1,
-        "only the successful prefix and failed occurrence are dispatched"
-    );
-    assert_eq!(store.rows.len(), fail_at, "the suffix remains undispatched");
+    {
+        let store = store.lock().unwrap();
+        assert_eq!(
+            store.attempts,
+            fail_at + 1,
+            "only the successful prefix and failed occurrence are dispatched"
+        );
+        assert_eq!(store.rows.len(), fail_at, "the suffix remains undispatched");
+    }
     assert_eq!(result.cause, plasm_runtime::FailureCause::Upstream);
     assert_eq!(
         result.recovery,
@@ -285,6 +288,36 @@ async fn ordered_fanout_case(
             == plasm_runtime::MutationDispatchStatus::RejectedWithoutEffect));
     } else {
         assert!(result.effects_unresolved);
+    }
+    if unrelated_write {
+        let symbols = session.teaching_exposure.as_ref().unwrap().to_symbol_map();
+        let entity = symbols.entity_sym_for("matrix", "PwExpense");
+        let create = symbols.method_sym_for("matrix", "PwExpense", "create");
+        let source = format!("class Unrelated(Program):\n    def build(self):\n        return {entity}.{create}(group_id=\"other\", description=\"unrelated\")\n");
+        let bundle = crate::plasm_compile::compile_python_program(&session, &source)
+            .await
+            .unwrap();
+        Box::pin(ExecutePipeline::run_program(
+            &session,
+            &host,
+            &opened.prompt_hash,
+            &opened.session_id,
+            &bundle,
+            ExecutionIntent::Live,
+            None,
+            None,
+            None,
+        ))
+        .await
+        .expect("unrelated write executes in the same live session");
+        let store = store.lock().unwrap();
+        assert_eq!(store.attempts, fail_at + 2);
+        assert_eq!(store.rows.len(), fail_at + 1);
+        assert_eq!(store.rows.last().unwrap()["description"], "unrelated");
+        for index in fail_at..count {
+            let remaining = format!("item-{index}");
+            assert!(store.rows.iter().all(|row| row["description"] != remaining));
+        }
     }
     result
 }
@@ -493,14 +526,14 @@ proptest! {
  #[test]
  fn oph_mutating_fanout_preserves_effects_on_system_failure(count in 1usize..6, fail_seed in 0usize..6) {
   let rt = tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap();
-  rt.block_on(Box::pin(ordered_fanout_case(count, fail_seed % count, false)));
+  rt.block_on(Box::pin(ordered_fanout_case(count, fail_seed % count, false, false)));
  }
 }
 
 #[tokio::test]
 async fn known_rejection_leaves_the_selected_suffix_unattempted() {
-    let two = Box::pin(ordered_fanout_case(3, 1, true)).await;
-    let three = Box::pin(ordered_fanout_case(4, 1, true)).await;
+    let two = Box::pin(ordered_fanout_case(3, 1, true, false)).await;
+    let three = Box::pin(ordered_fanout_case(4, 1, true, true)).await;
     let accounting = |failure: &plasm_runtime::ExecutionFailure| {
         failure
             .effects
@@ -547,5 +580,5 @@ async fn declared_rejection_before_any_write_is_known_no_effect() {
 
 #[tokio::test]
 async fn materialized_collection_over_default_page_retains_all_writes() {
-    Box::pin(ordered_fanout_case(31, 30, false)).await;
+    Box::pin(ordered_fanout_case(31, 30, false, false)).await;
 }
