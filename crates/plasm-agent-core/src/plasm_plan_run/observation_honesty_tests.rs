@@ -561,6 +561,82 @@ async fn known_rejection_leaves_the_selected_suffix_unattempted() {
     if let Some(path) = std::env::var_os("PLASM_EFFECT_OBSERVATION_PATH") {
         std::fs::write(path, serde_json::to_vec(&three).unwrap()).unwrap();
     }
+    if let Some(path) = std::env::var_os("PLASM_EFFECT_FIXTURE_DIR") {
+        export_effect_fixture(std::path::Path::new(&path));
+    }
+}
+
+/// Build an offline packed catalog for the NAPI/host obligation diagnostic.
+/// The vectors are fixture data; no discovery provider is called.
+fn export_effect_fixture(output: &std::path::Path) {
+    use plasm_core::catalog_discovery::{
+        capability_documents, CatalogDiscoveryArtifact, EmbeddedCapability,
+    };
+    use plasm_core::catalog_il::{
+        cgs_to_catalog_il_bytes, CatalogManifest, PLASM_CATALOG_FORMAT_VERSION,
+    };
+    let fixture = std::path::PathBuf::from(crate::test_manifest_dir())
+        .join("../../fixtures/schemas/partial_write_relation_matrix");
+    let mut cgs = plasm_core::loader::load_schema_dir_unvalidated(&fixture).unwrap();
+    cgs.bind_registry_entry_id("matrix");
+    cgs.capabilities
+        .get_mut("pwexpense_create")
+        .unwrap()
+        .no_effect_rejections
+        .push(plasm_core::schema::NoEffectRejection {
+            status: 422,
+            detail: plasm_core::schema::RejectionDetail::Exact {
+                value: "fixture 422".into(),
+            },
+        });
+    plasm_core::loader::finalize_cgs_load(&mut cgs).unwrap();
+    let cgs_hash = cgs.catalog_cgs_hash_hex();
+    let discovery = CatalogDiscoveryArtifact {
+        entry_id: "matrix".into(),
+        cgs_hash: cgs_hash.clone(),
+        renderer_version: plasm_core::catalog_discovery::DISCOVERY_RENDERER_VERSION,
+        profile: Default::default(),
+        prerequisites: cgs.prerequisites.clone(),
+        capabilities: capability_documents(&cgs)
+            .unwrap()
+            .into_iter()
+            .map(|document| EmbeddedCapability {
+                document,
+                embedding: vec![0.375; 1536],
+            })
+            .collect(),
+    };
+    let recipes =
+        serde_json::to_vec(&plasm_compile::compile_cgs_capability_templates(&cgs).unwrap())
+            .unwrap();
+    let discovery = serde_json::to_vec(&discovery).unwrap();
+    let manifest = CatalogManifest {
+        format_version: PLASM_CATALOG_FORMAT_VERSION,
+        entry_id: "matrix".into(),
+        version: cgs.version,
+        cgs_hash,
+        label: "Matrix".into(),
+        tags: vec![],
+        cgs_json: "matrix.cgs.json".into(),
+        recipes_json: "matrix.recipes.json".into(),
+        recipes_hash: plasm_core::catalog_discovery::content_hash(&recipes),
+        discovery_json: "matrix.discovery.json".into(),
+        discovery_hash: plasm_core::catalog_discovery::content_hash(&discovery),
+        embedding_profile: Default::default(),
+    };
+    std::fs::create_dir_all(output).unwrap();
+    std::fs::write(
+        output.join(&manifest.cgs_json),
+        cgs_to_catalog_il_bytes(&cgs).unwrap(),
+    )
+    .unwrap();
+    std::fs::write(output.join(&manifest.recipes_json), recipes).unwrap();
+    std::fs::write(output.join(&manifest.discovery_json), discovery).unwrap();
+    std::fs::write(
+        output.join("matrix.manifest.json"),
+        serde_json::to_vec(&manifest).unwrap(),
+    )
+    .unwrap();
 }
 
 #[tokio::test]
@@ -568,8 +644,11 @@ async fn first_selected_effect_can_be_rejected_without_any_applied_effect() {
     let failure = Box::pin(ordered_fanout_case(4, 0, true, false)).await;
     assert!(!failure.effects_unresolved);
     assert!(failure.effects.iter().all(|effect| effect.completed == 0));
-    assert!(failure.dispatches.iter().any(|dispatch| dispatch.status
-        == plasm_runtime::MutationDispatchStatus::RejectedWithoutEffect));
+    assert!(failure
+        .dispatches
+        .iter()
+        .any(|dispatch| dispatch.status
+            == plasm_runtime::MutationDispatchStatus::RejectedWithoutEffect));
 }
 
 #[tokio::test]
