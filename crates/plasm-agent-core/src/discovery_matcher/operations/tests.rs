@@ -190,10 +190,9 @@ impl plasm_runtime::provider_transport::ProviderTransport for MockExtraction {
         plasm_runtime::provider_transport::ProviderTransportError,
     > {
         let packet: serde_json::Value = serde_json::from_str(body).unwrap();
-        assert_eq!(
-            packet["messages"][1]["content"],
-            "Read the sensor and send a notice."
-        );
+        let input: serde_json::Value =
+            serde_json::from_str(packet["messages"][1]["content"].as_str().unwrap()).unwrap();
+        assert_eq!(input["request"], "Read the sensor and send a notice.");
         Ok(plasm_runtime::provider_transport::ProviderResponse {
             status: reqwest::StatusCode::OK,
             retry_after: None,
@@ -204,7 +203,7 @@ impl plasm_runtime::provider_transport::ProviderTransport for MockExtraction {
 
 #[tokio::test]
 async fn provider_boundary_binds_operation_excerpts_to_the_request() {
-    let response = serde_json::json!({"model":"fixture","choices":[{"finish_reason":"stop","message":{"content":serde_json::json!({"operations":["Read the sensor","send a notice"]}).to_string()}}]}).to_string();
+    let response = serde_json::json!({"model":"fixture","choices":[{"finish_reason":"stop","message":{"content":serde_json::json!({"operations":["s0","s1"]}).to_string()}}]}).to_string();
     let extractor = ProviderOperationExtractor::new(
         "fixture",
         std::sync::Arc::new(MockExtraction { response }),
@@ -230,7 +229,7 @@ async fn provider_boundary_binds_operation_excerpts_to_the_request() {
 async fn operation_provider_and_bounded_decision_packets_resume_together() {
     use plasm_core::prerequisites::CapabilityRef;
     let intent = "Read the sensor and send a notice.";
-    let response = serde_json::json!({"model":"fixture","choices":[{"finish_reason":"stop","message":{"content":serde_json::json!({"operations":["Read the sensor","send a notice"]}).to_string()}}]}).to_string();
+    let response = serde_json::json!({"model":"fixture","choices":[{"finish_reason":"stop","message":{"content":serde_json::json!({"operations":["s0","s1"]}).to_string()}}]}).to_string();
     let extractor = ProviderOperationExtractor::new(
         "fixture",
         std::sync::Arc::new(MockExtraction { response }),
@@ -883,7 +882,9 @@ fn extraction_contract_distinguishes_discovery_from_the_requested_action() {
             let body: serde_json::Value = serde_json::from_str(request.body()).unwrap();
             let instruction = body["messages"][0]["content"].as_str().unwrap();
             assert!(instruction.contains("listing capabilities is itself the actual task"));
-            assert_eq!(body["messages"][1]["content"], intent);
+            let input: serde_json::Value =
+                serde_json::from_str(body["messages"][1]["content"].as_str().unwrap()).unwrap();
+            assert_eq!(input["request"], intent);
         }
     }
 }
@@ -896,42 +897,69 @@ fn extraction_rejects_invented_text_and_truncated_responses() {
         serde_json::json!({"model":"fixture","choices":[{"finish_reason":finish,"message":{"content":serde_json::json!({"operations":operations}).to_string()}}]}).to_string()
     };
     assert!(request
-        .decode(
-            intent,
-            &response("stop", vec!["Find the report", "send it"])
-        )
+        .decode(intent, &response("stop", vec!["s0", "s1"]))
         .is_ok());
     assert_eq!(
         request.decode(intent, &response("stop", vec!["delete it"])),
         Err(OperationError::InvalidExcerpt)
     );
     assert_eq!(
-        request.decode(intent, &response("length", vec!["Find the report"])),
+        request.decode(intent, &response("length", vec!["s0"])),
         Err(OperationError::InvalidExtractionResponse)
     );
 }
 
 #[test]
-fn extraction_grounds_case_and_spacing_without_changing_currency_or_guards() {
+fn extraction_selects_host_issued_intent_spans() {
+    let intent = "Read the account; send £25 only if approved.";
+    let request = ExtractionRequest::new("fixture", intent).unwrap();
+    let body: serde_json::Value = serde_json::from_str(request.body()).unwrap();
+    let spans = body["messages"][1]["content"].as_str().unwrap();
+    assert!(spans.contains("Read the account"));
+    assert!(spans.contains("send £25 only if approved"));
+    let response = |ids: Vec<&str>| {
+        serde_json::json!({"model":"fixture","choices":[{"finish_reason":"stop","message":{"content":serde_json::json!({"operations":ids}).to_string()}}]}).to_string()
+    };
+    let result = request.decode(intent, &response(vec!["s0", "s1"])).unwrap();
+    assert!(result
+        .operations()
+        .iter()
+        .any(|v| v.text().contains("send £25 only if approved")));
+    assert!(request.decode(intent, &response(vec!["invented"])).is_err());
+    assert!(request.decode(intent, &response(vec!["s0", "s0"])).is_err());
+}
+
+#[test]
+fn issued_spans_are_exact_utf8_bounded_and_keep_decimal_amounts() {
+    let intent = format!(
+        "Review café invoice £25.50; {} and do not pay without approval.",
+        "α".repeat(400)
+    );
+    let spans = source_spans(&intent).unwrap();
+    assert!(spans.values().all(|span| !span.is_empty()
+        && span.len() <= MAX_OPERATION_BYTES
+        && intent.contains(span)));
+    assert!(spans.values().any(|span| span.contains("£25.50")));
+    assert!(spans
+        .values()
+        .any(|span| span.contains("do not pay without approval")));
+}
+
+#[test]
+fn extraction_preserves_original_currency_and_guards() {
     let intent = "Pay  £25 to Karen only if approved.";
     let request = ExtractionRequest::new("fixture", intent).unwrap();
     let response = |operation: &str| {
         serde_json::json!({"model":"fixture","choices":[{"finish_reason":"stop","message":{"content":serde_json::json!({"operations":[operation]}).to_string()}}]}).to_string()
     };
-    let operations = request
-        .decode(intent, &response("pay £25 to karen"))
-        .unwrap();
-    assert_eq!(operations.operations()[0].text(), "Pay  £25 to Karen");
+    let operations = request.decode(intent, &response("s0")).unwrap();
+    assert_eq!(operations.operations()[0].text(), intent);
     assert_eq!(
         request.decode(intent, &response("Pay $25 to Karen")),
         Err(OperationError::InvalidExcerpt)
     );
     assert_eq!(
         request.decode(intent, &response("Pay £25 to Karen if not approved")),
-        Err(OperationError::InvalidExcerpt)
-    );
-    assert_eq!(
-        grounded_excerpt("Read x; READ X", "read x"),
         Err(OperationError::InvalidExcerpt)
     );
 }
@@ -963,18 +991,14 @@ async fn malformed_semantic_proposal_gets_one_corrective_request() {
                     .unwrap()
                     .contains("not an exact intent excerpt"));
             }
-            let operation = if n == 0 {
-                "Invent an action"
-            } else {
-                "Read the record"
-            };
+            let operation = if n == 0 { "Invent an action" } else { "s0" };
             Ok(plasm_runtime::provider_transport::ProviderResponse { status: reqwest::StatusCode::OK, retry_after: None, body: serde_json::json!({"model":"fixture","choices":[{"finish_reason":"stop","message":{"content":serde_json::json!({"operations":[operation]}).to_string()}}]}).to_string() })
         }
     }
     let transport = std::sync::Arc::new(CorrectingTransport(AtomicUsize::new(0)));
     let extractor = ProviderOperationExtractor::new("fixture", transport.clone());
     let operations = extractor.extract("Read the record.").await.unwrap();
-    assert_eq!(operations.operations()[0].text(), "Read the record");
+    assert_eq!(operations.operations()[0].text(), "Read the record.");
     assert_eq!(transport.0.load(Ordering::SeqCst), 2);
 }
 
@@ -1192,6 +1216,34 @@ fn operation_packet_carries_the_connected_catalogue_witness() {
         DecisionBatch::from_graph(context, &operations, &scope, &index, &[], &[question]),
         Err(OperationError::InvalidGraphWitness)
     ));
+}
+
+#[test]
+fn relationship_scope_is_explicit_in_extraction_and_decision_packets() {
+    let intent = "Update records for projects assigned to my team.";
+    let extraction = ExtractionRequest::new("fixture", intent).unwrap();
+    assert!(extraction.body().contains("membership conditions"));
+    let operations = OperationSet::from_excerpts(intent, &[intent.into()]).unwrap();
+    let (index, authorization) = decision_fixture();
+    let scope = decision_scope(intent, &index, &authorization);
+    let question = DecisionQuestion {
+        operation: operations.operations()[0].id().clone(),
+        capability: plasm_core::prerequisites::CapabilityRef {
+            catalog: "matrix".into(),
+            capability: "inspect".into(),
+        },
+    };
+    let packet = DecisionBatch::new(
+        super::super::RELEVANCE_MODEL,
+        intent,
+        &operations,
+        &scope,
+        &authorization,
+        &index,
+        &[question],
+    )
+    .unwrap();
+    assert!(packet.body().contains("target-selection condition"));
 }
 
 #[test]
