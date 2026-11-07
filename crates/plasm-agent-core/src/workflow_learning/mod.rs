@@ -11,6 +11,7 @@ pub mod native;
 pub mod native_admin;
 pub mod native_recall;
 pub mod normalization;
+mod parameterization;
 mod quality;
 mod review;
 #[cfg(test)]

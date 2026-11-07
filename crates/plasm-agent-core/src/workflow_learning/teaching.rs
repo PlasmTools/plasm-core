@@ -560,7 +560,7 @@ impl TeachingProgram {
         Ok(program)
     }
 
-    fn substitute(
+    pub(super) fn substitute(
         &self,
         resolve: impl Fn(&SemanticReference) -> Result<String, TeachingError>,
     ) -> Result<String, TeachingError> {

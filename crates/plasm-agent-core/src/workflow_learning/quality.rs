@@ -313,6 +313,75 @@ impl Quality {
             _ => false,
         }
     }
+
+    /// Only an identical canonical program under identical catalogue contracts
+    /// permits teaching cost to break a tie without an independent cost analysis.
+    pub(super) fn strictly_better_for_same_behavior(
+        &self,
+        other: &Self,
+        program: &super::teaching::TeachingProgram,
+        previous: &super::teaching::TeachingProgram,
+    ) -> bool {
+        if program.behavior_fingerprint() != previous.behavior_fingerprint()
+            || program.catalog_fingerprints != previous.catalog_fingerprints
+            || program.semantic_contracts != previous.semantic_contracts
+            || program.required_capabilities != previous.required_capabilities
+            || program.outputs != previous.outputs
+            || self.assurance != other.assurance
+        {
+            return false;
+        }
+        let equally_observed = matches!(
+            (&self.robustness, &other.robustness),
+            (RobustnessAssessment::ObservedSuccess(a), RobustnessAssessment::ObservedSuccess(b)) if a.count == b.count
+        );
+        equally_observed
+            && matches!(self.call_cost, CallCostAssessment::Unanalysed)
+            && matches!(other.call_cost, CallCostAssessment::Unanalysed)
+            && plasm_core::o200k_token_count(&program.source)
+                < plasm_core::o200k_token_count(&previous.source)
+    }
+
+    /// Parameter bindings remain attached to their respective observed programs;
+    /// the proof preserves the typed filter, executable structure and contracts.
+    pub(super) fn strictly_better_for_parameterized_behavior(
+        &self,
+        other: &Self,
+        program: &CheckedTeachingExample,
+        previous: &CheckedTeachingExample,
+    ) -> bool {
+        let Some(proof) = super::parameterization::prove(previous, program) else {
+            return false;
+        };
+        if self.assurance != other.assurance {
+            return false;
+        }
+        let equally_observed = matches!(
+            (&self.robustness, &other.robustness),
+            (RobustnessAssessment::ObservedSuccess(a), RobustnessAssessment::ObservedSuccess(b)) if a.count == b.count
+        );
+        equally_observed
+            && matches!(self.call_cost, CallCostAssessment::Unanalysed)
+            && matches!(other.call_cost, CallCostAssessment::Unanalysed)
+            && proof.replacement_teaching_tokens < proof.original_teaching_tokens
+    }
+
+    pub(super) fn equivalent_parameterized_observation(
+        &self,
+        other: &Self,
+        program: &CheckedTeachingExample,
+        previous: &CheckedTeachingExample,
+    ) -> bool {
+        let Some(proof) = super::parameterization::prove(previous, program) else {
+            return false;
+        };
+        self.assurance == other.assurance
+            && matches!((&self.robustness, &other.robustness),
+                (RobustnessAssessment::ObservedSuccess(a), RobustnessAssessment::ObservedSuccess(b)) if a.count == b.count)
+            && matches!(self.call_cost, CallCostAssessment::Unanalysed)
+            && matches!(other.call_cost, CallCostAssessment::Unanalysed)
+            && proof.same_presentation
+    }
 }
 
 #[cfg(test)]
@@ -413,6 +482,35 @@ mod tests {
         assert!(Quality::observed(&seal, &[ids::run("missing")], 10).is_err());
         seal.executions[0].source.push_str("# changed program");
         assert!(!observed.verified_by(&seal));
+    }
+
+    #[test]
+    fn same_behavior_can_prefer_shorter_teaching_without_claiming_robustness() {
+        let (program, original) = seal();
+        let mut later = original.clone();
+        later.executions[0].execution_id = ids::run("independent-observation");
+        let old = Quality::observed(&original, &[ids::run("run")], 100).unwrap();
+        let better = Quality::observed(&later, &[ids::run("independent-observation")], 50).unwrap();
+        let mut longer = program.program().clone();
+        longer.source = format!(
+            "# A verbose explanation to be removed from the example\n{}",
+            longer.source
+        );
+        assert!(better.strictly_better_for_same_behavior(&old, program.program(), &longer));
+        assert!(!old.strictly_better_for_same_behavior(&better, &longer, program.program()));
+        assert!(!better.strictly_better_than(&old));
+        let mut changed = program.program().clone();
+        changed.structural_fingerprint.push('x');
+        assert!(!better.strictly_better_for_same_behavior(&old, &changed, program.program()));
+        let mut changed_contract = program.program().clone();
+        changed_contract
+            .catalog_fingerprints
+            .insert("other".into(), "changed".into());
+        assert!(!better.strictly_better_for_same_behavior(
+            &old,
+            &changed_contract,
+            program.program()
+        ));
     }
     #[test]
     fn unsupported_persisted_cost_and_readability_reports_are_not_proof() {

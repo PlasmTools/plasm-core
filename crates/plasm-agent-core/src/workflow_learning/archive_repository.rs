@@ -3,6 +3,7 @@ use super::*;
 use crate::discovery_store::DiscoveryAuthorization;
 use crate::workflow_learning::archive::*;
 use crate::workflow_learning::catalogue_guidance::CatalogueAssociation;
+use crate::workflow_learning::filesystem_archive::Record;
 use crate::{execute_session::ExecuteSession, server_state::PlasmHostState};
 
 pub(super) enum PublicationSupport {
@@ -14,6 +15,30 @@ pub(super) enum PublicationSupport {
     },
 }
 impl PublicationSupport {
+    pub(super) async fn recuration_reason(
+        &self,
+        tx: &mut sqlx_tracing::Transaction<'_, sqlx::Postgres>,
+        candidate: &Candidate,
+    ) -> Result<Option<String>> {
+        let Self::Archive {
+            scope,
+            archive,
+            item,
+        } = self
+        else {
+            return Ok(None);
+        };
+        let record: serde_json::Value = sqlx::query_scalar("SELECT record FROM workflow_learning_archive_items WHERE tenant=$1 AND project=$2 AND archive_digest=$3 AND item_digest=$4")
+            .bind(&scope.tenant).bind(&scope.project).bind(archive.as_str()).bind(item.as_str())
+            .fetch_one(&mut tx.executor()).await?;
+        let record: Record = serde_json::from_value(record)?;
+        let Record::Example { reason, .. } = record else {
+            return Ok(None);
+        };
+        Ok(super::recuration::preserved_imported_reason(
+            reason, candidate,
+        ))
+    }
     pub(super) async fn has_example(
         &self,
         tx: &mut sqlx_tracing::Transaction<'_, sqlx::Postgres>,
@@ -755,7 +780,7 @@ impl WorkflowRepository {
                 )
                 .await?;
                 for (candidate, _, _) in group.examples.values() {
-                    if !candidate.verified_by(&original) {
+                    if !candidate.observed_by(&original) {
                         return Err(FsError::Integrity);
                     }
                 }
@@ -1347,12 +1372,14 @@ async fn collect_imported_groups(
             let identity: String = row.try_get("identity")?;
             let id: Uuid = row.try_get("id")?;
             let source = archived_record(tx, scope, &archive, &identity).await?;
-            let (source_id, support_kind) = match source {
-                Record::Example { revision_id, .. } if !guidance => {
-                    (revision_id, "example_support")
-                }
+            let (source_id, support_kind, source_reason) = match source {
+                Record::Example {
+                    revision_id,
+                    reason,
+                    ..
+                } if !guidance => (revision_id, "example_support", reason),
                 Record::CatalogueGuidance { association_id, .. } if guidance => {
-                    (association_id, "guidance_support")
+                    (association_id, "guidance_support", None)
                 }
                 _ => return Err(FsError::Integrity),
             };
@@ -1386,9 +1413,14 @@ async fn collect_imported_groups(
                     let candidate: Candidate = serde_json::from_value(row.try_get("product")?)?;
                     let state =
                         StoredExampleState::try_from(row.try_get::<String, _>("state")?.as_str())?;
+                    let local_reason: Option<String> = row.try_get("reason")?;
+                    let imported_reason = super::recuration::preserved_imported_reason(
+                        source_reason.clone(),
+                        &candidate,
+                    );
                     group
                         .examples
-                        .insert(id, (candidate, row.try_get("reason")?, state));
+                        .insert(id, (candidate, local_reason.or(imported_reason), state));
                     covered_examples.insert(id);
                 }
             }
@@ -1403,6 +1435,14 @@ fn write_review_groups(
     local_reviews: &BTreeSet<(String, Uuid)>,
 ) -> std::result::Result<(), crate::workflow_learning::filesystem_archive::FilesystemArchiveError> {
     use crate::workflow_learning::filesystem_archive::Record;
+    crate::workflow_learning::serving_projection::validate_quality_anchors(
+        groups.values().flat_map(|group| {
+            group
+                .examples
+                .iter()
+                .map(|(id, (candidate, _, _))| (id, candidate, &group.seal))
+        }),
+    )?;
     for ((token, review_id), group) in groups {
         let candidates: Vec<_> = group
             .examples

@@ -2,6 +2,83 @@
 use super::*;
 
 #[tokio::test]
+async fn a_failed_assessment_packet_does_not_discard_another_packet() {
+    struct PartialModel;
+    impl ProposalModel for PartialModel {
+        fn embedding_profile(&self) -> String {
+            "fixture".into()
+        }
+        fn normalize<'a>(
+            &'a self,
+            _: &'a NormalizationRequest,
+        ) -> futures_util::future::LocalBoxFuture<'a, NormalizationExchange> {
+            Box::pin(async { unreachable!() })
+        }
+        fn embed<'a>(
+            &'a self,
+            _: &'a NormalizedIntent,
+        ) -> futures_util::future::LocalBoxFuture<'a, Result<Vec<f32>, LearningError>> {
+            Box::pin(async { unreachable!() })
+        }
+        fn assess<'a>(
+            &'a self,
+            request: &'a super::super::applicability::Request,
+        ) -> futures_util::future::LocalBoxFuture<
+            'a,
+            Result<BTreeMap<String, super::super::applicability::Assessment>, LearningError>,
+        > {
+            Box::pin(async move {
+                if request.labels().contains("example_1") {
+                    return Err(LearningError::ProviderConfiguration(
+                        "fixture failure".into(),
+                    ));
+                }
+                Ok(request
+                    .labels()
+                    .iter()
+                    .map(|label| {
+                        (
+                            label.clone(),
+                            super::super::applicability::Assessment {
+                                judgment: super::super::applicability::Judgment::RequiredSubtask,
+                                effect_alignment:
+                                    super::super::applicability::EffectAlignment::Aligned,
+                                constraint_alignment:
+                                    super::super::applicability::ConstraintAlignment::Compatible,
+                            },
+                        )
+                    })
+                    .collect())
+            })
+        }
+    }
+    use super::super::applicability::{Candidate, CandidateKind, Request};
+    let candidates: Vec<_> = (1..=6)
+        .map(|i| Candidate {
+            label: format!("example_{i}"),
+            kind: CandidateKind::Example,
+            purpose: "Inspect records".into(),
+            dependencies: vec![],
+            symbols: vec![],
+            outputs: vec![],
+            effects: vec![],
+            source: Some("x".repeat(4_000)),
+        })
+        .collect();
+    let requests = Request::batches("fixture", "Inspect records", &candidates).unwrap();
+    assert!(requests.len() > 1);
+    let (judgments, unavailable) = assess_packets(
+        &PartialModel,
+        &RecallBudget::new(Duration::from_secs(5)),
+        &requests,
+    )
+    .await;
+    assert!(unavailable.contains("example_1"));
+    assert!(judgments.contains_key("example_6"));
+    assert!(!judgments.contains_key("example_1"));
+}
+
+#[tokio::test]
 async fn recall_budget_allows_sequential_stages_and_reports_the_expired_stage() {
     let budget = RecallBudget::new(Duration::from_millis(250));
     for stage in [RecallStage::Normalization, RecallStage::Embedding] {
@@ -274,6 +351,8 @@ impl ProposalModel for OfflineModel {
                         super::super::applicability::Assessment {
                             judgment: super::super::applicability::Judgment::SameTask,
                             effect_alignment: super::super::applicability::EffectAlignment::Aligned,
+                            constraint_alignment:
+                                super::super::applicability::ConstraintAlignment::Compatible,
                         },
                     )
                 })
@@ -381,6 +460,8 @@ impl ProposalModel for UnrelatedModel {
                             judgment: super::super::applicability::Judgment::Unrelated,
                             effect_alignment:
                                 super::super::applicability::EffectAlignment::Unrequested,
+                            constraint_alignment:
+                                super::super::applicability::ConstraintAlignment::Compatible,
                         },
                     )
                 })

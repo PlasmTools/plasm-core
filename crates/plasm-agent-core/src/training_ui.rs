@@ -33,9 +33,128 @@ pub(crate) fn routes() -> Router {
         .route("/internal/training/v1/grants/revoke", post(revoke_grant))
         .route("/internal/training/v1/issuer/revoke", post(revoke_issuer))
         .route(
+            "/internal/training/v1/recuration/preview",
+            post(preview_recuration),
+        )
+        .route(
+            "/internal/training/v1/recuration/decide",
+            post(decide_recuration),
+        )
+        .route(
             "/internal/training/v1/archive-authorization",
             post(authorize_archive),
         )
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct RecurationPreviewRequest {
+    identity: HumanIdentity,
+    project: String,
+    source_example: uuid::Uuid,
+    survivor_example: uuid::Uuid,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct RecurationDecisionRequest {
+    identity: HumanIdentity,
+    project: String,
+    plan: workflow_learning::repository::CrossFamilyRecurationPlan,
+    decision_id: uuid::Uuid,
+}
+
+fn recuration_failure(
+    error: workflow_learning::repository::CrossFamilyRecurationError,
+) -> Response {
+    use workflow_learning::repository::CrossFamilyRecurationError as E;
+    let (status, code) = match &error {
+        E::Denied => (StatusCode::FORBIDDEN, "recuration_denied"),
+        E::StaleRevision => (StatusCode::CONFLICT, "recuration_stale_revision"),
+        E::NotEquivalent | E::IntentTooLarge | E::MissingEvidence => {
+            (StatusCode::UNPROCESSABLE_ENTITY, "recuration_not_eligible")
+        }
+        E::Database(_) | E::Serialization(_) | E::Repository(_) => {
+            (StatusCode::SERVICE_UNAVAILABLE, "recuration_unavailable")
+        }
+    };
+    (
+        status,
+        Json(json!({"code": code, "message": error.to_string()})),
+    )
+        .into_response()
+}
+
+async fn recuration_owner(
+    host: &PlasmHostState,
+    headers: &HeaderMap,
+    identity: &HumanIdentity,
+    project: String,
+) -> Result<(std::sync::Arc<WorkflowRepository>, TrustedTrainingActor), TrainingError> {
+    let authority = owner_authority(host, headers)?;
+    let scope = LibraryScope {
+        tenant: workflow_learning::learning_tenant(&identity.tenant_id),
+        project,
+    };
+    let actor = identity.actor(scope, authority)?;
+    let repo = host
+        .workflow_learning
+        .repository()
+        .await
+        .map_err(|_| TrainingError::Unavailable)?;
+    Ok((repo, actor))
+}
+
+async fn preview_recuration(
+    Extension(host): Extension<PlasmHostState>,
+    headers: HeaderMap,
+    Json(body): Json<RecurationPreviewRequest>,
+) -> Response {
+    host.live_plan_pool()
+        .run_local(move || async move {
+            let (repo, actor) =
+                match recuration_owner(&host, &headers, &body.identity, body.project).await {
+                    Ok(value) => value,
+                    Err(error) => return failure(error),
+                };
+            match repo
+                .describe_cross_family_recuration(
+                    &actor,
+                    body.source_example,
+                    body.survivor_example,
+                )
+                .await
+            {
+                Ok(preview) => Json(json!({"preview": preview})).into_response(),
+                Err(error) => recuration_failure(error),
+            }
+        })
+        .await
+        .unwrap_or_else(|_| failure(TrainingError::Unavailable))
+}
+
+async fn decide_recuration(
+    Extension(host): Extension<PlasmHostState>,
+    headers: HeaderMap,
+    Json(body): Json<RecurationDecisionRequest>,
+) -> Response {
+    host.live_plan_pool()
+        .run_local(move || async move {
+            let (repo, actor) =
+                match recuration_owner(&host, &headers, &body.identity, body.project).await {
+                    Ok(value) => value,
+                    Err(error) => return failure(error),
+                };
+            match repo
+                .recurate_cross_family(&actor, &body.plan, body.decision_id)
+                .await
+            {
+                Ok(receipt) => Json(json!({"receipt": receipt})).into_response(),
+                Err(error) => recuration_failure(error),
+            }
+        })
+        .await
+        .unwrap_or_else(|_| failure(TrainingError::Unavailable))
 }
 
 async fn page() -> Response {
@@ -573,6 +692,20 @@ async fn revoke_issuer_local(
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn recuration_wire_cannot_supply_authority() {
+        let value = json!({
+            "identity": {"tenant_id":"t", "subject":"s", "projects":["p"]},
+            "project":"p", "source_example":uuid::Uuid::new_v4(),
+            "survivor_example":uuid::Uuid::new_v4(), "authority":"human_owner"
+        });
+        assert!(serde_json::from_value::<RecurationPreviewRequest>(value).is_err());
+        assert_eq!(
+            recuration_failure(workflow_learning::repository::CrossFamilyRecurationError::Denied)
+                .status(),
+            StatusCode::FORBIDDEN
+        );
+    }
     #[test]
     fn human_identity_is_scoped_and_cannot_claim_another_tenant() {
         let identity = HumanIdentity {

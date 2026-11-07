@@ -8,6 +8,13 @@ use uuid::Uuid;
 use super::model::*;
 use crate::traced_pg::PgPool;
 
+#[path = "repository_recuration.rs"]
+mod recuration;
+pub use recuration::{
+    CrossFamilyExampleView, CrossFamilyRecurationError, CrossFamilyRecurationPlan,
+    CrossFamilyRecurationPreview, CrossFamilyRecurationReceipt,
+};
+
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct ExecutionSummary {
     pub execution_id: ExecutionId,
@@ -935,12 +942,60 @@ impl WorkflowRepository {
                         && existing.catalog_fingerprints == candidate.catalog_fingerprints
                         && existing.behavior_fingerprint() == candidate.behavior_fingerprint()
                     {
-                        duplicate_id = Some(row.try_get::<Uuid, _>("id")?);
+                        duplicate_id = Some((row.try_get::<Uuid, _>("id")?, existing));
                         break;
+                    }
+                    if existing.family == candidate.family
+                        && candidate
+                            .program()
+                            .zip(existing.program())
+                            .is_some_and(|(new, old)| {
+                                candidate.quality.strictly_better_for_same_behavior(
+                                    &existing.quality,
+                                    new,
+                                    old,
+                                )
+                            })
+                    {
+                        continue;
                     }
                     conflicting_identity = true;
                 }
-                if let Some(id) = duplicate_id {
+                if let Some((id, existing)) = duplicate_id {
+                    if let Some(reason) = support.recuration_reason(tx, candidate).await? {
+                        if existing.intent != candidate.intent {
+                            let incoming = &candidate.intent;
+                            let has_name = |name: &String| {
+                                incoming.purpose == *name || incoming.aliases.contains(name)
+                            };
+                            if !has_name(&existing.intent.purpose)
+                                || !existing.intent.aliases.iter().all(has_name)
+                                || !existing
+                                    .intent
+                                    .facets
+                                    .iter()
+                                    .all(|facet| incoming.facets.contains(facet))
+                            {
+                                return Err(RepositoryError::PortfolioConflict);
+                            }
+                            let mut revised = existing.clone();
+                            revised.intent = incoming.clone();
+                            let revised_id = Uuid::new_v4();
+                            sqlx::query("UPDATE workflow_learning_examples SET state='superseded' WHERE tenant=$1 AND project=$2 AND id=$3 AND state='active'")
+                                .bind(&scope.tenant).bind(&scope.project).bind(id).execute(&mut tx.executor()).await?;
+                            sqlx::query("INSERT INTO workflow_learning_examples(id,tenant,project,family,variant,identity,candidate,state,reason) VALUES($1,$2,$3,$4,$5,$6,$7,'active',$8)")
+                                .bind(revised_id).bind(&scope.tenant).bind(&scope.project).bind(&revised.family).bind(&revised.variant).bind(&revised.identity)
+                                .bind(serde_json::to_value(&revised)?).bind(reason).execute(&mut tx.executor()).await?;
+                            sqlx::query("INSERT INTO workflow_learning_support(example_id,review_id) SELECT $1,review_id FROM workflow_learning_support WHERE example_id=$2 ON CONFLICT DO NOTHING")
+                                .bind(revised_id).bind(id).execute(&mut tx.executor()).await?;
+                            sqlx::query("INSERT INTO workflow_learning_archive_example_support(example_id,tenant,project,archive_digest,item_digest) SELECT $1,tenant,project,archive_digest,item_digest FROM workflow_learning_archive_example_support WHERE example_id=$2 AND tenant=$3 AND project=$4 ON CONFLICT DO NOTHING")
+                                .bind(revised_id).bind(id).bind(&scope.tenant).bind(&scope.project).execute(&mut tx.executor()).await?;
+                            sqlx::query("UPDATE workflow_learning_families SET version=version+1 WHERE tenant=$1 AND project=$2 AND family=$3 AND variant=$4")
+                                .bind(&scope.tenant).bind(&scope.project).bind(&revised.family).bind(&revised.variant).execute(&mut tx.executor()).await?;
+                            support.attach_example(tx, revised_id).await?;
+                            continue;
+                        }
+                    }
                     support.attach_example(tx, id).await?;
                     continue;
                 }
@@ -996,7 +1051,7 @@ impl WorkflowRepository {
                     serde_json::from_value::<Candidate>(row.try_get("candidate")?)?,
                 ));
             }
-            let duplicate = sqlx::query("SELECT id,state,candidate FROM workflow_learning_examples WHERE tenant=$1 AND project=$2 AND family=$3 AND variant=$4 AND identity=$5 AND NOT (state='bad' AND reason IS NOT DISTINCT FROM 'incompatible teaching format; retained for repair') ORDER BY created_at,id LIMIT 1")
+            let duplicate = sqlx::query("SELECT id,state,candidate FROM workflow_learning_examples WHERE tenant=$1 AND project=$2 AND family=$3 AND variant=$4 AND identity=$5 AND state <> 'superseded' AND NOT (state='bad' AND reason IS NOT DISTINCT FROM 'incompatible teaching format; retained for repair') ORDER BY created_at,id LIMIT 1")
                 .bind(&scope.tenant).bind(&scope.project).bind(&candidate.family).bind(&candidate.variant).bind(&candidate.identity)
                 .fetch_optional(&mut tx.executor()).await?;
             let existing = duplicate
@@ -1019,10 +1074,26 @@ impl WorkflowRepository {
                     (policy == PublicationPolicy::Reviewed && approved)
                         || !support.has_example(tx, *id).await?
                 }
+                Some((_, state, old))
+                    if state == "active"
+                        && candidate.program().zip(old.program()).is_some_and(
+                            |(new, prior)| {
+                                candidate.quality.strictly_better_for_same_behavior(
+                                    &old.quality,
+                                    new,
+                                    prior,
+                                )
+                            },
+                        ) =>
+                {
+                    true
+                }
                 Some(_) => false,
             };
             let mut state = "candidate";
+            let mut superseded_id = None;
             let mut victim: Option<(Uuid, &Quality)> = None;
+            let mut equivalent_parameterized_example = false;
             if can_activate
                 && publish
                 && candidate.verified_by(seal)
@@ -1032,8 +1103,43 @@ impl WorkflowRepository {
                 let coverage: BTreeSet<_> = candidate.coverage.iter().collect();
                 for (id, old) in &active {
                     if old.coverage.iter().collect::<BTreeSet<_>>() == coverage
-                        && old.behavior_fingerprint() == candidate.behavior_fingerprint()
-                        && candidate.quality.strictly_better_than(&old.quality)
+                        && candidate
+                            .checked_program()
+                            .zip(old.checked_program())
+                            .is_some_and(|(new, prior)| {
+                                candidate.quality.equivalent_parameterized_observation(
+                                    &old.quality,
+                                    new,
+                                    prior,
+                                )
+                            })
+                    {
+                        equivalent_parameterized_example = true;
+                    }
+                    if old.coverage.iter().collect::<BTreeSet<_>>() == coverage
+                        && ((old.behavior_fingerprint() == candidate.behavior_fingerprint()
+                            && (candidate.quality.strictly_better_than(&old.quality)
+                                || candidate.program().zip(old.program()).is_some_and(
+                                    |(new, prior)| {
+                                        candidate.quality.strictly_better_for_same_behavior(
+                                            &old.quality,
+                                            new,
+                                            prior,
+                                        )
+                                    },
+                                )))
+                            || candidate
+                                .checked_program()
+                                .zip(old.checked_program())
+                                .is_some_and(|(new, prior)| {
+                                    candidate
+                                        .quality
+                                        .strictly_better_for_parameterized_behavior(
+                                            &old.quality,
+                                            new,
+                                            prior,
+                                        )
+                                }))
                         && victim
                             .as_ref()
                             .is_none_or(|(_, quality)| quality.strictly_better_than(&old.quality))
@@ -1045,12 +1151,17 @@ impl WorkflowRepository {
                     .bind(&scope.tenant).fetch_one(&mut tx.executor()).await?;
                 if let Some((id, _)) = victim {
                     sqlx::query(
-                        "UPDATE workflow_learning_examples SET state='superseded' WHERE id=$1",
+                        "UPDATE workflow_learning_examples SET state='superseded',reason='replaced by an independently observed, higher-quality equivalent teaching example' WHERE id=$1",
                     )
                     .bind(id)
                     .execute(&mut tx.executor())
                     .await?;
+                    superseded_id = Some(id);
                     state = "active";
+                } else if equivalent_parameterized_example {
+                    // Retain the observed program and its own evidence, while
+                    // serving only one equivalent parameterized presentation.
+                    state = "superseded";
                 } else if active.len() < 3
                     && count < self.tenant_cap
                     && !active
@@ -1060,9 +1171,14 @@ impl WorkflowRepository {
                     state = "active";
                 }
             }
-            let id = if let Some((id, _, _)) = existing {
+            let id = if let Some((id, _, _)) =
+                existing.filter(|(id, _, _)| Some(*id) != superseded_id)
+            {
                 if state == "active" {
                     sqlx::query("UPDATE workflow_learning_examples SET state='active',candidate=$1,reason=NULL WHERE id=$2 AND state='candidate'")
+                        .bind(serde_json::to_value(candidate)?).bind(id).execute(&mut tx.executor()).await?;
+                } else if state == "superseded" {
+                    sqlx::query("UPDATE workflow_learning_examples SET state='superseded',candidate=$1,reason='equivalent parameterized teaching presentation retained with its own evidence' WHERE id=$2 AND state='candidate'")
                         .bind(serde_json::to_value(candidate)?).bind(id).execute(&mut tx.executor()).await?;
                 }
                 id
@@ -1070,7 +1186,7 @@ impl WorkflowRepository {
                 let id = Uuid::new_v4();
                 sqlx::query("INSERT INTO workflow_learning_examples(id,tenant,project,family,variant,identity,candidate,state,reason) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9)")
                     .bind(id).bind(&scope.tenant).bind(&scope.project).bind(&candidate.family).bind(&candidate.variant)
-                    .bind(&candidate.identity).bind(serde_json::to_value(candidate)?).bind(state).bind(candidate.diagnostic().map(|d|d.message.as_str()).or(ambiguous_cross_family.then_some("similar purpose and coverage across families require semantic review"))).execute(&mut tx.executor()).await?;
+                    .bind(&candidate.identity).bind(serde_json::to_value(candidate)?).bind(state).bind(candidate.diagnostic().map(|d|d.message.as_str()).or(ambiguous_cross_family.then_some("similar purpose and coverage across families require semantic review")).or((state == "superseded").then_some("equivalent parameterized teaching presentation retained with its own evidence"))).execute(&mut tx.executor()).await?;
                 id
             };
             if candidate.verified_by(seal) && !conflicting_identity {
@@ -1160,6 +1276,37 @@ impl WorkflowRepository {
               ORDER BY score DESC,created_at,id LIMIT $6
         "#).bind(scope.tenant.clone()).bind(scope.project.clone()).bind(lexical).bind(vector)
             .bind(allowed).bind(i64::from(limit.min(32))).bind(active_only).bind(profile.to_owned())
+            .fetch_all(&mut connection).await?;
+        rows.into_iter()
+            .map(|row| {
+                Ok(StoredExample {
+                    id: row.try_get("id")?,
+                    candidate: serde_json::from_value(row.try_get("candidate")?)?,
+                })
+            })
+            .collect()
+    }
+
+    /// Bounded catalogue-qualified recall for semantic comparison. Equal
+    /// coverage nominates candidates; it is not a claim of equivalence.
+    pub(super) async fn comparable_coverage(
+        &self,
+        scope: &LibraryScope,
+        fingerprints: &BTreeMap<String, String>,
+        coverage: &[String],
+        intent: &super::index::NormalizedIntent,
+        limit: u32,
+    ) -> Result<Vec<StoredExample>> {
+        if coverage.is_empty() {
+            return Ok(Vec::new());
+        }
+        let mut connection = self.pool.acquire().await?;
+        let rows = sqlx::query("SELECT id,candidate FROM workflow_learning_examples WHERE tenant=$1 AND project=$2 AND state='active' AND candidate->'catalog_fingerprints'=$3 AND candidate->'coverage'=$4 ORDER BY ts_rank_cd(to_tsvector('english'::regconfig,coalesce(candidate->'intent'->>'purpose','')),plainto_tsquery('english'::regconfig,$5)) DESC,created_at,id LIMIT $6")
+            .bind(&scope.tenant).bind(&scope.project)
+            .bind(serde_json::to_value(fingerprints)?)
+            .bind(serde_json::to_value(coverage)?)
+            .bind(&intent.purpose)
+            .bind(i64::from(limit.min(16)))
             .fetch_all(&mut connection).await?;
         rows.into_iter()
             .map(|row| {

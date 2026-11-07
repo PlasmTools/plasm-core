@@ -39,6 +39,33 @@ struct RecallBudget {
     deadline: tokio::time::Instant,
 }
 
+async fn assess_packets(
+    model: &dyn ProposalModel,
+    budget: &RecallBudget,
+    requests: &[super::applicability::Request],
+) -> (
+    BTreeMap<String, super::applicability::Assessment>,
+    BTreeSet<String>,
+) {
+    let results = futures_util::future::join_all(requests.iter().map(|request| {
+        budget.run(
+            RecallStage::Applicability,
+            Duration::from_secs(10),
+            model.assess(request),
+        )
+    }))
+    .await;
+    let mut judgments = BTreeMap::new();
+    let mut unavailable = BTreeSet::new();
+    for (request, result) in requests.iter().zip(results) {
+        match result {
+            Ok(Ok(batch)) => judgments.extend(batch),
+            _ => unavailable.extend(request.labels().iter().cloned()),
+        }
+    }
+    (judgments, unavailable)
+}
+
 impl RecallBudget {
     fn new(duration: Duration) -> Self {
         Self {
@@ -444,6 +471,16 @@ fn select_candidate(proposed: &mut BTreeMap<ProposalKey, Candidate>, candidate: 
             if candidate_eligible && !previous_eligible
                 || candidate_eligible == previous_eligible
                     && (candidate.quality.strictly_better_than(&previous.quality)
+                        || candidate
+                            .program()
+                            .zip(previous.program())
+                            .is_some_and(|(new, old)| {
+                                candidate.quality.strictly_better_for_same_behavior(
+                                    &previous.quality,
+                                    new,
+                                    old,
+                                )
+                            })
                         || candidate.quality == previous.quality
                             && candidate.identity < previous.identity)
             {
@@ -553,6 +590,32 @@ async fn candidates(
                 },
             )
             .await?;
+        if let Ok(checked) = CheckedTeachingExample::from_observation(&execution.observation) {
+            let comparable = repo
+                .comparable_coverage(
+                    scope,
+                    &checked.program().catalog_fingerprints,
+                    &coverage(checked.program())?,
+                    initial.intent(),
+                    8,
+                )
+                .await?;
+            // Reserve slots for each recall channel; exact contracts do not
+            // establish semantic equivalence, which remains a model decision.
+            let mut merged = Vec::new();
+            for candidate in comparable.into_iter().chain(compared) {
+                if !merged
+                    .iter()
+                    .any(|old: &StoredExample| old.id == candidate.id)
+                {
+                    merged.push(candidate);
+                }
+                if merged.len() == 16 {
+                    break;
+                }
+            }
+            compared = merged;
+        }
         // Reviewed programs in this batch are not in the repository yet. Make
         // compatible verified siblings visible to the same semantic comparison
         // used for previously published material.
@@ -966,36 +1029,23 @@ async fn recall_with_model(
             source: Some(program.source.clone()),
         });
     }
-    let request = Request::bounded(
+    let requests = Request::batches(
         crate::discovery_matcher::RELEVANCE_MODEL,
         intent,
         &candidates,
     )
     .map_err(LearningError::Applicability)?;
-    let Some(request) = request else {
+    if requests.is_empty() {
         tracing::warn!(target: "plasm_agent::workflow_learning", candidates = candidates.len(), "no whole teaching candidate fits the semantic budget");
         for example in &examples {
             tracing::debug!(target: "plasm_agent::workflow_learning", example = %example.id, decision = "not_assessed_budget", "teaching example candidate decision");
         }
         return Ok((Vec::new(), guidance));
-    };
-    let judgments = match budget
-        .run(
-            RecallStage::Applicability,
-            Duration::from_secs(10),
-            model.assess(&request),
-        )
-        .await
-    {
-        Ok(Ok(judgments)) => judgments,
-        _ => {
-            for example in &examples {
-                tracing::debug!(target: "plasm_agent::workflow_learning", example = %example.id, decision = "assessment_unavailable", "teaching example candidate decision");
-            }
-            tracing::debug!(target: "plasm_agent::workflow_learning", "example applicability unavailable; catalogue candidates retained");
-            return Ok((Vec::new(), guidance));
-        }
-    };
+    }
+    let (judgments, unavailable) = assess_packets(model, budget, &requests).await;
+    if judgments.is_empty() {
+        tracing::debug!(target: "plasm_agent::workflow_learning", "example applicability unavailable; catalogue candidates retained");
+    }
     let useful = judgments
         .values()
         .filter(|assessment| assessment.supports_teaching())
@@ -1009,6 +1059,9 @@ async fn recall_with_model(
             ) || matches!(
                 assessment.effect_alignment,
                 super::applicability::EffectAlignment::Uncertain
+            ) || matches!(
+                assessment.constraint_alignment,
+                super::applicability::ConstraintAlignment::Uncertain
             )
         })
         .count();
@@ -1017,8 +1070,19 @@ async fn recall_with_model(
         let label = format!("example_{}", index + 1);
         let decision = judgments
             .get(&label)
-            .map(|result| format!("{:?}/{:?}", result.judgment, result.effect_alignment))
-            .unwrap_or_else(|| "not_assessed_budget".into());
+            .map(|result| {
+                format!(
+                    "{:?}/{:?}/{:?}",
+                    result.judgment, result.constraint_alignment, result.effect_alignment
+                )
+            })
+            .unwrap_or_else(|| {
+                if unavailable.contains(&label) {
+                    "assessment_unavailable".into()
+                } else {
+                    "not_assessed_budget".into()
+                }
+            });
         tracing::debug!(target: "plasm_agent::workflow_learning", example = %example.id, decision, "teaching example candidate decision");
     }
     let mut coverage = BTreeSet::new();

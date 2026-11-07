@@ -6,7 +6,25 @@ use super::{
     repository::RepositoryError,
     teaching::CheckedTeachingExample,
 };
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
+use uuid::Uuid;
+
+/// Every retained candidate must have at least one supporting review that
+/// proves its complete quality assessment, independently of other observations.
+pub(super) fn validate_quality_anchors<'a>(
+    items: impl IntoIterator<Item = (&'a Uuid, &'a Candidate, &'a SealedReview)>,
+) -> Result<(), RepositoryError> {
+    let mut anchored = BTreeMap::new();
+    for (id, candidate, review) in items {
+        *anchored.entry(*id).or_insert(false) |= candidate.verified_by(review);
+    }
+    if anchored.values().any(|valid| !valid) {
+        return Err(RepositoryError::InvalidEvidence(
+            "example quality evidence is unavailable",
+        ));
+    }
+    Ok(())
+}
 
 /// Derive only evidence needed by the selected products. The original review
 /// claims are intentionally not included in the portable projection.
@@ -20,7 +38,7 @@ pub(super) fn select_review_evidence(
     }
     let mut selected = BTreeSet::new();
     for candidate in candidates {
-        if !candidate.verified_by(original) {
+        if !candidate.observed_by(original) {
             return Err(RepositoryError::InvalidEvidence(
                 "example is not supported by review",
             ));
@@ -62,7 +80,7 @@ pub(super) fn select_review_evidence(
     };
     if candidates
         .iter()
-        .any(|candidate| !candidate.verified_by(&projected))
+        .any(|candidate| !candidate.observed_by(&projected))
     {
         return Err(RepositoryError::InvalidEvidence(
             "selected example evidence is incomplete",
@@ -166,6 +184,23 @@ mod tests {
             catalog_fingerprints: chosen.program().catalog_fingerprints.clone(),
             expected_family_version: 0,
         };
+        let mut observed_candidate = candidate.clone();
+        observed_candidate.quality =
+            Quality::observed(&original, &[receipt.execution_id], 1).unwrap();
+        let mut duplicate_review = original.clone();
+        duplicate_review.executions = vec![receipt.clone()];
+        duplicate_review.executions[0].execution_id = ids::run("duplicate");
+        assert!(!observed_candidate.verified_by(&duplicate_review));
+        let id = Uuid::new_v4();
+        assert!(validate_quality_anchors([(&id, &observed_candidate, &duplicate_review)]).is_err());
+        validate_quality_anchors([
+            (&id, &observed_candidate, &original),
+            (&id, &observed_candidate, &duplicate_review),
+        ])
+        .unwrap();
+        let (_, duplicate_receipts) =
+            select_review_evidence(&duplicate_review, &[observed_candidate], &[]).unwrap();
+        assert_eq!(duplicate_receipts[0].execution_id, ids::run("duplicate"));
         let (projection, selected) = select_review_evidence(&original, &[candidate], &[]).unwrap();
         assert_eq!(selected.len(), 1);
         assert_eq!(selected[0].execution_id, receipt.execution_id);

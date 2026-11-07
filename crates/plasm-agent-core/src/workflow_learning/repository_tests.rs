@@ -1,9 +1,241 @@
 use super::*;
 use crate::workflow_learning::test_identities as ids;
 
+/// Optional read-only audit of a retained corpus; it makes no publication decisions.
+#[tokio::test]
+#[ignore = "requires explicit retained corpus and credentials"]
+async fn retained_corpus_contract_recall_is_read_only(
+) -> std::result::Result<(), Box<dyn std::error::Error>> {
+    let url = std::env::var("PLASM_RETAINED_CORPUS_URL")?;
+    let scope = LibraryScope {
+        tenant: std::env::var("PLASM_RETAINED_CORPUS_TENANT")?,
+        project: std::env::var("PLASM_RETAINED_CORPUS_PROJECT")?,
+    };
+    let repo = WorkflowRepository::connect(&url).await?;
+    let rows = repo.list_eligible(&scope, 1000).await?;
+    let mut cross_family_hits = 0;
+    let mut parameterized_pairs = 0;
+    let mut identical_presentations = 0;
+    for example in &rows {
+        let found = repo
+            .comparable_coverage(
+                &scope,
+                &example.candidate.catalog_fingerprints,
+                &example.candidate.coverage,
+                &example.candidate.intent,
+                8,
+            )
+            .await?;
+        if found
+            .iter()
+            .any(|other| other.candidate.family != example.candidate.family)
+        {
+            cross_family_hits += 1;
+        }
+        for other in &found {
+            if other.id != example.id && example.id < other.id {
+                if let (Some(a), Some(b)) = (
+                    example.candidate.checked_program(),
+                    other.candidate.checked_program(),
+                ) {
+                    if let Some(proof) = super::super::parameterization::prove(a, b) {
+                        parameterized_pairs += 1;
+                        identical_presentations += usize::from(proof.same_presentation);
+                        println!(
+                            "parameterized purposes: {:?} / {:?}",
+                            example.candidate.intent.purpose, other.candidate.intent.purpose
+                        );
+                    }
+                }
+            }
+        }
+        assert!(found
+            .iter()
+            .all(|other| other.candidate.catalog_fingerprints
+                == example.candidate.catalog_fingerprints
+                && other.candidate.coverage == example.candidate.coverage));
+    }
+    println!(
+        "audited {} active examples; {} nominate another family; {} have validated literal parameterization, {} with identical parameterized presentation",
+        rows.len(),
+        cross_family_hits,
+        parameterized_pairs,
+        identical_presentations
+    );
+    assert!(
+        cross_family_hits > 0,
+        "corpus has no observable cross-family comparison candidates"
+    );
+    assert!(
+        parameterized_pairs > 0,
+        "no retained pair satisfies the parameterization proof"
+    );
+    assert!(
+        identical_presentations > 0,
+        "no retained pair is eligible for same-family consolidation"
+    );
+    Ok(())
+}
+
 async fn fixture_seal(repo: &WorkflowRepository, value: serde_json::Value) -> Result<SealedReview> {
     let digest = plasm_core::catalog_discovery::content_hash(&serde_json::to_vec(&value)?);
     hydrate_review(&mut repo.pool.acquire().await?, value, &digest).await
+}
+
+#[tokio::test]
+async fn postgres_same_behavior_shorter_example_supersedes_atomically(
+) -> std::result::Result<(), Box<dyn std::error::Error>> {
+    let Ok(url) = std::env::var("PLASM_TEST_POSTGRES_URL") else {
+        return Ok(());
+    };
+    let repo = WorkflowRepository::connect(&url).await?;
+    repo.migrate().await?;
+    let session = super::super::teaching::tests::session(&["LangItem"]);
+    let source = super::super::teaching::tests::source(&session);
+    let verbose = format!("# A verbose explanation that consumes teaching tokens\n{source}");
+    let filtered = source.replace(
+        ".query().take(1)",
+        ".query().where(lambda row: row.title == \"short\").select(\"title\").take(1)",
+    );
+    let filtered_long = format!(
+        "# A verbose explanation that consumes teaching tokens\n{}",
+        filtered.replace("short", "an exceptionally long user-selected title")
+    );
+    for sources in [
+        vec![verbose.clone(), source.clone(), verbose],
+        vec![
+            filtered_long.clone(),
+            filtered.clone(),
+            filtered.replace("short", "another selected title"),
+            filtered_long,
+        ],
+    ] {
+        let scope = LibraryScope {
+            tenant: Uuid::new_v4().to_string(),
+            project: "portfolio-fixture".into(),
+        };
+        let mut old_id = None;
+        let mut best_id = None;
+        for (index, source) in sources.iter().enumerate() {
+            let logical = LogicalSessionId::new_v4();
+            repo.bind_training_fixture(&scope, logical).await?;
+            let attempt = format!("attempt-{index}");
+            repo.begin_execution(&scope, logical, &attempt).await?;
+            let bundle = crate::plasm_dag::compile_python_program_checked(&session, source)?;
+            let checked = super::super::teaching::CheckedTeachingExample::from_execution(
+                &session, source, &bundle,
+            )
+            .await?;
+            let execution_id = ids::run(&format!("portfolio-{index}"));
+            let receipt = ExecutionReceipt {
+                scope: scope.clone(),
+                logical_session: logical,
+                session_revision: 1,
+                execution_id,
+                plan_id: CompiledProgramId::from_comp(&bundle.artifact().comp),
+                prompt_hash: session.prompt_hash.parse()?,
+                execute_session: ids::execute("portfolio"),
+                source: source.clone(),
+                compiled_plan: serde_json::to_value(&bundle.artifact().comp)?,
+                teaching_plan: super::super::review_packet::TeachingPlan::Unavailable {
+                    reason: super::super::review_packet::TeachingPlanUnavailable::PlanningFailed,
+                },
+                observation: checked.observation(),
+                catalogue_requirements:
+                    super::super::catalogue_guidance::CatalogueRequirementEvidence::Unavailable {
+                        diagnostic: "fixture".into(),
+                    },
+                catalog_fingerprints: checked.program().catalog_fingerprints.clone(),
+            };
+            repo.record_training_fixture(&receipt).await?;
+            repo.finish_execution(&scope, logical, &attempt, true)
+                .await?;
+            let request = ReviewRequest {
+                scope: scope.clone(),
+                logical_session: logical,
+                session_revision: 1,
+                intent: "inspect a fixture item".into(),
+                subtasks: vec![AchievedSubtask {
+                    intent: "inspect item".into(),
+                    observed_outcome: "item observed".into(),
+                    execution_ids: vec![execution_id],
+                }],
+            };
+            let review = repo.review_training_fixture(&request).await?;
+            let claim = repo
+                .claim_scoped(60, Some(&scope))
+                .await?
+                .expect("review claim");
+            assert_eq!(claim.id, review.id);
+            let quality = Quality::observed(
+                &claim.seal,
+                &[execution_id],
+                u32::try_from(plasm_core::o200k_token_count(source))?,
+            )?;
+            let candidate = Candidate {
+                intent: super::super::index::NormalizedIntent {
+                    purpose: "inspect item".into(),
+                    facets: vec![],
+                    aliases: vec![],
+                },
+                embedding: vec![1.0],
+                embedding_profile: "fixture".into(),
+                family: "fixture-family".into(),
+                variant: "fixture-variant".into(),
+                identity: checked.program().structural_fingerprint.clone(),
+                coverage: vec!["read".into()],
+                quality,
+                catalog_fingerprints: checked.program().catalog_fingerprints.clone(),
+                state: CandidateState::Verified {
+                    evidence: VerifiedProgram::observed(checked, OutcomeAssurance::AgentAttested),
+                },
+                expected_family_version: repo
+                    .portfolio_version(&scope, "fixture-family", "fixture-variant")
+                    .await?,
+            };
+            let candidate_identity = candidate.identity.clone();
+            repo.finish(&claim, &[candidate], PublicationPolicy::Automatic)
+                .await?;
+            let active = repo.list_eligible(&scope, 10).await?;
+            assert_eq!(active.len(), 1);
+            if index == 0 {
+                old_id = Some(active[0].id);
+            } else if index == 1 {
+                assert_ne!(old_id, Some(active[0].id));
+                best_id = Some(active[0].id);
+                let state: String =
+                    sqlx::query_scalar("SELECT state FROM workflow_learning_examples WHERE id=$1")
+                        .bind(old_id.expect("old revision"))
+                        .fetch_one(&repo.pool)
+                        .await?;
+                assert_eq!(state, "superseded");
+                assert_eq!(
+                    active[0].candidate.program().expect("program").source,
+                    *source
+                );
+            } else {
+                assert_eq!(
+                    best_id,
+                    Some(active[0].id),
+                    "weaker example must not displace the better revision"
+                );
+                assert_eq!(
+                    active[0].candidate.program().expect("program").source,
+                    sources[1]
+                );
+                if index == 2 && sources.len() == 4 {
+                    let state: String = sqlx::query_scalar("SELECT state FROM workflow_learning_examples WHERE tenant=$1 AND project=$2 AND identity=$3 ORDER BY created_at DESC LIMIT 1")
+                        .bind(&scope.tenant).bind(&scope.project).bind(&candidate_identity)
+                        .fetch_one(&repo.pool).await?;
+                    assert_eq!(
+                        state, "superseded",
+                        "literal-only variants consolidate with their own evidence"
+                    );
+                }
+            }
+        }
+    }
+    Ok(())
 }
 
 #[tokio::test]
@@ -495,6 +727,27 @@ async fn postgres_workflow_seals_and_fences() -> std::result::Result<(), Box<dyn
         .await?;
     let active = repo.list_eligible(&scope, 10).await?;
     assert_eq!(1, active.len());
+    let contract_matches = repo
+        .comparable_coverage(
+            &scope,
+            &active[0].candidate.catalog_fingerprints,
+            &active[0].candidate.coverage,
+            &active[0].candidate.intent,
+            8,
+        )
+        .await?;
+    assert_eq!(contract_matches.len(), 1);
+    let different_contract = [("matrix".to_owned(), "different".to_owned())].into();
+    assert!(repo
+        .comparable_coverage(
+            &scope,
+            &different_contract,
+            &active[0].candidate.coverage,
+            &active[0].candidate.intent,
+            8
+        )
+        .await?
+        .is_empty());
     let allowed = BTreeSet::from(["matrix".to_owned()]);
     let search = &active[0].candidate.intent;
     assert!(repo

@@ -386,15 +386,20 @@ impl Candidate {
         }
     }
     pub fn verified_by(&self, seal: &SealedReview) -> bool {
+        self.observed_by(seal)
+            && self
+                .checked_program()
+                .is_some_and(|program| self.quality.verified_for(program, seal))
+    }
+    /// Independent supporting reviews may observe the same program without
+    /// containing the original receipts that establish its quality.
+    pub(super) fn observed_by(&self, seal: &SealedReview) -> bool {
         self.eligible(seal.assurance)
             && self.checked_program().is_some_and(|program| {
-                self.quality.verified_for(program, seal)
-                    && seal.executions.iter().any(|receipt| {
-                        super::teaching::CheckedTeachingExample::from_observation(
-                            &receipt.observation,
-                        )
+                seal.executions.iter().any(|receipt| {
+                    super::teaching::CheckedTeachingExample::from_observation(&receipt.observation)
                         .is_ok_and(|observed| &observed == program)
-                    })
+                })
             })
     }
     pub fn eligible(&self, assurance: OutcomeAssurance) -> bool {

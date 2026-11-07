@@ -4,10 +4,10 @@ use serde::{Deserialize, Serialize};
 use std::collections::BTreeSet;
 
 const PURPOSE_LIMIT: usize = 2048;
-const FACET_LIMIT: usize = 1024;
-const ALIAS_LIMIT: usize = 512;
-const FACET_COUNT: usize = 32;
-const ALIAS_COUNT: usize = 8;
+pub(super) const FACET_LIMIT: usize = 1024;
+pub(super) const ALIAS_LIMIT: usize = 512;
+pub(super) const FACET_COUNT: usize = 32;
+pub(super) const ALIAS_COUNT: usize = 8;
 const REQUEST_LIMIT: usize = 131_072;
 const OUTPUT_TOKEN_LIMIT: usize = 8192;
 

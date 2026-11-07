@@ -358,12 +358,29 @@ pub(crate) fn stage_example_symbols(
             .filter(|reference| &reference.catalog == entry)
             .map(|reference| reference.capability.clone())
             .collect::<Vec<_>>();
-        let delta = plasm_core::capability_exposure::selected_capability_surface(
+        let mut delta = plasm_core::capability_exposure::selected_capability_surface(
             &context.cgs,
             entry,
             &capabilities,
         )
         .map_err(ServingError::CapabilityExposure)?;
+        // Referenced relation targets may have no separately requested
+        // capability. Expose their entity identities without admitting any
+        // additional operations, so the relation can be rebound.
+        for entity in entities {
+            if context.cgs.get_entity(entity).is_none() {
+                return Err(ServingError::Invalid(format!(
+                    "required entity {entry}::{entity} is missing"
+                )));
+            }
+            delta
+                .required
+                .entities
+                .insert(plasm_core::symbol_tuning::ExposureEntityKey {
+                    entry_id: entry.clone(),
+                    entity: entity.as_str().into(),
+                });
+        }
         let names: Vec<_> = entities.iter().map(String::as_str).collect();
         exposure.expose_surface(&layers, context.cgs.clone(), entry, &names, delta);
     }
@@ -562,3 +579,7 @@ pub(crate) async fn synchronized_hot_session(
     }
     Ok(current)
 }
+
+#[cfg(test)]
+#[path = "serving_tests.rs"]
+mod tests;
