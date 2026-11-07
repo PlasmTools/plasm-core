@@ -100,7 +100,6 @@ pub async fn seed_model_boundary(store: &DiscoveryStore, generation: &str, turns
     vector[0] = 1.0;
     sqlx::query("INSERT INTO discovery_intent_embeddings VALUES ($1,$2,$3::text::vector) ON CONFLICT DO NOTHING")
         .bind(key).bind(serde_json::to_value(profile).unwrap()).bind(serde_json::to_string(&vector).unwrap()).execute(&pool).await.unwrap();
-    pool.close().await;
     let allowed = DiscoveryAuthorization::catalogs(BTreeSet::from(["matrix".into()]));
     let provenance = IntentProvenance::from_turns(turns.iter().map(|s| (*s).to_owned())).unwrap();
     let model = plasm_agent_core::discovery_matcher::RELEVANCE_MODEL;
@@ -120,7 +119,9 @@ pub async fn seed_model_boundary(store: &DiscoveryStore, generation: &str, turns
         },
         &recall,
         plasm_agent_core::discovery_matcher::operations::OperationSet::from_excerpts(intent, &[intent.to_owned()]).unwrap(),
-        |batch| async move {
+        |batch| {
+        let pool = pool.clone();
+        async move {
         let body: Value = serde_json::from_str(batch.body()).unwrap();
         let answers: BTreeMap<_, _> = body["questions"]
             .as_object()
@@ -129,13 +130,11 @@ pub async fn seed_model_boundary(store: &DiscoveryStore, generation: &str, turns
             .map(|key| (key.clone(), json!({"type":"choice","choice":"relevant","confidence":1.0,"probabilities":{"relevant":1.0,"uncertain":0.0,"unrelated":0.0}})))
             .collect();
         let raw = json!({"model":model,"provider":"OpenAI","answers":answers}).to_string();
-        store
-            .store_selector_envelope(
-                batch.cache_key(),
-                &raw,
-            )
+        sqlx::query("INSERT INTO discovery_selector_cache (cache_key, envelope) VALUES ($1,$2) ON CONFLICT (cache_key) DO NOTHING")
+            .bind(batch.cache_key()).bind(&raw).execute(&pool)
             .await
             .unwrap();
         Ok(raw)
-    }).await.unwrap();
+    }}).await.unwrap();
+    pool.close().await;
 }

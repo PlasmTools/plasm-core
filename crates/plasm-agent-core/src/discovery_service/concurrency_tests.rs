@@ -5,6 +5,227 @@ use std::sync::{
 };
 use tokio::sync::Notify;
 
+fn progress(requests: usize) -> matcher::online::SearchProgress {
+    let mut accounting = matcher::online::SearchReceipt::default();
+    accounting.requests = requests;
+    serde_json::from_value(serde_json::json!({
+        "state": {"state": "admitted"},
+        "accounting": accounting,
+        "judgments": [],
+        "pending": [],
+        "paths": []
+    }))
+    .unwrap()
+}
+
+#[tokio::test]
+#[ignore = "requires an isolated PLASM_TEST_POSTGRES_URL with discovery_selector_cache"]
+async fn typed_search_repository_preserves_record_keys_and_write_contracts() {
+    let (a, b) = services().await;
+    let key = uuid::Uuid::new_v4().to_string();
+    let repo = a.store.searches();
+    assert!(matches!(
+        repo.reserve(SearchKey(&key)).await.unwrap(),
+        SearchAdmission::Fresh
+    ));
+    assert!(matches!(
+        b.store.searches().reserve(SearchKey(&key)).await.unwrap(),
+        SearchAdmission::PreviouslyStarted(None)
+    ));
+    repo.checkpoint(SearchKey(&key), &progress(3))
+        .await
+        .unwrap();
+    let SearchAdmission::PreviouslyStarted(Some(saved)) =
+        b.store.searches().reserve(SearchKey(&key)).await.unwrap()
+    else {
+        panic!("spent search must return its persisted progress")
+    };
+    assert_eq!(saved.accounting().requests, 3);
+    repo.record_decision(&format!("{key}-decision"), "first")
+        .await
+        .unwrap();
+    repo.record_decision(&format!("{key}-decision"), "second")
+        .await
+        .unwrap();
+    assert_eq!(
+        b.store
+            .searches()
+            .decision(&format!("{key}-decision"))
+            .await
+            .unwrap()
+            .as_deref(),
+        Some("first")
+    );
+    let receipt = receipt();
+    repo.complete(SearchKey(&key), &receipt).await.unwrap();
+    let original = serde_json::to_value(&receipt).unwrap();
+    let mut other = receipt;
+    other.pin_id = "different".into();
+    repo.complete(SearchKey(&key), &other).await.unwrap();
+    let saved = b
+        .store
+        .searches()
+        .completion(SearchKey(&key))
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(serde_json::to_value(saved).unwrap(), original);
+    let pool = sqlx::PgPool::connect(&std::env::var("PLASM_TEST_POSTGRES_URL").unwrap())
+        .await
+        .unwrap();
+    let marker: String =
+        sqlx::query_scalar("SELECT envelope FROM discovery_selector_cache WHERE cache_key=$1")
+            .bind(format!("{key}:started"))
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert_eq!(marker, "{\"started\":true}");
+    let raw: String =
+        sqlx::query_scalar("SELECT envelope FROM discovery_selector_cache WHERE cache_key=$1")
+            .bind(format!("{key}:progress"))
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert_eq!(
+        serde_json::from_str::<serde_json::Value>(&raw).unwrap(),
+        serde_json::to_value(progress(3)).unwrap()
+    );
+    sqlx::query("UPDATE discovery_selector_cache SET envelope=$1 WHERE cache_key=$2")
+        .bind("{invalid")
+        .bind(format!("{key}:progress"))
+        .execute(&pool)
+        .await
+        .unwrap();
+    assert!(
+        matches!(
+            repo.reserve(SearchKey(&key)).await,
+            Err(crate::discovery_store::DiscoveryStoreError::Json(_))
+        ),
+        "corrupt progress must not restore a fresh budget"
+    );
+    pool.close().await;
+}
+
+/// Spawned by the companion test; ordinary ignored-suite runs leave it inert.
+#[tokio::test]
+#[ignore = "subprocess helper; requires an isolated PLASM_TEST_POSTGRES_URL"]
+async fn subprocess_search_lock_owner() {
+    let Ok(key) = std::env::var("PLASM_DISCOVERY_TEST_CHILD_KEY") else {
+        return;
+    };
+    let url = std::env::var("PLASM_TEST_POSTGRES_URL").unwrap();
+    let store = DiscoveryStore::connect(&url).await.unwrap();
+    let pool = sqlx::PgPool::connect(&url).await.unwrap();
+    store
+        .searches()
+        .with_search(SearchKey(&key), || async {
+            assert!(matches!(
+                store.searches().reserve(SearchKey(&key)).await.unwrap(),
+                SearchAdmission::Fresh
+            ));
+            sqlx::query(
+                "INSERT INTO discovery_selector_cache (cache_key,envelope) VALUES ($1,'ready')",
+            )
+            .bind(format!("{key}-ready"))
+            .execute(&pool)
+            .await
+            .unwrap();
+            tokio::time::timeout(std::time::Duration::from_secs(10), async {
+                loop {
+                    let released: bool = sqlx::query_scalar(
+                        "SELECT EXISTS(SELECT 1 FROM discovery_selector_cache WHERE cache_key=$1)",
+                    )
+                    .bind(format!("{key}-release"))
+                    .fetch_one(&pool)
+                    .await
+                    .unwrap();
+                    if released {
+                        break;
+                    }
+                    tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+                }
+            })
+            .await
+            .expect("parent must release the child");
+        })
+        .await
+        .unwrap();
+    pool.close().await;
+}
+
+#[tokio::test]
+#[ignore = "requires an isolated PLASM_TEST_POSTGRES_URL and subprocess execution"]
+async fn separate_process_waits_for_search_owner_and_preserves_spent_admission() {
+    let (service, _) = services().await;
+    let key = uuid::Uuid::new_v4().to_string();
+    let mut child = std::process::Command::new(std::env::current_exe().unwrap())
+        .arg("--ignored")
+        .arg("--exact")
+        .arg("discovery_service::concurrency_tests::subprocess_search_lock_owner")
+        .env("PLASM_DISCOVERY_TEST_CHILD_KEY", &key)
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::inherit())
+        .spawn()
+        .unwrap();
+    let pool = sqlx::PgPool::connect(&std::env::var("PLASM_TEST_POSTGRES_URL").unwrap())
+        .await
+        .unwrap();
+    tokio::time::timeout(std::time::Duration::from_secs(10), async {
+        loop {
+            let ready: bool = sqlx::query_scalar(
+                "SELECT EXISTS(SELECT 1 FROM discovery_selector_cache WHERE cache_key=$1)",
+            )
+            .bind(format!("{key}-ready"))
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+            if ready {
+                break;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+        }
+    })
+    .await
+    .expect("child must hold the database search lock");
+    let mut follower = Box::pin(service.route_cached(&key, &[], || async {
+        match service.store.searches().reserve(SearchKey(&key)).await? {
+            SearchAdmission::PreviouslyStarted(None) => {
+                Err(DiscoveryServiceError::SearchAlreadyStarted)
+            }
+            _ => panic!("a second process must not receive a fresh budget"),
+        }
+    }));
+    assert!(
+        tokio::time::timeout(std::time::Duration::from_millis(150), &mut follower)
+            .await
+            .is_err(),
+        "a different process must wait for the owner"
+    );
+    sqlx::query("INSERT INTO discovery_selector_cache (cache_key,envelope) VALUES ($1,'release')")
+        .bind(format!("{key}-release"))
+        .execute(&pool)
+        .await
+        .unwrap();
+    assert!(matches!(
+        tokio::time::timeout(std::time::Duration::from_secs(10), follower)
+            .await
+            .unwrap(),
+        Err(DiscoveryServiceError::SearchAlreadyStarted)
+    ));
+    let status = tokio::time::timeout(std::time::Duration::from_secs(10), async {
+        loop {
+            if let Some(status) = child.try_wait().unwrap() {
+                break status;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+        }
+    })
+    .await
+    .expect("child must exit after release");
+    assert!(status.success());
+    pool.close().await;
+}
+
 #[path = "objective_epoch_tests.rs"]
 mod objective_epoch_tests;
 
@@ -517,10 +738,8 @@ async fn replay_of_an_old_completion_cannot_roll_back_operation_revision() {
         next.commit(&scope, &matrix).unwrap();
         service
             .store
-            .store_search_progress(
-                &format!("{key}:operations"),
-                &serde_json::to_string(&next).unwrap(),
-            )
+            .searches()
+            .checkpoint_operations(SearchKey(&key), &next)
             .await
             .unwrap();
         service
@@ -536,15 +755,13 @@ async fn replay_of_an_old_completion_cannot_roll_back_operation_revision() {
         })
         .await
         .unwrap();
-    let saved: SearchFrontier = serde_json::from_str(
-        &service
-            .store
-            .cached_selector_envelope(&frontier_key)
-            .await
-            .unwrap()
-            .unwrap(),
-    )
-    .unwrap();
+    let saved: SearchFrontier = service
+        .store
+        .searches()
+        .frontier(FrontierKey(&frontier_key))
+        .await
+        .unwrap()
+        .unwrap();
     assert!(matches!(
         saved
             .operation_state
@@ -589,10 +806,10 @@ async fn same_request_continues_once_per_changed_operation_checkpoint() {
     .unwrap();
     let mut state = OperationFrontier::default();
     state.commit(&scope, &matrix).unwrap();
-    let state = serde_json::to_string(&state).unwrap();
     service
         .store
-        .store_search_progress(&format!("{key}:operations"), &state)
+        .searches()
+        .checkpoint_operations(SearchKey(&key), &state)
         .await
         .unwrap();
     service
@@ -609,7 +826,8 @@ async fn same_request_continues_once_per_changed_operation_checkpoint() {
             let state = &state;
             async move {
                 store
-                    .store_search_progress(&format!("{effective}:operations"), state)
+                    .searches()
+                    .checkpoint_operations(SearchKey(&effective), state)
                     .await
                     .unwrap();
                 Ok(receipt())
@@ -735,15 +953,13 @@ async fn self_contained_requests_advance_frontier_but_exact_replays_do_not() {
         })
         .await
         .unwrap();
-    let saved: SearchFrontier = serde_json::from_str(
-        &recreated
-            .store
-            .cached_selector_envelope(&scope)
-            .await
-            .unwrap()
-            .unwrap(),
-    )
-    .unwrap();
+    let saved: SearchFrontier = recreated
+        .store
+        .searches()
+        .frontier(FrontierKey(&scope))
+        .await
+        .unwrap()
+        .unwrap();
     assert_eq!(calls.load(Ordering::SeqCst), 3);
     assert_eq!(saved.completed.len(), 1);
     assert!(saved.visits().values().all(|count| *count == 1));
@@ -756,15 +972,13 @@ async fn self_contained_requests_advance_frontier_but_exact_replays_do_not() {
         })
         .await
         .unwrap();
-    let old: SearchFrontier = serde_json::from_str(
-        &recreated
-            .store
-            .cached_selector_envelope(&old_scope)
-            .await
-            .unwrap()
-            .unwrap(),
-    )
-    .unwrap();
+    let old: SearchFrontier = recreated
+        .store
+        .searches()
+        .frontier(FrontierKey(&old_scope))
+        .await
+        .unwrap()
+        .unwrap();
     assert_eq!(old.completed.len(), 2);
     assert!(old.visits().values().all(|count| *count == 2));
     let returning = changed.derived(first.current().into()).unwrap();
@@ -793,9 +1007,7 @@ async fn self_contained_requests_advance_frontier_but_exact_replays_do_not() {
 async fn services() -> (Arc<DiscoveryService>, Arc<DiscoveryService>) {
     let url = std::env::var("PLASM_TEST_POSTGRES_URL").unwrap();
     let a = DiscoveryStore::connect(&url).await.unwrap();
-    a.store_selector_envelope("test-schema-check", "{}")
-        .await
-        .unwrap();
+    a.migrate().await.unwrap();
     let b = DiscoveryStore::connect(&url).await.unwrap();
     (
         Arc::new(DiscoveryService::cached_test_service(a)),
@@ -860,10 +1072,8 @@ async fn frontier_reuses_completion_once_and_survives_store_recreation() {
     // Receipt persistence succeeded but the frontier checkpoint did not.
     // The saved completion must repair progress without repeating judgment.
     b.store
-        .store_search_progress(
-            &scope,
-            &serde_json::to_string(&SearchFrontier::default()).unwrap(),
-        )
+        .searches()
+        .checkpoint_frontier(FrontierKey(&scope), &SearchFrontier::default())
         .await
         .unwrap();
     b.route_frontier(&scope, &first, &[], |_, _, _| async {
@@ -881,16 +1091,79 @@ async fn frontier_reuses_completion_once_and_survives_store_recreation() {
     })
     .await
     .unwrap();
-    let saved: SearchFrontier = serde_json::from_str(
-        &a.store
-            .cached_selector_envelope(&scope)
-            .await
-            .unwrap()
-            .unwrap(),
-    )
-    .unwrap();
+    let saved: SearchFrontier = a
+        .store
+        .searches()
+        .frontier(FrontierKey(&scope))
+        .await
+        .unwrap()
+        .unwrap();
     assert_eq!(saved.completed.len(), 2);
     assert!(saved.visits().values().all(|count| *count == 2));
+}
+
+#[tokio::test]
+#[ignore = "requires an isolated PLASM_TEST_POSTGRES_URL with discovery_selector_cache"]
+async fn failed_frontier_write_is_repaired_from_the_durable_completion() {
+    let (a, b) = services().await;
+    let scope = uuid::Uuid::new_v4().to_string();
+    let key = uuid::Uuid::new_v4().to_string();
+    let name = format!("discovery_reject_{}", uuid::Uuid::new_v4().simple());
+    let pool = sqlx::PgPool::connect(&std::env::var("PLASM_TEST_POSTGRES_URL").unwrap())
+        .await
+        .unwrap();
+    let create = format!(
+        "CREATE FUNCTION {name}() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN IF NEW.cache_key = '{scope}' THEN RAISE EXCEPTION 'injected frontier failure'; END IF; RETURN NEW; END $$"
+    );
+    sqlx::query(&create).execute(&pool).await.unwrap();
+    sqlx::query(&format!("CREATE TRIGGER {name} BEFORE INSERT OR UPDATE ON discovery_selector_cache FOR EACH ROW EXECUTE FUNCTION {name}()"))
+        .execute(&pool).await.unwrap();
+    let calls = AtomicUsize::new(0);
+    let failed = a
+        .route_frontier(&scope, &key, &[], |_, _, _| async {
+            calls.fetch_add(1, Ordering::SeqCst);
+            Ok(receipt())
+        })
+        .await;
+    assert!(matches!(failed, Err(DiscoveryServiceError::Store(_))));
+    assert_eq!(calls.load(Ordering::SeqCst), 1);
+    assert!(a
+        .store
+        .searches()
+        .completion(SearchKey(&key))
+        .await
+        .unwrap()
+        .is_some());
+    assert!(a
+        .store
+        .searches()
+        .frontier(FrontierKey(&scope))
+        .await
+        .unwrap()
+        .is_none());
+    sqlx::query(&format!("DROP TRIGGER {name} ON discovery_selector_cache"))
+        .execute(&pool)
+        .await
+        .unwrap();
+    sqlx::query(&format!("DROP FUNCTION {name}()"))
+        .execute(&pool)
+        .await
+        .unwrap();
+    b.route_frontier(&scope, &key, &[], |_, _, _| async {
+        panic!("repair must reuse the durable completion")
+    })
+    .await
+    .unwrap();
+    assert_eq!(calls.load(Ordering::SeqCst), 1);
+    let restored = b
+        .store
+        .searches()
+        .frontier(FrontierKey(&scope))
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(restored.completed.len(), 1);
+    pool.close().await;
 }
 
 #[tokio::test]
@@ -950,11 +1223,12 @@ async fn concurrent_search_waits_for_other_store_and_reuses_completion() {
         let calls = calls.clone();
         tokio::spawn(async move {
             a.route_cached(&key, &[], || async {
-                assert!(
-                    a.store
-                        .reserve_selector_search(&format!("{key}:started"))
-                        .await?
-                );
+                assert!(a
+                    .store
+                    .searches()
+                    .reserve(SearchKey(&key))
+                    .await?
+                    .is_fresh());
                 calls.fetch_add(1, Ordering::SeqCst);
                 started.notify_one();
                 release.notified().await;
@@ -967,8 +1241,10 @@ async fn concurrent_search_waits_for_other_store_and_reuses_completion() {
     let mut follower = Box::pin(b.route_cached(&key, &[], || async {
         if !b
             .store
-            .reserve_selector_search(&format!("{key}:started"))
+            .searches()
+            .reserve(SearchKey(&key))
             .await?
+            .is_fresh()
         {
             return Err(DiscoveryServiceError::SearchAlreadyStarted);
         }
@@ -1010,13 +1286,15 @@ async fn cancelled_or_failed_owner_releases_waiters_without_replaying_budget() {
                 a.route_frontier(&format!("{key}:frontier"), &key, &[], |visits, _, _| {
                     assert!(visits.is_empty());
                     async {
-                        assert!(
-                            a.store
-                                .reserve_selector_search(&format!("{key}:started"))
-                                .await?
-                        );
+                        assert!(a
+                            .store
+                            .searches()
+                            .reserve(SearchKey(&key))
+                            .await?
+                            .is_fresh());
                         a.store
-                            .store_search_progress(&format!("{key}:progress"), "{\"requests\":1}")
+                            .searches()
+                            .checkpoint(SearchKey(&key), &progress(1))
                             .await?;
                         started.notify_one();
                         release.notified().await;
@@ -1031,17 +1309,12 @@ async fn cancelled_or_failed_owner_releases_waiters_without_replaying_budget() {
         let mut follower = Box::pin(b.route_frontier(&scope, &key, &[], |visits, _, _| {
             assert!(visits.is_empty());
             async {
-                assert!(
-                    !b.store
-                        .reserve_selector_search(&format!("{key}:started"))
-                        .await?
-                );
-                assert_eq!(
-                    b.store
-                        .cached_selector_envelope(&format!("{key}:progress"))
-                        .await?,
-                    Some("{\"requests\":1}".into())
-                );
+                let SearchAdmission::PreviouslyStarted(Some(saved)) =
+                    b.store.searches().reserve(SearchKey(&key)).await?
+                else {
+                    panic!("spent search must retain its progress");
+                };
+                assert_eq!(saved.accounting().requests, 1);
                 Err(DiscoveryServiceError::SearchAlreadyStarted)
             }
         }));
@@ -1078,11 +1351,12 @@ async fn cancelled_waiter_does_not_cancel_owner_or_block_distinct_searches() {
         let release = release.clone();
         tokio::spawn(async move {
             a.route_cached(&key, &[], || async {
-                assert!(
-                    a.store
-                        .reserve_selector_search(&format!("{key}:started"))
-                        .await?
-                );
+                assert!(a
+                    .store
+                    .searches()
+                    .reserve(SearchKey(&key))
+                    .await?
+                    .is_fresh());
                 started.notify_one();
                 release.notified().await;
                 Ok(receipt())
@@ -1125,14 +1399,16 @@ async fn distinct_searches_leave_pool_capacity_for_progress_and_completion() {
         tasks.spawn(async move {
             let key = uuid::Uuid::new_v4().to_string();
             a.route_cached(&key, &[], || async {
-                assert!(
-                    a.store
-                        .reserve_selector_search(&format!("{key}:started"))
-                        .await?
-                );
+                assert!(a
+                    .store
+                    .searches()
+                    .reserve(SearchKey(&key))
+                    .await?
+                    .is_fresh());
                 tokio::task::yield_now().await;
                 a.store
-                    .store_search_progress(&format!("{key}:progress"), "{}")
+                    .searches()
+                    .checkpoint(SearchKey(&key), &progress(1))
                     .await?;
                 Ok(receipt())
             })

@@ -48,11 +48,12 @@ async fn objective_epoch_continuation_revision_and_replay() {
                 assert_eq!(visits.is_empty(), expected_visits == 0);
                 assert!(visits.values().all(|n| *n == expected_visits));
                 async {
-                    assert!(
-                        a.store
-                            .reserve_selector_search(&format!("{key}:started"))
-                            .await?
-                    );
+                    assert!(a
+                        .store
+                        .searches()
+                        .reserve(SearchKey(&key))
+                        .await?
+                        .is_fresh());
                     calls.fetch_add(1, Ordering::SeqCst);
                     Ok(receipt())
                 }
@@ -72,14 +73,13 @@ async fn objective_epoch_continuation_revision_and_replay() {
     }
     assert_eq!(calls.load(Ordering::SeqCst), 4);
     for (epoch, count) in [(0, 3), (1, 1)] {
-        let saved: SearchFrontier = serde_json::from_str(
-            &b.store
-                .cached_selector_envelope(&scope(&session, epoch))
-                .await
-                .unwrap()
-                .unwrap(),
-        )
-        .unwrap();
+        let saved: SearchFrontier = b
+            .store
+            .searches()
+            .frontier(FrontierKey(&scope(&session, epoch)))
+            .await
+            .unwrap()
+            .unwrap();
         assert_eq!(saved.completed.len(), count);
         assert!(saved.visits().values().all(|n| *n == count));
     }
@@ -107,11 +107,12 @@ async fn objective_epoch_late_completion_and_concurrent_duplicate() {
         let old_key = old_key.clone();
         tokio::spawn(async move {
             a.route_frontier(&old, &old_key, &[], |_, _, _| async {
-                assert!(
-                    a.store
-                        .reserve_selector_search(&format!("{old_key}:started"))
-                        .await?
-                );
+                assert!(a
+                    .store
+                    .searches()
+                    .reserve(SearchKey(&old_key))
+                    .await?
+                    .is_fresh());
                 started.notify_one();
                 release.notified().await;
                 Ok(receipt())
@@ -128,11 +129,12 @@ async fn objective_epoch_late_completion_and_concurrent_duplicate() {
         b.route_frontier(&new, &new_key, &[], |visits, _, _| {
             assert!(visits.is_empty());
             async {
-                assert!(
-                    b.store
-                        .reserve_selector_search(&format!("{new_key}:started"))
-                        .await?
-                );
+                assert!(b
+                    .store
+                    .searches()
+                    .reserve(SearchKey(&new_key))
+                    .await?
+                    .is_fresh());
                 Ok(receipt())
             }
         }),
@@ -155,14 +157,13 @@ async fn objective_epoch_late_completion_and_concurrent_duplicate() {
         .unwrap()
         .unwrap();
     for frontier in [&old, &new] {
-        let saved: SearchFrontier = serde_json::from_str(
-            &b.store
-                .cached_selector_envelope(frontier)
-                .await
-                .unwrap()
-                .unwrap(),
-        )
-        .unwrap();
+        let saved: SearchFrontier = b
+            .store
+            .searches()
+            .frontier(FrontierKey(frontier))
+            .await
+            .unwrap()
+            .unwrap();
         assert_eq!(
             saved.completed.len(),
             1,

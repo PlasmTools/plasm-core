@@ -11,7 +11,8 @@ use thiserror::Error;
 
 use crate::discovery_matcher::{self as matcher, CapabilityMatchReceipt};
 use crate::discovery_store::{
-    DiscoveryAuthorization, DiscoverySessionPin, DiscoveryStore, RetrievalReceipt,
+    BacklogKey, DiscoveryAuthorization, DiscoverySessionPin, DiscoveryStore, FrontierKey,
+    RetrievalReceipt, SearchAdmission, SearchKey,
 };
 
 pub use crate::discovery_recovery::{CatalogAppDescription, DiscoveryRecovery, RECOVERY_GUIDANCE};
@@ -21,7 +22,7 @@ type Result<T> = std::result::Result<T, DiscoveryServiceError>;
 /// Scheduling evidence only: no model judgments or permissions cross intents.
 #[derive(Default, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
-struct DeferredBacklog {
+pub(crate) struct DeferredBacklog {
     revision: usize,
     last_intent: String,
     last_receipt: String,
@@ -112,7 +113,7 @@ fn deferred_backlog_key(
 /// Completed searches advance priority once within a self-contained request.
 /// No negative relevance decisions are applied to exposure or permissions.
 #[derive(Default, Clone, Serialize, Deserialize)]
-struct SearchFrontier {
+pub(crate) struct SearchFrontier {
     completed: std::collections::BTreeMap<String, std::collections::BTreeSet<CapabilityRef>>,
     operation_state: OperationFrontier,
     active_request: Option<String>,
@@ -122,7 +123,7 @@ struct SearchFrontier {
 /// The prepared state is scoped and revalidated by `OperationMatrix::restore`.
 #[derive(Default, Clone, Serialize, Deserialize)]
 #[serde(tag = "state", content = "checkpoint", rename_all = "snake_case")]
-enum OperationFrontier {
+pub(crate) enum OperationFrontier {
     #[default]
     AwaitingExtraction,
     Prepared(Box<matcher::operations::MatrixCheckpoint>),
@@ -579,11 +580,12 @@ impl DiscoveryService {
         );
         let backlog_key =
             deferred_backlog_key(&pin_id, &generation, request.allowed, &policy_models)?;
-        let backlog: DeferredBacklog =
-            match self.store.cached_selector_envelope(&backlog_key).await? {
-                Some(saved) => serde_json::from_str(&saved)?,
-                None => DeferredBacklog::default(),
-            };
+        let backlog = self
+            .store
+            .searches()
+            .backlog(BacklogKey(&backlog_key))
+            .await?
+            .unwrap_or_default();
         let deferred_priorities = if self.lane == DiscoveryLane::Ordinary {
             backlog.priorities(&intent_id, request.allowed)
         } else {
@@ -659,12 +661,14 @@ impl DiscoveryService {
             let receipt_id =
                 plasm_core::catalog_discovery::content_hash(&serde_json::to_vec(&receipt)?);
             self.store
-                .with_selector_search(&backlog_key, || async {
-                    let mut latest: DeferredBacklog =
-                        match self.store.cached_selector_envelope(&backlog_key).await? {
-                            Some(saved) => serde_json::from_str(&saved)?,
-                            None => DeferredBacklog::default(),
-                        };
+                .searches()
+                .with_backlog(BacklogKey(&backlog_key), || async {
+                    let mut latest = self
+                        .store
+                        .searches()
+                        .backlog(BacklogKey(&backlog_key))
+                        .await?
+                        .unwrap_or_default();
                     latest.observe(
                         request.intent_provenance.turns().count(),
                         intent_id,
@@ -672,7 +676,8 @@ impl DiscoveryService {
                         receipt_id,
                     );
                     self.store
-                        .store_search_progress(&backlog_key, &serde_json::to_string(&latest)?)
+                        .searches()
+                        .checkpoint_backlog(BacklogKey(&backlog_key), &latest)
                         .await?;
                     Ok::<_, DiscoveryServiceError>(())
                 })
@@ -794,12 +799,14 @@ impl DiscoveryService {
         let _same_request = self.store.pending_decisions.claim(frontier_key).await;
         metrics::record(metrics::Stage::FrontierLockWait, wait_started.elapsed());
         self.store
-            .with_selector_search(frontier_key, || async {
-                let mut frontier: SearchFrontier =
-                    match self.store.cached_selector_envelope(frontier_key).await? {
-                        Some(saved) => serde_json::from_str(&saved)?,
-                        None => SearchFrontier::default(),
-                    };
+            .searches()
+            .with_frontier(FrontierKey(frontier_key), || async {
+                let mut frontier = self
+                    .store
+                    .searches()
+                    .frontier(FrontierKey(frontier_key))
+                    .await?
+                    .unwrap_or_default();
                 let visits = frontier.visits();
                 let prior_pairs = frontier.operation_state.answered_pairs();
                 let historical_replay = frontier.active_request.as_deref() != Some(key)
@@ -827,10 +834,11 @@ impl DiscoveryService {
                 if !historical_replay && !frontier.completed.contains_key(&effective_key) {
                     if let Some(saved) = self
                         .store
-                        .cached_selector_envelope(&format!("{effective_key}:operations"))
+                        .searches()
+                        .operations(SearchKey(&effective_key))
                         .await?
                     {
-                        frontier.operation_state = serde_json::from_str(&saved)?;
+                        frontier.operation_state = saved;
                     }
                 }
                 if !historical_replay {
@@ -844,7 +852,8 @@ impl DiscoveryService {
                     .collect();
                 frontier.record(&effective_key, &receipt, &answered);
                 self.store
-                    .store_search_progress(frontier_key, &serde_json::to_string(&frontier)?)
+                    .searches()
+                    .checkpoint_frontier(FrontierKey(frontier_key), &frontier)
                     .await?;
                 Ok(receipt)
             })
@@ -865,7 +874,10 @@ impl DiscoveryService {
         let _same_search = self.store.pending_decisions.claim(key).await;
         metrics::record(metrics::Stage::SearchLockWait, wait_started.elapsed());
         self.store
-            .with_selector_search(key, || async { self.route_owned(key, exposed, work).await })
+            .searches()
+            .with_search(SearchKey(key), || async {
+                self.route_owned(key, exposed, work).await
+            })
             .await?
     }
 
@@ -880,8 +892,7 @@ impl DiscoveryService {
         F: FnOnce() -> Fut,
         Fut: std::future::Future<Output = Result<RoutingReceipt>>,
     {
-        if let Some(saved) = self.store.cached_selector_envelope(key).await? {
-            let receipt: RoutingReceipt = serde_json::from_str(&saved)?;
+        if let Some(receipt) = self.store.searches().completion(SearchKey(key)).await? {
             if exposed
                 .iter()
                 .any(|reference| !receipt.search.exposed.contains(reference))
@@ -892,7 +903,8 @@ impl DiscoveryService {
         }
         let receipt = work().await?;
         self.store
-            .store_selector_envelope(key, &serde_json::to_string(&receipt)?)
+            .searches()
+            .complete(SearchKey(key), &receipt)
             .await?;
         Ok(receipt)
     }
@@ -955,23 +967,15 @@ impl DiscoveryService {
         metrics::record(metrics::Stage::IndexLookupOrBuild, stage_started.elapsed());
         // Validate the pinned catalogue and authorization before durable admission.
         // Once admitted, interruption must not silently repeat provider work.
-        if !self
-            .store
-            .reserve_selector_search(&format!("{key}:started"))
-            .await?
-        {
-            if let Some(saved) = self
-                .store
-                .cached_selector_envelope(&format!("{key}:progress"))
-                .await?
-            {
-                return Err(DiscoveryServiceError::SearchInterrupted(Box::new(
-                    serde_json::from_str(&saved)?,
-                )));
+        match self.store.searches().reserve(SearchKey(key)).await? {
+            SearchAdmission::Fresh => {}
+            SearchAdmission::PreviouslyStarted(Some(progress)) => {
+                return Err(DiscoveryServiceError::SearchInterrupted(progress));
             }
-            return Err(DiscoveryServiceError::SearchAlreadyStarted);
+            SearchAdmission::PreviouslyStarted(None) => {
+                return Err(DiscoveryServiceError::SearchAlreadyStarted);
+            }
         }
-        let progress_key = format!("{key}:progress");
         let references = self
             .guided_capabilities
             .iter()
@@ -1115,12 +1119,12 @@ impl DiscoveryService {
                     }
                 },
                 |progress| {
-                    let key = &progress_key;
                     let checkpoint = &checkpoint;
                     async move {
                         checkpoint.persist().await?;
                         self.store
-                            .store_search_progress(key, &serde_json::to_string(&progress)?)
+                            .searches()
+                            .checkpoint(SearchKey(key), &progress)
                             .await?;
                         Ok(())
                     }
@@ -1129,10 +1133,8 @@ impl DiscoveryService {
             .await?;
             operation_state.commit(&scope, &matrix)?;
             self.store
-                .store_search_progress(
-                    &format!("{key}:operations"),
-                    &serde_json::to_string(&operation_state)?,
-                )
+                .searches()
+                .checkpoint_operations(SearchKey(key), &operation_state)
                 .await?;
             result
         };

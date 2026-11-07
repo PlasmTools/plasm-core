@@ -18,11 +18,11 @@ pub(crate) trait DecisionCache: Sync {
 #[async_trait::async_trait]
 impl DecisionCache for DiscoveryStore {
     async fn load(&self, key: &str) -> Result<Option<String>, DecisionProviderError> {
-        Ok(self.cached_selector_envelope(key).await?)
+        Ok(self.searches().decision(key).await?)
     }
 
     async fn save(&self, key: &str, raw: &str) -> Result<(), DecisionProviderError> {
-        Ok(self.store_selector_envelope(key, raw).await?)
+        Ok(self.searches().record_decision(key, raw).await?)
     }
 }
 

@@ -15,7 +15,9 @@ use serde::{Deserialize, Serialize};
 use sqlx::{Connection, Row};
 
 mod database;
+mod search_repository;
 use database::DiscoveryDatabase;
+pub(crate) use search_repository::{BacklogKey, FrontierKey, SearchAdmission, SearchKey};
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
 use std::sync::Arc;
@@ -864,47 +866,6 @@ impl DiscoveryStore {
         .await
     }
 
-    pub async fn cached_selector_envelope(&self, cache_key: &str) -> Result<Option<String>> {
-        sqlx::query_scalar("SELECT envelope FROM discovery_selector_cache WHERE cache_key=$1")
-            .bind(cache_key)
-            .fetch_optional(&mut *self.pool.acquire().await?)
-            .await
-            .map_err(DiscoveryStoreError::from)
-    }
-
-    pub(crate) async fn with_selector_search<F, Fut, T>(&self, key: &str, work: F) -> Result<T>
-    where
-        F: FnOnce() -> Fut,
-        Fut: std::future::Future<Output = T>,
-    {
-        self.pool.with_search_lock(key, work).await
-    }
-
-    pub async fn store_selector_envelope(&self, cache_key: &str, envelope: &str) -> Result<()> {
-        sqlx::query(
-            "INSERT INTO discovery_selector_cache (cache_key, envelope) VALUES ($1,$2) ON CONFLICT (cache_key) DO NOTHING",
-        )
-        .bind(cache_key)
-        .bind(envelope)
-        .execute(&mut *self.pool.acquire().await?)
-        .await?;
-        Ok(())
-    }
-
-    /// Cross-process single admission. A failed or interrupted bounded search
-    /// cannot acquire a fresh budget by issuing the same request again.
-    pub async fn reserve_selector_search(&self, cache_key: &str) -> Result<bool> {
-        Ok(sqlx::query(
-            "INSERT INTO discovery_selector_cache (cache_key, envelope) VALUES ($1,'{\"started\":true}') ON CONFLICT (cache_key) DO NOTHING",
-        ).bind(cache_key).execute(&mut *self.pool.acquire().await?).await?.rows_affected() == 1)
-    }
-
-    pub async fn store_search_progress(&self, cache_key: &str, envelope: &str) -> Result<()> {
-        sqlx::query("INSERT INTO discovery_selector_cache (cache_key,envelope) VALUES ($1,$2) ON CONFLICT (cache_key) DO UPDATE SET envelope=EXCLUDED.envelope")
-            .bind(cache_key).bind(envelope).execute(&mut *self.pool.acquire().await?).await?;
-        Ok(())
-    }
-
     /// Rank within the authorized generation. Typed graph expansion belongs to the routing layer.
     async fn retrieve_vector(
         &self,
@@ -1716,7 +1677,8 @@ pub(crate) mod tests {
                 .collect();
             let raw=serde_json::json!({"model":crate::discovery_matcher::RELEVANCE_MODEL,"provider":"OpenAI","answers":answers}).to_string();
             store
-                .store_selector_envelope(batch.cache_key(), &raw)
+                .searches()
+                .record_decision(batch.cache_key(), &raw)
                 .await
                 .unwrap();
         }
