@@ -63,13 +63,7 @@ pub(crate) fn render_for_each_expressions(
     materialized: Option<&BTreeMap<PlanNodeId, MaterializedNode>>,
 ) -> Result<Vec<String>, super::eval::RuntimeOperandError> {
     let input_rows = if let Some(materialized) = materialized {
-        materialized_result_use_inputs(materialized, &for_each_cross_uses(for_each), None).map_err(
-            |_| {
-                super::eval::RuntimeOperandError::MaterializedInput(
-                    super::eval::MaterializedInputError,
-                )
-            },
-        )?
+        materialized_result_use_inputs(materialized, &for_each_cross_uses(for_each), None)?
     } else {
         BTreeMap::new()
     };

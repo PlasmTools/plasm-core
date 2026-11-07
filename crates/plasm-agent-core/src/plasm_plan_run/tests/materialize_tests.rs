@@ -1,6 +1,68 @@
 use super::super::*;
 
 #[test]
+fn missing_materialized_input_has_the_same_failure_through_each_binding_route() {
+    use plasm_runtime::{ExecutionFailure, FailureCause, RecoveryDisposition};
+    let uses = vec![PlanResultUse {
+        node: "secret_source".into(),
+        r#as: "selected".into(),
+        qualified_entity: None,
+    }];
+    let materialized = BTreeMap::new();
+    let direct: ExecutionFailure = materialized_result_use_inputs(&materialized, &uses, None)
+        .err()
+        .unwrap()
+        .into();
+    let parsed = plasm_core::expr_parser::ParsedExpr::from_expr(plasm_core::Expr::Get(
+        plasm_core::GetExpr::new("Item", "one"),
+    ));
+    let bound_error = instantiate_parsed_expr_plan_inputs(
+        parsed,
+        &plasm_core::CGS::default(),
+        &uses,
+        &materialized,
+    )
+    .unwrap_err();
+    assert!(matches!(
+        &bound_error,
+        RuntimeOperandError::MaterializedInput(InputRowsError::NodeUnavailable { node_id, alias })
+            if node_id == "secret_source" && alias == "selected"
+    ));
+    let bound: ExecutionFailure = bound_error.into();
+    let pure: ExecutionFailure = super::super::executable_plan::PureStepError::from(
+        materialized_result_use_inputs(&materialized, &uses, None)
+            .err()
+            .unwrap(),
+    )
+    .into();
+    for failure in [bound, pure] {
+        assert_eq!(failure.cause, FailureCause::Program);
+        assert_eq!(failure.recovery, RecoveryDisposition::RepairProgram);
+        assert_eq!(failure.code, direct.code);
+        assert_eq!(failure.diagnostic(), direct.diagnostic());
+        let json = serde_json::to_string(&failure).unwrap();
+        assert!(!json.contains("secret_source"), "{json}");
+    }
+}
+
+#[test]
+fn collection_input_fault_keeps_its_response_contract_classification() {
+    use plasm_core::collection_codec::CollectionFault;
+    let direct: plasm_runtime::ExecutionFailure = CollectionFault::NotResident.into();
+    let input = || InputRowsError::IncompleteCollection(CollectionFault::NotResident);
+    let operand: plasm_runtime::ExecutionFailure =
+        RuntimeOperandError::MaterializedInput(input()).into();
+    let pure: plasm_runtime::ExecutionFailure =
+        super::super::executable_plan::PureStepError::from(input()).into();
+    for failure in [operand, pure] {
+        assert_eq!(failure.cause, direct.cause);
+        assert_eq!(failure.recovery, direct.recovery);
+        assert_eq!(failure.code, direct.code);
+        assert_eq!(failure.diagnostic(), direct.diagnostic());
+    }
+}
+
+#[test]
 fn materialized_result_use_preserves_scalar_data_binding_value() {
     let node = PlanNodeId::new("workspace_id".to_string()).expect("node id");
     let row = plasm_core::ValueRow::from_output(plasm_core::Value::String("workspace_123".into()));

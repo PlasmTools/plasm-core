@@ -130,12 +130,7 @@ pub(crate) async fn materialize_iterate_until_node(
         return Err(IterateUntilError::EmptySeed.into());
     }
     let cross = cross_uses_excluding_item(&it.uses_result, &it.item_binding);
-    let mut input_rows =
-        materialized_result_use_inputs(materialized, &cross, None).map_err(|_| {
-            IterateUntilError::Operand(super::eval::RuntimeOperandError::MaterializedInput(
-                super::eval::MaterializedInputError,
-            ))
-        })?;
+    let mut input_rows = materialized_result_use_inputs(materialized, &cross, None)?;
     let wire_coercion_by_alias =
         wire_coercion_by_alias_from_inputs(es, &mut input_rows).map_err(|error| {
             ExecutionFailure::new(

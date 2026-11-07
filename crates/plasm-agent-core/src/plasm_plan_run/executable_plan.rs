@@ -51,16 +51,22 @@ pub(crate) enum PureStepError {
 
 impl From<PureStepError> for plasm_runtime::ExecutionFailure {
     fn from(error: PureStepError) -> Self {
+        let error = match error {
+            PureStepError::InputRows(error) => return error.into(),
+            PureStepError::IncompleteCollection(error) => return error.into(),
+            other => other,
+        };
         let code = match &error {
             PureStepError::Identifier(_) => "plan_identifier_invalid",
-            PureStepError::InputRows(_) => "plan_input_invalid",
             PureStepError::BindingRows(_) => "plan_binding_rows_invalid",
             PureStepError::DataEvaluation(_) => "plan_data_evaluation_failed",
             PureStepError::Fingerprint(_) => "plan_compute_fingerprint_failed",
             PureStepError::DeriveEvaluation(_) => "plan_derive_evaluation_failed",
             PureStepError::TypedComputeEvaluation(_) => "plan_compute_evaluation_failed",
             PureStepError::MissingComputeBranch { .. } => "plan_compute_branch_missing",
-            PureStepError::IncompleteCollection(_) => "plan_compute_collection_incomplete",
+            PureStepError::InputRows(_) | PureStepError::IncompleteCollection(_) => {
+                unreachable!("classified by the owning input or collection error")
+            }
             PureStepError::MapBodySchema(_)
             | PureStepError::SyntheticSchema(_)
             | PureStepError::RowContract(_) => "plan_compute_schema_invalid",

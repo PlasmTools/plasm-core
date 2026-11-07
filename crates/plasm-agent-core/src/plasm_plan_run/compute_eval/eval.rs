@@ -10,8 +10,8 @@ pub(crate) enum RuntimeOperandError {
     Codec(#[from] plasm_core::ValueCodecError),
     #[error(transparent)]
     Identity(#[from] plasm_core::operand_binding::IdentityCodecError),
-    #[error("materialized plan input is invalid")]
-    MaterializedInput(#[source] MaterializedInputError),
+    #[error(transparent)]
+    MaterializedInput(#[from] super::input_rows::InputRowsError),
     #[error("row binding `{binding}` was used outside a row scope")]
     BindingOutsideRowScope { binding: String },
     #[error("row binding `{binding}` does not match active binding `{active}`")]
@@ -77,10 +77,6 @@ pub(crate) enum DataOperandError {
 }
 
 #[derive(Debug, thiserror::Error)]
-#[error("materialized plan input could not be bound")]
-pub(crate) struct MaterializedInputError;
-
-#[derive(Debug, thiserror::Error)]
 pub(crate) enum WireCoercionContextError {
     #[error("input alias `{alias}` references unloaded catalog `{entry_id}` for `{entity}`")]
     CatalogUnavailable {
@@ -92,6 +88,9 @@ pub(crate) enum WireCoercionContextError {
 
 impl From<RuntimeOperandError> for plasm_runtime::ExecutionFailure {
     fn from(error: RuntimeOperandError) -> Self {
+        if let RuntimeOperandError::MaterializedInput(error) = error {
+            return error.into();
+        }
         Self::new(
             plasm_runtime::FailureCause::Runtime,
             "operand_binding",
@@ -135,8 +134,7 @@ pub(crate) fn instantiate_parsed_expr_plan_inputs(
     if uses_result.is_empty() {
         return Ok(parsed);
     }
-    let input_rows = materialized_result_use_inputs(materialized, uses_result, None)
-        .map_err(|_| RuntimeOperandError::MaterializedInput(MaterializedInputError))?;
+    let input_rows = materialized_result_use_inputs(materialized, uses_result, None)?;
     let empty = BTreeMap::new();
     instantiate_parsed_expr_plan_inputs_with_rows(parsed, target_cgs, &input_rows, &empty)
 }
