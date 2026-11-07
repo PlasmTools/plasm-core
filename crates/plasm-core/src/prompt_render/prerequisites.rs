@@ -62,12 +62,15 @@ pub fn render_prerequisite_bindings(
                 port: "provider".into(),
             })?;
         let filled_get = renderer.filled_get_identity_acquisition(acquisition, provider)?;
+        let provider_entity = &renderer.schema(&acquisition.capability)?.domain;
         lines.push(format!(
-            "{} = {}",
+            "{} = {}  # {}::{}",
             renderer.label(&acquisition.id)?,
             filled_get
                 .clone()
-                .map_or_else(|| renderer.capability(&acquisition.capability), Ok)?
+                .map_or_else(|| renderer.capability(&acquisition.capability), Ok)?,
+            acquisition.provider_catalog,
+            provider_entity,
         ));
         for (port, argument) in &acquisition.arguments {
             let input = provider.inputs.get(port).ok_or_else(|| {

@@ -1158,6 +1158,22 @@ mod tests {
             })
             .collect();
         prerequisite_closure(&refs, &bindings, &all_consumers, &allowed).unwrap();
+        // A service's session cannot be deployed as another service's login.
+        let mut wrong_session = bindings.clone();
+        let simple_note = wrong_session
+            .bindings
+            .iter_mut()
+            .find(|binding| {
+                binding.consumer.catalog == "simple_note"
+                    && binding.consumer.capability == "note_get"
+                    && binding.requirement == "session"
+            })
+            .expect("Simple Note session binding");
+        simple_note.provider_catalog = "venmo".into();
+        assert!(matches!(
+            prerequisite_closure(&refs, &wrong_session, &all_consumers, &allowed),
+            Err(plasm_core::prerequisites::PrerequisiteError::IncompatibleProviderContract)
+        ));
         let business: Vec<_> = catalogs
             .iter()
             .filter(|(id, _)| id.as_str() != "supervisor")

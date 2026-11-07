@@ -2587,6 +2587,10 @@ mod tests {
             symbols.as_ref(),
         )
         .unwrap();
+        assert!(
+            guidance.contains("matrix::ProviderResult"),
+            "provider catalogue and entity must be visible: {guidance}"
+        );
         assert!(!guidance.contains("scoped_access"));
         assert!(!guidance.contains("Declared prerequisites"));
         assert!(!guidance.contains("Acquisition "));
@@ -3309,6 +3313,16 @@ mod tests {
                     + 1
             )
         };
+        for (acquisition, owner) in [(consumer_acq, "consumer"), (source_acq, "source")] {
+            let line = guidance
+                .lines()
+                .find(|line| line.starts_with(&format!("{} = ", label(&acquisition.id))))
+                .expect("provider acquisition teaching");
+            assert!(
+                line.ends_with(&format!("# {owner}::AuthSession")),
+                "{guidance}"
+            );
+        }
         let local = guidance
             .lines()
             .find(|line| line.starts_with(&format!("{}.", label(&consumer_acq.id))))
