@@ -208,7 +208,7 @@ pub(crate) struct GetObservation {
     pub catalog: String,
     pub environment: IndexMap<String, Value>,
     pub parameters: IndexMap<String, Value>,
-    pub explicit_parameters: Option<Vec<String>>,
+    pub authoritative_parameters: Option<Vec<String>>,
     pub row_version: u64,
 }
 
@@ -328,7 +328,7 @@ impl SessionMaterialization {
         overlay.extend(self.capability_params_for(reference));
         if let Some(observation) = self.get_observations.get(reference) {
             if observation.catalog == catalog_key {
-                if let Some(names) = &observation.explicit_parameters {
+                if let Some(names) = &observation.authoritative_parameters {
                     overlay.retain(|name, _| !names.contains(name));
                     overlay.extend(observation.parameters.clone());
                 }

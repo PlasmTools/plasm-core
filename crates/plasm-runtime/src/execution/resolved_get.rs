@@ -37,8 +37,15 @@ pub(crate) struct ResolvedGet<'a> {
     pub(super) capability: &'a CapabilitySchema,
     pub(super) env: CmlEnv,
     pub(super) ambient: ViewAmbientContext,
+    purpose: GetPurpose,
 }
 impl<'a> ResolvedGet<'a> {
+    fn has_authoritative_inputs(&self) -> bool {
+        self.get.input.is_some()
+            || (matches!(self.purpose, GetPurpose::Hydration)
+                && !self.ambient.capability_params.is_empty())
+    }
+
     fn observation(&self, cgs: &CGS, row_version: u64) -> crate::materialization::GetObservation {
         crate::materialization::GetObservation {
             capability: self.capability.name.clone(),
@@ -48,7 +55,7 @@ impl<'a> ResolvedGet<'a> {
             ),
             environment: self.env.clone(),
             parameters: self.ambient.capability_params.clone(),
-            explicit_parameters: self.get.input.as_ref().map(|_| {
+            authoritative_parameters: self.has_authoritative_inputs().then(|| {
                 self.capability
                     .input_parameter_names()
                     .map(str::to_owned)
@@ -67,7 +74,7 @@ impl<'a> ResolvedGet<'a> {
         match mat.get_observations.get(&self.get.reference) {
             Some(observation) => {
                 let mut expected = self.observation(cgs, row.version);
-                expected.explicit_parameters = observation.explicit_parameters.clone();
+                expected.authoritative_parameters = observation.authoritative_parameters.clone();
                 if observation != &expected {
                     return None;
                 }
@@ -85,8 +92,16 @@ impl<'a> ResolvedGet<'a> {
         row: CachedEntity,
     ) -> Result<(), RuntimeError> {
         let reference = row.reference.clone();
-        if self.get.input.is_some() {
-            // An explicit scoped read publishes its own snapshot, without fields from another scope.
+        let changed_scope = mat
+            .get_observations
+            .get(&reference)
+            .is_some_and(|previous| {
+                let mut expected = self.observation(cgs, previous.row_version);
+                expected.authoritative_parameters = previous.authoritative_parameters.clone();
+                previous != &expected
+            });
+        if self.has_authoritative_inputs() || changed_scope {
+            // A scoped read publishes its own snapshot, without fields from another scope.
             mat.publish_fresh_row(row)?;
         } else {
             mat.insert(row)?;
@@ -96,7 +111,7 @@ impl<'a> ResolvedGet<'a> {
         };
         mat.get_observations
             .insert(reference.clone(), self.observation(cgs, row.version));
-        if self.get.input.is_some() {
+        if self.has_authoritative_inputs() {
             let parameters = mat
                 .inherited_capability_params
                 .entry(reference)
@@ -169,6 +184,7 @@ impl<'a> ResolvedGet<'a> {
             capability,
             env,
             ambient,
+            purpose,
         })
     }
 }

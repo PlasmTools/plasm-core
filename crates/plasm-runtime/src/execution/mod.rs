@@ -60,7 +60,7 @@ pub use resolved_effect::{
 };
 mod engine_get;
 mod resolved_get;
-use resolved_get::{GetPurpose, ResolvedGet};
+use resolved_get::{GetBindings, GetPurpose, ResolvedGet};
 mod engine_query;
 mod entity_decoder;
 mod expr_executor;

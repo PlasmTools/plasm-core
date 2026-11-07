@@ -3,21 +3,181 @@
 use super::*;
 use plasm_core::collection_codec::{CollectionIdentity, Demand, Observation, SharedRows};
 
-/// An observed row is reusable when complete, or when the catalogue declares
-/// no richer Get projection. The latter preserves Summary; it does not promote it.
-pub(crate) fn observed_row_needs_no_detail_get(row: Option<&CachedEntity>, cgs: &CGS) -> bool {
-    row.is_some_and(|row| {
-        row.completeness == crate::EntityCompleteness::Complete
-            || cgs
-                .find_capability(
-                    row.reference.entity_type.as_str(),
-                    plasm_core::CapabilityKind::Get,
-                )
-                .is_none()
-    })
+pub(crate) struct RelationGetBindings<'a> {
+    pub(crate) mat: &'a SessionMaterialization,
+    pub(crate) inherited: &'a CapabilityParamEnv,
+}
+
+impl GetBindings for RelationGetBindings<'_> {
+    fn bindings_for(&self, get: &GetExpr, cgs: &CGS) -> IndexMap<String, Value> {
+        if self.inherited.bindings().is_empty() {
+            self.mat.bindings_for(get, cgs)
+        } else {
+            self.inherited.bindings().clone()
+        }
+    }
+}
+
+/// A Get-backed relation uses the same scope and freshness proof as an authored Get.
+/// A relation without a Get retains its observed row without promoting completeness.
+pub(crate) enum PreparedRelationGet<'a> {
+    Observed(CachedEntity),
+    Fetch(ResolvedGet<'a>),
+}
+
+pub(crate) fn prepare_relation_get<'a>(
+    get: &'a GetExpr,
+    inherited: &CapabilityParamEnv,
+    cgs: &'a CGS,
+    mat: &SessionMaterialization,
+    ambient: &ViewAmbientContext,
+) -> Result<PreparedRelationGet<'a>, RuntimeError> {
+    if get.capability_name.is_none()
+        && cgs
+            .find_capability(
+                get.reference.entity_type.as_str(),
+                plasm_core::CapabilityKind::Get,
+            )
+            .is_none()
+    {
+        if let Some(row) = mat.get(&get.reference) {
+            return Ok(PreparedRelationGet::Observed(row.clone()));
+        }
+    }
+    let ambient = ambient
+        .clone()
+        .with_capability_params(inherited.bindings().clone());
+    let bindings = RelationGetBindings { mat, inherited };
+    let resolved = ResolvedGet::resolve(
+        get,
+        cgs,
+        get.capability_name.as_deref(),
+        &bindings,
+        &ambient,
+        GetPurpose::Hydration,
+    )?;
+    if (get.capability_name.is_none() && inherited.bindings().is_empty())
+        || mat.get_observations.contains_key(&get.reference)
+    {
+        if let Some(row) = resolved.cached_row(mat, cgs) {
+            return Ok(PreparedRelationGet::Observed(row.clone()));
+        }
+    }
+    Ok(PreparedRelationGet::Fetch(resolved))
+}
+
+#[derive(Clone, PartialEq)]
+struct RelationGet {
+    get: GetExpr,
+    inherited: CapabilityParamEnv,
 }
 
 impl ExecutionEngine {
+    /// Resolve each parent occurrence before coalescing equivalent detail requests.
+    async fn resolve_relation_occurrences(
+        &self,
+        occurrences: Vec<RelationGet>,
+        cgs: &CGS,
+        mat: &mut SessionMaterialization,
+        mode: ExecutionMode,
+    ) -> Result<(Vec<CachedEntity>, usize, usize, bool), RuntimeError> {
+        use futures_util::stream::{self, StreamExt};
+
+        let mut unique: Vec<RelationGet> = Vec::new();
+        let mut by_reference: std::collections::HashMap<Ref, Vec<usize>> = Default::default();
+        let positions: Vec<usize> = occurrences
+            .into_iter()
+            .map(|occurrence| {
+                let candidates = by_reference
+                    .entry(occurrence.get.reference.clone())
+                    .or_default();
+                if let Some(index) = candidates
+                    .iter()
+                    .copied()
+                    .find(|index| unique[*index] == occurrence)
+                {
+                    index
+                } else {
+                    let index = unique.len();
+                    unique.push(occurrence);
+                    candidates.push(index);
+                    index
+                }
+            })
+            .collect();
+        let concurrency = self
+            .config
+            .effective_hydrate_concurrency(cgs.entry_id.as_deref());
+        let (seed, _) = crate::BranchMaterializationBase::fork_from(mat);
+        let mut stream = stream::iter(unique.into_iter().map(|RelationGet { get, inherited }| {
+            let mut branch = seed.clone();
+            async move {
+                let reference = get.reference.clone();
+                let ambient = ViewAmbientContext::default()
+                    .with_capability_params(inherited.bindings().clone());
+                let request = match prepare_relation_get(&get, &inherited, cgs, &branch, &ambient)?
+                {
+                    PreparedRelationGet::Observed(row) => {
+                        return Ok::<_, RuntimeError>((row, ExecutionSource::Cache, None))
+                    }
+                    PreparedRelationGet::Fetch(request) => request,
+                };
+                let (row, source) = self
+                    .fetch_resolved_get_decoded(&request, cgs, mode, &mut branch)
+                    .await
+                    .map_err(|error| {
+                        wrap_synthesized_get_error(
+                            request.capability.name.as_str(),
+                            reference.entity_type.as_str(),
+                            error,
+                        )
+                    })?;
+                if row.reference != reference {
+                    return Err(wrap_synthesized_get_error(
+                        request.capability.name.as_str(),
+                        reference.entity_type.as_str(),
+                        RuntimeError::GetIdentityMismatch {
+                            expected: Box::new(reference.clone()),
+                            actual: Box::new(row.reference.clone()),
+                        },
+                    ));
+                }
+                request.record(&mut branch, cgs, row.clone())?;
+                Ok((row, source, Some(branch)))
+            }
+        }))
+        .buffered(concurrency);
+        let mut rows = Vec::new();
+        let mut network = 0;
+        let mut hits = 0;
+        let mut live = false;
+        while let Some(result) = stream.next().await {
+            cooperative_cancel_check()?;
+            let (row, source, branch) = result?;
+            if let Some(branch) = branch {
+                mat.absorb_branch(branch)?;
+                if source == ExecutionSource::Live {
+                    network += 1;
+                    live = true;
+                } else {
+                    hits += 1;
+                }
+            } else {
+                hits += 1;
+            }
+            rows.push(row);
+        }
+        Ok((
+            positions
+                .into_iter()
+                .map(|index| rows[index].clone())
+                .collect(),
+            network,
+            hits,
+            live,
+        ))
+    }
+
     /// Execute a chain expression (Kleisli EntityRef navigation).
     ///
     /// 1. Execute the source expression to get one or more entities.
@@ -338,111 +498,26 @@ impl ExecutionEngine {
             });
         }
 
-        // ── AutoGet with batching ────────────────────────────────────────
-        // Deduplicate IDs.
-        let unique_ids: Vec<String> = {
-            let mut seen = std::collections::HashSet::new();
-            ref_ids
-                .iter()
-                .filter_map(|o| o.as_ref())
-                .filter(|id| seen.insert((*id).clone()))
-                .cloned()
-                .collect()
-        };
-
-        // Partition: cached (Complete) vs uncached.
-        let mut cached_hits = 0usize;
-        let to_fetch: Vec<Ref> = unique_ids
+        let occurrences = source_result
+            .entities()
             .iter()
-            .filter(|id| {
-                let r = Ref::new(&target_entity_name, id.as_str());
-                if observed_row_needs_no_detail_get(mat.get(&r), cgs) {
-                    cached_hits += 1;
-                    false
-                } else {
-                    true
-                }
-            })
-            .map(|id| Ref::new(&target_entity_name, id.as_str()))
-            .collect();
-
-        // Fetch uncached via concurrent GETs (same pattern as hydrate).
-        let mut extra_network = 0usize;
-        let mut any_live = source_result.source == ExecutionSource::Live;
-
-        if !to_fetch.is_empty() {
-            use futures_util::stream::{self, StreamExt};
-
-            let mut inherit_by_id: std::collections::HashMap<String, CapabilityParamEnv> =
-                std::collections::HashMap::new();
-            for (entity, id_opt) in source_result.entities().iter().zip(ref_ids.iter()) {
-                let Some(id) = id_opt else { continue };
-                inherit_by_id.entry(id.clone()).or_insert_with(|| {
-                    CapabilityParamEnv::from_source_row(
+            .zip(&ref_ids)
+            .filter_map(|(parent, id)| {
+                id.as_ref().map(|id| RelationGet {
+                    get: GetExpr::from_ref(Ref::new(&target_entity_name, id.as_str())),
+                    inherited: CapabilityParamEnv::from_source_row(
                         cgs,
-                        target_entity_name.as_str(),
+                        &target_entity_name,
                         mat,
-                        entity,
-                    )
-                });
-            }
-            let get_cap_name = cgs
-                .find_capability(&target_entity_name, plasm_core::CapabilityKind::Get)
-                .map(|c| c.name.to_string())
-                .unwrap_or_else(|| "get".to_string());
-            let concurrency = self
-                .config
-                .effective_hydrate_concurrency(cgs.entry_id.as_deref());
-            let (branch_seed, _) = crate::BranchMaterializationBase::fork_from(mat);
-            let mut stream = stream::iter(to_fetch.into_iter().map(|reference| {
-                let mut branch = branch_seed.clone();
-                let inherit = inherit_by_id
-                    .get(reference.primary_slot_str().as_str())
-                    .cloned()
-                    .unwrap_or_default();
-                let get = GetExpr::from_ref(reference.clone());
-                let cap_name = get_cap_name.clone();
-                let ambient = ViewAmbientContext::default()
-                    .with_capability_params(inherit.bindings().clone());
-                async move {
-                    self.fetch_get_decoded(&get, cgs, mode, None, false, &mut branch, &ambient)
-                        .await
-                        .map(|(entity, source)| (entity, source, branch))
-                        .map_err(|e| {
-                            wrap_synthesized_get_error(
-                                cap_name.as_str(),
-                                reference.entity_type.as_str(),
-                                e,
-                            )
-                        })
-                }
-            }))
-            .buffer_unordered(concurrency);
-
-            while let Some(res) = stream.next().await {
-                cooperative_cancel_check()?;
-                let (entity, source, branch) = res?;
-                mat.absorb_branch(branch)?;
-                if source == ExecutionSource::Live {
-                    any_live = true;
-                    extra_network += 1;
-                }
-                mat.insert(entity)?;
-            }
-        }
-
-        // Reassemble in source order from cache.
-        let mut resolved = Vec::with_capacity(ref_ids.len());
-        for id_opt in &ref_ids {
-            let Some(id) = id_opt else { continue };
-            let r = Ref::new(&target_entity_name, id.as_str());
-            let e = mat
-                .get(&r)
-                .ok_or_else(|| crate::CacheError::EntityMissing {
-                    reference: r.clone(),
-                })?;
-            resolved.push(e.clone());
-        }
+                        parent,
+                    ),
+                })
+            })
+            .collect();
+        let (resolved, extra_network, cached_hits, child_live) = self
+            .resolve_relation_occurrences(occurrences, cgs, mat, mode)
+            .await?;
+        let any_live = source_result.source == ExecutionSource::Live || child_live;
 
         let count = resolved.len();
         Ok(ExecutionResult {
@@ -908,8 +983,6 @@ impl ExecutionEngine {
         mat: &mut SessionMaterialization,
         mode: ExecutionMode,
     ) -> Result<ExecutionResult, RuntimeError> {
-        use futures_util::stream::{self, StreamExt};
-
         let target_key = target_entity.as_str();
         let cap = cgs.get_capability(capability.as_str()).ok_or_else(|| {
             RuntimeError::CapabilityNotFound {
@@ -933,7 +1006,7 @@ impl ExecutionEngine {
                 entity: target_key.to_string(),
             })?;
 
-        let mut gets: Vec<(GetExpr, ViewAmbientContext)> = Vec::new();
+        let mut gets = Vec::new();
         for entity in source_result.entities() {
             let mut bound: IndexMap<String, String> = IndexMap::new();
             for (cap_param, parent_field) in bindings.iter() {
@@ -944,15 +1017,12 @@ impl ExecutionEngine {
             }
             let reference = ref_from_materialize_bindings_for_get_chain(target_ent, &bound)?;
             let inherit = CapabilityParamEnv::from_source_row_for_cap(cgs, mat, entity, cap);
-            if !inherit.bindings().is_empty() {
-                mat.stamp_capability_params(&reference, inherit.bindings().clone());
-            }
-            // This fetch executes without a materialization borrow. Carry the typed
-            // inherited parameters across that boundary rather than only stamping
-            // the cache that fetch_get_decoded cannot see.
-            let ambient =
-                ViewAmbientContext::default().with_capability_params(inherit.bindings().clone());
-            gets.push((GetExpr::from_ref(reference), ambient));
+            let mut get = GetExpr::from_ref(reference);
+            get.capability_name = Some(capability.clone());
+            gets.push(RelationGet {
+                get,
+                inherited: inherit,
+            });
         }
 
         if gets.is_empty() {
@@ -968,54 +1038,12 @@ impl ExecutionEngine {
             });
         }
 
-        let concurrency = self
-            .config
-            .effective_hydrate_concurrency(cgs.entry_id.as_deref());
-        let mut all_entities: Vec<CachedEntity> = Vec::new();
         let total_network = source_result.stats.network_requests;
         let total_cache_hits = source_result.stats.cache_hits;
-        let mut any_live = source_result.source == ExecutionSource::Live;
-
-        let cap_named = capability.clone();
-        let entity_type = target_key.to_string();
-        let (branch_seed, _) = crate::BranchMaterializationBase::fork_from(mat);
-        let mut stream = stream::iter(gets.into_iter().map(move |(get, ambient)| {
-            let mut branch = branch_seed.clone();
-            let c = cap_named.clone();
-            let entity_type = entity_type.clone();
-            async move {
-                self.fetch_get_decoded(
-                    &get,
-                    cgs,
-                    mode,
-                    Some(c.as_str()),
-                    false,
-                    &mut branch,
-                    &ambient,
-                )
-                .await
-                .map(|(entity, source)| (entity, source, branch))
-                .map_err(|e| wrap_synthesized_get_error(c.as_str(), &entity_type, e))
-            }
-        }))
-        .buffered(concurrency);
-
-        let mut extra_network = 0usize;
-        let mut extra_cache_hits = 0usize;
-        while let Some(res) = stream.next().await {
-            cooperative_cancel_check()?;
-            let (entity, source, branch) = res?;
-            mat.absorb_branch(branch)?;
-            if source == ExecutionSource::Live {
-                any_live = true;
-                extra_network += 1;
-            } else {
-                extra_cache_hits += 1;
-            }
-            all_entities.push(entity);
-        }
-
-        mat.merge(all_entities.clone())?;
+        let (all_entities, extra_network, extra_cache_hits, child_live) = self
+            .resolve_relation_occurrences(gets, cgs, mat, mode)
+            .await?;
+        let any_live = source_result.source == ExecutionSource::Live || child_live;
         let count = all_entities.len();
         Ok(ExecutionResult {
             collection: ExecutionCollection::evaluate(
@@ -1061,8 +1089,6 @@ impl ExecutionEngine {
         consume: StreamConsumeOpts,
         opts: ExecuteOptions,
     ) -> Result<ExecutionResult, RuntimeError> {
-        use futures_util::stream::{self, StreamExt};
-
         let relation_key = relation.name.as_str();
         let expected_target = &relation.target_resource;
 
@@ -1158,99 +1184,21 @@ impl ExecutionEngine {
             });
         }
 
-        let mut seen = HashSet::new();
-        let unique_refs: Vec<Ref> = ordered_refs
-            .iter()
-            .filter(|r| seen.insert((*r).clone()))
-            .cloned()
-            .collect();
-
-        let mut cached_hits = 0usize;
-        let to_fetch: Vec<Ref> = unique_refs
-            .iter()
-            .filter(|r| {
-                if observed_row_needs_no_detail_get(mat.get(r), cgs) {
-                    cached_hits += 1;
-                    false
-                } else {
-                    true
-                }
-            })
-            .cloned()
-            .collect();
-
-        let mut extra_network = 0usize;
-        let mut any_live = source_result.source == ExecutionSource::Live;
-
-        if !to_fetch.is_empty() {
-            let target_entity = to_fetch[0].entity_type.as_str();
-            let mut inherit_by_ref: std::collections::HashMap<Ref, CapabilityParamEnv> =
-                std::collections::HashMap::new();
-            for source in source_result.entities() {
-                if let Some(refs) = source.relations.get(relation_key) {
-                    for r in refs {
-                        inherit_by_ref.entry(r.clone()).or_insert_with(|| {
-                            CapabilityParamEnv::from_source_row(cgs, target_entity, mat, source)
-                        });
-                    }
-                }
-            }
-            let get_cap_name = cgs
-                .find_capability(target_entity, plasm_core::CapabilityKind::Get)
-                .map(|c| c.name.to_string())
-                .unwrap_or_else(|| "get".to_string());
-            let concurrency = self
-                .config
-                .effective_hydrate_concurrency(cgs.entry_id.as_deref());
-            let (branch_seed, _) = crate::BranchMaterializationBase::fork_from(mat);
-            let mut stream = stream::iter(to_fetch.into_iter().map(|reference| {
-                let mut branch = branch_seed.clone();
-                let inherit = inherit_by_ref.get(&reference).cloned().unwrap_or_default();
-                let get = GetExpr::from_ref(reference.clone());
-                let cap_name = get_cap_name.clone();
-                let ambient = ViewAmbientContext::default()
-                    .with_capability_params(inherit.bindings().clone());
-                async move {
-                    self.fetch_get_decoded(&get, cgs, mode, None, false, &mut branch, &ambient)
-                        .await
-                        .and_then(|(entity, source)| {
-                            if entity.reference != reference {
-                                return Err(RuntimeError::GetIdentityMismatch {
-                                    expected: Box::new(reference.clone()),
-                                    actual: Box::new(entity.reference.clone()),
-                                });
-                            }
-                            Ok((entity, source, branch))
-                        })
-                        .map_err(|e| {
-                            wrap_synthesized_get_error(
-                                cap_name.as_str(),
-                                reference.entity_type.as_str(),
-                                e,
-                            )
-                        })
-                }
-            }))
-            .buffer_unordered(concurrency);
-
-            while let Some(res) = stream.next().await {
-                cooperative_cancel_check()?;
-                let (entity, source, branch) = res?;
-                mat.absorb_branch(branch)?;
-                if source == ExecutionSource::Live {
-                    any_live = true;
-                    extra_network += 1;
-                }
-                mat.insert(entity)?;
+        let mut occurrences = Vec::with_capacity(ordered_refs.len());
+        for parent in source_result.entities() {
+            if let Some(refs) = parent.relations.get(relation_key) {
+                let inherited =
+                    CapabilityParamEnv::from_source_row(cgs, expected_target.as_str(), mat, parent);
+                occurrences.extend(refs.iter().cloned().map(|reference| RelationGet {
+                    get: GetExpr::from_ref(reference),
+                    inherited: inherited.clone(),
+                }));
             }
         }
-
-        let mut resolved = Vec::with_capacity(ordered_refs.len());
-        for r in &ordered_refs {
-            if let Some(e) = mat.get(r) {
-                resolved.push(e.clone());
-            }
-        }
+        let (resolved, extra_network, cached_hits, child_live) = self
+            .resolve_relation_occurrences(occurrences, cgs, mat, mode)
+            .await?;
+        let any_live = source_result.source == ExecutionSource::Live || child_live;
 
         let count = resolved.len();
         Ok(ExecutionResult {

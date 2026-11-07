@@ -122,7 +122,7 @@ pub fn preflight_compile_bound_relation(
             let target_ambient = ambient
                 .clone()
                 .with_capability_params(inherited.bindings().clone());
-            return preflight_compile_expr(&Expr::Get(get), cgs, compiled, &target_ambient, mat);
+            return preflight_relation_get(&get, cgs, compiled, &target_ambient, mat, &inherited);
         }
         RelationMaterialization::FromParentGet { .. }
         | RelationMaterialization::ViewEmbed { .. } => {
@@ -251,22 +251,46 @@ fn preflight_bound_targets<'a>(
                 preflight_compile_expr(expr, cgs, compiled, ambient, mat)?
             }
             ChainStep::AutoGet => {
-                if !super::chain::observed_row_needs_no_detail_get(mat.get(reference), cgs) {
-                    let inherited =
-                        CapabilityParamEnv::from_source_row(cgs, target.as_str(), mat, parent);
-                    let target_ambient = ambient
-                        .clone()
-                        .with_capability_params(inherited.bindings().clone());
-                    preflight_compile_expr(
-                        &Expr::Get(GetExpr::from_ref(reference.clone())),
-                        cgs,
-                        compiled,
-                        &target_ambient,
-                        mat,
-                    )?;
-                }
+                let inherited =
+                    CapabilityParamEnv::from_source_row(cgs, target.as_str(), mat, parent);
+                let target_ambient = ambient
+                    .clone()
+                    .with_capability_params(inherited.bindings().clone());
+                preflight_relation_get(
+                    &GetExpr::from_ref(reference.clone()),
+                    cgs,
+                    compiled,
+                    &target_ambient,
+                    mat,
+                    &inherited,
+                )?;
             }
         }
+    }
+    Ok(())
+}
+
+fn preflight_relation_get(
+    get: &GetExpr,
+    cgs: &CGS,
+    compiled: &plasm_compile::CompiledCatalog,
+    ambient: &ViewAmbientContext,
+    mat: &SessionMaterialization,
+    inherited: &CapabilityParamEnv,
+) -> Result<(), RuntimeError> {
+    let request = match super::chain::prepare_relation_get(get, inherited, cgs, mat, ambient)? {
+        super::chain::PreparedRelationGet::Observed(_) => return Ok(()),
+        super::chain::PreparedRelationGet::Fetch(request) => request,
+    };
+    if let Some(view) = preflight_compile_resolved_get(&request, cgs, compiled)? {
+        preflight_view_scoped_with_proof(
+            &view.name,
+            view.scope,
+            cgs,
+            compiled,
+            &view.ambient,
+            mat,
+        )?;
     }
     Ok(())
 }
@@ -327,7 +351,16 @@ fn preflight_compile_leaf(
         match expr {
             Expr::Chain(chain) => expr = &chain.source,
             Expr::Query(query) => return preflight_compile_query(query, cgs, compiled, ambient),
-            Expr::Get(get) => return preflight_compile_get(get, cgs, compiled, ambient, mat),
+            Expr::Get(get) => {
+                return preflight_compile_get(
+                    get,
+                    cgs,
+                    compiled,
+                    ambient,
+                    mat,
+                    GetPurpose::Authored,
+                )
+            }
             Expr::Create(create) => {
                 return preflight_compile_create(create, cgs, compiled).map(|_| None)
             }
@@ -370,16 +403,26 @@ fn preflight_compile_get(
     cgs: &CGS,
     compiled: &plasm_compile::CompiledCatalog,
     ambient: &ViewAmbientContext,
-    mat: &SessionMaterialization,
+    bindings: &impl GetBindings,
+    purpose: GetPurpose,
 ) -> Result<Option<PreparedViewPreflight>, RuntimeError> {
     let request = ResolvedGet::resolve(
         get,
         cgs,
         get.capability_name.as_deref(),
-        mat,
+        bindings,
         ambient,
-        GetPurpose::Authored,
+        purpose,
     )?;
+    preflight_compile_resolved_get(&request, cgs, compiled)
+}
+
+fn preflight_compile_resolved_get(
+    request: &ResolvedGet<'_>,
+    cgs: &CGS,
+    compiled: &plasm_compile::CompiledCatalog,
+) -> Result<Option<PreparedViewPreflight>, RuntimeError> {
+    let get = request.get;
     let capability = request.capability;
     // List-backed derived Gets have no CML mapping; schema load already validated the plan.
     if capability.derived.is_some() {
@@ -390,7 +433,7 @@ fn preflight_compile_get(
         return Ok(Some(PreparedViewPreflight {
             name: vt.view.to_string(),
             scope: derive_view_get_scope(vt.view.as_str(), get, cgs)?,
-            ambient: request.ambient,
+            ambient: request.ambient.clone(),
         }));
     }
     compile_operation_dispatch(&capability_template, &request.env).map(|_| None)
