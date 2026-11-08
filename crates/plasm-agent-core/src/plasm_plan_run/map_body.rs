@@ -253,14 +253,13 @@ pub(super) async fn materialize(
         occurrence_path: ctx.occurrence_path.clone(),
     };
     let mut operations = plasm_runtime::OperationLedger::empty();
-    let mut retained_outputs = matches!(
+    let mutating = matches!(
         body.effect_class(),
         EffectClass::Write | EffectClass::SideEffect
-    )
-    .then(plasm_runtime::execution::effect_continuation::EffectContinuation::empty_retention);
-    let execution: Result<_, ExecutionFailure> =
-        plasm_runtime::execution::effect_continuation::EffectContinuation::selection_scope(
-            selection.clone(), async {
+    );
+    let mut retained_outputs = mutating
+        .then(plasm_runtime::execution::effect_continuation::EffectContinuation::empty_retention);
+    let work = Box::pin(async {
     let mut execution_source = ExecutionSource::Cache;
     let layers = body.execution_layers()?;
     let mut rows = Vec::with_capacity(parents.len());
@@ -693,8 +692,16 @@ pub(super) async fn materialize(
         },
         evidence,
     ))
-            },
-        ).await;
+    });
+    let execution: Result<_, ExecutionFailure> = if mutating {
+        plasm_runtime::execution::effect_continuation::EffectContinuation::selection_scope_mutating(
+            selection.clone(), work,
+        ).await.unwrap_or_else(|error| Err(scope_retention_failure(error)))
+    } else {
+        plasm_runtime::execution::effect_continuation::EffectContinuation::selection_scope_read_only(
+            selection.clone(), work,
+        ).await
+    };
     execution.map_err(|failure| {
         failure
             .with_effects(&operations)

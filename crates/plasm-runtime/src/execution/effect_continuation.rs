@@ -539,12 +539,55 @@ impl EffectContinuation {
 
     /// Carry public selection accounting into a checkpoint while the owning
     /// execution future retains the actual rows. This is not a membership proof.
-    pub async fn selection_scope<T>(
+    pub async fn selection_scope_read_only<T>(
         selection: crate::execution_failure::EffectSelectionEvidence,
         future: impl Future<Output = T>,
     ) -> T {
+        match Self::selection_scope_inner(selection, false, future).await {
+            Ok(value) => value,
+            Err(_) => unreachable!("read-only selection does not require retention"),
+        }
+    }
+
+    /// Admit a mutating selection only when its evidence can be retained.
+    pub async fn selection_scope_mutating<T>(
+        selection: crate::execution_failure::EffectSelectionEvidence,
+        future: impl Future<Output = T>,
+    ) -> Result<T, EffectContinuationError> {
+        Self::selection_scope_inner(selection, true, future).await
+    }
+
+    async fn selection_scope_inner<T>(
+        selection: crate::execution_failure::EffectSelectionEvidence,
+        require_retention: bool,
+        future: impl Future<Output = T>,
+    ) -> Result<T, EffectContinuationError> {
         let Some(control) = Self::current() else {
-            return future.await;
+            return Ok(future.await);
+        };
+        let reservation = (|| {
+            let mut guard = Self::reserve_retained(&selection)?;
+            let capacity = selection
+                .scope_path
+                .capacity()
+                .saturating_mul(std::mem::size_of::<String>())
+                .saturating_add(
+                    selection
+                        .occurrence_path
+                        .capacity()
+                        .saturating_mul(std::mem::size_of::<usize>()),
+                )
+                .saturating_add(std::mem::size_of::<SelectionFrame>())
+                .saturating_add(selection.scope_path.iter().fold(0usize, |total, value| {
+                    total.saturating_add(value.capacity())
+                }));
+            guard.add_capacity_bytes(capacity)?;
+            Ok(guard)
+        })();
+        let reservation = match reservation {
+            Ok(guard) => Some(guard),
+            Err(error) if require_retention => return Err(error),
+            Err(_) => None,
         };
         control.state.saw_selection.store(true, Ordering::Release);
         if selection.coverage != plasm_core::collection_codec::ResultCoverage::Complete {
@@ -577,34 +620,14 @@ impl EffectContinuation {
                 }
             }
         };
-        let mut reservation = Self::reserve_retained(&selection).ok();
-        if let Some(guard) = reservation.as_mut() {
-            let capacity = selection
-                .scope_path
-                .capacity()
-                .saturating_mul(std::mem::size_of::<String>())
-                .saturating_add(
-                    selection
-                        .occurrence_path
-                        .capacity()
-                        .saturating_mul(std::mem::size_of::<usize>()),
-                )
-                .saturating_add(std::mem::size_of::<SelectionFrame>())
-                .saturating_add(selection.scope_path.iter().fold(0usize, |total, value| {
-                    total.saturating_add(value.capacity())
-                }));
-            if guard.add_capacity_bytes(capacity).is_err() {
-                reservation = None;
-            }
-        }
         let frame = Arc::new(SelectionFrame {
             evidence: selection,
             parent: SELECTIONS.try_with(Clone::clone).ok(),
             _reservation: reservation,
         });
-        SELECTIONS
+        Ok(SELECTIONS
             .scope(frame, AUDIT_SCOPE.scope(scope, future))
-            .await
+            .await)
     }
 
     /// Record a scheduler-completed occurrence in the innermost native scope.
@@ -926,12 +949,12 @@ mod tests {
         control
             .clone()
             .scope(async {
-                EffectContinuation::selection_scope(selection(ResultCoverage::Complete), async {})
+                EffectContinuation::selection_scope_read_only(selection(ResultCoverage::Complete), async {})
                     .await;
                 assert!(control.selections_have_complete_coverage());
-                EffectContinuation::selection_scope(selection(ResultCoverage::Partial), async {})
+                EffectContinuation::selection_scope_read_only(selection(ResultCoverage::Partial), async {})
                     .await;
-                EffectContinuation::selection_scope(selection(ResultCoverage::Complete), async {})
+                EffectContinuation::selection_scope_read_only(selection(ResultCoverage::Complete), async {})
                     .await;
             })
             .await;
@@ -941,7 +964,7 @@ mod tests {
         unknown
             .clone()
             .scope(async {
-                EffectContinuation::selection_scope(selection(ResultCoverage::Unknown), async {})
+                EffectContinuation::selection_scope_read_only(selection(ResultCoverage::Unknown), async {})
                     .await;
             })
             .await;
@@ -965,7 +988,7 @@ mod tests {
         let (control, _pauses) = EffectContinuation::new_native(Duration::from_secs(2)).unwrap();
         control
             .clone()
-            .scope(EffectContinuation::selection_scope(
+            .scope(EffectContinuation::selection_scope_read_only(
                 selection.clone(),
                 async {
                     EffectContinuation::complete_selection_occurrence(0);
@@ -980,7 +1003,7 @@ mod tests {
         let (duplicate, _pauses) = EffectContinuation::new_native(Duration::from_secs(2)).unwrap();
         duplicate
             .clone()
-            .scope(EffectContinuation::selection_scope(selection, async {
+            .scope(EffectContinuation::selection_scope_read_only(selection, async {
                 EffectContinuation::complete_selection_occurrence(0);
                 EffectContinuation::complete_selection_occurrence(0);
                 EffectContinuation::complete_selection_occurrence(1);
@@ -1004,7 +1027,7 @@ mod tests {
         };
         short_circuit
             .clone()
-            .scope(EffectContinuation::selection_scope(
+            .scope(EffectContinuation::selection_scope_read_only(
                 short_selection,
                 async {
                     EffectContinuation::complete_selection_occurrence(0);
@@ -1039,8 +1062,8 @@ mod tests {
         };
         nested
             .clone()
-            .scope(EffectContinuation::selection_scope(outer, async {
-                EffectContinuation::selection_scope(inner, async {
+            .scope(EffectContinuation::selection_scope_read_only(outer, async {
+                EffectContinuation::selection_scope_read_only(inner, async {
                     EffectContinuation::complete_selection_occurrence(0);
                     EffectContinuation::complete_selection_occurrence(1);
                 })
@@ -1064,7 +1087,7 @@ mod tests {
         };
         oversized
             .clone()
-            .scope(EffectContinuation::selection_scope(too_many, async {}))
+            .scope(EffectContinuation::selection_scope_read_only(too_many, async {}))
             .await;
         assert!(!oversized.selected_occurrences_completed());
     }
@@ -1547,7 +1570,7 @@ mod tests {
             let worker = owner.clone();
             let pending = owner
                 .clone()
-                .scope_for_repair(EffectContinuation::selection_scope(selection, async move {
+                .scope_for_repair(EffectContinuation::selection_scope_read_only(selection, async move {
                     worker
                         .checkpoint(failure(MutationDispatchStatus::RejectedWithoutEffect))
                         .await?;
@@ -1608,7 +1631,7 @@ mod tests {
             let worker = control.clone();
             let pending = control
                 .clone()
-                .scope_for_repair(EffectContinuation::selection_scope(selection, async move {
+                .scope_for_repair(EffectContinuation::selection_scope_read_only(selection, async move {
                     worker
                         .checkpoint(failure(MutationDispatchStatus::RejectedWithoutEffect))
                         .await
@@ -1650,7 +1673,7 @@ mod tests {
         };
         let worker = control.clone();
         let pending = control.clone().scope_for_repair(async move {
-            EffectContinuation::selection_scope(selection, async {
+            EffectContinuation::selection_scope_read_only(selection, async {
                 EffectContinuation::complete_selection_occurrence(0);
             })
             .await;
@@ -1729,6 +1752,36 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn mutating_selection_requires_retention_before_polling() {
+        use plasm_core::collection_codec::{CollectionIdentity, ResultCoverage};
+        let oversized = || {
+            let mut path = String::with_capacity(MAX_EFFECT_SELECTION_BYTES + 1);
+            path.push('x');
+            crate::execution_failure::EffectSelectionEvidence {
+                collection: CollectionIdentity { catalog: [1; 32], expression: [2; 32], epoch: 0 },
+                coverage: ResultCoverage::Complete,
+                count: 1,
+                scope_path: vec![path],
+                occurrence_path: Vec::new(),
+            }
+        };
+        let (control, _pauses) = EffectContinuation::new_native(Duration::from_secs(2)).unwrap();
+        let polled = std::sync::atomic::AtomicBool::new(false);
+        let result = control.clone().scope(EffectContinuation::selection_scope_mutating(
+            oversized(), async { polled.store(true, Ordering::Relaxed); },
+        )).await;
+        assert!(matches!(result, Err(EffectContinuationError::SelectionBudget(
+            plasm_core::ValueBudgetError::BytesExceeded
+        ))));
+        assert!(!polled.load(Ordering::Relaxed));
+        control.clone().scope(async {
+            assert!(EffectContinuation::reserve_retained(&"small").is_ok());
+        }).await;
+        let value = control.scope(EffectContinuation::selection_scope_read_only(oversized(), async { 42 })).await;
+        assert_eq!(value, 42);
+    }
+
+    #[tokio::test]
     async fn oversized_selection_ancestry_never_creates_a_checkpoint() {
         use plasm_core::collection_codec::{CollectionIdentity, ResultCoverage};
         let (control, mut pauses) = EffectContinuation::new_native(Duration::from_secs(2)).unwrap();
@@ -1748,7 +1801,7 @@ mod tests {
         let worker = control.clone();
         let result = control
             .clone()
-            .scope(EffectContinuation::selection_scope(selection, async move {
+            .scope(EffectContinuation::selection_scope_read_only(selection, async move {
                 worker
                     .checkpoint(failure(MutationDispatchStatus::RejectedWithoutEffect))
                     .await
@@ -1788,9 +1841,9 @@ mod tests {
         };
         let outer = selection(2);
         let inner = selection(3);
-        let pending = control.clone().scope(EffectContinuation::selection_scope(
+        let pending = control.clone().scope(EffectContinuation::selection_scope_read_only(
             outer.clone(),
-            EffectContinuation::selection_scope(
+            EffectContinuation::selection_scope_read_only(
                 inner.clone(),
                 control.checkpoint(failure(MutationDispatchStatus::RejectedWithoutEffect)),
             ),
