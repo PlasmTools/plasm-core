@@ -45,6 +45,141 @@ pub(crate) struct ArchiveValidationContext {
     pub authorization: plasm_agent_core::discovery_store::DiscoveryAuthorization,
 }
 
+/// A reviewed live run owns everything needed after the engine mutex is
+/// released. Its execution can therefore remain suspended without blocking
+/// later operations in the same logical session.
+pub(crate) struct PreparedLiveRun {
+    reference: String,
+    session: ExecuteSession,
+    host: plasm_agent_core::server_state::PlasmHostState,
+    bundle: PlasmCompBundle,
+    dry: plasm_agent_core::plasm_plan_run::DryPlasmPlanEvaluation,
+    authorization: Option<PlanCommitRef>,
+    workflow_config: NativeLearningConfig,
+    execute_session_id: String,
+}
+
+pub(crate) enum PreparedLiveRunResult {
+    Ready(Box<PreparedLiveRun>),
+    Rejected(RunPlanResult),
+}
+
+impl PreparedLiveRun {
+    pub(crate) async fn execute(self: Box<Self>) -> Result<RunPlanResult> {
+        let Self {
+            reference,
+            session,
+            host,
+            bundle,
+            dry,
+            authorization,
+            workflow_config,
+            execute_session_id,
+        } = *self;
+        let execution = plasm_agent_core::plan_authorization::execute_authorized(
+            &session,
+            &host,
+            authorization.as_ref(),
+            Box::pin(run_plasm_comp(
+                &session,
+                &host,
+                AGENT_PROMPT_HASH,
+                &execute_session_id,
+                &bundle,
+                true,
+                None,
+                None,
+                Some(dry),
+                Some(plasm_agent_core::McpResultTransportPolicy {
+                    artifact_access: plasm_agent_core::ArtifactAccessMode::DagCompute,
+                    ..Default::default()
+                }),
+            )),
+        );
+        let live_result = if workflow_config.mode() != NativeLearningMode::Baseline {
+            plasm_agent_core::workflow_learning::native::observe_execution(
+                &host,
+                &session,
+                &execute_session_id,
+                &bundle,
+                execution,
+            )
+            .await
+        } else {
+            execution.await
+        };
+        let live = match live_result {
+            Ok(live) => live,
+            Err(failure) => {
+                return Ok(RunPlanResult {
+                    ok: false,
+                    message: plasm_agent_core::agent_presentation::render_failure(&failure)
+                        .into_string(),
+                    rows_json: None,
+                    meta_json: None,
+                    artifacts_json: None,
+                    failure_json: Some(serde_json::to_string(&failure)?),
+                })
+            }
+        };
+        let publication: Result<RunPlanResult> = async {
+            let message = live
+                .run_markdown
+                .clone()
+                .unwrap_or_else(|| format!("Live run completed for `{reference}`."));
+            let mut artifacts = Vec::new();
+            for artifact in &live.code_plan_run_artifacts {
+                let id =
+                    plasm_agent_core::run_artifacts::RunArtifactId::from_wire(&artifact.run_id)
+                        .ok_or(AgentEngineError::InvalidRunArtifactId)?;
+                let payload = host
+                    .run_artifacts
+                    .get_payload_result(AGENT_PROMPT_HASH, &execute_session_id, id)
+                    .await
+                    .map_err(AgentEngineError::RunArtifact)?
+                    .ok_or(AgentEngineError::RunArtifactMissing)?;
+                artifacts.push(serde_json::json!({
+                    "run_id": artifact.run_id,
+                    "producer_binding": artifact.node_id,
+                    "reusable": session.recorded_output_reusable(id).await,
+                    "snapshot": serde_json::from_slice::<serde_json::Value>(&payload.bytes)?,
+                }));
+            }
+            Ok(RunPlanResult {
+                ok: true,
+                message,
+                rows_json: live_run_rows_json(&live)?,
+                meta_json: live_run_meta_json(&live),
+                failure_json: None,
+                artifacts_json: Some(serde_json::to_string(&artifacts)?),
+            })
+        }
+        .await;
+        match publication {
+            Ok(result) => Ok(result),
+            Err(error) => {
+                let mut failure = plasm_runtime::ExecutionFailure::new(
+                    plasm_runtime::FailureCause::Runtime,
+                    "run_publication_failed",
+                    error.to_string(),
+                );
+                for step in &live.return_steps {
+                    failure = failure.with_effects(&step.result.operations);
+                }
+                Ok(RunPlanResult {
+                    ok: false,
+                    message: plasm_agent_core::agent_presentation::render_failure(&failure)
+                        .into_string(),
+                    rows_json: None,
+                    meta_json: None,
+                    artifacts_json: None,
+                    failure_json: Some(serde_json::to_string(&failure)?),
+                })
+            }
+        }
+    }
+}
+
 #[derive(Debug, Error)]
 pub enum AgentEngineError {
     #[error("native execution engine construction failed")]
@@ -1386,172 +1521,99 @@ impl AgentEngine {
         plan_commit_ref: &str,
         transport: Arc<dyn HttpTransport>,
     ) -> Result<RunPlanResult> {
-        // Bound the public native future's layout independently of the composed
-        // authorization, execution and evidence protocols it drives.
-        let operation: std::pin::Pin<
-            Box<dyn std::future::Future<Output = Result<RunPlanResult>> + '_>,
-        > = Box::pin(async move {
-            let trimmed = plan_commit_ref.trim();
-            if trimmed.is_empty() {
-                return Ok(RunPlanResult::reference_rejection(
+        match self.prepare_live_run(plan_commit_ref, transport).await? {
+            PreparedLiveRunResult::Ready(run) => Box::pin(run.execute()).await,
+            PreparedLiveRunResult::Rejected(result) => Ok(result),
+        }
+    }
+
+    pub(crate) async fn prepare_live_run(
+        &mut self,
+        plan_commit_ref: &str,
+        transport: Arc<dyn HttpTransport>,
+    ) -> Result<PreparedLiveRunResult> {
+        let trimmed = plan_commit_ref.trim();
+        if trimmed.is_empty() {
+            return Ok(PreparedLiveRunResult::Rejected(
+                RunPlanResult::reference_rejection(
                     "invalid_run_reference",
                     "Copy a reviewed commit reference or paging handle verbatim.",
-                ));
-            }
-            let es = self.ensure_execute_session()?;
-            let (bundle, dry, authorization) = match ExecutableRunTarget::parse(trimmed) {
-                Ok(ExecutableRunTarget::Commit(commit_ref)) => {
-                    let committed = match resolve_committed_plan(&es, &commit_ref) {
-                        Ok(committed) => committed,
-                        Err(error) => return Ok(RunPlanResult::failure(error.into())),
-                    };
-                    let bundle = PlasmCompBundle::new(committed.artifact.clone())
-                        .map_err(AgentEngineError::CommittedPlanArtifact)?
-                        .with_source(committed.program.clone())
-                        .with_compilation_symbols(committed.dry_cache.compilation_symbols.clone());
-                    let dry = match dry_for_committed_plasm_run(&es, &bundle, &committed) {
-                        Ok(dry) => dry,
-                        Err(error) => return Ok(RunPlanResult::failure(error.into())),
-                    };
-                    (bundle, dry, Some(commit_ref))
-                }
-                Ok(ExecutableRunTarget::Page(handle)) => {
-                    let bundle = match plasm_agent_core::mcp_server::compile_page_continuation(
-                        &es, &handle, 0,
-                    ) {
-                        Ok(bundle) => bundle,
-                        Err(failure) => return Ok(RunPlanResult::failure(failure)),
-                    };
-                    let dry = match evaluate_plasm_comp_dry(&es, &bundle) {
-                        Ok(dry) => dry,
-                        Err(error) => return Ok(RunPlanResult::failure(error.into())),
-                    };
-                    (bundle, dry, None)
-                }
-                Err(_) => {
-                    return Ok(RunPlanResult::reference_rejection(
-                        "invalid_run_reference",
-                        format!(
-                            "Run reference `{trimmed}` is not executable. Copy a reviewed commit reference from plasm or a continuation handle from plasm_run verbatim; run artifact IDs identify observations, not executable plans."
-                        ),
-                    ));
-                }
-            };
-
-            let host = self.build_host_state(Some(transport))?;
-            self.workflow_config
-                .register(
-                    &host,
-                    &es,
-                    &self.session_id,
-                    self.execute_session_id.as_str(),
-                    &self.intent_turns,
-                )
-                .await?;
-            let execution = plasm_agent_core::plan_authorization::execute_authorized(
-                &es,
-                &host,
-                authorization.as_ref(),
-                Box::pin(run_plasm_comp(
-                    &es,
-                    &host,
-                    AGENT_PROMPT_HASH,
-                    self.execute_session_id.as_str(),
-                    &bundle,
-                    true,
-                    None,
-                    None,
-                    Some(dry),
-                    Some(plasm_agent_core::McpResultTransportPolicy {
-                        artifact_access: plasm_agent_core::ArtifactAccessMode::DagCompute,
-                        ..Default::default()
-                    }),
-                )),
-            );
-            let live_result = if self.workflow_config.mode() != NativeLearningMode::Baseline {
-                plasm_agent_core::workflow_learning::native::observe_execution(
-                    &host,
-                    &es,
-                    self.execute_session_id.as_str(),
-                    &bundle,
-                    execution,
-                )
-                .await
-            } else {
-                execution.await
-            };
-            let live = match live_result {
-                Ok(live) => live,
-                Err(failure) => {
-                    return Ok(RunPlanResult {
-                        ok: false,
-                        message: plasm_agent_core::agent_presentation::render_failure(&failure)
-                            .into_string(),
-                        rows_json: None,
-                        meta_json: None,
-                        artifacts_json: None,
-                        failure_json: Some(serde_json::to_string(&failure)?),
-                    });
-                }
-            };
-
-            let publication: Result<RunPlanResult> = async {
-                let message = live
-                    .run_markdown
-                    .clone()
-                    .unwrap_or_else(|| format!("Live run completed for `{trimmed}`."));
-                let mut artifacts = Vec::new();
-                for artifact in &live.code_plan_run_artifacts {
-                    let id =
-                        plasm_agent_core::run_artifacts::RunArtifactId::from_wire(&artifact.run_id)
-                            .ok_or(AgentEngineError::InvalidRunArtifactId)?;
-                    let payload = host
-                        .run_artifacts
-                        .get_payload_result(AGENT_PROMPT_HASH, self.execute_session_id.as_str(), id)
-                        .await
-                        .map_err(AgentEngineError::RunArtifact)?
-                        .ok_or(AgentEngineError::RunArtifactMissing)?;
-                    artifacts.push(serde_json::json!({
-                        "run_id": artifact.run_id,
-                        "producer_binding": artifact.node_id,
-                        "reusable": es.recorded_output_reusable(id).await,
-                        "snapshot": serde_json::from_slice::<serde_json::Value>(&payload.bytes)?,
-                    }));
-                }
-                Ok(RunPlanResult {
-                    ok: true,
-                    message,
-                    rows_json: live_run_rows_json(&live)?,
-                    meta_json: live_run_meta_json(&live),
-                    failure_json: None,
-                    artifacts_json: Some(serde_json::to_string(&artifacts)?),
-                })
-            }
-            .await;
-            match publication {
-                Ok(result) => Ok(result),
-                Err(error) => {
-                    let mut failure = plasm_runtime::ExecutionFailure::new(
-                        plasm_runtime::FailureCause::Runtime,
-                        "run_publication_failed",
-                        error.to_string(),
-                    );
-                    for step in &live.return_steps {
-                        failure = failure.with_effects(&step.result.operations);
+                ),
+            ));
+        }
+        let session = self.ensure_execute_session()?;
+        let (bundle, dry, authorization) = match ExecutableRunTarget::parse(trimmed) {
+            Ok(ExecutableRunTarget::Commit(commit_ref)) => {
+                let committed = match resolve_committed_plan(&session, &commit_ref) {
+                    Ok(committed) => committed,
+                    Err(error) => {
+                        return Ok(PreparedLiveRunResult::Rejected(RunPlanResult::failure(
+                            error.into(),
+                        )))
                     }
-                    Ok(RunPlanResult {
-                        ok: false,
-                        message: plasm_agent_core::agent_presentation::render_failure(&failure)
-                            .into_string(),
-                        rows_json: None,
-                        meta_json: None,
-                        artifacts_json: None,
-                        failure_json: Some(serde_json::to_string(&failure)?),
-                    })
-                }
+                };
+                let bundle = PlasmCompBundle::new(committed.artifact.clone())
+                    .map_err(AgentEngineError::CommittedPlanArtifact)?
+                    .with_source(committed.program.clone())
+                    .with_compilation_symbols(committed.dry_cache.compilation_symbols.clone());
+                let dry = match dry_for_committed_plasm_run(&session, &bundle, &committed) {
+                    Ok(dry) => dry,
+                    Err(error) => {
+                        return Ok(PreparedLiveRunResult::Rejected(RunPlanResult::failure(
+                            error.into(),
+                        )))
+                    }
+                };
+                (bundle, dry, Some(commit_ref))
             }
-        });
-        operation.await
+            Ok(ExecutableRunTarget::Page(handle)) => {
+                let bundle = match plasm_agent_core::mcp_server::compile_page_continuation(
+                    &session, &handle, 0,
+                ) {
+                    Ok(bundle) => bundle,
+                    Err(failure) => {
+                        return Ok(PreparedLiveRunResult::Rejected(RunPlanResult::failure(
+                            failure,
+                        )))
+                    }
+                };
+                let dry = match evaluate_plasm_comp_dry(&session, &bundle) {
+                    Ok(dry) => dry,
+                    Err(error) => {
+                        return Ok(PreparedLiveRunResult::Rejected(RunPlanResult::failure(
+                            error.into(),
+                        )))
+                    }
+                };
+                (bundle, dry, None)
+            }
+            Err(_) => {
+                return Ok(PreparedLiveRunResult::Rejected(RunPlanResult::reference_rejection(
+                    "invalid_run_reference",
+                    format!("Run reference `{trimmed}` is not executable. Copy a reviewed commit reference from plasm or a continuation handle from plasm_run verbatim; run artifact IDs identify observations, not executable plans."),
+                )));
+            }
+        };
+        let host = self.build_host_state(Some(transport))?;
+        self.workflow_config
+            .register(
+                &host,
+                &session,
+                &self.session_id,
+                self.execute_session_id.as_str(),
+                &self.intent_turns,
+            )
+            .await?;
+        Ok(PreparedLiveRunResult::Ready(Box::new(PreparedLiveRun {
+            reference: trimmed.to_owned(),
+            session,
+            host,
+            bundle,
+            dry,
+            authorization,
+            workflow_config: self.workflow_config.clone(),
+            execute_session_id: self.execute_session_id.as_str().to_owned(),
+        })))
     }
 
     fn build_host_state(
@@ -3026,6 +3088,41 @@ mod tests {
         assert!(artifacts
             .iter()
             .any(|artifact| artifact["producer_binding"] == "observed"));
+    }
+
+    #[tokio::test]
+    async fn prepared_live_run_does_not_borrow_the_session_engine() {
+        fn assert_send<T: Send>() {}
+        assert_send::<PreparedLiveRun>();
+        let (mut engine, info) = tiny_engine();
+        engine
+            .expose_seeds(
+                "list products",
+                &[CapabilitySeed {
+                    entry_id: info.entry_id,
+                    entity: "Product".into(),
+                }],
+            )
+            .await
+            .unwrap();
+        let program = "class Read(Program):\n    def build(self):\n        observed = e1.query()\n        return observed\n";
+        let reviewed = engine.dry_run(program).await.unwrap();
+        let prepared = match engine
+            .prepare_live_run(
+                &reviewed.plan_commit_ref,
+                Arc::new(MockProductListTransport),
+            )
+            .await
+            .unwrap()
+        {
+            PreparedLiveRunResult::Ready(prepared) => prepared,
+            PreparedLiveRunResult::Rejected(_) => panic!("reviewed run was rejected"),
+        };
+        let other = engine.dry_run(program).await.unwrap();
+        assert!(!other.plan_commit_ref.is_empty());
+        let live = Box::pin(prepared.execute()).await.unwrap();
+        assert!(live.ok, "{}", live.message);
+        assert!(live.rows_json.is_some());
     }
 
     struct RecordingItemTransport(std::sync::Mutex<Vec<String>>);
