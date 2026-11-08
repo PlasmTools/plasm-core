@@ -859,6 +859,139 @@ async fn oversized_continuation_inputs_stop_before_scoped_writes() {
 }
 
 #[tokio::test]
+async fn ordered_fanout_oversized_job_refuses_before_any_dispatch() {
+    use super::plan_bounded_parallel::BatchAdmission;
+    use super::plan_fanout_parallel::{execute_row_fanout, PlanLineJob, RowFanoutPolicy};
+    use plasm_runtime::execution::effect_continuation::{
+        EffectContinuation, MAX_EFFECT_SELECTION_BYTES,
+    };
+    let OrderedFanoutFixture {
+        host,
+        session,
+        opened,
+        store,
+    } = ordered_fanout_fixture(1, usize::MAX, true).await;
+    let mut label = String::with_capacity(MAX_EFFECT_SELECTION_BYTES + 1);
+    label.push('x');
+    let jobs = vec![PlanLineJob {
+        index: 0,
+        expr_label: label,
+        trace_line_index: 0,
+        parsed: plasm_core::expr_parser::ParsedExpr::from_expr(plasm_core::Expr::Query(
+            plasm_core::QueryExpr::all("PwExpense"),
+        )),
+        source_identity: None,
+        observed_relation_source: None,
+    }];
+    let (control, _pauses) =
+        EffectContinuation::new_native(std::time::Duration::from_secs(10)).unwrap();
+    let failure = control
+        .scope(Box::pin(execute_row_fanout(
+            &host,
+            &session,
+            &opened.session_id,
+            jobs,
+            None,
+            None,
+            None,
+            RowFanoutPolicy::for_each(BatchAdmission::OrderedEffects, 1),
+        )))
+        .await
+        .err()
+        .expect("oversized job must be refused");
+    assert_eq!(failure.code, "effect_fanout_retention_refused");
+    assert!(failure.input_budget.is_some());
+    assert!(failure.effects.is_empty());
+    assert_eq!(store.lock().unwrap().attempts, 0);
+}
+
+#[tokio::test]
+async fn ordered_fanout_retention_failure_keeps_completed_occurrence_and_stops_suffix() {
+    use super::plan_bounded_parallel::BatchAdmission;
+    use super::plan_fanout_parallel::{execute_row_fanout, PlanLineJob, RowFanoutPolicy};
+    use plasm_runtime::execution::effect_continuation::{
+        EffectContinuation, MAX_EFFECT_SELECTION_BYTES,
+    };
+    let OrderedFanoutFixture {
+        host,
+        session,
+        opened,
+        store,
+    } = ordered_fanout_fixture(2, usize::MAX, true).await;
+    store.lock().unwrap().response_padding = MAX_EFFECT_SELECTION_BYTES;
+    let jobs = (0..2)
+        .map(|index| {
+            let input = Value::Object(indexmap::IndexMap::from([
+                ("group_id".into(), Value::String("dest".into())),
+                ("description".into(), Value::String(format!("item-{index}"))),
+            ]));
+            let parsed = plasm_core::expr_parser::ParsedExpr::from_expr(plasm_core::Expr::Create(
+                plasm_core::expr::CreateExpr {
+                    capability: "pwexpense_create".into(),
+                    entity: "PwExpense".into(),
+                    input: plasm_core::InvokeInputPayload::raw(input),
+                    catalog_entry_id: plasm_core::catalog_id::CatalogEntryStamp::some(
+                        "matrix".into(),
+                    ),
+                    dotted_receiver: None,
+                },
+            ));
+            PlanLineJob {
+                index,
+                expr_label: format!("create-{index}"),
+                trace_line_index: index,
+                parsed,
+                source_identity: Some(format!("source-{index}")),
+                observed_relation_source: None,
+            }
+        })
+        .collect();
+    let (control, _pauses) =
+        EffectContinuation::new_native(std::time::Duration::from_secs(10)).unwrap();
+    let failure = control
+        .scope(Box::pin(execute_row_fanout(
+            &host,
+            &session,
+            &opened.session_id,
+            jobs,
+            None,
+            None,
+            None,
+            RowFanoutPolicy::for_each(BatchAdmission::OrderedEffects, 2),
+        )))
+        .await
+        .err()
+        .expect("oversized completed result must stop the suffix");
+    assert_eq!(failure.code, "effect_fanout_retention_refused");
+    assert!(failure.input_budget.is_some());
+    assert_eq!(
+        failure
+            .effects
+            .iter()
+            .map(|effect| effect.completed)
+            .sum::<usize>(),
+        1
+    );
+    assert_eq!(
+        failure
+            .effects
+            .iter()
+            .map(|effect| effect.failed)
+            .sum::<usize>(),
+        0
+    );
+    let occurrence = failure
+        .effects
+        .iter()
+        .flat_map(|effect| &effect.occurrences)
+        .next()
+        .expect("completed occurrence evidence");
+    assert_eq!(occurrence.source_index, 0);
+    assert_eq!(occurrence.source_identity.as_deref(), Some("source-0"));
+    assert_eq!(store.lock().unwrap().attempts, 1);
+}
+
+#[tokio::test]
 async fn oversized_accumulated_scope_output_keeps_completed_effect_and_stops_suffix() {
     use plasm_runtime::execution::effect_continuation::{
         EffectContinuation, MAX_EFFECT_SELECTION_BYTES,
