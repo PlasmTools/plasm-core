@@ -153,7 +153,7 @@ pub struct PlasmEngine {
             >,
         >,
     >,
-    effect_pauses: Mutex<HashMap<String, PendingEffectEntry>>,
+    effect_pauses: Arc<Mutex<HashMap<String, PendingEffectEntry>>>,
     discovery_store: Arc<OnceCell<DiscoveryStore>>,
     activated: tokio::sync::RwLock<Option<(String, std::collections::BTreeSet<String>)>>,
 }
@@ -188,6 +188,48 @@ fn prune_expired_effects(entries: &mut HashMap<String, PendingEffectEntry>) {
             false
         } else {
             true
+        }
+    });
+}
+
+fn rotate_effect_entry(
+    entries: &mut HashMap<String, PendingEffectEntry>,
+    old_ref: &str,
+    next_ref: String,
+    entry: &PendingEffectEntry,
+) -> std::result::Result<(), &'static str> {
+    let registered = entries
+        .get(old_ref)
+        .is_some_and(|current| Arc::ptr_eq(&current.pending, &entry.pending));
+    if !registered || std::time::Instant::now() >= entry.deadline {
+        if registered {
+            entries.remove(old_ref);
+        }
+        entry.control.cancel();
+        return Err("effect continuation is closed or expired");
+    }
+    if entries.contains_key(&next_ref) {
+        entry.control.cancel();
+        entries.remove(old_ref);
+        return Err("effect continuation identity collision");
+    }
+    entries.remove(old_ref);
+    entries.insert(next_ref, entry.clone());
+    Ok(())
+}
+
+/// Reclaim an unattended checkpoint at its original deadline, even when no
+/// subsequent request arrives to trigger opportunistic pruning. A weak handle
+/// avoids keeping the engine (or other entries) alive solely for this timer.
+fn schedule_effect_expiry(
+    entries: &Arc<Mutex<HashMap<String, PendingEffectEntry>>>,
+    deadline: std::time::Instant,
+) {
+    let entries = Arc::downgrade(entries);
+    tokio::spawn(async move {
+        tokio::time::sleep_until(deadline.into()).await;
+        if let Some(entries) = entries.upgrade() {
+            prune_expired_effects(&mut lock(&entries));
         }
     });
 }
@@ -1692,6 +1734,7 @@ impl PlasmEngine {
                 }
                 retained.insert(continuation_ref.clone(), entry);
                 drop(retained);
+                schedule_effect_expiry(&self.effect_pauses, deadline);
                 return Ok(JsRunPlanResult {
                     ok: false,
                     message: "Execution paused after a confirmed no-effect rejection. Earlier effects may have completed. Resume only this original execution.".into(),
@@ -1772,12 +1815,10 @@ impl PlasmEngine {
                 pending.reference = next_ref.clone();
                 drop(pending);
                 let mut retained = lock(&self.effect_pauses);
-                retained.remove(&continuation_ref);
-                if retained.contains_key(&next_ref) {
-                    entry.control.cancel();
-                    return Err(Error::from_reason("effect continuation identity collision"));
-                }
-                retained.insert(next_ref.clone(), entry.clone());
+                // Expiry or session closure may have removed the entry while
+                // this resume was awaiting the worker. Never resurrect it.
+                rotate_effect_entry(&mut retained, &continuation_ref, next_ref.clone(), &entry)
+                    .map_err(Error::from_reason)?;
                 return Ok(JsRunPlanResult { ok: false,
                     message: "Execution paused again after a confirmed no-effect rejection. Resume only this original execution.".into(),
                     rows_json: None, meta_json: None, artifacts_json: None,
@@ -1814,6 +1855,58 @@ fn parse_archive_metadata<T: serde::de::DeserializeOwned>(json: &str) -> Result<
 #[cfg(test)]
 mod mutex_law_tests {
     use super::*;
+
+    #[tokio::test]
+    async fn unattended_effect_expiry_reclaims_rotated_entry() {
+        let pool = plasm_agent_core::live_plan_run_worker::LivePlanRunPool::new();
+        let worker: EffectWorker = pool
+            .start_local(|| async { Err(engine::AgentEngineError::WorkflowEvidenceMissing) })
+            .await
+            .unwrap();
+        let (control, pauses) =
+            plasm_runtime::execution::effect_continuation::EffectContinuation::new_native(
+                std::time::Duration::from_secs(1),
+            )
+            .unwrap();
+        let deadline = std::time::Instant::now() + std::time::Duration::from_millis(50);
+        let pending = Arc::new(AsyncMutex::new(PendingEffect {
+            workflow: "workflow".into(),
+            reference: "rotated".into(),
+            control: control.clone(),
+            pause: None,
+            pauses,
+            worker,
+        }));
+        let weak_pending = Arc::downgrade(&pending);
+        let entries = Arc::new(Mutex::new(HashMap::from([(
+            "original".into(),
+            PendingEffectEntry {
+                workflow: "workflow".into(),
+                deadline,
+                control,
+                pending,
+            },
+        )])));
+        let entry = lock(&entries).get("original").unwrap().clone();
+        rotate_effect_entry(&mut lock(&entries), "original", "rotated".into(), &entry).unwrap();
+        schedule_effect_expiry(&entries, deadline);
+        tokio::time::timeout(std::time::Duration::from_secs(3), async {
+            loop {
+                if lock(&entries).is_empty() {
+                    break;
+                }
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .expect("expired entry retained the worker without another request");
+        assert!(
+            rotate_effect_entry(&mut lock(&entries), "rotated", "stale".into(), &entry).is_err()
+        );
+        assert!(lock(&entries).is_empty());
+        drop(entry);
+        assert!(weak_pending.upgrade().is_none());
+    }
 
     #[test]
     fn node_error_retains_catalog_failure_cause() {
