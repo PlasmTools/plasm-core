@@ -84,6 +84,7 @@ mod retention_tests {
                     panic!("clone budget should reject")
                 };
                 assert_eq!(failure.code, "effect_plan_retention_refused");
+                assert_eq!(failure.input_budget.as_ref().unwrap().input, "cloned plan");
                 drop(retained);
                 assert!(reserve_node_clone(MAX_EFFECT_SELECTION_BYTES / 2 + 1).is_ok());
             })
@@ -503,9 +504,13 @@ pub(super) fn reserve_node_clone(
         return Ok(None);
     }
     let mut reservation = EffectContinuation::empty_retention();
-    reservation
-        .add_capacity_bytes(bytes)
-        .map_err(plan_retention_failure)?;
+    reservation.add_capacity_bytes(bytes).map_err(|error| {
+        let mut failure = plan_retention_failure(error);
+        if let Some(budget) = &mut failure.input_budget {
+            budget.input = "cloned plan".into();
+        }
+        failure
+    })?;
     Ok(Some(reservation))
 }
 

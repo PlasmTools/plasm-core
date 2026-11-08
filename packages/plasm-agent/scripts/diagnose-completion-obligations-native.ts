@@ -14,6 +14,8 @@
  * PLASM_EFFECT_FIXTURE_ENGINE_AUTH=1, point the manifest at it, and pass --repair.
  * Optional flags: --loop, --answer, --repeat-rejection, --duplicates,
  * --two-obligations, --unknown, --cancel, --host-auth, --auth-change and --auth-loss exercise distinct offline boundaries.
+ * --clone-budget-pause, --clone-budget-checkpoint and --clone-budget-refusal
+ * use the authenticated rejection fixture to exercise the retention boundary.
  * --observe prints all cases without failing; the default fails on any violation.
  */
 import assert from "node:assert/strict";
@@ -34,6 +36,9 @@ import { runEveToolLoop } from "../src/telemetry/eve-tool-loop.js";
 const manifest = process.env.PLASM_EFFECT_FIXTURE_MANIFEST;
 if (!manifest) throw new Error("Set PLASM_EFFECT_FIXTURE_MANIFEST to the offline fixture manifest");
 const catalog = await loadPackedCatalog(manifest);
+const cloneBudgetMode = process.argv.includes("--clone-budget-pause") ? "pause"
+  : process.argv.includes("--clone-budget-checkpoint") ? "checkpoint"
+  : process.argv.includes("--clone-budget-refusal") ? "refusal" : undefined;
 const allCases = [
   {name: "failure_then_complete", terminal: "complete_task", intervening: "none"},
   {name: "failure_then_answer", terminal: "submit_answer", intervening: "none"},
@@ -42,7 +47,7 @@ const allCases = [
   {name: "write_while_original_is_in_flight", terminal: "complete_task", intervening: "inflight"},
   {name: "native_repair_original_selection", terminal: "complete_task", intervening: "repair"},
 ] as const;
-const cases = allCases.filter((scenario, index) => process.argv.includes("--context-race") ? index === 0 : process.argv.includes("--repair") ? scenario.intervening === "repair" : scenario.intervening !== "repair");
+const cases = allCases.filter((scenario, index) => process.argv.includes("--context-race") ? index === 0 : process.argv.includes("--repair") || cloneBudgetMode ? scenario.intervening === "repair" : scenario.intervening !== "repair");
 
 let exposed = 0;
 for (const scenario of cases) {
@@ -150,7 +155,13 @@ for (const scenario of cases) {
     }
     const entity = "e1";
     const create = "m1";
-    const original = `class Copy(Program):\n    def build(self):\n        source = ${entity}.query(group_id="source")\n        return source.flat_map(lambda row: ${entity}.${create}(group_id="dest", description=row.description))\n`;
+    const planPadding = cloneBudgetMode ? 8192 : 0;
+    const planRepeats = cloneBudgetMode === "pause" ? 5 : cloneBudgetMode === "checkpoint" ? 6 : cloneBudgetMode === "refusal" ? 7 : 0;
+    const destination = `dest${"x".repeat(planPadding)}`;
+    const filters = planRepeats ? `        marker = ${JSON.stringify(destination)}\n` +
+      `        source = source.where(lambda row: row.description != marker)\n`.repeat(planRepeats) : "";
+    const target = planRepeats ? "dest" : destination;
+    const original = `class Copy(Program):\n    def build(self):\n        source = ${entity}.query(group_id="source")\n${filters}        return source.flat_map(lambda row: ${entity}.${create}(group_id=${JSON.stringify(target)}, description=row.description))\n`;
     const write = `class Other(Program):\n    def build(self):\n        return ${entity}.${create}(group_id="other", description="unrelated")\n`;
     const read = `class Read(Program):\n    def build(self):\n        return ${entity}.query(group_id="other")\n`;
     async function plan(program: string): Promise<string> {
@@ -194,12 +205,37 @@ for (const scenario of cases) {
         continue;
       }
       let continuation: string | undefined;
+      let initialFailure: ExecutionFailure | undefined;
       try { await live.plasmRun({logicalSessionRef: session, runRef: originalRef}); }
       catch (error) {
         assert.ok(error instanceof AgentExecutionFailure);
+        initialFailure = error.failure;
         assert.ok(!error.summary.includes("Bearer fixture"), "checkpoint presentation must not expose authentication");
         if (process.argv.includes("--unknown")) assert.equal(error.failure.effects_unresolved, true);
         continuation = error.summary.match(/continuation_ref=([0-9a-f-]{36})/)?.[1];
+      }
+      if (cloneBudgetMode === "refusal") {
+        assert.equal(initialFailure?.code, "effect_plan_retention_refused");
+        assert.equal(initialFailure?.input_budget?.unit, "accounted_bytes");
+        assert.equal(initialFailure?.input_budget?.limit, 8 * 1024 * 1024);
+        assert.equal(initialFailure?.input_budget?.input, "cloned plan", "refusal must come from the live node-clone reservation");
+        assert.equal(continuation, undefined, "an oversized node clone cannot grant a checkpoint");
+        assert.equal(reads, 1, "the read completed before the cloned write node was reserved");
+        assert.equal(posts, 0, "the oversized cloned node must be refused before dispatch");
+        assert.deepEqual(rows, []);
+        console.log(JSON.stringify({case: "native_oversized_clone_refused", contract: "bounded", posts, reads}));
+        continue;
+      }
+      if (cloneBudgetMode === "checkpoint") {
+        assert.equal(initialFailure?.code, "upstream_rejection");
+        assert.equal(continuation, undefined, "a checkpoint that exceeds the remaining budget cannot be retained");
+        assert.equal(posts, 2);
+        assert.equal(reads, 1);
+        assert.equal(initialFailure?.effects.reduce((sum, effect) => sum + effect.completed, 0), 1);
+        assert.deepEqual(rows.map(row => row.description), [process.argv.includes("--duplicates") ? "same-value" : "item-0"]);
+        await assert.rejects(live.sealEffectWorkflows(), /unfinished or uncertain effects/);
+        console.log(JSON.stringify({case: "native_oversized_checkpoint_refused", contract: "effects_preserved", posts, reads}));
+        continue;
       }
       if (process.argv.includes("--unknown")) {
         assert.equal(continuation, undefined, "unknown effects cannot grant a resume capability");
@@ -210,6 +246,9 @@ for (const scenario of cases) {
       }
       assert.ok(continuation, "native checkpoint must expose its opaque continuation");
       assert.deepEqual(rows.map(row => row.description), [process.argv.includes("--duplicates") ? "same-value" : "item-0"]);
+      if (cloneBudgetMode === "pause") {
+        await assert.rejects(live.sealEffectWorkflows(), /unfinished or uncertain effects/);
+      }
       await assert.rejects(live.plasmResume({logicalSessionRef: "wrong-workflow", continuationRef: continuation}), /unknown or belongs/);
       await assert.rejects(native.resumeEffectRun(continuation, "wrong-workflow"));
       assert.equal(posts, 2, "foreign workflow cannot consume or dispatch the checkpoint");
@@ -291,7 +330,7 @@ for (const scenario of cases) {
         messages: [{role: "user", content: "Complete the reviewed copy"}], tools: terminals,
         maxSteps: 1, agentName: "certified-native-repair", telemetry: {isEnabled: false}});
       assert.equal(terminalResult.stopReason, "completed", "native certificate permits the requested terminal");
-      console.log(JSON.stringify({case: scenario.name, contract: "certified", posts, reads}));
+      console.log(JSON.stringify({case: cloneBudgetMode === "pause" ? "native_large_clone_paused_and_repaired" : scenario.name, contract: "certified", posts, reads}));
       continue;
     }
     runConcurrent = async () => { await live.plasmRun({logicalSessionRef: session, runRef: unrelatedRef!}); };
