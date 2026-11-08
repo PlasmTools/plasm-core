@@ -256,6 +256,7 @@ export async function checkSessionExtension(observe: (intent: string) => Promise
     const beforeMalformed = await runtime.sessionManager.getByLogicalRef(ref);
     await assert.rejects(() => runtime.plasmContext({ intent: "Malformed incremental teaching", sessionMode: "extend", logicalSessionRef: ref }), /canonical teaching/);
     assert.deepEqual(await runtime.sessionManager.getByLogicalRef(ref), beforeMalformed);
+    malformedTeaching = false;
     if (exercise) await exercise(runtime, ref, engine);
     console.log("session-extension: new -> persist -> concurrent extend passed");
   } finally {

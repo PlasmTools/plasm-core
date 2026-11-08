@@ -42,7 +42,7 @@ const allCases = [
   {name: "write_while_original_is_in_flight", terminal: "complete_task", intervening: "inflight"},
   {name: "native_repair_original_selection", terminal: "complete_task", intervening: "repair"},
 ] as const;
-const cases = allCases.filter(scenario => process.argv.includes("--repair") ? scenario.intervening === "repair" : scenario.intervening !== "repair");
+const cases = allCases.filter((scenario, index) => process.argv.includes("--context-race") ? index === 0 : process.argv.includes("--repair") ? scenario.intervening === "repair" : scenario.intervening !== "repair");
 
 let exposed = 0;
 for (const scenario of cases) {
@@ -58,6 +58,11 @@ for (const scenario of cases) {
   let reads = 0;
   let runConcurrent: (() => Promise<void>) | undefined;
   let hostAuth: string | null = "Bearer host-fixture-one";
+  let discoveryEntered!: () => void;
+  let releaseDiscovery!: () => void;
+  const inDiscovery = new Promise<void>(resolve => { discoveryEntered = resolve; });
+  const proceedDiscovery = new Promise<void>(resolve => { releaseDiscovery = resolve; });
+  let initialTeaching: {prompt: string; deltaRefs: string[]} | undefined;
   const transport: HostTransportFn = async request => {
     if (request.method === "GET") {
       reads++;
@@ -103,7 +108,13 @@ for (const scenario of cases) {
       run: (plan, callback) => native.run(plan, callback),
       async routeIntent(provenance) {
         const intent = provenance.nodes.at(-1)!.intent;
+        if (intent === "Delayed terminal race") {
+          discoveryEntered();
+          await proceedDiscovery;
+        }
         const exposure = await native.synthesizeTeaching(intent, [{api: "matrix", entity: "PwExpense"}]);
+        initialTeaching ??= {prompt: exposure.prompt, deltaRefs: exposure.deltaRefs};
+        const teaching = process.argv.includes("--context-race") && intent === "Explicit new workflow" ? initialTeaching : exposure;
         return routingPacketSchema.parse({routing: {
           intent_provenance: provenance, intent, pin_id: randomUUID(),
           authorization: {catalogs: ["matrix"], capabilities: {}},
@@ -115,13 +126,28 @@ for (const scenario of cases) {
             requests: 1, input_bytes: 1, reported_input_tokens: 1, missing_usage: 0},
           recovery: null, closure: {business: [{catalog: "matrix", capability: "pwexpense_query"}],
             input_sources: [], prerequisites: [], acquisitions: [], edges: []},
-        }, teaching: {prompt: exposure.prompt, declarations_changed: true, delta_refs: exposure.deltaRefs}});
+        }, teaching: {prompt: teaching.prompt, declarations_changed: true, delta_refs: teaching.deltaRefs}});
       },
     };
     runtime = new AgentRuntime({agentRoot: root, engine, archive: null, hostTransport: transport});
     const opened = await runtime.plasmContext({intent: "Copy selected records"});
     const session = opened.match(/l_[A-Za-z0-9_-]{22}/)?.[0];
     assert.ok(session, "workflow ref");
+    if (process.argv.includes("--context-race")) {
+      const pending = runtime.plasmContext({intent: "Delayed terminal race", sessionMode: "new"});
+      const outcome = pending.then(() => null, error => error);
+      await inDiscovery;
+      await runtime.sealEffectWorkflows();
+      releaseDiscovery();
+      const error = await outcome;
+      assert.ok(error instanceof Error);
+      assert.match(error.message, /Workflow completion changed/);
+      await assert.rejects(runtime.plasmRun({logicalSessionRef: session, runRef: "pc1"}), /already ended/);
+      const next = await runtime.plasmContext({intent: "Explicit new workflow", sessionMode: "new"});
+      assert.match(next, /l_[A-Za-z0-9_-]{22}/);
+      console.log(JSON.stringify({case: "native_terminal_context_race", contract: "sealed"}));
+      continue;
+    }
     const entity = "e1";
     const create = "m1";
     const original = `class Copy(Program):\n    def build(self):\n        source = ${entity}.query(group_id="source")\n        return source.flat_map(lambda row: ${entity}.${create}(group_id="dest", description=row.description))\n`;

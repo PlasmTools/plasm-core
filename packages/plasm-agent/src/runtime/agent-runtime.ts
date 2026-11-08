@@ -439,6 +439,7 @@ export class AgentRuntime {
   private readonly effectWorkflowIds = new Set<string>();
   private readonly effectContinuations = new Map<string, {logicalSessionRef: string; runRef: string; expiresAt: number}>();
   private effectTerminalState: "open" | "sealing" | "sealed" = "open";
+  private effectTerminalGeneration = 0;
 
   /** Terminal acceptance is native and covers every workflow used by this runtime. */
   async sealEffectWorkflows(): Promise<void> {
@@ -446,6 +447,7 @@ export class AgentRuntime {
     this.effectTerminalState = "sealing";
     try {
       await this.engine.sealEffectWorkflows([...this.effectWorkflowIds]);
+      this.effectTerminalGeneration++;
       this.effectTerminalState = "sealed";
     } catch (error) {
       this.effectTerminalState = "open";
@@ -577,21 +579,29 @@ export class AgentRuntime {
     if (this.effectTerminalState === "sealed" && input.sessionMode === "extend") {
       throw new Error("This workflow has already ended; open a new workflow.");
     }
+    const admission = { generation: this.effectTerminalGeneration, afterTerminal: this.effectTerminalState === "sealed" };
     // Snapshot inputs before waiting: callers must not mutate a queued request.
     const request: PlasmContextInput = {
       ...input,
       intent: workflowIntentSchema.parse(input.intent),
     };
-    if (request.sessionMode !== "extend") return this.plasmContextTurn(request);
+    if (request.sessionMode !== "extend") return this.plasmContextTurn(request, admission);
     const ref = this.parseSessionRef(request.logicalSessionRef);
     return this.discoveryQueue.run(
       ref,
       request.intent,
-      () => this.plasmContextTurn(request),
+      () => this.plasmContextTurn(request, admission),
     );
   }
 
-  private async plasmContextTurn(input: PlasmContextInput): Promise<string> {
+  private assertContextAdmission(admission: { generation: number; afterTerminal: boolean }): void {
+    if (admission.generation !== this.effectTerminalGeneration || this.effectTerminalState === "sealing"
+      || (this.effectTerminalState === "sealed") !== admission.afterTerminal) {
+      throw new Error("Workflow completion changed while plasm_context was in progress; no new workflow was opened.");
+    }
+  }
+
+  private async plasmContextTurn(input: PlasmContextInput, admission: { generation: number; afterTerminal: boolean }): Promise<string> {
     await this.configureLearning();
     const intent = workflowIntentSchema.parse(input.intent);
     const mode = input.sessionMode ?? "new";
@@ -643,14 +653,17 @@ export class AgentRuntime {
       const session = existing ?? await this.sessionManager.getOrCreate({
         intent: provenance.nodes[0]!.intent, intentProvenance: provenance, logicalSessionRef: wireRef, logicalSessionId: routing.pin_id,
       });
+      this.assertContextAdmission(admission);
       session.intentProvenance = provenance;
       session.engineInstanceId = this.engineInstanceId;
       session.registryGeneration = routing.retrieval.generation;
       await this.sessionManager.update(session);
+      this.assertContextAdmission(admission);
       this.workflowSession = session;
-      if (mode === "new" && this.effectTerminalState === "sealed") {
+      if (mode === "new" && admission.afterTerminal) {
         this.effectWorkflowIds.clear();
         this.effectTerminalState = "open";
+        this.effectTerminalGeneration++;
       }
       if (!this.effectWorkflowIds.has(session.logicalSessionId) && this.effectWorkflowIds.size >= 1024) {
         throw new Error("Effect workflow capacity exhausted; no operation was executed.");
