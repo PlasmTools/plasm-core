@@ -59,6 +59,7 @@ pub use resolved_effect::{
     EffectInputReference, EffectOrigin, EffectSelectionReference, EffectTargetKind,
     ResolvedEffectEvidence,
 };
+pub use retained_mutation::expression_retention_capacity_bytes;
 mod engine_get;
 mod resolved_get;
 use resolved_get::{GetBindings, GetPurpose, ResolvedGet};

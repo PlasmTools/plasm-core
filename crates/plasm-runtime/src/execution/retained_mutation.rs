@@ -116,6 +116,12 @@ fn predicate(value: &Predicate, depth: usize) -> usize {
     }
 }
 
+/// Conservatively count the heap capacity retained by an executable expression.
+/// Expressions exceeding the traversal depth fail closed with `usize::MAX`.
+pub fn expression_retention_capacity_bytes(value: &Expr) -> usize {
+    expression(value, 0)
+}
+
 fn expression(value: &Expr, depth: usize) -> usize {
     if depth >= 64 {
         return usize::MAX;

@@ -512,7 +512,16 @@ impl ValidatedPlanArtifact {
             value.as_ref().map_or(0, strings)
         }
         fn template(value: &ValidatedPlanExprTemplate) -> usize {
-            projection(&value.projection).saturating_add(bindings(&value.input_bindings))
+            projection(&value.projection)
+                .saturating_add(bindings(&value.input_bindings))
+                .saturating_add(
+                    plasm_runtime::execution::expression_retention_capacity_bytes(&value.expr),
+                )
+        }
+        fn expr_ir(value: &ValidatedPlanExprIr) -> usize {
+            projection(&value.projection).saturating_add(
+                plasm_runtime::execution::expression_retention_capacity_bytes(&value.expr),
+            )
         }
         fn effect(value: &ValidatedEffectTemplate) -> usize {
             entity(&value.qualified_entity)
@@ -572,7 +581,7 @@ impl ValidatedPlanArtifact {
                     .qualified_entity
                     .as_ref()
                     .map_or(0, entity)
-                    .saturating_add(n.ir.as_ref().map_or(0, |ir| projection(&ir.projection)))
+                    .saturating_add(n.ir.as_ref().map_or(0, expr_ir))
                     .saturating_add(n.ir_template.as_ref().map_or(0, template))
                     .saturating_add(strings(&n.projection))
                     .saturating_add(predicates(&n.predicates))
@@ -611,11 +620,7 @@ impl ValidatedPlanArtifact {
                     .saturating_add(effect(&n.effect_template))
                     .saturating_add(predicates(&n.until_predicates))
                     .saturating_add(n.approval.as_ref().map_or(0, String::capacity))
-                    .saturating_add(
-                        n.seed_ir
-                            .as_ref()
-                            .map_or(0, |ir| projection(&ir.projection)),
-                    )
+                    .saturating_add(n.seed_ir.as_ref().map_or(0, expr_ir))
                     .saturating_add(usize::from(n.until_scope.is_some()).saturating_mul(
                         std::mem::size_of::<plasm_core::plasm_monad::CorrelatedBody>(),
                     ))
@@ -629,7 +634,7 @@ impl ValidatedPlanArtifact {
                         .capacity()
                         .saturating_add(n.relation.relation.0.capacity())
                         .saturating_add(entity(&n.relation.target))
-                        .saturating_add(projection(&n.relation.ir.projection))
+                        .saturating_add(expr_ir(&n.relation.ir))
                         .saturating_add(vec_bytes(&n.relation.binding_proofs)),
                     |sum, proof| {
                         sum.saturating_add(proof.cap_param.capacity())

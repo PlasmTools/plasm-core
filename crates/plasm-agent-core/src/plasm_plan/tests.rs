@@ -89,6 +89,65 @@ async fn validated_plan_spare_node_capacity_obeys_the_continuation_budget() {
 }
 
 #[tokio::test]
+async fn validated_plan_expression_capacity_obeys_the_continuation_budget() {
+    use plasm_runtime::execution::effect_continuation::{
+        EffectContinuation, EffectContinuationError, MAX_EFFECT_SELECTION_BYTES,
+    };
+
+    let mut key = String::with_capacity(MAX_EFFECT_SELECTION_BYTES + 1);
+    key.push('1');
+    let id = PlanNodeId::new("read").unwrap();
+    let node = ValidatedPlanNode::Surface(ValidatedSurfaceNode {
+        id: id.clone(),
+        kind: PlanNodeKind::Get,
+        qualified_entity: None,
+        ir: Some(ValidatedPlanExprIr {
+            expr: plasm_core::Expr::Get(plasm_core::GetExpr {
+                reference: plasm_core::Ref::new("Item", key),
+                catalog_entry_id: plasm_core::CatalogEntryStamp::none(),
+                capability_name: None,
+                input: None,
+            }),
+            projection: None,
+        }),
+        ir_template: None,
+        effect_class: EffectClass::Read,
+        result_shape: ResultShape::Single,
+        projection: Vec::new(),
+        predicates: Vec::new(),
+        depends_on: Vec::new(),
+        uses_result: Vec::new(),
+        approval: None,
+        page_size: None,
+        pushed_read_budget: None,
+    });
+    let plan = Plan::new_program(
+        1,
+        None,
+        vec![node],
+        ValidatedPlanReturn::Node(id.clone()),
+        Default::default(),
+    );
+    let artifact = ValidatedPlanArtifact::from_parts(
+        plan,
+        vec![id.clone()],
+        std::collections::HashMap::from([(id, 0)]),
+        Vec::new(),
+    );
+    let (control, _pauses) =
+        EffectContinuation::new_native(std::time::Duration::from_secs(2)).unwrap();
+    control
+        .scope(async {
+            let mut reservation = EffectContinuation::reserve_retained(&artifact).unwrap();
+            assert!(matches!(
+                reservation.add_capacity_bytes(artifact.structural_retention_capacity_bytes()),
+                Err(EffectContinuationError::SelectionBudget(_))
+            ));
+        })
+        .await;
+}
+
+#[tokio::test]
 async fn validated_node_projection_capacity_obeys_the_continuation_budget() {
     use plasm_runtime::execution::effect_continuation::{
         EffectContinuation, EffectContinuationError, MAX_EFFECT_SELECTION_BYTES,
