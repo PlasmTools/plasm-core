@@ -216,6 +216,20 @@ pub async fn run_with_write_conflict_retry(
 ) -> Result<ExecutionResult, RunLineError> {
     for attempt in 0..=MAX_WRITE_CONFLICT_RETRIES {
         let mut branch = GraphExecuteBranch::fork(sess).await;
+        let capability = match &input.parsed.expr {
+            Expr::Create(expr) => Some(&expr.capability),
+            Expr::Delete(expr) => Some(&expr.capability),
+            Expr::Invoke(expr) => Some(&expr.capability),
+            _ => None,
+        };
+        let may_pause = capability.and_then(|name| input.exec_cgs.get_capability(name.as_str()))
+            .is_some_and(plasm_runtime::execution::effect_continuation::EffectContinuation::supports_capability);
+        let _retained_base = if may_pause {
+            Some(plasm_runtime::execution::effect_continuation::EffectContinuation::reserve_retained(&branch.base_retention_view())
+                .map_err(|error| RunLineError::from(plasm_runtime::RuntimeError::ContinuationRetention(error)))?)
+        } else {
+            None
+        };
         let branch_result = execute_on_branch(&mut branch, input).await;
         match branch.commit(sess).await {
             Ok(()) => return branch_result,

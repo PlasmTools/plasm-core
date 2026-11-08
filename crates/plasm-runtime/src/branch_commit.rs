@@ -37,6 +37,13 @@ pub struct BranchMaterializationBase {
 }
 
 impl BranchMaterializationBase {
+    /// Internal discard-only view of the fork's retained response and query bases.
+    pub fn retention_view(&self) -> impl serde::Serialize + '_ {
+        (
+            crate::materialization::RetainedResponses(&self.responses),
+            crate::query_index::RetainedQueryEntries(&self.query_index),
+        )
+    }
     pub fn fork_from(hot: &SessionMaterialization) -> (SessionMaterialization, Self) {
         let base = Self {
             responses: hot.responses.entries_snapshot(),

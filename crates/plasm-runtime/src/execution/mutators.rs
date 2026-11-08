@@ -58,14 +58,10 @@ impl ExecutionEngine {
         operation: OperationIdentity,
         capability: &CapabilitySchema,
         identity: Option<&super::request_identity::RequestIdentity>,
-        graph: &crate::GraphCache,
+        materialization: &SessionMaterialization,
     ) -> Result<(serde_json::Value, Option<String>), RuntimeError> {
         let control = super::effect_continuation::EffectContinuation::current().filter(|_| {
-            !capability.no_effect_rejections.is_empty()
-                && !capability
-                    .output_schema
-                    .as_ref()
-                    .is_some_and(|output| output.idempotent && output.reconcile.is_some())
+            super::effect_continuation::EffectContinuation::supports_capability(capability)
         });
         // A host with opaque credentials cannot prove that a later dispatch is
         // in the same account. Such an operation executes normally, but cannot
@@ -136,7 +132,7 @@ impl ExecutionEngine {
                             entity,
                             &operation,
                             original_identity.retention_auth(),
-                            graph.retention_view(),
+                            materialization.retention_view(),
                             (
                                 &response.mutation_request_fingerprint,
                                 &response.method,
@@ -237,7 +233,7 @@ impl ExecutionEngine {
                         },
                         capability,
                         None,
-                        &mat.graph,
+                        mat,
                     )
                     .await;
                 let (response, _) = match http_res {
@@ -358,7 +354,7 @@ impl ExecutionEngine {
                         },
                         capability,
                         None,
-                        &mat.graph,
+                        mat,
                     )
                     .await?;
                 preflight_fibery_command_envelope(&response)?;
@@ -471,7 +467,7 @@ impl ExecutionEngine {
                         },
                         capability,
                         request_identity.as_ref(),
-                        &mat.graph,
+                        mat,
                     )
                     .await;
                 let (response, _) = match http_res {
@@ -781,7 +777,7 @@ mod continuation_tests {
             unreachable!()
         };
         request.body = Some(Value::String("x".repeat(MAX_EFFECT_SELECTION_BYTES)));
-        let graph = crate::GraphCache::new();
+        let graph = SessionMaterialization::new();
         let journal = super::super::mutation_evidence::MutationJournal::default();
         let (control, mut pauses) = EffectContinuation::new_native(Duration::from_secs(5)).unwrap();
         let result = control
@@ -836,7 +832,7 @@ mod continuation_tests {
             )),
         );
         let compiled = request();
-        let graph = crate::GraphCache::new();
+        let graph = SessionMaterialization::new();
         let journal = super::super::mutation_evidence::MutationJournal::default();
         let (control, mut pauses) = EffectContinuation::new_native(Duration::from_secs(5)).unwrap();
         let result = control
@@ -890,7 +886,10 @@ mod continuation_tests {
                 0,
             ))
             .unwrap();
-        let graph = graph.fork_for_branch();
+        let graph = SessionMaterialization {
+            graph: graph.fork_for_branch(),
+            ..Default::default()
+        };
         let compiled = request();
         let journal = super::super::mutation_evidence::MutationJournal::default();
         let (control, mut pauses) = EffectContinuation::new_native(Duration::from_secs(5)).unwrap();
@@ -922,6 +921,92 @@ mod continuation_tests {
     }
 
     #[tokio::test]
+    async fn oversized_auxiliary_branch_stores_cannot_be_pinned_by_a_checkpoint() {
+        use crate::execution::effect_continuation::MAX_EFFECT_SELECTION_BYTES;
+        use plasm_core::collection_codec::{CollectionCodec, Observation, RecordingCodec};
+        for store_kind in 0..3 {
+            let transport = Arc::new(Transport {
+                statuses: vec![422],
+                opaque: false,
+                requests: Mutex::new(Vec::new()),
+            });
+            let engine = ExecutionEngine::new_with_transport(
+                ExecutionConfig {
+                    base_url: Some("https://fixture.test".into()),
+                    ..Default::default()
+                },
+                Arc::clone(&transport) as Arc<dyn HttpTransport>,
+                None,
+            );
+            let compiled = request();
+            let mut materialization = SessionMaterialization::new();
+            let payload = "x".repeat(MAX_EFFECT_SELECTION_BYTES);
+            if store_kind == 0 {
+                let fingerprint = crate::RequestFingerprint::from_operation(&compiled).unwrap();
+                materialization.responses.store(
+                    fingerprint,
+                    crate::replay::TransportOutcome {
+                        response: serde_json::json!({"private": payload}),
+                        next_link: None,
+                    },
+                    ExecutionSource::Cache,
+                );
+            } else if store_kind == 1 {
+                materialization.provided_session_params.insert(
+                    "fixture".into(),
+                    indexmap::IndexMap::from([("private".into(), Value::String(payload))]),
+                );
+            } else {
+                let query = plasm_core::QueryExpr::all("Item");
+                let key = crate::query_index::QueryCacheKey::from_query(
+                    &query,
+                    "fixture",
+                    &plasm_core::CGS::new(),
+                    &Default::default(),
+                    0,
+                )
+                .unwrap();
+                let record = RecordingCodec::new()
+                    .record(
+                        key.identity().clone(),
+                        vec![plasm_core::Ref::new("Item", &payload)],
+                        Observation::ExactOutput { decoded: 1 },
+                    )
+                    .unwrap();
+                materialization.query_index.insert(key, record).unwrap();
+            }
+            let journal = super::super::mutation_evidence::MutationJournal::default();
+            let (control, mut pauses) =
+                EffectContinuation::new_native(Duration::from_secs(5)).unwrap();
+            let result = control
+                .scope(journal.scope(engine.dispatch_compiled_mutation(
+                    &compiled,
+                    "PwExpense",
+                    OperationIdentity {
+                        entry_id: "matrix".into(),
+                        capability: "pwexpense_create".into(),
+                    },
+                    &capability(),
+                    None,
+                    &materialization,
+                )))
+                .await;
+            assert!(matches!(
+                result,
+                Err(RuntimeError::RequestError {
+                    status: Some(422),
+                    ..
+                })
+            ));
+            assert_eq!(transport.requests.lock().unwrap().len(), 1);
+            assert!(!matches!(
+                tokio::time::timeout(Duration::from_millis(20), pauses.recv()).await,
+                Ok(Some(_))
+            ));
+        }
+    }
+
+    #[tokio::test]
     async fn paused_mutation_blocks_competing_dispatch_then_resumes_original() {
         let transport = Arc::new(Transport {
             statuses: vec![422, 200],
@@ -942,7 +1027,7 @@ mod continuation_tests {
             entry_id: "matrix".into(),
             capability: "pwexpense_create".into(),
         };
-        let graph = crate::GraphCache::new();
+        let graph = SessionMaterialization::new();
         let journal = super::super::mutation_evidence::MutationJournal::default();
         let (control, mut pauses) = EffectContinuation::new_native(Duration::from_secs(5)).unwrap();
         let run = control
@@ -1010,7 +1095,7 @@ mod continuation_tests {
         );
         let capability = capability();
         let compiled = request();
-        let graph = crate::GraphCache::new();
+        let graph = SessionMaterialization::new();
         let journal = super::super::mutation_evidence::MutationJournal::default();
         let workflow = Uuid::new_v4();
         let (control, mut pauses) =

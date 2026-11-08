@@ -722,6 +722,56 @@ async fn oversized_accumulated_scope_output_keeps_completed_effect_and_stops_suf
     assert_eq!(store.lock().unwrap().attempts, 1);
 }
 
+#[tokio::test]
+async fn oversized_fork_base_stops_before_mutation_dispatch() {
+    use plasm_runtime::execution::effect_continuation::{
+        EffectContinuation, MAX_EFFECT_SELECTION_BYTES,
+    };
+    use std::time::Duration;
+    let OrderedFanoutFixture {
+        host,
+        session,
+        opened,
+        store,
+    } = ordered_fanout_fixture(1, usize::MAX, true).await;
+    let fingerprint =
+        plasm_runtime::RequestFingerprint::from_hex(&format!("{:064x}", 77u64)).unwrap();
+    session.lock_graph_cache().await.responses.store(
+        fingerprint,
+        plasm_runtime::replay::TransportOutcome {
+            response: json!({"private": "x".repeat(MAX_EFFECT_SELECTION_BYTES)}),
+            next_link: None,
+        },
+        plasm_runtime::ExecutionSource::Cache,
+    );
+    let symbols = session.teaching_exposure.as_ref().unwrap().to_symbol_map();
+    let entity = symbols.entity_sym_for("matrix", "PwExpense");
+    let create = symbols.method_sym_for("matrix", "PwExpense", "create");
+    let source = format!("class Observe(Program):\n    def build(self):\n        return {entity}.{create}(group_id=\"dest\", description=\"item\")\n");
+    let bundle = crate::plasm_compile::compile_python_program(&session, &source)
+        .await
+        .unwrap();
+    let (control, _pauses) = EffectContinuation::new_native(Duration::from_secs(10)).unwrap();
+    let failure = control
+        .scope(Box::pin(ExecutePipeline::run_program(
+            &session,
+            &host,
+            &opened.prompt_hash,
+            &opened.session_id,
+            &bundle,
+            ExecutionIntent::Live,
+            None,
+            None,
+            None,
+        )))
+        .await
+        .expect_err("oversized base must be refused before mutation");
+    assert_eq!(failure.code, "effect_branch_retention_refused");
+    assert!(failure.input_budget.is_some());
+    assert!(failure.dispatches.is_empty());
+    assert_eq!(store.lock().unwrap().attempts, 0);
+}
+
 async fn resumed_fanout_case(cancel: bool, duplicate: bool) {
     use plasm_runtime::execution::effect_continuation::EffectContinuation;
     use std::time::Duration;

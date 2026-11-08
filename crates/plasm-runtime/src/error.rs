@@ -222,6 +222,8 @@ pub enum ContinuationAuthorizationReason {
 
 #[derive(Error, Debug)]
 pub enum RuntimeError {
+    #[error("effect continuation cannot retain branch state")]
+    ContinuationRetention(#[source] crate::execution::effect_continuation::EffectContinuationError),
     #[error("mutation dispatch refused while its journal is suspended")]
     MutationJournalPaused,
     #[error(transparent)]

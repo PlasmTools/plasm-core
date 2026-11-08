@@ -97,6 +97,32 @@ pub struct SessionResponseStore {
     entries: std::collections::HashMap<RequestFingerprint, Arc<StoredResponse>>,
 }
 
+pub(crate) struct RetainedResponses<'a>(
+    pub(crate) &'a std::collections::HashMap<RequestFingerprint, Arc<StoredResponse>>,
+);
+impl serde::Serialize for RetainedResponses<'_> {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        use serde::ser::SerializeSeq;
+        let mut sequence = serializer.serialize_seq(Some(self.0.len()))?;
+        for (fingerprint, response) in self.0 {
+            sequence.serialize_element(&(fingerprint, &response.outcome, response.source))?;
+        }
+        sequence.end()
+    }
+}
+
+struct RetainedPairs<'a, K, V>(&'a std::collections::HashMap<K, V>);
+impl<K: serde::Serialize, V: serde::Serialize> serde::Serialize for RetainedPairs<'_, K, V> {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        use serde::ser::SerializeSeq;
+        let mut sequence = serializer.serialize_seq(Some(self.0.len()))?;
+        for item in self.0 {
+            sequence.serialize_element(&item)?;
+        }
+        sequence.end()
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct StoredResponse {
     pub outcome: crate::replay::TransportOutcome,
@@ -202,7 +228,7 @@ pub(crate) enum BranchLocalWrite {
 }
 
 /// A Get's resolved input snapshot and row-version witness for scoped reuse.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize)]
 pub(crate) struct GetObservation {
     pub capability: plasm_core::CapabilityName,
     pub catalog: String,
@@ -240,6 +266,21 @@ pub struct SessionMaterialization {
 }
 
 impl SessionMaterialization {
+    /// Internal discard-only accounting view, including private cache and
+    /// binding values. This is not a public serialization format.
+    pub(crate) fn retention_view(&self) -> impl serde::Serialize + '_ {
+        (
+            self.graph.retention_view(),
+            RetainedResponses(&self.responses.entries),
+            self.query_index.retention_view(),
+            &self.observed_snapshot_rows,
+            &self.snapshot_row_refs,
+            RetainedPairs(&self.inherited_capability_params),
+            RetainedPairs(&self.get_observations),
+            &self.provided_session_params,
+            &self.prerequisite_deployments,
+        )
+    }
     pub fn new() -> Self {
         Self::default()
     }

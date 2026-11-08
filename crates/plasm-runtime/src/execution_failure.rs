@@ -589,6 +589,7 @@ impl From<crate::RuntimeError> for ExecutionFailure {
             }
             Mcp(_) => (FailureCause::ResponseContract, "mcp_response_contract"),
             MutationJournalPaused => (FailureCause::Runtime, "mutation_journal_paused"),
+            ContinuationRetention(_) => (FailureCause::Runtime, "effect_branch_retention_refused"),
             FieldUnavailable { .. } => (FailureCause::ResponseContract, "field_unavailable"),
             DecodeError {
                 source: plasm_compile::DecodeError::EntityAssertionMismatch { .. },
@@ -719,6 +720,7 @@ impl From<crate::RuntimeError> for ExecutionFailure {
             // Explicit semantic-display whitelist: adding a runtime variant must
             // select its agent projection; no wildcard can promote a new payload.
             MutationJournalPaused
+            | ContinuationRetention(_)
             | RequestIdentityAuthOpaque
             | RequestIdentityCardinality { .. }
             | DeclaredOutputCardinality { .. }
@@ -800,6 +802,22 @@ impl From<crate::RuntimeError> for ExecutionFailure {
             | HydrationGet { .. } => error.to_string(),
         };
         let mut failure = Self::new(cause, code, diagnostic);
+        if matches!(
+            &error,
+            ContinuationRetention(
+                crate::execution::effect_continuation::EffectContinuationError::SelectionBudget(
+                    plasm_core::ValueBudgetError::BytesExceeded
+                )
+            )
+        ) {
+            failure.input_budget = Some(InputBudgetEvidence {
+                unit: InputBudgetUnit::AccountedBytes,
+                limit: crate::execution::effect_continuation::MAX_EFFECT_SELECTION_BYTES,
+                observed_at_least: crate::execution::effect_continuation::MAX_EFFECT_SELECTION_BYTES
+                    + 1,
+                input: "branch base".into(),
+            });
+        }
         failure.provider_rejection =
             provider_rejection(&error).map(|(status, detail, fingerprint)| {
                 (status, detail.to_owned(), fingerprint.to_owned())

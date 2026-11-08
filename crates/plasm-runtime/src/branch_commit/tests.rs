@@ -3,6 +3,38 @@
 use super::*;
 use crate::ExecutionSource;
 
+#[tokio::test]
+async fn fork_base_retains_response_after_branch_invalidation() {
+    use crate::execution::effect_continuation::{
+        EffectContinuation, EffectContinuationError, MAX_EFFECT_SELECTION_BYTES,
+    };
+    let mut hot = SessionMaterialization::new();
+    let fingerprint = RequestFingerprint::from_hex(&format!("{:064x}", 77u64)).unwrap();
+    hot.responses.store(
+        fingerprint,
+        crate::replay::TransportOutcome {
+            response: serde_json::json!({"private": "x".repeat(MAX_EFFECT_SELECTION_BYTES)}),
+            next_link: None,
+        },
+        ExecutionSource::Cache,
+    );
+    let (mut branch, base) = BranchMaterializationBase::fork_from(&hot);
+    branch.responses.invalidate_entity_type("Item");
+    let (control, _pauses) =
+        EffectContinuation::new_native(std::time::Duration::from_secs(2)).unwrap();
+    control
+        .scope(async {
+            assert!(EffectContinuation::reserve_retained(&branch.retention_view()).is_ok());
+            assert!(matches!(
+                EffectContinuation::reserve_retained(&base.retention_view()),
+                Err(EffectContinuationError::SelectionBudget(
+                    plasm_core::ValueBudgetError::BytesExceeded
+                ))
+            ));
+        })
+        .await;
+}
+
 #[test]
 fn equivalent_decoded_membership_commits_across_read_projections() {
     use plasm_compile::decoder::{EntityDecoder, PathExpr, PathSegment, RelationDecoder};

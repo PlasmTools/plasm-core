@@ -55,6 +55,10 @@ impl GraphExecuteBranch {
         &mut self.mat
     }
 
+    fn base_retention_view(&self) -> impl serde::Serialize + '_ {
+        self.base.retention_view()
+    }
+
     /// Merge branch into session when no write-set entry raced a concurrent writer.
     pub async fn commit(self, sess: &ExecuteSession) -> Result<(), GraphCommitError> {
         let mut guard = sess.lock_graph_cache().await;

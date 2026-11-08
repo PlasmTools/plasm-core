@@ -45,7 +45,32 @@ pub enum QueryObservation {
 pub struct QueryIndex {
     entries: HashMap<QueryCacheKey, QueryObservation>,
 }
+
+pub(crate) struct RetainedQueryEntries<'a>(pub(crate) &'a HashMap<QueryCacheKey, QueryObservation>);
+impl serde::Serialize for RetainedQueryEntries<'_> {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        use serde::ser::SerializeSeq;
+        let mut sequence = serializer.serialize_seq(Some(self.0.len()))?;
+        for (key, observation) in self.0 {
+            match observation {
+                QueryObservation::Observed(record) => sequence.serialize_element(&(
+                    &key.entity,
+                    &key.identity,
+                    Some(record.retention_view()),
+                ))?,
+                QueryObservation::Disputed => {
+                    sequence.serialize_element(&(&key.entity, &key.identity, Option::<()>::None))?
+                }
+            }
+        }
+        sequence.end()
+    }
+}
+
 impl QueryIndex {
+    pub(crate) fn retention_view(&self) -> impl serde::Serialize + '_ {
+        RetainedQueryEntries(&self.entries)
+    }
     pub fn get(&self, key: &QueryCacheKey) -> Option<&RecordedCollection<Ref>> {
         match self.entries.get(key)? {
             QueryObservation::Observed(record) => Some(record),

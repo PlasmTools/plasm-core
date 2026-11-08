@@ -228,6 +228,14 @@ tokio::task_local! {
 }
 
 impl EffectContinuation {
+    /// Whether this capability may use a classified no-effect checkpoint.
+    pub fn supports_capability(capability: &plasm_core::CapabilitySchema) -> bool {
+        !capability.no_effect_rejections.is_empty()
+            && !capability
+                .output_schema
+                .as_ref()
+                .is_some_and(|output| output.idempotent && output.reconcile.is_some())
+    }
     /// Whether this task belongs to a continuation-controlled execution.
     pub fn is_active() -> bool {
         CURRENT.try_with(|_| ()).is_ok()
