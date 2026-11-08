@@ -166,6 +166,33 @@ pub(crate) struct PlanStepMaterializeOutcome {
     pub(crate) scope_instances: Option<serde_json::Value>,
 }
 
+pub(super) fn charge_plan_payload<T: serde::Serialize + ?Sized>(
+    reservation: &mut Option<plasm_runtime::execution::effect_continuation::SelectionReservation>,
+    payload: &T,
+) -> Result<(), ExecutionFailure> {
+    let Some(reservation) = reservation else {
+        return Ok(());
+    };
+    reservation.add_retained(payload).map_err(|error| {
+        use plasm_runtime::execution::effect_continuation::{
+            EffectContinuationError, MAX_EFFECT_SELECTION_BYTES,
+        };
+        let mut failure = step_failure("effect_plan_retention_refused", error.to_string());
+        if matches!(
+            error,
+            EffectContinuationError::SelectionBudget(plasm_core::ValueBudgetError::BytesExceeded)
+        ) {
+            failure.input_budget = Some(plasm_runtime::InputBudgetEvidence {
+                unit: plasm_runtime::InputBudgetUnit::AccountedBytes,
+                limit: MAX_EFFECT_SELECTION_BYTES,
+                observed_at_least: MAX_EFFECT_SELECTION_BYTES + 1,
+                input: "plan frame".into(),
+            });
+        }
+        failure
+    })
+}
+
 /// Shared session/host context for live plan step materialization.
 pub(crate) struct PlanStepMaterializeCtx<'a> {
     pub es: &'a ExecuteSession,
@@ -192,8 +219,22 @@ pub(crate) fn apply_step_materialize_outcomes(
     approval_receipts: &mut Vec<PlasmPlanApprovalReceipt>,
     outcomes: impl IntoIterator<Item = PlanStepMaterializeOutcome>,
     execution_scope: Option<&crate::operation::ExecutionScope>,
-) {
+    retained_evidence: &mut Option<
+        plasm_runtime::execution::effect_continuation::SelectionReservation,
+    >,
+) -> Result<(), ExecutionFailure> {
     for outcome in outcomes {
+        // Preserve the successful outcome's receipts even if its evidence
+        // cannot be retained for a later checkpoint.
+        charge_plan_payload(
+            retained_evidence,
+            &(
+                &outcome.evidence,
+                &outcome.scope_instances,
+                &outcome.approval,
+            ),
+        )
+        .map_err(|failure| failure.with_effects(&outcome.mat.result.operations))?;
         if let Some(instances) = outcome.scope_instances {
             scope_instances.push(instances);
         }
@@ -212,6 +253,7 @@ pub(crate) fn apply_step_materialize_outcomes(
         materialized.insert(outcome.node_id, outcome.mat);
         evidence_steps.push(outcome.evidence);
     }
+    Ok(())
 }
 
 pub(crate) async fn materialize_executable_plan_step(

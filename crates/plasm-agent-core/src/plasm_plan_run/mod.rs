@@ -345,12 +345,12 @@ pub struct PlasmPlanDryRunTextMeta<'a> {
     pub plan_hash: &'a str,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize)]
 enum PlasmPlanApprovalDecision {
     Approved,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize)]
 struct PlasmPlanApprovalReceipt {
     decision: PlasmPlanApprovalDecision,
     policy: &'static str,
