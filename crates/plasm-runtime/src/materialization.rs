@@ -114,6 +114,52 @@ pub struct SessionResponseStore {
 pub(crate) struct RetainedResponses<'a>(
     pub(crate) &'a std::collections::HashMap<RequestFingerprint, Arc<StoredResponse>>,
 );
+
+// Encoded size alone misses spare capacity, including after a provider body is
+// shortened. Bound the walk itself as well as the continuation it measures.
+fn json_retention_capacity(value: &serde_json::Value, depth: usize) -> usize {
+    if depth == 128 {
+        return usize::MAX;
+    }
+    match value {
+        serde_json::Value::String(s) => s.capacity(),
+        serde_json::Value::Array(values) => values.iter().fold(
+            values
+                .capacity()
+                .saturating_mul(std::mem::size_of::<serde_json::Value>()),
+            |total, value| total.saturating_add(json_retention_capacity(value, depth + 1)),
+        ),
+        serde_json::Value::Object(values) => {
+            values
+                .iter()
+                .fold(values.len().saturating_mul(1024), |total, (key, value)| {
+                    total
+                        .saturating_add(key.capacity())
+                        .saturating_add(json_retention_capacity(value, depth + 1))
+                })
+        }
+        _ => 0,
+    }
+}
+
+pub(crate) fn response_retention_capacity(
+    entries: &std::collections::HashMap<RequestFingerprint, Arc<StoredResponse>>,
+) -> usize {
+    entries.values().fold(
+        retained_hash_capacity::<RequestFingerprint, Arc<StoredResponse>>(entries.capacity()),
+        |total, response| {
+            total
+                .saturating_add(json_retention_capacity(&response.outcome.response, 0))
+                .saturating_add(
+                    response
+                        .outcome
+                        .next_link
+                        .as_ref()
+                        .map_or(0, String::capacity),
+                )
+        },
+    )
+}
 impl serde::Serialize for RetainedResponses<'_> {
     fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
         use serde::ser::SerializeSeq;
@@ -145,7 +191,7 @@ pub struct StoredResponse {
 
 impl SessionResponseStore {
     pub(crate) fn retention_capacity_bytes(&self) -> usize {
-        retained_hash_capacity::<RequestFingerprint, Arc<StoredResponse>>(self.entries.capacity())
+        response_retention_capacity(&self.entries)
     }
     pub fn lookup(&self, fingerprint: &RequestFingerprint) -> Option<Arc<StoredResponse>> {
         self.entries.get(fingerprint).cloned()
@@ -803,6 +849,53 @@ pub fn replay_store_lookup(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn response_capacity_walk_counts_arrays_and_limits_depth() {
+        let array = Vec::<serde_json::Value>::with_capacity(100);
+        assert!(
+            json_retention_capacity(&serde_json::Value::Array(array), 0)
+                >= 100 * std::mem::size_of::<serde_json::Value>()
+        );
+        let mut nested = serde_json::Value::Null;
+        for _ in 0..128 {
+            nested = serde_json::Value::Array(vec![nested]);
+        }
+        assert_eq!(json_retention_capacity(&nested, 0), usize::MAX);
+    }
+
+    #[tokio::test]
+    async fn retained_response_payload_capacity_is_charged() {
+        use crate::execution::effect_continuation::{
+            EffectContinuation, EffectContinuationError, MAX_EFFECT_SELECTION_BYTES,
+        };
+        let mut payload = String::with_capacity(MAX_EFFECT_SELECTION_BYTES + 1);
+        payload.push('x');
+        let mut materialization = SessionMaterialization::new();
+        materialization.responses.store(
+            RequestFingerprint::from_hex(&format!("{:064x}", 42u64)).unwrap(),
+            crate::replay::TransportOutcome {
+                response: serde_json::Value::Array(vec![serde_json::Value::String(payload)]),
+                next_link: None,
+            },
+            ExecutionSource::Cache,
+        );
+        let (control, _pauses) =
+            EffectContinuation::new_native(std::time::Duration::from_secs(2)).unwrap();
+        control
+            .scope(async {
+                let mut reservation =
+                    EffectContinuation::reserve_retained(&materialization.retention_view())
+                        .unwrap();
+                assert!(matches!(
+                    reservation.add_capacity_bytes(materialization.retention_capacity_bytes()),
+                    Err(EffectContinuationError::SelectionBudget(
+                        plasm_core::ValueBudgetError::BytesExceeded
+                    ))
+                ));
+            })
+            .await;
+    }
 
     #[tokio::test]
     async fn empty_response_store_capacity_is_not_hidden_from_continuation_budget() {
