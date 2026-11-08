@@ -3,7 +3,7 @@
 use plasm_core::entity_ref_value::{EntityRefAtom, EntityRefPayload};
 use plasm_core::typed_invoke::{InvokeInputPayload, TypedInvokeInput};
 use plasm_core::typed_literal::TypedLiteral;
-use plasm_core::{CreateExpr, DeleteExpr, InvokeExpr};
+use plasm_core::{CreateExpr, DeleteExpr, Expr, InvokeExpr, Predicate};
 use serde::Serialize;
 
 #[cfg(test)]
@@ -18,52 +18,179 @@ pub(super) enum RetainedMutationSource<'a> {
 }
 
 impl RetainedMutationSource<'_> {
-    /// Known owned capacity, in addition to the serialized source charge.
-    /// Nested dotted-receiver expression capacity is not included.
+    /// Owned capacity, in addition to the serialized source charge.
     pub(super) fn retention_capacity_bytes(&self) -> usize {
-        fn input(value: &InvokeInputPayload) -> usize {
-            match value {
-                InvokeInputPayload::Raw(value) => {
-                    crate::materialization::value_retention_capacity(value, 0)
-                }
-                InvokeInputPayload::Typed(value) => typed_input(value, 0),
+        match self {
+            Self::Create(expr) => create(expr, 0),
+            Self::Delete(expr) => delete(expr, 0),
+            Self::Invoke(expr) => invoke(expr, 0),
+        }
+    }
+}
+
+fn input(value: &InvokeInputPayload, depth: usize) -> usize {
+    match value {
+        InvokeInputPayload::Raw(value) => {
+            crate::materialization::value_retention_capacity(value, depth)
+        }
+        InvokeInputPayload::Typed(value) => typed_input(value, depth),
+    }
+}
+
+fn stamp(value: &plasm_core::CatalogEntryStamp) -> usize {
+    value.as_ref().map_or(0, |id| id.retention_capacity_bytes())
+}
+
+fn create(expr: &CreateExpr, depth: usize) -> usize {
+    if depth >= 64 {
+        return usize::MAX;
+    }
+    expr.capability
+        .retention_capacity_bytes()
+        .saturating_add(expr.entity.retention_capacity_bytes())
+        .saturating_add(stamp(&expr.catalog_entry_id))
+        .saturating_add(input(&expr.input, depth + 1))
+        .saturating_add(expr.dotted_receiver.as_ref().map_or(0, |receiver| {
+            std::mem::size_of::<Expr>().saturating_add(expression(receiver, depth + 1))
+        }))
+}
+
+fn delete(expr: &DeleteExpr, depth: usize) -> usize {
+    expr.capability
+        .retention_capacity_bytes()
+        .saturating_add(expr.target.retention_capacity_bytes())
+        .saturating_add(stamp(&expr.catalog_entry_id))
+        .saturating_add(
+            expr.input
+                .as_ref()
+                .map_or(0, |value| input(value, depth + 1)),
+        )
+}
+
+fn invoke(expr: &InvokeExpr, depth: usize) -> usize {
+    expr.capability
+        .retention_capacity_bytes()
+        .saturating_add(expr.target.retention_capacity_bytes())
+        .saturating_add(stamp(&expr.catalog_entry_id))
+        .saturating_add(
+            expr.input
+                .as_ref()
+                .map_or(0, |value| input(value, depth + 1)),
+        )
+}
+
+fn predicate(value: &Predicate, depth: usize) -> usize {
+    if depth >= 64 {
+        return usize::MAX;
+    }
+    match value {
+        Predicate::True | Predicate::False => 0,
+        Predicate::Comparison { field, value, .. } => {
+            field
+                .capacity()
+                .saturating_add(value.typed_literal().map_or_else(
+                    || {
+                        value.dynamic_value().map_or(0, |value| {
+                            crate::materialization::value_retention_capacity(value, depth + 1)
+                        })
+                    },
+                    |value| typed_literal(value, depth + 1),
+                ))
+        }
+        Predicate::And { args } | Predicate::Or { args } => args.iter().fold(
+            args.capacity()
+                .saturating_mul(std::mem::size_of::<Predicate>()),
+            |sum, value| sum.saturating_add(predicate(value, depth + 1)),
+        ),
+        Predicate::Not { predicate: inner } => {
+            std::mem::size_of::<Predicate>().saturating_add(predicate(inner, depth + 1))
+        }
+        Predicate::ExistsRelation {
+            relation,
+            predicate: inner,
+        } => relation
+            .capacity()
+            .saturating_add(inner.as_ref().map_or(0, |value| {
+                std::mem::size_of::<Predicate>().saturating_add(predicate(value, depth + 1))
+            })),
+    }
+}
+
+fn expression(value: &Expr, depth: usize) -> usize {
+    if depth >= 64 {
+        return usize::MAX;
+    }
+    match value {
+        Expr::Query(query) => {
+            let projection = query.projection.as_ref().map_or(0, |fields| {
+                fields.iter().fold(
+                    fields
+                        .capacity()
+                        .saturating_mul(std::mem::size_of::<String>()),
+                    |sum, field| sum.saturating_add(field.capacity()),
+                )
+            });
+            query
+                .entity
+                .retention_capacity_bytes()
+                .saturating_add(stamp(&query.catalog_entry_id))
+                .saturating_add(
+                    query
+                        .capability_name
+                        .as_ref()
+                        .map_or(0, |name| name.retention_capacity_bytes()),
+                )
+                .saturating_add(
+                    query
+                        .predicate
+                        .as_ref()
+                        .map_or(0, |value| predicate(value, depth + 1)),
+                )
+                .saturating_add(
+                    query
+                        .pagination
+                        .as_ref()
+                        .and_then(|page| page.cursor.as_ref())
+                        .map_or(0, String::capacity),
+                )
+                .saturating_add(projection)
+        }
+        Expr::Get(get) => get
+            .reference
+            .retention_capacity_bytes()
+            .saturating_add(stamp(&get.catalog_entry_id))
+            .saturating_add(
+                get.capability_name
+                    .as_ref()
+                    .map_or(0, |name| name.retention_capacity_bytes()),
+            )
+            .saturating_add(
+                get.input
+                    .as_ref()
+                    .map_or(0, |value| input(value, depth + 1)),
+            ),
+        Expr::Create(value) => create(value, depth + 1),
+        Expr::Delete(value) => delete(value, depth + 1),
+        Expr::Invoke(value) => invoke(value, depth + 1),
+        Expr::Chain(chain) => {
+            let base = chain
+                .selector
+                .capacity()
+                .saturating_add(stamp(&chain.catalog_entry_id))
+                .saturating_add(std::mem::size_of::<Expr>())
+                .saturating_add(expression(&chain.source, depth + 1));
+            match &chain.step {
+                plasm_core::expr::ChainStep::AutoGet => base,
+                plasm_core::expr::ChainStep::Explicit { expr } => base
+                    .saturating_add(std::mem::size_of::<Expr>())
+                    .saturating_add(expression(expr, depth + 1)),
             }
         }
-        match self {
-            Self::Create(expr) => expr
-                .capability
-                .retention_capacity_bytes()
-                .saturating_add(expr.entity.retention_capacity_bytes())
-                .saturating_add(
-                    expr.catalog_entry_id
-                        .as_ref()
-                        .map_or(0, |id| id.retention_capacity_bytes()),
-                )
-                .saturating_add(input(&expr.input))
-                .saturating_add(
-                    usize::from(expr.dotted_receiver.is_some())
-                        .saturating_mul(std::mem::size_of::<plasm_core::Expr>()),
-                ),
-            Self::Delete(expr) => expr
-                .capability
-                .retention_capacity_bytes()
-                .saturating_add(expr.target.retention_capacity_bytes())
-                .saturating_add(
-                    expr.catalog_entry_id
-                        .as_ref()
-                        .map_or(0, |id| id.retention_capacity_bytes()),
-                )
-                .saturating_add(expr.input.as_ref().map_or(0, input)),
-            Self::Invoke(expr) => expr
-                .capability
-                .retention_capacity_bytes()
-                .saturating_add(expr.target.retention_capacity_bytes())
-                .saturating_add(
-                    expr.catalog_entry_id
-                        .as_ref()
-                        .map_or(0, |id| id.retention_capacity_bytes()),
-                )
-                .saturating_add(expr.input.as_ref().map_or(0, input)),
+        Expr::Page(value) => value.handle.retention_capacity_bytes(),
+        Expr::Wait(value) => value.handle.retention_capacity_bytes(),
+        Expr::Cancel(value) => value.handle.retention_capacity_bytes(),
+        Expr::TeachingValue { value } => {
+            crate::materialization::value_retention_capacity(value, depth + 1)
         }
     }
 }
@@ -224,5 +351,35 @@ mod tests {
         ] {
             assert!(source.retention_capacity_bytes() > MAX_EFFECT_SELECTION_BYTES);
         }
+    }
+
+    #[test]
+    fn nested_receiver_counts_predicate_and_chain_capacity() {
+        let mut binding = String::with_capacity(MAX_EFFECT_SELECTION_BYTES + 1);
+        binding.push('x');
+        let mut query = plasm_core::QueryExpr::all("Item");
+        query.predicate = Some(Predicate::Comparison {
+            field: "name".into(),
+            op: plasm_core::CompOp::Eq,
+            value: plasm_core::typed_literal::TypedComparisonValue::from_value(
+                Value::GetScalarExtract(plasm_core::GetScalarExtract {
+                    entity: "Item".into(),
+                    identity: Box::new(Value::String(binding)),
+                    wire: "name".into(),
+                    catalog_entry_id: None,
+                }),
+            ),
+        });
+        let nested = Expr::Chain(plasm_core::expr::ChainExpr::auto_get(
+            Expr::Query(query),
+            "child",
+        ));
+        assert!(expression(&nested, 0) > MAX_EFFECT_SELECTION_BYTES);
+
+        let mut deep = Expr::Query(plasm_core::QueryExpr::all("Item"));
+        for _ in 0..64 {
+            deep = Expr::Chain(plasm_core::expr::ChainExpr::auto_get(deep, "child"));
+        }
+        assert_eq!(expression(&deep, 0), usize::MAX);
     }
 }

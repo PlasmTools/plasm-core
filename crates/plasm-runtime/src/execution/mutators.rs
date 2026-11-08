@@ -1132,6 +1132,71 @@ mod continuation_tests {
         }
     }
 
+    #[tokio::test]
+    async fn oversized_dotted_receiver_capacity_cannot_create_a_checkpoint() {
+        use crate::execution::effect_continuation::MAX_EFFECT_SELECTION_BYTES;
+        let transport = Arc::new(Transport {
+            statuses: vec![422],
+            opaque: false,
+            requests: Mutex::new(Vec::new()),
+        });
+        let engine = ExecutionEngine::new_with_transport(
+            ExecutionConfig {
+                base_url: Some("https://fixture.test".into()),
+                ..Default::default()
+            },
+            Arc::clone(&transport) as Arc<dyn HttpTransport>,
+            None,
+        );
+        let mut id = String::with_capacity(MAX_EFFECT_SELECTION_BYTES + 1);
+        id.push('1');
+        let source = plasm_core::CreateExpr {
+            capability: "pwexpense_create".into(),
+            entity: "PwExpense".into(),
+            input: plasm_core::InvokeInputPayload::raw(Value::Null),
+            catalog_entry_id: plasm_core::CatalogEntryStamp::none(),
+            dotted_receiver: Some(Box::new(plasm_core::Expr::Get(plasm_core::GetExpr {
+                reference: plasm_core::Ref::new("PwGroup", id),
+                catalog_entry_id: plasm_core::CatalogEntryStamp::none(),
+                capability_name: None,
+                input: None,
+            }))),
+        };
+        let compiled = request();
+        let graph = SessionMaterialization::new();
+        let capability = capability();
+        let journal = super::super::mutation_evidence::MutationJournal::default();
+        let (control, mut pauses) = EffectContinuation::new_native(Duration::from_secs(5)).unwrap();
+        let run = control.scope(journal.scope(engine.dispatch_compiled_mutation(
+            &compiled,
+            "PwExpense",
+            OperationIdentity {
+                entry_id: "matrix".into(),
+                capability: "pwexpense_create".into(),
+            },
+            &capability,
+            None,
+            RetainedMutationFrame {
+                materialization: &graph,
+                env: empty_env(),
+                source: super::super::retained_mutation::RetainedMutationSource::Create(&source),
+            },
+        )));
+        tokio::pin!(run);
+        let result = tokio::select! {
+            result = &mut run => result,
+            pause = pauses.recv() => panic!("oversized dotted receiver admitted checkpoint: {}", pause.is_some()),
+        };
+        assert!(matches!(
+            result,
+            Err(RuntimeError::RequestError {
+                status: Some(422),
+                ..
+            })
+        ));
+        assert_eq!(transport.requests.lock().unwrap().len(), 1);
+    }
+
     fn request() -> CompiledOperation {
         CompiledOperation::Http(CompiledRequest {
             method: plasm_compile::HttpMethod::Post,
