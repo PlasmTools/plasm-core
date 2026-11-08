@@ -63,7 +63,12 @@ export type HostTransportResponse = {
  * this engine-visible contract; their runtime transport must attest Opaque so
  * request-owned identity fails with typed RequestIdentityAuthOpaque.
  */
-export type HostTransportFn = (request: HostTransportRequest) => Promise<HostTransportResponse>;
+export type HostTransportFn = ((request: HostTransportRequest) => Promise<HostTransportResponse>) & {
+  /** Resolve the same bearer the transport would inject now. The transport must
+   * preserve a supplied Authorization without adding any other credentials.
+   * Absence means host-injected authentication remains opaque. */
+  resolveAuth?: (request: { entryId?: string }) => Promise<string | null>;
+};
 
 export interface PlasmEngine {
   /** Atomically refuse completion while any named workflow has unfinished effects. */
@@ -139,6 +144,7 @@ type NativePlasmEngine = {
     planCommitRef: string,
     transport: (request: HostTransportRequest) => Promise<HostTransportResponse>,
     logicalSessionId?: string,
+    resolveAuth?: (request: { entryId?: string }) => Promise<string | null>,
   ): Promise<{
     ok: boolean;
     message: string;
@@ -264,7 +270,7 @@ export class NapiPlasmEngine implements PlasmEngine {
     transport: HostTransportFn,
     logicalSessionId?: string,
   ): Promise<{ ok: boolean; message: string; rowsJson?: string; metaJson?: string; artifactsJson?: string; failureJson?: string; continuationRef?: string }> {
-    return this.native.runPlanLive(planCommitRef, toNapiHostTransport(transport), logicalSessionId);
+    return this.native.runPlanLive(planCommitRef, toNapiHostTransport(transport), logicalSessionId, transport.resolveAuth?.bind(transport));
   }
 
   async run(_resolved: ResolvedPlanPayload, transport: HostTransportFn): Promise<unknown> {

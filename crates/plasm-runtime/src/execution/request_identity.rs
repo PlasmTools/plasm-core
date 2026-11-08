@@ -100,6 +100,7 @@ impl ExecutionEngine {
             _ => return Err(RuntimeError::HttpQueryTemplateRequired),
         };
         let auth = self.resolve_compiled_http_auth(request).await?;
+        let auth = self.transport.resolve_identity_auth(request, auth).await?;
         if matches!(
             self.transport.auth_scope(request, auth.as_ref())?,
             crate::http_transport::TransportAuthScope::Opaque

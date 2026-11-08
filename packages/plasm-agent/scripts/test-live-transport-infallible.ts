@@ -53,6 +53,8 @@ assert.equal(fetchBoom.status, 599);
 assert.match(fetchBoom.body, /ECONNREFUSED/);
 
 let visibleDispatches = 0;
+const resolvable = createDefaultHostTransport({ bearer: "fixture-scope", useConnect: false });
+assert.equal(await resolvable.resolveAuth?.({ entryId: "fixture" }), "Bearer fixture-scope");
 const visibleAuth = await createDefaultHostTransport({
   bearer: "must-not-replace-visible-auth",
   useConnect: true,

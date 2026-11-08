@@ -13,7 +13,7 @@
  * For the positive repair witness, generate a second fixture with
  * PLASM_EFFECT_FIXTURE_ENGINE_AUTH=1, point the manifest at it, and pass --repair.
  * Optional flags: --loop, --answer, --repeat-rejection, --duplicates,
- * --two-obligations, --unknown, and --cancel exercise distinct offline boundaries.
+ * --two-obligations, --unknown, --cancel, --host-auth, --auth-change and --auth-loss exercise distinct offline boundaries.
  * --observe prints all cases without failing; the default fails on any violation.
  */
 import assert from "node:assert/strict";
@@ -57,6 +57,7 @@ for (const scenario of cases) {
   let posts = 0;
   let reads = 0;
   let runConcurrent: (() => Promise<void>) | undefined;
+  let hostAuth: string | null = "Bearer host-fixture-one";
   const transport: HostTransportFn = async request => {
     if (request.method === "GET") {
       reads++;
@@ -64,6 +65,9 @@ for (const scenario of cases) {
     }
     assert.equal(request.method, "POST");
     const body = JSON.parse(request.body ?? "null") as {group_id: string; description: string};
+    if (process.argv.includes("--host-auth")) {
+      assert.equal(Object.entries(request.headers ?? {}).find(([name]) => name.toLowerCase() === "authorization")?.[1], "Bearer host-fixture-one");
+    }
     const attempt = posts++;
     if (attempt === 1 || (scenario.intervening === "repair" && process.argv.includes("--repeat-rejection") && attempt === 3)
       || (scenario.intervening === "repair" && process.argv.includes("--two-obligations") && attempt === 2)) {
@@ -80,6 +84,7 @@ for (const scenario of cases) {
     rows.push(row);
     return {status: 200, body: JSON.stringify(row)};
   };
+  if (process.argv.includes("--host-auth")) transport.resolveAuth = async () => hostAuth;
   try {
     await native.loadCatalog(catalog);
     const engine: PlasmEngine = {
@@ -182,6 +187,19 @@ for (const scenario of cases) {
       await assert.rejects(live.plasmResume({logicalSessionRef: "wrong-workflow", continuationRef: continuation}), /unknown or belongs/);
       await assert.rejects(native.resumeEffectRun(continuation, "wrong-workflow"));
       assert.equal(posts, 2, "foreign workflow cannot consume or dispatch the checkpoint");
+      if (process.argv.includes("--auth-change") || process.argv.includes("--auth-loss")) {
+        hostAuth = process.argv.includes("--auth-loss") ? null : "Bearer host-fixture-two";
+        await assert.rejects(live.plasmResume({logicalSessionRef: session, continuationRef: continuation}), error => {
+          assert.ok(error instanceof AgentExecutionFailure);
+          assert.equal(error.failure.code, hostAuth === null ? "continuation_auth_revalidation_failed" : "continuation_auth_scope_changed");
+          assert.ok(!JSON.stringify(error.failure).includes("host-fixture"));
+          return true;
+        });
+        assert.equal(posts, 2, "changed authority must not dispatch the rejected operation");
+        await assert.rejects(live.sealEffectWorkflows(), /unfinished or uncertain effects/);
+        console.log(JSON.stringify({case: "native_changed_host_auth", contract: "unresolved", posts, reads}));
+        continue;
+      }
       if (process.argv.includes("--cancel")) {
         await Promise.race([
           native.close(),

@@ -34,7 +34,7 @@ use plasm_runtime::request_error_from_host_http;
 use std::collections::HashMap;
 use std::sync::Arc;
 
-use crate::types::{JsTransportRequest, JsTransportResponse};
+use crate::types::{JsAuthScopeRequest, JsTransportRequest, JsTransportResponse};
 
 pub type TransportTsfn = ThreadsafeFunction<
     JsTransportRequest,
@@ -54,6 +54,49 @@ pub fn build_transport_tsfn(
 
 /// Host transport callback converted synchronously at the NAPI boundary (`Send` for async Rust).
 pub struct JsHostTransport(pub TransportTsfn);
+
+type AuthTsfn = ThreadsafeFunction<
+    JsAuthScopeRequest,
+    Promise<Option<String>>,
+    JsAuthScopeRequest,
+    napi::Status,
+    false,
+>;
+
+pub struct JsHostAuthResolver(AuthTsfn);
+
+impl TypeName for JsHostAuthResolver {
+    fn type_name() -> &'static str {
+        "Function"
+    }
+    fn value_type() -> napi::ValueType {
+        napi::ValueType::Function
+    }
+}
+
+impl ValidateNapiValue for JsHostAuthResolver {
+    unsafe fn validate(
+        env: napi::sys::napi_env,
+        value: napi::sys::napi_value,
+    ) -> Result<napi::sys::napi_value> {
+        Function::<JsAuthScopeRequest, Promise<Option<String>>>::validate(env, value)
+    }
+}
+
+impl FromNapiValue for JsHostAuthResolver {
+    unsafe fn from_napi_value(
+        env: napi::sys::napi_env,
+        value: napi::sys::napi_value,
+    ) -> Result<Self> {
+        let callback =
+            Function::<JsAuthScopeRequest, Promise<Option<String>>>::from_napi_value(env, value)?;
+        Ok(Self(
+            callback
+                .build_threadsafe_function::<JsAuthScopeRequest>()
+                .build()?,
+        ))
+    }
+}
 
 impl TypeName for JsHostTransport {
     fn type_name() -> &'static str {
@@ -91,13 +134,19 @@ impl FromNapiValue for JsHostTransport {
 #[derive(Clone)]
 pub struct JsCallbackHttpTransport {
     tsfn: Arc<TransportTsfn>,
+    auth_resolver: Option<Arc<AuthTsfn>>,
     entry_id: Option<String>,
 }
 
 impl JsCallbackHttpTransport {
-    pub fn new(tsfn: TransportTsfn, entry_id: Option<String>) -> Arc<Self> {
+    pub fn new(
+        tsfn: TransportTsfn,
+        entry_id: Option<String>,
+        auth_resolver: Option<JsHostAuthResolver>,
+    ) -> Arc<Self> {
         Arc::new(Self {
             tsfn: Arc::new(tsfn),
+            auth_resolver: auth_resolver.map(|resolver| Arc::new(resolver.0)),
             entry_id,
         })
     }
@@ -219,6 +268,35 @@ fn encode_outbound_body(
 impl HttpTransport for JsCallbackHttpTransport {
     fn injects_host_auth(&self) -> bool {
         true
+    }
+    async fn resolve_identity_auth(
+        &self,
+        request: &CompiledRequest,
+        auth: Option<ResolvedAuth>,
+    ) -> std::result::Result<Option<ResolvedAuth>, RuntimeError> {
+        use plasm_runtime::http_transport::TransportAuthScope;
+        if matches!(
+            callback_auth_scope(request, auth.as_ref())?,
+            TransportAuthScope::EngineVisible
+        ) {
+            return Ok(auth);
+        }
+        let Some(resolver) = &self.auth_resolver else {
+            return Ok(auth);
+        };
+        let promise = resolver
+            .call_async_catch(JsAuthScopeRequest {
+                entry_id: self.entry_id.clone(),
+            })
+            .await
+            .map_err(HostTransportError::Callback)?;
+        let bearer = promise.await.map_err(HostTransportError::Promise)?;
+        let Some(bearer) = bearer.filter(|value| !value.trim().is_empty()) else {
+            return Ok(auth);
+        };
+        let mut auth = auth.unwrap_or_default();
+        auth.headers.push(("Authorization".into(), bearer));
+        Ok(Some(auth))
     }
     fn auth_scope(
         &self,

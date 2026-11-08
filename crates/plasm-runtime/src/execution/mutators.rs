@@ -71,13 +71,12 @@ impl ExecutionEngine {
         // acquire a resume capability from this mechanism.
         let pinned = if control.is_some() && identity.is_none() {
             match compiled {
-                CompiledOperation::Http(request) | CompiledOperation::GraphQl(request)
-                    if matches!(
-                        self.transport.auth_scope(request, None)?,
-                        crate::http_transport::TransportAuthScope::EngineVisible
-                    ) =>
-                {
-                    Some(self.prepare_request_identity(compiled).await?)
+                CompiledOperation::Http(_) | CompiledOperation::GraphQl(_) => {
+                    match self.prepare_request_identity(compiled).await {
+                        Ok(identity) => Some(identity),
+                        Err(RuntimeError::RequestIdentityAuthOpaque) => None,
+                        Err(error) => return Err(error),
+                    }
                 }
                 _ => None,
             }

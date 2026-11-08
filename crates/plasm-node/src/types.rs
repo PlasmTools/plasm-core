@@ -2,6 +2,11 @@ use napi_derive::napi;
 use std::collections::HashMap;
 
 #[napi(object)]
+pub struct JsAuthScopeRequest {
+    pub entry_id: Option<String>,
+}
+
+#[napi(object)]
 #[derive(Clone, Debug)]
 pub struct JsTransportRequest {
     /// Scoped credentials require the callback to reject HTTP redirects.

@@ -34,7 +34,7 @@ use std::sync::{Arc, Mutex};
 use thiserror::Error;
 use tokio::sync::{Mutex as AsyncMutex, OnceCell};
 
-use crate::transport::{JsCallbackHttpTransport, JsHostTransport};
+use crate::transport::{JsCallbackHttpTransport, JsHostAuthResolver, JsHostTransport};
 
 #[napi(object)]
 pub struct JsCatalogInfo {
@@ -1618,18 +1618,20 @@ impl PlasmEngine {
     }
 
     #[napi(
-        ts_args_type = "planCommitRef: string, transport: (request: JsTransportRequest) => JsTransportResponse | Promise<JsTransportResponse>, logicalSessionId?: string"
+        ts_args_type = "planCommitRef: string, transport: (request: JsTransportRequest) => Promise<JsTransportResponse>, logicalSessionId?: string, resolveAuth?: (request: JsAuthScopeRequest) => Promise<string | null>"
     )]
     pub async fn run_plan_live(
         &self,
         plan_commit_ref: String,
         transport: JsHostTransport,
         logical_session_id: Option<String>,
+        resolve_auth: Option<JsHostAuthResolver>,
     ) -> Result<JsRunPlanResult> {
         let _admission = self.admit().await?;
         let _session_admission = self.admit_session(logical_session_id.as_deref()).await?;
         let mut engine = self.execution_engine(logical_session_id.as_deref()).await?;
-        let callback = JsCallbackHttpTransport::new(transport.0, engine.primary_entry_id());
+        let callback =
+            JsCallbackHttpTransport::new(transport.0, engine.primary_entry_id(), resolve_auth);
         let workflow = logical_session_id.unwrap_or_default();
         let (control, mut pauses) =
             plasm_runtime::execution::effect_continuation::EffectContinuation::new_native(

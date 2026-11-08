@@ -309,6 +309,14 @@ impl HttpTransport for ResilientHttpTransport {
         self.inner.injects_host_auth()
     }
 
+    async fn resolve_identity_auth(
+        &self,
+        request: &CompiledRequest,
+        auth: Option<ResolvedAuth>,
+    ) -> Result<Option<ResolvedAuth>, RuntimeError> {
+        self.inner.resolve_identity_auth(request, auth).await
+    }
+
     fn auth_scope(
         &self,
         request: &CompiledRequest,

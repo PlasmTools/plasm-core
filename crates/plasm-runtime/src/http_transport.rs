@@ -113,6 +113,16 @@ pub trait HttpTransport: Send + Sync {
         false
     }
 
+    /// Resolve credentials into engine-visible material for a request identity.
+    /// Opaque transports may leave the material unchanged and must attest Opaque.
+    async fn resolve_identity_auth(
+        &self,
+        _request: &CompiledRequest,
+        auth: Option<ResolvedAuth>,
+    ) -> Result<Option<ResolvedAuth>, RuntimeError> {
+        Ok(auth)
+    }
+
     /// Attest that dispatch uses only the supplied auth and compiled request credentials.
     /// Delegated transports must not claim visibility if they may replace or add credentials.
     fn auth_scope(

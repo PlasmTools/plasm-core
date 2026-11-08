@@ -52,7 +52,7 @@ export declare class PlasmEngine {
   introspectCatalog(entryId: string): Promise<string>
   dryRun(program: string, logicalSessionId?: string | undefined | null): Promise<JsDryRunResult>
   runPlan(planCommitRef: string, logicalSessionId?: string | undefined | null): Promise<JsRunPlanResult>
-  runPlanLive(planCommitRef: string, transport: (request: JsTransportRequest) => JsTransportResponse | Promise<JsTransportResponse>, logicalSessionId?: string): Promise<JsRunPlanResult>
+  runPlanLive(planCommitRef: string, transport: (request: JsTransportRequest) => Promise<JsTransportResponse>, logicalSessionId?: string, resolveAuth?: (request: { entryId?: string }) => Promise<string | null>): Promise<JsRunPlanResult>
   sealEffectWorkflows(workflowsJson: string): Promise<void>
   resumeEffectRun(continuationRef: string, logicalSessionId?: string | null): Promise<JsRunPlanResult>
 }
