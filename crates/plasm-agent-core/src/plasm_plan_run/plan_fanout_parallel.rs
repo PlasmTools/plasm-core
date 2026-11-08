@@ -104,11 +104,160 @@ pub(crate) struct PlanLineJobFailure {
     pub parsed: ParsedExpr,
     pub message: ExecutionFailure,
     pub source_identity: Option<String>,
+    /// The operation succeeded; only retention of its result was refused.
+    pub post_effect_retention: bool,
 }
 
 pub(crate) struct FanoutJobBatch {
     pub completed: Vec<PlanLineJobResult>,
     pub failures: Vec<PlanLineJobFailure>,
+}
+
+fn fanout_retention_failure(
+    error: plasm_runtime::execution::effect_continuation::EffectContinuationError,
+) -> ExecutionFailure {
+    use plasm_runtime::execution::effect_continuation::{
+        EffectContinuationError, MAX_EFFECT_SELECTION_BYTES,
+    };
+    let mut failure = ExecutionFailure::new(
+        plasm_runtime::FailureCause::Program,
+        "effect_fanout_retention_refused",
+        error.to_string(),
+    );
+    if matches!(
+        error,
+        EffectContinuationError::SelectionBudget(plasm_core::ValueBudgetError::BytesExceeded)
+    ) {
+        failure.input_budget = Some(plasm_runtime::InputBudgetEvidence {
+            unit: plasm_runtime::InputBudgetUnit::AccountedBytes,
+            limit: MAX_EFFECT_SELECTION_BYTES,
+            observed_at_least: MAX_EFFECT_SELECTION_BYTES + 1,
+            input: "ordered fanout".into(),
+        });
+    }
+    failure
+}
+
+fn reserve_ordered_fanout_jobs(
+    jobs: &Vec<PlanLineJob>,
+) -> Result<
+    Vec<plasm_runtime::execution::effect_continuation::SelectionReservation>,
+    ExecutionFailure,
+> {
+    use plasm_runtime::execution::effect_continuation::EffectContinuation;
+    let failure = fanout_retention_failure;
+    let mut reservation = EffectContinuation::empty_retention();
+    if !EffectContinuation::is_active() {
+        return Ok(Vec::new());
+    }
+    let mut pages = Vec::new();
+    reservation
+        .add_capacity_bytes(
+            jobs.capacity()
+                .saturating_mul(std::mem::size_of::<PlanLineJob>()),
+        )
+        .map_err(&failure)?;
+    for job in jobs {
+        reservation
+            .add_retained(&(
+                job.index,
+                &job.expr_label,
+                job.trace_line_index,
+                &job.parsed,
+                &job.source_identity,
+            ))
+            .map_err(&failure)?;
+        reservation
+            .add_capacity_bytes(
+                job.expr_label
+                    .capacity()
+                    .saturating_add(job.source_identity.as_ref().map_or(0, String::capacity)),
+            )
+            .map_err(&failure)?;
+        if let Some(source) = &job.observed_relation_source {
+            reservation
+                .add_retained(&(
+                    source.collection.retention_view(),
+                    &source.stats,
+                    &source.request_fingerprints,
+                    &source.operations,
+                ))
+                .map_err(&failure)?;
+            reservation
+                .add_capacity_bytes(source.collection.retention_capacity_bytes())
+                .map_err(&failure)?;
+            if let Some(resume) = &source.pagination_resume {
+                pages.push(EffectContinuation::reserve_pagination(resume).map_err(&failure)?);
+            }
+        }
+    }
+    pages.push(reservation);
+    Ok(pages)
+}
+
+struct RetainedFanoutResults {
+    main: plasm_runtime::execution::effect_continuation::SelectionReservation,
+    pages: Vec<plasm_runtime::execution::effect_continuation::SelectionReservation>,
+}
+
+impl RetainedFanoutResults {
+    fn add(&mut self, result: &PlanLineJobResult) -> Result<(), ExecutionFailure> {
+        use plasm_runtime::execution::effect_continuation::EffectContinuation;
+        self.main
+            .add_retained(&(
+                result.index,
+                &result.expr_label,
+                result.trace_line_index,
+                &result.parsed,
+                &result.source_identity,
+                result.result.collection.retention_view(),
+                result.result.has_more,
+                result.result.source,
+                &result.result.stats,
+                &result.result.request_fingerprints,
+                &result.result.operations,
+            ))
+            .map_err(fanout_retention_failure)?;
+        let mut bytes = std::mem::size_of::<PlanLineJobResult>()
+            .saturating_mul(2)
+            .saturating_add(result.expr_label.capacity())
+            .saturating_add(result.source_identity.as_ref().map_or(0, String::capacity))
+            .saturating_add(result.result.collection.retention_capacity_bytes())
+            .saturating_add(
+                result
+                    .result
+                    .request_fingerprints
+                    .capacity()
+                    .saturating_mul(std::mem::size_of::<String>()),
+            );
+        for fingerprint in &result.result.request_fingerprints {
+            bytes = bytes.saturating_add(fingerprint.capacity());
+        }
+        self.main
+            .add_capacity_bytes(bytes)
+            .map_err(fanout_retention_failure)?;
+        if let Some(resume) = &result.result.pagination_resume {
+            self.pages.push(
+                EffectContinuation::reserve_pagination(resume).map_err(fanout_retention_failure)?,
+            );
+        }
+        Ok(())
+    }
+}
+
+fn completed_result_retention_failure(
+    result: &PlanLineJobResult,
+    failure: ExecutionFailure,
+) -> PlanLineJobFailure {
+    let mut operations = result.result.operations.clone();
+    stamp_fanout_outcomes(&mut operations, std::slice::from_ref(result), &[]);
+    PlanLineJobFailure {
+        index: result.index,
+        source_identity: result.source_identity.clone(),
+        parsed: result.parsed.clone(),
+        message: failure.with_effects(&operations),
+        post_effect_retention: true,
+    }
 }
 
 #[derive(Clone)]
@@ -492,6 +641,9 @@ fn stamp_fanout_outcomes(
         }
     }
     for failure in failures {
+        if failure.post_effect_retention {
+            continue;
+        }
         let Some(identity) = OperationAck::try_from_mutating_expr(
             &failure.parsed.expr,
             None,
@@ -553,6 +705,9 @@ fn merge_failed_job_operations(
     failures: &[PlanLineJobFailure],
 ) {
     for failure in failures {
+        if failure.post_effect_retention {
+            continue;
+        }
         if let Some(ack) = OperationAck::try_from_mutating_expr(
             &failure.parsed.expr,
             Some(scoped_es.cgs.as_ref()),
@@ -589,6 +744,18 @@ pub(crate) async fn run_plan_line_jobs_parallel(
         });
     }
 
+    let _retained_jobs = if matches!(admission, BatchAdmission::OrderedEffects) {
+        reserve_ordered_fanout_jobs(&jobs)?
+    } else {
+        Vec::new()
+    };
+    let retained_results = (matches!(admission, BatchAdmission::OrderedEffects)
+        && plasm_runtime::execution::effect_continuation::EffectContinuation::is_active())
+        .then(|| Arc::new(std::sync::Mutex::new(RetainedFanoutResults {
+            main: plasm_runtime::execution::effect_continuation::EffectContinuation::empty_retention(),
+            pages: Vec::new(),
+        })));
+
     let st = st.clone();
     let scoped_es = scoped_es.clone();
     let scoped_es_for_trace = scoped_es.clone();
@@ -604,6 +771,7 @@ pub(crate) async fn run_plan_line_jobs_parallel(
             let session_id = session_id.clone();
             let trace_ctx = trace_ctx.clone();
             let plan_shared = plan_shared.clone();
+            let retained_results = retained_results.clone();
             async move {
                 let parsed = job.parsed.clone();
                 let index = job.index;
@@ -619,12 +787,24 @@ pub(crate) async fn run_plan_line_jobs_parallel(
                 )
                 .await
                 {
-                    Ok(result) => Ok(result),
+                    Ok(result) => {
+                        if let Some(retained) = retained_results {
+                            if let Err(failure) = retained
+                                .lock()
+                                .unwrap_or_else(|error| error.into_inner())
+                                .add(&result)
+                            {
+                                return Err(completed_result_retention_failure(&result, failure));
+                            }
+                        }
+                        Ok(result)
+                    }
                     Err(message) => Err(PlanLineJobFailure {
                         index,
                         source_identity,
                         parsed,
                         message,
+                        post_effect_retention: false,
                     }),
                 }
             }
@@ -718,6 +898,81 @@ async fn run_plan_line_job(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    async fn ordered_fanout_jobs_charge_spare_capacity_before_dispatch() {
+        use plasm_runtime::execution::effect_continuation::{
+            EffectContinuation, MAX_EFFECT_SELECTION_BYTES,
+        };
+        let mut label = String::with_capacity(MAX_EFFECT_SELECTION_BYTES + 1);
+        label.push('x');
+        let jobs = vec![PlanLineJob {
+            index: 0,
+            expr_label: label,
+            trace_line_index: 0,
+            parsed: ParsedExpr::from_expr(plasm_core::Expr::Query(plasm_core::QueryExpr::all(
+                "Item",
+            ))),
+            source_identity: None,
+            observed_relation_source: None,
+        }];
+        let (control, _pauses) =
+            EffectContinuation::new_native(std::time::Duration::from_secs(2)).unwrap();
+        control
+            .scope(async {
+                let failure = reserve_ordered_fanout_jobs(&jobs)
+                    .err()
+                    .expect("oversized job must be refused");
+                assert_eq!(failure.code, "effect_fanout_retention_refused");
+                assert!(failure.input_budget.is_some());
+            })
+            .await;
+    }
+
+    #[tokio::test]
+    async fn completed_fanout_retention_failure_preserves_effect_occurrence() {
+        use plasm_runtime::execution::effect_continuation::{
+            EffectContinuation, MAX_EFFECT_SELECTION_BYTES,
+        };
+        let mut result = test_job_result(2, "item-2");
+        result.expr_label.reserve(MAX_EFFECT_SELECTION_BYTES + 1);
+        result.source_identity = Some("item-2".into());
+        result.result.operations = OperationLedger::from_ack(OperationAck {
+            resolved_effects: Vec::new(),
+            entry_id: "test".into(),
+            capability: "write".into(),
+            entity: "Item".into(),
+            logical_invocations: 1,
+            completed: 1,
+            failed: 0,
+            source: ExecutionSource::Live,
+            description: "write".into(),
+            outcomes: Vec::new(),
+        });
+        let (control, _pauses) =
+            EffectContinuation::new_native(std::time::Duration::from_secs(2)).unwrap();
+        control
+            .scope(async {
+                let mut retained = RetainedFanoutResults {
+                    main: EffectContinuation::empty_retention(),
+                    pages: Vec::new(),
+                };
+                let failure =
+                    completed_result_retention_failure(&result, retained.add(&result).unwrap_err());
+                assert!(failure.post_effect_retention);
+                assert!(failure.message.input_budget.is_some());
+                assert_eq!(failure.message.effects.len(), 1);
+                let receipt = &failure.message.effects[0];
+                assert_eq!((receipt.completed, receipt.failed), (1, 0));
+                assert_eq!(receipt.occurrences.len(), 1);
+                assert_eq!(receipt.occurrences[0].source_index, 2);
+                assert_eq!(
+                    receipt.occurrences[0].source_identity.as_deref(),
+                    Some("item-2")
+                );
+            })
+            .await;
+    }
     use plasm_runtime::{CachedEntity, ResultCoverage};
     use proptest::prelude::*;
 
@@ -1085,6 +1340,7 @@ mod tests {
                         parsed: job.parsed,
                         message: ExecutionFailure::new(plasm_runtime::FailureCause::Upstream, "upstream_rejection", format!("rejected-{index}")),
                         source_identity: Some(format!("item_id={index}")),
+                        post_effect_retention: false,
                     }
                 })
                 .collect::<Vec<_>>();
