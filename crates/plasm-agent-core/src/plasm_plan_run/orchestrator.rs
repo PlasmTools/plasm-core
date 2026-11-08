@@ -5,7 +5,7 @@ use crate::evidence_chain::{active_chain, attach_evidence_meta, persist_evidence
 use crate::http_execute::run_seal_record_for_handle;
 use crate::plasm_plan_run::step_materialize::{
     apply_step_materialize_outcomes, charge_plan_payload, materialize_executable_plan_step,
-    PlanStepMaterializeCtx,
+    plan_retention_failure, PlanStepMaterializeCtx,
 };
 use futures::future::join_all;
 use plasm_core::plasm_monad::{PlasmStepPayload, StepId};
@@ -415,6 +415,13 @@ pub(crate) async fn run_executable_plan_phased(
             ),
         ),
     )?;
+    if plasm_runtime::execution::effect_continuation::EffectContinuation::is_active() {
+        if let Some(retained) = retained_frame.as_mut() {
+            retained
+                .add_capacity_bytes(dry.validated().structural_retention_capacity_bytes())
+                .map_err(plan_retention_failure)?;
+        }
+    }
     // PEC witness: the executable schedule is a total function of the semantic DAG (`steps` + `bind`)
     // that the durable commit id already seals, so this digest is identical at `plasm` (dry) and
     // `plasm_run` (replay). Emitting it makes the plan-vs-run schedule identity observable.

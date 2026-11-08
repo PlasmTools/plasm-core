@@ -402,6 +402,73 @@ impl ValidatedPlanArtifact {
             approval_gates,
         }
     }
+
+    /// Allocation capacity for plan containers and their node identifiers.
+    /// This structural charge does not include allocations inside expressions.
+    pub(crate) fn structural_retention_capacity_bytes(&self) -> usize {
+        fn vec_bytes<T>(value: &Vec<T>) -> usize {
+            value.capacity().saturating_mul(std::mem::size_of::<T>())
+        }
+        fn id_bytes(ids: &Vec<PlanNodeId>) -> usize {
+            ids.iter().fold(vec_bytes(ids), |sum, id| {
+                sum.saturating_add(id.0.capacity())
+            })
+        }
+        fn common(dependencies: &Vec<PlanNodeId>, uses: &Vec<PlanResultUse>) -> usize {
+            uses.iter().fold(
+                id_bytes(dependencies).saturating_add(vec_bytes(uses)),
+                |sum, value| {
+                    let entity = value.qualified_entity.as_ref().map_or(0, |entity| {
+                        entity
+                            .entry_id
+                            .capacity()
+                            .saturating_add(entity.entity.capacity())
+                    });
+                    sum.saturating_add(value.node.capacity())
+                        .saturating_add(value.r#as.capacity())
+                        .saturating_add(entity)
+                },
+            )
+        }
+        let mut bytes = vec_bytes(&self.artifact.nodes)
+            .saturating_add(id_bytes(&self.topo))
+            .saturating_add(id_bytes(&self.approval_gates))
+            .saturating_add(self.artifact.name.as_ref().map_or(0, String::capacity))
+            .saturating_add(
+                self.node_indices
+                    .capacity()
+                    .saturating_mul(2)
+                    .saturating_mul(std::mem::size_of::<(PlanNodeId, usize)>().saturating_add(1)),
+            );
+        bytes = bytes.saturating_add(match &self.artifact.return_value {
+            ValidatedPlanReturn::Node(id) => id.0.capacity(),
+            ValidatedPlanReturn::Parallel { parallel } => id_bytes(parallel),
+        });
+        for id in self.node_indices.keys() {
+            bytes = bytes.saturating_add(id.0.capacity());
+        }
+        for node in &self.artifact.nodes {
+            bytes = bytes.saturating_add(node.id().0.capacity());
+            let node_common = match node {
+                ValidatedPlanNode::Surface(n) => common(&n.depends_on, &n.uses_result),
+                ValidatedPlanNode::Data(n) => common(&n.depends_on, &n.uses_result),
+                ValidatedPlanNode::Derive(n) => common(&n.depends_on, &n.uses_result),
+                ValidatedPlanNode::Compute(n) => common(&n.depends_on, &n.uses_result),
+                ValidatedPlanNode::ForEach(n) => common(&n.depends_on, &n.uses_result),
+                ValidatedPlanNode::IterateUntil(n) => common(&n.depends_on, &n.uses_result),
+                ValidatedPlanNode::RelationTraversal(n) => common(&n.depends_on, &n.uses_result),
+                ValidatedPlanNode::MapBody(n) => common(&n.depends_on, &n.uses_result),
+                ValidatedPlanNode::Capture(_) => 0,
+            };
+            bytes = bytes.saturating_add(node_common);
+            for nested in node.nested_plans() {
+                bytes = bytes
+                    .saturating_add(std::mem::size_of::<ValidatedPlanArtifact>())
+                    .saturating_add(nested.structural_retention_capacity_bytes());
+            }
+        }
+        bytes
+    }
 }
 
 pub type ValidatedPlan = ValidatedPlanArtifact;

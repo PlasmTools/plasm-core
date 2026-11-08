@@ -404,7 +404,7 @@ pub(super) fn charge_plan_payload<T: serde::Serialize + ?Sized>(
         .map_err(plan_retention_failure)
 }
 
-fn plan_retention_failure(
+pub(super) fn plan_retention_failure(
     error: plasm_runtime::execution::effect_continuation::EffectContinuationError,
 ) -> ExecutionFailure {
     use plasm_runtime::execution::effect_continuation::{
