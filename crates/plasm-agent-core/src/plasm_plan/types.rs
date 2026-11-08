@@ -461,7 +461,6 @@ impl ValidatedPlanArtifact {
                     .saturating_add(alias.capacity())
                     .saturating_add(strings(path)),
                 PlanValue::Symbol { path } => path.capacity(),
-                // The template's opaque compiled environment is not accounted here.
                 PlanValue::Template {
                     template,
                     input_bindings,

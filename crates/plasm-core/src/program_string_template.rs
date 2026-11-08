@@ -62,7 +62,6 @@ pub enum ProgramStringError {
 #[derive(Clone)]
 pub struct CompiledProgramString {
     source: String,
-    environment: std::sync::Arc<Environment<'static>>,
     roots: std::collections::BTreeSet<String>,
     paths: Vec<Vec<String>>,
 }
@@ -124,7 +123,6 @@ impl CompiledProgramString {
             .collect();
         Ok(Self {
             source,
-            environment: std::sync::Arc::new(environment),
             roots,
             paths,
         })
@@ -133,8 +131,7 @@ impl CompiledProgramString {
         &self.source
     }
 
-    /// Capacity of the visible source and dependency metadata; this excludes
-    /// the opaque compiled template environment.
+    /// Capacity of the retained source and dependency metadata.
     pub fn metadata_retention_capacity_bytes(&self) -> usize {
         let roots = self.roots.iter().fold(0usize, |sum, root| {
             sum.saturating_add(1024).saturating_add(root.capacity())
@@ -174,8 +171,13 @@ impl CompiledProgramString {
         &self,
         context: &BTreeMap<String, MjValue>,
     ) -> Result<String, ProgramStringError> {
-        let output = self
-            .environment
+        // The admitted source is immutable. Compile the transient renderer
+        // locally so a suspended execution retains no opaque template state.
+        let mut environment = program_string_env();
+        environment
+            .add_template_owned("operand", self.source.clone())
+            .map_err(ProgramStringError::Render)?;
+        let output = environment
             .get_template("operand")
             .map_err(ProgramStringError::Render)?
             .render(context)
@@ -293,11 +295,15 @@ pub fn register_shared_minijinja_filters(env: &mut Environment<'_>) {
 }
 
 fn program_string_env() -> Environment<'static> {
-    let mut env = Environment::new();
-    env.set_undefined_behavior(UndefinedBehavior::Strict);
-    env.set_auto_escape_callback(|_| minijinja::AutoEscape::None);
-    register_shared_minijinja_filters(&mut env);
-    env
+    static BASE: std::sync::OnceLock<Environment<'static>> = std::sync::OnceLock::new();
+    BASE.get_or_init(|| {
+        let mut env = Environment::new();
+        env.set_undefined_behavior(UndefinedBehavior::Strict);
+        env.set_auto_escape_callback(|_| minijinja::AutoEscape::None);
+        register_shared_minijinja_filters(&mut env);
+        env
+    })
+    .clone()
 }
 
 /// A program-binding value in Minijinja: iterable sequence, with attribute access
@@ -575,6 +581,30 @@ mod tests {
         let out =
             render_program_string("{{ title }} / {{ report.content }}", &scope_title()).unwrap();
         assert_eq!(out, "Hello / BODY");
+    }
+
+    #[test]
+    fn admitted_template_renders_fresh_contexts_and_rejects_invalid_source() {
+        assert!(CompiledProgramString::compile("{{".into()).is_err());
+        let template = CompiledProgramString::compile("Hello {{ name }}".into()).unwrap();
+        assert!(template.roots().contains("name"));
+        assert_eq!(template.paths(), &[vec!["name".to_string()]]);
+        for name in ["Ada", "Grace"] {
+            let scope = BTreeMap::from([("name".into(), Value::String(name.into()))]);
+            assert_eq!(template.render(&scope).unwrap(), format!("Hello {name}"));
+        }
+        assert!(template.render(&BTreeMap::new()).is_err());
+    }
+
+    #[test]
+    fn cloned_template_environments_do_not_share_user_templates() {
+        let mut first = program_string_env();
+        first.add_template_owned("private", "hello").unwrap();
+        assert_eq!(
+            first.get_template("private").unwrap().render(()).unwrap(),
+            "hello"
+        );
+        assert!(program_string_env().get_template("private").is_err());
     }
 
     #[test]
