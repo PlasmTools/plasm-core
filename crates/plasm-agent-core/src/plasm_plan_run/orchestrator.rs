@@ -333,11 +333,15 @@ pub(crate) async fn run_executable_plan_phased(
     mcp_result_policy: Option<crate::mcp_run_markdown::McpResultTransportPolicy>,
     python_host_calls: bool,
 ) -> Result<PlasmPlanRunResult, ExecutionFailure> {
-    let executable = dry.executable.clone();
+    // The reviewed-plan owner retains compilation provenance for later repair.
+    // Live execution never reads this duplicate, which can include a large
+    // captured symbol ledger and teaching state; do not hold it across a pause.
+    drop(std::mem::take(&mut dry.compilation_symbols));
     if let Some(evidence) = active_chain(es, execution_scope) {
         evidence.record_comp_committed(&dry.artifact().comp)?;
     }
     let node_results = dry.take_node_results_for_live();
+    let executable = &dry.executable;
     let flow = dry.flow.clone();
     let plan_shared = Arc::new(
         crate::plan_execute_shared::PlanLineExecuteShared::prepare(es, st, session_id).await,
@@ -454,6 +458,7 @@ pub(crate) async fn run_executable_plan_phased(
         execution_scope,
     };
     let execution: Result<PlasmPlanRunResult, ExecutionFailure> = async {
+        let executable = &dry.executable;
         let schema_nodes = &dry.validated_plan().nodes;
         for layer in layers {
             if let Some(scope) = execution_scope {
