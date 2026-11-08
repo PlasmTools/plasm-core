@@ -191,6 +191,26 @@ fn charge_selection_capacity(
 }
 
 impl SelectionReservation {
+    /// Add one resolved value retained by an execution frame.
+    pub fn add_value(&mut self, value: &plasm_core::Value) -> Result<(), EffectContinuationError> {
+        let Some(state) = &self.state else {
+            return Ok(());
+        };
+        let mut used = state
+            .selection_bytes
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        let mut remaining = MAX_EFFECT_SELECTION_BYTES - *used;
+        let initial = remaining;
+        plasm_core::charge_value_budget(value, &mut remaining)
+            .map_err(EffectContinuationError::SelectionBudget)?;
+        charge_selection_capacity(value, &mut remaining)
+            .map_err(EffectContinuationError::SelectionBudget)?;
+        let bytes = initial - remaining;
+        *used += bytes;
+        self.bytes += bytes;
+        Ok(())
+    }
     /// Add retained rows to this reservation without copying their payloads.
     pub fn add_selection(
         &mut self,

@@ -8,6 +8,107 @@ use crate::plasm_plan::ValidatedIterateUntilNode;
 use plasm_core::expr_parser::ParsedExpr;
 use thiserror::Error;
 
+fn reserve_iteration_state(
+    rows: &Vec<plasm_core::ValueRow>,
+    inputs: &BTreeMap<InputAlias, MaterializedInputRow>,
+    dependencies: &Vec<plasm_runtime::execution::ExecutionCollection>,
+    fingerprints: &Vec<String>,
+    operations: &plasm_runtime::OperationLedger,
+) -> Result<plasm_runtime::execution::effect_continuation::SelectionReservation, ExecutionFailure> {
+    use plasm_runtime::execution::effect_continuation::{
+        EffectContinuation, EffectContinuationError, MAX_EFFECT_SELECTION_BYTES,
+    };
+    let map_failure = |error: EffectContinuationError| {
+        let mut failure = ExecutionFailure::new(
+            plasm_runtime::FailureCause::Program,
+            "effect_iteration_retention_refused",
+            error.to_string(),
+        );
+        if matches!(
+            error,
+            EffectContinuationError::SelectionBudget(plasm_core::ValueBudgetError::BytesExceeded)
+        ) {
+            failure.input_budget = Some(plasm_runtime::InputBudgetEvidence {
+                unit: plasm_runtime::InputBudgetUnit::AccountedBytes,
+                limit: MAX_EFFECT_SELECTION_BYTES,
+                observed_at_least: MAX_EFFECT_SELECTION_BYTES + 1,
+                input: "iteration state".into(),
+            });
+        }
+        failure
+    };
+    if !EffectContinuation::is_active() {
+        return Ok(EffectContinuation::empty_retention());
+    }
+    let mut retained = EffectContinuation::reserve_selection(rows).map_err(&map_failure)?;
+    retained
+        .add_capacity_bytes(
+            rows.capacity()
+                .saturating_mul(std::mem::size_of::<plasm_core::ValueRow>())
+                .saturating_add(dependencies.capacity().saturating_mul(std::mem::size_of::<
+                    plasm_runtime::execution::ExecutionCollection,
+                >()))
+                .saturating_add(
+                    fingerprints
+                        .capacity()
+                        .saturating_mul(std::mem::size_of::<String>()),
+                ),
+        )
+        .map_err(&map_failure)?;
+    retained
+        .add_retained(&(operations, fingerprints))
+        .map_err(&map_failure)?;
+    for fingerprint in fingerprints {
+        retained
+            .add_capacity_bytes(fingerprint.capacity())
+            .map_err(&map_failure)?;
+    }
+    for (alias, input) in inputs {
+        retained
+            .add_retained(&(
+                alias.as_str(),
+                input.node.as_str(),
+                &input.qualified_entity,
+                &input.id_field,
+                &input.optional_fields,
+                &input.value_projection,
+                super::super::step_materialize::RetainedIdentities(&input.row_identities),
+                super::super::step_materialize::RetainedIdentities(std::slice::from_ref(
+                    &input.row_identity,
+                )),
+            ))
+            .map_err(&map_failure)?;
+        retained.add_value(&input.row).map_err(&map_failure)?;
+        retained.add_selection(&input.rows).map_err(&map_failure)?;
+        retained
+            .add_capacity_bytes(
+                input
+                    .rows
+                    .capacity()
+                    .saturating_mul(std::mem::size_of::<plasm_core::ValueRow>())
+                    .saturating_add(
+                        input
+                            .row_identities
+                            .capacity()
+                            .saturating_mul(std::mem::size_of::<Option<plasm_core::RowIdentity>>()),
+                    )
+                    .saturating_add(input.id_field.capacity())
+                    .saturating_add(input.qualified_entity.entry_id.capacity())
+                    .saturating_add(input.qualified_entity.entity.capacity()),
+            )
+            .map_err(&map_failure)?;
+    }
+    for dependency in dependencies {
+        retained
+            .add_retained(&dependency.retention_view())
+            .map_err(&map_failure)?;
+        retained
+            .add_capacity_bytes(dependency.retention_capacity_bytes())
+            .map_err(&map_failure)?;
+    }
+    Ok(retained)
+}
+
 #[derive(Debug, Error)]
 enum IterateUntilError {
     #[error("iteration row predicate could not be evaluated: {0}")]
@@ -89,6 +190,58 @@ mod predicate_contract_tests {
     use super::*;
     use plasm_core::{value_contract::ValueContract, FieldPath, FieldType, PlanPredicateOp, Value};
     use plasm_runtime::row_predicate::{BoundRowPredicate, PreparedRowPredicate};
+
+    #[tokio::test]
+    async fn iteration_state_refuses_oversized_row_and_dependency_backing() {
+        use plasm_core::collection_codec::{CollectionIdentity, Observation};
+        use plasm_runtime::execution::effect_continuation::{
+            EffectContinuation, MAX_EFFECT_SELECTION_BYTES,
+        };
+        let mut text = String::with_capacity(MAX_EFFECT_SELECTION_BYTES + 1);
+        text.push('x');
+        let rows = vec![plasm_core::ValueRow::from_iter([(
+            "value".into(),
+            Value::String(text),
+        )])];
+        let mut entity = plasm_runtime::CachedEntity::new(plasm_core::Ref::new("Item", "one"), 0);
+        let mut text = String::with_capacity(MAX_EFFECT_SELECTION_BYTES + 1);
+        text.push('x');
+        entity
+            .fields
+            .insert("value".into(), plasm_core::TypedFieldValue::String(text));
+        let dependency = plasm_runtime::execution::ExecutionCollection::observe(
+            CollectionIdentity::for_untyped_observation(&"iteration").unwrap(),
+            vec![entity],
+            Observation::Literal,
+        )
+        .unwrap();
+        let (control, _pauses) =
+            EffectContinuation::new_native(std::time::Duration::from_secs(2)).unwrap();
+        control
+            .scope(async {
+                let failure = reserve_iteration_state(
+                    &rows,
+                    &BTreeMap::new(),
+                    &Vec::new(),
+                    &Vec::new(),
+                    &plasm_runtime::OperationLedger::empty(),
+                )
+                .err()
+                .expect("oversized row must be refused");
+                assert!(failure.input_budget.is_some());
+                let failure = reserve_iteration_state(
+                    &Vec::new(),
+                    &BTreeMap::new(),
+                    &vec![dependency],
+                    &Vec::new(),
+                    &plasm_runtime::OperationLedger::empty(),
+                )
+                .err()
+                .expect("oversized dependency must be refused");
+                assert!(failure.input_budget.is_some());
+            })
+            .await;
+    }
 
     #[test]
     fn until_uses_declared_text_order_and_distinguishes_missing_from_null() {
@@ -234,6 +387,13 @@ pub(crate) async fn materialize_iterate_until_node(
         }
 
         for step_idx in 1..=it.take {
+            let _retained_iteration = reserve_iteration_state(
+                &current_rows,
+                &input_rows,
+                &dependencies,
+                &request_fingerprints,
+                &operations,
+            )?;
             iteration_occurrence = ctx.occurrence_path.clone();
             iteration_occurrence.push(step_idx as usize);
             if let Some(step) = crate::map_body::iteration_step(it)? {
