@@ -174,23 +174,29 @@ pub fn retained_entities_capacity(entities: &[CachedEntity]) -> usize {
 }
 
 fn retained_entity_capacity(entity: &CachedEntity) -> usize {
-    let mut bytes = entity
+    entity
         .reference
         .retention_capacity_bytes()
-        .saturating_add(crate::materialization::retained_index_capacity::<
-            String,
-            TypedFieldValue,
-        >(entity.fields.capacity()))
-        .saturating_add(crate::materialization::retained_index_capacity::<
-            String,
-            RelationMembership,
-        >(entity.relations.capacity()));
-    for (key, value) in &entity.fields {
+        .saturating_add(retained_content_capacity(&entity.fields, &entity.relations))
+}
+
+fn retained_content_capacity(
+    fields: &IndexMap<String, TypedFieldValue>,
+    relations: &IndexMap<String, RelationMembership>,
+) -> usize {
+    let mut bytes = crate::materialization::retained_index_capacity::<String, TypedFieldValue>(
+        fields.capacity(),
+    )
+    .saturating_add(crate::materialization::retained_index_capacity::<
+        String,
+        RelationMembership,
+    >(relations.capacity()));
+    for (key, value) in fields {
         bytes = bytes.saturating_add(key.capacity()).saturating_add(
             crate::materialization::typed_value_retention_capacity(value, 0),
         );
     }
-    for (key, relation) in &entity.relations {
+    for (key, relation) in relations {
         bytes = bytes
             .saturating_add(key.capacity())
             .saturating_add(retained_reference_collection_capacity(relation.record()));
@@ -299,9 +305,17 @@ impl GraphCache {
         for values in self.type_index.values() {
             bytes =
                 bytes.saturating_add(values.capacity().saturating_mul(std::mem::size_of::<Ref>()));
+            for reference in values {
+                bytes = bytes.saturating_add(reference.retention_capacity_bytes());
+            }
         }
-        for entity in self.entities.values() {
-            bytes = bytes.saturating_add(retained_entity_capacity(&entity[0]));
+        for (reference, entity) in &self.entities {
+            bytes = bytes
+                .saturating_add(reference.retention_capacity_bytes())
+                .saturating_add(retained_entity_capacity(&entity[0]));
+        }
+        for reference in &self.insertion_order {
+            bytes = bytes.saturating_add(reference.retention_capacity_bytes());
         }
         if let Some(fork) = &self.branch_fork {
             bytes = bytes
@@ -312,6 +326,14 @@ impl GraphCache {
                     Ref,
                     crate::materialization_conflict::EntityBaseContent,
                 >(fork.lazy_base.capacity()));
+            for (reference, base) in &fork.lazy_base {
+                bytes = bytes
+                    .saturating_add(reference.retention_capacity_bytes())
+                    .saturating_add(retained_content_capacity(&base.fields, &base.relations));
+            }
+            for reference in &fork.initial_refs {
+                bytes = bytes.saturating_add(reference.retention_capacity_bytes());
+            }
         }
         bytes
     }
