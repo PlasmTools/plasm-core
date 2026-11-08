@@ -78,7 +78,7 @@ const model = new MockLanguageModelV3({
 const result = await runEveToolLoop({
   model,
   system: "system",
-  tools: createEvalTerminalTools(),
+  tools: createEvalTerminalTools({sealEffectWorkflows: async () => {}}),
   messages: [{ role: "user", content: "finish the task" }],
   maxSteps: 3,
   generationTimeoutMs: 20,
@@ -117,7 +117,7 @@ const retryModel = new MockLanguageModelV3({
 });
 const retried = await runEveToolLoop({
   model: retryModel, system: "system", messages: [{ role: "user", content: "test" }],
-  tools: createEvalTerminalTools(), maxSteps: 1, generationTimeoutMs: 10_000,
+  tools: createEvalTerminalTools({sealEffectWorkflows: async () => {}}), maxSteps: 1, generationTimeoutMs: 10_000,
   agentName: "provider-retry-observation", telemetry: { isEnabled: false },
   onProviderRequest: event => retryEvents.push(event),
 });
@@ -145,7 +145,7 @@ const exhaustedModel = new MockLanguageModelV3({
 const exhausted = await runEveToolLoop({
   model: exhaustedModel,
   system: "system",
-  tools: createEvalTerminalTools(),
+  tools: createEvalTerminalTools({sealEffectWorkflows: async () => {}}),
   messages: [{ role: "user", content: "finish the task" }],
   maxSteps: 5,
   generationTimeoutMs: 20,

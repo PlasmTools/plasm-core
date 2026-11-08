@@ -66,6 +66,8 @@ export type HostTransportResponse = {
 export type HostTransportFn = (request: HostTransportRequest) => Promise<HostTransportResponse>;
 
 export interface PlasmEngine {
+  /** Atomically refuse completion while any named workflow has unfinished effects. */
+  sealEffectWorkflows?(logicalSessionIds: string[]): Promise<void>;
   readonly learning?: WorkflowLearningEngine;
   /** Close admission and drain all accepted native work before releasing workers. */
   close(): Promise<void>;
@@ -89,6 +91,7 @@ export interface PlasmEngine {
 }
 
 type NativePlasmEngine = {
+  sealEffectWorkflows(workflowsJson: string): Promise<void>;
   configureWorkflowLearning(configJson: string): Promise<void>;
   configureTraining(grantJson: string): Promise<void>;
   sealTrainingEvaluation(logicalSessionId: string): Promise<void>;
@@ -158,6 +161,9 @@ function loadNativeConstructor(): NativeConstructor | null {
 export class NapiPlasmEngine implements PlasmEngine {
   private readonly native: NativePlasmEngine;
   private loaded: LoadedCatalog[] = [];
+  sealEffectWorkflows(ids: string[]): Promise<void> {
+    return this.native.sealEffectWorkflows(JSON.stringify(ids));
+  }
   readonly learning: WorkflowLearningEngine = {
     configure: config => this.native.configureWorkflowLearning(JSON.stringify(config)),
     configureTraining: grant => this.native.configureTraining(JSON.stringify(grant)),

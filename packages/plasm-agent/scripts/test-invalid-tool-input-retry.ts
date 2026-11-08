@@ -110,7 +110,7 @@ const truncatedThenRepairModel = new MockLanguageModelV3({
 const store = new TaskLedgerStore();
 const tools = {
   ...createTaskLedgerTool(store),
-  ...createEvalTerminalTools(),
+  ...createEvalTerminalTools({ sealEffectWorkflows: async () => {} }),
 };
 
 const repaired = await runEveToolLoop({
@@ -191,7 +191,7 @@ const midBudget = await runEveToolLoop({
       inputSchema: toolInput(z.object({ note: z.string().min(1) })),
       execute: async ({ note }) => note,
     }),
-    ...createEvalTerminalTools(),
+    ...createEvalTerminalTools({ sealEffectWorkflows: async () => {} }),
   },
   messages: [{ role: "user", content: "try a tool" }],
   maxSteps: 6,
@@ -238,7 +238,7 @@ const providerFailureThenTerminal = new MockLanguageModelV3({
   }
 });
 const providerResult = await runEveToolLoop({model:providerFailureThenTerminal,system:"system",
-  tools:{...createTaskLedgerTool(new TaskLedgerStore()),...createEvalTerminalTools()},
+  tools:{...createTaskLedgerTool(new TaskLedgerStore()),...createEvalTerminalTools({ sealEffectWorkflows: async () => {} })},
   messages:[{role:"user",content:"perform task"}],maxSteps:3,agentName:"test-provider-error",telemetry:{isEnabled:false}});
 assert.equal(providerResult.stopReason,"completed");
 assert.deepEqual(providerResult.stepFinishReasons,["error","tool-calls"]);

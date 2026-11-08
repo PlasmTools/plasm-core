@@ -53,6 +53,7 @@ export declare class PlasmEngine {
   dryRun(program: string, logicalSessionId?: string | undefined | null): Promise<JsDryRunResult>
   runPlan(planCommitRef: string, logicalSessionId?: string | undefined | null): Promise<JsRunPlanResult>
   runPlanLive(planCommitRef: string, transport: (request: JsTransportRequest) => JsTransportResponse | Promise<JsTransportResponse>, logicalSessionId?: string): Promise<JsRunPlanResult>
+  sealEffectWorkflows(workflowsJson: string): Promise<void>
 }
 
 /** Wire-schema parity gate, using the same parser as MCP and native execution. */

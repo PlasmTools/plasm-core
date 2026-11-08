@@ -17,7 +17,7 @@ const model = new MockLanguageModelV3({
   },
 });
 const result = await runEveToolLoop({
-  model, system: "system", tools: createEvalTerminalTools({ discoveryCompleted: () => true }),
+  model, system: "system", tools: createEvalTerminalTools({ discoveryCompleted: () => true, sealEffectWorkflows: async () => {} }),
   messages: [{ role: "user", content: "task" }], maxSteps: 2, agentName: "supplemental-test",
   telemetry: { isEnabled: false },
   pollSessionUpdate: async () => ++polls === 1 ? "supplemental declaration witness" : "",

@@ -62,6 +62,7 @@ for (const scenario of cases) {
   try {
     await native.loadCatalog(catalog);
     const engine: PlasmEngine = {
+      sealEffectWorkflows: () => native.sealEffectWorkflows([""]),
       close: () => native.close(), loadCatalog: c => native.loadCatalog(c),
       synthesizeTeaching: (intent, seeds) => native.synthesizeTeaching(intent, seeds),
       activateDiscovery: (deployment, bindings) => native.activateDiscovery(deployment, bindings),
@@ -137,7 +138,7 @@ for (const scenario of cases) {
     }});
     const result = await runEveToolLoop({model, system: "Abstract completion contract",
       messages: [{role: "user", content: "Copy the selected records"}],
-      tools: {...tools, ...createHarnessTools({includeEvalTerminals: true, discoveryCompleted: () => live.hasOpenWorkflow(),
+      tools: {...tools, ...createHarnessTools({includeEvalTerminals: true, discoveryCompleted: () => live.hasOpenWorkflow(), sealEffectWorkflows: () => live.sealEffectWorkflows(),
         responseObligation: {resolve: async () => scenario.terminal === "submit_answer" ? "value_required" : "no_answer"}})},
       maxSteps: scenario.intervening === "none" ? 2 : scenario.intervening === "read" ? 4 : 3,
       agentName: "native-completion-contract", telemetry: {isEnabled: false}});

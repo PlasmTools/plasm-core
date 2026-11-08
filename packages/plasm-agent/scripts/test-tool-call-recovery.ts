@@ -42,7 +42,7 @@ import { createTaskLedgerTool, TaskLedgerStore, emptyTaskLedger } from "../src/t
   const execute = ledger.task_ledger!.execute!;
   ledger.task_ledger!.execute = async (input, options) => { writes++; return execute(input, options); };
   const result = await runEveToolLoop({ model, system: "Abstract evidence recovery", messages: [{ role: "user", content: "Retain outstanding work" }],
-    tools: { ...ledger, ...createEvalTerminalTools() }, maxSteps: 4, agentName: "evidence-repair", telemetry: { isEnabled: false } });
+    tools: { ...ledger, ...createEvalTerminalTools({sealEffectWorkflows: async () => {}}) }, maxSteps: 4, agentName: "evidence-repair", telemetry: { isEnabled: false } });
   assert.equal(result.stopReason, "completed");
   assert.equal(writes, 1, "admitted replacement executes once");
   assert.equal(requests, 3);
@@ -90,7 +90,7 @@ for (const input of ['{"answer":"PRIVATE_REJECTED_VALUE"}', '{"logical_session_r
     } }) };
   } });
   let completions = 0;
-  const terminals = createEvalTerminalTools({discoveryCompleted: () => { completions++; return true; }});
+  const terminals = createEvalTerminalTools({discoveryCompleted: () => { completions++; return true; }, sealEffectWorkflows: async () => {}});
   const result = await runEveToolLoop({model, system: "Abstract terminal fixture", messages: [{role: "user", content: "Finish"}], tools: terminals,
     maxSteps: 4, agentName: "terminal-validation", telemetry: {isEnabled: false}});
   assert.equal(result.stopReason, "completed");
@@ -141,7 +141,7 @@ for (const invalidFirst of [false, true]) {
     } }) };
   } });
   const result = await runEveToolLoop({ model, system: "Abstract repair authority fixture", messages: [{ role: "user", content: "Perform one effect" }],
-    tools: { ...createEvalTerminalTools(), effect: tool({ inputSchema: z.object({ value: z.string() }), execute: async () => { effects++; return "done"; } }) },
+    tools: { ...createEvalTerminalTools({sealEffectWorkflows: async () => {}}), effect: tool({ inputSchema: z.object({ value: z.string() }), execute: async () => { effects++; return "done"; } }) },
     maxSteps: 5, agentName: "repair-quota", telemetry: { isEnabled: false } });
   assert.equal(effects, 1);
   assert.equal(requests, 3, "an executed replacement must retire its obligation despite an earlier invalid sibling");
@@ -169,7 +169,7 @@ for (const invalidFirst of [false, true]) {
     } }) };
   } });
   const result = await runEveToolLoop({ model, system: "Abstract selection fixture", messages: [{ role: "user", content: "Use the available tool" }],
-    tools: { ...createEvalTerminalTools(), effect: tool({ inputSchema: z.object({}), execute: async () => { effects++; return "done"; } }) },
+    tools: { ...createEvalTerminalTools({sealEffectWorkflows: async () => {}}), effect: tool({ inputSchema: z.object({}), execute: async () => { effects++; return "done"; } }) },
     maxSteps: 6, agentName: "selection-fixture", telemetry: { isEnabled: false } });
   assert.equal(result.stopReason, "completed");
   assert.equal(effects, 1);
@@ -237,7 +237,7 @@ for (const repaired of [true, false]) {
       } }) };
     } });
     const result = await runEveToolLoop({ model, system: "Abstract repair fixture", messages: [{ role: "user", content: "Read abstract records" }],
-      tools: { ...createPlasmTools(runtime), ...createEvalTerminalTools(), effect: tool({ inputSchema: z.object({}), execute: async () => { effects++; return "effect already completed"; } }) },
+      tools: { ...createPlasmTools(runtime), ...createEvalTerminalTools({sealEffectWorkflows: async () => {}}), effect: tool({ inputSchema: z.object({}), execute: async () => { effects++; return "effect already completed"; } }) },
       maxSteps: 12, agentName: "repair-fixture", telemetry: { isEnabled: false } });
     assert.equal(requests, 3, `initial plus repair/terminal; stop=${result.stopReason}, failure=${JSON.stringify(result.executionFailure)}`);
     assert.equal(result.stopReason, repaired ? "completed" : "repair_exhausted");

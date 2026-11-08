@@ -123,7 +123,7 @@ const emptyContinued = await runEveToolLoop({
         return note;
       },
     }),
-    ...createEvalTerminalTools(),
+    ...createEvalTerminalTools({sealEffectWorkflows: async () => {}}),
   },
   messages: [{ role: "user", content: "do the task" }],
   maxSteps: 8,
@@ -209,7 +209,7 @@ const repaired = await runEveToolLoop({
         return note;
       },
     }),
-    ...createEvalTerminalTools(),
+    ...createEvalTerminalTools({sealEffectWorkflows: async () => {}}),
   },
   messages: [{ role: "user", content: "try a tool" }],
   maxSteps: 8,
@@ -282,7 +282,7 @@ const mixedContinued = await runEveToolLoop({
         return note;
       },
     }),
-    ...createEvalTerminalTools(),
+    ...createEvalTerminalTools({sealEffectWorkflows: async () => {}}),
   },
   messages: [{ role: "user", content: "run then continue" }],
   maxSteps: 8,
@@ -346,7 +346,7 @@ const lengthExhaustModel = new MockLanguageModelV3({
 const lengthOnly = await runEveToolLoop({
   model: lengthExhaustModel,
   system: "system",
-  tools: createEvalTerminalTools(),
+  tools: createEvalTerminalTools({sealEffectWorkflows: async () => {}}),
   messages: [{ role: "user", content: "never finish" }],
   maxSteps: 3,
   agentName: "test-length-not-complete",

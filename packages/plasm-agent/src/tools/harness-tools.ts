@@ -43,6 +43,7 @@ export const EVAL_TERMINAL_REQUIRES_DISCOVERY =
   "Do not claim unsupported access or abandon before discovery.";
 
 export type EvalTerminalGate = {
+  sealEffectWorkflows?: () => Promise<void>;
   responseObligation?: {
     /** Host-owned resolution. Terminal payloads and agent quotes are not evidence. */
     resolve: (terminal: "no_answer" | "value_required") => Promise<"no_answer" | "value_required" | "uncertain">;
@@ -77,6 +78,13 @@ function assertDiscoveryCompleted(gate?: EvalTerminalGate): void {
   throw new Error(EVAL_TERMINAL_REQUIRES_DISCOVERY);
 }
 
+async function sealEffectWorkflows(gate?: EvalTerminalGate): Promise<void> {
+  if (!gate?.sealEffectWorkflows) {
+    throw new Error("Native effect-obligation enforcement is unavailable; no terminal was recorded.");
+  }
+  await gate.sealEffectWorkflows();
+}
+
 export function createCompleteTaskTool(gate?: EvalTerminalGate): ToolSet {
   return {
     [COMPLETE_TASK_TOOL_NAME]: tool({
@@ -85,6 +93,7 @@ export function createCompleteTaskTool(gate?: EvalTerminalGate): ToolSet {
       execute: async () => {
         assertDiscoveryCompleted(gate);
         await assertResponseObligation("no_answer", gate);
+        await sealEffectWorkflows(gate);
         return "Completion claim recorded; task success has not been independently verified.";
       },
     }),
@@ -99,6 +108,7 @@ export function createSubmitAnswerTool(gate?: EvalTerminalGate): ToolSet {
       execute: async () => {
         assertDiscoveryCompleted(gate);
         await assertResponseObligation("value_required", gate);
+        await sealEffectWorkflows(gate);
         return "Answer submission recorded; correctness and requested effects have not been independently verified.";
       },
     }),
@@ -113,6 +123,7 @@ export function createEvalTerminalTools(gate?: EvalTerminalGate): ToolSet {
 }
 
 export function createHarnessTools(options: {
+  sealEffectWorkflows?: () => Promise<void>;
   responseObligation?: EvalTerminalGate["responseObligation"];
   skills?: SkillDefinition[];
   subagents?: SubagentRegistry;
@@ -178,7 +189,7 @@ export function createHarnessTools(options: {
   if (options.includeEvalTerminals) {
     Object.assign(
       tools,
-      createEvalTerminalTools({ discoveryCompleted: options.discoveryCompleted, responseObligation: options.responseObligation }),
+      createEvalTerminalTools({ discoveryCompleted: options.discoveryCompleted, responseObligation: options.responseObligation, sealEffectWorkflows: options.sealEffectWorkflows }),
     );
   }
 

@@ -436,6 +436,24 @@ export class AgentRuntime {
   private loadedCatalogs: LoadedCatalog[] = [];
   /** Most recently used live session; explicit new calls create distinct workflows. */
   private workflowSession: AgentSessionState | null = null;
+  private readonly effectWorkflowIds = new Set<string>();
+  private effectTerminalState: "open" | "sealing" | "sealed" = "open";
+
+  /** Terminal acceptance is native and covers every workflow used by this runtime. */
+  async sealEffectWorkflows(): Promise<void> {
+    if (this.effectTerminalState !== "open") throw new Error("This workflow has already ended.");
+    this.effectTerminalState = "sealing";
+    try {
+      if (!this.engine.sealEffectWorkflows) {
+        throw new Error("Native effect-obligation enforcement is unavailable; no terminal was recorded.");
+      }
+      await this.engine.sealEffectWorkflows([...this.effectWorkflowIds]);
+      this.effectTerminalState = "sealed";
+    } catch (error) {
+      this.effectTerminalState = "open";
+      throw error;
+    }
+  }
 
 
   /** True after the first successful `plasm_context` mint on this runtime. */
@@ -557,6 +575,10 @@ export class AgentRuntime {
   }
 
   private async plasmContextAdmitted(input: PlasmContextInput): Promise<string> {
+    if (this.effectTerminalState === "sealing") throw new Error("Workflow completion is in progress.");
+    if (this.effectTerminalState === "sealed" && input.sessionMode === "extend") {
+      throw new Error("This workflow has already ended; open a new workflow.");
+    }
     // Snapshot inputs before waiting: callers must not mutate a queued request.
     const request: PlasmContextInput = {
       ...input,
@@ -628,6 +650,14 @@ export class AgentRuntime {
       session.registryGeneration = routing.retrieval.generation;
       await this.sessionManager.update(session);
       this.workflowSession = session;
+      if (mode === "new" && this.effectTerminalState === "sealed") {
+        this.effectWorkflowIds.clear();
+        this.effectTerminalState = "open";
+      }
+      if (!this.effectWorkflowIds.has(session.logicalSessionId) && this.effectWorkflowIds.size >= 1024) {
+        throw new Error("Effect workflow capacity exhausted; no operation was executed.");
+      }
+      this.effectWorkflowIds.add(session.logicalSessionId);
       this.learningSessions.set(session.logicalSessionRef, session.logicalSessionId);
       if (routing.closure?.business.length) await this.ensureEvaluationSealed(session.logicalSessionId);
       let trainingMarkdown: string | undefined;
@@ -788,6 +818,11 @@ export class AgentRuntime {
 
   private async plasmRunAdmitted(input: PlasmRunInput): Promise<string> {
     const session = await this.requireSessionByRef(input.logicalSessionRef);
+    if (this.effectTerminalState !== "open") throw new Error("This workflow has already ended.");
+    if (!this.effectWorkflowIds.has(session.logicalSessionId) && this.effectWorkflowIds.size >= 1024) {
+      throw new Error("Effect workflow capacity exhausted; no operation was executed.");
+    }
+    this.effectWorkflowIds.add(session.logicalSessionId);
     await this.ensureEvaluationSealed(session.logicalSessionId);
     if (!runReferenceSchema.safeParse(input.runRef).success) {
       throw new AgentExecutionFailure({

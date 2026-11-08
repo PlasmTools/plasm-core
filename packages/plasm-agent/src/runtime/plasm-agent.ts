@@ -260,6 +260,7 @@ export class PlasmAgent {
     const system = await this.loadInstructions();
     const plasmTools = createPlasmTools(this.runtime);
     const harnessTools = createHarnessTools({
+      sealEffectWorkflows: () => this.runtime.sealEffectWorkflows(),
       responseObligation: options.responseObligation,
       skills: this.skillsMode === "index" ? this.loadedSkills : undefined,
       subagents: this.subagentRegistry,

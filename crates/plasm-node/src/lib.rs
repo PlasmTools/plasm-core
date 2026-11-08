@@ -1,5 +1,6 @@
 #![recursion_limit = "512"]
 
+mod effect_obligations;
 mod engine;
 mod tracing_setup;
 mod transport;
@@ -138,6 +139,7 @@ pub struct PlasmEngine {
     inner: Arc<AsyncMutex<InnerEngine>>,
     sessions: Mutex<HashMap<String, Arc<AsyncMutex<InnerEngine>>>>,
     session_admission: Mutex<HashMap<String, Arc<SessionAdmission>>>,
+    effect_obligations: effect_obligations::EffectObligations,
     discovery_store: Arc<OnceCell<DiscoveryStore>>,
     activated: tokio::sync::RwLock<Option<(String, std::collections::BTreeSet<String>)>>,
 }
@@ -390,6 +392,7 @@ impl PlasmEngine {
             python_pool,
             sessions: Mutex::new(HashMap::new()),
             session_admission: Mutex::new(HashMap::new()),
+            effect_obligations: Default::default(),
             discovery_store: Arc::new(OnceCell::new()),
             activated: Default::default(),
         }
@@ -602,6 +605,7 @@ impl PlasmEngine {
         let mut sessions = lock(&self.sessions);
         sessions.remove(&logical_session_id);
         lock(&self.session_admission).remove(&logical_session_id);
+        self.effect_obligations.release(&logical_session_id);
         Ok(())
     }
 
@@ -1501,12 +1505,20 @@ impl PlasmEngine {
         let _session_admission = self.admit_session(logical_session_id.as_deref()).await?;
         let mut engine = self.execution_engine(logical_session_id.as_deref()).await?;
         let callback = JsCallbackHttpTransport::new(transport.0, engine.primary_entry_id());
+        let reservation = self
+            .effect_obligations
+            .admit(logical_session_id.as_deref().unwrap_or(""))
+            .map_err(Error::from_reason)?;
         let result = self
             .learning_pool
             .run_local(move || async move {
                 let _admission = _admission;
                 let _session_admission = _session_admission;
-                engine.run_plan_live(&plan_commit_ref, callback).await
+                let result = engine.run_plan_live(&plan_commit_ref, callback).await;
+                if let Ok(value) = &result {
+                    reservation.finish(value);
+                }
+                result
             })
             .await
             .map_err(map_err)?
@@ -1519,6 +1531,16 @@ impl PlasmEngine {
             artifacts_json: result.artifacts_json,
             failure_json: result.failure_json,
         })
+    }
+
+    /// Atomically accept a terminal across the caller's native workflows.
+    #[napi]
+    pub async fn seal_effect_workflows(&self, workflows_json: String) -> Result<()> {
+        let _admission = self.admit().await?;
+        let ids: Vec<String> = parse_archive_metadata(&workflows_json)?;
+        self.effect_obligations
+            .seal(&ids)
+            .map_err(Error::from_reason)
     }
 }
 
