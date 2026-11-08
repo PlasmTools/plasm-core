@@ -92,7 +92,7 @@ async fn validated_plan_spare_node_capacity_obeys_the_continuation_budget() {
 async fn correlated_scope_capacity_obeys_the_continuation_budget() {
     use plasm_core::plasm_monad::{
         empty_comp, CaptureContract, CorrelatedBody, ParentCapture, PlanQualifiedEntityKey,
-        ScopedCapture, ScopedOutput, StepId,
+        PlasmDataValue, PlasmStepPayload, PurePayload, ScopedCapture, ScopedOutput, StepId,
     };
     use plasm_runtime::execution::effect_continuation::{
         EffectContinuation, EffectContinuationError, MAX_EFFECT_SELECTION_BYTES,
@@ -102,6 +102,18 @@ async fn correlated_scope_capacity_obeys_the_continuation_budget() {
     source.push('s');
     let mut name = String::with_capacity(MAX_EFFECT_SELECTION_BYTES + 1);
     name.push('n');
+    let mut operand = String::with_capacity(MAX_EFFECT_SELECTION_BYTES + 1);
+    operand.push('x');
+    let mut comp_with_operand = empty_comp(None);
+    comp_with_operand.steps.insert(
+        "pure".into(),
+        PlasmStepPayload::Pure(PurePayload {
+            data: PlasmDataValue::Symbol { path: operand },
+            recorded_output: None,
+            effect_class: EffectClass::Read,
+            result_shape: ResultShape::Single,
+        }),
+    );
     let entity = || PlanQualifiedEntityKey {
         entry_id: "e".into(),
         entity: "Item".into(),
@@ -134,6 +146,18 @@ async fn correlated_scope_capacity_obeys_the_continuation_budget() {
             max_parents: std::num::NonZeroU32::new(1).unwrap(),
             captures: Vec::new(),
             body: empty_comp(Some(name)),
+        },
+        CorrelatedBody {
+            parent: ParentCapture {
+                source: StepId("s".into()),
+                local: StepId("p".into()),
+                entity: entity(),
+                contract: contract(),
+            },
+            output: ScopedOutput::Record,
+            max_parents: std::num::NonZeroU32::new(1).unwrap(),
+            captures: Vec::new(),
+            body: comp_with_operand,
         },
         CorrelatedBody {
             parent: ParentCapture {

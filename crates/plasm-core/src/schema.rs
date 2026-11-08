@@ -273,6 +273,11 @@ impl DataClassName {
     pub fn as_str(&self) -> &str {
         &self.0
     }
+
+    /// Heap capacity retained by this owned name.
+    pub fn retention_capacity_bytes(&self) -> usize {
+        self.0.capacity()
+    }
 }
 
 impl Deref for DataClassName {

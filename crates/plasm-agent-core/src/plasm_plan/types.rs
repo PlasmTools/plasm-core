@@ -574,9 +574,40 @@ impl ValidatedPlanArtifact {
                 1024usize.saturating_add(16usize.saturating_mul(std::mem::size_of::<T>()))
             }
             let mut bytes = value.name.as_ref().map_or(0, String::capacity);
-            bytes = value.steps.iter().fold(bytes, |sum, (id, _)| {
+            bytes = value.steps.iter().fold(bytes, |sum, (id, payload)| {
                 sum.saturating_add(tree_entry::<(String, PlasmStepPayload)>())
                     .saturating_add(id.capacity())
+                    .saturating_add(match payload {
+                        PlasmStepPayload::Pure(pure) => {
+                            let mut retained = data(&pure.data, 0);
+                            if let Some(origin) = &pure.recorded_output {
+                                retained = retained
+                                    .saturating_add(origin.run_id.capacity())
+                                    .saturating_add(origin.entry_id.capacity())
+                                    .saturating_add(origin.entity.capacity());
+                                for label in &origin.labels {
+                                    retained = retained
+                                        .saturating_add(tree_entry::<plasm_core::DataClassName>())
+                                        .saturating_add(label.retention_capacity_bytes());
+                                }
+                                for source in &origin.provenance {
+                                    retained = retained
+                                        .saturating_add(tree_entry::<String>())
+                                        .saturating_add(source.capacity());
+                                }
+                            }
+                            retained
+                        }
+                        // Their container storage is charged here; their owned payloads
+                        // still need the same capacity walk as `Pure`.
+                        PlasmStepPayload::Invoke(_)
+                        | PlasmStepPayload::Map(_)
+                        | PlasmStepPayload::Derive(_)
+                        | PlasmStepPayload::FlatMapRelation(_)
+                        | PlasmStepPayload::FlatMapApply(_)
+                        | PlasmStepPayload::UnfoldUntil(_)
+                        | PlasmStepPayload::MapBody(_) => 0,
+                    })
             });
             bytes = value.metadata.iter().fold(bytes, |sum, (key, value)| {
                 sum.saturating_add(tree_entry::<(String, serde_json::Value)>())
@@ -592,9 +623,8 @@ impl ValidatedPlanArtifact {
                 .fold(bytes.saturating_add(vec_bytes(&bind.topo)), |sum, id| {
                     sum.saturating_add(id.0.capacity())
                 });
-            bytes =
-                bind.deps.iter().fold(bytes, |sum, (id, deps)| {
-                    deps.iter().fold(
+            bytes = bind.deps.iter().fold(bytes, |sum, (id, deps)| {
+                deps.iter().fold(
                         sum.saturating_add(tree_entry::<(
                             StepId,
                             std::collections::BTreeSet<StepId>,
@@ -605,7 +635,7 @@ impl ValidatedPlanArtifact {
                                 .saturating_add(dependency.0.capacity())
                         },
                     )
-                });
+            });
             bytes = bind.primary.iter().fold(bytes, |sum, (id, primary)| {
                 sum.saturating_add(tree_entry::<(StepId, StepId)>())
                     .saturating_add(id.0.capacity())
