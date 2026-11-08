@@ -47,24 +47,60 @@ fn charge_scope_payload<T: serde::Serialize + ?Sized>(
     let Some(reservation) = reservation else {
         return Ok(());
     };
-    reservation.add_retained(payload).map_err(|error| {
-        let mut failure = scope_failure("effect_scope_retention_refused", error.to_string());
-        if matches!(
-            error,
-            plasm_runtime::execution::effect_continuation::EffectContinuationError::SelectionBudget(
-                plasm_core::ValueBudgetError::BytesExceeded
-            )
-        ) {
-            failure.input_budget = Some(plasm_runtime::InputBudgetEvidence {
-                unit: plasm_runtime::InputBudgetUnit::AccountedBytes,
-                limit: plasm_runtime::execution::effect_continuation::MAX_EFFECT_SELECTION_BYTES,
-                observed_at_least:
-                    plasm_runtime::execution::effect_continuation::MAX_EFFECT_SELECTION_BYTES + 1,
-                input: "scope output".into(),
-            });
-        }
-        failure
-    })
+    reservation
+        .add_retained(payload)
+        .map_err(scope_retention_failure)
+}
+
+fn scope_retention_failure(
+    error: plasm_runtime::execution::effect_continuation::EffectContinuationError,
+) -> ExecutionFailure {
+    let mut failure = scope_failure("effect_scope_retention_refused", error.to_string());
+    if matches!(
+        error,
+        plasm_runtime::execution::effect_continuation::EffectContinuationError::SelectionBudget(
+            plasm_core::ValueBudgetError::BytesExceeded
+        )
+    ) {
+        failure.input_budget = Some(plasm_runtime::InputBudgetEvidence {
+            unit: plasm_runtime::InputBudgetUnit::AccountedBytes,
+            limit: plasm_runtime::execution::effect_continuation::MAX_EFFECT_SELECTION_BYTES,
+            observed_at_least:
+                plasm_runtime::execution::effect_continuation::MAX_EFFECT_SELECTION_BYTES + 1,
+            input: "scope output".into(),
+        });
+    }
+    failure
+}
+
+fn charge_scope_rows(
+    reservation: &mut Option<plasm_runtime::execution::effect_continuation::SelectionReservation>,
+    rows: &[plasm_core::ValueRow],
+) -> Result<(), ExecutionFailure> {
+    if let Some(reservation) = reservation {
+        reservation
+            .add_selection(rows)
+            .map_err(scope_retention_failure)?;
+    }
+    Ok(())
+}
+
+fn vector_capacity_bytes<T>(values: &Vec<T>) -> usize {
+    values.capacity().saturating_mul(std::mem::size_of::<T>())
+}
+
+fn charge_scope_capacity(
+    reservation: &mut Option<plasm_runtime::execution::effect_continuation::SelectionReservation>,
+    previous: &mut usize,
+    current: usize,
+) -> Result<(), ExecutionFailure> {
+    if let Some(reservation) = reservation {
+        reservation
+            .add_capacity_bytes(current.saturating_sub(*previous))
+            .map_err(scope_retention_failure)?;
+    }
+    *previous = (*previous).max(current);
+    Ok(())
 }
 
 fn scope_rehydration_failure(
@@ -235,6 +271,7 @@ pub(super) async fn materialize(
     let mut dependencies = vec![source.result.collection.clone()];
     dependencies.extend(captured.values().map(|m| m.result.collection.clone()));
     let mut instances = Vec::with_capacity(parents.len());
+    let mut charged_vectors = 0usize;
     let mut completed = 0usize;
     let mut fingerprints: BTreeSet<_> =
         source.result.request_fingerprints.iter().cloned().collect();
@@ -279,6 +316,14 @@ pub(super) async fn materialize(
         .map_err(scope_rehydration_failure)?;
     let semantic_parents: std::collections::HashMap<_, _> = semantic_parent_rows.iter().enumerate().map(|(index, row)| (&row.reference, index)).collect();
     for (occurrence, parent) in parents.into_iter().enumerate() {
+        let capacity = vector_capacity_bytes(&rows)
+            .saturating_add(vector_capacity_bytes(&value_shapes))
+            .saturating_add(vector_capacity_bytes(&identities))
+            .saturating_add(vector_capacity_bytes(&returned_children))
+            .saturating_add(vector_capacity_bytes(&retained_parents))
+            .saturating_add(vector_capacity_bytes(&dependencies))
+            .saturating_add(vector_capacity_bytes(&instances));
+        charge_scope_capacity(&mut retained_outputs, &mut charged_vectors, capacity)?;
         ctx.scope_budget
             .enter()
             .map_err(|diagnostic| {
@@ -484,7 +529,7 @@ pub(super) async fn materialize(
                         scope_failure("scope_output_value_shape_invalid", diagnostic.to_string())
                     })?);
             }
-            charge_scope_payload(&mut retained_outputs, &values)?;
+            charge_scope_rows(&mut retained_outputs, &values)?;
             charge_scope_payload(
                 &mut retained_outputs,
                 &super::step_materialize::RetainedIdentities(&output.row_identities),
@@ -539,9 +584,10 @@ pub(super) async fn materialize(
             .map_err(|diagnostic| {
                 scope_failure("scope_record_materialization_failed", diagnostic.to_string())
             })?;
-        charge_scope_payload(&mut retained_outputs, &row)?;
+        let row = plasm_core::ValueRow::from(row);
+        charge_scope_rows(&mut retained_outputs, std::slice::from_ref(&row))?;
         charge_scope_payload(&mut retained_outputs, &occurrence_path)?;
-        rows.push(plasm_core::ValueRow::from(row));
+        rows.push(row);
         value_shapes.push(MaterializedValueShape::Record);
         completed += 1;
         invocation.finish(OccurrencePhase::Done, Some(1), None, Vec::new(), None);
@@ -717,6 +763,38 @@ fn materialize_record<'a>(
 #[cfg(test)]
 mod budget_tests {
     use super::*;
+
+    #[tokio::test]
+    async fn accumulated_rows_charge_spare_capacity() {
+        use plasm_runtime::execution::effect_continuation::{
+            EffectContinuation, MAX_EFFECT_SELECTION_BYTES,
+        };
+        let (control, _pauses) =
+            EffectContinuation::new_native(std::time::Duration::from_secs(2)).unwrap();
+        let mut text = String::with_capacity(MAX_EFFECT_SELECTION_BYTES + 1);
+        text.push('x');
+        let row =
+            plasm_core::ValueRow::from_iter([("text".into(), plasm_core::Value::String(text))]);
+        control
+            .scope(async {
+                let mut retained = Some(EffectContinuation::empty_retention());
+                let failure = charge_scope_rows(&mut retained, &[row]).unwrap_err();
+                assert!(failure.input_budget.is_some());
+                let rows = Vec::<plasm_core::ValueRow>::with_capacity(
+                    MAX_EFFECT_SELECTION_BYTES / std::mem::size_of::<plasm_core::ValueRow>() + 1,
+                );
+                let mut charged = 0;
+                let failure = charge_scope_capacity(
+                    &mut retained,
+                    &mut charged,
+                    vector_capacity_bytes(&rows),
+                )
+                .unwrap_err();
+                assert!(failure.input_budget.is_some());
+                assert_eq!(charged, 0);
+            })
+            .await;
+    }
 
     #[test]
     fn graph_rehydration_failure_stops_instead_of_repairing_the_program() {

@@ -191,6 +191,32 @@ fn charge_selection_capacity(
 }
 
 impl SelectionReservation {
+    /// Add retained rows to this reservation without copying their payloads.
+    pub fn add_selection(
+        &mut self,
+        rows: &[plasm_core::ValueRow],
+    ) -> Result<(), EffectContinuationError> {
+        let Some(state) = &self.state else {
+            return Ok(());
+        };
+        let mut used = state
+            .selection_bytes
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        let mut remaining = MAX_EFFECT_SELECTION_BYTES - *used;
+        let initial = remaining;
+        for row in rows {
+            plasm_core::charge_value_budget(row, &mut remaining)
+                .map_err(EffectContinuationError::SelectionBudget)?;
+            charge_selection_capacity(row, &mut remaining)
+                .map_err(EffectContinuationError::SelectionBudget)?;
+        }
+        let bytes = initial - remaining;
+        *used += bytes;
+        self.bytes += bytes;
+        Ok(())
+    }
+
     /// Charge known retained allocation capacity in addition to encoded payload.
     /// On failure the reservation and the shared budget are unchanged.
     pub fn add_capacity_bytes(&mut self, bytes: usize) -> Result<(), EffectContinuationError> {
@@ -420,32 +446,9 @@ impl EffectContinuation {
     pub fn reserve_selection(
         rows: &[plasm_core::ValueRow],
     ) -> Result<SelectionReservation, EffectContinuationError> {
-        let Some(control) = Self::current() else {
-            return Ok(SelectionReservation {
-                state: None,
-                bytes: 0,
-            });
-        };
-        let mut used = control
-            .state
-            .selection_bytes
-            .lock()
-            .unwrap_or_else(|e| e.into_inner());
-        let mut remaining = MAX_EFFECT_SELECTION_BYTES - *used;
-        let initial = remaining;
-        for row in rows {
-            plasm_core::charge_value_budget(row, &mut remaining)
-                .map_err(EffectContinuationError::SelectionBudget)?;
-            charge_selection_capacity(row, &mut remaining)
-                .map_err(EffectContinuationError::SelectionBudget)?;
-        }
-        let bytes = initial - remaining;
-        *used += bytes;
-        drop(used);
-        Ok(SelectionReservation {
-            state: Some(control.state),
-            bytes,
-        })
+        let mut reservation = Self::empty_retention();
+        reservation.add_selection(rows)?;
+        Ok(reservation)
     }
 
     /// Charge a serializable retained payload to the same aggregate budget as
@@ -1039,6 +1042,35 @@ mod tests {
                     ));
                 }
                 assert!(EffectContinuation::reserve_selection(&[]).is_ok());
+            })
+            .await;
+    }
+
+    #[tokio::test]
+    async fn incremental_selection_failure_preserves_existing_reservation() {
+        let (control, _pauses) = EffectContinuation::new_native(Duration::from_secs(2)).unwrap();
+        control
+            .scope(async {
+                let small = plasm_core::ValueRow::from_iter([(
+                    "value".into(),
+                    plasm_core::Value::String("small".into()),
+                )]);
+                let mut large = String::with_capacity(MAX_EFFECT_SELECTION_BYTES + 1);
+                large.push('x');
+                let large = plasm_core::ValueRow::from_iter([(
+                    "value".into(),
+                    plasm_core::Value::String(large),
+                )]);
+                let mut reservation = EffectContinuation::empty_retention();
+                reservation.add_selection(&[small]).unwrap();
+                assert!(matches!(
+                    reservation.add_selection(&[large]),
+                    Err(EffectContinuationError::SelectionBudget(
+                        plasm_core::ValueBudgetError::BytesExceeded
+                    ))
+                ));
+                drop(reservation);
+                assert!(EffectContinuation::reserve_retained(&"small").is_ok());
             })
             .await;
     }
