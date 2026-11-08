@@ -15,6 +15,8 @@ use uuid::Uuid;
 
 /// A reviewed execution cannot keep an unattended checkpoint indefinitely.
 pub const MAX_EFFECT_CONTINUATION_LEASE: Duration = Duration::from_secs(600);
+/// Accounted payload retained by active nested selection frames in one run.
+pub const MAX_EFFECT_SELECTION_BYTES: usize = 8 * 1024 * 1024;
 
 #[derive(Debug, thiserror::Error, PartialEq, Eq)]
 pub enum EffectContinuationError {
@@ -34,6 +36,8 @@ pub enum EffectContinuationError {
     WorkflowMismatch,
     #[error("the continuation has already been resumed or expired")]
     AlreadyResolved,
+    #[error("continuation selection cannot be retained within its byte budget: {0}")]
+    SelectionBudget(#[source] plasm_core::value::ValueBudgetError),
 }
 
 struct State {
@@ -44,6 +48,7 @@ struct State {
     cancelled: AtomicBool,
     cancel_notify: Notify,
     pauses: mpsc::Sender<EffectPause>,
+    selection_bytes: Mutex<usize>,
 }
 
 /// Native owner of one execution's suspension channel and lifetime.
@@ -77,6 +82,24 @@ impl EffectPause {
 /// The execution owner consumes checkpoints; dropping it abandons a pending pause.
 pub struct EffectPauseReceiver {
     pauses: mpsc::Receiver<EffectPause>,
+}
+
+/// Keeps the accounting charge alive for precisely the selection frame's lifetime.
+pub struct SelectionReservation {
+    state: Option<Arc<State>>,
+    bytes: usize,
+}
+
+impl Drop for SelectionReservation {
+    fn drop(&mut self) {
+        if let Some(state) = &self.state {
+            let mut used = state
+                .selection_bytes
+                .lock()
+                .unwrap_or_else(|e| e.into_inner());
+            *used -= self.bytes;
+        }
+    }
 }
 
 impl EffectPauseReceiver {
@@ -117,6 +140,7 @@ impl EffectContinuation {
                     cancelled: AtomicBool::new(false),
                     cancel_notify: Notify::new(),
                     pauses,
+                    selection_bytes: Mutex::new(0),
                 }),
             },
             EffectPauseReceiver { pauses: receiver },
@@ -127,6 +151,38 @@ impl EffectContinuation {
     /// explicitly install their own scope.
     pub async fn scope<T>(self, future: impl Future<Output = T>) -> T {
         CURRENT.scope(self, future).await
+    }
+
+    /// Reserve the aggregate payload of an active selection, including nested
+    /// selections. A failed reservation changes no accounting and issues no
+    /// checkpoint. Other retained execution state is accounted separately.
+    pub fn reserve_selection(
+        rows: &[plasm_core::ValueRow],
+    ) -> Result<SelectionReservation, EffectContinuationError> {
+        let Some(control) = Self::current() else {
+            return Ok(SelectionReservation {
+                state: None,
+                bytes: 0,
+            });
+        };
+        let mut used = control
+            .state
+            .selection_bytes
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        let mut remaining = MAX_EFFECT_SELECTION_BYTES - *used;
+        let initial = remaining;
+        for row in rows {
+            plasm_core::charge_value_budget(row, &mut remaining)
+                .map_err(EffectContinuationError::SelectionBudget)?;
+        }
+        let bytes = initial - remaining;
+        *used += bytes;
+        drop(used);
+        Ok(SelectionReservation {
+            state: Some(control.state),
+            bytes,
+        })
     }
 
     /// Carry public selection accounting into a checkpoint while the owning
@@ -272,6 +328,32 @@ mod tests {
             status,
         });
         failure
+    }
+
+    #[tokio::test]
+    async fn nested_selection_reservations_share_a_bounded_budget() {
+        let (control, _pauses) =
+            EffectContinuation::new(Uuid::new_v4(), Duration::from_secs(2)).unwrap();
+        let mut row = plasm_core::ValueRow::new();
+        row.insert(
+            "payload".into(),
+            plasm_core::Value::String("x".repeat(MAX_EFFECT_SELECTION_BYTES / 2)),
+        );
+        control
+            .scope(async {
+                let first =
+                    EffectContinuation::reserve_selection(std::slice::from_ref(&row)).unwrap();
+                assert!(matches!(
+                    EffectContinuation::reserve_selection(std::slice::from_ref(&row)),
+                    Err(EffectContinuationError::SelectionBudget(
+                        plasm_core::ValueBudgetError::BytesExceeded
+                    ))
+                ));
+                drop(first);
+                let _after_release =
+                    EffectContinuation::reserve_selection(std::slice::from_ref(&row)).unwrap();
+            })
+            .await;
     }
 
     #[tokio::test]

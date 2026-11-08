@@ -615,6 +615,51 @@ async fn cancelled_fanout_retains_its_completed_prefix() {
     resumed_fanout_case(true).await;
 }
 
+#[tokio::test]
+async fn oversized_continuation_selection_stops_before_scoped_writes() {
+    use plasm_runtime::execution::effect_continuation::{
+        EffectContinuation, MAX_EFFECT_SELECTION_BYTES,
+    };
+    use std::time::Duration;
+
+    let OrderedFanoutFixture {
+        host,
+        session,
+        opened,
+        store,
+    } = ordered_fanout_fixture(1, 1, true).await;
+    store.lock().unwrap().source_rows[0]["description"] =
+        json!("x".repeat(MAX_EFFECT_SELECTION_BYTES));
+    let symbols = session.teaching_exposure.as_ref().unwrap().to_symbol_map();
+    let entity = symbols.entity_sym_for("matrix", "PwExpense");
+    let create = symbols.method_sym_for("matrix", "PwExpense", "create");
+    let source = format!("class Observe(Program):\n    def build(self):\n        source = {entity}.query(group_id=\"source\")\n        return source.flat_map(lambda row: {entity}.{create}(group_id=\"dest\", description=row.description))\n");
+    let bundle = crate::plasm_compile::compile_python_program(&session, &source)
+        .await
+        .unwrap();
+    let (control, _pauses) =
+        EffectContinuation::new(uuid::Uuid::new_v4(), Duration::from_secs(10)).unwrap();
+    let failure = control
+        .scope(Box::pin(ExecutePipeline::run_program(
+            &session,
+            &host,
+            &opened.prompt_hash,
+            &opened.session_id,
+            &bundle,
+            ExecutionIntent::Live,
+            None,
+            None,
+            None,
+        )))
+        .await
+        .expect_err("oversized selection must be refused");
+    assert_eq!(failure.code, "effect_selection_retention_refused");
+    let budget = failure.input_budget.as_ref().expect("typed byte budget");
+    assert_eq!(budget.unit, plasm_runtime::InputBudgetUnit::AccountedBytes);
+    assert_eq!(budget.limit, MAX_EFFECT_SELECTION_BYTES);
+    assert_eq!(store.lock().unwrap().attempts, 0);
+}
+
 async fn resumed_fanout_case(cancel: bool) {
     use plasm_runtime::execution::effect_continuation::EffectContinuation;
     use std::time::Duration;

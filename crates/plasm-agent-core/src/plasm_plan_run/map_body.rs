@@ -115,6 +115,31 @@ pub(super) async fn materialize(
     {
         return Err(scope_failure("scope_original_occurrence_required", "Entity continuation requires unchanged original row occurrences; a constructed or modified value has no receiver identity"));
     }
+    // Retain the charge until this selection frame exits, including while a
+    // nested effect is paused. Failure happens before any effect in this scope.
+    let _selection_reservation =
+        plasm_runtime::execution::effect_continuation::EffectContinuation::reserve_selection(
+            &parents,
+        )
+        .map_err(|error| {
+            use plasm_runtime::execution::effect_continuation::{
+                EffectContinuationError, MAX_EFFECT_SELECTION_BYTES,
+            };
+            let mut failure =
+                scope_failure("effect_selection_retention_refused", error.to_string());
+            if matches!(
+                error,
+                EffectContinuationError::SelectionBudget(plasm_core::ValueBudgetError::BytesExceeded)
+            ) {
+                failure.input_budget = Some(plasm_runtime::InputBudgetEvidence {
+                    unit: plasm_runtime::InputBudgetUnit::AccountedBytes,
+                    limit: MAX_EFFECT_SELECTION_BYTES,
+                    observed_at_least: MAX_EFFECT_SELECTION_BYTES + 1,
+                    input: body.parent.source.to_string(),
+                });
+            }
+            failure
+        })?;
     let schema = crate::map_body_schema::output_schema(ctx.es, body).map_err(|diagnostic| {
         scope_failure("scope_output_schema_invalid", diagnostic.to_string())
     })?;
