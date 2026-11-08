@@ -116,6 +116,74 @@ pub struct GraphCache {
     pub(crate) branch_fork: Option<crate::materialization_conflict::BranchForkTracker>,
 }
 
+/// A discard-only serialization view of all graph state held by a branch.
+struct RetainedGraph<'a>(&'a GraphCache);
+
+struct RetainedGraphEntries<'a>(&'a GraphCache);
+impl serde::Serialize for RetainedGraphEntries<'_> {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        use serde::ser::SerializeSeq;
+        let mut sequence = serializer.serialize_seq(Some(self.0.entities.len()))?;
+        for (reference, entity) in &self.0.entities {
+            sequence.serialize_element(&(reference, entity.as_ref()))?;
+        }
+        sequence.end()
+    }
+}
+
+struct RetainedGraphIndices<'a>(&'a GraphCache);
+impl serde::Serialize for RetainedGraphIndices<'_> {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        use serde::ser::SerializeSeq;
+        let mut sequence = serializer.serialize_seq(Some(self.0.type_index.len()))?;
+        for item in &self.0.type_index {
+            sequence.serialize_element(&item)?;
+        }
+        sequence.end()
+    }
+}
+
+struct RetainedFork<'a>(&'a crate::materialization_conflict::BranchForkTracker);
+impl serde::Serialize for RetainedFork<'_> {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        use serde::ser::{SerializeSeq, SerializeTuple};
+        struct LazyEntries<'a>(&'a crate::materialization_conflict::BranchForkTracker);
+        impl serde::Serialize for LazyEntries<'_> {
+            fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+                let mut sequence = serializer.serialize_seq(Some(self.0.lazy_base.len()))?;
+                for item in &self.0.lazy_base {
+                    sequence.serialize_element(&item)?;
+                }
+                sequence.end()
+            }
+        }
+        let mut tuple = serializer.serialize_tuple(2)?;
+        tuple.serialize_element(&self.0.initial_refs)?;
+        tuple.serialize_element(&LazyEntries(self.0))?;
+        tuple.end()
+    }
+}
+
+impl serde::Serialize for RetainedGraph<'_> {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        (
+            RetainedGraphEntries(self.0),
+            self.0.version_counter,
+            RetainedGraphIndices(self.0),
+            &self.0.insertion_order,
+            self.0.branch_fork.as_ref().map(RetainedFork),
+        )
+            .serialize(serializer)
+    }
+}
+
+impl GraphCache {
+    /// Internal accounting view; it must not be emitted as a public artifact.
+    pub(crate) fn retention_view(&self) -> impl serde::Serialize + '_ {
+        RetainedGraph(self)
+    }
+}
+
 /// Options for cache operations
 #[derive(Debug, Clone, Default)]
 pub struct CacheOptions {

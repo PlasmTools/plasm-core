@@ -8,7 +8,7 @@ use plasm_core::{Ref, TypedFieldValue};
 use crate::cache::{CachedEntity, EntityCompleteness};
 
 /// Per-key content captured lazily on first branch mutation (CEP-14).
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize)]
 pub(crate) struct EntityBaseContent {
     pub fields: IndexMap<String, TypedFieldValue>,
     pub relations: IndexMap<String, plasm_core::row_contract::RelationMembership>,

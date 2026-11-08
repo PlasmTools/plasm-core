@@ -58,6 +58,7 @@ impl ExecutionEngine {
         operation: OperationIdentity,
         capability: &CapabilitySchema,
         identity: Option<&super::request_identity::RequestIdentity>,
+        graph: &crate::GraphCache,
     ) -> Result<(serde_json::Value, Option<String>), RuntimeError> {
         let control = super::effect_continuation::EffectContinuation::current().filter(|_| {
             !capability.no_effect_rejections.is_empty()
@@ -135,6 +136,7 @@ impl ExecutionEngine {
                             entity,
                             &operation,
                             original_identity.retention_auth(),
+                            graph.retention_view(),
                             (
                                 &response.mutation_request_fingerprint,
                                 &response.method,
@@ -235,6 +237,7 @@ impl ExecutionEngine {
                         },
                         capability,
                         None,
+                        &mat.graph,
                     )
                     .await;
                 let (response, _) = match http_res {
@@ -355,6 +358,7 @@ impl ExecutionEngine {
                         },
                         capability,
                         None,
+                        &mat.graph,
                     )
                     .await?;
                 preflight_fibery_command_envelope(&response)?;
@@ -467,6 +471,7 @@ impl ExecutionEngine {
                         },
                         capability,
                         request_identity.as_ref(),
+                        &mat.graph,
                     )
                     .await;
                 let (response, _) = match http_res {
@@ -776,6 +781,7 @@ mod continuation_tests {
             unreachable!()
         };
         request.body = Some(Value::String("x".repeat(MAX_EFFECT_SELECTION_BYTES)));
+        let graph = crate::GraphCache::new();
         let journal = super::super::mutation_evidence::MutationJournal::default();
         let (control, mut pauses) = EffectContinuation::new_native(Duration::from_secs(5)).unwrap();
         let result = control
@@ -788,6 +794,7 @@ mod continuation_tests {
                 },
                 &capability(),
                 None,
+                &graph,
             )))
             .await;
         assert!(matches!(
@@ -829,6 +836,7 @@ mod continuation_tests {
             )),
         );
         let compiled = request();
+        let graph = crate::GraphCache::new();
         let journal = super::super::mutation_evidence::MutationJournal::default();
         let (control, mut pauses) = EffectContinuation::new_native(Duration::from_secs(5)).unwrap();
         let result = control
@@ -841,6 +849,62 @@ mod continuation_tests {
                 },
                 &capability(),
                 None,
+                &graph,
+            )))
+            .await;
+        assert!(matches!(
+            result,
+            Err(RuntimeError::RequestError {
+                status: Some(422),
+                ..
+            })
+        ));
+        assert_eq!(transport.requests.lock().unwrap().len(), 1);
+        assert!(!matches!(
+            tokio::time::timeout(Duration::from_millis(20), pauses.recv()).await,
+            Ok(Some(_))
+        ));
+    }
+
+    #[tokio::test]
+    async fn oversized_unrelated_branch_graph_cannot_be_pinned_by_a_checkpoint() {
+        use crate::execution::effect_continuation::MAX_EFFECT_SELECTION_BYTES;
+        let transport = Arc::new(Transport {
+            statuses: vec![422],
+            opaque: false,
+            requests: Mutex::new(Vec::new()),
+        });
+        let engine = ExecutionEngine::new_with_transport(
+            ExecutionConfig {
+                base_url: Some("https://fixture.test".into()),
+                ..Default::default()
+            },
+            Arc::clone(&transport) as Arc<dyn HttpTransport>,
+            None,
+        );
+        let mut graph = crate::GraphCache::new();
+        let unrelated_id = "x".repeat(MAX_EFFECT_SELECTION_BYTES);
+        graph
+            .insert(crate::CachedEntity::new(
+                plasm_core::Ref::new("Unrelated", &unrelated_id),
+                0,
+            ))
+            .unwrap();
+        let graph = graph.fork_for_branch();
+        let compiled = request();
+        let journal = super::super::mutation_evidence::MutationJournal::default();
+        let (control, mut pauses) = EffectContinuation::new_native(Duration::from_secs(5)).unwrap();
+        let result = control
+            .scope(journal.scope(engine.dispatch_compiled_mutation(
+                &compiled,
+                "PwExpense",
+                OperationIdentity {
+                    entry_id: "matrix".into(),
+                    capability: "pwexpense_create".into(),
+                },
+                &capability(),
+                None,
+                &graph,
             )))
             .await;
         assert!(matches!(
@@ -878,6 +942,7 @@ mod continuation_tests {
             entry_id: "matrix".into(),
             capability: "pwexpense_create".into(),
         };
+        let graph = crate::GraphCache::new();
         let journal = super::super::mutation_evidence::MutationJournal::default();
         let (control, mut pauses) = EffectContinuation::new_native(Duration::from_secs(5)).unwrap();
         let run = control
@@ -888,6 +953,7 @@ mod continuation_tests {
                 identity.clone(),
                 &capability,
                 None,
+                &graph,
             )));
         tokio::pin!(run);
         let mut pause = tokio::select! {
@@ -944,6 +1010,7 @@ mod continuation_tests {
         );
         let capability = capability();
         let compiled = request();
+        let graph = crate::GraphCache::new();
         let journal = super::super::mutation_evidence::MutationJournal::default();
         let workflow = Uuid::new_v4();
         let (control, mut pauses) =
@@ -959,6 +1026,7 @@ mod continuation_tests {
                 },
                 &capability,
                 None,
+                &graph,
             )));
         tokio::pin!(run);
         if opaque || first_status != 422 {
