@@ -404,11 +404,28 @@ impl ValidatedPlanArtifact {
     }
 
     /// Conservative allocation capacity of the accounted validated-plan structure.
+    #[cfg(test)]
     pub(crate) fn structural_retention_capacity_bytes(&self) -> usize {
-        self.structural_retention_capacity_bytes_at_depth(0)
+        self.structural_retention_capacity_bytes_at_depth(0, None)
     }
 
-    fn structural_retention_capacity_bytes_at_depth(&self, depth: usize) -> usize {
+    /// Charge the reviewed program and executable alongside the validated plan.
+    pub(crate) fn retention_capacity_bytes_with_program(
+        &self,
+        program: &plasm_core::plasm_monad::PlasmCompArtifact,
+        executable: &crate::plasm_comp_lift::ExecutablePlasmComp,
+    ) -> usize {
+        self.structural_retention_capacity_bytes_at_depth(0, Some((program, executable)))
+    }
+
+    fn structural_retention_capacity_bytes_at_depth(
+        &self,
+        depth: usize,
+        program: Option<(
+            &plasm_core::plasm_monad::PlasmCompArtifact,
+            &crate::plasm_comp_lift::ExecutablePlasmComp,
+        )>,
+    ) -> usize {
         if depth >= 64 {
             return usize::MAX;
         }
@@ -824,82 +841,85 @@ impl ValidatedPlanArtifact {
                 )
                 .saturating_add(op)
         }
-        fn comp_structure(value: &plasm_core::plasm_monad::PlasmComp, depth: usize) -> usize {
-            use plasm_core::plasm_monad::{PlasmReturn, PlasmStepPayload, StepId};
-
-            // Account conservatively for B-tree nodes, which do not expose capacity.
-            fn tree_entry<T>() -> usize {
-                1024usize.saturating_add(16usize.saturating_mul(std::mem::size_of::<T>()))
+        fn payload_capacity(
+            payload: &plasm_core::plasm_monad::PlasmStepPayload,
+            depth: usize,
+        ) -> usize {
+            use plasm_core::plasm_monad::PlasmStepPayload;
+            match payload {
+                PlasmStepPayload::Pure(pure) => data(&pure.data, 0)
+                    .saturating_add(pure.recorded_output.as_ref().map_or(0, origin)),
+                PlasmStepPayload::Invoke(invoke) => invoke
+                    .qualified_entity
+                    .as_ref()
+                    .map_or(0, monad_entity)
+                    .saturating_add(invoke.ir.as_ref().map_or(0, monad_ir))
+                    .saturating_add(invoke.ir_template.as_ref().map_or(0, monad_template))
+                    .saturating_add(strings(&invoke.projection))
+                    .saturating_add(predicates(&invoke.predicates))
+                    .saturating_add(invoke.approval.as_ref().map_or(0, String::capacity))
+                    .saturating_add(invoke.display_expr.as_ref().map_or(0, String::capacity)),
+                PlasmStepPayload::Derive(derive) => derive.derive.inputs.iter().fold(
+                    derive
+                        .derive
+                        .source
+                        .as_ref()
+                        .map_or(0, String::capacity)
+                        .saturating_add(
+                            derive
+                                .derive
+                                .item_binding
+                                .as_ref()
+                                .map_or(0, |v| v.retention_capacity_bytes()),
+                        )
+                        .saturating_add(vec_bytes(&derive.derive.inputs))
+                        .saturating_add(data(&derive.derive.value, 0)),
+                    |sum, input| {
+                        sum.saturating_add(input.node.capacity())
+                            .saturating_add(input.alias.capacity())
+                    },
+                ),
+                PlasmStepPayload::FlatMapApply(apply) => apply
+                    .source
+                    .capacity()
+                    .saturating_add(apply.item_binding.retention_capacity_bytes())
+                    .saturating_add(monad_effect(&apply.effect_template))
+                    .saturating_add(strings(&apply.projection))
+                    .saturating_add(predicates(&apply.predicates))
+                    .saturating_add(apply.approval.as_ref().map_or(0, String::capacity)),
+                PlasmStepPayload::UnfoldUntil(iter) => iter
+                    .source
+                    .capacity()
+                    .saturating_add(iter.item_binding.retention_capacity_bytes())
+                    .saturating_add(monad_effect(&iter.effect_template))
+                    .saturating_add(predicates(&iter.until_predicates))
+                    .saturating_add(
+                        iter.until_scope
+                            .as_deref()
+                            .map_or(0, |body| scope(body, depth + 1)),
+                    )
+                    .saturating_add(
+                        iter.step_scope
+                            .as_deref()
+                            .map_or(0, |body| scope(body, depth + 1)),
+                    )
+                    .saturating_add(iter.seed_ir.as_ref().map_or(0, monad_ir))
+                    .saturating_add(iter.approval.as_ref().map_or(0, String::capacity)),
+                PlasmStepPayload::MapBody(body) => scope(body, depth + 1),
+                PlasmStepPayload::Map(map) => compute(&map.compute),
+                PlasmStepPayload::FlatMapRelation(value) => relation(&value.relation),
             }
+        }
+        fn tree_entry<T>() -> usize {
+            1024usize.saturating_add(16usize.saturating_mul(std::mem::size_of::<T>()))
+        }
+        fn comp_structure(value: &plasm_core::plasm_monad::PlasmComp, depth: usize) -> usize {
+            use plasm_core::plasm_monad::PlasmStepPayload;
             let mut bytes = value.name.as_ref().map_or(0, String::capacity);
             bytes = value.steps.iter().fold(bytes, |sum, (id, payload)| {
                 sum.saturating_add(tree_entry::<(String, PlasmStepPayload)>())
                     .saturating_add(id.capacity())
-                    .saturating_add(match payload {
-                        PlasmStepPayload::Pure(pure) => data(&pure.data, 0)
-                            .saturating_add(pure.recorded_output.as_ref().map_or(0, origin)),
-                        PlasmStepPayload::Invoke(invoke) => invoke
-                            .qualified_entity
-                            .as_ref()
-                            .map_or(0, monad_entity)
-                            .saturating_add(invoke.ir.as_ref().map_or(0, monad_ir))
-                            .saturating_add(invoke.ir_template.as_ref().map_or(0, monad_template))
-                            .saturating_add(strings(&invoke.projection))
-                            .saturating_add(predicates(&invoke.predicates))
-                            .saturating_add(invoke.approval.as_ref().map_or(0, String::capacity))
-                            .saturating_add(
-                                invoke.display_expr.as_ref().map_or(0, String::capacity),
-                            ),
-                        PlasmStepPayload::Derive(derive) => derive.derive.inputs.iter().fold(
-                            derive
-                                .derive
-                                .source
-                                .as_ref()
-                                .map_or(0, String::capacity)
-                                .saturating_add(
-                                    derive
-                                        .derive
-                                        .item_binding
-                                        .as_ref()
-                                        .map_or(0, |v| v.retention_capacity_bytes()),
-                                )
-                                .saturating_add(vec_bytes(&derive.derive.inputs))
-                                .saturating_add(data(&derive.derive.value, 0)),
-                            |sum, input| {
-                                sum.saturating_add(input.node.capacity())
-                                    .saturating_add(input.alias.capacity())
-                            },
-                        ),
-                        PlasmStepPayload::FlatMapApply(apply) => apply
-                            .source
-                            .capacity()
-                            .saturating_add(apply.item_binding.retention_capacity_bytes())
-                            .saturating_add(monad_effect(&apply.effect_template))
-                            .saturating_add(strings(&apply.projection))
-                            .saturating_add(predicates(&apply.predicates))
-                            .saturating_add(apply.approval.as_ref().map_or(0, String::capacity)),
-                        PlasmStepPayload::UnfoldUntil(iter) => iter
-                            .source
-                            .capacity()
-                            .saturating_add(iter.item_binding.retention_capacity_bytes())
-                            .saturating_add(monad_effect(&iter.effect_template))
-                            .saturating_add(predicates(&iter.until_predicates))
-                            .saturating_add(
-                                iter.until_scope
-                                    .as_deref()
-                                    .map_or(0, |body| scope(body, depth + 1)),
-                            )
-                            .saturating_add(
-                                iter.step_scope
-                                    .as_deref()
-                                    .map_or(0, |body| scope(body, depth + 1)),
-                            )
-                            .saturating_add(iter.seed_ir.as_ref().map_or(0, monad_ir))
-                            .saturating_add(iter.approval.as_ref().map_or(0, String::capacity)),
-                        PlasmStepPayload::MapBody(body) => scope(body, depth + 1),
-                        PlasmStepPayload::Map(map) => compute(&map.compute),
-                        PlasmStepPayload::FlatMapRelation(value) => relation(&value.relation),
-                    })
+                    .saturating_add(payload_capacity(payload, depth))
             });
             bytes = value.metadata.iter().fold(bytes, |sum, (key, value)| {
                 sum.saturating_add(tree_entry::<(String, serde_json::Value)>())
@@ -908,13 +928,15 @@ impl ValidatedPlanArtifact {
                         value,
                     ))
             });
-            let bind = &value.bind;
-            bytes = bind
-                .topo
-                .iter()
-                .fold(bytes.saturating_add(vec_bytes(&bind.topo)), |sum, id| {
-                    sum.saturating_add(id.0.capacity())
-                });
+            bytes
+                .saturating_add(bind_capacity(&value.bind))
+                .saturating_add(return_capacity(&value.return_))
+        }
+        fn bind_capacity(bind: &plasm_core::plasm_monad::PlasmBindGraph) -> usize {
+            use plasm_core::plasm_monad::StepId;
+            let mut bytes = bind.topo.iter().fold(vec_bytes(&bind.topo), |sum, id| {
+                sum.saturating_add(id.0.capacity())
+            });
             bytes = bind.deps.iter().fold(bytes, |sum, (id, deps)| {
                 deps.iter().fold(
                         sum.saturating_add(tree_entry::<(
@@ -947,13 +969,17 @@ impl ValidatedPlanArtifact {
                     },
                 )
             });
-            match &value.return_ {
-                PlasmReturn::Step { step } => bytes.saturating_add(step.0.capacity()),
-                PlasmReturn::Parallel { steps } => steps
-                    .iter()
-                    .fold(bytes.saturating_add(vec_bytes(steps)), |sum, id| {
+            bytes
+        }
+        fn return_capacity(value: &plasm_core::plasm_monad::PlasmReturn) -> usize {
+            use plasm_core::plasm_monad::PlasmReturn;
+            match value {
+                PlasmReturn::Step { step } => step.0.capacity(),
+                PlasmReturn::Parallel { steps } => {
+                    steps.iter().fold(vec_bytes(steps), |sum, id| {
                         sum.saturating_add(id.0.capacity())
-                    }),
+                    })
+                }
             }
         }
         fn scope(value: &plasm_core::plasm_monad::CorrelatedBody, depth: usize) -> usize {
@@ -1006,7 +1032,27 @@ impl ValidatedPlanArtifact {
                 },
             )
         }
-        let mut bytes = vec_bytes(&self.artifact.nodes)
+        let mut bytes = program
+            .map_or(0, |(program, executable)| {
+                let gate_capacity = |gates: &Vec<plasm_core::plasm_monad::StepId>| {
+                    gates.iter().fold(vec_bytes(gates), |sum, gate| {
+                        sum.saturating_add(gate.0.capacity())
+                    })
+                };
+                executable.steps_topo.iter().fold(
+                    comp_structure(&program.comp, 0)
+                        .saturating_add(gate_capacity(&program.approval_gates))
+                        .saturating_add(bind_capacity(&executable.bind))
+                        .saturating_add(return_capacity(&executable.return_))
+                        .saturating_add(gate_capacity(&executable.approval_gates))
+                        .saturating_add(vec_bytes(&executable.steps_topo)),
+                    |sum, (id, payload)| {
+                        sum.saturating_add(id.0.capacity())
+                            .saturating_add(payload_capacity(payload, 0))
+                    },
+                )
+            })
+            .saturating_add(vec_bytes(&self.artifact.nodes))
             .saturating_add(id_bytes(&self.topo))
             .saturating_add(id_bytes(&self.approval_gates))
             .saturating_add(self.artifact.name.as_ref().map_or(0, String::capacity))
@@ -1124,7 +1170,9 @@ impl ValidatedPlanArtifact {
             for nested in node.nested_plans() {
                 bytes = bytes
                     .saturating_add(std::mem::size_of::<ValidatedPlanArtifact>())
-                    .saturating_add(nested.structural_retention_capacity_bytes_at_depth(depth + 1));
+                    .saturating_add(
+                        nested.structural_retention_capacity_bytes_at_depth(depth + 1, None),
+                    );
             }
         }
         bytes

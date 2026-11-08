@@ -178,6 +178,102 @@ pub struct PlanFlowAnalysis {
 }
 
 impl PlanFlowAnalysis {
+    /// Conservative capacity retained by this flow-policy result.
+    pub(crate) fn retention_capacity_bytes(&self) -> usize {
+        fn entry<T>() -> usize {
+            1024usize.saturating_add(16usize.saturating_mul(std::mem::size_of::<T>()))
+        }
+        fn labels(values: &BTreeSet<DataClassName>) -> usize {
+            values.iter().fold(0usize, |sum, value| {
+                sum.saturating_add(entry::<DataClassName>())
+                    .saturating_add(value.retention_capacity_bytes())
+            })
+        }
+        fn facts(value: &FlowFacts) -> usize {
+            value
+                .provenance
+                .iter()
+                .fold(labels(&value.labels), |sum, item| {
+                    sum.saturating_add(entry::<String>())
+                        .saturating_add(item.capacity())
+                })
+        }
+        let mut bytes = self.node_facts.iter().fold(0usize, |sum, (id, node)| {
+            node.columns.iter().fold(
+                sum.saturating_add(entry::<(String, NodeFlowFacts)>())
+                    .saturating_add(id.capacity())
+                    .saturating_add(facts(&node.residual)),
+                |sum, (path, value)| {
+                    path.iter().fold(
+                        sum.saturating_add(entry::<(Vec<String>, FlowFacts)>())
+                            .saturating_add(
+                                path.capacity()
+                                    .saturating_mul(std::mem::size_of::<String>()),
+                            )
+                            .saturating_add(facts(value)),
+                        |sum, part| sum.saturating_add(part.capacity()),
+                    )
+                },
+            )
+        });
+        bytes = self
+            .node_dispositions
+            .iter()
+            .fold(bytes, |sum, (id, disposition)| {
+                let size = match disposition {
+                    NodeDisposition::Approve { requirement } => requirement
+                        .entry_id
+                        .capacity()
+                        .saturating_add(requirement.entity.capacity())
+                        .saturating_add(requirement.capability.capacity())
+                        .saturating_add(requirement.policy_key.capacity())
+                        .saturating_add(
+                            requirement
+                                .author_label
+                                .as_ref()
+                                .map_or(0, String::capacity),
+                        )
+                        .saturating_add(requirement.reason.as_ref().map_or(0, String::capacity)),
+                    NodeDisposition::Allow | NodeDisposition::Review | NodeDisposition::Deny => 0,
+                };
+                sum.saturating_add(entry::<(String, NodeDisposition)>())
+                    .saturating_add(id.capacity())
+                    .saturating_add(size)
+            });
+        bytes = self.sink_proofs.iter().fold(bytes, |sum, (id, proof)| {
+            let size = match proof {
+                SinkProof::StaticClean => 0,
+                SinkProof::Deferred { check } => check.capacity(),
+                SinkProof::Sanitized { by, cleared } => {
+                    by.capacity().saturating_add(labels(cleared))
+                }
+            };
+            sum.saturating_add(entry::<(String, SinkProof)>())
+                .saturating_add(id.capacity())
+                .saturating_add(size)
+        });
+        self.violations.iter().fold(
+            bytes.saturating_add(
+                self.violations
+                    .capacity()
+                    .saturating_mul(std::mem::size_of::<FlowViolation>()),
+            ),
+            |sum, violation| {
+                let sink = violation.sink_param.as_ref().map_or(0, |sink| {
+                    sink.param.retention_capacity_bytes().saturating_add(
+                        sink.sink_class
+                            .as_ref()
+                            .map_or(0, |class| class.retention_capacity_bytes()),
+                    )
+                });
+                sum.saturating_add(violation.node.capacity())
+                    .saturating_add(violation.reason.capacity())
+                    .saturating_add(sink)
+                    .saturating_add(labels(&violation.labels))
+            },
+        )
+    }
+
     pub fn approval_gates_json(&self) -> Vec<serde_json::Value> {
         self.node_dispositions
             .iter()

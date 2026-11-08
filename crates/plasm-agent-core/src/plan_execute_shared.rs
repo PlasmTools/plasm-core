@@ -27,6 +27,14 @@ pub struct PlanLineExecuteShared {
 }
 
 impl PlanLineExecuteShared {
+    /// Capacity owned by this execution-local wrapper; provider and session arcs are shared.
+    pub(crate) fn retention_capacity_bytes(&self) -> usize {
+        std::mem::size_of::<Self>()
+            .saturating_add(2 * std::mem::size_of::<usize>())
+            .saturating_add(self.prompt_hash.capacity())
+            .saturating_add(self.session_id.capacity())
+    }
+
     pub async fn prepare(es: &ExecuteSession, st: &PlasmHostState, session_id: &str) -> Self {
         let federation = es.federation_dispatch();
         let secret_provider = st.effective_outbound_secret_provider();

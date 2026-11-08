@@ -89,6 +89,64 @@ async fn validated_plan_spare_node_capacity_obeys_the_continuation_budget() {
 }
 
 #[test]
+fn retained_program_capacity_is_charged_with_validated_plan() {
+    use plasm_runtime::execution::effect_continuation::MAX_EFFECT_SELECTION_BYTES;
+    let id = PlanNodeId::new("value").unwrap();
+    let plan = Plan::new_program(
+        1,
+        None,
+        Vec::new(),
+        ValidatedPlanReturn::Node(id),
+        Default::default(),
+    );
+    let artifact =
+        ValidatedPlanArtifact::from_parts(plan, Vec::new(), Default::default(), Vec::new());
+    let mut name = String::with_capacity(MAX_EFFECT_SELECTION_BYTES + 1);
+    name.push('n');
+    let program = plasm_core::PlasmCompArtifact {
+        comp: plasm_core::plasm_monad::empty_comp(Some(name)),
+        approval_gates: Vec::new(),
+    };
+    let executable = crate::plasm_comp_lift::ExecutablePlasmComp {
+        bind: Default::default(),
+        steps_topo: Vec::new(),
+        return_: program.comp.return_.clone(),
+        approval_gates: Vec::new(),
+    };
+    assert!(artifact.structural_retention_capacity_bytes() < MAX_EFFECT_SELECTION_BYTES);
+    assert!(
+        artifact.retention_capacity_bytes_with_program(&program, &executable)
+            > MAX_EFFECT_SELECTION_BYTES
+    );
+
+    let mut large = String::with_capacity(MAX_EFFECT_SELECTION_BYTES + 1);
+    large.push('x');
+    let mut payload = plasm_core::plasm_monad::invoke_step_payload(
+        plasm_core::plasm_monad::SurfaceKind::Get,
+        EffectClass::Read,
+        ResultShape::Single,
+        "x",
+    );
+    if let plasm_core::plasm_monad::PlasmStepPayload::Invoke(ref mut value) = payload {
+        value.display_expr = Some(large);
+    }
+    let compact_program = plasm_core::PlasmCompArtifact {
+        comp: plasm_core::plasm_monad::empty_comp(None),
+        approval_gates: Vec::new(),
+    };
+    let executable = crate::plasm_comp_lift::ExecutablePlasmComp {
+        bind: Default::default(),
+        steps_topo: vec![(plasm_core::plasm_monad::StepId("read".into()), payload)],
+        return_: compact_program.comp.return_.clone(),
+        approval_gates: Vec::new(),
+    };
+    assert!(
+        artifact.retention_capacity_bytes_with_program(&compact_program, &executable)
+            > MAX_EFFECT_SELECTION_BYTES
+    );
+}
+
+#[test]
 fn deeply_nested_validated_plan_fails_closed_for_continuation() {
     use plasm_core::plasm_monad::{
         empty_comp, CaptureContract, CorrelatedBody, ParentCapture, PlanQualifiedEntityKey,

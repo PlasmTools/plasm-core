@@ -14,6 +14,39 @@ use std::collections::{BTreeMap, HashMap};
 use std::sync::Arc;
 use tracing::Instrument;
 
+fn retained_vec_storage<T>(values: &Vec<T>) -> usize {
+    values.capacity().saturating_mul(std::mem::size_of::<T>())
+}
+
+fn retained_strings(values: &Vec<String>) -> usize {
+    values
+        .iter()
+        .fold(retained_vec_storage(values), |sum, value| {
+            sum.saturating_add(value.capacity())
+        })
+}
+
+fn retained_step_index(values: &HashMap<StepId, usize>) -> usize {
+    values.keys().fold(
+        values
+            .capacity()
+            .saturating_mul(std::mem::size_of::<(StepId, usize)>().saturating_add(2))
+            .saturating_mul(2),
+        |sum, id| sum.saturating_add(id.0.capacity()),
+    )
+}
+
+fn retained_layers(values: &Vec<Vec<StepId>>) -> usize {
+    values
+        .iter()
+        .fold(retained_vec_storage(values), |sum, layer| {
+            layer.iter().fold(
+                sum.saturating_add(retained_vec_storage(layer)),
+                |sum, id| sum.saturating_add(id.0.capacity()),
+            )
+        })
+}
+
 #[allow(clippy::too_many_arguments)]
 pub async fn run_plasm_comp(
     es: &ExecuteSession,
@@ -348,7 +381,6 @@ pub(crate) async fn run_executable_plan_phased(
     );
     let mut materialized: BTreeMap<PlanNodeId, MaterializedNode> = BTreeMap::new();
     let approval_policy = PlasmPlanApprovalPolicy::automatic();
-    let mut approval_receipts: Vec<PlasmPlanApprovalReceipt> = Vec::new();
     let mut trace = None;
     let mut sink = None;
     let meta_index_for_publish = mcp_tool_hooks
@@ -359,6 +391,10 @@ pub(crate) async fn run_executable_plan_phased(
         sink = Some(hooks.sink);
     }
     let step_total = executable.steps_topo.len() as u32;
+    // Each top-level step contributes at most one receipt and one scope summary.
+    // Reserve their complete backing storage before a mutation can pause.
+    let mut approval_receipts: Vec<PlasmPlanApprovalReceipt> =
+        Vec::with_capacity(step_total as usize);
     let prepared_nodes: HashMap<StepId, usize> = dry
         .validated_plan()
         .nodes
@@ -372,7 +408,7 @@ pub(crate) async fn run_executable_plan_phased(
         })
         .collect();
     let mut evidence_steps = Vec::with_capacity(step_total as usize);
-    let mut scope_instances = Vec::new();
+    let mut scope_instances = Vec::with_capacity(step_total as usize);
     let step_topo_index: HashMap<StepId, usize> = executable
         .steps_topo
         .iter()
@@ -389,8 +425,61 @@ pub(crate) async fn run_executable_plan_phased(
     .then(plasm_runtime::execution::effect_continuation::EffectContinuation::empty_retention);
     if plasm_runtime::execution::effect_continuation::EffectContinuation::is_active() {
         if let Some(retained) = retained_frame.as_mut() {
+            let nodes =
+                node_results
+                    .iter()
+                    .fold(retained_vec_storage(&node_results), |sum, value| {
+                        sum.saturating_add(plasm_runtime::materialization::retained_json_capacity(
+                            value,
+                        ))
+                    });
+            let metadata = plasm_runtime::materialization::retained_json_capacity(&dry.version)
+                .saturating_add(dry.name.as_ref().map_or(0, String::capacity))
+                .saturating_add(nodes)
+                .saturating_add(plasm_runtime::materialization::retained_json_capacity(
+                    &dry.graph_summary,
+                ))
+                .saturating_add(retained_strings(&dry.topological_order))
+                .saturating_add(retained_strings(&dry.staged_nodes))
+                .saturating_add(retained_strings(&dry.execution_unsupported))
+                .saturating_add(retained_strings(&dry.review.unused_seeds))
+                .saturating_add(retained_strings(&dry.review.unused_bindings))
+                .saturating_add(dry.flow.retention_capacity_bytes())
+                .saturating_add(flow.retention_capacity_bytes())
+                .saturating_add(retained_step_index(&prepared_nodes))
+                .saturating_add(retained_step_index(&step_topo_index))
+                .saturating_add(retained_layers(&layers))
+                .saturating_add(plan_shared.retention_capacity_bytes())
+                .saturating_add(trace.as_ref().map_or(0, |trace| {
+                    trace
+                        .mcp_session_id
+                        .as_ref()
+                        .map_or(0, String::capacity)
+                        .saturating_add(
+                            trace
+                                .logical_session_id
+                                .as_ref()
+                                .map_or(0, String::capacity),
+                        )
+                        .saturating_add(
+                            trace
+                                .logical_session_ref
+                                .as_ref()
+                                .map_or(0, String::capacity),
+                        )
+                }))
+                .saturating_add(sink.as_ref().map_or(0, |sink| sink.mcp_key.capacity()))
+                .saturating_add(retained_vec_storage(&evidence_steps))
+                .saturating_add(retained_vec_storage(&scope_instances))
+                .saturating_add(retained_vec_storage(&approval_receipts));
             retained
-                .add_capacity_bytes(dry.validated().structural_retention_capacity_bytes())
+                .add_capacity_bytes(
+                    dry.validated()
+                        .retention_capacity_bytes_with_program(dry.artifact(), executable),
+                )
+                .map_err(plan_retention_failure)?;
+            retained
+                .add_capacity_bytes(metadata)
                 .map_err(plan_retention_failure)?;
         }
     }
@@ -867,6 +956,33 @@ mod tests {
     use super::*;
     use crate::evidence_chain::StepExecutedRecord;
     use crate::plasm_plan_run::step_materialize::PlanStepMaterializeOutcome;
+
+    #[test]
+    fn retained_frame_counts_spare_index_and_flow_capacity() {
+        use plasm_runtime::execution::effect_continuation::MAX_EFFECT_SELECTION_BYTES;
+        let mut id = String::with_capacity(MAX_EFFECT_SELECTION_BYTES + 1);
+        id.push('x');
+        let index = HashMap::from([(StepId(id), 0)]);
+        assert!(retained_step_index(&index) > MAX_EFFECT_SELECTION_BYTES);
+
+        let mut reason = String::with_capacity(MAX_EFFECT_SELECTION_BYTES + 1);
+        reason.push('x');
+        let flow = crate::plan_flow::PlanFlowAnalysis {
+            policy_revision: None,
+            verdict: crate::plan_flow::FlowVerdict::Clean,
+            node_facts: Default::default(),
+            node_dispositions: Default::default(),
+            sink_proofs: Default::default(),
+            violations: vec![crate::plan_flow::FlowViolation {
+                node: "n".into(),
+                kind: None,
+                sink_param: None,
+                labels: Default::default(),
+                reason,
+            }],
+        };
+        assert!(flow.retention_capacity_bytes() > MAX_EFFECT_SELECTION_BYTES);
+    }
 
     fn test_node(display: &str) -> MaterializedNode {
         MaterializedNode {
