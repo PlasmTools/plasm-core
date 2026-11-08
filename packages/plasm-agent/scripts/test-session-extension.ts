@@ -17,7 +17,7 @@ export async function checkSessionExtension(observe: (intent: string) => Promise
   let guidanceOnly = false;
   const provenanceBySession = new Map<string, IntentProvenance>();
   const unused = async (): Promise<never> => { throw new Error("unexpected engine operation"); };
-  const engine: PlasmEngine = { takeCompletedTeaching: async () => "",
+  const engine: PlasmEngine = { sealEffectWorkflows: async () => {}, resumeEffectRun: async () => { throw new Error("unexpected repair"); }, takeCompletedTeaching: async () => "",
   close: async () => {},
     loadCatalog: unused, synthesizeTeaching: unused, dryRun: unused,
     activateDiscovery: unused, runPlan: unused, run: unused, introspectCatalog: unused,

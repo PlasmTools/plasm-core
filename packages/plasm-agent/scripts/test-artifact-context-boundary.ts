@@ -17,7 +17,7 @@ const message = "Native Plasm response: snapshot available.";
 let snapshot: unknown;
 let executions = 0;
 let reusable = false;
-const engine: PlasmEngine = { takeCompletedTeaching: async () => "",
+const engine: PlasmEngine = { sealEffectWorkflows: async () => {}, resumeEffectRun: async () => { throw new Error("unexpected repair"); }, takeCompletedTeaching: async () => "",
   close: async () => {},
   loadCatalog: unused, activateDiscovery: unused, routeIntent: unused,
   synthesizeTeaching: unused, dryRun: unused, run: unused, introspectCatalog: unused,

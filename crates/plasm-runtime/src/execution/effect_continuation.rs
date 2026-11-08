@@ -6,6 +6,7 @@
 //! coverage or completion of the enclosing plan.
 
 use crate::{ExecutionFailure, MutationDispatchStatus};
+use std::collections::HashMap;
 use std::future::Future;
 use std::sync::atomic::{AtomicBool, AtomicU8, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
@@ -22,9 +23,16 @@ pub const MAX_EFFECT_AUDIT_OCCURRENCES: usize = 65_536;
 
 #[derive(Default)]
 struct OccurrenceAudit {
-    scopes: Vec<Vec<bool>>,
+    scopes: Vec<Vec<OccurrenceDisposition>>,
     slots: usize,
     invalid: bool,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum OccurrenceDisposition {
+    Pending,
+    Completed,
+    PureShortCircuit,
 }
 
 #[derive(Debug, thiserror::Error, PartialEq, Eq)]
@@ -68,6 +76,7 @@ struct State {
     scope_reentered: AtomicBool,
     completed_resumes: AtomicUsize,
     unscoped_checkpoint: AtomicBool,
+    scalar_effects: Mutex<HashMap<Uuid, bool>>,
 }
 
 /// Native owner of one execution's suspension channel and lifetime.
@@ -100,10 +109,14 @@ impl RepairCertificate {
 pub struct EffectPause {
     pub failure: ExecutionFailure,
     workflow: Uuid,
+    reference: Uuid,
     resume: Option<oneshot::Sender<()>>,
 }
 
 impl EffectPause {
+    pub fn native_reference(&self) -> String {
+        self.reference.to_string()
+    }
     /// A different workflow cannot consume the original workflow's capability.
     pub fn resume(&mut self, workflow: Uuid) -> Result<(), EffectContinuationError> {
         if workflow != self.workflow {
@@ -178,6 +191,15 @@ impl EffectContinuation {
         self.state.workflow.to_string()
     }
 
+    /// Deadline established by the first checkpoint, never extended by retry.
+    pub fn checkpoint_deadline(&self) -> Option<Instant> {
+        *self
+            .state
+            .deadline
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+    }
+
     pub fn has_checkpoint(&self) -> bool {
         self.state.checkpoint_seen.load(Ordering::Acquire)
     }
@@ -209,6 +231,7 @@ impl EffectContinuation {
                     scope_reentered: AtomicBool::new(false),
                     completed_resumes: AtomicUsize::new(0),
                     unscoped_checkpoint: AtomicBool::new(false),
+                    scalar_effects: Mutex::new(HashMap::new()),
                 }),
             },
             EffectPauseReceiver { pauses: receiver },
@@ -248,8 +271,7 @@ impl EffectContinuation {
             && !control.state.unscoped_checkpoint.load(Ordering::Acquire)
             && !control.state.pending.load(Ordering::Acquire)
             && control.check_active().is_ok()
-            && control.selections_have_complete_coverage()
-            && control.selected_occurrences_completed()
+            && control.repair_audit_complete()
         {
             Some(RepairCertificate {
                 state: control.state.clone(),
@@ -262,7 +284,7 @@ impl EffectContinuation {
 
     /// Reserve the aggregate payload of an active selection, including nested
     /// selections. A failed reservation changes no accounting and issues no
-    /// checkpoint. Other retained execution state is accounted separately.
+    /// checkpoint. This does not account for other state retained by the future.
     pub fn reserve_selection(
         rows: &[plasm_core::ValueRow],
     ) -> Result<SelectionReservation, EffectContinuationError> {
@@ -320,7 +342,9 @@ impl EffectContinuation {
                         && audit.scopes.len() < MAX_EFFECT_AUDIT_OCCURRENCES =>
                 {
                     let id = audit.scopes.len();
-                    audit.scopes.push(vec![false; selection.count]);
+                    audit
+                        .scopes
+                        .push(vec![OccurrenceDisposition::Pending; selection.count]);
                     audit.slots = total;
                     Some(id)
                 }
@@ -353,7 +377,36 @@ impl EffectContinuation {
             .and_then(|scope| audit.scopes.get_mut(scope))
             .and_then(|scope| scope.get_mut(index));
         match completed {
-            Some(value) if !*value => *value = true,
+            Some(value) if *value == OccurrenceDisposition::Pending => {
+                *value = OccurrenceDisposition::Completed
+            }
+            _ => audit.invalid = true,
+        }
+    }
+
+    /// Record positions skipped by a statically validated pure short circuit.
+    /// The scheduler may call this only for a scope whose effects cannot write.
+    pub fn complete_pure_short_circuit(first_skipped: usize) {
+        let Some(control) = Self::current() else {
+            return;
+        };
+        let scope = AUDIT_SCOPE.try_with(|value| *value).ok().flatten();
+        let mut audit = control
+            .state
+            .occurrence_audit
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        let positions = scope
+            .and_then(|scope| audit.scopes.get_mut(scope))
+            .and_then(|scope| scope.get_mut(first_skipped..));
+        match positions {
+            Some(positions)
+                if positions
+                    .iter()
+                    .all(|value| *value == OccurrenceDisposition::Pending) =>
+            {
+                positions.fill(OccurrenceDisposition::PureShortCircuit);
+            }
             _ => audit.invalid = true,
         }
     }
@@ -369,10 +422,11 @@ impl EffectContinuation {
             .unwrap_or_else(|e| e.into_inner());
         !audit.invalid
             && !audit.scopes.is_empty()
-            && audit
-                .scopes
-                .iter()
-                .all(|scope| scope.iter().all(|done| *done))
+            && audit.scopes.iter().all(|scope| {
+                scope
+                    .iter()
+                    .all(|done| *done != OccurrenceDisposition::Pending)
+            })
     }
 
     /// Conservative run-wide coverage fact. This is necessary but not
@@ -380,6 +434,40 @@ impl EffectContinuation {
     pub fn selections_have_complete_coverage(&self) -> bool {
         self.state.saw_selection.load(Ordering::Acquire)
             && !self.state.incomplete_selection.load(Ordering::Acquire)
+    }
+
+    fn repair_audit_complete(&self) -> bool {
+        let scalar = self
+            .state
+            .scalar_effects
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        let has_selections = self.state.saw_selection.load(Ordering::Acquire);
+        (has_selections || !scalar.is_empty())
+            && (!has_selections
+                || (self.selections_have_complete_coverage()
+                    && self.selected_occurrences_completed()))
+            && scalar.values().all(|complete| *complete)
+    }
+
+    /// The same resolved scalar invocation received a successful response.
+    /// The enclosing reviewed run must still finish successfully to certify it.
+    pub(crate) fn scalar_dispatch_completed(&self) {
+        let Some(effect) = super::resolved_effect::current_effect() else {
+            return;
+        };
+        self.record_scalar_success(effect.invocation);
+    }
+
+    fn record_scalar_success(&self, invocation: Uuid) {
+        let mut scalar = self
+            .state
+            .scalar_effects
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        if let Some(done) = scalar.get_mut(&invocation) {
+            *done = true;
+        }
     }
 
     pub(crate) fn current() -> Option<Self> {
@@ -425,19 +513,45 @@ impl EffectContinuation {
         {
             return Err(EffectContinuationError::NotRetryable);
         }
-        if let Ok(selections) = SELECTIONS.try_with(Clone::clone) {
-            if selections.is_empty() {
-                self.state
-                    .unscoped_checkpoint
-                    .store(true, Ordering::Release);
-            }
+        let selections = SELECTIONS.try_with(Clone::clone).unwrap_or_default();
+        if !selections.is_empty() {
             for selection in selections {
                 failure = failure.with_effect_selection(selection);
             }
         } else {
-            self.state
-                .unscoped_checkpoint
-                .store(true, Ordering::Release);
+            let scalar = failure
+                .dispatches
+                .first()
+                .and_then(|dispatch| dispatch.resolved_effect.as_ref())
+                .filter(|effect| {
+                    effect.origin.as_ref().is_some_and(|origin| {
+                        origin.selection.is_none()
+                            && origin.occurrence_path.is_empty()
+                            && origin.inputs.is_empty()
+                    })
+                });
+            let mut audit = self
+                .state
+                .scalar_effects
+                .lock()
+                .unwrap_or_else(|e| e.into_inner());
+            match scalar {
+                Some(effect)
+                    if audit.len() < MAX_EFFECT_AUDIT_OCCURRENCES
+                        || audit.contains_key(&effect.invocation) =>
+                {
+                    if audit.get(&effect.invocation) == Some(&true) {
+                        self.state
+                            .unscoped_checkpoint
+                            .store(true, Ordering::Release);
+                    }
+                    audit.entry(effect.invocation).or_insert(false);
+                }
+                _ => self
+                    .state
+                    .unscoped_checkpoint
+                    .store(true, Ordering::Release),
+            }
         }
         if self.state.cancelled.load(Ordering::Acquire) {
             return Err(EffectContinuationError::Cancelled);
@@ -470,6 +584,7 @@ impl EffectContinuation {
                 .send(EffectPause {
                     failure,
                     workflow: self.state.workflow,
+                    reference: Uuid::new_v4(),
                     resume: Some(sender),
                 })
                 .await
@@ -608,6 +723,31 @@ mod tests {
             }))
             .await;
         assert!(!duplicate.selected_occurrences_completed());
+
+        let (short_circuit, _pauses) =
+            EffectContinuation::new_native(Duration::from_secs(2)).unwrap();
+        let short_selection = crate::execution_failure::EffectSelectionEvidence {
+            collection: CollectionIdentity {
+                catalog: [1; 32],
+                expression: [6; 32],
+                epoch: 0,
+            },
+            coverage: ResultCoverage::Complete,
+            count: 3,
+            scope_path: vec!["pure".into()],
+            occurrence_path: vec![],
+        };
+        short_circuit
+            .clone()
+            .scope(EffectContinuation::selection_scope(
+                short_selection,
+                async {
+                    EffectContinuation::complete_selection_occurrence(0);
+                    EffectContinuation::complete_pure_short_circuit(1);
+                },
+            ))
+            .await;
+        assert!(short_circuit.selected_occurrences_completed());
 
         let (nested, _pauses) = EffectContinuation::new_native(Duration::from_secs(2)).unwrap();
         let outer = crate::execution_failure::EffectSelectionEvidence {
@@ -878,6 +1018,65 @@ mod tests {
         let (result, certificate) = pending.await.unwrap();
         assert!(result.is_ok());
         assert!(certificate.is_none());
+    }
+
+    #[tokio::test]
+    async fn scalar_certificate_requires_an_attributed_root_invocation() {
+        use crate::execution::{
+            EffectInputReference, EffectOrigin, EffectTargetKind, ResolvedEffectEvidence,
+        };
+        use plasm_core::collection_codec::CollectionIdentity;
+        for (nested, input, expected) in [
+            (false, false, true),
+            (true, false, false),
+            (false, true, false),
+        ] {
+            let (control, mut pauses) =
+                EffectContinuation::new_native(Duration::from_secs(2)).unwrap();
+            let invocation = Uuid::new_v4();
+            let mut rejected = failure(MutationDispatchStatus::RejectedWithoutEffect);
+            let operation = rejected.dispatches[0].operation.clone();
+            rejected.dispatches[0].resolved_effect = Some(ResolvedEffectEvidence {
+                invocation,
+                operation,
+                entity: "Item".into(),
+                target_kind: EffectTargetKind::Create,
+                origin: Some(EffectOrigin {
+                    execution: Uuid::new_v4(),
+                    scope_path: vec!["write".into()],
+                    occurrence_path: if nested { vec![0] } else { vec![] },
+                    selection: None,
+                    inputs: if input {
+                        vec![EffectInputReference {
+                            binding: "input".into(),
+                            producer: "source".into(),
+                            collection: CollectionIdentity {
+                                catalog: [1; 32],
+                                expression: [2; 32],
+                                epoch: 0,
+                            },
+                        }]
+                    } else {
+                        vec![]
+                    },
+                }),
+            });
+            let worker = control.clone();
+            let pending = control.clone().scope_for_repair(async move {
+                worker.checkpoint(rejected).await.unwrap();
+                worker.record_scalar_success(invocation);
+                Ok::<_, ()>(())
+            });
+            tokio::pin!(pending);
+            let mut pause = tokio::select! {
+                pause = pauses.recv() => pause.unwrap(),
+                _ = &mut pending => panic!("scope returned before resume"),
+            };
+            control.resume(&mut pause).unwrap();
+            let (outcome, certificate) = pending.await.unwrap();
+            assert!(outcome.is_ok());
+            assert_eq!(certificate.is_some(), expected);
+        }
     }
 
     #[tokio::test]

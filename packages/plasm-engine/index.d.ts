@@ -54,6 +54,7 @@ export declare class PlasmEngine {
   runPlan(planCommitRef: string, logicalSessionId?: string | undefined | null): Promise<JsRunPlanResult>
   runPlanLive(planCommitRef: string, transport: (request: JsTransportRequest) => JsTransportResponse | Promise<JsTransportResponse>, logicalSessionId?: string): Promise<JsRunPlanResult>
   sealEffectWorkflows(workflowsJson: string): Promise<void>
+  resumeEffectRun(continuationRef: string, logicalSessionId?: string | null): Promise<JsRunPlanResult>
 }
 
 /** Wire-schema parity gate, using the same parser as MCP and native execution. */
@@ -80,6 +81,7 @@ export interface JsRunPlanResult {
   metaJson?: string
   artifactsJson?: string
   failureJson?: string
+  continuationRef?: string
 }
 
 export interface JsSeed {

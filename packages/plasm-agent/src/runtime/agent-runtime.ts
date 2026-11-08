@@ -437,6 +437,7 @@ export class AgentRuntime {
   /** Most recently used live session; explicit new calls create distinct workflows. */
   private workflowSession: AgentSessionState | null = null;
   private readonly effectWorkflowIds = new Set<string>();
+  private readonly effectContinuations = new Map<string, {logicalSessionRef: string; runRef: string; expiresAt: number}>();
   private effectTerminalState: "open" | "sealing" | "sealed" = "open";
 
   /** Terminal acceptance is native and covers every workflow used by this runtime. */
@@ -444,9 +445,6 @@ export class AgentRuntime {
     if (this.effectTerminalState !== "open") throw new Error("This workflow has already ended.");
     this.effectTerminalState = "sealing";
     try {
-      if (!this.engine.sealEffectWorkflows) {
-        throw new Error("Native effect-obligation enforcement is unavailable; no terminal was recorded.");
-      }
       await this.engine.sealEffectWorkflows([...this.effectWorkflowIds]);
       this.effectTerminalState = "sealed";
     } catch (error) {
@@ -816,7 +814,18 @@ export class AgentRuntime {
     return this.lifecycle.run(() => this.plasmRunAdmitted(input));
   }
 
-  private async plasmRunAdmitted(input: PlasmRunInput): Promise<string> {
+  plasmResume(input: {logicalSessionRef: string; continuationRef: string}): Promise<string> {
+    return this.lifecycle.run(async () => {
+      const original = this.effectContinuations.get(input.continuationRef);
+      if (original && performance.now() >= original.expiresAt) this.effectContinuations.delete(input.continuationRef);
+      if (!original || performance.now() >= original.expiresAt || original.logicalSessionRef !== input.logicalSessionRef) {
+        throw new Error("Effect continuation is unknown or belongs to another workflow; no operation ran.");
+      }
+      return this.plasmRunAdmitted(original, input.continuationRef);
+    });
+  }
+
+  private async plasmRunAdmitted(input: PlasmRunInput, continuationRef?: string): Promise<string> {
     const session = await this.requireSessionByRef(input.logicalSessionRef);
     if (this.effectTerminalState !== "open") throw new Error("This workflow has already ended.");
     if (!this.effectWorkflowIds.has(session.logicalSessionId) && this.effectWorkflowIds.size >= 1024) {
@@ -851,11 +860,25 @@ export class AgentRuntime {
         const observation = await this.beginObservation(session);
         let observationEnded = false;
         try {
-          const result = this.hostTransport
-            ? await this.engine.runPlanLive!(input.runRef, this.hostTransport, session.logicalSessionId)
-            : await this.engine.runPlan(input.runRef, session.logicalSessionId);
+          const result = continuationRef
+            ? await this.engine.resumeEffectRun(continuationRef, session.logicalSessionId)
+            : this.hostTransport
+              ? await this.engine.runPlanLive!(input.runRef, this.hostTransport, session.logicalSessionId)
+              : await this.engine.runPlan(input.runRef, session.logicalSessionId);
+          const continuationDeadline = continuationRef ? this.effectContinuations.get(continuationRef)?.expiresAt : undefined;
+          if (continuationRef && result.continuationRef !== continuationRef) this.effectContinuations.delete(continuationRef);
           if (result.failureJson) {
             const failure = executionFailureSchema.parse(JSON.parse(result.failureJson));
+            if (result.continuationRef) {
+              for (const [ref, entry] of this.effectContinuations) {
+                if (performance.now() >= entry.expiresAt) this.effectContinuations.delete(ref);
+              }
+              if (!this.effectContinuations.has(result.continuationRef) && this.effectContinuations.size >= 128) {
+                throw new Error("Effect continuation capacity exhausted; the original run remains unresolved.");
+              }
+              this.effectContinuations.set(result.continuationRef, {logicalSessionRef: input.logicalSessionRef, runRef: input.runRef, expiresAt: continuationDeadline ?? performance.now() + 600_000});
+              throw new AgentExecutionFailure(failure, `${result.message}\nResume the original selection with plasm_resume using continuation_ref=${result.continuationRef}.`);
+            }
             throw new AgentExecutionFailure(failure, result.message);
           }
           const runMeta = parseRunMeta(result.metaJson);

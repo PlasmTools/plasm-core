@@ -97,7 +97,7 @@ for (const id of cases) {
   let calls = 0;
   let forbiddenCalls = 0;
   const unused = async (): Promise<never> => { forbiddenCalls++; throw new Error("Unexpected execution or provider operation"); };
-  const engine: PlasmEngine = { takeCompletedTeaching: async () => "",
+  const engine: PlasmEngine = { sealEffectWorkflows: async () => {}, resumeEffectRun: async () => { throw new Error("unexpected repair"); }, takeCompletedTeaching: async () => "",
     close: async () => {}, loadCatalog: unused, activateDiscovery: unused,
     synthesizeTeaching: unused, dryRun: unused, runPlan: unused, run: unused, introspectCatalog: unused,
     routeIntent: async (provenance, sessionId) => {

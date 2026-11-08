@@ -14,7 +14,7 @@ const failure = executionFailureSchema.parse({
 });
 let executions = 0;
 const runtime = {
-  plasmContext: async () => "context", plasm: async () => "plan",
+  plasmContext: async () => "context", plasm: async () => "plan", plasmResume: async () => { throw new Error("unexpected repair"); },
   plasmRun: async () => { executions++; throw new AgentExecutionFailure(failure, "Execution stopped: status 422: Already set. 75 completed; earlier effects were not rolled back."); },
   recordExecutionFailure: async () => {},
 };
@@ -71,7 +71,7 @@ for (const recovery of ["repair_program", "obtain_authorization", "reconcile_eff
     let calls = 0;
     let recorded = 0;
     const fail = async () => { calls++; throw new AgentExecutionFailure(small, "Matrix operation stopped."); };
-    const matrixTools = createPlasmTools({plasmContext: fail, plasm: fail, plasmRun: fail,
+    const matrixTools = createPlasmTools({plasmContext: fail, plasm: fail, plasmRun: fail, plasmResume: fail,
       recordExecutionFailure: async (_name, evidence) => { recorded++; assert.deepEqual(evidence, small); },
     });
     const args = name === "plasm_context" ? {session_mode: "extend", logical_session_ref: "l_AAAAAAAAQACAAAAAAAAAAQ", intent: "Observe abstract records"}
@@ -93,7 +93,7 @@ for (const recovery of ["repair_program", "obtain_authorization", "reconcile_eff
   }
 }
 const successTools = createPlasmTools({plasmContext: async () => "declarations",
-  plasm: async () => "review pc0", plasmRun: async () => "observed rows",
+  plasm: async () => "review pc0", plasmRun: async () => "observed rows", plasmResume: async () => { throw new Error("unexpected repair"); },
   recordExecutionFailure: async () => { assert.fail("success recorded as failure"); },
 });
 assert.equal(await successTools.plasm_context!.execute!({session_mode: "extend", logical_session_ref: "l_AAAAAAAAQACAAAAAAAAAAQ", intent: "Read records"}, options), "declarations");

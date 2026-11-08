@@ -9,3 +9,5 @@ Return only needed results: select and aggregate rowsets, and use typed @compute
 A failed or cancelled run may have completed writes. Inspect operation outcomes before issuing further effects; do not blindly replay a program. A rejected duplicate dispatches nothing new and does not undo the earlier execution.
 
 Failure evidence belongs to one execution. A new program may perform reads or writes in the same logical session; it does not resume or roll back an earlier execution. Service diagnostics inform the agent but do not determine effect status.
+
+If a confirmed no-effect rejection returns a `continuation_ref`, use `plasm_resume` with that reference and the same `logical_session_ref` to continue the original reviewed selection. Each returned reference is one-use; copy the latest one if the run pauses again.

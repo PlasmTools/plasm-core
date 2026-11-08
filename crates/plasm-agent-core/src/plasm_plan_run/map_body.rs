@@ -470,6 +470,8 @@ pub(super) async fn materialize(
             instances.push(serde_json::json!({"occurrence_path":occurrence_path, "steps":steps}));
             if quantifying.is_some_and(|all| keep != all) {
                 quantified = keep;
+                // Quantifier scopes are validated as read-only before execution.
+                plasm_runtime::execution::effect_continuation::EffectContinuation::complete_pure_short_circuit(occurrence + 1);
                 break;
             }
             continue;

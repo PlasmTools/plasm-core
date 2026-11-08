@@ -40,6 +40,7 @@ for (const scenario of cases) {
   const runtime = {
     plasmContext: async () => "Workflow opened",
     plasm: async () => "Read-only observation; no reconciliation evidence",
+    plasmResume: async () => { throw new Error("unexpected repair"); },
     plasmRun: async () => {
       if (executions++ > 0) return "Another reviewed selection completed; no relation to the failed selection is certified";
       throw new AgentExecutionFailure(failure,

@@ -10,6 +10,10 @@
  * Fixture generation: PLASM_EFFECT_FIXTURE_DIR=/tmp/plasm-obligation-fixture cargo test
  * -p plasm-agent-core --lib known_rejection_leaves_the_selected_suffix_unattempted
  * (also set PLASM_MONTY_BINARY to the current vendored worker for that command).
+ * For the positive repair witness, generate a second fixture with
+ * PLASM_EFFECT_FIXTURE_ENGINE_AUTH=1, point the manifest at it, and pass --repair.
+ * Optional flags: --loop, --answer, --repeat-rejection, --duplicates,
+ * --two-obligations, --unknown, and --cancel exercise distinct offline boundaries.
  * --observe prints all cases without failing; the default fails on any violation.
  */
 import assert from "node:assert/strict";
@@ -21,7 +25,7 @@ import { MockLanguageModelV3 } from "ai/test";
 import { loadPackedCatalog } from "../src/catalog/loader.js";
 import { NapiPlasmEngine, type HostTransportFn, type PlasmEngine } from "../src/engine/napi-binding.js";
 import { AgentRuntime } from "../src/runtime/agent-runtime.js";
-import type { ExecutionFailure } from "../src/runtime/execution-failure.js";
+import { AgentExecutionFailure, type ExecutionFailure } from "../src/runtime/execution-failure.js";
 import { routingPacketSchema } from "../src/engine/routing.js";
 import { createPlasmTools } from "../src/tools/plasm-tools.js";
 import { createHarnessTools } from "../src/tools/harness-tools.js";
@@ -30,13 +34,15 @@ import { runEveToolLoop } from "../src/telemetry/eve-tool-loop.js";
 const manifest = process.env.PLASM_EFFECT_FIXTURE_MANIFEST;
 if (!manifest) throw new Error("Set PLASM_EFFECT_FIXTURE_MANIFEST to the offline fixture manifest");
 const catalog = await loadPackedCatalog(manifest);
-const cases = [
+const allCases = [
   {name: "failure_then_complete", terminal: "complete_task", intervening: "none"},
   {name: "failure_then_answer", terminal: "submit_answer", intervening: "none"},
   {name: "failure_then_unrelated_read_then_complete", terminal: "complete_task", intervening: "read"},
   {name: "failure_then_unrelated_write_then_complete", terminal: "complete_task", intervening: "write"},
   {name: "write_while_original_is_in_flight", terminal: "complete_task", intervening: "inflight"},
+  {name: "native_repair_original_selection", terminal: "complete_task", intervening: "repair"},
 ] as const;
+const cases = allCases.filter(scenario => process.argv.includes("--repair") ? scenario.intervening === "repair" : scenario.intervening !== "repair");
 
 let exposed = 0;
 for (const scenario of cases) {
@@ -44,6 +50,9 @@ for (const scenario of cases) {
   const native = new NapiPlasmEngine();
   let runtime: AgentRuntime | undefined;
   const source = [0, 1, 2, 3].map(i => ({expense_id: `source-${i}`, group_id: "source", description: `item-${i}`}));
+  if (scenario.intervening === "repair" && process.argv.includes("--duplicates")) {
+    for (let i = 0; i < source.length; i++) source[i] = {expense_id: "source-0", group_id: "source", description: "same-value"};
+  }
   const rows: Array<{expense_id: string; group_id: string; description: string}> = [];
   let posts = 0;
   let reads = 0;
@@ -56,7 +65,8 @@ for (const scenario of cases) {
     assert.equal(request.method, "POST");
     const body = JSON.parse(request.body ?? "null") as {group_id: string; description: string};
     const attempt = posts++;
-    if (attempt === 1) {
+    if (attempt === 1 || (scenario.intervening === "repair" && process.argv.includes("--repeat-rejection") && attempt === 3)
+      || (scenario.intervening === "repair" && process.argv.includes("--two-obligations") && attempt === 2)) {
       if (scenario.intervening === "inflight") {
         assert.ok(runConcurrent);
         await Promise.race([
@@ -64,7 +74,7 @@ for (const scenario of cases) {
           new Promise<never>((_, reject) => setTimeout(() => reject(new Error("concurrent write blocked by original run")), 5000)),
         ]);
       }
-      return {status: 422, body: "fixture 422"};
+      return process.argv.includes("--unknown") ? {status: 503, body: "ambiguous fixture failure"} : {status: 422, body: "fixture 422"};
     }
     const row = {expense_id: `created-${attempt}`, group_id: body.group_id, description: body.description};
     rows.push(row);
@@ -74,6 +84,7 @@ for (const scenario of cases) {
     await native.loadCatalog(catalog);
     const engine: PlasmEngine = {
       sealEffectWorkflows: () => native.sealEffectWorkflows([""]),
+      resumeEffectRun: ref => native.resumeEffectRun(ref),
       close: () => native.close(), loadCatalog: c => native.loadCatalog(c),
       synthesizeTeaching: (intent, seeds) => native.synthesizeTeaching(intent, seeds),
       activateDiscovery: (deployment, bindings) => native.activateDiscovery(deployment, bindings),
@@ -118,12 +129,130 @@ for (const scenario of cases) {
       return ref;
     }
     const originalRef = await plan(original);
-    const unrelatedRef = scenario.intervening === "write" || scenario.intervening === "inflight" ? await plan(write) : undefined;
+    const unrelatedRef = scenario.intervening === "write" || scenario.intervening === "inflight" || scenario.intervening === "repair" ? await plan(write) : undefined;
     const recorded: ExecutionFailure[] = [];
     const live = runtime;
+    if (scenario.intervening === "repair") {
+      if (process.argv.includes("--loop")) {
+        let step = 0;
+        const model = new MockLanguageModelV3({doStream: async request => {
+          const current = step++;
+          if (current === 2) for (const row of source) row.description = "changed-after-selection";
+          const continuation = JSON.stringify(request.prompt).match(/continuation_ref=([0-9a-f-]{36})/)?.[1];
+          if (current === 2) assert.ok(continuation, "checkpoint must reach the model as a usable reference");
+          const name = current < 2 ? "plasm_run" : current === 2 ? "plasm_resume" : "complete_task";
+          const input = current < 2 ? {logical_session_ref: session, run_ref: current === 0 ? originalRef : unrelatedRef}
+            : current === 2 ? {logical_session_ref: session, continuation_ref: continuation} : {};
+          return {stream: new ReadableStream({start(controller) {
+            controller.enqueue({type: "tool-call", toolCallId: `repair-${current}`, toolName: name, input: JSON.stringify(input)});
+            controller.enqueue({type: "finish", finishReason: {unified: "tool-calls", raw: undefined},
+              usage: {inputTokens: {total: 0, noCache: 0, cacheRead: 0, cacheWrite: 0}, outputTokens: {total: 0, text: 0, reasoning: 0}}});
+            controller.close();
+          }})};
+        }});
+        const result = await runEveToolLoop({model, system: "Native repair fixture",
+          messages: [{role: "user", content: "Copy the selected records"}],
+          tools: {...createPlasmTools(live), ...createHarnessTools({includeEvalTerminals: true,
+            discoveryCompleted: () => live.hasOpenWorkflow(), sealEffectWorkflows: () => live.sealEffectWorkflows(),
+            responseObligation: {resolve: async () => "no_answer"}})},
+          maxSteps: 4, agentName: "native-repair-loop", telemetry: {isEnabled: false}});
+        assert.equal(result.stopReason, "completed");
+        assert.deepEqual(rows.map(row => row.description), ["item-0", "unrelated", "item-1", "item-2", "item-3"]);
+        assert.equal(posts, 6);
+        console.log(JSON.stringify({case: "native_repair_agent_loop", contract: "certified", posts, reads}));
+        continue;
+      }
+      let continuation: string | undefined;
+      try { await live.plasmRun({logicalSessionRef: session, runRef: originalRef}); }
+      catch (error) {
+        assert.ok(error instanceof AgentExecutionFailure);
+        assert.ok(!error.summary.includes("Bearer fixture"), "checkpoint presentation must not expose authentication");
+        if (process.argv.includes("--unknown")) assert.equal(error.failure.effects_unresolved, true);
+        continuation = error.summary.match(/continuation_ref=([0-9a-f-]{36})/)?.[1];
+      }
+      if (process.argv.includes("--unknown")) {
+        assert.equal(continuation, undefined, "unknown effects cannot grant a resume capability");
+        assert.equal(posts, 2);
+        await assert.rejects(live.sealEffectWorkflows(), /unfinished or uncertain effects/);
+        console.log(JSON.stringify({case: "native_unknown_dispatch", contract: "unresolved", posts, reads}));
+        continue;
+      }
+      assert.ok(continuation, "native checkpoint must expose its opaque continuation");
+      assert.deepEqual(rows.map(row => row.description), [process.argv.includes("--duplicates") ? "same-value" : "item-0"]);
+      await assert.rejects(live.plasmResume({logicalSessionRef: "wrong-workflow", continuationRef: continuation}), /unknown or belongs/);
+      await assert.rejects(native.resumeEffectRun(continuation, "wrong-workflow"));
+      assert.equal(posts, 2, "foreign workflow cannot consume or dispatch the checkpoint");
+      if (process.argv.includes("--cancel")) {
+        await Promise.race([
+          native.close(),
+          new Promise<never>((_, reject) => setTimeout(() => reject(new Error("closing did not cancel the paused worker")), 5000)),
+        ]);
+        assert.equal(posts, 2, "closing a paused run cannot retry the rejected write");
+        assert.deepEqual(rows.map(row => row.description), ["item-0"]);
+        console.log(JSON.stringify({case: "native_paused_close", contract: "cancelled", posts, reads}));
+        continue;
+      }
+      let secondContinuation: string | undefined;
+      if (process.argv.includes("--two-obligations")) {
+        try { await live.plasmRun({logicalSessionRef: session, runRef: unrelatedRef!}); }
+        catch (error) {
+          assert.ok(error instanceof AgentExecutionFailure);
+          secondContinuation = error.summary.match(/continuation_ref=([0-9a-f-]{36})/)?.[1];
+        }
+        assert.ok(secondContinuation, "second reviewed mutation must retain its own checkpoint");
+      } else {
+        await live.plasmRun({logicalSessionRef: session, runRef: unrelatedRef!});
+      }
+      for (const row of source) row.description = "changed-after-selection";
+      if (process.argv.includes("--repeat-rejection")) {
+        let next: string | undefined;
+        try { await live.plasmResume({logicalSessionRef: session, continuationRef: continuation}); }
+        catch (error) {
+          assert.ok(error instanceof AgentExecutionFailure);
+          next = error.summary.match(/continuation_ref=([0-9a-f-]{36})/)?.[1];
+        }
+        assert.ok(next);
+        assert.notEqual(next, continuation, "each checkpoint has a fresh one-use reference");
+        await assert.rejects(live.plasmResume({logicalSessionRef: session, continuationRef: continuation}), /unknown or belongs/);
+        continuation = next;
+      }
+      const resumeTool = createPlasmTools(live).plasm_resume?.execute;
+      assert.ok(resumeTool);
+      const resumed = await resumeTool({logical_session_ref: session, continuation_ref: continuation}, {toolCallId: "native-repair", messages: [], context: {}});
+      assert.equal(typeof resumed, "string", "the public repair tool must deliver the resumed result");
+      const originals = process.argv.includes("--duplicates") ? ["same-value", "same-value", "same-value", "same-value"] : ["item-0", "item-1", "item-2", "item-3"];
+      assert.deepEqual(rows.map(row => row.description), process.argv.includes("--two-obligations")
+        ? originals : [originals[0], "unrelated", ...originals.slice(1)]);
+      assert.equal(posts, process.argv.includes("--repeat-rejection") ? 7 : 6);
+      await assert.rejects(live.plasmResume({logicalSessionRef: session, continuationRef: continuation}), /unknown or belongs/);
+      assert.equal(posts, process.argv.includes("--repeat-rejection") ? 7 : 6, "replaying a consumed continuation cannot dispatch again");
+      if (process.argv.includes("--two-obligations")) {
+        await assert.rejects(live.sealEffectWorkflows(), /unfinished or uncertain effects/);
+        await live.plasmResume({logicalSessionRef: session, continuationRef: secondContinuation!});
+        assert.equal(posts, 7);
+        assert.equal(rows.at(-1)?.description, "unrelated");
+      }
+      const terminalName = process.argv.includes("--answer") ? "submit_answer" : "complete_task";
+      const terminals = createHarnessTools({includeEvalTerminals: true,
+        discoveryCompleted: () => live.hasOpenWorkflow(), sealEffectWorkflows: () => live.sealEffectWorkflows(),
+        responseObligation: {resolve: async () => terminalName === "submit_answer" ? "value_required" : "no_answer"}});
+      const terminalModel = new MockLanguageModelV3({doStream: async () => ({stream: new ReadableStream({start(controller) {
+        controller.enqueue({type: "tool-call", toolCallId: "certified-terminal", toolName: terminalName,
+          input: JSON.stringify(terminalName === "submit_answer" ? {answer: "42"} : {})});
+        controller.enqueue({type: "finish", finishReason: {unified: "tool-calls", raw: undefined},
+          usage: {inputTokens: {total: 0, noCache: 0, cacheRead: 0, cacheWrite: 0}, outputTokens: {total: 0, text: 0, reasoning: 0}}});
+        controller.close();
+      }})})});
+      const terminalResult = await runEveToolLoop({model: terminalModel, system: "Certified repair fixture",
+        messages: [{role: "user", content: "Complete the reviewed copy"}], tools: terminals,
+        maxSteps: 1, agentName: "certified-native-repair", telemetry: {isEnabled: false}});
+      assert.equal(terminalResult.stopReason, "completed", "native certificate permits the requested terminal");
+      console.log(JSON.stringify({case: scenario.name, contract: "certified", posts, reads}));
+      continue;
+    }
     runConcurrent = async () => { await live.plasmRun({logicalSessionRef: session, runRef: unrelatedRef!}); };
     const tools = createPlasmTools({plasmContext: live.plasmContext.bind(live), plasm: live.plasm.bind(live),
-      plasmRun: live.plasmRun.bind(live), recordExecutionFailure: async (name, failure) => {
+      plasmRun: live.plasmRun.bind(live), plasmResume: live.plasmResume.bind(live), recordExecutionFailure: async (name, failure) => {
         recorded.push(failure);
         await live.recordExecutionFailure(name, failure);
       }});

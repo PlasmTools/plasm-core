@@ -18,7 +18,7 @@ let fail = false;
 let calls = 0;
 let pause: Promise<void> | undefined;
 const consumed = new Set<string>();
-const engine: PlasmEngine = { takeCompletedTeaching: async () => "",
+const engine: PlasmEngine = { sealEffectWorkflows: async () => {}, resumeEffectRun: async () => { throw new Error("unexpected repair"); }, takeCompletedTeaching: async () => "",
   close: async () => {}, loadCatalog: unused, activateDiscovery: unused, routeIntent: unused,
   synthesizeTeaching: unused, dryRun: unused, run: unused, introspectCatalog: unused,
   runPlan: async input => {

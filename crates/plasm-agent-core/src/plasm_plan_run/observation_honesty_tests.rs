@@ -832,6 +832,18 @@ fn export_effect_fixture(output: &std::path::Path) {
                 value: "fixture 422".into(),
             },
         });
+    if std::env::var_os("PLASM_EFFECT_FIXTURE_ENGINE_AUTH").is_some() {
+        let mapping = cgs
+            .capabilities
+            .get_mut("pwexpense_create")
+            .unwrap()
+            .mapping
+            .as_mut()
+            .unwrap();
+        mapping.template.0["headers"] = serde_json::json!({
+            "type": "object", "fields": [["Authorization", {"type": "const", "value": "Bearer fixture"}]]
+        });
+    }
     plasm_core::loader::finalize_cgs_load(&mut cgs).unwrap();
     let cgs_hash = cgs.catalog_cgs_hash_hex();
     let discovery = CatalogDiscoveryArtifact {

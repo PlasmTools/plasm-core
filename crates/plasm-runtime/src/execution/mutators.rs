@@ -103,6 +103,11 @@ impl ExecutionEngine {
                 (None, Some(identity)) => identity.scope_auth(dispatch).await,
                 (None, None) => dispatch.await,
             };
+            if result.is_ok() {
+                if let Some(control) = &control {
+                    control.scalar_dispatch_completed();
+                }
+            }
             if let (Err(error), Some(control), Some(journal), Some(start)) =
                 (&result, control.as_ref(), journal.as_ref(), start)
             {

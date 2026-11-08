@@ -38,7 +38,7 @@ for (const recovery of ["reconcile_effects", "stop"] as const) {
   let traced = 0;
   const tools = createPlasmTools({
     plasmContext: async () => "context",
-    plasm: async () => "plan",
+    plasm: async () => "plan", plasmResume: async () => { throw new Error("unexpected repair"); },
     plasmRun: async () => {throw new AgentExecutionFailure(failure, summary);},
     recordExecutionFailure: async (_name, observed) => {assert.deepEqual(observed, failure);traced++;},
   });

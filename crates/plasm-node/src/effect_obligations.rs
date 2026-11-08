@@ -21,6 +21,7 @@ pub(crate) struct AdmittedRun {
     id: u64,
     dispatched: bool,
     removed: bool,
+    control: plasm_runtime::execution::effect_continuation::EffectContinuation,
 }
 
 impl EffectObligations {
@@ -37,7 +38,11 @@ impl EffectObligations {
 
     /// Reserve before execution. A dropped or panicked worker leaves the run
     /// unresolved; only an observed safe result removes its reservation.
-    pub(crate) fn admit(&self, workflow: &str) -> Result<AdmittedRun, &'static str> {
+    pub(crate) fn admit(
+        &self,
+        workflow: &str,
+        control: plasm_runtime::execution::effect_continuation::EffectContinuation,
+    ) -> Result<AdmittedRun, &'static str> {
         let mut workflows = self.0.lock().unwrap_or_else(|e| e.into_inner());
         if !workflows.contains_key(workflow) && workflows.len() >= MAX_WORKFLOWS {
             return Err("effect workflow capacity exhausted");
@@ -58,6 +63,7 @@ impl EffectObligations {
             id,
             dispatched: false,
             removed: false,
+            control,
         })
     }
 
@@ -115,20 +121,31 @@ impl AdmittedRun {
 
     /// Remove only when execution succeeded, or native failure evidence proves
     /// that no mutation was dispatched or acknowledged.
-    pub(crate) fn finish(mut self, result: &crate::engine::RunPlanResult) {
-        let safe = result.ok
-            || result
-                .failure_json
-                .as_deref()
-                .and_then(|json| serde_json::from_str::<plasm_runtime::ExecutionFailure>(json).ok())
-                .is_some_and(|failure| {
-                    !failure.effects_unresolved
-                        && failure.dispatches.is_empty()
-                        && failure.effects.iter().all(|effect| effect.completed == 0)
-                });
+    pub(crate) fn finish(
+        mut self,
+        result: &crate::engine::RunPlanResult,
+        certificate: Option<plasm_runtime::execution::effect_continuation::RepairCertificate>,
+    ) -> bool {
+        let safe = if self.control.has_checkpoint() {
+            result.ok && certificate.is_some_and(|cert| cert.consume_for(&self.control))
+        } else {
+            result.ok
+                || result
+                    .failure_json
+                    .as_deref()
+                    .and_then(|json| {
+                        serde_json::from_str::<plasm_runtime::ExecutionFailure>(json).ok()
+                    })
+                    .is_some_and(|failure| {
+                        !failure.effects_unresolved
+                            && failure.dispatches.is_empty()
+                            && failure.effects.iter().all(|effect| effect.completed == 0)
+                    })
+        };
         if safe {
             self.remove();
         }
+        safe
     }
 }
 
@@ -156,56 +173,73 @@ mod tests {
         }
     }
 
+    fn control() -> plasm_runtime::execution::effect_continuation::EffectContinuation {
+        plasm_runtime::execution::effect_continuation::EffectContinuation::new_native(
+            std::time::Duration::from_secs(1),
+        )
+        .unwrap()
+        .0
+    }
+
     #[test]
     fn unrelated_success_cannot_discharge_unresolved_run() {
         let registry = EffectObligations::default();
-        let mut original = registry.admit("workflow").unwrap();
+        let mut original = registry.admit("workflow", control()).unwrap();
         original.begin_execution();
         drop(original); // A lost worker is uncertain and must remain open.
-        registry.admit("workflow").unwrap().finish(&success());
+        registry
+            .admit("workflow", control())
+            .unwrap()
+            .finish(&success(), None);
         assert!(registry.seal(&["workflow".into()]).is_err());
         assert!(registry.seal(&["other".into()]).is_ok());
-        assert!(registry.admit("other").is_err());
+        assert!(registry.admit("other", control()).is_err());
     }
 
     #[test]
     fn terminal_and_execution_admission_are_serialized() {
         let registry = EffectObligations::default();
-        let running = registry.admit("workflow").unwrap();
+        let running = registry.admit("workflow", control()).unwrap();
         assert!(registry.seal(&["workflow".into()]).is_err());
-        running.finish(&success());
+        running.finish(&success(), None);
         registry.seal(&["workflow".into()]).unwrap();
-        assert!(registry.admit("workflow").is_err());
+        assert!(registry.admit("workflow", control()).is_err());
     }
 
     #[test]
     fn preparation_failure_cannot_leave_a_dispatch_obligation() {
         let registry = EffectObligations::default();
-        registry.admit("workflow").unwrap().preparation_failed();
+        registry
+            .admit("workflow", control())
+            .unwrap()
+            .preparation_failed();
         assert!(registry.seal(&["workflow".into()]).is_ok());
     }
 
     #[test]
     fn dropped_preparation_does_not_leave_a_phantom_obligation() {
         let registry = EffectObligations::default();
-        drop(registry.admit("workflow").unwrap());
+        drop(registry.admit("workflow", control()).unwrap());
         assert!(registry.seal(&["workflow".into()]).is_ok());
     }
 
     #[test]
     fn refusing_one_workflow_does_not_seal_the_others() {
         let registry = EffectObligations::default();
-        let running = registry.admit("b").unwrap();
+        let running = registry.admit("b", control()).unwrap();
         assert!(registry.seal(&["a".into(), "b".into()]).is_err());
-        registry.admit("a").unwrap().finish(&success());
-        running.finish(&success());
+        registry
+            .admit("a", control())
+            .unwrap()
+            .finish(&success(), None);
+        running.finish(&success(), None);
         assert!(registry.seal(&["a".into(), "b".into()]).is_ok());
     }
 
     #[test]
     fn releasing_a_session_does_not_erase_an_unresolved_run() {
         let registry = EffectObligations::default();
-        let mut run = registry.admit("workflow").unwrap();
+        let mut run = registry.admit("workflow", control()).unwrap();
         run.begin_execution();
         drop(run);
         registry.release("workflow");

@@ -182,6 +182,10 @@ impl PreparedLiveRun {
 
 #[derive(Debug, Error)]
 pub enum AgentEngineError {
+    #[error("native effect continuation failed")]
+    EffectContinuation(
+        #[source] plasm_runtime::execution::effect_continuation::EffectContinuationError,
+    ),
     #[error("native execution engine construction failed")]
     Runtime(#[source] Box<plasm_runtime::RuntimeError>),
     #[error("native workflow learning: {0}")]
