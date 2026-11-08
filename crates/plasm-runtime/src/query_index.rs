@@ -47,6 +47,22 @@ pub struct QueryIndex {
 }
 
 pub(crate) struct RetainedQueryEntries<'a>(pub(crate) &'a HashMap<QueryCacheKey, QueryObservation>);
+
+pub(crate) fn retained_query_capacity(entries: &HashMap<QueryCacheKey, QueryObservation>) -> usize {
+    entries.iter().fold(
+        crate::materialization::retained_hash_capacity::<QueryCacheKey, QueryObservation>(
+            entries.capacity(),
+        ),
+        |total, (key, observation)| {
+            let total = total.saturating_add(key.entity.capacity());
+            match observation {
+                QueryObservation::Observed(record) => total
+                    .saturating_add(crate::cache::retained_reference_collection_capacity(record)),
+                QueryObservation::Disputed => total,
+            }
+        },
+    )
+}
 impl serde::Serialize for RetainedQueryEntries<'_> {
     fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
         use serde::ser::SerializeSeq;
@@ -69,9 +85,7 @@ impl serde::Serialize for RetainedQueryEntries<'_> {
 
 impl QueryIndex {
     pub(crate) fn retention_capacity_bytes(&self) -> usize {
-        crate::materialization::retained_hash_capacity::<QueryCacheKey, QueryObservation>(
-            self.entries.capacity(),
-        )
+        retained_query_capacity(&self.entries)
     }
     pub(crate) fn retention_view(&self) -> impl serde::Serialize + '_ {
         RetainedQueryEntries(&self.entries)

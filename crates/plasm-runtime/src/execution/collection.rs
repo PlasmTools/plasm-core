@@ -69,14 +69,11 @@ impl ExecutionCollection {
         let mut total = 0usize;
         let mut current = Some(self);
         while let Some(collection) = current {
-            let refs = collection.membership.observed();
             total = total
-                .saturating_add(refs.retention_allocation_bytes())
+                .saturating_add(crate::cache::retained_reference_collection_capacity(
+                    &collection.membership,
+                ))
                 .saturating_add(collection.entities.retention_allocation_bytes());
-            for batch in refs.retention_batches() {
-                total =
-                    total.saturating_add(batch.len().saturating_mul(std::mem::size_of::<Ref>()));
-            }
             for batch in collection.entities.retention_batches() {
                 total = total.saturating_add(crate::cache::retained_entities_capacity(batch));
             }

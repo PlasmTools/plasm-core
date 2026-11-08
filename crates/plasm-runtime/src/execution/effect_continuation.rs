@@ -1283,6 +1283,36 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn retained_collection_counts_identity_spare_capacity() {
+        use plasm_core::collection_codec::{
+            CollectionCodec, CollectionIdentity, Observation, RecordingCodec,
+        };
+        let mut id = String::with_capacity(MAX_EFFECT_SELECTION_BYTES + 1);
+        id.push('x');
+        let record = RecordingCodec::new()
+            .record(
+                CollectionIdentity::for_untyped_observation(&"identity-capacity").unwrap(),
+                vec![plasm_core::Ref::new("Item", id)],
+                Observation::Literal,
+            )
+            .unwrap();
+        let collection = super::super::ExecutionCollection::graph(record);
+        let (control, _pauses) = EffectContinuation::new_native(Duration::from_secs(2)).unwrap();
+        control
+            .scope(async {
+                let mut reservation =
+                    EffectContinuation::reserve_retained(&collection.retention_view()).unwrap();
+                assert!(matches!(
+                    reservation.add_capacity_bytes(collection.retention_capacity_bytes()),
+                    Err(EffectContinuationError::SelectionBudget(
+                        plasm_core::ValueBudgetError::BytesExceeded
+                    ))
+                ));
+            })
+            .await;
+    }
+
+    #[tokio::test]
     async fn retained_collection_charges_nested_hidden_relation_rows() {
         use plasm_core::collection_codec::{
             CollectionCodec, CollectionIdentity, Observation, RecordingCodec, Transform,

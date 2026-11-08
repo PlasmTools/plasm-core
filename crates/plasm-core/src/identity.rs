@@ -106,6 +106,18 @@ string_id! {
     /// Stable instance id for an entity (string form).
     EntityId
 }
+
+impl EntityName {
+    pub(crate) fn retained_capacity(&self) -> usize {
+        self.0.capacity()
+    }
+}
+
+impl EntityId {
+    pub(crate) fn retained_capacity(&self) -> usize {
+        self.0.capacity()
+    }
+}
 string_id! {
     /// Capability operation name (e.g. `list_pets`, `update_account`).
     CapabilityName
@@ -130,6 +142,12 @@ string_id! {
 string_id! {
     /// Registry / catalog row id (`entry_id` in YAML and HTTP/MCP).
     RegistryEntryId
+}
+
+impl RegistryEntryId {
+    pub(crate) fn retained_capacity(&self) -> usize {
+        self.0.capacity()
+    }
 }
 
 impl From<&EntityName> for EntityName {

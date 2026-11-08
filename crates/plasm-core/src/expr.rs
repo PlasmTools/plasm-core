@@ -438,6 +438,43 @@ pub struct Ref {
     pub key: EntityKey,
 }
 
+impl Ref {
+    /// Conservative heap capacity retained by the identity's owned components.
+    pub fn retention_capacity_bytes(&self) -> usize {
+        fn slot_capacity(slot: &IdentitySlot) -> usize {
+            match slot {
+                IdentitySlot::Lit(id) => id.retained_capacity(),
+                IdentitySlot::Binding(binding) => {
+                    let (name, path) = match binding {
+                        crate::PlasmInputRef::NodeInput { node, path } => (node, path),
+                        crate::PlasmInputRef::RowBinding { binding, path } => (binding, path),
+                    };
+                    path.iter().fold(
+                        name.capacity().saturating_add(
+                            path.capacity()
+                                .saturating_mul(std::mem::size_of::<String>()),
+                        ),
+                        |total, item| total.saturating_add(item.capacity()),
+                    )
+                }
+            }
+        }
+        let key = match &self.key {
+            EntityKey::Simple(slot) => slot_capacity(slot),
+            EntityKey::Compound(values) => {
+                values
+                    .iter()
+                    .fold(values.len().saturating_mul(1024), |total, (key, slot)| {
+                        total
+                            .saturating_add(key.capacity())
+                            .saturating_add(slot_capacity(slot))
+                    })
+            }
+        };
+        self.entity_type.retained_capacity().saturating_add(key)
+    }
+}
+
 impl QueryExpr {
     /// Create a new query for all resources of the given type.
     pub fn all(entity: impl Into<EntityName>) -> Self {

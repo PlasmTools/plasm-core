@@ -175,10 +175,33 @@ mod retention_tests {
                 plasm_runtime::ResultCoverage::Unknown,
             );
         control
+            .clone()
             .scope(async {
                 let failure = reserve_materialized_inputs(&nodes, &StepId("step".into()))
                     .err()
                     .expect("oversized retained collection must fail");
+                assert!(failure.input_budget.is_some());
+            })
+            .await;
+        let node = nodes.values_mut().next().unwrap();
+        Arc::get_mut(&mut node.result).unwrap().collection =
+            crate::test_support::execution_fixtures::collection(
+                Vec::new(),
+                plasm_runtime::ResultCoverage::Unknown,
+            );
+        let mut id = String::with_capacity(MAX_EFFECT_SELECTION_BYTES + 1);
+        id.push('x');
+        node.row_identities = vec![Some(plasm_core::RowIdentity::new(
+            plasm_core::QualifiedEntityKey::new("test", "Item"),
+            plasm_core::Ref::new("Item", id),
+            Default::default(),
+            plasm_core::row_composition::IdEncoding::Simple,
+        ))];
+        control
+            .scope(async {
+                let failure = reserve_materialized_inputs(&nodes, &StepId("step".into()))
+                    .err()
+                    .expect("oversized retained identity must fail");
                 assert!(failure.input_budget.is_some());
             })
             .await;
@@ -282,17 +305,31 @@ fn reserve_materialized_inputs(
                 ))
                 .map_err(&failure)?;
                 reservation
-                    .add_capacity_bytes(entity_type.capacity().saturating_add(
-                        plasm_runtime::cache::retained_entities_capacity(hot_snapshot.as_ref()),
-                    ))
+                    .add_capacity_bytes(
+                        entity_type
+                            .capacity()
+                            .saturating_add(plasm_runtime::cache::retained_entities_capacity(
+                                hot_snapshot.as_ref(),
+                            ))
+                            .saturating_add(
+                                plasm_runtime::cache::retained_reference_collection_capacity(
+                                    membership,
+                                ),
+                            ),
+                    )
                     .map_err(&failure)?;
                 reservations.push(reservation);
             }
         }
-        reservations.push(
+        let mut identities =
             EffectContinuation::reserve_retained(&RetainedIdentities(&value.row_identities))
-                .map_err(&failure)?,
-        );
+                .map_err(&failure)?;
+        for identity in value.row_identities.iter().flatten() {
+            identities
+                .add_capacity_bytes(identity.retention_capacity_bytes())
+                .map_err(&failure)?;
+        }
+        reservations.push(identities);
     }
     Ok(reservations)
 }

@@ -174,20 +174,40 @@ pub fn retained_entities_capacity(entities: &[CachedEntity]) -> usize {
 }
 
 fn retained_entity_capacity(entity: &CachedEntity) -> usize {
-    let mut bytes = crate::materialization::retained_index_capacity::<String, TypedFieldValue>(
-        entity.fields.capacity(),
-    )
-    .saturating_add(crate::materialization::retained_index_capacity::<
-        String,
-        RelationMembership,
-    >(entity.relations.capacity()));
+    let mut bytes = entity
+        .reference
+        .retention_capacity_bytes()
+        .saturating_add(crate::materialization::retained_index_capacity::<
+            String,
+            TypedFieldValue,
+        >(entity.fields.capacity()))
+        .saturating_add(crate::materialization::retained_index_capacity::<
+            String,
+            RelationMembership,
+        >(entity.relations.capacity()));
     for (key, value) in &entity.fields {
         bytes = bytes.saturating_add(key.capacity()).saturating_add(
             crate::materialization::typed_value_retention_capacity(value, 0),
         );
     }
-    for key in entity.relations.keys() {
-        bytes = bytes.saturating_add(key.capacity());
+    for (key, relation) in &entity.relations {
+        bytes = bytes
+            .saturating_add(key.capacity())
+            .saturating_add(retained_reference_collection_capacity(relation.record()));
+    }
+    bytes
+}
+
+pub fn retained_reference_collection_capacity(
+    collection: &plasm_core::collection_codec::RecordedCollection<Ref>,
+) -> usize {
+    let rows = collection.observed();
+    let mut bytes = rows.retention_allocation_bytes();
+    for batch in rows.retention_batches() {
+        bytes = bytes.saturating_add(batch.len().saturating_mul(std::mem::size_of::<Ref>()));
+        for reference in batch {
+            bytes = bytes.saturating_add(reference.retention_capacity_bytes());
+        }
     }
     bytes
 }

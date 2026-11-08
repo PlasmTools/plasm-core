@@ -40,10 +40,7 @@ impl BranchMaterializationBase {
     /// Conservative capacity charge for the fork's snapshot hash tables.
     pub fn retention_capacity_bytes(&self) -> usize {
         crate::materialization::response_retention_capacity(&self.responses).saturating_add(
-            crate::materialization::retained_hash_capacity::<
-                QueryCacheKey,
-                crate::query_index::QueryObservation,
-            >(self.query_index.capacity()),
+            crate::query_index::retained_query_capacity(&self.query_index),
         )
     }
     /// Internal discard-only view of the fork's retained response and query bases.

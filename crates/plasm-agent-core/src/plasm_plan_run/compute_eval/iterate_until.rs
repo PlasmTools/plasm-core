@@ -80,6 +80,16 @@ fn reserve_iteration_state(
             .map_err(&map_failure)?;
         retained.add_value(&input.row).map_err(&map_failure)?;
         retained.add_selection(&input.rows).map_err(&map_failure)?;
+        for identity in input
+            .row_identities
+            .iter()
+            .chain(std::iter::once(&input.row_identity))
+            .flatten()
+        {
+            retained
+                .add_capacity_bytes(identity.retention_capacity_bytes())
+                .map_err(&map_failure)?;
+        }
         retained
             .add_capacity_bytes(
                 input
