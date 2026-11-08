@@ -949,6 +949,61 @@ mod tests {
     use super::*;
 
     #[tokio::test]
+    async fn graph_retention_counts_hidden_relation_backing_rows_and_fork_base() {
+        use crate::execution::effect_continuation::{
+            EffectContinuation, EffectContinuationError, MAX_EFFECT_SELECTION_BYTES,
+        };
+        use plasm_core::collection_codec::{
+            CollectionCodec, CollectionIdentity, Observation, RecordingCodec, Transform,
+        };
+        use plasm_core::row_contract::RelationMembership;
+
+        let codec = RecordingCodec::new();
+        let identity = CollectionIdentity::for_untyped_observation(&"relation-retention").unwrap();
+        let original = codec
+            .record(
+                identity.clone(),
+                vec![
+                    Ref::new("Child", "small"),
+                    Ref::new("Child", "x".repeat(MAX_EFFECT_SELECTION_BYTES)),
+                ],
+                Observation::Literal,
+            )
+            .unwrap();
+        let visible = codec
+            .derive(
+                identity.derived(&"take-one").unwrap(),
+                &[&original],
+                Transform::Take(1),
+            )
+            .unwrap();
+        let mut entity = CachedEntity::new(Ref::new("Parent", "one"), 0);
+        entity
+            .relations
+            .insert("children".into(), RelationMembership::from_record(visible));
+        let mut graph = GraphCache::new();
+        graph.overwrite(entity).unwrap();
+        let mut branch = graph.fork_for_branch();
+        branch
+            .overwrite(CachedEntity::new(Ref::new("Parent", "one"), 0))
+            .unwrap();
+        let (control, _pauses) =
+            EffectContinuation::new_native(std::time::Duration::from_secs(2)).unwrap();
+        control
+            .scope(async {
+                for state in [&graph, &branch] {
+                    assert!(matches!(
+                        EffectContinuation::reserve_retained(&state.retention_view()),
+                        Err(EffectContinuationError::SelectionBudget(
+                            plasm_core::ValueBudgetError::BytesExceeded
+                        ))
+                    ));
+                }
+            })
+            .await;
+    }
+
+    #[tokio::test]
     async fn graph_and_binding_payload_capacities_are_charged() {
         use crate::execution::effect_continuation::{
             EffectContinuation, EffectContinuationError, MAX_EFFECT_SELECTION_BYTES,

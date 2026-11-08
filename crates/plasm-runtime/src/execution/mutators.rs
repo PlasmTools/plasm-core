@@ -870,6 +870,86 @@ mod continuation_tests {
     }
 
     #[tokio::test]
+    async fn hidden_relation_backing_cannot_be_pinned_by_a_checkpoint() {
+        use crate::execution::effect_continuation::MAX_EFFECT_SELECTION_BYTES;
+        use plasm_core::collection_codec::{
+            CollectionCodec, CollectionIdentity, Observation, RecordingCodec, Transform,
+        };
+        use plasm_core::row_contract::RelationMembership;
+
+        let codec = RecordingCodec::new();
+        let identity = CollectionIdentity::for_untyped_observation(&"hidden-relation").unwrap();
+        let all = codec
+            .record(
+                identity.clone(),
+                vec![
+                    plasm_core::Ref::new("Child", "small"),
+                    plasm_core::Ref::new("Child", "x".repeat(MAX_EFFECT_SELECTION_BYTES)),
+                ],
+                Observation::Literal,
+            )
+            .unwrap();
+        let selected = codec
+            .derive(
+                identity.derived(&"take-one").unwrap(),
+                &[&all],
+                Transform::Take(1),
+            )
+            .unwrap();
+        let mut entity = crate::CachedEntity::new(plasm_core::Ref::new("Parent", "one"), 0);
+        entity
+            .relations
+            .insert("children".into(), RelationMembership::from_record(selected));
+        let mut graph = crate::GraphCache::new();
+        graph.overwrite(entity).unwrap();
+        let graph = SessionMaterialization {
+            graph: graph.fork_for_branch(),
+            ..Default::default()
+        };
+        let transport = Arc::new(Transport {
+            statuses: vec![422],
+            opaque: false,
+            requests: Mutex::new(Vec::new()),
+        });
+        let engine = ExecutionEngine::new_with_transport(
+            ExecutionConfig {
+                base_url: Some("https://fixture.test".into()),
+                ..Default::default()
+            },
+            Arc::clone(&transport) as Arc<dyn HttpTransport>,
+            None,
+        );
+        let journal = super::super::mutation_evidence::MutationJournal::default();
+        let (control, mut pauses) = EffectContinuation::new_native(Duration::from_secs(5)).unwrap();
+        let compiled = request();
+        let result = control
+            .scope(journal.scope(engine.dispatch_compiled_mutation(
+                &compiled,
+                "PwExpense",
+                OperationIdentity {
+                    entry_id: "matrix".into(),
+                    capability: "pwexpense_create".into(),
+                },
+                &capability(),
+                None,
+                &graph,
+            )))
+            .await;
+        assert!(matches!(
+            result,
+            Err(RuntimeError::RequestError {
+                status: Some(422),
+                ..
+            })
+        ));
+        assert_eq!(transport.requests.lock().unwrap().len(), 1);
+        assert!(!matches!(
+            tokio::time::timeout(Duration::from_millis(20), pauses.recv()).await,
+            Ok(Some(_))
+        ));
+    }
+
+    #[tokio::test]
     async fn oversized_unrelated_branch_graph_cannot_be_pinned_by_a_checkpoint() {
         use crate::execution::effect_continuation::MAX_EFFECT_SELECTION_BYTES;
         let transport = Arc::new(Transport {

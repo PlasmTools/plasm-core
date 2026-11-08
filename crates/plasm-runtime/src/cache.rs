@@ -119,13 +119,53 @@ pub struct GraphCache {
 /// A discard-only serialization view of all graph state held by a branch.
 struct RetainedGraph<'a>(&'a GraphCache);
 
+struct RetainedRelations<'a>(&'a IndexMap<String, RelationMembership>);
+impl serde::Serialize for RetainedRelations<'_> {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        use serde::ser::SerializeMap;
+        let mut map = serializer.serialize_map(Some(self.0.len()))?;
+        for (name, membership) in self.0 {
+            map.serialize_entry(name, &membership.record().retention_view())?;
+        }
+        map.end()
+    }
+}
+
+struct RetainedEntity<'a>(&'a CachedEntity);
+impl serde::Serialize for RetainedEntity<'_> {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        (
+            &self.0.reference,
+            &self.0.fields,
+            RetainedRelations(&self.0.relations),
+            self.0.last_updated,
+            self.0.version,
+            self.0.completeness,
+            &self.0.unavailable_fields,
+        )
+            .serialize(serializer)
+    }
+}
+
+struct RetainedBase<'a>(&'a crate::materialization_conflict::EntityBaseContent);
+impl serde::Serialize for RetainedBase<'_> {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        (
+            &self.0.fields,
+            RetainedRelations(&self.0.relations),
+            self.0.completeness,
+        )
+            .serialize(serializer)
+    }
+}
+
 struct RetainedGraphEntries<'a>(&'a GraphCache);
 impl serde::Serialize for RetainedGraphEntries<'_> {
     fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
         use serde::ser::SerializeSeq;
         let mut sequence = serializer.serialize_seq(Some(self.0.entities.len()))?;
         for (reference, entity) in &self.0.entities {
-            sequence.serialize_element(&(reference, entity.as_ref()))?;
+            sequence.serialize_element(&(reference, RetainedEntity(&entity[0])))?;
         }
         sequence.end()
     }
@@ -151,8 +191,8 @@ impl serde::Serialize for RetainedFork<'_> {
         impl serde::Serialize for LazyEntries<'_> {
             fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
                 let mut sequence = serializer.serialize_seq(Some(self.0.lazy_base.len()))?;
-                for item in &self.0.lazy_base {
-                    sequence.serialize_element(&item)?;
+                for (reference, base) in &self.0.lazy_base {
+                    sequence.serialize_element(&(reference, RetainedBase(base)))?;
                 }
                 sequence.end()
             }
