@@ -10,6 +10,12 @@ fn execution_mode_label(mode: ExecutionMode) -> &'static str {
     }
 }
 
+/// Materialization and bindings held by the caller while dispatch is paused.
+struct RetainedMutationFrame<'a> {
+    materialization: &'a SessionMaterialization,
+    env: &'a CmlEnv,
+}
+
 fn retained_http_request_capacity(operation: &CompiledOperation) -> usize {
     let request = match operation {
         CompiledOperation::Http(request) | CompiledOperation::GraphQl(request) => request,
@@ -141,8 +147,12 @@ impl ExecutionEngine {
         operation: OperationIdentity,
         capability: &CapabilitySchema,
         identity: Option<&super::request_identity::RequestIdentity>,
-        materialization: &SessionMaterialization,
+        retained: RetainedMutationFrame<'_>,
     ) -> Result<(serde_json::Value, Option<String>), RuntimeError> {
+        let RetainedMutationFrame {
+            materialization,
+            env: retained_env,
+        } = retained;
         let control = super::effect_continuation::EffectContinuation::current().filter(|_| {
             super::effect_continuation::EffectContinuation::supports_capability(capability)
         });
@@ -205,8 +215,8 @@ impl ExecutionEngine {
                     else {
                         return result;
                     };
-                    // The request, pinned authority and original rejection all
-                    // remain in this frame while checkpoint() awaits a resume.
+                    // The request, caller bindings, materialization, pinned
+                    // authority and rejection remain live across the pause.
                     // If they do not fit, return the original typed rejection:
                     // no continuation capability or retry is issued.
                     let mut retained_dispatch =
@@ -214,6 +224,7 @@ impl ExecutionEngine {
                             compiled,
                             entity,
                             &operation,
+                            retained_env,
                             original_identity.retention_auth(),
                             materialization.retention_view(),
                             (
@@ -241,6 +252,12 @@ impl ExecutionEngine {
                             materialization
                                 .retention_capacity_bytes()
                                 .saturating_add(retained_http_request_capacity(compiled))
+                                .saturating_add(crate::materialization::value_map_capacity(
+                                    retained_env,
+                                    0,
+                                ))
+                                .saturating_add(operation.entry_id.capacity())
+                                .saturating_add(operation.capability.capacity())
                                 .saturating_add(original_identity.retention_auth_capacity())
                                 .saturating_add(retained_rejection_capacity(response, body)),
                         )
@@ -329,7 +346,10 @@ impl ExecutionEngine {
                         },
                         capability,
                         None,
-                        mat,
+                        RetainedMutationFrame {
+                            materialization: mat,
+                            env: &env,
+                        },
                     )
                     .await;
                 let (response, _) = match http_res {
@@ -436,10 +456,14 @@ impl ExecutionEngine {
         merge_plasm_execute_session_env(&mut env);
 
         let compiled = compile_operation_dispatch(&capability_template, &env)?;
+        // Delete needs neither the template nor its bindings after compilation.
+        drop(env);
+        drop(capability_template);
 
         match mode {
             ExecutionMode::Live => {
                 ensure_mutating_operation(&compiled, "delete")?;
+                let retained_env = CmlEnv::new();
                 let (response, _) = self
                     .dispatch_compiled_mutation(
                         &compiled,
@@ -450,7 +474,10 @@ impl ExecutionEngine {
                         },
                         capability,
                         None,
-                        mat,
+                        RetainedMutationFrame {
+                            materialization: mat,
+                            env: &retained_env,
+                        },
                     )
                     .await?;
                 preflight_fibery_command_envelope(&response)?;
@@ -563,7 +590,10 @@ impl ExecutionEngine {
                         },
                         capability,
                         request_identity.as_ref(),
-                        mat,
+                        RetainedMutationFrame {
+                            materialization: mat,
+                            env: &env,
+                        },
                     )
                     .await;
                 let (response, _) = match http_res {
@@ -836,6 +866,119 @@ mod continuation_tests {
         capability
     }
 
+    fn empty_env() -> &'static CmlEnv {
+        static EMPTY: std::sync::OnceLock<CmlEnv> = std::sync::OnceLock::new();
+        EMPTY.get_or_init(CmlEnv::new)
+    }
+
+    #[tokio::test]
+    async fn oversized_retained_mutation_environment_cannot_create_a_checkpoint() {
+        use crate::execution::effect_continuation::MAX_EFFECT_SELECTION_BYTES;
+        let mut spare = String::with_capacity(MAX_EFFECT_SELECTION_BYTES + 1);
+        spare.push('x');
+        for value in ["x".repeat(MAX_EFFECT_SELECTION_BYTES), spare] {
+            let transport = Arc::new(Transport {
+                statuses: vec![422],
+                opaque: false,
+                requests: Mutex::new(Vec::new()),
+            });
+            let engine = ExecutionEngine::new_with_transport(
+                ExecutionConfig {
+                    base_url: Some("https://fixture.test".into()),
+                    ..Default::default()
+                },
+                Arc::clone(&transport) as Arc<dyn HttpTransport>,
+                None,
+            );
+            let compiled = request();
+            let graph = SessionMaterialization::new();
+            let env = CmlEnv::from([("unused".into(), Value::String(value))]);
+            let capability = capability();
+            let journal = super::super::mutation_evidence::MutationJournal::default();
+            let (control, mut pauses) =
+                EffectContinuation::new_native(Duration::from_secs(5)).unwrap();
+            let run = control.scope(journal.scope(engine.dispatch_compiled_mutation(
+                &compiled,
+                "PwExpense",
+                OperationIdentity {
+                    entry_id: "matrix".into(),
+                    capability: "pwexpense_create".into(),
+                },
+                &capability,
+                None,
+                RetainedMutationFrame {
+                    materialization: &graph,
+                    env: &env,
+                },
+            )));
+            tokio::pin!(run);
+            let result = tokio::select! {
+                result = &mut run => result,
+                pause = pauses.recv() => panic!("oversized retained environment admitted checkpoint: {}", pause.is_some()),
+            };
+            assert!(matches!(
+                result,
+                Err(RuntimeError::RequestError {
+                    status: Some(422),
+                    ..
+                })
+            ));
+            assert_eq!(transport.requests.lock().unwrap().len(), 1);
+        }
+    }
+
+    #[tokio::test]
+    async fn oversized_operation_identity_capacity_cannot_create_a_checkpoint() {
+        use crate::execution::effect_continuation::MAX_EFFECT_SELECTION_BYTES;
+        let transport = Arc::new(Transport {
+            statuses: vec![422],
+            opaque: false,
+            requests: Mutex::new(Vec::new()),
+        });
+        let engine = ExecutionEngine::new_with_transport(
+            ExecutionConfig {
+                base_url: Some("https://fixture.test".into()),
+                ..Default::default()
+            },
+            Arc::clone(&transport) as Arc<dyn HttpTransport>,
+            None,
+        );
+        let compiled = request();
+        let graph = SessionMaterialization::new();
+        let capability = capability();
+        let mut entry_id = String::with_capacity(MAX_EFFECT_SELECTION_BYTES + 1);
+        entry_id.push_str("matrix");
+        let journal = super::super::mutation_evidence::MutationJournal::default();
+        let (control, mut pauses) = EffectContinuation::new_native(Duration::from_secs(5)).unwrap();
+        let run = control.scope(journal.scope(engine.dispatch_compiled_mutation(
+            &compiled,
+            "PwExpense",
+            OperationIdentity {
+                entry_id,
+                capability: "pwexpense_create".into(),
+            },
+            &capability,
+            None,
+            RetainedMutationFrame {
+                materialization: &graph,
+                env: empty_env(),
+            },
+        )));
+        tokio::pin!(run);
+        let result = tokio::select! {
+            result = &mut run => result,
+            pause = pauses.recv() => panic!("oversized operation identity admitted checkpoint: {}", pause.is_some()),
+        };
+        assert!(matches!(
+            result,
+            Err(RuntimeError::RequestError {
+                status: Some(422),
+                ..
+            })
+        ));
+        assert_eq!(transport.requests.lock().unwrap().len(), 1);
+    }
+
     fn request() -> CompiledOperation {
         CompiledOperation::Http(CompiledRequest {
             method: plasm_compile::HttpMethod::Post,
@@ -910,7 +1053,10 @@ mod continuation_tests {
             identity,
             &capability,
             None,
-            &graph,
+            RetainedMutationFrame {
+                materialization: &graph,
+                env: empty_env(),
+            },
         )));
         tokio::pin!(run);
         let result = tokio::select! {
@@ -961,7 +1107,10 @@ mod continuation_tests {
                 },
                 &capability(),
                 None,
-                &graph,
+                RetainedMutationFrame {
+                    materialization: &graph,
+                    env: empty_env(),
+                },
             )))
             .await;
         assert!(matches!(
@@ -1016,7 +1165,10 @@ mod continuation_tests {
                 },
                 &capability(),
                 None,
-                &graph,
+                RetainedMutationFrame {
+                    materialization: &graph,
+                    env: empty_env(),
+                },
             )))
             .await;
         assert!(matches!(
@@ -1105,7 +1257,10 @@ mod continuation_tests {
                 },
                 &capability(),
                 None,
-                &graph,
+                RetainedMutationFrame {
+                    materialization: &graph,
+                    env: empty_env(),
+                },
             ))),
         )
         .await
@@ -1187,7 +1342,10 @@ mod continuation_tests {
                 },
                 &capability(),
                 None,
-                &graph,
+                RetainedMutationFrame {
+                    materialization: &graph,
+                    env: empty_env(),
+                },
             )))
             .await;
         assert!(matches!(
@@ -1245,7 +1403,10 @@ mod continuation_tests {
                 },
                 &capability(),
                 None,
-                &graph,
+                RetainedMutationFrame {
+                    materialization: &graph,
+                    env: empty_env(),
+                },
             )))
             .await;
         assert!(matches!(
@@ -1330,7 +1491,10 @@ mod continuation_tests {
                     },
                     &capability(),
                     None,
-                    &materialization,
+                    RetainedMutationFrame {
+                        materialization: &materialization,
+                        env: empty_env(),
+                    },
                 )))
                 .await;
             assert!(matches!(
@@ -1380,7 +1544,10 @@ mod continuation_tests {
                 identity.clone(),
                 &capability,
                 None,
-                &graph,
+                RetainedMutationFrame {
+                    materialization: &graph,
+                    env: empty_env(),
+                },
             )));
         tokio::pin!(run);
         let mut pause = tokio::select! {
@@ -1453,7 +1620,10 @@ mod continuation_tests {
                 },
                 &capability,
                 None,
-                &graph,
+                RetainedMutationFrame {
+                    materialization: &graph,
+                    env: empty_env(),
+                },
             )));
         tokio::pin!(run);
         if opaque || first_status != 422 {
