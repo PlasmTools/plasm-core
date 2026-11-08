@@ -1,7 +1,5 @@
 //! Bind-graph layer scheduling for parallel comp step execution.
 
-use std::collections::HashMap;
-
 use plasm_core::plasm_monad::{PlasmBindGraph, PlasmStepPayload, StepId};
 use plasm_core::EffectClass;
 
@@ -55,16 +53,16 @@ pub(crate) fn comp_step_parallel_safe(payload: &PlasmStepPayload) -> bool {
 }
 
 #[must_use]
-pub(crate) fn layer_parallel_safe(
+pub(crate) fn layer_parallel_safe<'a>(
     layer: &[StepId],
-    payload_by_step: &HashMap<StepId, PlasmStepPayload>,
+    payload_for: impl Fn(&StepId) -> Option<&'a PlasmStepPayload>,
 ) -> bool {
     if layer.len() <= 1 {
         return false;
     }
     if !layer
         .iter()
-        .all(|id| payload_by_step.get(id).is_some_and(comp_step_parallel_safe))
+        .all(|id| payload_for(id).is_some_and(comp_step_parallel_safe))
     {
         return false;
     }
@@ -73,7 +71,7 @@ pub(crate) fn layer_parallel_safe(
     // bind graph dropped that edge; refuse parallel execution in every profile.
     // Linear scan (no allocation); layers are small and relations rare.
     for id in layer {
-        let Some(PlasmStepPayload::FlatMapRelation(p)) = payload_by_step.get(id) else {
+        let Some(PlasmStepPayload::FlatMapRelation(p)) = payload_for(id) else {
             continue;
         };
         let source = match StepId::new(p.relation.source.clone()) {
@@ -111,6 +109,7 @@ mod tests {
     };
     use plasm_core::RelationMaterialization;
     use std::collections::BTreeSet;
+    use std::collections::HashMap;
 
     fn step(id: &str) -> StepId {
         StepId::new(id.to_string()).expect("step id")
@@ -186,7 +185,7 @@ mod tests {
         let payload_by_step = HashMap::from([(a, pure_payload()), (b, pure_payload())]);
         let layers = bind_topo_execution_layers(&bind).expect("layers");
         assert_eq!(layers.len(), 1);
-        assert!(layer_parallel_safe(&layers[0], &payload_by_step));
+        assert!(layer_parallel_safe(&layers[0], |id| payload_by_step.get(id)));
     }
 
     #[test]
@@ -205,7 +204,7 @@ mod tests {
         let layers = bind_topo_execution_layers(&bind).expect("layers");
         assert_eq!(layers.len(), 1);
         assert_eq!(layers[0].len(), 2);
-        assert!(!layer_parallel_safe(&layers[0], &payload_by_step));
+        assert!(!layer_parallel_safe(&layers[0], |id| payload_by_step.get(id)));
     }
 
     #[test]
@@ -228,6 +227,14 @@ mod tests {
     }
 
     #[test]
+    fn parallel_layer_rejects_missing_scheduled_payload() {
+        let a = step("a");
+        let b = step("b");
+        let payload_by_step = HashMap::from([(a.clone(), pure_payload())]);
+        assert!(!layer_parallel_safe(&[a, b], |id| payload_by_step.get(id)));
+    }
+
+    #[test]
     fn cep_9_parallel_layer_rejects_relation_with_invalid_source_id() {
         let pure = step("pure");
         let rel = step("tags");
@@ -238,7 +245,7 @@ mod tests {
         let layer = vec![pure, rel];
 
         assert!(
-            !layer_parallel_safe(&layer, &payload_by_step),
+            !layer_parallel_safe(&layer, |id| payload_by_step.get(id)),
             "CEP-9: malformed relation source ids must fail closed"
         );
     }

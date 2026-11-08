@@ -8,7 +8,7 @@ use crate::plasm_plan_run::step_materialize::{
     plan_retention_failure, PlanStepMaterializeCtx,
 };
 use futures::future::join_all;
-use plasm_core::plasm_monad::{PlasmStepPayload, StepId};
+use plasm_core::plasm_monad::StepId;
 use plasm_core::PlasmReturn;
 use std::collections::{BTreeMap, HashMap};
 use std::sync::Arc;
@@ -379,11 +379,6 @@ pub(crate) async fn run_executable_plan_phased(
         .enumerate()
         .map(|(i, (id, _))| (id.clone(), i))
         .collect();
-    let payload_by_step: HashMap<StepId, PlasmStepPayload> = executable
-        .steps_topo
-        .iter()
-        .map(|(id, payload)| (id.clone(), payload.clone()))
-        .collect();
     let layers = super::plan_schedule::bind_topo_execution_layers(&executable.bind)?;
     // These reviewed structures and later evidence remain in the enclosing
     // async frame while a nested write is suspended. Read-only plans cannot
@@ -392,6 +387,13 @@ pub(crate) async fn run_executable_plan_phased(
         dry.validated_plan(),
     )
     .then(plasm_runtime::execution::effect_continuation::EffectContinuation::empty_retention);
+    if plasm_runtime::execution::effect_continuation::EffectContinuation::is_active() {
+        if let Some(retained) = retained_frame.as_mut() {
+            retained
+                .add_capacity_bytes(dry.validated().structural_retention_capacity_bytes())
+                .map_err(plan_retention_failure)?;
+        }
+    }
     charge_plan_payload(
         &mut retained_frame,
         &(
@@ -400,7 +402,6 @@ pub(crate) async fn run_executable_plan_phased(
                 &dry.artifact().approval_gates,
                 dry.validated(),
                 &executable,
-                &payload_by_step,
             ),
             (
                 &dry.version,
@@ -415,13 +416,6 @@ pub(crate) async fn run_executable_plan_phased(
             ),
         ),
     )?;
-    if plasm_runtime::execution::effect_continuation::EffectContinuation::is_active() {
-        if let Some(retained) = retained_frame.as_mut() {
-            retained
-                .add_capacity_bytes(dry.validated().structural_retention_capacity_bytes())
-                .map_err(plan_retention_failure)?;
-        }
-    }
     // PEC witness: the executable schedule is a total function of the semantic DAG (`steps` + `bind`)
     // that the durable commit id already seals, so this digest is identical at `plasm` (dry) and
     // `plasm_run` (replay). Emitting it makes the plan-vs-run schedule identity observable.
@@ -472,7 +466,11 @@ pub(crate) async fn run_executable_plan_phased(
             if let Some(scope) = execution_scope {
                 scope.check()?;
             }
-            let parallel = super::plan_schedule::layer_parallel_safe(&layer, &payload_by_step);
+            let parallel = super::plan_schedule::layer_parallel_safe(&layer, |id| {
+                step_topo_index
+                    .get(id)
+                    .map(|index| &executable.steps_topo[*index].1)
+            });
             if parallel {
                 let rows_progress_parallel = rows_progress.clone();
                 if let Some(scope) = execution_scope {
