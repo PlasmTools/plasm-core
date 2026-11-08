@@ -31,6 +31,54 @@ pub struct MutationDispatch {
     pub status: MutationDispatchStatus,
 }
 
+fn journal_capacity(entries: &Vec<MutationDispatch>) -> usize {
+    let mut bytes = entries
+        .capacity()
+        .saturating_mul(std::mem::size_of::<MutationDispatch>());
+    for entry in entries {
+        bytes = bytes
+            .saturating_add(entry.operation.entry_id.capacity())
+            .saturating_add(entry.operation.capability.capacity())
+            .saturating_add(entry.request_fingerprint.capacity());
+        if let Some(effect) = &entry.resolved_effect {
+            bytes = bytes
+                .saturating_add(effect.entity.capacity())
+                .saturating_add(effect.operation.entry_id.capacity())
+                .saturating_add(effect.operation.capability.capacity());
+            if let Some(origin) = &effect.origin {
+                bytes = bytes
+                    .saturating_add(
+                        origin
+                            .scope_path
+                            .capacity()
+                            .saturating_mul(std::mem::size_of::<String>()),
+                    )
+                    .saturating_add(
+                        origin
+                            .occurrence_path
+                            .capacity()
+                            .saturating_mul(std::mem::size_of::<usize>()),
+                    )
+                    .saturating_add(
+                        origin
+                            .inputs
+                            .capacity()
+                            .saturating_mul(std::mem::size_of::<super::EffectInputReference>()),
+                    );
+                for scope in &origin.scope_path {
+                    bytes = bytes.saturating_add(scope.capacity());
+                }
+                for input in &origin.inputs {
+                    bytes = bytes
+                        .saturating_add(input.binding.capacity())
+                        .saturating_add(input.producer.capacity());
+                }
+            }
+        }
+    }
+    bytes
+}
+
 type Observer = Arc<dyn Fn(Vec<MutationDispatch>) + Send + Sync>;
 
 #[derive(Clone, Default)]
@@ -95,8 +143,9 @@ impl MutationJournal {
         if !stable || self.frozen.load(Ordering::Acquire) {
             return Err(super::effect_continuation::EffectContinuationError::ConcurrentCheckpoint);
         }
-        let reservation =
+        let mut reservation =
             super::effect_continuation::EffectContinuation::reserve_retained(&*entries)?;
+        reservation.add_capacity_bytes(journal_capacity(&entries))?;
         self.frozen.store(true, Ordering::Release);
         Ok(FrozenJournal {
             journal: self.clone(),
@@ -263,6 +312,38 @@ mod tests {
             entry_id: "fixture".into(),
             capability: "write".into(),
         }
+    }
+
+    #[tokio::test]
+    async fn checkpoint_freeze_rejects_oversized_journal_capacity() {
+        use super::super::effect_continuation::{
+            EffectContinuation, EffectContinuationError, MAX_EFFECT_SELECTION_BYTES,
+        };
+        let journal = MutationJournal::default();
+        let first = MutationDispatch {
+            resolved_effect: None,
+            operation: identity(),
+            request_fingerprint: "first".into(),
+            status: MutationDispatchStatus::RejectedWithoutEffect,
+        };
+        journal.change(|entries| {
+            entries
+                .reserve(MAX_EFFECT_SELECTION_BYTES / std::mem::size_of::<MutationDispatch>() + 1);
+            entries.push(first.clone());
+        });
+        let (control, _pauses) =
+            EffectContinuation::new_native(std::time::Duration::from_secs(2)).unwrap();
+        control
+            .scope(async {
+                assert!(matches!(
+                    journal.freeze_retention(0, std::slice::from_ref(&first)),
+                    Err(EffectContinuationError::SelectionBudget(
+                        plasm_core::ValueBudgetError::BytesExceeded
+                    ))
+                ));
+                assert!(!journal.frozen.load(Ordering::Acquire));
+            })
+            .await;
     }
 
     #[tokio::test]
