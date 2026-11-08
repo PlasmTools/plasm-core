@@ -89,6 +89,116 @@ async fn validated_plan_spare_node_capacity_obeys_the_continuation_budget() {
 }
 
 #[tokio::test]
+async fn correlated_scope_capacity_obeys_the_continuation_budget() {
+    use plasm_core::plasm_monad::{
+        empty_comp, CaptureContract, CorrelatedBody, ParentCapture, PlanQualifiedEntityKey,
+        ScopedCapture, ScopedOutput, StepId,
+    };
+    use plasm_runtime::execution::effect_continuation::{
+        EffectContinuation, EffectContinuationError, MAX_EFFECT_SELECTION_BYTES,
+    };
+
+    let mut source = String::with_capacity(MAX_EFFECT_SELECTION_BYTES + 1);
+    source.push('s');
+    let mut name = String::with_capacity(MAX_EFFECT_SELECTION_BYTES + 1);
+    name.push('n');
+    let entity = || PlanQualifiedEntityKey {
+        entry_id: "e".into(),
+        entity: "Item".into(),
+    };
+    let contract = || CaptureContract::Rows {
+        schema: None,
+        entity_authority: true,
+    };
+    let bodies = [
+        CorrelatedBody {
+            parent: ParentCapture {
+                source: StepId(source),
+                local: StepId("p".into()),
+                entity: entity(),
+                contract: contract(),
+            },
+            output: ScopedOutput::Record,
+            max_parents: std::num::NonZeroU32::new(1).unwrap(),
+            captures: Vec::new(),
+            body: empty_comp(None),
+        },
+        CorrelatedBody {
+            parent: ParentCapture {
+                source: StepId("s".into()),
+                local: StepId("p".into()),
+                entity: entity(),
+                contract: contract(),
+            },
+            output: ScopedOutput::Record,
+            max_parents: std::num::NonZeroU32::new(1).unwrap(),
+            captures: Vec::new(),
+            body: empty_comp(Some(name)),
+        },
+        CorrelatedBody {
+            parent: ParentCapture {
+                source: StepId("s".into()),
+                local: StepId("p".into()),
+                entity: entity(),
+                contract: contract(),
+            },
+            output: ScopedOutput::Record,
+            max_parents: std::num::NonZeroU32::new(1).unwrap(),
+            captures: Vec::<ScopedCapture>::with_capacity(
+                MAX_EFFECT_SELECTION_BYTES / std::mem::size_of::<ScopedCapture>() + 1,
+            ),
+            body: empty_comp(None),
+        },
+    ];
+    let (control, _pauses) =
+        EffectContinuation::new_native(std::time::Duration::from_secs(2)).unwrap();
+    control
+        .scope(async {
+            for body in bodies {
+                let id = PlanNodeId::new("scope").unwrap();
+                let nested = ValidatedPlanArtifact::from_parts(
+                    Plan::new_program(
+                        1,
+                        None,
+                        Vec::new(),
+                        ValidatedPlanReturn::Node(id.clone()),
+                        Default::default(),
+                    ),
+                    Vec::new(),
+                    Default::default(),
+                    Vec::new(),
+                );
+                let node = ValidatedPlanNode::MapBody(ValidatedMapBodyNode {
+                    id: id.clone(),
+                    body: Box::new(body),
+                    plan: Box::new(nested),
+                    depends_on: Vec::new(),
+                    uses_result: Vec::new(),
+                });
+                let plan = Plan::new_program(
+                    1,
+                    None,
+                    vec![node],
+                    ValidatedPlanReturn::Node(id.clone()),
+                    Default::default(),
+                );
+                let artifact = ValidatedPlanArtifact::from_parts(
+                    plan,
+                    vec![id.clone()],
+                    std::collections::HashMap::from([(id, 0)]),
+                    Vec::new(),
+                );
+                let mut reservation = EffectContinuation::reserve_retained(&artifact).unwrap();
+                assert!(matches!(
+                    reservation.add_capacity_bytes(artifact.structural_retention_capacity_bytes()),
+                    Err(EffectContinuationError::SelectionBudget(_))
+                ));
+            }
+        })
+        .await;
+}
+
+#[tokio::test]
 async fn validated_plan_expression_capacity_obeys_the_continuation_budget() {
     use plasm_runtime::execution::effect_continuation::{
         EffectContinuation, EffectContinuationError, MAX_EFFECT_SELECTION_BYTES,

@@ -36,6 +36,11 @@ macro_rules! plan_string_atom {
                 &self.0
             }
 
+            /// Heap capacity retained by this owned atom.
+            pub fn retention_capacity_bytes(&self) -> usize {
+                self.0.capacity()
+            }
+
             pub fn into_inner(self) -> String {
                 self.0
             }

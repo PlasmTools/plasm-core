@@ -403,8 +403,7 @@ impl ValidatedPlanArtifact {
         }
     }
 
-    /// Allocation capacity for plan containers and their node identifiers.
-    /// This structural charge does not include allocations inside expressions.
+    /// Conservative allocation capacity of the accounted validated-plan structure.
     pub(crate) fn structural_retention_capacity_bytes(&self) -> usize {
         fn vec_bytes<T>(value: &Vec<T>) -> usize {
             value.capacity().saturating_mul(std::mem::size_of::<T>())
@@ -529,6 +528,143 @@ impl ValidatedPlanArtifact {
                 .saturating_add(strings(&value.projection))
                 .saturating_add(bindings(&value.input_bindings))
         }
+        fn schema(value: &plasm_core::plasm_monad::SyntheticResultSchema) -> usize {
+            let fields = value
+                .fields
+                .iter()
+                .fold(vec_bytes(&value.fields), |sum, field| {
+                    sum.saturating_add(field.name.retention_capacity_bytes())
+                        .saturating_add(
+                            field
+                                .source
+                                .as_ref()
+                                .map_or(0, |path| path.retention_capacity_bytes()),
+                        )
+                        .saturating_add(
+                            field
+                                .value_type
+                                .as_ref()
+                                .map_or(0, |contract| contract.retention_capacity_bytes()),
+                        )
+                });
+            value.optional_fields.iter().fold(
+                fields.saturating_add(value.entity.as_ref().map_or(0, String::capacity)),
+                |sum, field| {
+                    sum.saturating_add(1024)
+                        .saturating_add(16 * std::mem::size_of::<String>())
+                        .saturating_add(field.capacity())
+                },
+            )
+        }
+        fn contract(value: &plasm_core::plasm_monad::CaptureContract) -> usize {
+            match value {
+                plasm_core::plasm_monad::CaptureContract::Value { value } => {
+                    value.retention_capacity_bytes()
+                }
+                plasm_core::plasm_monad::CaptureContract::Rows { schema: value, .. } => {
+                    value.as_ref().map_or(0, schema)
+                }
+            }
+        }
+        fn comp_structure(value: &plasm_core::plasm_monad::PlasmComp) -> usize {
+            use plasm_core::plasm_monad::{PlasmReturn, PlasmStepPayload, StepId};
+
+            // Account conservatively for B-tree nodes, which do not expose capacity.
+            fn tree_entry<T>() -> usize {
+                1024usize.saturating_add(16usize.saturating_mul(std::mem::size_of::<T>()))
+            }
+            let mut bytes = value.name.as_ref().map_or(0, String::capacity);
+            bytes = value.steps.iter().fold(bytes, |sum, (id, _)| {
+                sum.saturating_add(tree_entry::<(String, PlasmStepPayload)>())
+                    .saturating_add(id.capacity())
+            });
+            bytes = value.metadata.iter().fold(bytes, |sum, (key, value)| {
+                sum.saturating_add(tree_entry::<(String, serde_json::Value)>())
+                    .saturating_add(key.capacity())
+                    .saturating_add(plasm_runtime::materialization::retained_json_capacity(
+                        value,
+                    ))
+            });
+            let bind = &value.bind;
+            bytes = bind
+                .topo
+                .iter()
+                .fold(bytes.saturating_add(vec_bytes(&bind.topo)), |sum, id| {
+                    sum.saturating_add(id.0.capacity())
+                });
+            bytes =
+                bind.deps.iter().fold(bytes, |sum, (id, deps)| {
+                    deps.iter().fold(
+                        sum.saturating_add(tree_entry::<(
+                            StepId,
+                            std::collections::BTreeSet<StepId>,
+                        )>())
+                        .saturating_add(id.0.capacity()),
+                        |sum, dependency| {
+                            sum.saturating_add(tree_entry::<StepId>())
+                                .saturating_add(dependency.0.capacity())
+                        },
+                    )
+                });
+            bytes = bind.primary.iter().fold(bytes, |sum, (id, primary)| {
+                sum.saturating_add(tree_entry::<(StepId, StepId)>())
+                    .saturating_add(id.0.capacity())
+                    .saturating_add(primary.0.capacity())
+            });
+            bytes = bind.holes.iter().fold(bytes, |sum, (id, holes)| {
+                holes.iter().fold(
+                    sum.saturating_add(tree_entry::<(
+                        StepId,
+                        Vec<plasm_core::plasm_monad::PlasmHoleUse>,
+                    )>())
+                    .saturating_add(id.0.capacity())
+                    .saturating_add(vec_bytes(holes)),
+                    |sum, hole| {
+                        sum.saturating_add(hole.step.0.capacity())
+                            .saturating_add(hole.alias.capacity())
+                    },
+                )
+            });
+            match &value.return_ {
+                PlasmReturn::Step { step } => bytes.saturating_add(step.0.capacity()),
+                PlasmReturn::Parallel { steps } => steps
+                    .iter()
+                    .fold(bytes.saturating_add(vec_bytes(steps)), |sum, id| {
+                        sum.saturating_add(id.0.capacity())
+                    }),
+            }
+        }
+        fn scope(value: &plasm_core::plasm_monad::CorrelatedBody) -> usize {
+            let parent = &value.parent;
+            let mut bytes = std::mem::size_of::<plasm_core::plasm_monad::CorrelatedBody>()
+                .saturating_add(parent.source.0.capacity())
+                .saturating_add(parent.local.0.capacity())
+                .saturating_add(parent.entity.entry_id.capacity())
+                .saturating_add(parent.entity.entity.capacity())
+                .saturating_add(contract(&parent.contract))
+                .saturating_add(comp_structure(&value.body));
+            if let plasm_core::plasm_monad::ScopedOutput::Rows {
+                entity,
+                schema: output,
+                ..
+            } = &value.output
+            {
+                bytes = bytes
+                    .saturating_add(entity.entry_id.capacity())
+                    .saturating_add(entity.entity.capacity())
+                    .saturating_add(schema(output));
+            }
+            value.captures.iter().fold(
+                bytes.saturating_add(vec_bytes(&value.captures)),
+                |sum, capture| {
+                    sum.saturating_add(capture.source.0.capacity())
+                        .saturating_add(capture.local.0.capacity())
+                        .saturating_add(capture.entity.entry_id.capacity())
+                        .saturating_add(capture.entity.entity.capacity())
+                        .saturating_add(contract(&capture.contract))
+                },
+            )
+        }
         fn common(dependencies: &Vec<PlanNodeId>, uses: &Vec<PlanResultUse>) -> usize {
             uses.iter().fold(
                 id_bytes(dependencies).saturating_add(vec_bytes(uses)),
@@ -621,12 +757,8 @@ impl ValidatedPlanArtifact {
                     .saturating_add(predicates(&n.until_predicates))
                     .saturating_add(n.approval.as_ref().map_or(0, String::capacity))
                     .saturating_add(n.seed_ir.as_ref().map_or(0, expr_ir))
-                    .saturating_add(usize::from(n.until_scope.is_some()).saturating_mul(
-                        std::mem::size_of::<plasm_core::plasm_monad::CorrelatedBody>(),
-                    ))
-                    .saturating_add(usize::from(n.step_scope.is_some()).saturating_mul(
-                        std::mem::size_of::<plasm_core::plasm_monad::CorrelatedBody>(),
-                    )),
+                    .saturating_add(n.until_scope.as_deref().map_or(0, scope))
+                    .saturating_add(n.step_scope.as_deref().map_or(0, scope)),
                 ValidatedPlanNode::RelationTraversal(n) => n.relation.binding_proofs.iter().fold(
                     n.relation
                         .source
@@ -641,9 +773,7 @@ impl ValidatedPlanArtifact {
                             .saturating_add(proof.parent_field.capacity())
                     },
                 ),
-                ValidatedPlanNode::MapBody(_) => {
-                    std::mem::size_of::<plasm_core::plasm_monad::CorrelatedBody>()
-                }
+                ValidatedPlanNode::MapBody(n) => scope(&n.body),
                 ValidatedPlanNode::Capture(n) => entity(&n.entity),
             };
             bytes = bytes.saturating_add(node_owned);
