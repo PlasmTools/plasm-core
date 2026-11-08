@@ -315,6 +315,11 @@ pub(super) async fn materialize(
         .await
         .map_err(scope_rehydration_failure)?;
     let semantic_parents: std::collections::HashMap<_, _> = semantic_parent_rows.iter().enumerate().map(|(index, row)| (&row.reference, index)).collect();
+    let node_clone_capacity = if ctx.node_clone_capacity == 0 {
+        0
+    } else {
+        map.plan.structural_retention_capacity_bytes()
+    };
     for (occurrence, parent) in parents.into_iter().enumerate() {
         let capacity = vector_capacity_bytes(&rows)
             .saturating_add(vector_capacity_bytes(&value_shapes))
@@ -396,6 +401,7 @@ pub(super) async fn materialize(
             occurrence_path: occurrence_path.clone(),
             rows_progress: ctx.rows_progress.clone(),
             execution_scope: ctx.execution_scope,
+            node_clone_capacity,
         };
         for layer in &layers {
             for step in layer {

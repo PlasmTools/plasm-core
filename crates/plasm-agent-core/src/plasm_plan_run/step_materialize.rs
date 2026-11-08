@@ -74,6 +74,23 @@ mod retention_tests {
     };
 
     #[tokio::test]
+    async fn cloned_plan_reservations_accumulate_and_release() {
+        let (control, _pauses) =
+            EffectContinuation::new_native(std::time::Duration::from_secs(2)).unwrap();
+        control
+            .scope(async {
+                let retained = reserve_node_clone(MAX_EFFECT_SELECTION_BYTES / 2).unwrap();
+                let Err(failure) = reserve_node_clone(MAX_EFFECT_SELECTION_BYTES / 2 + 1) else {
+                    panic!("clone budget should reject")
+                };
+                assert_eq!(failure.code, "effect_plan_retention_refused");
+                drop(retained);
+                assert!(reserve_node_clone(MAX_EFFECT_SELECTION_BYTES / 2 + 1).is_ok());
+            })
+            .await;
+    }
+
+    #[tokio::test]
     async fn inline_materialized_rows_charge_spare_capacity() {
         let mut text = String::with_capacity(MAX_EFFECT_SELECTION_BYTES + 1);
         text.push('x');
@@ -471,6 +488,25 @@ pub(crate) struct PlanStepMaterializeCtx<'a> {
     pub occurrence_path: Vec<usize>,
     pub rows_progress: Option<plasm_runtime::RowsProgressFn>,
     pub execution_scope: Option<&'a crate::operation::ExecutionScope>,
+    /// Conservative upper bound for one cloned node from the current plan.
+    pub(super) node_clone_capacity: usize,
+}
+
+pub(super) fn reserve_node_clone(
+    bytes: usize,
+) -> Result<
+    Option<plasm_runtime::execution::effect_continuation::SelectionReservation>,
+    ExecutionFailure,
+> {
+    use plasm_runtime::execution::effect_continuation::EffectContinuation;
+    if !EffectContinuation::is_active() {
+        return Ok(None);
+    }
+    let mut reservation = EffectContinuation::empty_retention();
+    reservation
+        .add_capacity_bytes(bytes)
+        .map_err(plan_retention_failure)?;
+    Ok(Some(reservation))
 }
 
 pub(crate) fn apply_step_materialize_outcomes(
@@ -531,6 +567,16 @@ pub(crate) async fn materialize_executable_plan_step(
     schema_nodes: &[ValidatedPlanNode],
     materialized: &BTreeMap<PlanNodeId, MaterializedNode>,
 ) -> Result<PlanStepMaterializeOutcome, ExecutionFailure> {
+    // The executable step owns a cloned node across await points. A whole-plan
+    // capacity is a conservative bound for one node, including nested plans.
+    let _retained_node = if matches!(
+        node.effect_class(),
+        EffectClass::Write | EffectClass::SideEffect
+    ) {
+        reserve_node_clone(ctx.node_clone_capacity)?
+    } else {
+        None
+    };
     let _retained_inputs = if matches!(
         node.effect_class(),
         EffectClass::Write | EffectClass::SideEffect

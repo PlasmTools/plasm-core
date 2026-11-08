@@ -211,6 +211,64 @@ fn deeply_nested_validated_plan_fails_closed_for_continuation() {
 }
 
 #[tokio::test]
+async fn pushed_predicate_capacity_obeys_the_continuation_budget() {
+    use plasm_runtime::execution::effect_continuation::{
+        EffectContinuation, EffectContinuationError, MAX_EFFECT_SELECTION_BYTES,
+    };
+    let mut literal = String::with_capacity(MAX_EFFECT_SELECTION_BYTES + 1);
+    literal.push('x');
+    let predicate = plasm_runtime::row_predicate::BoundRowPredicate {
+        field_path: FieldPath::new(vec!["name".into()]).unwrap(),
+        op: PlanPredicateOp::Eq,
+        value: plasm_core::operand_binding::ResolvedValue::string(literal),
+    };
+    let id = PlanNodeId::new("read").unwrap();
+    let node = ValidatedPlanNode::Surface(ValidatedSurfaceNode {
+        id: id.clone(),
+        kind: PlanNodeKind::Query,
+        qualified_entity: None,
+        ir: None,
+        ir_template: None,
+        effect_class: EffectClass::Read,
+        result_shape: ResultShape::List,
+        projection: Vec::new(),
+        predicates: Vec::new(),
+        depends_on: Vec::new(),
+        uses_result: Vec::new(),
+        approval: None,
+        page_size: None,
+        pushed_read_budget: Some(crate::plan_read_bounds::PushedReadBudget::FilterLimit {
+            count: 1,
+            predicates: vec![predicate],
+        }),
+    });
+    let plan = Plan::new_program(
+        1,
+        None,
+        vec![node],
+        ValidatedPlanReturn::Node(id.clone()),
+        Default::default(),
+    );
+    let artifact = ValidatedPlanArtifact::from_parts(
+        plan,
+        vec![id.clone()],
+        std::collections::HashMap::from([(id, 0)]),
+        Vec::new(),
+    );
+    let (control, _pauses) =
+        EffectContinuation::new_native(std::time::Duration::from_secs(2)).unwrap();
+    control
+        .scope(async {
+            let mut retained = EffectContinuation::reserve_retained(&artifact).unwrap();
+            assert!(matches!(
+                retained.add_capacity_bytes(artifact.structural_retention_capacity_bytes()),
+                Err(EffectContinuationError::SelectionBudget(_))
+            ));
+        })
+        .await;
+}
+
+#[tokio::test]
 async fn validated_compute_capacity_obeys_the_continuation_budget() {
     use plasm_runtime::execution::effect_continuation::{
         EffectContinuation, EffectContinuationError, MAX_EFFECT_SELECTION_BYTES,

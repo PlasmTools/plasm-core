@@ -531,6 +531,12 @@ pub(crate) async fn run_executable_plan_phased(
     } else {
         crate::python_compute::prepared_scope::PreparedComputeScope::new(es)
     };
+    let node_clone_capacity =
+        if plasm_runtime::execution::effect_continuation::EffectContinuation::is_active() {
+            dry.validated().structural_retention_capacity_bytes()
+        } else {
+            0
+        };
     let mat_ctx = PlanStepMaterializeCtx {
         es,
         st,
@@ -547,6 +553,7 @@ pub(crate) async fn run_executable_plan_phased(
         occurrence_path: Vec::new(),
         rows_progress: rows_progress.clone(),
         execution_scope,
+        node_clone_capacity,
     };
     let execution: Result<PlasmPlanRunResult, ExecutionFailure> = async {
         let executable = &dry.executable;
@@ -622,6 +629,7 @@ pub(crate) async fn run_executable_plan_phased(
                             occurrence_path: Vec::new(),
                             rows_progress: rows_progress_step,
                             execution_scope: execution_scope_step.as_ref(),
+                            node_clone_capacity,
                         };
                         Box::pin(materialize_executable_plan_step(
                             &mat_ctx,

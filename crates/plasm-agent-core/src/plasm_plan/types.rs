@@ -404,7 +404,6 @@ impl ValidatedPlanArtifact {
     }
 
     /// Conservative allocation capacity of the accounted validated-plan structure.
-    #[cfg(test)]
     pub(crate) fn structural_retention_capacity_bytes(&self) -> usize {
         self.structural_retention_capacity_bytes_at_depth(0, None)
     }
@@ -518,6 +517,28 @@ impl ValidatedPlanArtifact {
                 sum.saturating_add(predicate.field_path.retention_capacity_bytes())
                     .saturating_add(data(&predicate.value, 0))
             })
+        }
+        fn pushed_budget(value: &crate::plan_read_bounds::PushedReadBudget) -> usize {
+            use crate::plan_read_bounds::PushedReadBudget;
+            fn bound_predicates(
+                values: &Vec<plasm_runtime::row_predicate::BoundRowPredicate>,
+            ) -> usize {
+                values.iter().fold(vec_bytes(values), |sum, predicate| {
+                    sum.saturating_add(predicate.field_path.retention_capacity_bytes())
+                        .saturating_add(
+                            plasm_runtime::materialization::resolved_value_retention_capacity(
+                                predicate.value.value(),
+                            ),
+                        )
+                })
+            }
+            match value {
+                PushedReadBudget::Limit(_) | PushedReadBudget::Complete => 0,
+                PushedReadBudget::FilterLimit { predicates, .. } => bound_predicates(predicates),
+                PushedReadBudget::TopK { key, filter, .. } => key
+                    .retention_capacity_bytes()
+                    .saturating_add(filter.as_ref().map_or(0, bound_predicates)),
+            }
         }
         fn entity(value: &QualifiedEntityKey) -> usize {
             value
@@ -1101,6 +1122,7 @@ impl ValidatedPlanArtifact {
                     .saturating_add(n.ir_template.as_ref().map_or(0, template))
                     .saturating_add(strings(&n.projection))
                     .saturating_add(predicates(&n.predicates))
+                    .saturating_add(n.pushed_read_budget.as_ref().map_or(0, pushed_budget))
                     .saturating_add(n.approval.as_ref().map_or(0, String::capacity)),
                 ValidatedPlanNode::Data(n) => {
                     data(&n.data, 0).saturating_add(n.recorded_output.as_ref().map_or(0, origin))
@@ -1155,6 +1177,7 @@ impl ValidatedPlanArtifact {
                         .saturating_add(expr_ir(&n.relation.ir))
                         .saturating_add(n.relation.materialize.retention_capacity_bytes())
                         .saturating_add(n.relation.view_embed_proof.as_ref().map_or(0, view_proof))
+                        .saturating_add(n.pushed_read_budget.as_ref().map_or(0, pushed_budget))
                         .saturating_add(vec_bytes(&n.relation.binding_proofs)),
                     |sum, proof| {
                         sum.saturating_add(proof.cap_param.capacity())

@@ -407,6 +407,9 @@ pub(crate) async fn materialize_iterate_until_node(
             iteration_occurrence = ctx.occurrence_path.clone();
             iteration_occurrence.push(step_idx as usize);
             if let Some(step) = crate::map_body::iteration_step(it)? {
+                // The synthetic map owns cloned scope and plan data through the nested pause.
+                let _retained_step =
+                    super::super::step_materialize::reserve_node_clone(ctx.node_clone_capacity)?;
                 let mut environment = materialized.clone();
                 environment.insert(it.source.clone(), current.clone());
                 let mut occurrence_path = ctx.occurrence_path.clone();
@@ -429,6 +432,7 @@ pub(crate) async fn materialize_iterate_until_node(
                     occurrence_path,
                     rows_progress: ctx.rows_progress.clone(),
                     execution_scope: ctx.execution_scope,
+                    node_clone_capacity: ctx.node_clone_capacity,
                 };
                 let (result, _) = Box::pin(super::super::map_body::materialize(
                     &child_ctx,
@@ -726,6 +730,7 @@ async fn evaluate_stop(
         occurrence_path,
         rows_progress: ctx.rows_progress.clone(),
         execution_scope: ctx.execution_scope,
+        node_clone_capacity: ctx.node_clone_capacity,
     };
     let (result, _) = Box::pin(super::super::map_body::materialize(
         &child_ctx,
