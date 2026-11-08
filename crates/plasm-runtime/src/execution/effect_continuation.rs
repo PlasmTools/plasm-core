@@ -986,6 +986,48 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn retained_collection_charges_unselected_backing_rows_and_delivery_source() {
+        use plasm_core::collection_codec::{CollectionIdentity, Observation};
+        let row = |id: &str| {
+            crate::CachedEntity::from_decoded(
+                plasm_core::Ref::new("Row", id),
+                Default::default(),
+                Default::default(),
+                0,
+                crate::EntityCompleteness::Complete,
+            )
+        };
+        let huge = "z".repeat(MAX_EFFECT_SELECTION_BYTES);
+        let collection = super::super::ExecutionCollection::observe(
+            CollectionIdentity {
+                catalog: [1; 32],
+                expression: [2; 32],
+                epoch: 0,
+            },
+            vec![row("small"), row(&huge)],
+            Observation::ExactOutput { decoded: 2 },
+        )
+        .unwrap();
+        let capture = collection.capture(0).unwrap();
+        let delivery = collection.delivery(0..1).unwrap();
+        assert!(serde_json::to_vec(&capture).unwrap().len() < 4096);
+        assert!(serde_json::to_vec(&delivery).unwrap().len() < 4096);
+        let (control, _pauses) = EffectContinuation::new_native(Duration::from_secs(2)).unwrap();
+        control
+            .scope(async {
+                for collection in [&capture, &delivery] {
+                    assert!(matches!(
+                        EffectContinuation::reserve_retained(&collection.retention_view()),
+                        Err(EffectContinuationError::SelectionBudget(
+                            plasm_core::ValueBudgetError::BytesExceeded
+                        ))
+                    ));
+                }
+            })
+            .await;
+    }
+
+    #[tokio::test]
     async fn only_the_owning_workflow_can_resume_once() {
         let workflow = Uuid::new_v4();
         let (control, mut pauses) =

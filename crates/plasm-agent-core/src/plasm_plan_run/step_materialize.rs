@@ -67,8 +67,17 @@ fn reserve_materialized_inputs(
         result
     };
     for value in materialized.values() {
-        reservations
-            .push(EffectContinuation::reserve_retained(value.result.as_ref()).map_err(&failure)?);
+        reservations.push(
+            EffectContinuation::reserve_retained(&(
+                value.result.collection.retention_view(),
+                value.result.has_more,
+                value.result.source,
+                &value.result.stats,
+                &value.result.request_fingerprints,
+                &value.result.operations,
+            ))
+            .map_err(&failure)?,
+        );
         if let Some(resume) = &value.result.pagination_resume {
             reservations.push(EffectContinuation::reserve_pagination(resume).map_err(&failure)?);
         }
@@ -84,7 +93,7 @@ fn reserve_materialized_inputs(
                 reservations.push(
                     EffectContinuation::reserve_retained(&(
                         entity_type,
-                        membership,
+                        membership.retention_view(),
                         hot_snapshot.as_ref(),
                     ))
                     .map_err(&failure)?,

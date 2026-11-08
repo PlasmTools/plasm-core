@@ -29,7 +29,33 @@ pub struct ExecutionCollection {
     graph_backed: bool,
 }
 
+struct RetainedCollection<'a>(&'a ExecutionCollection);
+
+impl serde::Serialize for RetainedCollection<'_> {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        use serde::ser::SerializeSeq;
+        let mut sequence = serializer.serialize_seq(None)?;
+        let mut current = Some(self.0);
+        while let Some(collection) = current {
+            sequence.serialize_element(&(
+                collection.row_materialization,
+                collection.delivery_start,
+                collection.graph_backed,
+                collection.membership.retention_view(),
+                collection.entities.retention_view(),
+            ))?;
+            current = collection.delivery_source.as_deref();
+        }
+        sequence.end()
+    }
+}
+
 impl ExecutionCollection {
+    /// Internal accounting view of all storage kept by this collection and its
+    /// delivery source. This intentionally differs from its public wire shape.
+    pub fn retention_view(&self) -> impl serde::Serialize + '_ {
+        RetainedCollection(self)
+    }
     pub fn observe_for(
         cgs: &plasm_core::CGS,
         expression: &impl serde::Serialize,

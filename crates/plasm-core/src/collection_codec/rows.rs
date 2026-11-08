@@ -2,7 +2,7 @@
 use serde::{ser::SerializeSeq, Serialize, Serializer};
 use std::sync::Arc;
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, Serialize)]
 struct Occurrence {
     source: usize,
     row: usize,
@@ -14,6 +14,29 @@ struct Occurrence {
 pub struct SharedRows<R> {
     sources: Arc<[Arc<[R]>]>,
     order: Arc<[Occurrence]>,
+}
+
+struct RetainedRows<'a, R>(&'a SharedRows<R>);
+struct RetainedBatches<'a, R>(&'a [Arc<[R]>]);
+
+impl<R: Serialize> Serialize for RetainedBatches<'_, R> {
+    fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        let mut sequence = serializer.serialize_seq(Some(self.0.len()))?;
+        for batch in self.0 {
+            sequence.serialize_element(batch.as_ref())?;
+        }
+        sequence.end()
+    }
+}
+
+impl<R: Serialize> Serialize for RetainedRows<'_, R> {
+    fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        use serde::ser::SerializeTuple;
+        let mut tuple = serializer.serialize_tuple(2)?;
+        tuple.serialize_element(&RetainedBatches(&self.0.sources))?;
+        tuple.serialize_element(self.0.order.as_ref())?;
+        tuple.end()
+    }
 }
 impl<R> Default for SharedRows<R> {
     fn default() -> Self {
@@ -60,6 +83,14 @@ impl<R> From<Arc<[R]>> for SharedRows<R> {
     }
 }
 impl<R> SharedRows<R> {
+    /// Internal retention accounting view. This includes backing batches even
+    /// when only a subset of their rows is visible. It is not a wire format.
+    pub fn retention_view(&self) -> impl Serialize + '_
+    where
+        R: Serialize,
+    {
+        RetainedRows(self)
+    }
     pub fn len(&self) -> usize {
         self.order.len()
     }

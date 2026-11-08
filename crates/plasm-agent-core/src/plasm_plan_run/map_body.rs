@@ -419,7 +419,7 @@ pub(super) async fn materialize(
                 });
                 charge_scope_payload(&mut retained_outputs, &step_evidence)?;
                 steps.push(step_evidence);
-                charge_scope_payload(&mut retained_outputs, &outcome.mat.result.collection)?;
+                charge_scope_payload(&mut retained_outputs, &outcome.mat.result.collection.retention_view())?;
                 dependencies.push(outcome.mat.result.collection.clone());
                 environment.insert(outcome.node_id, outcome.mat);
             }
