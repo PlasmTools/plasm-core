@@ -23,6 +23,189 @@ struct Transport {
     store: Arc<Mutex<Store>>,
     fail_at: usize,
 }
+
+#[derive(Default)]
+struct CursorState {
+    attempts: usize,
+    ticks: usize,
+    reads: usize,
+}
+
+struct CursorTransport(Arc<Mutex<CursorState>>);
+
+#[async_trait]
+impl HttpTransport for CursorTransport {
+    async fn get_json_absolute(
+        &self,
+        _: &str,
+        _: Option<ResolvedAuth>,
+    ) -> Result<(serde_json::Value, Option<String>), RuntimeError> {
+        panic!("unexpected absolute GET")
+    }
+
+    async fn send_compiled_http(
+        &self,
+        _: &str,
+        req: &CompiledRequest,
+        _: Option<ResolvedAuth>,
+    ) -> Result<(serde_json::Value, Option<String>), RuntimeError> {
+        let mut state = self.0.lock().unwrap();
+        if matches!(req.method, HttpMethod::Post) {
+            state.attempts += 1;
+            if state.attempts == 1 {
+                plasm_runtime::execution::record_transport_response_received();
+                return Err(RuntimeError::RequestError {
+                    source: plasm_runtime::RequestFailure::HttpStatus(Box::new(
+                        plasm_runtime::HttpStatusFailure::without_request(
+                            422,
+                            "fixture 422".into(),
+                        ),
+                    )),
+                    attempts: 1,
+                    status: Some(422),
+                    body: None,
+                });
+            }
+            state.ticks += 1;
+            return Ok((json!({}), None));
+        }
+        state.reads += 1;
+        Ok((
+            json!({"id":"c1", "phase": if state.ticks == 0 { "open" } else { "done" }, "ticks": state.ticks}),
+            None,
+        ))
+    }
+}
+
+#[test]
+fn native_repair_resumes_bounded_iteration_and_reobserves() {
+    std::thread::Builder::new()
+        .stack_size(32 * 1024 * 1024)
+        .spawn(|| {
+            tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+                .unwrap()
+                .block_on(native_repair_iteration_case());
+        })
+        .unwrap()
+        .join()
+        .unwrap();
+}
+
+async fn native_repair_iteration_case() {
+    use plasm_runtime::execution::effect_continuation::EffectContinuation;
+    let mut cgs = load_schema_dir(
+        &std::path::PathBuf::from(crate::test_manifest_dir())
+            .join("../../fixtures/schemas/plasm_language_matrix"),
+    )
+    .unwrap();
+    cgs.capabilities
+        .get_mut("langcursor_tick")
+        .unwrap()
+        .no_effect_rejections
+        .push(plasm_core::schema::NoEffectRejection {
+            status: 422,
+            detail: plasm_core::schema::RejectionDetail::Exact {
+                value: "fixture 422".into(),
+            },
+        });
+    let registry = CgsRegistry::from_pairs(vec![(
+        "matrix".into(),
+        "Matrix".into(),
+        vec![],
+        Arc::new(cgs),
+    )]);
+    let state = Arc::new(Mutex::new(CursorState::default()));
+    let engine = ExecutionEngine::new_with_transport(
+        ExecutionConfig {
+            base_url: Some("http://127.0.0.1:9".into()),
+            hydrate: false,
+            ..Default::default()
+        },
+        Arc::new(CursorTransport(state.clone())),
+        None,
+    );
+    let host = build_plasm_host_state(PlasmHostBootstrap {
+        engine,
+        mode: ExecutionMode::Live,
+        registry: Arc::new(registry),
+        catalog_bootstrap: CatalogBootstrap::Fixed,
+        incoming_auth: None,
+        run_artifacts: Arc::new(crate::run_artifacts::RunArtifactStore::memory()),
+        session_graph_persistence: None,
+        oss_local_filesystem_defaults: false,
+    })
+    .unwrap();
+    let opened = Box::pin(apply_capability_seeds(
+        &host,
+        None,
+        None,
+        vec![CapabilitySeed {
+            entry_id: "matrix".into(),
+            entity: "LangCursor".into(),
+        }],
+        None,
+        None,
+        None,
+        "resume iteration",
+    ))
+    .await
+    .unwrap();
+    let session = host
+        .get_execute_session(&opened.prompt_hash, &opened.session_id)
+        .await
+        .unwrap();
+    let symbols = session.teaching_exposure.as_ref().unwrap().to_symbol_map();
+    let entity = symbols.entity_sym_for("matrix", "LangCursor");
+    let tick = symbols.method_sym_for("matrix", "LangCursor", "tick");
+    let program = format!("class Iterate(Program):\n    def build(self):\n        cur = {entity}.get(\"c1\")\n        return cur.iterate(lambda row: row.{tick}(), until=lambda row: row.phase == \"done\", max_steps=2)\n");
+    let bundle = crate::plasm_compile::compile_python_program(&session, &program)
+        .await
+        .unwrap();
+    let workflow = uuid::Uuid::new_v4();
+    let (control, mut pauses) =
+        EffectContinuation::new(workflow, std::time::Duration::from_secs(10)).unwrap();
+    let run = control
+        .clone()
+        .scope_for_repair(Box::pin(ExecutePipeline::run_program(
+            &session,
+            &host,
+            &opened.prompt_hash,
+            &opened.session_id,
+            &bundle,
+            ExecutionIntent::Live,
+            None,
+            None,
+            None,
+        )));
+    tokio::pin!(run);
+    let mut pause = tokio::select! {
+        pause = pauses.recv() => pause.expect("classified rejection must pause"),
+        result = &mut run => panic!("iteration returned before checkpoint: {result:?}"),
+    };
+    assert_eq!(state.lock().unwrap().attempts, 1);
+    pause.resume(workflow).unwrap();
+    let (result, certificate) = run.await.unwrap();
+    let result = result.expect("iteration resumes and reaches its stop predicate");
+    assert_eq!(
+        result
+            .return_steps
+            .iter()
+            .flat_map(|step| step.result.operations.entries())
+            .map(|ack| ack.completed)
+            .sum::<usize>(),
+        1
+    );
+    assert!(certificate.is_some_and(|certificate| certificate.consume_for(&control)));
+    let state = state.lock().unwrap();
+    assert_eq!(state.attempts, 2);
+    assert_eq!(state.ticks, 1);
+    assert!(
+        state.reads >= 2,
+        "stop condition must use a fresh observation"
+    );
+}
 #[async_trait]
 impl HttpTransport for Transport {
     async fn send_compiled_http(
