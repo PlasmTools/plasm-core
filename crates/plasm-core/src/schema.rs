@@ -177,6 +177,11 @@ impl ValueDomainKey {
     pub fn as_str(&self) -> &str {
         &self.0
     }
+
+    /// Heap capacity owned by this domain key.
+    pub fn retention_capacity_bytes(&self) -> usize {
+        self.0.capacity()
+    }
 }
 
 impl<'de> Deserialize<'de> for ValueDomainKey {

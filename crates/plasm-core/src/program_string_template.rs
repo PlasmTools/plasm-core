@@ -132,6 +132,30 @@ impl CompiledProgramString {
     pub fn source(&self) -> &str {
         &self.source
     }
+
+    /// Capacity of the visible source and dependency metadata; this excludes
+    /// the opaque compiled template environment.
+    pub fn metadata_retention_capacity_bytes(&self) -> usize {
+        let roots = self.roots.iter().fold(0usize, |sum, root| {
+            sum.saturating_add(1024).saturating_add(root.capacity())
+        });
+        self.paths.iter().fold(
+            self.source.capacity().saturating_add(roots).saturating_add(
+                self.paths
+                    .capacity()
+                    .saturating_mul(std::mem::size_of::<Vec<String>>()),
+            ),
+            |sum, path| {
+                path.iter().fold(
+                    sum.saturating_add(
+                        path.capacity()
+                            .saturating_mul(std::mem::size_of::<String>()),
+                    ),
+                    |sum, segment| sum.saturating_add(segment.capacity()),
+                )
+            },
+        )
+    }
     pub fn paths(&self) -> &[Vec<String>] {
         &self.paths
     }

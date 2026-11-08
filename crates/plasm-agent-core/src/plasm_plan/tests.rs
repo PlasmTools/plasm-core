@@ -153,6 +153,25 @@ async fn validated_operand_capacity_obeys_the_continuation_budget() {
     };
     let mut binding = String::with_capacity(MAX_EFFECT_SELECTION_BYTES + 1);
     binding.push('x');
+    let mut source = String::with_capacity(MAX_EFFECT_SELECTION_BYTES + 1);
+    source.push('x');
+    let template =
+        plasm_core::program_string_template::CompiledProgramString::compile(source).unwrap();
+    let contract = plasm_core::value_contract::ValueContract {
+        shape: plasm_core::value_contract::ValueShape::Tuple {
+            members: plasm_core::value_contract::TupleContract {
+                prefix: Vec::with_capacity(
+                    MAX_EFFECT_SELECTION_BYTES
+                        / std::mem::size_of::<plasm_core::value_contract::ValueContract>()
+                        + 1,
+                ),
+                variable: None,
+                suffix: Vec::new(),
+            },
+        },
+        domain: None,
+        nullable: false,
+    };
     let values = [
         PlanValue::BindingSymbol {
             binding,
@@ -162,6 +181,16 @@ async fn validated_operand_capacity_obeys_the_continuation_budget() {
             items: Vec::with_capacity(
                 MAX_EFFECT_SELECTION_BYTES / std::mem::size_of::<PlanValue>() + 1,
             ),
+        },
+        PlanValue::Template {
+            template,
+            input_bindings: Vec::new(),
+        },
+        PlanValue::Expression {
+            expression: plasm_core::value_expression::ValueOperation::Refine {
+                value: Box::new(PlanValue::Symbol { path: "x".into() }),
+                contract,
+            },
         },
     ];
     let (control, _pauses) =

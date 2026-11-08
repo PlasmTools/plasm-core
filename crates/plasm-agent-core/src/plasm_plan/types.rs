@@ -441,6 +441,9 @@ impl ValidatedPlanArtifact {
                         plasm_core::value_expression::ValueOperation::Field { name, .. } => {
                             name.capacity()
                         }
+                        plasm_core::value_expression::ValueOperation::Refine {
+                            contract, ..
+                        } => contract.retention_capacity_bytes(),
                         _ => 0,
                     };
                     expression
@@ -459,14 +462,18 @@ impl ValidatedPlanArtifact {
                     .saturating_add(strings(path)),
                 PlanValue::Symbol { path } => path.capacity(),
                 // The template's opaque compiled environment is not accounted here.
-                PlanValue::Template { input_bindings, .. } => {
-                    input_bindings
-                        .iter()
-                        .fold(vec_bytes(input_bindings), |sum, value| {
-                            sum.saturating_add(value.from.capacity())
-                                .saturating_add(value.to.capacity())
-                        })
-                }
+                PlanValue::Template {
+                    template,
+                    input_bindings,
+                } => input_bindings.iter().fold(
+                    template
+                        .metadata_retention_capacity_bytes()
+                        .saturating_add(vec_bytes(input_bindings)),
+                    |sum, value| {
+                        sum.saturating_add(value.from.capacity())
+                            .saturating_add(value.to.capacity())
+                    },
+                ),
                 PlanValue::EntityRefKey { api, entity, key } => api
                     .capacity()
                     .saturating_add(entity.capacity())
@@ -476,6 +483,9 @@ impl ValidatedPlanArtifact {
                 }),
                 PlanValue::Object { fields } => fields.iter().fold(0usize, |sum, (name, value)| {
                     sum.saturating_add(1024)
+                        .saturating_add(
+                            16usize.saturating_mul(std::mem::size_of::<(String, PlanValue)>()),
+                        )
                         .saturating_add(name.capacity())
                         .saturating_add(data(value, depth + 1))
                 }),

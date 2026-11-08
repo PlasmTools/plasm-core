@@ -23,6 +23,11 @@ macro_rules! string_id {
                 &self.0
             }
 
+            /// Heap capacity owned by this identity.
+            pub fn retention_capacity_bytes(&self) -> usize {
+                self.0.capacity()
+            }
+
             pub fn into_inner(self) -> String {
                 self.0
             }
