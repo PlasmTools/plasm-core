@@ -35,6 +35,7 @@ const cases = [
   {name: "failure_then_answer", terminal: "submit_answer", intervening: "none"},
   {name: "failure_then_unrelated_read_then_complete", terminal: "complete_task", intervening: "read"},
   {name: "failure_then_unrelated_write_then_complete", terminal: "complete_task", intervening: "write"},
+  {name: "write_while_original_is_in_flight", terminal: "complete_task", intervening: "inflight"},
 ] as const;
 
 let exposed = 0;
@@ -46,6 +47,7 @@ for (const scenario of cases) {
   const rows: Array<{expense_id: string; group_id: string; description: string}> = [];
   let posts = 0;
   let reads = 0;
+  let runConcurrent: (() => Promise<void>) | undefined;
   const transport: HostTransportFn = async request => {
     if (request.method === "GET") {
       reads++;
@@ -54,7 +56,16 @@ for (const scenario of cases) {
     assert.equal(request.method, "POST");
     const body = JSON.parse(request.body ?? "null") as {group_id: string; description: string};
     const attempt = posts++;
-    if (attempt === 1) return {status: 422, body: "fixture 422"};
+    if (attempt === 1) {
+      if (scenario.intervening === "inflight") {
+        assert.ok(runConcurrent);
+        await Promise.race([
+          runConcurrent(),
+          new Promise<never>((_, reject) => setTimeout(() => reject(new Error("concurrent write blocked by original run")), 5000)),
+        ]);
+      }
+      return {status: 422, body: "fixture 422"};
+    }
     const row = {expense_id: `created-${attempt}`, group_id: body.group_id, description: body.description};
     rows.push(row);
     return {status: 200, body: JSON.stringify(row)};
@@ -107,9 +118,10 @@ for (const scenario of cases) {
       return ref;
     }
     const originalRef = await plan(original);
-    const unrelatedRef = scenario.intervening === "write" ? await plan(write) : undefined;
+    const unrelatedRef = scenario.intervening === "write" || scenario.intervening === "inflight" ? await plan(write) : undefined;
     const recorded: ExecutionFailure[] = [];
     const live = runtime;
+    runConcurrent = async () => { await live.plasmRun({logicalSessionRef: session, runRef: unrelatedRef!}); };
     const tools = createPlasmTools({plasmContext: live.plasmContext.bind(live), plasm: live.plasm.bind(live),
       plasmRun: live.plasmRun.bind(live), recordExecutionFailure: async (name, failure) => {
         recorded.push(failure);
@@ -149,9 +161,9 @@ for (const scenario of cases) {
       "failure carries native accounting for the original selection");
     assert.equal(rows[0]?.description, "item-0");
     assert.ok(rows.every(row => !["item-1", "item-2", "item-3"].includes(row.description)));
-    assert.equal(posts, scenario.intervening === "write" ? 3 : 2);
+    assert.equal(posts, scenario.intervening === "write" || scenario.intervening === "inflight" ? 3 : 2);
     if (scenario.intervening === "read") assert.ok(reads > readsBeforeIntervention, "unrelated read reaches transport after failure");
-    if (scenario.intervening === "write") assert.equal(rows.at(-1)?.description, "unrelated");
+    if (scenario.intervening === "write" || scenario.intervening === "inflight") assert.equal(rows.at(-1)?.description, "unrelated");
     const violated = result.stopReason === "completed";
     exposed += Number(violated);
     console.log(JSON.stringify({case: scenario.name, stopReason: result.stopReason,

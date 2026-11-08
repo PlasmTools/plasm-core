@@ -19,6 +19,8 @@ pub(crate) struct AdmittedRun {
     owner: EffectObligations,
     workflow: String,
     id: u64,
+    dispatched: bool,
+    removed: bool,
 }
 
 impl EffectObligations {
@@ -54,6 +56,8 @@ impl EffectObligations {
             owner: self.clone(),
             workflow: workflow.into(),
             id,
+            dispatched: false,
+            removed: false,
         })
     }
 
@@ -83,9 +87,35 @@ impl EffectObligations {
 }
 
 impl AdmittedRun {
+    /// Preparation failed before the live future was polled.
+    pub(crate) fn preparation_failed(mut self) {
+        self.remove();
+    }
+
+    pub(crate) fn begin_execution(&mut self) {
+        self.dispatched = true;
+    }
+
+    fn remove(&mut self) {
+        if self.removed {
+            return;
+        }
+        let mut workflows = self.owner.0.lock().unwrap_or_else(|e| e.into_inner());
+        if let Some(state) = workflows.get_mut(&self.workflow) {
+            state.runs.remove(&self.id);
+        }
+        if workflows
+            .get(&self.workflow)
+            .is_some_and(|state| state.runs.is_empty() && !state.sealed)
+        {
+            workflows.remove(&self.workflow);
+        }
+        self.removed = true;
+    }
+
     /// Remove only when execution succeeded, or native failure evidence proves
     /// that no mutation was dispatched or acknowledged.
-    pub(crate) fn finish(self, result: &crate::engine::RunPlanResult) {
+    pub(crate) fn finish(mut self, result: &crate::engine::RunPlanResult) {
         let safe = result.ok
             || result
                 .failure_json
@@ -97,16 +127,15 @@ impl AdmittedRun {
                         && failure.effects.iter().all(|effect| effect.completed == 0)
                 });
         if safe {
-            let mut workflows = self.owner.0.lock().unwrap_or_else(|e| e.into_inner());
-            if let Some(state) = workflows.get_mut(&self.workflow) {
-                state.runs.remove(&self.id);
-            }
-            if workflows
-                .get(&self.workflow)
-                .is_some_and(|state| state.runs.is_empty() && !state.sealed)
-            {
-                workflows.remove(&self.workflow);
-            }
+            self.remove();
+        }
+    }
+}
+
+impl Drop for AdmittedRun {
+    fn drop(&mut self) {
+        if !self.dispatched {
+            self.remove();
         }
     }
 }
@@ -130,7 +159,8 @@ mod tests {
     #[test]
     fn unrelated_success_cannot_discharge_unresolved_run() {
         let registry = EffectObligations::default();
-        let original = registry.admit("workflow").unwrap();
+        let mut original = registry.admit("workflow").unwrap();
+        original.begin_execution();
         drop(original); // A lost worker is uncertain and must remain open.
         registry.admit("workflow").unwrap().finish(&success());
         assert!(registry.seal(&["workflow".into()]).is_err());
@@ -149,6 +179,20 @@ mod tests {
     }
 
     #[test]
+    fn preparation_failure_cannot_leave_a_dispatch_obligation() {
+        let registry = EffectObligations::default();
+        registry.admit("workflow").unwrap().preparation_failed();
+        assert!(registry.seal(&["workflow".into()]).is_ok());
+    }
+
+    #[test]
+    fn dropped_preparation_does_not_leave_a_phantom_obligation() {
+        let registry = EffectObligations::default();
+        drop(registry.admit("workflow").unwrap());
+        assert!(registry.seal(&["workflow".into()]).is_ok());
+    }
+
+    #[test]
     fn refusing_one_workflow_does_not_seal_the_others() {
         let registry = EffectObligations::default();
         let running = registry.admit("b").unwrap();
@@ -161,7 +205,9 @@ mod tests {
     #[test]
     fn releasing_a_session_does_not_erase_an_unresolved_run() {
         let registry = EffectObligations::default();
-        drop(registry.admit("workflow").unwrap());
+        let mut run = registry.admit("workflow").unwrap();
+        run.begin_execution();
+        drop(run);
         registry.release("workflow");
         assert!(registry.seal(&["workflow".into()]).is_err());
     }

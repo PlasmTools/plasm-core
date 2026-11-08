@@ -124,9 +124,9 @@ fn lock<T>(m: &Mutex<T>) -> std::sync::MutexGuard<'_, T> {
 
 /// In-process Plasm engine for NAPI.
 ///
-/// Each engine has a FIFO asynchronous admission queue. A live HTTP callback may
-/// await JavaScript while retaining its session engine; queued callers yield the
-/// executor instead of blocking it. Independent logical sessions remain concurrent.
+/// Session engines serialize admission and plan preparation. Reviewed live
+/// runs own their execution state and do not retain the session engine lock
+/// while awaiting transport callbacks.
 #[napi]
 pub struct PlasmEngine {
     closing: std::sync::atomic::AtomicBool,
@@ -1505,7 +1505,7 @@ impl PlasmEngine {
         let _session_admission = self.admit_session(logical_session_id.as_deref()).await?;
         let mut engine = self.execution_engine(logical_session_id.as_deref()).await?;
         let callback = JsCallbackHttpTransport::new(transport.0, engine.primary_entry_id());
-        let reservation = self
+        let mut reservation = self
             .effect_obligations
             .admit(logical_session_id.as_deref().unwrap_or(""))
             .map_err(Error::from_reason)?;
@@ -1514,7 +1514,21 @@ impl PlasmEngine {
             .run_local(move || async move {
                 let _admission = _admission;
                 let _session_admission = _session_admission;
-                let result = engine.run_plan_live(&plan_commit_ref, callback).await;
+                let prepared = match engine.prepare_live_run(&plan_commit_ref, callback).await {
+                    Ok(value) => value,
+                    Err(error) => {
+                        reservation.preparation_failed();
+                        return Err(error);
+                    }
+                };
+                drop(engine);
+                let result = match prepared {
+                    engine::PreparedLiveRunResult::Rejected(result) => Ok(result),
+                    engine::PreparedLiveRunResult::Ready(prepared) => {
+                        reservation.begin_execution();
+                        prepared.execute().await
+                    }
+                };
                 if let Ok(value) = &result {
                     reservation.finish(value);
                 }
