@@ -91,8 +91,9 @@ async fn validated_plan_spare_node_capacity_obeys_the_continuation_budget() {
 #[tokio::test]
 async fn correlated_scope_capacity_obeys_the_continuation_budget() {
     use plasm_core::plasm_monad::{
-        empty_comp, CaptureContract, CorrelatedBody, ParentCapture, PlanQualifiedEntityKey,
-        PlasmDataValue, PlasmStepPayload, PurePayload, ScopedCapture, ScopedOutput, StepId,
+        empty_comp, invoke_step_payload, CaptureContract, CorrelatedBody, ParentCapture,
+        PlanQualifiedEntityKey, PlasmDataValue, PlasmStepPayload, PurePayload, ScopedCapture,
+        ScopedOutput, StepId,
     };
     use plasm_runtime::execution::effect_continuation::{
         EffectContinuation, EffectContinuationError, MAX_EFFECT_SELECTION_BYTES,
@@ -114,6 +115,19 @@ async fn correlated_scope_capacity_obeys_the_continuation_budget() {
             result_shape: ResultShape::Single,
         }),
     );
+    let mut display = String::with_capacity(MAX_EFFECT_SELECTION_BYTES + 1);
+    display.push('x');
+    let mut invocation = invoke_step_payload(
+        plasm_core::plasm_monad::SurfaceKind::Get,
+        EffectClass::Read,
+        ResultShape::Single,
+        "x",
+    );
+    if let PlasmStepPayload::Invoke(ref mut invoke) = invocation {
+        invoke.display_expr = Some(display);
+    }
+    let mut comp_with_invocation = empty_comp(None);
+    comp_with_invocation.steps.insert("get".into(), invocation);
     let entity = || PlanQualifiedEntityKey {
         entry_id: "e".into(),
         entity: "Item".into(),
@@ -123,6 +137,18 @@ async fn correlated_scope_capacity_obeys_the_continuation_budget() {
         entity_authority: true,
     };
     let bodies = [
+        CorrelatedBody {
+            parent: ParentCapture {
+                source: StepId("s".into()),
+                local: StepId("p".into()),
+                entity: entity(),
+                contract: contract(),
+            },
+            output: ScopedOutput::Record,
+            max_parents: std::num::NonZeroU32::new(1).unwrap(),
+            captures: Vec::new(),
+            body: comp_with_invocation,
+        },
         CorrelatedBody {
             parent: ParentCapture {
                 source: StepId(source),

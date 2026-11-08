@@ -566,7 +566,37 @@ impl ValidatedPlanArtifact {
                 }
             }
         }
-        fn comp_structure(value: &plasm_core::plasm_monad::PlasmComp) -> usize {
+        fn monad_entity(value: &plasm_core::plasm_monad::PlanQualifiedEntityKey) -> usize {
+            value
+                .entry_id
+                .capacity()
+                .saturating_add(value.entity.capacity())
+        }
+        fn monad_bindings(values: &Vec<plasm_core::plasm_monad::PlanInputBinding>) -> usize {
+            values.iter().fold(vec_bytes(values), |sum, binding| {
+                sum.saturating_add(binding.from.capacity())
+                    .saturating_add(binding.to.capacity())
+            })
+        }
+        fn monad_ir(value: &plasm_core::plasm_monad::PlanExprIr) -> usize {
+            plasm_runtime::execution::expression_retention_capacity_bytes(&value.expr)
+                .saturating_add(projection(&value.projection))
+                .saturating_add(value.display_expr.as_ref().map_or(0, String::capacity))
+        }
+        fn monad_template(value: &plasm_core::plasm_monad::PlanExprTemplate) -> usize {
+            plasm_runtime::execution::expression_retention_capacity_bytes(&value.expr)
+                .saturating_add(projection(&value.projection))
+                .saturating_add(value.display_expr.as_ref().map_or(0, String::capacity))
+                .saturating_add(monad_bindings(&value.input_bindings))
+        }
+        fn monad_effect(value: &plasm_core::plasm_monad::EffectTemplate) -> usize {
+            monad_entity(&value.qualified_entity)
+                .saturating_add(value.expr_template.capacity())
+                .saturating_add(monad_template(&value.ir_template))
+                .saturating_add(strings(&value.projection))
+                .saturating_add(monad_bindings(&value.input_bindings))
+        }
+        fn comp_structure(value: &plasm_core::plasm_monad::PlasmComp, depth: usize) -> usize {
             use plasm_core::plasm_monad::{PlasmReturn, PlasmStepPayload, StepId};
 
             // Account conservatively for B-tree nodes, which do not expose capacity.
@@ -598,15 +628,67 @@ impl ValidatedPlanArtifact {
                             }
                             retained
                         }
-                        // Their container storage is charged here; their owned payloads
-                        // still need the same capacity walk as `Pure`.
-                        PlasmStepPayload::Invoke(_)
-                        | PlasmStepPayload::Map(_)
-                        | PlasmStepPayload::Derive(_)
-                        | PlasmStepPayload::FlatMapRelation(_)
-                        | PlasmStepPayload::FlatMapApply(_)
-                        | PlasmStepPayload::UnfoldUntil(_)
-                        | PlasmStepPayload::MapBody(_) => 0,
+                        PlasmStepPayload::Invoke(invoke) => invoke
+                            .qualified_entity
+                            .as_ref()
+                            .map_or(0, monad_entity)
+                            .saturating_add(invoke.ir.as_ref().map_or(0, monad_ir))
+                            .saturating_add(invoke.ir_template.as_ref().map_or(0, monad_template))
+                            .saturating_add(strings(&invoke.projection))
+                            .saturating_add(predicates(&invoke.predicates))
+                            .saturating_add(invoke.approval.as_ref().map_or(0, String::capacity))
+                            .saturating_add(
+                                invoke.display_expr.as_ref().map_or(0, String::capacity),
+                            ),
+                        PlasmStepPayload::Derive(derive) => derive.derive.inputs.iter().fold(
+                            derive
+                                .derive
+                                .source
+                                .as_ref()
+                                .map_or(0, String::capacity)
+                                .saturating_add(
+                                    derive
+                                        .derive
+                                        .item_binding
+                                        .as_ref()
+                                        .map_or(0, |v| v.retention_capacity_bytes()),
+                                )
+                                .saturating_add(vec_bytes(&derive.derive.inputs))
+                                .saturating_add(data(&derive.derive.value, 0)),
+                            |sum, input| {
+                                sum.saturating_add(input.node.capacity())
+                                    .saturating_add(input.alias.capacity())
+                            },
+                        ),
+                        PlasmStepPayload::FlatMapApply(apply) => apply
+                            .source
+                            .capacity()
+                            .saturating_add(apply.item_binding.retention_capacity_bytes())
+                            .saturating_add(monad_effect(&apply.effect_template))
+                            .saturating_add(strings(&apply.projection))
+                            .saturating_add(predicates(&apply.predicates))
+                            .saturating_add(apply.approval.as_ref().map_or(0, String::capacity)),
+                        PlasmStepPayload::UnfoldUntil(iter) => iter
+                            .source
+                            .capacity()
+                            .saturating_add(iter.item_binding.retention_capacity_bytes())
+                            .saturating_add(monad_effect(&iter.effect_template))
+                            .saturating_add(predicates(&iter.until_predicates))
+                            .saturating_add(
+                                iter.until_scope
+                                    .as_deref()
+                                    .map_or(0, |body| scope(body, depth + 1)),
+                            )
+                            .saturating_add(
+                                iter.step_scope
+                                    .as_deref()
+                                    .map_or(0, |body| scope(body, depth + 1)),
+                            )
+                            .saturating_add(iter.seed_ir.as_ref().map_or(0, monad_ir))
+                            .saturating_add(iter.approval.as_ref().map_or(0, String::capacity)),
+                        PlasmStepPayload::MapBody(body) => scope(body, depth + 1),
+                        // Compute and relation payload allocations remain to be accounted.
+                        PlasmStepPayload::Map(_) | PlasmStepPayload::FlatMapRelation(_) => 0,
                     })
             });
             bytes = value.metadata.iter().fold(bytes, |sum, (key, value)| {
@@ -664,7 +746,10 @@ impl ValidatedPlanArtifact {
                     }),
             }
         }
-        fn scope(value: &plasm_core::plasm_monad::CorrelatedBody) -> usize {
+        fn scope(value: &plasm_core::plasm_monad::CorrelatedBody, depth: usize) -> usize {
+            if depth >= 64 {
+                return usize::MAX;
+            }
             let parent = &value.parent;
             let mut bytes = std::mem::size_of::<plasm_core::plasm_monad::CorrelatedBody>()
                 .saturating_add(parent.source.0.capacity())
@@ -672,7 +757,7 @@ impl ValidatedPlanArtifact {
                 .saturating_add(parent.entity.entry_id.capacity())
                 .saturating_add(parent.entity.entity.capacity())
                 .saturating_add(contract(&parent.contract))
-                .saturating_add(comp_structure(&value.body));
+                .saturating_add(comp_structure(&value.body, depth));
             if let plasm_core::plasm_monad::ScopedOutput::Rows {
                 entity,
                 schema: output,
@@ -787,8 +872,8 @@ impl ValidatedPlanArtifact {
                     .saturating_add(predicates(&n.until_predicates))
                     .saturating_add(n.approval.as_ref().map_or(0, String::capacity))
                     .saturating_add(n.seed_ir.as_ref().map_or(0, expr_ir))
-                    .saturating_add(n.until_scope.as_deref().map_or(0, scope))
-                    .saturating_add(n.step_scope.as_deref().map_or(0, scope)),
+                    .saturating_add(n.until_scope.as_deref().map_or(0, |body| scope(body, 0)))
+                    .saturating_add(n.step_scope.as_deref().map_or(0, |body| scope(body, 0))),
                 ValidatedPlanNode::RelationTraversal(n) => n.relation.binding_proofs.iter().fold(
                     n.relation
                         .source
@@ -803,7 +888,7 @@ impl ValidatedPlanArtifact {
                             .saturating_add(proof.parent_field.capacity())
                     },
                 ),
-                ValidatedPlanNode::MapBody(n) => scope(&n.body),
+                ValidatedPlanNode::MapBody(n) => scope(&n.body, 0),
                 ValidatedPlanNode::Capture(n) => entity(&n.entity),
             };
             bytes = bytes.saturating_add(node_owned);
