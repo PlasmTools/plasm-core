@@ -35,7 +35,7 @@ enum OccurrenceDisposition {
     PureShortCircuit,
 }
 
-#[derive(Debug, thiserror::Error, PartialEq, Eq)]
+#[derive(Debug, thiserror::Error)]
 pub enum EffectContinuationError {
     #[error("continuation lease must be positive and at most ten minutes")]
     InvalidLease,
@@ -53,8 +53,10 @@ pub enum EffectContinuationError {
     WorkflowMismatch,
     #[error("the continuation has already been resumed or expired")]
     AlreadyResolved,
-    #[error("continuation selection cannot be retained within its byte budget: {0}")]
+    #[error("continuation payload cannot be retained within its byte budget: {0}")]
     SelectionBudget(#[source] plasm_core::value::ValueBudgetError),
+    #[error("continuation retained-state accounting failed")]
+    RetainedSerialization(#[source] serde_json::Error),
     #[error("continuation execution scope has already been used")]
     ScopeAlreadyUsed,
 }
@@ -174,6 +176,10 @@ tokio::task_local! {
 }
 
 impl EffectContinuation {
+    /// Whether this task belongs to a continuation-controlled execution.
+    pub fn is_active() -> bool {
+        CURRENT.try_with(|_| ()).is_ok()
+    }
     /// Construct a private native continuation identity for a single run.
     pub fn new_native(
         lease: Duration,
@@ -306,6 +312,64 @@ impl EffectContinuation {
                 .map_err(EffectContinuationError::SelectionBudget)?;
         }
         let bytes = initial - remaining;
+        *used += bytes;
+        drop(used);
+        Ok(SelectionReservation {
+            state: Some(control.state),
+            bytes,
+        })
+    }
+
+    /// Charge a serializable retained payload to the same aggregate budget as
+    /// selection rows. The counter discards all bytes and cannot reveal values.
+    /// This measures encoded payload, not the entire allocation of the future.
+    pub fn reserve_retained<T: serde::Serialize + ?Sized>(
+        value: &T,
+    ) -> Result<SelectionReservation, EffectContinuationError> {
+        let Some(control) = Self::current() else {
+            return Ok(SelectionReservation {
+                state: None,
+                bytes: 0,
+            });
+        };
+        struct Counter {
+            remaining: usize,
+            exceeded: bool,
+        }
+        impl std::io::Write for Counter {
+            fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
+                if let Some(remaining) = self.remaining.checked_sub(bytes.len()) {
+                    self.remaining = remaining;
+                    Ok(bytes.len())
+                } else {
+                    self.exceeded = true;
+                    Err(std::io::Error::other("continuation budget exceeded"))
+                }
+            }
+            fn flush(&mut self) -> std::io::Result<()> {
+                Ok(())
+            }
+        }
+        let mut used = control
+            .state
+            .selection_bytes
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        let initial = MAX_EFFECT_SELECTION_BYTES - *used;
+        let mut counter = Counter {
+            remaining: initial,
+            exceeded: false,
+        };
+        if let Err(error) = serde_json::to_writer(&mut counter, value) {
+            return Err(if counter.exceeded {
+                EffectContinuationError::SelectionBudget(
+                    plasm_core::ValueBudgetError::BytesExceeded,
+                )
+            } else {
+                EffectContinuationError::RetainedSerialization(error)
+            });
+        }
+        let bytes = initial - counter.remaining;
         *used += bytes;
         drop(used);
         Ok(SelectionReservation {
@@ -831,6 +895,29 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn materialized_payload_and_selection_share_the_retention_budget() {
+        let (control, _pauses) = EffectContinuation::new_native(Duration::from_secs(2)).unwrap();
+        let payload = "x".repeat(MAX_EFFECT_SELECTION_BYTES / 2);
+        let mut row = plasm_core::ValueRow::new();
+        row.insert("payload".into(), plasm_core::Value::String(payload.clone()));
+        control
+            .scope(async {
+                let retained = EffectContinuation::reserve_retained(&payload).unwrap();
+                assert!(matches!(
+                    EffectContinuation::reserve_selection(&[row.clone()]),
+                    Err(EffectContinuationError::SelectionBudget(
+                        plasm_core::ValueBudgetError::BytesExceeded
+                    ))
+                ));
+                drop(retained);
+                let selection = EffectContinuation::reserve_selection(&[row]).unwrap();
+                drop(selection);
+                assert!(EffectContinuation::reserve_retained(&payload).is_ok());
+            })
+            .await;
+    }
+
+    #[tokio::test]
     async fn only_the_owning_workflow_can_resume_once() {
         let workflow = Uuid::new_v4();
         let (control, mut pauses) =
@@ -841,16 +928,16 @@ mod tests {
             pause = pauses.recv() => pause.unwrap(),
             _ = &mut pending => panic!("checkpoint returned before resume"),
         };
-        assert_eq!(
+        assert!(matches!(
             pause.resume(Uuid::new_v4()),
             Err(EffectContinuationError::WorkflowMismatch)
-        );
-        assert_eq!(pause.resume(workflow), Ok(()));
-        assert_eq!(
+        ));
+        assert!(pause.resume(workflow).is_ok());
+        assert!(matches!(
             pause.resume(workflow),
             Err(EffectContinuationError::AlreadyResolved)
-        );
-        assert_eq!(pending.await, Ok(()));
+        ));
+        assert!(pending.await.is_ok());
     }
 
     #[tokio::test]
@@ -864,12 +951,12 @@ mod tests {
             pause = pauses.recv() => pause.unwrap(),
             _ = &mut pending => panic!("checkpoint returned before resume"),
         };
-        assert_eq!(
+        assert!(matches!(
             other.resume(&mut pause),
             Err(EffectContinuationError::WorkflowMismatch)
-        );
+        ));
         owner.resume(&mut pause).unwrap();
-        assert_eq!(pending.await, Ok(()));
+        assert!(pending.await.is_ok());
     }
 
     #[tokio::test]
@@ -912,7 +999,7 @@ mod tests {
             };
             owner.resume(&mut pause).unwrap();
             let (outcome, certificate) = pending.await.unwrap();
-            assert_eq!(outcome, Ok(()));
+            assert!(outcome.is_ok());
             if coverage == ResultCoverage::Complete {
                 let certificate = certificate.expect("complete original scope has a certificate");
                 assert!(!certificate.consume_for(&other));
@@ -1113,26 +1200,26 @@ mod tests {
         };
         assert_eq!(pause.failure.effect_selections, vec![outer, inner]);
         pause.resume(workflow).unwrap();
-        assert_eq!(pending.await, Ok(()));
+        assert!(pending.await.is_ok());
     }
 
     #[tokio::test]
     async fn unknown_or_ambiguous_dispatches_are_not_resumable() {
         let (control, mut pauses) =
             EffectContinuation::new(Uuid::new_v4(), Duration::from_secs(1)).unwrap();
-        assert_eq!(
+        assert!(matches!(
             control
                 .checkpoint(failure(MutationDispatchStatus::Unresolved))
                 .await,
             Err(EffectContinuationError::NotRetryable)
-        );
+        ));
         let mut ambiguous = failure(MutationDispatchStatus::RejectedWithoutEffect);
         let second = ambiguous.dispatches[0].clone();
         ambiguous.dispatches.push(second);
-        assert_eq!(
+        assert!(matches!(
             control.checkpoint(ambiguous).await,
             Err(EffectContinuationError::NotRetryable)
-        );
+        ));
         assert!(
             tokio::time::timeout(Duration::from_millis(20), pauses.recv())
                 .await
@@ -1152,11 +1239,14 @@ mod tests {
             _ = &mut pending => panic!("checkpoint returned before cancellation"),
         };
         control.cancel();
-        assert_eq!(pending.await, Err(EffectContinuationError::Cancelled));
-        assert_eq!(
+        assert!(matches!(
+            pending.await,
+            Err(EffectContinuationError::Cancelled)
+        ));
+        assert!(matches!(
             pause.resume(workflow),
             Err(EffectContinuationError::AlreadyResolved)
-        );
+        ));
     }
 
     #[tokio::test]
@@ -1170,11 +1260,14 @@ mod tests {
             pause = pauses.recv() => pause.unwrap(),
             _ = &mut pending => panic!("checkpoint expired before its event was received"),
         };
-        assert_eq!(pending.await, Err(EffectContinuationError::Expired));
-        assert_eq!(
+        assert!(matches!(
+            pending.await,
+            Err(EffectContinuationError::Expired)
+        ));
+        assert!(matches!(
             pause.resume(workflow),
             Err(EffectContinuationError::AlreadyResolved)
-        );
+        ));
     }
 
     #[tokio::test]
@@ -1189,14 +1282,14 @@ mod tests {
             _ = &mut first => panic!("checkpoint returned before resume"),
         };
         pause.resume(workflow).unwrap();
-        assert_eq!(first.await, Ok(()));
+        assert!(first.await.is_ok());
         tokio::time::sleep(Duration::from_millis(220)).await;
-        assert_eq!(
+        assert!(matches!(
             control
                 .checkpoint(failure(MutationDispatchStatus::RejectedWithoutEffect))
                 .await,
             Err(EffectContinuationError::Expired)
-        );
+        ));
         assert!(
             tokio::time::timeout(Duration::from_millis(20), pauses.recv())
                 .await

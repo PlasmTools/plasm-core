@@ -770,18 +770,18 @@ mod continuation_tests {
             pause.failure.dispatches[0].status,
             crate::MutationDispatchStatus::RejectedWithoutEffect
         );
-        assert_eq!(
+        assert!(matches!(
             pause.resume(Uuid::new_v4()),
             Err(EffectContinuationError::WorkflowMismatch)
-        );
+        ));
         if cancel {
             control.cancel();
             assert!(matches!(run.await, Err(RuntimeError::Cancelled)));
             assert_eq!(transport.requests.lock().unwrap().len(), 1);
-            assert_eq!(
+            assert!(matches!(
                 pause.resume(workflow),
                 Err(EffectContinuationError::AlreadyResolved)
-            );
+            ));
             return;
         }
         if change_auth {

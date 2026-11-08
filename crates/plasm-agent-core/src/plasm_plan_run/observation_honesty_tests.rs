@@ -621,7 +621,7 @@ async fn resumed_fanout_preserves_duplicate_occurrences() {
 }
 
 #[tokio::test]
-async fn oversized_continuation_selection_stops_before_scoped_writes() {
+async fn oversized_continuation_inputs_stop_before_scoped_writes() {
     use plasm_runtime::execution::effect_continuation::{
         EffectContinuation, MAX_EFFECT_SELECTION_BYTES,
     };
@@ -658,7 +658,7 @@ async fn oversized_continuation_selection_stops_before_scoped_writes() {
         )))
         .await
         .expect_err("oversized selection must be refused");
-    assert_eq!(failure.code, "effect_selection_retention_refused");
+    assert_eq!(failure.code, "effect_materialization_retention_refused");
     let budget = failure.input_budget.as_ref().expect("typed byte budget");
     assert_eq!(budget.unit, plasm_runtime::InputBudgetUnit::AccountedBytes);
     assert_eq!(budget.limit, MAX_EFFECT_SELECTION_BYTES);

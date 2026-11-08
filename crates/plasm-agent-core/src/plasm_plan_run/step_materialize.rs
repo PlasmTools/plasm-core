@@ -13,6 +13,90 @@ fn step_failure(code: &'static str, diagnostic: impl Into<String>) -> ExecutionF
     ExecutionFailure::new(plasm_runtime::FailureCause::Program, code, diagnostic)
 }
 
+struct RetainedIdentities<'a>(&'a [Option<plasm_core::RowIdentity>]);
+
+impl serde::Serialize for RetainedIdentities<'_> {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        use serde::ser::SerializeSeq;
+        let mut sequence = serializer.serialize_seq(None)?;
+        for identity in self.0 {
+            match identity {
+                Some(identity) => {
+                    sequence.serialize_element(&(&identity.reference, &identity.ambient))?
+                }
+                None => sequence.serialize_element(&Option::<()>::None)?,
+            }
+        }
+        sequence.end()
+    }
+}
+
+/// These values remain reachable through the step's borrowed environment while
+/// a nested dispatch is suspended. Charge their wire payload without retaining
+/// an additional copy. Host-only pagination state and other future frames are
+/// not included by this accounting.
+fn reserve_materialized_inputs(
+    materialized: &BTreeMap<PlanNodeId, MaterializedNode>,
+    step_id: &StepId,
+) -> Result<
+    Vec<plasm_runtime::execution::effect_continuation::SelectionReservation>,
+    ExecutionFailure,
+> {
+    use plasm_runtime::execution::effect_continuation::{
+        EffectContinuation, EffectContinuationError, MAX_EFFECT_SELECTION_BYTES,
+    };
+    let mut reservations = Vec::new();
+    if !EffectContinuation::is_active() {
+        return Ok(reservations);
+    }
+    let failure = |error| {
+        let mut result = step_failure(
+            "effect_materialization_retention_refused",
+            format!("retained inputs exceed the continuation budget: {error}"),
+        );
+        if matches!(
+            error,
+            EffectContinuationError::SelectionBudget(plasm_core::ValueBudgetError::BytesExceeded)
+        ) {
+            result.input_budget = Some(plasm_runtime::InputBudgetEvidence {
+                unit: plasm_runtime::InputBudgetUnit::AccountedBytes,
+                limit: MAX_EFFECT_SELECTION_BYTES,
+                observed_at_least: MAX_EFFECT_SELECTION_BYTES + 1,
+                input: step_id.to_string(),
+            });
+        }
+        result
+    };
+    for value in materialized.values() {
+        reservations
+            .push(EffectContinuation::reserve_retained(value.result.as_ref()).map_err(&failure)?);
+        match &value.row_source {
+            MaterializedRowSource::Inline(rows) => {
+                reservations.push(EffectContinuation::reserve_retained(rows).map_err(&failure)?)
+            }
+            MaterializedRowSource::GraphBacked {
+                entity_type,
+                membership,
+                hot_snapshot,
+            } => {
+                reservations.push(
+                    EffectContinuation::reserve_retained(&(
+                        entity_type,
+                        membership,
+                        hot_snapshot.as_ref(),
+                    ))
+                    .map_err(&failure)?,
+                );
+            }
+        }
+        reservations.push(
+            EffectContinuation::reserve_retained(&RetainedIdentities(&value.row_identities))
+                .map_err(&failure)?,
+        );
+    }
+    Ok(reservations)
+}
+
 fn selection_identities(
     selection: &plasm_core::plasm_monad::PythonRowSelection,
     occurrences: &[Option<crate::python_pool::SelectedOccurrence>],
@@ -127,6 +211,14 @@ pub(crate) async fn materialize_executable_plan_step(
     schema_nodes: &[ValidatedPlanNode],
     materialized: &BTreeMap<PlanNodeId, MaterializedNode>,
 ) -> Result<PlanStepMaterializeOutcome, ExecutionFailure> {
+    let _retained_inputs = if matches!(
+        node.effect_class(),
+        EffectClass::Write | EffectClass::SideEffect
+    ) {
+        reserve_materialized_inputs(materialized, step_id)?
+    } else {
+        Vec::new()
+    };
     use crate::occurrence_progress::{OccurrenceGuard, OccurrencePhase, OccurrenceProgress};
     let mut occurrence = OccurrenceGuard::new(
         ctx.execution_scope,
