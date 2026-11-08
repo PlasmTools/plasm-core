@@ -18,6 +18,7 @@ struct Store {
     rows: Vec<serde_json::Value>,
     source_rows: Vec<serde_json::Value>,
     response_padding: usize,
+    response_padding_at: Option<usize>,
 }
 struct Transport {
     store: Arc<Mutex<Store>>,
@@ -235,7 +236,11 @@ impl HttpTransport for Transport {
             let Value::Object(body) = req.body.as_ref().expect("POST body") else {
                 panic!("object body")
             };
-            let description = if store.response_padding == 0 {
+            let description = if store.response_padding == 0
+                || store
+                    .response_padding_at
+                    .is_some_and(|index| index != attempt)
+            {
                 body.get("description")
                     .unwrap()
                     .as_str()
@@ -907,6 +912,12 @@ async fn ordered_fanout_oversized_job_refuses_before_any_dispatch() {
 
 #[tokio::test]
 async fn ordered_fanout_retention_failure_keeps_completed_occurrence_and_stops_suffix() {
+    for oversized_at in [0, 1] {
+        Box::pin(ordered_fanout_retention_case(oversized_at)).await;
+    }
+}
+
+async fn ordered_fanout_retention_case(oversized_at: usize) {
     use super::plan_bounded_parallel::BatchAdmission;
     use super::plan_fanout_parallel::{execute_row_fanout, PlanLineJob, RowFanoutPolicy};
     use plasm_runtime::execution::effect_continuation::{
@@ -917,9 +928,13 @@ async fn ordered_fanout_retention_failure_keeps_completed_occurrence_and_stops_s
         session,
         opened,
         store,
-    } = ordered_fanout_fixture(2, usize::MAX, true).await;
-    store.lock().unwrap().response_padding = MAX_EFFECT_SELECTION_BYTES;
-    let jobs = (0..2)
+    } = ordered_fanout_fixture(3, usize::MAX, true).await;
+    {
+        let mut state = store.lock().unwrap();
+        state.response_padding = MAX_EFFECT_SELECTION_BYTES;
+        state.response_padding_at = Some(oversized_at);
+    }
+    let jobs = (0..3)
         .map(|index| {
             let input = Value::Object(indexmap::IndexMap::from([
                 ("group_id".into(), Value::String("dest".into())),
@@ -957,7 +972,7 @@ async fn ordered_fanout_retention_failure_keeps_completed_occurrence_and_stops_s
             None,
             None,
             None,
-            RowFanoutPolicy::for_each(BatchAdmission::OrderedEffects, 2),
+            RowFanoutPolicy::for_each(BatchAdmission::OrderedEffects, 3),
         )))
         .await
         .err()
@@ -970,7 +985,7 @@ async fn ordered_fanout_retention_failure_keeps_completed_occurrence_and_stops_s
             .iter()
             .map(|effect| effect.completed)
             .sum::<usize>(),
-        1
+        oversized_at + 1
     );
     assert_eq!(
         failure
@@ -980,15 +995,20 @@ async fn ordered_fanout_retention_failure_keeps_completed_occurrence_and_stops_s
             .sum::<usize>(),
         0
     );
-    let occurrence = failure
+    let mut occurrences = failure
         .effects
         .iter()
         .flat_map(|effect| &effect.occurrences)
-        .next()
-        .expect("completed occurrence evidence");
-    assert_eq!(occurrence.source_index, 0);
-    assert_eq!(occurrence.source_identity.as_deref(), Some("source-0"));
-    assert_eq!(store.lock().unwrap().attempts, 1);
+        .map(|occurrence| (occurrence.source_index, occurrence.source_identity.clone()))
+        .collect::<Vec<_>>();
+    occurrences.sort_by_key(|(index, _)| *index);
+    assert_eq!(
+        occurrences,
+        (0..=oversized_at)
+            .map(|index| (index, Some(format!("source-{index}"))))
+            .collect::<Vec<_>>()
+    );
+    assert_eq!(store.lock().unwrap().attempts, oversized_at + 1);
 }
 
 #[tokio::test]
