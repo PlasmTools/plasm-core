@@ -420,6 +420,7 @@ pub(crate) async fn run_executable_plan_phased(
         .collect();
     let schedule_digest =
         super::ScheduleDigest::from_validated_plan(dry.validated_plan(), &schedule_order);
+    drop(schedule_order);
     tracing::debug!(
         target: "plasm.pec",
         schedule_digest = %schedule_digest.to_hex(),
@@ -428,7 +429,13 @@ pub(crate) async fn run_executable_plan_phased(
     );
     let rows_progress = execution_scope.and_then(|s| s.rows_progress_fn());
     let scope_budget = Arc::new(super::map_body::ScopeBudget::default());
-    let prepared_computes = crate::python_compute::prepared_scope::PreparedComputeScope::new(es);
+    let prepared_computes = if retained_frame.is_some()
+        && plasm_runtime::execution::effect_continuation::EffectContinuation::is_active()
+    {
+        crate::python_compute::prepared_scope::PreparedComputeScope::without_retention(es)
+    } else {
+        crate::python_compute::prepared_scope::PreparedComputeScope::new(es)
+    };
     let mat_ctx = PlanStepMaterializeCtx {
         es,
         st,
