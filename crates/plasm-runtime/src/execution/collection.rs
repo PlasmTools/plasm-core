@@ -31,6 +31,18 @@ pub struct ExecutionCollection {
 
 struct RetainedCollection<'a>(&'a ExecutionCollection);
 
+struct RetainedEntityBatches<'a>(&'a SharedRows<CachedEntity>);
+impl serde::Serialize for RetainedEntityBatches<'_> {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        use serde::ser::SerializeSeq;
+        let mut sequence = serializer.serialize_seq(None)?;
+        for batch in self.0.retention_batches() {
+            sequence.serialize_element(&crate::cache::retained_entities(batch))?;
+        }
+        sequence.end()
+    }
+}
+
 impl serde::Serialize for RetainedCollection<'_> {
     fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
         use serde::ser::SerializeSeq;
@@ -42,7 +54,8 @@ impl serde::Serialize for RetainedCollection<'_> {
                 collection.delivery_start,
                 collection.graph_backed,
                 collection.membership.retention_view(),
-                collection.entities.retention_view(),
+                collection.entities.retention_order_view(),
+                RetainedEntityBatches(&collection.entities),
             ))?;
             current = collection.delivery_source.as_deref();
         }
@@ -51,6 +64,26 @@ impl serde::Serialize for RetainedCollection<'_> {
 }
 
 impl ExecutionCollection {
+    /// Backing allocation capacity retained by this collection and its delivery source.
+    pub fn retention_capacity_bytes(&self) -> usize {
+        let mut total = 0usize;
+        let mut current = Some(self);
+        while let Some(collection) = current {
+            let refs = collection.membership.observed();
+            total = total
+                .saturating_add(refs.retention_allocation_bytes())
+                .saturating_add(collection.entities.retention_allocation_bytes());
+            for batch in refs.retention_batches() {
+                total =
+                    total.saturating_add(batch.len().saturating_mul(std::mem::size_of::<Ref>()));
+            }
+            for batch in collection.entities.retention_batches() {
+                total = total.saturating_add(crate::cache::retained_entities_capacity(batch));
+            }
+            current = collection.delivery_source.as_deref();
+        }
+        total
+    }
     /// Internal accounting view of all storage kept by this collection and its
     /// delivery source. This intentionally differs from its public wire shape.
     pub fn retention_view(&self) -> impl serde::Serialize + '_ {

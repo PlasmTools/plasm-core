@@ -1110,6 +1110,54 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn retained_collection_charges_nested_hidden_relation_rows() {
+        use plasm_core::collection_codec::{
+            CollectionCodec, CollectionIdentity, Observation, RecordingCodec, Transform,
+        };
+        use plasm_core::row_contract::RelationMembership;
+        let codec = RecordingCodec::new();
+        let identity = CollectionIdentity::for_untyped_observation(&"nested-relation").unwrap();
+        let original = codec
+            .record(
+                identity.clone(),
+                vec![
+                    plasm_core::Ref::new("Child", "small"),
+                    plasm_core::Ref::new("Child", "x".repeat(MAX_EFFECT_SELECTION_BYTES)),
+                ],
+                Observation::Literal,
+            )
+            .unwrap();
+        let visible = codec
+            .derive(
+                identity.derived(&"take-one").unwrap(),
+                &[&original],
+                Transform::Take(1),
+            )
+            .unwrap();
+        let mut entity = crate::CachedEntity::new(plasm_core::Ref::new("Parent", "one"), 0);
+        entity
+            .relations
+            .insert("children".into(), RelationMembership::from_record(visible));
+        let collection = super::super::ExecutionCollection::observe(
+            CollectionIdentity::for_untyped_observation(&"parents").unwrap(),
+            vec![entity],
+            Observation::Literal,
+        )
+        .unwrap();
+        let (control, _pauses) = EffectContinuation::new_native(Duration::from_secs(2)).unwrap();
+        control
+            .scope(async {
+                assert!(matches!(
+                    EffectContinuation::reserve_retained(&collection.retention_view()),
+                    Err(EffectContinuationError::SelectionBudget(
+                        plasm_core::ValueBudgetError::BytesExceeded
+                    ))
+                ));
+            })
+            .await;
+    }
+
+    #[tokio::test]
     async fn retained_collection_charges_unselected_backing_rows_and_delivery_source() {
         use plasm_core::collection_codec::{CollectionIdentity, Observation};
         let row = |id: &str| {

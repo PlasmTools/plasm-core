@@ -147,6 +147,51 @@ impl serde::Serialize for RetainedEntity<'_> {
     }
 }
 
+/// Discard-only retention view for snapshots, including hidden relation rows.
+pub fn retained_entities(entities: &[CachedEntity]) -> impl serde::Serialize + '_ {
+    struct Entities<'a>(&'a [CachedEntity]);
+    impl serde::Serialize for Entities<'_> {
+        fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+            use serde::ser::SerializeSeq;
+            let mut sequence = serializer.serialize_seq(Some(self.0.len()))?;
+            for entity in self.0 {
+                sequence.serialize_element(&RetainedEntity(entity))?;
+            }
+            sequence.end()
+        }
+    }
+    Entities(entities)
+}
+
+/// Conservative capacity charge for an immutable snapshot and its entity payloads.
+pub fn retained_entities_capacity(entities: &[CachedEntity]) -> usize {
+    entities.iter().fold(
+        entities
+            .len()
+            .saturating_mul(std::mem::size_of::<CachedEntity>()),
+        |bytes, entity| bytes.saturating_add(retained_entity_capacity(entity)),
+    )
+}
+
+fn retained_entity_capacity(entity: &CachedEntity) -> usize {
+    let mut bytes = crate::materialization::retained_index_capacity::<String, TypedFieldValue>(
+        entity.fields.capacity(),
+    )
+    .saturating_add(crate::materialization::retained_index_capacity::<
+        String,
+        RelationMembership,
+    >(entity.relations.capacity()));
+    for (key, value) in &entity.fields {
+        bytes = bytes.saturating_add(key.capacity()).saturating_add(
+            crate::materialization::typed_value_retention_capacity(value, 0),
+        );
+    }
+    for key in entity.relations.keys() {
+        bytes = bytes.saturating_add(key.capacity());
+    }
+    bytes
+}
+
 struct RetainedBase<'a>(&'a crate::materialization_conflict::EntityBaseContent);
 impl serde::Serialize for RetainedBase<'_> {
     fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
@@ -236,24 +281,7 @@ impl GraphCache {
                 bytes.saturating_add(values.capacity().saturating_mul(std::mem::size_of::<Ref>()));
         }
         for entity in self.entities.values() {
-            let entity = &entity[0];
-            bytes = bytes
-                .saturating_add(crate::materialization::retained_index_capacity::<
-                    String,
-                    TypedFieldValue,
-                >(entity.fields.capacity()))
-                .saturating_add(crate::materialization::retained_index_capacity::<
-                    String,
-                    RelationMembership,
-                >(entity.relations.capacity()));
-            for (key, value) in &entity.fields {
-                bytes = bytes.saturating_add(key.capacity()).saturating_add(
-                    crate::materialization::typed_value_retention_capacity(value, 0),
-                );
-            }
-            for key in entity.relations.keys() {
-                bytes = bytes.saturating_add(key.capacity());
-            }
+            bytes = bytes.saturating_add(retained_entity_capacity(&entity[0]));
         }
         if let Some(fork) = &self.branch_fork {
             bytes = bytes

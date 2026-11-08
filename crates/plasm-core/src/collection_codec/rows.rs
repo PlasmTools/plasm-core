@@ -83,6 +83,29 @@ impl<R> From<Arc<[R]>> for SharedRows<R> {
     }
 }
 impl<R> SharedRows<R> {
+    /// Physical batches retained by this occurrence set, including unselected rows.
+    /// Intended for internal retention accounting, not membership traversal.
+    pub fn retention_batches(&self) -> impl Iterator<Item = &[R]> {
+        self.sources.iter().map(AsRef::as_ref)
+    }
+
+    /// Occurrence coordinates for a retention view with a custom batch serializer.
+    pub fn retention_order_view(&self) -> impl Serialize + '_ {
+        self.order.as_ref()
+    }
+
+    /// Inline allocation sizes; nested allocations owned by rows are separate.
+    pub fn retention_allocation_bytes(&self) -> usize {
+        self.sources
+            .len()
+            .saturating_mul(std::mem::size_of::<Arc<[R]>>())
+            .saturating_add(
+                self.order
+                    .len()
+                    .saturating_mul(std::mem::size_of::<Occurrence>()),
+            )
+    }
+
     /// Internal retention accounting view. This includes backing batches even
     /// when only a subset of their rows is visible. It is not a wire format.
     pub fn retention_view(&self) -> impl Serialize + '_

@@ -15,6 +15,176 @@ fn step_failure(code: &'static str, diagnostic: impl Into<String>) -> ExecutionF
 
 pub(super) struct RetainedIdentities<'a>(pub(super) &'a [Option<plasm_core::RowIdentity>]);
 
+fn materialized_metadata_capacity(value: &MaterializedNode) -> usize {
+    let mut bytes = value
+        .display
+        .capacity()
+        .saturating_add(value.qualified_entity.entry_id.capacity())
+        .saturating_add(value.qualified_entity.entity.capacity())
+        .saturating_add(
+            value
+                .value_shapes
+                .capacity()
+                .saturating_mul(std::mem::size_of::<
+                    super::orchestrator::MaterializedValueShape,
+                >()),
+        )
+        .saturating_add(
+            value
+                .row_identities
+                .capacity()
+                .saturating_mul(std::mem::size_of::<Option<plasm_core::RowIdentity>>()),
+        );
+    for field in &value.optional_fields {
+        bytes = bytes.saturating_add(1024).saturating_add(field.capacity());
+    }
+    if let Some(projection) = &value.projection {
+        bytes = bytes.saturating_add(
+            projection
+                .capacity()
+                .saturating_mul(std::mem::size_of::<String>()),
+        );
+        for field in projection {
+            bytes = bytes.saturating_add(field.capacity());
+        }
+    }
+    if let Some(artifact) = &value.artifact {
+        bytes = bytes
+            .saturating_add(artifact.plasm_uri.capacity())
+            .saturating_add(artifact.canonical_plasm_uri.capacity())
+            .saturating_add(artifact.http_path.capacity())
+            .saturating_add(
+                artifact
+                    .request_fingerprints
+                    .capacity()
+                    .saturating_mul(std::mem::size_of::<String>()),
+            );
+        for fingerprint in &artifact.request_fingerprints {
+            bytes = bytes.saturating_add(fingerprint.capacity());
+        }
+    }
+    bytes
+}
+
+#[cfg(test)]
+mod retention_tests {
+    use super::*;
+    use plasm_runtime::execution::effect_continuation::{
+        EffectContinuation, MAX_EFFECT_SELECTION_BYTES,
+    };
+
+    #[tokio::test]
+    async fn inline_materialized_rows_charge_spare_capacity() {
+        let mut text = String::with_capacity(MAX_EFFECT_SELECTION_BYTES + 1);
+        text.push('x');
+        let mut row = plasm_core::ValueRow::new();
+        row.insert("payload".into(), plasm_core::Value::String(text));
+        let node = MaterializedNode {
+            value_shapes: Vec::new(),
+            optional_fields: Default::default(),
+            qualified_entity: crate::plasm_plan::QualifiedEntityKey {
+                entry_id: "test".into(),
+                entity: "Item".into(),
+            },
+            result: Arc::new(plasm_runtime::ExecutionResult {
+                collection: crate::test_support::execution_fixtures::collection(
+                    Vec::new(),
+                    plasm_runtime::ResultCoverage::Unknown,
+                ),
+                has_more: false,
+                pagination_resume: None,
+                paging_handle: None,
+                source: plasm_runtime::ExecutionSource::Cache,
+                stats: plasm_runtime::ExecutionStats::default(),
+                request_fingerprints: Vec::new(),
+                operations: plasm_runtime::OperationLedger::empty(),
+            }),
+            row_source: MaterializedRowSource::Inline(vec![row]),
+            row_identities: Vec::new(),
+            artifact: None,
+            display: "test".into(),
+            projection: None,
+        };
+        let mut nodes = BTreeMap::from([(PlanNodeId::new("source").unwrap(), node)]);
+        let (control, _pauses) =
+            EffectContinuation::new_native(std::time::Duration::from_secs(2)).unwrap();
+        control
+            .clone()
+            .scope(async {
+                let failure = reserve_materialized_inputs(&nodes, &StepId("step".into()))
+                    .err()
+                    .expect("oversized retained input must fail");
+                assert!(failure.input_budget.is_some());
+            })
+            .await;
+        let node = nodes.values_mut().next().unwrap();
+        node.row_source = MaterializedRowSource::Inline(Vec::new());
+        node.display = String::with_capacity(MAX_EFFECT_SELECTION_BYTES + 1);
+        control
+            .clone()
+            .scope(async {
+                let failure = reserve_materialized_inputs(&nodes, &StepId("step".into()))
+                    .err()
+                    .expect("oversized retained metadata must fail");
+                assert!(failure.input_budget.is_some());
+            })
+            .await;
+        use plasm_core::collection_codec::{
+            CollectionCodec, CollectionIdentity, Observation, RecordingCodec,
+        };
+        let node = nodes.values_mut().next().unwrap();
+        node.display = String::new();
+        let mut entity = plasm_runtime::CachedEntity::new(plasm_core::Ref::new("Item", "one"), 0);
+        let mut text = String::with_capacity(MAX_EFFECT_SELECTION_BYTES + 1);
+        text.push('x');
+        entity
+            .fields
+            .insert("payload".into(), plasm_core::TypedFieldValue::String(text));
+        let membership = RecordingCodec::new()
+            .record(
+                CollectionIdentity::for_untyped_observation(&"snapshot").unwrap(),
+                vec![plasm_core::Ref::new("Item", "one")],
+                Observation::Literal,
+            )
+            .unwrap();
+        node.row_source = MaterializedRowSource::GraphBacked {
+            entity_type: "Item".into(),
+            membership,
+            hot_snapshot: Arc::from([entity]),
+        };
+        control
+            .clone()
+            .scope(async {
+                let failure = reserve_materialized_inputs(&nodes, &StepId("step".into()))
+                    .err()
+                    .expect("oversized retained snapshot must fail");
+                assert!(failure.input_budget.is_some());
+            })
+            .await;
+        let node = nodes.values_mut().next().unwrap();
+        node.row_source = MaterializedRowSource::Inline(Vec::new());
+        let mut entity = plasm_runtime::CachedEntity::new(plasm_core::Ref::new("Item", "one"), 0);
+        let mut text = String::with_capacity(MAX_EFFECT_SELECTION_BYTES + 1);
+        text.push('x');
+        entity
+            .fields
+            .insert("payload".into(), plasm_core::TypedFieldValue::String(text));
+        Arc::get_mut(&mut node.result).unwrap().collection =
+            crate::test_support::execution_fixtures::collection(
+                vec![entity],
+                plasm_runtime::ResultCoverage::Unknown,
+            );
+        control
+            .scope(async {
+                let failure = reserve_materialized_inputs(&nodes, &StepId("step".into()))
+                    .err()
+                    .expect("oversized retained collection must fail");
+                assert!(failure.input_budget.is_some());
+            })
+            .await;
+    }
+}
+
 impl serde::Serialize for RetainedIdentities<'_> {
     fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
         use serde::ser::SerializeSeq;
@@ -67,37 +237,56 @@ fn reserve_materialized_inputs(
         result
     };
     for value in materialized.values() {
-        reservations.push(
-            EffectContinuation::reserve_retained(&(
-                value.result.collection.retention_view(),
-                value.result.has_more,
-                value.result.source,
-                &value.result.stats,
-                &value.result.request_fingerprints,
-                &value.result.operations,
-            ))
-            .map_err(&failure)?,
-        );
+        let mut metadata = EffectContinuation::empty_retention();
+        metadata
+            .add_capacity_bytes(materialized_metadata_capacity(value))
+            .map_err(&failure)?;
+        reservations.push(metadata);
+        let mut result = EffectContinuation::reserve_retained(&(
+            value.result.collection.retention_view(),
+            value.result.has_more,
+            value.result.source,
+            &value.result.stats,
+            &value.result.request_fingerprints,
+            &value.result.operations,
+        ))
+        .map_err(&failure)?;
+        result
+            .add_capacity_bytes(value.result.collection.retention_capacity_bytes())
+            .map_err(&failure)?;
+        reservations.push(result);
         if let Some(resume) = &value.result.pagination_resume {
             reservations.push(EffectContinuation::reserve_pagination(resume).map_err(&failure)?);
         }
         match &value.row_source {
             MaterializedRowSource::Inline(rows) => {
-                reservations.push(EffectContinuation::reserve_retained(rows).map_err(&failure)?)
+                let mut reservation =
+                    EffectContinuation::reserve_selection(rows).map_err(&failure)?;
+                reservation
+                    .add_capacity_bytes(
+                        rows.capacity()
+                            .saturating_mul(std::mem::size_of::<plasm_core::ValueRow>()),
+                    )
+                    .map_err(&failure)?;
+                reservations.push(reservation);
             }
             MaterializedRowSource::GraphBacked {
                 entity_type,
                 membership,
                 hot_snapshot,
             } => {
-                reservations.push(
-                    EffectContinuation::reserve_retained(&(
-                        entity_type,
-                        membership.retention_view(),
-                        hot_snapshot.as_ref(),
+                let mut reservation = EffectContinuation::reserve_retained(&(
+                    entity_type,
+                    membership.retention_view(),
+                    plasm_runtime::cache::retained_entities(hot_snapshot.as_ref()),
+                ))
+                .map_err(&failure)?;
+                reservation
+                    .add_capacity_bytes(entity_type.capacity().saturating_add(
+                        plasm_runtime::cache::retained_entities_capacity(hot_snapshot.as_ref()),
                     ))
-                    .map_err(&failure)?,
-                );
+                    .map_err(&failure)?;
+                reservations.push(reservation);
             }
         }
         reservations.push(
