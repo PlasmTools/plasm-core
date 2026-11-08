@@ -68,6 +68,11 @@ impl serde::Serialize for RetainedQueryEntries<'_> {
 }
 
 impl QueryIndex {
+    pub(crate) fn retention_capacity_bytes(&self) -> usize {
+        crate::materialization::retained_hash_capacity::<QueryCacheKey, QueryObservation>(
+            self.entries.capacity(),
+        )
+    }
     pub(crate) fn retention_view(&self) -> impl serde::Serialize + '_ {
         RetainedQueryEntries(&self.entries)
     }

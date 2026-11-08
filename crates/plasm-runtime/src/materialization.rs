@@ -8,6 +8,20 @@ use indexmap::IndexMap;
 use plasm_core::prerequisites::DeploymentBindings;
 use plasm_core::{CompOp, GetExpr, QueryExpr, Ref, Value, CGS};
 use serde::{Deserialize, Serialize};
+
+/// Conservative charge for hash-table buckets, including control bytes and
+/// growth slack. Saturation makes oversized capacities fail the budget check.
+pub(crate) fn retained_hash_capacity<K, V>(capacity: usize) -> usize {
+    capacity
+        .saturating_mul(std::mem::size_of::<(K, V)>().saturating_add(2))
+        .saturating_mul(2)
+}
+
+pub(crate) fn retained_index_capacity<K, V>(capacity: usize) -> usize {
+    capacity
+        .saturating_mul(std::mem::size_of::<(K, V)>().saturating_add(16))
+        .saturating_mul(2)
+}
 use std::sync::Arc;
 
 /// Honest cache consult counters (distinct from output row counts).
@@ -130,6 +144,9 @@ pub struct StoredResponse {
 }
 
 impl SessionResponseStore {
+    pub(crate) fn retention_capacity_bytes(&self) -> usize {
+        retained_hash_capacity::<RequestFingerprint, Arc<StoredResponse>>(self.entries.capacity())
+    }
     pub fn lookup(&self, fingerprint: &RequestFingerprint) -> Option<Arc<StoredResponse>> {
         self.entries.get(fingerprint).cloned()
     }
@@ -266,6 +283,60 @@ pub struct SessionMaterialization {
 }
 
 impl SessionMaterialization {
+    /// Conservative capacity charge for branch-owned container allocations.
+    /// Payload strings and nested values are measured separately.
+    pub(crate) fn retention_capacity_bytes(&self) -> usize {
+        let hash = retained_hash_capacity::<Ref, ()>;
+        let mut bytes = self
+            .graph
+            .retention_capacity_bytes()
+            .saturating_add(self.responses.retention_capacity_bytes())
+            .saturating_add(self.query_index.retention_capacity_bytes())
+            .saturating_add(hash(self.observed_snapshot_rows.capacity()))
+            .saturating_add(hash(self.snapshot_row_refs.capacity()))
+            .saturating_add(retained_hash_capacity::<Ref, IndexMap<String, Value>>(
+                self.inherited_capability_params.capacity(),
+            ))
+            .saturating_add(retained_hash_capacity::<Ref, GetObservation>(
+                self.get_observations.capacity(),
+            ))
+            .saturating_add(retained_hash_capacity::<String, IndexMap<String, Value>>(
+                self.provided_session_params.capacity(),
+            ));
+        for values in self
+            .inherited_capability_params
+            .values()
+            .chain(self.provided_session_params.values())
+        {
+            bytes =
+                bytes.saturating_add(retained_index_capacity::<String, Value>(values.capacity()));
+        }
+        for observation in self.get_observations.values() {
+            bytes = bytes
+                .saturating_add(retained_index_capacity::<String, Value>(
+                    observation.environment.capacity(),
+                ))
+                .saturating_add(retained_index_capacity::<String, Value>(
+                    observation.parameters.capacity(),
+                ))
+                .saturating_add(
+                    observation
+                        .authoritative_parameters
+                        .as_ref()
+                        .map_or(0, |v| {
+                            v.capacity().saturating_mul(std::mem::size_of::<String>())
+                        }),
+                );
+        }
+        bytes.saturating_add(
+            self.prerequisite_deployments
+                .bindings
+                .capacity()
+                .saturating_mul(std::mem::size_of::<
+                    plasm_core::prerequisites::DeploymentBinding,
+                >()),
+        )
+    }
     /// Internal discard-only accounting view, including private cache and
     /// binding values. This is not a public serialization format.
     pub(crate) fn retention_view(&self) -> impl serde::Serialize + '_ {
@@ -732,6 +803,44 @@ pub fn replay_store_lookup(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    async fn empty_response_store_capacity_is_not_hidden_from_continuation_budget() {
+        use crate::execution::effect_continuation::{
+            EffectContinuation, EffectContinuationError, MAX_EFFECT_SELECTION_BYTES,
+        };
+        let mut materialization = SessionMaterialization::new();
+        materialization.responses.entries.reserve(110_000);
+        let fingerprint = RequestFingerprint::from_hex(&format!("{:064x}", 91u64)).unwrap();
+        materialization.responses.store(
+            fingerprint,
+            crate::replay::TransportOutcome {
+                response: serde_json::json!({"ok": true}),
+                next_link: None,
+            },
+            ExecutionSource::Cache,
+        );
+        materialization.responses.invalidate_entity_type("Item");
+        assert!(materialization.responses.entries.is_empty());
+        assert!(materialization.retention_capacity_bytes() > MAX_EFFECT_SELECTION_BYTES);
+        let (control, _pauses) =
+            EffectContinuation::new_native(std::time::Duration::from_secs(2)).unwrap();
+        control
+            .scope(async {
+                let mut reservation =
+                    EffectContinuation::reserve_retained(&materialization.retention_view())
+                        .unwrap();
+                assert!(matches!(
+                    reservation.add_capacity_bytes(materialization.retention_capacity_bytes()),
+                    Err(EffectContinuationError::SelectionBudget(
+                        plasm_core::ValueBudgetError::BytesExceeded
+                    ))
+                ));
+                drop(reservation);
+                assert!(EffectContinuation::reserve_retained(&"small").is_ok());
+            })
+            .await;
+    }
     use crate::execution::ExecutionStats;
     use plasm_core::{EntityName, Predicate, QueryExpr, Value};
 

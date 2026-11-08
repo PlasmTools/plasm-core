@@ -59,6 +59,10 @@ impl GraphExecuteBranch {
         self.base.retention_view()
     }
 
+    fn base_retention_capacity_bytes(&self) -> usize {
+        self.base.retention_capacity_bytes()
+    }
+
     /// Merge branch into session when no write-set entry raced a concurrent writer.
     pub async fn commit(self, sess: &ExecuteSession) -> Result<(), GraphCommitError> {
         let mut guard = sess.lock_graph_cache().await;

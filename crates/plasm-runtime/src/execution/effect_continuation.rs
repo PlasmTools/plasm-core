@@ -144,6 +144,25 @@ pub struct SelectionReservation {
 }
 
 impl SelectionReservation {
+    /// Charge known retained allocation capacity in addition to encoded payload.
+    /// On failure the reservation and the shared budget are unchanged.
+    pub fn add_capacity_bytes(&mut self, bytes: usize) -> Result<(), EffectContinuationError> {
+        let Some(state) = &self.state else {
+            return Ok(());
+        };
+        let mut used = state
+            .selection_bytes
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        if bytes > MAX_EFFECT_SELECTION_BYTES.saturating_sub(*used) {
+            return Err(EffectContinuationError::SelectionBudget(
+                plasm_core::ValueBudgetError::BytesExceeded,
+            ));
+        }
+        *used += bytes;
+        self.bytes += bytes;
+        Ok(())
+    }
     /// Add a newly retained payload to this reservation without copying it.
     pub fn add_retained<T: serde::Serialize + ?Sized>(
         &mut self,

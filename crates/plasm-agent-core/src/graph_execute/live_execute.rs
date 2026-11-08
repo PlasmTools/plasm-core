@@ -225,8 +225,14 @@ pub async fn run_with_write_conflict_retry(
         let may_pause = capability.and_then(|name| input.exec_cgs.get_capability(name.as_str()))
             .is_some_and(plasm_runtime::execution::effect_continuation::EffectContinuation::supports_capability);
         let _retained_base = if may_pause {
-            Some(plasm_runtime::execution::effect_continuation::EffectContinuation::reserve_retained(&branch.base_retention_view())
-                .map_err(|error| RunLineError::from(plasm_runtime::RuntimeError::ContinuationRetention(error)))?)
+            let mut reservation = plasm_runtime::execution::effect_continuation::EffectContinuation::reserve_retained(&branch.base_retention_view())
+                .map_err(|error| RunLineError::from(plasm_runtime::RuntimeError::ContinuationRetention(error)))?;
+            reservation
+                .add_capacity_bytes(branch.base_retention_capacity_bytes())
+                .map_err(|error| {
+                    RunLineError::from(plasm_runtime::RuntimeError::ContinuationRetention(error))
+                })?;
+            Some(reservation)
         } else {
             None
         };

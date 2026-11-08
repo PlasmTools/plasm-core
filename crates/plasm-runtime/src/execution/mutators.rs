@@ -126,7 +126,7 @@ impl ExecutionEngine {
                     // remain in this frame while checkpoint() awaits a resume.
                     // If they do not fit, return the original typed rejection:
                     // no continuation capability or retry is issued.
-                    let _retained_dispatch =
+                    let mut retained_dispatch =
                         match super::effect_continuation::EffectContinuation::reserve_retained(&(
                             compiled,
                             entity,
@@ -153,6 +153,13 @@ impl ExecutionEngine {
                             Ok(reservation) => reservation,
                             Err(_) => return result,
                         };
+                    if retained_dispatch
+                        .add_capacity_bytes(materialization.retention_capacity_bytes())
+                        .is_err()
+                    {
+                        return result;
+                    }
+                    let _retained_dispatch = retained_dispatch;
                     let _retained_journal = match journal.freeze_retention(start, &attempt) {
                         Ok(reservation) => reservation,
                         Err(_) => return result,

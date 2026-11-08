@@ -178,6 +178,35 @@ impl serde::Serialize for RetainedGraph<'_> {
 }
 
 impl GraphCache {
+    pub(crate) fn retention_capacity_bytes(&self) -> usize {
+        use crate::materialization::retained_hash_capacity;
+        let mut bytes = retained_hash_capacity::<Ref, std::sync::Arc<[CachedEntity; 1]>>(
+            self.entities.capacity(),
+        )
+        .saturating_add(retained_hash_capacity::<EntityName, Vec<Ref>>(
+            self.type_index.capacity(),
+        ))
+        .saturating_add(
+            self.insertion_order
+                .capacity()
+                .saturating_mul(std::mem::size_of::<Ref>()),
+        );
+        for values in self.type_index.values() {
+            bytes =
+                bytes.saturating_add(values.capacity().saturating_mul(std::mem::size_of::<Ref>()));
+        }
+        if let Some(fork) = &self.branch_fork {
+            bytes = bytes
+                .saturating_add(retained_hash_capacity::<Ref, ()>(
+                    fork.initial_refs.capacity(),
+                ))
+                .saturating_add(retained_hash_capacity::<
+                    Ref,
+                    crate::materialization_conflict::EntityBaseContent,
+                >(fork.lazy_base.capacity()));
+        }
+        bytes
+    }
     /// Internal accounting view; it must not be emitted as a public artifact.
     pub(crate) fn retention_view(&self) -> impl serde::Serialize + '_ {
         RetainedGraph(self)
