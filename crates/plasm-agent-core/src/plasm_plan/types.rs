@@ -419,6 +419,74 @@ impl ValidatedPlanArtifact {
                 sum.saturating_add(value.capacity())
             })
         }
+        fn data(value: &PlanValue, depth: usize) -> usize {
+            if depth >= 64 {
+                return usize::MAX;
+            }
+            let boxed = |value: &PlanValue| {
+                std::mem::size_of::<PlanValue>().saturating_add(data(value, depth + 1))
+            };
+            match value {
+                PlanValue::Quantified {
+                    collection,
+                    binding,
+                    predicate,
+                    ..
+                } => binding
+                    .capacity()
+                    .saturating_add(boxed(collection))
+                    .saturating_add(boxed(predicate)),
+                PlanValue::Expression { expression } => {
+                    let extra = match expression {
+                        plasm_core::value_expression::ValueOperation::Field { name, .. } => {
+                            name.capacity()
+                        }
+                        _ => 0,
+                    };
+                    expression
+                        .operands()
+                        .fold(extra, |sum, value| sum.saturating_add(boxed(value)))
+                }
+                PlanValue::Literal { value } => {
+                    plasm_runtime::materialization::resolved_value_retention_capacity(value.value())
+                }
+                PlanValue::BindingSymbol { binding, path } => {
+                    binding.capacity().saturating_add(strings(path))
+                }
+                PlanValue::NodeSymbol { node, alias, path } => node
+                    .capacity()
+                    .saturating_add(alias.capacity())
+                    .saturating_add(strings(path)),
+                PlanValue::Symbol { path } => path.capacity(),
+                // The template's opaque compiled environment is not accounted here.
+                PlanValue::Template { input_bindings, .. } => {
+                    input_bindings
+                        .iter()
+                        .fold(vec_bytes(input_bindings), |sum, value| {
+                            sum.saturating_add(value.from.capacity())
+                                .saturating_add(value.to.capacity())
+                        })
+                }
+                PlanValue::EntityRefKey { api, entity, key } => api
+                    .capacity()
+                    .saturating_add(entity.capacity())
+                    .saturating_add(boxed(key)),
+                PlanValue::Array { items } => items.iter().fold(vec_bytes(items), |sum, value| {
+                    sum.saturating_add(data(value, depth + 1))
+                }),
+                PlanValue::Object { fields } => fields.iter().fold(0usize, |sum, (name, value)| {
+                    sum.saturating_add(1024)
+                        .saturating_add(name.capacity())
+                        .saturating_add(data(value, depth + 1))
+                }),
+            }
+        }
+        fn predicates(values: &Vec<PlanPredicate>) -> usize {
+            values.iter().fold(vec_bytes(values), |sum, predicate| {
+                sum.saturating_add(predicate.field_path.retention_capacity_bytes())
+                    .saturating_add(data(&predicate.value, 0))
+            })
+        }
         fn entity(value: &QualifiedEntityKey) -> usize {
             value
                 .entry_id
@@ -498,20 +566,24 @@ impl ValidatedPlanArtifact {
                     .saturating_add(n.ir.as_ref().map_or(0, |ir| projection(&ir.projection)))
                     .saturating_add(n.ir_template.as_ref().map_or(0, template))
                     .saturating_add(strings(&n.projection))
-                    .saturating_add(vec_bytes(&n.predicates))
+                    .saturating_add(predicates(&n.predicates))
                     .saturating_add(n.approval.as_ref().map_or(0, String::capacity)),
-                ValidatedPlanNode::Data(_) => 0,
-                ValidatedPlanNode::Derive(n) => n.inputs.iter().fold(
-                    n.source
-                        .0
-                        .capacity()
-                        .saturating_add(n.item_binding.0.capacity())
-                        .saturating_add(vec_bytes(&n.inputs)),
-                    |sum, input| {
-                        sum.saturating_add(input.node.0.capacity())
-                            .saturating_add(input.alias.0.capacity())
-                    },
-                ),
+                ValidatedPlanNode::Data(n) => data(&n.data, 0),
+                ValidatedPlanNode::Derive(n) => n
+                    .inputs
+                    .iter()
+                    .fold(
+                        n.source
+                            .0
+                            .capacity()
+                            .saturating_add(n.item_binding.0.capacity())
+                            .saturating_add(vec_bytes(&n.inputs)),
+                        |sum, input| {
+                            sum.saturating_add(input.node.0.capacity())
+                                .saturating_add(input.alias.0.capacity())
+                        },
+                    )
+                    .saturating_add(data(&n.value, 0)),
                 ValidatedPlanNode::Compute(n) => n.source_node.0.capacity(),
                 ValidatedPlanNode::ForEach(n) => n
                     .source
@@ -520,7 +592,7 @@ impl ValidatedPlanArtifact {
                     .saturating_add(n.item_binding.0.capacity())
                     .saturating_add(effect(&n.effect_template))
                     .saturating_add(strings(&n.projection))
-                    .saturating_add(vec_bytes(&n.predicates))
+                    .saturating_add(predicates(&n.predicates))
                     .saturating_add(n.approval.as_ref().map_or(0, String::capacity)),
                 ValidatedPlanNode::IterateUntil(n) => n
                     .source
@@ -528,7 +600,7 @@ impl ValidatedPlanArtifact {
                     .capacity()
                     .saturating_add(n.item_binding.0.capacity())
                     .saturating_add(effect(&n.effect_template))
-                    .saturating_add(vec_bytes(&n.until_predicates))
+                    .saturating_add(predicates(&n.until_predicates))
                     .saturating_add(n.approval.as_ref().map_or(0, String::capacity))
                     .saturating_add(
                         n.seed_ir

@@ -34,6 +34,12 @@ pub(crate) fn value_map_capacity(values: &IndexMap<String, Value>, depth: usize)
     )
 }
 
+/// Account a resolved value's owned heap capacity; unsupported opaque operands
+/// or excessive nesting conservatively return `usize::MAX`.
+pub fn resolved_value_retention_capacity(value: &Value) -> usize {
+    value_retention_capacity(value, 0)
+}
+
 pub(crate) fn value_retention_capacity(value: &Value, depth: usize) -> usize {
     if depth >= 64 {
         return usize::MAX;

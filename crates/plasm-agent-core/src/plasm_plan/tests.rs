@@ -146,6 +146,63 @@ async fn validated_node_projection_capacity_obeys_the_continuation_budget() {
         .await;
 }
 
+#[tokio::test]
+async fn validated_operand_capacity_obeys_the_continuation_budget() {
+    use plasm_runtime::execution::effect_continuation::{
+        EffectContinuation, EffectContinuationError, MAX_EFFECT_SELECTION_BYTES,
+    };
+    let mut binding = String::with_capacity(MAX_EFFECT_SELECTION_BYTES + 1);
+    binding.push('x');
+    let values = [
+        PlanValue::BindingSymbol {
+            binding,
+            path: Vec::new(),
+        },
+        PlanValue::Array {
+            items: Vec::with_capacity(
+                MAX_EFFECT_SELECTION_BYTES / std::mem::size_of::<PlanValue>() + 1,
+            ),
+        },
+    ];
+    let (control, _pauses) =
+        EffectContinuation::new_native(std::time::Duration::from_secs(2)).unwrap();
+    control
+        .scope(async {
+            for data in values {
+                let id = PlanNodeId::new("value").unwrap();
+                let node = ValidatedPlanNode::Data(ValidatedDataNode {
+                    recorded_output: None,
+                    id: id.clone(),
+                    effect_class: EffectClass::Read,
+                    result_shape: ResultShape::Single,
+                    data,
+                    depends_on: Vec::new(),
+                    uses_result: Vec::new(),
+                });
+                let plan = Plan::new_program(
+                    1,
+                    None,
+                    vec![node],
+                    ValidatedPlanReturn::Node(id.clone()),
+                    Default::default(),
+                );
+                let artifact = ValidatedPlanArtifact::from_parts(
+                    plan,
+                    vec![id.clone()],
+                    std::collections::HashMap::from([(id, 0)]),
+                    Vec::new(),
+                );
+                let mut reservation = EffectContinuation::reserve_retained(&artifact).unwrap();
+                assert!(matches!(
+                    reservation.add_capacity_bytes(artifact.structural_retention_capacity_bytes()),
+                    Err(EffectContinuationError::SelectionBudget(_))
+                ));
+            }
+            assert!(EffectContinuation::reserve_retained(&"small").is_ok());
+        })
+        .await;
+}
+
 #[test]
 fn dependency_chain_growth_does_not_grow_native_stack() {
     let count = 65_536;

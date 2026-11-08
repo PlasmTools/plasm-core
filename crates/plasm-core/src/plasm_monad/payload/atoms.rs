@@ -89,6 +89,16 @@ impl FieldPath {
         &self.0
     }
 
+    /// Heap capacity owned by the path's segment storage.
+    pub fn retention_capacity_bytes(&self) -> usize {
+        self.0.iter().fold(
+            self.0
+                .capacity()
+                .saturating_mul(std::mem::size_of::<String>()),
+            |sum, segment| sum.saturating_add(segment.capacity()),
+        )
+    }
+
     pub fn dotted(&self) -> String {
         self.0.join(".")
     }
