@@ -531,12 +531,6 @@ pub(crate) async fn run_executable_plan_phased(
     } else {
         crate::python_compute::prepared_scope::PreparedComputeScope::new(es)
     };
-    let node_clone_capacity =
-        if plasm_runtime::execution::effect_continuation::EffectContinuation::is_active() {
-            dry.validated().structural_retention_capacity_bytes()
-        } else {
-            0
-        };
     let mat_ctx = PlanStepMaterializeCtx {
         es,
         st,
@@ -553,7 +547,6 @@ pub(crate) async fn run_executable_plan_phased(
         occurrence_path: Vec::new(),
         rows_progress: rows_progress.clone(),
         execution_scope,
-        node_clone_capacity,
     };
     let execution: Result<PlasmPlanRunResult, ExecutionFailure> = async {
         let executable = &dry.executable;
@@ -629,7 +622,6 @@ pub(crate) async fn run_executable_plan_phased(
                             occurrence_path: Vec::new(),
                             rows_progress: rows_progress_step,
                             execution_scope: execution_scope_step.as_ref(),
-                            node_clone_capacity,
                         };
                         Box::pin(materialize_executable_plan_step(
                             &mat_ctx,
@@ -967,13 +959,13 @@ mod tests {
 
     #[test]
     fn retained_frame_counts_spare_index_and_flow_capacity() {
-        use plasm_runtime::execution::effect_continuation::MAX_EFFECT_SELECTION_BYTES;
-        let mut id = String::with_capacity(MAX_EFFECT_SELECTION_BYTES + 1);
+        use plasm_runtime::execution::effect_continuation::MAX_RETAINED_EXECUTION_BYTES;
+        let mut id = String::with_capacity(MAX_RETAINED_EXECUTION_BYTES + 1);
         id.push('x');
         let index = HashMap::from([(StepId(id), 0)]);
-        assert!(retained_step_index(&index) > MAX_EFFECT_SELECTION_BYTES);
+        assert!(retained_step_index(&index) > MAX_RETAINED_EXECUTION_BYTES);
 
-        let mut reason = String::with_capacity(MAX_EFFECT_SELECTION_BYTES + 1);
+        let mut reason = String::with_capacity(MAX_RETAINED_EXECUTION_BYTES + 1);
         reason.push('x');
         let flow = crate::plan_flow::PlanFlowAnalysis {
             policy_revision: None,
@@ -989,7 +981,7 @@ mod tests {
                 reason,
             }],
         };
-        assert!(flow.retention_capacity_bytes() > MAX_EFFECT_SELECTION_BYTES);
+        assert!(flow.retention_capacity_bytes() > MAX_RETAINED_EXECUTION_BYTES);
     }
 
     fn test_node(display: &str) -> MaterializedNode {
@@ -1024,7 +1016,7 @@ mod tests {
     #[tokio::test]
     async fn oversized_plan_evidence_capacity_retains_the_completed_effect() {
         use plasm_runtime::execution::effect_continuation::{
-            EffectContinuation, MAX_EFFECT_SELECTION_BYTES,
+            EffectContinuation, MAX_RETAINED_EXECUTION_BYTES,
         };
         let (control, _pauses) =
             EffectContinuation::new_native(std::time::Duration::from_secs(2)).unwrap();
@@ -1045,7 +1037,7 @@ mod tests {
                             description: "write".into(),
                             outcomes: Vec::new(),
                         });
-                    let mut text = String::with_capacity(MAX_EFFECT_SELECTION_BYTES + 1);
+                    let mut text = String::with_capacity(MAX_RETAINED_EXECUTION_BYTES + 1);
                     text.push('x');
                     let outcome = PlanStepMaterializeOutcome {
                         node_id: PlanNodeId::new("write").unwrap(),
@@ -1096,7 +1088,7 @@ mod tests {
     #[tokio::test]
     async fn oversized_plan_evidence_retains_the_completed_effect() {
         use plasm_runtime::execution::effect_continuation::{
-            EffectContinuation, MAX_EFFECT_SELECTION_BYTES,
+            EffectContinuation, MAX_RETAINED_EXECUTION_BYTES,
         };
         let (control, _pauses) =
             EffectContinuation::new_native(std::time::Duration::from_secs(2)).unwrap();
@@ -1123,7 +1115,7 @@ mod tests {
                         step_id: "write".into(),
                         step_index: 0,
                         entry_id: Some("test".into()),
-                        source_line: "x".repeat(MAX_EFFECT_SELECTION_BYTES),
+                        source_line: "x".repeat(MAX_RETAINED_EXECUTION_BYTES),
                         parsed: plasm_core::expr_parser::ParsedExpr::from_expr(
                             plasm_core::Expr::Query(plasm_core::QueryExpr::all("Item")),
                         ),

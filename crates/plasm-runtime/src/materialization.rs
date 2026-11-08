@@ -982,9 +982,9 @@ mod tests {
 
     #[test]
     fn executable_operand_capacity_counts_retained_storage() {
-        use crate::execution::effect_continuation::MAX_EFFECT_SELECTION_BYTES;
+        use crate::execution::effect_continuation::MAX_RETAINED_EXECUTION_BYTES;
         let large = || {
-            let mut text = String::with_capacity(MAX_EFFECT_SELECTION_BYTES + 1);
+            let mut text = String::with_capacity(MAX_RETAINED_EXECUTION_BYTES + 1);
             text.push('x');
             text
         };
@@ -1002,24 +1002,24 @@ mod tests {
             }),
         ];
         for value in &operands {
-            assert!(value_retention_capacity(value, 0) > MAX_EFFECT_SELECTION_BYTES);
+            assert!(value_retention_capacity(value, 0) > MAX_RETAINED_EXECUTION_BYTES);
         }
         let small = Value::StringTemplate(
             plasm_core::CompiledProgramString::compile("{{ name }}".into()).unwrap(),
         );
-        assert!(value_retention_capacity(&small, 0) < MAX_EFFECT_SELECTION_BYTES);
+        assert!(value_retention_capacity(&small, 0) < MAX_RETAINED_EXECUTION_BYTES);
     }
 
     #[tokio::test]
     async fn lazy_fork_base_charges_hidden_identity_capacity() {
         use crate::execution::effect_continuation::{
-            EffectContinuation, EffectContinuationError, MAX_EFFECT_SELECTION_BYTES,
+            EffectContinuation, EffectContinuationError, MAX_RETAINED_EXECUTION_BYTES,
         };
         use plasm_core::collection_codec::{
             CollectionCodec, CollectionIdentity, Observation, RecordingCodec, Transform,
         };
         use plasm_core::row_contract::RelationMembership;
-        let mut hidden = String::with_capacity(MAX_EFFECT_SELECTION_BYTES + 1);
+        let mut hidden = String::with_capacity(MAX_RETAINED_EXECUTION_BYTES + 1);
         hidden.push('x');
         let codec = RecordingCodec::new();
         let id = CollectionIdentity::for_untyped_observation(&"fork-base-capacity").unwrap();
@@ -1056,7 +1056,7 @@ mod tests {
                         EffectContinuation::reserve_retained(&state.retention_view()).unwrap();
                     assert!(matches!(
                         reservation.add_capacity_bytes(state.retention_capacity_bytes()),
-                        Err(EffectContinuationError::SelectionBudget(
+                        Err(EffectContinuationError::RetainedBudget(
                             plasm_core::ValueBudgetError::BytesExceeded
                         ))
                     ));
@@ -1068,7 +1068,7 @@ mod tests {
     #[tokio::test]
     async fn graph_retention_counts_hidden_relation_backing_rows_and_fork_base() {
         use crate::execution::effect_continuation::{
-            EffectContinuation, EffectContinuationError, MAX_EFFECT_SELECTION_BYTES,
+            EffectContinuation, EffectContinuationError, MAX_RETAINED_EXECUTION_BYTES,
         };
         use plasm_core::collection_codec::{
             CollectionCodec, CollectionIdentity, Observation, RecordingCodec, Transform,
@@ -1082,7 +1082,7 @@ mod tests {
                 identity.clone(),
                 vec![
                     Ref::new("Child", "small"),
-                    Ref::new("Child", "x".repeat(MAX_EFFECT_SELECTION_BYTES)),
+                    Ref::new("Child", "x".repeat(MAX_RETAINED_EXECUTION_BYTES)),
                 ],
                 Observation::Literal,
             )
@@ -1111,7 +1111,7 @@ mod tests {
                 for state in [&graph, &branch] {
                     assert!(matches!(
                         EffectContinuation::reserve_retained(&state.retention_view()),
-                        Err(EffectContinuationError::SelectionBudget(
+                        Err(EffectContinuationError::RetainedBudget(
                             plasm_core::ValueBudgetError::BytesExceeded
                         ))
                     ));
@@ -1123,11 +1123,11 @@ mod tests {
     #[tokio::test]
     async fn graph_and_binding_payload_capacities_are_charged() {
         use crate::execution::effect_continuation::{
-            EffectContinuation, EffectContinuationError, MAX_EFFECT_SELECTION_BYTES,
+            EffectContinuation, EffectContinuationError, MAX_RETAINED_EXECUTION_BYTES,
         };
         let mut graph = SessionMaterialization::new();
         let mut entity = CachedEntity::new(Ref::new("Thing", "one"), 0);
-        let mut text = String::with_capacity(MAX_EFFECT_SELECTION_BYTES + 1);
+        let mut text = String::with_capacity(MAX_RETAINED_EXECUTION_BYTES + 1);
         text.push('x');
         entity
             .fields
@@ -1137,7 +1137,7 @@ mod tests {
         let values = vec![(
             "field".into(),
             Value::Array(Vec::with_capacity(
-                MAX_EFFECT_SELECTION_BYTES / std::mem::size_of::<Value>() + 1,
+                MAX_RETAINED_EXECUTION_BYTES / std::mem::size_of::<Value>() + 1,
             )),
         )]
         .into_iter()
@@ -1154,7 +1154,7 @@ mod tests {
                         EffectContinuation::reserve_retained(&state.retention_view()).unwrap();
                     assert!(matches!(
                         reservation.add_capacity_bytes(state.retention_capacity_bytes()),
-                        Err(EffectContinuationError::SelectionBudget(
+                        Err(EffectContinuationError::RetainedBudget(
                             plasm_core::ValueBudgetError::BytesExceeded
                         ))
                     ));
@@ -1180,9 +1180,9 @@ mod tests {
     #[tokio::test]
     async fn retained_response_payload_capacity_is_charged() {
         use crate::execution::effect_continuation::{
-            EffectContinuation, EffectContinuationError, MAX_EFFECT_SELECTION_BYTES,
+            EffectContinuation, EffectContinuationError, MAX_RETAINED_EXECUTION_BYTES,
         };
-        let mut payload = String::with_capacity(MAX_EFFECT_SELECTION_BYTES + 1);
+        let mut payload = String::with_capacity(MAX_RETAINED_EXECUTION_BYTES + 1);
         payload.push('x');
         let mut materialization = SessionMaterialization::new();
         materialization.responses.store(
@@ -1202,7 +1202,7 @@ mod tests {
                         .unwrap();
                 assert!(matches!(
                     reservation.add_capacity_bytes(materialization.retention_capacity_bytes()),
-                    Err(EffectContinuationError::SelectionBudget(
+                    Err(EffectContinuationError::RetainedBudget(
                         plasm_core::ValueBudgetError::BytesExceeded
                     ))
                 ));
@@ -1213,7 +1213,7 @@ mod tests {
     #[tokio::test]
     async fn empty_response_store_capacity_is_not_hidden_from_continuation_budget() {
         use crate::execution::effect_continuation::{
-            EffectContinuation, EffectContinuationError, MAX_EFFECT_SELECTION_BYTES,
+            EffectContinuation, EffectContinuationError, MAX_RETAINED_EXECUTION_BYTES,
         };
         let mut materialization = SessionMaterialization::new();
         materialization.responses.entries.reserve(110_000);
@@ -1228,7 +1228,7 @@ mod tests {
         );
         materialization.responses.invalidate_entity_type("Item");
         assert!(materialization.responses.entries.is_empty());
-        assert!(materialization.retention_capacity_bytes() > MAX_EFFECT_SELECTION_BYTES);
+        assert!(materialization.retention_capacity_bytes() > MAX_RETAINED_EXECUTION_BYTES);
         let (control, _pauses) =
             EffectContinuation::new_native(std::time::Duration::from_secs(2)).unwrap();
         control
@@ -1238,7 +1238,7 @@ mod tests {
                         .unwrap();
                 assert!(matches!(
                     reservation.add_capacity_bytes(materialization.retention_capacity_bytes()),
-                    Err(EffectContinuationError::SelectionBudget(
+                    Err(EffectContinuationError::RetainedBudget(
                         plasm_core::ValueBudgetError::BytesExceeded
                     ))
                 ));

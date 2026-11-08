@@ -322,12 +322,12 @@ fn typed_input(value: &TypedInvokeInput, depth: usize) -> usize {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::execution::effect_continuation::MAX_EFFECT_SELECTION_BYTES;
+    use crate::execution::effect_continuation::MAX_RETAINED_EXECUTION_BYTES;
 
     #[test]
     fn all_mutation_forms_charge_owned_capability_capacity() {
         fn capability() -> plasm_core::CapabilityName {
-            let mut name = String::with_capacity(MAX_EFFECT_SELECTION_BYTES + 1);
+            let mut name = String::with_capacity(MAX_RETAINED_EXECUTION_BYTES + 1);
             name.push_str("write");
             name.into()
         }
@@ -355,13 +355,13 @@ mod tests {
             RetainedMutationSource::Delete(&delete),
             RetainedMutationSource::Invoke(&invoke),
         ] {
-            assert!(source.retention_capacity_bytes() > MAX_EFFECT_SELECTION_BYTES);
+            assert!(source.retention_capacity_bytes() > MAX_RETAINED_EXECUTION_BYTES);
         }
     }
 
     #[test]
     fn nested_receiver_counts_predicate_and_chain_capacity() {
-        let mut binding = String::with_capacity(MAX_EFFECT_SELECTION_BYTES + 1);
+        let mut binding = String::with_capacity(MAX_RETAINED_EXECUTION_BYTES + 1);
         binding.push('x');
         let mut query = plasm_core::QueryExpr::all("Item");
         query.predicate = Some(Predicate::Comparison {
@@ -380,7 +380,7 @@ mod tests {
             Expr::Query(query),
             "child",
         ));
-        assert!(expression(&nested, 0) > MAX_EFFECT_SELECTION_BYTES);
+        assert!(expression(&nested, 0) > MAX_RETAINED_EXECUTION_BYTES);
 
         let mut deep = Expr::Query(plasm_core::QueryExpr::all("Item"));
         for _ in 0..64 {

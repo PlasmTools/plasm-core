@@ -70,7 +70,7 @@ fn materialized_metadata_capacity(value: &MaterializedNode) -> usize {
 mod retention_tests {
     use super::*;
     use plasm_runtime::execution::effect_continuation::{
-        EffectContinuation, MAX_EFFECT_SELECTION_BYTES,
+        EffectContinuation, MAX_RETAINED_EXECUTION_BYTES,
     };
 
     #[tokio::test]
@@ -79,21 +79,21 @@ mod retention_tests {
             EffectContinuation::new_native(std::time::Duration::from_secs(2)).unwrap();
         control
             .scope(async {
-                let retained = reserve_node_clone(MAX_EFFECT_SELECTION_BYTES / 2).unwrap();
-                let Err(failure) = reserve_node_clone(MAX_EFFECT_SELECTION_BYTES / 2 + 1) else {
+                let retained = reserve_node_clone(|| MAX_RETAINED_EXECUTION_BYTES / 2).unwrap();
+                let Err(failure) = reserve_node_clone(|| MAX_RETAINED_EXECUTION_BYTES / 2 + 1) else {
                     panic!("clone budget should reject")
                 };
                 assert_eq!(failure.code, "effect_plan_retention_refused");
                 assert_eq!(failure.input_budget.as_ref().unwrap().input, "cloned plan");
                 drop(retained);
-                assert!(reserve_node_clone(MAX_EFFECT_SELECTION_BYTES / 2 + 1).is_ok());
+                assert!(reserve_node_clone(|| MAX_RETAINED_EXECUTION_BYTES / 2 + 1).is_ok());
             })
             .await;
     }
 
     #[tokio::test]
     async fn inline_materialized_rows_charge_spare_capacity() {
-        let mut text = String::with_capacity(MAX_EFFECT_SELECTION_BYTES + 1);
+        let mut text = String::with_capacity(MAX_RETAINED_EXECUTION_BYTES + 1);
         text.push('x');
         let mut row = plasm_core::ValueRow::new();
         row.insert("payload".into(), plasm_core::Value::String(text));
@@ -137,7 +137,7 @@ mod retention_tests {
             .await;
         let node = nodes.values_mut().next().unwrap();
         node.row_source = MaterializedRowSource::Inline(Vec::new());
-        node.display = String::with_capacity(MAX_EFFECT_SELECTION_BYTES + 1);
+        node.display = String::with_capacity(MAX_RETAINED_EXECUTION_BYTES + 1);
         control
             .clone()
             .scope(async {
@@ -153,7 +153,7 @@ mod retention_tests {
         let node = nodes.values_mut().next().unwrap();
         node.display = String::new();
         let mut entity = plasm_runtime::CachedEntity::new(plasm_core::Ref::new("Item", "one"), 0);
-        let mut text = String::with_capacity(MAX_EFFECT_SELECTION_BYTES + 1);
+        let mut text = String::with_capacity(MAX_RETAINED_EXECUTION_BYTES + 1);
         text.push('x');
         entity
             .fields
@@ -182,7 +182,7 @@ mod retention_tests {
         let node = nodes.values_mut().next().unwrap();
         node.row_source = MaterializedRowSource::Inline(Vec::new());
         let mut entity = plasm_runtime::CachedEntity::new(plasm_core::Ref::new("Item", "one"), 0);
-        let mut text = String::with_capacity(MAX_EFFECT_SELECTION_BYTES + 1);
+        let mut text = String::with_capacity(MAX_RETAINED_EXECUTION_BYTES + 1);
         text.push('x');
         entity
             .fields
@@ -207,7 +207,7 @@ mod retention_tests {
                 Vec::new(),
                 plasm_runtime::ResultCoverage::Unknown,
             );
-        let mut id = String::with_capacity(MAX_EFFECT_SELECTION_BYTES + 1);
+        let mut id = String::with_capacity(MAX_RETAINED_EXECUTION_BYTES + 1);
         id.push('x');
         node.row_identities = vec![Some(plasm_core::RowIdentity::new(
             plasm_core::QualifiedEntityKey::new("test", "Item"),
@@ -249,11 +249,11 @@ fn reserve_materialized_inputs(
     materialized: &BTreeMap<PlanNodeId, MaterializedNode>,
     step_id: &StepId,
 ) -> Result<
-    Vec<plasm_runtime::execution::effect_continuation::SelectionReservation>,
+    Vec<plasm_runtime::execution::effect_continuation::RetainedExecutionReservation>,
     ExecutionFailure,
 > {
     use plasm_runtime::execution::effect_continuation::{
-        EffectContinuation, EffectContinuationError, MAX_EFFECT_SELECTION_BYTES,
+        EffectContinuation, EffectContinuationError, MAX_RETAINED_EXECUTION_BYTES,
     };
     let mut reservations = Vec::new();
     if !EffectContinuation::is_active() {
@@ -266,12 +266,12 @@ fn reserve_materialized_inputs(
         );
         if matches!(
             error,
-            EffectContinuationError::SelectionBudget(plasm_core::ValueBudgetError::BytesExceeded)
+            EffectContinuationError::RetainedBudget(plasm_core::ValueBudgetError::BytesExceeded)
         ) {
             result.input_budget = Some(plasm_runtime::InputBudgetEvidence {
                 unit: plasm_runtime::InputBudgetUnit::AccountedBytes,
-                limit: MAX_EFFECT_SELECTION_BYTES,
-                observed_at_least: MAX_EFFECT_SELECTION_BYTES + 1,
+                limit: MAX_RETAINED_EXECUTION_BYTES,
+                observed_at_least: MAX_RETAINED_EXECUTION_BYTES + 1,
                 input: step_id.to_string(),
             });
         }
@@ -411,7 +411,7 @@ pub(crate) struct PlanStepMaterializeOutcome {
 }
 
 pub(super) fn charge_plan_payload<T: serde::Serialize + ?Sized>(
-    reservation: &mut Option<plasm_runtime::execution::effect_continuation::SelectionReservation>,
+    reservation: &mut Option<plasm_runtime::execution::effect_continuation::RetainedExecutionReservation>,
     payload: &T,
 ) -> Result<(), ExecutionFailure> {
     let Some(reservation) = reservation else {
@@ -426,17 +426,17 @@ pub(super) fn plan_retention_failure(
     error: plasm_runtime::execution::effect_continuation::EffectContinuationError,
 ) -> ExecutionFailure {
     use plasm_runtime::execution::effect_continuation::{
-        EffectContinuationError, MAX_EFFECT_SELECTION_BYTES,
+        EffectContinuationError, MAX_RETAINED_EXECUTION_BYTES,
     };
     let mut failure = step_failure("effect_plan_retention_refused", error.to_string());
     if matches!(
         error,
-        EffectContinuationError::SelectionBudget(plasm_core::ValueBudgetError::BytesExceeded)
+        EffectContinuationError::RetainedBudget(plasm_core::ValueBudgetError::BytesExceeded)
     ) {
         failure.input_budget = Some(plasm_runtime::InputBudgetEvidence {
             unit: plasm_runtime::InputBudgetUnit::AccountedBytes,
-            limit: MAX_EFFECT_SELECTION_BYTES,
-            observed_at_least: MAX_EFFECT_SELECTION_BYTES + 1,
+            limit: MAX_RETAINED_EXECUTION_BYTES,
+            observed_at_least: MAX_RETAINED_EXECUTION_BYTES + 1,
             input: "plan frame".into(),
         });
     }
@@ -489,14 +489,12 @@ pub(crate) struct PlanStepMaterializeCtx<'a> {
     pub occurrence_path: Vec<usize>,
     pub rows_progress: Option<plasm_runtime::RowsProgressFn>,
     pub execution_scope: Option<&'a crate::operation::ExecutionScope>,
-    /// Conservative upper bound for one cloned node from the current plan.
-    pub(super) node_clone_capacity: usize,
 }
 
 pub(super) fn reserve_node_clone(
-    bytes: usize,
+    measure: impl FnOnce() -> usize,
 ) -> Result<
-    Option<plasm_runtime::execution::effect_continuation::SelectionReservation>,
+    Option<plasm_runtime::execution::effect_continuation::RetainedExecutionReservation>,
     ExecutionFailure,
 > {
     use plasm_runtime::execution::effect_continuation::EffectContinuation;
@@ -504,7 +502,7 @@ pub(super) fn reserve_node_clone(
         return Ok(None);
     }
     let mut reservation = EffectContinuation::empty_retention();
-    reservation.add_capacity_bytes(bytes).map_err(|error| {
+    reservation.add_capacity_bytes(measure()).map_err(|error| {
         let mut failure = plan_retention_failure(error);
         if let Some(budget) = &mut failure.input_budget {
             budget.input = "cloned plan".into();
@@ -522,7 +520,7 @@ pub(crate) fn apply_step_materialize_outcomes(
     outcomes: impl IntoIterator<Item = PlanStepMaterializeOutcome>,
     execution_scope: Option<&crate::operation::ExecutionScope>,
     retained_evidence: &mut Option<
-        plasm_runtime::execution::effect_continuation::SelectionReservation,
+        plasm_runtime::execution::effect_continuation::RetainedExecutionReservation,
     >,
 ) -> Result<(), ExecutionFailure> {
     for outcome in outcomes {
@@ -572,13 +570,12 @@ pub(crate) async fn materialize_executable_plan_step(
     schema_nodes: &[ValidatedPlanNode],
     materialized: &BTreeMap<PlanNodeId, MaterializedNode>,
 ) -> Result<PlanStepMaterializeOutcome, ExecutionFailure> {
-    // The executable step owns a cloned node across await points. A whole-plan
-    // capacity is a conservative bound for one node, including nested plans.
+    // The executable step owns a cloned node across await points.
     let _retained_node = if matches!(
         node.effect_class(),
         EffectClass::Write | EffectClass::SideEffect
     ) {
-        reserve_node_clone(ctx.node_clone_capacity)?
+        reserve_node_clone(|| crate::plasm_plan::ValidatedPlanArtifact::retained_node_capacity_bytes(&node))?
     } else {
         None
     };
@@ -1126,7 +1123,7 @@ pub(super) async fn live_materialize_io(
             "capture must be installed by its enclosing scope",
         )),
         IoStep::Surface(surface) => {
-            let surface = (**surface).clone();
+            let surface = &**surface;
             let scoped_es = entry_scoped_execute_session(ctx.es, surface.qualified_entity.as_ref())
                 .map_err(|diagnostic| {
                     step_failure("surface_catalog_context_invalid", diagnostic.to_string())
@@ -1186,6 +1183,24 @@ pub(super) async fn live_materialize_io(
                 parsed.projection.as_deref(),
                 Some(&scoped_es),
             );
+            let retained_parsed = if matches!(
+                surface.effect_class,
+                EffectClass::Write | EffectClass::SideEffect
+            )
+                && plasm_runtime::execution::effect_continuation::EffectContinuation::is_active()
+            {
+                let mut retained = plasm_runtime::execution::effect_continuation::EffectContinuation::empty_retention();
+                // Dispatch retains its input; the runtime separately reserves the normalized mutation source.
+                retained
+                    .add_parsed_expr(&parsed)
+                    .map_err(plan_retention_failure)?;
+                retained
+                    .add_capacity_bytes(expr_label.capacity())
+                    .map_err(plan_retention_failure)?;
+                Some(retained)
+            } else {
+                None
+            };
             let host_page = crate::plan_read_bounds::effective_host_page_size(&surface);
             // Surface IO is a deep async execution tree, just like relation and
             // control-flow IO below. Keep it out of the dispatcher's future so
@@ -1202,6 +1217,7 @@ pub(super) async fn live_materialize_io(
                 surface.pushed_read_budget.clone(),
                 ctx.rows_progress.clone(),
                 Some(ctx.plan_shared.as_ref()),
+                retained_parsed,
             ))
             .await?;
             let entity_type = surface
@@ -1293,6 +1309,16 @@ pub(super) async fn live_materialize_io(
         IoStep::Relation(relation) => {
             let relation = (**relation).clone();
             let node = ValidatedPlanNode::RelationTraversal(relation);
+            let _retained_relation = if matches!(
+                node.effect_class(),
+                EffectClass::Write | EffectClass::SideEffect
+            ) {
+                reserve_node_clone(|| {
+                    crate::plasm_plan::ValidatedPlanArtifact::retained_node_capacity_bytes(&node)
+                })?
+            } else {
+                None
+            };
             let ValidatedPlanNode::RelationTraversal(relation_ref) = &node else {
                 unreachable!("relation traversal node");
             };

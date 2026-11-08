@@ -404,8 +404,9 @@ impl ValidatedPlanArtifact {
     }
 
     /// Conservative allocation capacity of the accounted validated-plan structure.
+    #[cfg(test)]
     pub(crate) fn structural_retention_capacity_bytes(&self) -> usize {
-        self.structural_retention_capacity_bytes_at_depth(0, None)
+        Self::retention_capacity_impl(Some(self), None, 0, None)
     }
 
     /// Charge the reviewed program and executable alongside the validated plan.
@@ -414,11 +415,17 @@ impl ValidatedPlanArtifact {
         program: &plasm_core::plasm_monad::PlasmCompArtifact,
         executable: &crate::plasm_comp_lift::ExecutablePlasmComp,
     ) -> usize {
-        self.structural_retention_capacity_bytes_at_depth(0, Some((program, executable)))
+        Self::retention_capacity_impl(Some(self), None, 0, Some((program, executable)))
     }
 
-    fn structural_retention_capacity_bytes_at_depth(
-        &self,
+    /// Account one cloned node and its owned nested plans, not its siblings.
+    pub(crate) fn retained_node_capacity_bytes(node: &ValidatedPlanNode) -> usize {
+        Self::retention_capacity_impl(None, Some(node), 0, None)
+    }
+
+    fn retention_capacity_impl(
+        plan: Option<&Self>,
+        selected: Option<&ValidatedPlanNode>,
         depth: usize,
         program: Option<(
             &plasm_core::plasm_monad::PlasmCompArtifact,
@@ -1053,54 +1060,8 @@ impl ValidatedPlanArtifact {
                 },
             )
         }
-        let mut bytes = program
-            .map_or(0, |(program, executable)| {
-                let gate_capacity = |gates: &Vec<plasm_core::plasm_monad::StepId>| {
-                    gates.iter().fold(vec_bytes(gates), |sum, gate| {
-                        sum.saturating_add(gate.0.capacity())
-                    })
-                };
-                executable.steps_topo.iter().fold(
-                    comp_structure(&program.comp, 0)
-                        .saturating_add(gate_capacity(&program.approval_gates))
-                        .saturating_add(bind_capacity(&executable.bind))
-                        .saturating_add(return_capacity(&executable.return_))
-                        .saturating_add(gate_capacity(&executable.approval_gates))
-                        .saturating_add(vec_bytes(&executable.steps_topo)),
-                    |sum, (id, payload)| {
-                        sum.saturating_add(id.0.capacity())
-                            .saturating_add(payload_capacity(payload, 0))
-                    },
-                )
-            })
-            .saturating_add(vec_bytes(&self.artifact.nodes))
-            .saturating_add(id_bytes(&self.topo))
-            .saturating_add(id_bytes(&self.approval_gates))
-            .saturating_add(self.artifact.name.as_ref().map_or(0, String::capacity))
-            .saturating_add(
-                self.node_indices
-                    .capacity()
-                    .saturating_mul(2)
-                    .saturating_mul(std::mem::size_of::<(PlanNodeId, usize)>().saturating_add(1)),
-            );
-        for (key, value) in &self.artifact.metadata {
-            bytes = bytes
-                .saturating_add(1024)
-                .saturating_add(16 * std::mem::size_of::<(String, serde_json::Value)>())
-                .saturating_add(key.capacity())
-                .saturating_add(plasm_runtime::materialization::retained_json_capacity(
-                    value,
-                ));
-        }
-        bytes = bytes.saturating_add(match &self.artifact.return_value {
-            ValidatedPlanReturn::Node(id) => id.0.capacity(),
-            ValidatedPlanReturn::Parallel { parallel } => id_bytes(parallel),
-        });
-        for id in self.node_indices.keys() {
-            bytes = bytes.saturating_add(id.0.capacity());
-        }
-        for node in &self.artifact.nodes {
-            bytes = bytes.saturating_add(node.id().0.capacity());
+        fn node_capacity(node: &ValidatedPlanNode, depth: usize) -> usize {
+            let mut bytes = node.id().0.capacity();
             let node_common = match node {
                 ValidatedPlanNode::Surface(n) => common(&n.depends_on, &n.uses_result),
                 ValidatedPlanNode::Data(n) => common(&n.depends_on, &n.uses_result),
@@ -1194,9 +1155,63 @@ impl ValidatedPlanArtifact {
                 bytes = bytes
                     .saturating_add(std::mem::size_of::<ValidatedPlanArtifact>())
                     .saturating_add(
-                        nested.structural_retention_capacity_bytes_at_depth(depth + 1, None),
+                        ValidatedPlanArtifact::retention_capacity_impl(Some(nested), None, depth + 1, None),
                     );
             }
+            bytes
+        }
+        if let Some(node) = selected {
+            return std::mem::size_of::<ValidatedPlanNode>().saturating_add(node_capacity(node, depth));
+        }
+        let plan = plan.expect("plan or selected node");
+        let mut bytes = program
+            .map_or(0, |(program, executable)| {
+                let gate_capacity = |gates: &Vec<plasm_core::plasm_monad::StepId>| {
+                    gates.iter().fold(vec_bytes(gates), |sum, gate| {
+                        sum.saturating_add(gate.0.capacity())
+                    })
+                };
+                executable.steps_topo.iter().fold(
+                    comp_structure(&program.comp, 0)
+                        .saturating_add(gate_capacity(&program.approval_gates))
+                        .saturating_add(bind_capacity(&executable.bind))
+                        .saturating_add(return_capacity(&executable.return_))
+                        .saturating_add(gate_capacity(&executable.approval_gates))
+                        .saturating_add(vec_bytes(&executable.steps_topo)),
+                    |sum, (id, payload)| {
+                        sum.saturating_add(id.0.capacity())
+                            .saturating_add(payload_capacity(payload, 0))
+                    },
+                )
+            })
+            .saturating_add(vec_bytes(&plan.artifact.nodes))
+            .saturating_add(id_bytes(&plan.topo))
+            .saturating_add(id_bytes(&plan.approval_gates))
+            .saturating_add(plan.artifact.name.as_ref().map_or(0, String::capacity))
+            .saturating_add(
+                plan.node_indices
+                    .capacity()
+                    .saturating_mul(2)
+                    .saturating_mul(std::mem::size_of::<(PlanNodeId, usize)>().saturating_add(1)),
+            );
+        for (key, value) in &plan.artifact.metadata {
+            bytes = bytes
+                .saturating_add(1024)
+                .saturating_add(16 * std::mem::size_of::<(String, serde_json::Value)>())
+                .saturating_add(key.capacity())
+                .saturating_add(plasm_runtime::materialization::retained_json_capacity(
+                    value,
+                ));
+        }
+        bytes = bytes.saturating_add(match &plan.artifact.return_value {
+            ValidatedPlanReturn::Node(id) => id.0.capacity(),
+            ValidatedPlanReturn::Parallel { parallel } => id_bytes(parallel),
+        });
+        for id in plan.node_indices.keys() {
+            bytes = bytes.saturating_add(id.0.capacity());
+        }
+        for node in &plan.artifact.nodes {
+            bytes = bytes.saturating_add(node_capacity(node, depth));
         }
         bytes
     }

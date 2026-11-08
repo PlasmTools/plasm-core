@@ -6,14 +6,14 @@ use crate::ExecutionSource;
 #[tokio::test]
 async fn fork_base_retains_response_after_branch_invalidation() {
     use crate::execution::effect_continuation::{
-        EffectContinuation, EffectContinuationError, MAX_EFFECT_SELECTION_BYTES,
+        EffectContinuation, EffectContinuationError, MAX_RETAINED_EXECUTION_BYTES,
     };
     let mut hot = SessionMaterialization::new();
     let fingerprint = RequestFingerprint::from_hex(&format!("{:064x}", 77u64)).unwrap();
     hot.responses.store(
         fingerprint,
         crate::replay::TransportOutcome {
-            response: serde_json::json!({"private": "x".repeat(MAX_EFFECT_SELECTION_BYTES)}),
+            response: serde_json::json!({"private": "x".repeat(MAX_RETAINED_EXECUTION_BYTES)}),
             next_link: None,
         },
         ExecutionSource::Cache,
@@ -27,7 +27,7 @@ async fn fork_base_retains_response_after_branch_invalidation() {
             assert!(EffectContinuation::reserve_retained(&branch.retention_view()).is_ok());
             assert!(matches!(
                 EffectContinuation::reserve_retained(&base.retention_view()),
-                Err(EffectContinuationError::SelectionBudget(
+                Err(EffectContinuationError::RetainedBudget(
                     plasm_core::ValueBudgetError::BytesExceeded
                 ))
             ));

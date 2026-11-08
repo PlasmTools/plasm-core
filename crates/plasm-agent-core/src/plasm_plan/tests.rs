@@ -8,9 +8,61 @@ use crate::plasm_plan::{
 };
 
 #[tokio::test]
+async fn small_cloned_node_does_not_pay_for_unrelated_plan_storage() {
+    use plasm_runtime::execution::effect_continuation::{
+        EffectContinuation, MAX_RETAINED_EXECUTION_BYTES,
+    };
+    let id = PlanNodeId::new("value").unwrap();
+    let mut nodes = Vec::with_capacity(
+        MAX_RETAINED_EXECUTION_BYTES / std::mem::size_of::<ValidatedPlanNode>() + 1,
+    );
+    nodes.push(ValidatedPlanNode::Data(ValidatedDataNode {
+        recorded_output: None,
+        id: id.clone(),
+        effect_class: EffectClass::Read,
+        result_shape: ResultShape::Single,
+        data: PlanValue::BindingSymbol {
+            binding: "x".into(),
+            path: Vec::new(),
+        },
+        depends_on: Vec::new(),
+        uses_result: Vec::new(),
+    }));
+    let plan = Plan::new_program(
+        1,
+        None,
+        nodes,
+        ValidatedPlanReturn::Node(id.clone()),
+        Default::default(),
+    );
+    let artifact = ValidatedPlanArtifact::from_parts(
+        plan,
+        vec![id.clone()],
+        std::collections::HashMap::from([(id, 0)]),
+        Vec::new(),
+    );
+    let (control, _pauses) =
+        EffectContinuation::new_native(std::time::Duration::from_secs(2)).unwrap();
+    control
+        .scope(async {
+            let mut reservation = EffectContinuation::empty_retention();
+            assert!(artifact.structural_retention_capacity_bytes() > MAX_RETAINED_EXECUTION_BYTES);
+            let node = &artifact.artifact.nodes[0];
+            let bound = ValidatedPlanArtifact::retained_node_capacity_bytes(node);
+            let cloned = node.clone();
+            assert!(bound >= ValidatedPlanArtifact::retained_node_capacity_bytes(&cloned));
+            assert!(
+                reservation.add_capacity_bytes(bound).is_ok(),
+                "a small node clone must not pay for the surrounding plan's unused node capacity"
+            );
+        })
+        .await;
+}
+
+#[tokio::test]
 async fn validated_plan_payload_obeys_the_continuation_budget() {
     use plasm_runtime::execution::effect_continuation::{
-        EffectContinuation, EffectContinuationError, MAX_EFFECT_SELECTION_BYTES,
+        EffectContinuation, EffectContinuationError, MAX_RETAINED_EXECUTION_BYTES,
     };
 
     let id = PlanNodeId::new("value").unwrap();
@@ -20,7 +72,7 @@ async fn validated_plan_payload_obeys_the_continuation_budget() {
         effect_class: EffectClass::Read,
         result_shape: ResultShape::Single,
         data: PlanValue::BindingSymbol {
-            binding: "x".repeat(MAX_EFFECT_SELECTION_BYTES + 1),
+            binding: "x".repeat(MAX_RETAINED_EXECUTION_BYTES + 1),
             path: Vec::new(),
         },
         depends_on: Vec::new(),
@@ -45,7 +97,7 @@ async fn validated_plan_payload_obeys_the_continuation_budget() {
         .scope(async {
             assert!(matches!(
                 EffectContinuation::reserve_retained(&artifact),
-                Err(EffectContinuationError::SelectionBudget(_))
+                Err(EffectContinuationError::RetainedBudget(_))
             ));
             assert!(EffectContinuation::reserve_retained(&"small").is_ok());
         })
@@ -55,11 +107,11 @@ async fn validated_plan_payload_obeys_the_continuation_budget() {
 #[tokio::test]
 async fn validated_plan_spare_node_capacity_obeys_the_continuation_budget() {
     use plasm_runtime::execution::effect_continuation::{
-        EffectContinuation, EffectContinuationError, MAX_EFFECT_SELECTION_BYTES,
+        EffectContinuation, EffectContinuationError, MAX_RETAINED_EXECUTION_BYTES,
     };
 
     let id = PlanNodeId::new("value").unwrap();
-    let slots = MAX_EFFECT_SELECTION_BYTES / std::mem::size_of::<ValidatedPlanNode>() + 1;
+    let slots = MAX_RETAINED_EXECUTION_BYTES / std::mem::size_of::<ValidatedPlanNode>() + 1;
     let plan = Plan::new_program(
         1,
         None,
@@ -80,7 +132,7 @@ async fn validated_plan_spare_node_capacity_obeys_the_continuation_budget() {
             let mut reservation = EffectContinuation::reserve_retained(&artifact).unwrap();
             assert!(matches!(
                 reservation.add_capacity_bytes(artifact.structural_retention_capacity_bytes()),
-                Err(EffectContinuationError::SelectionBudget(_))
+                Err(EffectContinuationError::RetainedBudget(_))
             ));
             drop(reservation);
             assert!(EffectContinuation::reserve_retained(&"small").is_ok());
@@ -90,7 +142,7 @@ async fn validated_plan_spare_node_capacity_obeys_the_continuation_budget() {
 
 #[test]
 fn retained_program_capacity_is_charged_with_validated_plan() {
-    use plasm_runtime::execution::effect_continuation::MAX_EFFECT_SELECTION_BYTES;
+    use plasm_runtime::execution::effect_continuation::MAX_RETAINED_EXECUTION_BYTES;
     let id = PlanNodeId::new("value").unwrap();
     let plan = Plan::new_program(
         1,
@@ -101,7 +153,7 @@ fn retained_program_capacity_is_charged_with_validated_plan() {
     );
     let artifact =
         ValidatedPlanArtifact::from_parts(plan, Vec::new(), Default::default(), Vec::new());
-    let mut name = String::with_capacity(MAX_EFFECT_SELECTION_BYTES + 1);
+    let mut name = String::with_capacity(MAX_RETAINED_EXECUTION_BYTES + 1);
     name.push('n');
     let program = plasm_core::PlasmCompArtifact {
         comp: plasm_core::plasm_monad::empty_comp(Some(name)),
@@ -113,13 +165,13 @@ fn retained_program_capacity_is_charged_with_validated_plan() {
         return_: program.comp.return_.clone(),
         approval_gates: Vec::new(),
     };
-    assert!(artifact.structural_retention_capacity_bytes() < MAX_EFFECT_SELECTION_BYTES);
+    assert!(artifact.structural_retention_capacity_bytes() < MAX_RETAINED_EXECUTION_BYTES);
     assert!(
         artifact.retention_capacity_bytes_with_program(&program, &executable)
-            > MAX_EFFECT_SELECTION_BYTES
+            > MAX_RETAINED_EXECUTION_BYTES
     );
 
-    let mut large = String::with_capacity(MAX_EFFECT_SELECTION_BYTES + 1);
+    let mut large = String::with_capacity(MAX_RETAINED_EXECUTION_BYTES + 1);
     large.push('x');
     let mut payload = plasm_core::plasm_monad::invoke_step_payload(
         plasm_core::plasm_monad::SurfaceKind::Get,
@@ -142,7 +194,7 @@ fn retained_program_capacity_is_charged_with_validated_plan() {
     };
     assert!(
         artifact.retention_capacity_bytes_with_program(&compact_program, &executable)
-            > MAX_EFFECT_SELECTION_BYTES
+            > MAX_RETAINED_EXECUTION_BYTES
     );
 }
 
@@ -208,14 +260,15 @@ fn deeply_nested_validated_plan_fails_closed_for_continuation() {
         );
     }
     assert_eq!(nested.structural_retention_capacity_bytes(), usize::MAX);
+    assert_eq!(ValidatedPlanArtifact::retained_node_capacity_bytes(&nested.artifact.nodes[0]), usize::MAX);
 }
 
 #[tokio::test]
 async fn pushed_predicate_capacity_obeys_the_continuation_budget() {
     use plasm_runtime::execution::effect_continuation::{
-        EffectContinuation, EffectContinuationError, MAX_EFFECT_SELECTION_BYTES,
+        EffectContinuation, EffectContinuationError, MAX_RETAINED_EXECUTION_BYTES,
     };
-    let mut literal = String::with_capacity(MAX_EFFECT_SELECTION_BYTES + 1);
+    let mut literal = String::with_capacity(MAX_RETAINED_EXECUTION_BYTES + 1);
     literal.push('x');
     let predicate = plasm_runtime::row_predicate::BoundRowPredicate {
         field_path: FieldPath::new(vec!["name".into()]).unwrap(),
@@ -262,7 +315,7 @@ async fn pushed_predicate_capacity_obeys_the_continuation_budget() {
             let mut retained = EffectContinuation::reserve_retained(&artifact).unwrap();
             assert!(matches!(
                 retained.add_capacity_bytes(artifact.structural_retention_capacity_bytes()),
-                Err(EffectContinuationError::SelectionBudget(_))
+                Err(EffectContinuationError::RetainedBudget(_))
             ));
         })
         .await;
@@ -271,9 +324,9 @@ async fn pushed_predicate_capacity_obeys_the_continuation_budget() {
 #[tokio::test]
 async fn validated_compute_capacity_obeys_the_continuation_budget() {
     use plasm_runtime::execution::effect_continuation::{
-        EffectContinuation, EffectContinuationError, MAX_EFFECT_SELECTION_BYTES,
+        EffectContinuation, EffectContinuationError, MAX_RETAINED_EXECUTION_BYTES,
     };
-    let mut source = String::with_capacity(MAX_EFFECT_SELECTION_BYTES + 1);
+    let mut source = String::with_capacity(MAX_RETAINED_EXECUTION_BYTES + 1);
     source.push('s');
     let payload = plasm_core::plasm_monad::map_step_payload(
         "x",
@@ -314,7 +367,7 @@ async fn validated_compute_capacity_obeys_the_continuation_budget() {
             let mut reservation = EffectContinuation::reserve_retained(&artifact).unwrap();
             assert!(matches!(
                 reservation.add_capacity_bytes(artifact.structural_retention_capacity_bytes()),
-                Err(EffectContinuationError::SelectionBudget(_))
+                Err(EffectContinuationError::RetainedBudget(_))
             ));
         })
         .await;
@@ -328,14 +381,14 @@ async fn correlated_scope_capacity_obeys_the_continuation_budget() {
         ScopedCapture, ScopedOutput, StepId,
     };
     use plasm_runtime::execution::effect_continuation::{
-        EffectContinuation, EffectContinuationError, MAX_EFFECT_SELECTION_BYTES,
+        EffectContinuation, EffectContinuationError, MAX_RETAINED_EXECUTION_BYTES,
     };
 
-    let mut source = String::with_capacity(MAX_EFFECT_SELECTION_BYTES + 1);
+    let mut source = String::with_capacity(MAX_RETAINED_EXECUTION_BYTES + 1);
     source.push('s');
-    let mut name = String::with_capacity(MAX_EFFECT_SELECTION_BYTES + 1);
+    let mut name = String::with_capacity(MAX_RETAINED_EXECUTION_BYTES + 1);
     name.push('n');
-    let mut operand = String::with_capacity(MAX_EFFECT_SELECTION_BYTES + 1);
+    let mut operand = String::with_capacity(MAX_RETAINED_EXECUTION_BYTES + 1);
     operand.push('x');
     let mut comp_with_operand = empty_comp(None);
     comp_with_operand.steps.insert(
@@ -347,7 +400,7 @@ async fn correlated_scope_capacity_obeys_the_continuation_budget() {
             result_shape: ResultShape::Single,
         }),
     );
-    let mut display = String::with_capacity(MAX_EFFECT_SELECTION_BYTES + 1);
+    let mut display = String::with_capacity(MAX_RETAINED_EXECUTION_BYTES + 1);
     display.push('x');
     let mut invocation = invoke_step_payload(
         plasm_core::plasm_monad::SurfaceKind::Get,
@@ -360,7 +413,7 @@ async fn correlated_scope_capacity_obeys_the_continuation_budget() {
     }
     let mut comp_with_invocation = empty_comp(None);
     comp_with_invocation.steps.insert("get".into(), invocation);
-    let mut compute_source = String::with_capacity(MAX_EFFECT_SELECTION_BYTES + 1);
+    let mut compute_source = String::with_capacity(MAX_RETAINED_EXECUTION_BYTES + 1);
     compute_source.push('x');
     let mut compute = map_step_payload(
         "x",
@@ -372,7 +425,7 @@ async fn correlated_scope_capacity_obeys_the_continuation_budget() {
     }
     let mut comp_with_compute = empty_comp(None);
     comp_with_compute.steps.insert("map".into(), compute);
-    let mut relation_source = String::with_capacity(MAX_EFFECT_SELECTION_BYTES + 1);
+    let mut relation_source = String::with_capacity(MAX_RETAINED_EXECUTION_BYTES + 1);
     relation_source.push('r');
     let relation = plasm_core::plasm_monad::PlanRelationTraversal {
         source: relation_source,
@@ -498,7 +551,7 @@ async fn correlated_scope_capacity_obeys_the_continuation_budget() {
             output: ScopedOutput::Record,
             max_parents: std::num::NonZeroU32::new(1).unwrap(),
             captures: Vec::<ScopedCapture>::with_capacity(
-                MAX_EFFECT_SELECTION_BYTES / std::mem::size_of::<ScopedCapture>() + 1,
+                MAX_RETAINED_EXECUTION_BYTES / std::mem::size_of::<ScopedCapture>() + 1,
             ),
             body: empty_comp(None),
         },
@@ -544,7 +597,7 @@ async fn correlated_scope_capacity_obeys_the_continuation_budget() {
                 let mut reservation = EffectContinuation::reserve_retained(&artifact).unwrap();
                 assert!(matches!(
                     reservation.add_capacity_bytes(artifact.structural_retention_capacity_bytes()),
-                    Err(EffectContinuationError::SelectionBudget(_))
+                    Err(EffectContinuationError::RetainedBudget(_))
                 ));
             }
         })
@@ -554,10 +607,10 @@ async fn correlated_scope_capacity_obeys_the_continuation_budget() {
 #[tokio::test]
 async fn validated_plan_expression_capacity_obeys_the_continuation_budget() {
     use plasm_runtime::execution::effect_continuation::{
-        EffectContinuation, EffectContinuationError, MAX_EFFECT_SELECTION_BYTES,
+        EffectContinuation, EffectContinuationError, MAX_RETAINED_EXECUTION_BYTES,
     };
 
-    let mut key = String::with_capacity(MAX_EFFECT_SELECTION_BYTES + 1);
+    let mut key = String::with_capacity(MAX_RETAINED_EXECUTION_BYTES + 1);
     key.push('1');
     let id = PlanNodeId::new("read").unwrap();
     let node = ValidatedPlanNode::Surface(ValidatedSurfaceNode {
@@ -604,7 +657,7 @@ async fn validated_plan_expression_capacity_obeys_the_continuation_budget() {
             let mut reservation = EffectContinuation::reserve_retained(&artifact).unwrap();
             assert!(matches!(
                 reservation.add_capacity_bytes(artifact.structural_retention_capacity_bytes()),
-                Err(EffectContinuationError::SelectionBudget(_))
+                Err(EffectContinuationError::RetainedBudget(_))
             ));
         })
         .await;
@@ -613,13 +666,13 @@ async fn validated_plan_expression_capacity_obeys_the_continuation_budget() {
 #[tokio::test]
 async fn validated_node_projection_capacity_obeys_the_continuation_budget() {
     use plasm_runtime::execution::effect_continuation::{
-        EffectContinuation, EffectContinuationError, MAX_EFFECT_SELECTION_BYTES,
+        EffectContinuation, EffectContinuationError, MAX_RETAINED_EXECUTION_BYTES,
     };
 
-    let mut field = String::with_capacity(MAX_EFFECT_SELECTION_BYTES + 1);
+    let mut field = String::with_capacity(MAX_RETAINED_EXECUTION_BYTES + 1);
     field.push('x');
     let projections = [
-        Vec::with_capacity(MAX_EFFECT_SELECTION_BYTES / std::mem::size_of::<String>() + 1),
+        Vec::with_capacity(MAX_RETAINED_EXECUTION_BYTES / std::mem::size_of::<String>() + 1),
         vec![field],
     ];
     let (control, _pauses) =
@@ -660,7 +713,7 @@ async fn validated_node_projection_capacity_obeys_the_continuation_budget() {
                 let mut reservation = EffectContinuation::reserve_retained(&artifact).unwrap();
                 assert!(matches!(
                     reservation.add_capacity_bytes(artifact.structural_retention_capacity_bytes()),
-                    Err(EffectContinuationError::SelectionBudget(_))
+                    Err(EffectContinuationError::RetainedBudget(_))
                 ));
             }
             assert!(EffectContinuation::reserve_retained(&"small").is_ok());
@@ -671,11 +724,11 @@ async fn validated_node_projection_capacity_obeys_the_continuation_budget() {
 #[tokio::test]
 async fn validated_operand_capacity_obeys_the_continuation_budget() {
     use plasm_runtime::execution::effect_continuation::{
-        EffectContinuation, EffectContinuationError, MAX_EFFECT_SELECTION_BYTES,
+        EffectContinuation, EffectContinuationError, MAX_RETAINED_EXECUTION_BYTES,
     };
-    let mut binding = String::with_capacity(MAX_EFFECT_SELECTION_BYTES + 1);
+    let mut binding = String::with_capacity(MAX_RETAINED_EXECUTION_BYTES + 1);
     binding.push('x');
-    let mut source = String::with_capacity(MAX_EFFECT_SELECTION_BYTES + 1);
+    let mut source = String::with_capacity(MAX_RETAINED_EXECUTION_BYTES + 1);
     source.push('x');
     let template =
         plasm_core::program_string_template::CompiledProgramString::compile(source).unwrap();
@@ -683,7 +736,7 @@ async fn validated_operand_capacity_obeys_the_continuation_budget() {
         shape: plasm_core::value_contract::ValueShape::Tuple {
             members: plasm_core::value_contract::TupleContract {
                 prefix: Vec::with_capacity(
-                    MAX_EFFECT_SELECTION_BYTES
+                    MAX_RETAINED_EXECUTION_BYTES
                         / std::mem::size_of::<plasm_core::value_contract::ValueContract>()
                         + 1,
                 ),
@@ -701,7 +754,7 @@ async fn validated_operand_capacity_obeys_the_continuation_budget() {
         },
         PlanValue::Array {
             items: Vec::with_capacity(
-                MAX_EFFECT_SELECTION_BYTES / std::mem::size_of::<PlanValue>() + 1,
+                MAX_RETAINED_EXECUTION_BYTES / std::mem::size_of::<PlanValue>() + 1,
             ),
         },
         PlanValue::Template {
@@ -746,7 +799,7 @@ async fn validated_operand_capacity_obeys_the_continuation_budget() {
                 let mut reservation = EffectContinuation::reserve_retained(&artifact).unwrap();
                 assert!(matches!(
                     reservation.add_capacity_bytes(artifact.structural_retention_capacity_bytes()),
-                    Err(EffectContinuationError::SelectionBudget(_))
+                    Err(EffectContinuationError::RetainedBudget(_))
                 ));
             }
             assert!(EffectContinuation::reserve_retained(&"small").is_ok());

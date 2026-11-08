@@ -15,12 +15,13 @@ use std::sync::{Arc, Mutex};
 #[derive(Default)]
 struct Store {
     attempts: usize,
+    source_reads: usize,
     rows: Vec<serde_json::Value>,
     source_rows: Vec<serde_json::Value>,
     response_padding: usize,
     response_padding_at: Option<usize>,
     selection_headroom: Option<usize>,
-    selection_pressure: Option<plasm_runtime::execution::effect_continuation::SelectionReservation>,
+    selection_pressure: Option<plasm_runtime::execution::effect_continuation::RetainedExecutionReservation>,
 }
 struct Transport {
     store: Arc<Mutex<Store>>,
@@ -258,11 +259,12 @@ impl HttpTransport for Transport {
         if req.path.ends_with("/expenses") {
             if req.path.contains("/source/") {
                 let mut store = self.store.lock().unwrap();
+                store.source_reads += 1;
                 if let Some(headroom) = store.selection_headroom.take() {
                     use plasm_runtime::execution::effect_continuation::{
-                        EffectContinuation, MAX_EFFECT_SELECTION_BYTES,
+                        EffectContinuation, MAX_RETAINED_EXECUTION_BYTES,
                     };
-                    let (mut lower, mut upper) = (0, MAX_EFFECT_SELECTION_BYTES + 1);
+                    let (mut lower, mut upper) = (0, MAX_RETAINED_EXECUTION_BYTES + 1);
                     while lower + 1 < upper {
                         let middle = lower + (upper - lower) / 2;
                         let mut probe = EffectContinuation::empty_retention();
@@ -396,7 +398,7 @@ async fn ordered_fanout_fixture(
 async fn unretained_mutation_scope_refuses_dispatch_end_to_end() {
     use plasm_core::collection_codec::{CollectionIdentity, ResultCoverage};
     use plasm_runtime::execution::effect_continuation::{
-        EffectContinuation, MAX_EFFECT_SELECTION_BYTES,
+        EffectContinuation, MAX_RETAINED_EXECUTION_BYTES,
     };
 
     let OrderedFanoutFixture {
@@ -414,7 +416,7 @@ async fn unretained_mutation_scope_refuses_dispatch_end_to_end() {
     let bundle = crate::plasm_compile::compile_python_program(&session, &source)
         .await
         .unwrap();
-    let mut path = String::with_capacity(MAX_EFFECT_SELECTION_BYTES + 1);
+    let mut path = String::with_capacity(MAX_RETAINED_EXECUTION_BYTES + 1);
     path.push('x');
     let selection = plasm_runtime::execution_failure::EffectSelectionEvidence {
         collection: CollectionIdentity {
@@ -452,77 +454,79 @@ async fn unretained_mutation_scope_refuses_dispatch_end_to_end() {
     );
     assert!(matches!(
         result,
-        Err(plasm_runtime::execution::effect_continuation::EffectContinuationError::SelectionBudget(
+        Err(plasm_runtime::execution::effect_continuation::EffectContinuationError::RetainedBudget(
             plasm_core::ValueBudgetError::BytesExceeded
         ))
     ));
 }
 
+async fn pressured_scope(
+    headroom: usize,
+) -> (Option<plasm_runtime::ExecutionFailure>, usize, usize, bool) {
+    use plasm_runtime::execution::effect_continuation::EffectContinuation;
+    let OrderedFanoutFixture {
+        host,
+        session,
+        opened,
+        store,
+    } = ordered_fanout_fixture(1, usize::MAX, true).await;
+    store.lock().unwrap().selection_headroom = Some(headroom);
+    let symbols = session.teaching_exposure.as_ref().unwrap().to_symbol_map();
+    let entity = symbols.entity_sym_for("matrix", "PwExpense");
+    let create = symbols.method_sym_for("matrix", "PwExpense", "create");
+    let source = format!(
+        "class Observe(Program):\n    def build(self):\n        source = {entity}.query(group_id=\"source\")\n        return source.flat_map(lambda row: {entity}.{create}(group_id=\"dest\", description=row.description))\n"
+    );
+    let bundle = crate::plasm_compile::compile_python_program(&session, &source)
+        .await
+        .unwrap();
+    let (control, _pauses) =
+        EffectContinuation::new_native(std::time::Duration::from_secs(10)).unwrap();
+    let result = control
+        .clone()
+        .scope(ExecutePipeline::run_program(
+            &session,
+            &host,
+            &opened.prompt_hash,
+            &opened.session_id,
+            &bundle,
+            ExecutionIntent::Live,
+            None,
+            None,
+            None,
+        ))
+        .await;
+    let store = store.lock().unwrap();
+    (
+        result.err(),
+        store.attempts,
+        store.source_reads,
+        control.selections_have_complete_coverage(),
+    )
+}
+
 #[tokio::test]
 async fn production_mutation_scope_refuses_unretained_selection() {
-    use plasm_runtime::execution::effect_continuation::{
-        EffectContinuation, MAX_EFFECT_SELECTION_BYTES,
-    };
+    use plasm_runtime::execution::effect_continuation::MAX_RETAINED_EXECUTION_BYTES;
     let mut observations = Vec::new();
-    let (mut lower, mut upper) = (0, MAX_EFFECT_SELECTION_BYTES);
+    let (mut lower, mut upper) = (0, MAX_RETAINED_EXECUTION_BYTES);
     while lower <= upper {
         let headroom = lower + (upper - lower) / 2;
-        let OrderedFanoutFixture {
-            host,
-            session,
-            opened,
-            store,
-        } = ordered_fanout_fixture(1, usize::MAX, true).await;
-        store.lock().unwrap().selection_headroom = Some(headroom);
-        let symbols = session.teaching_exposure.as_ref().unwrap().to_symbol_map();
-        let entity = symbols.entity_sym_for("matrix", "PwExpense");
-        let create = symbols.method_sym_for("matrix", "PwExpense", "create");
-        let source = format!(
-            "class Observe(Program):\n    def build(self):\n        source = {entity}.query(group_id=\"source\")\n        return source.flat_map(lambda row: {entity}.{create}(group_id=\"dest\", description=row.description))\n"
-        );
-        let bundle = crate::plasm_compile::compile_python_program(&session, &source)
-            .await
-            .unwrap();
-        let (control, _pauses) =
-            EffectContinuation::new_native(std::time::Duration::from_secs(10)).unwrap();
-        let result = control
-            .clone()
-            .scope(ExecutePipeline::run_program(
-                &session,
-                &host,
-                &opened.prompt_hash,
-                &opened.session_id,
-                &bundle,
-                ExecutionIntent::Live,
-                None,
-                None,
-                None,
-            ))
-            .await;
-        if let Err(failure) = result {
-            observations.push((
-                headroom,
-                failure.code.clone(),
-                store.lock().unwrap().attempts,
-                control.selections_have_complete_coverage(),
-            ));
-            if failure.code == "effect_scope_retention_refused"
-                && store.lock().unwrap().attempts == 0
-                && !control.selections_have_complete_coverage()
-            {
+        let (failure, attempts, reads, admitted) = pressured_scope(headroom).await;
+        let code = failure
+            .as_ref()
+            .map_or("ok", |failure| failure.code.as_str())
+            .to_string();
+        observations.push((headroom, code.clone(), attempts, reads, admitted));
+        if let Some(failure) = failure {
+            if failure.code == "effect_scope_retention_refused" && attempts == 0 && !admitted {
+                assert_eq!(reads, 1);
                 assert!(failure.input_budget.is_some());
                 assert!(failure.effect_selections.is_empty());
                 return;
             }
-        } else {
-            observations.push((
-                headroom,
-                "ok".into(),
-                store.lock().unwrap().attempts,
-                control.selections_have_complete_coverage(),
-            ));
         }
-        if control.selections_have_complete_coverage() {
+        if admitted {
             if headroom == 0 {
                 break;
             }
@@ -532,6 +536,77 @@ async fn production_mutation_scope_refuses_unretained_selection() {
         }
     }
     panic!("no production selection admission reached the retention limit: {observations:?}");
+}
+
+#[tokio::test]
+async fn production_cloned_node_refuses_before_dispatch_when_budget_is_full() {
+    let mut observations = Vec::new();
+    for headroom in [0, 128, 512, 2048, 8192, 32768, 65536, 131072] {
+        let (failure, attempts, reads, admitted) = pressured_scope(headroom).await;
+        if let Some(failure) = failure {
+            let input = failure
+                .input_budget
+                .as_ref()
+                .map(|budget| budget.input.clone());
+            observations.push((
+                headroom,
+                failure.code.clone(),
+                input.clone(),
+                attempts,
+                reads,
+                admitted,
+            ));
+            if failure.code == "effect_plan_retention_refused"
+                && input.as_deref() == Some("cloned plan")
+            {
+                assert_eq!(reads, 1);
+                assert_eq!(attempts, 0);
+                assert!(!admitted);
+                return;
+            }
+        }
+    }
+    panic!("no production node clone reached the retention limit: {observations:?}");
+}
+
+#[tokio::test]
+async fn production_normalized_expression_refuses_before_dispatch_when_budget_is_full() {
+    use plasm_runtime::execution::effect_continuation::MAX_RETAINED_EXECUTION_BYTES;
+    let (mut lower, mut upper) = (0, MAX_RETAINED_EXECUTION_BYTES);
+    let mut observations = Vec::new();
+    while lower <= upper {
+        let headroom = lower + (upper - lower) / 2;
+        let (failure, attempts, reads, admitted) = pressured_scope(headroom).await;
+        if let Some(failure) = failure {
+            let input = failure
+                .input_budget
+                .as_ref()
+                .map(|budget| budget.input.clone());
+            observations.push((
+                headroom,
+                failure.code.clone(),
+                input.clone(),
+                attempts,
+                reads,
+                admitted,
+            ));
+            if failure.code == "effect_expression_retention_refused" {
+                assert_eq!(input.as_deref(), Some("parsed expression"));
+                assert_eq!(attempts, 0);
+                assert_eq!(reads, 1);
+                return;
+            }
+        }
+        if attempts > 0 {
+            if headroom == 0 {
+                break;
+            }
+            upper = headroom - 1;
+        } else {
+            lower = headroom + 1;
+        }
+    }
+    panic!("no normalized expression reached the retention limit: {observations:?}");
 }
 
 async fn ordered_fanout_case(
@@ -986,7 +1061,7 @@ async fn resumed_fanout_preserves_duplicate_occurrences() {
 #[tokio::test]
 async fn oversized_continuation_inputs_stop_before_scoped_writes() {
     use plasm_runtime::execution::effect_continuation::{
-        EffectContinuation, MAX_EFFECT_SELECTION_BYTES,
+        EffectContinuation, MAX_RETAINED_EXECUTION_BYTES,
     };
     use std::time::Duration;
 
@@ -997,7 +1072,7 @@ async fn oversized_continuation_inputs_stop_before_scoped_writes() {
         store,
     } = ordered_fanout_fixture(1, 1, true).await;
     store.lock().unwrap().source_rows[0]["description"] =
-        json!("x".repeat(MAX_EFFECT_SELECTION_BYTES));
+        json!("x".repeat(MAX_RETAINED_EXECUTION_BYTES));
     let symbols = session.teaching_exposure.as_ref().unwrap().to_symbol_map();
     let entity = symbols.entity_sym_for("matrix", "PwExpense");
     let create = symbols.method_sym_for("matrix", "PwExpense", "create");
@@ -1024,7 +1099,7 @@ async fn oversized_continuation_inputs_stop_before_scoped_writes() {
     assert_eq!(failure.code, "effect_materialization_retention_refused");
     let budget = failure.input_budget.as_ref().expect("typed byte budget");
     assert_eq!(budget.unit, plasm_runtime::InputBudgetUnit::AccountedBytes);
-    assert_eq!(budget.limit, MAX_EFFECT_SELECTION_BYTES);
+    assert_eq!(budget.limit, MAX_RETAINED_EXECUTION_BYTES);
     assert_eq!(store.lock().unwrap().attempts, 0);
 }
 
@@ -1033,7 +1108,7 @@ async fn ordered_fanout_oversized_job_refuses_before_any_dispatch() {
     use super::plan_bounded_parallel::BatchAdmission;
     use super::plan_fanout_parallel::{execute_row_fanout, PlanLineJob, RowFanoutPolicy};
     use plasm_runtime::execution::effect_continuation::{
-        EffectContinuation, MAX_EFFECT_SELECTION_BYTES,
+        EffectContinuation, MAX_RETAINED_EXECUTION_BYTES,
     };
     let OrderedFanoutFixture {
         host,
@@ -1041,7 +1116,7 @@ async fn ordered_fanout_oversized_job_refuses_before_any_dispatch() {
         opened,
         store,
     } = ordered_fanout_fixture(1, usize::MAX, true).await;
-    let mut label = String::with_capacity(MAX_EFFECT_SELECTION_BYTES + 1);
+    let mut label = String::with_capacity(MAX_RETAINED_EXECUTION_BYTES + 1);
     label.push('x');
     let jobs = vec![PlanLineJob {
         index: 0,
@@ -1086,7 +1161,7 @@ async fn ordered_fanout_retention_case(oversized_at: usize) {
     use super::plan_bounded_parallel::BatchAdmission;
     use super::plan_fanout_parallel::{execute_row_fanout, PlanLineJob, RowFanoutPolicy};
     use plasm_runtime::execution::effect_continuation::{
-        EffectContinuation, MAX_EFFECT_SELECTION_BYTES,
+        EffectContinuation, MAX_RETAINED_EXECUTION_BYTES,
     };
     let OrderedFanoutFixture {
         host,
@@ -1096,7 +1171,7 @@ async fn ordered_fanout_retention_case(oversized_at: usize) {
     } = ordered_fanout_fixture(3, usize::MAX, true).await;
     {
         let mut state = store.lock().unwrap();
-        state.response_padding = MAX_EFFECT_SELECTION_BYTES;
+        state.response_padding = MAX_RETAINED_EXECUTION_BYTES;
         state.response_padding_at = Some(oversized_at);
     }
     let jobs = (0..3)
@@ -1179,7 +1254,7 @@ async fn ordered_fanout_retention_case(oversized_at: usize) {
 #[tokio::test]
 async fn oversized_accumulated_scope_output_keeps_completed_effect_and_stops_suffix() {
     use plasm_runtime::execution::effect_continuation::{
-        EffectContinuation, MAX_EFFECT_SELECTION_BYTES,
+        EffectContinuation, MAX_RETAINED_EXECUTION_BYTES,
     };
     use std::time::Duration;
     let OrderedFanoutFixture {
@@ -1188,7 +1263,7 @@ async fn oversized_accumulated_scope_output_keeps_completed_effect_and_stops_suf
         opened,
         store,
     } = ordered_fanout_fixture(3, usize::MAX, true).await;
-    store.lock().unwrap().response_padding = MAX_EFFECT_SELECTION_BYTES;
+    store.lock().unwrap().response_padding = MAX_RETAINED_EXECUTION_BYTES;
     let symbols = session.teaching_exposure.as_ref().unwrap().to_symbol_map();
     let entity = symbols.entity_sym_for("matrix", "PwExpense");
     let create = symbols.method_sym_for("matrix", "PwExpense", "create");
@@ -1226,7 +1301,7 @@ async fn oversized_accumulated_scope_output_keeps_completed_effect_and_stops_suf
 #[tokio::test]
 async fn oversized_fork_base_stops_before_mutation_dispatch() {
     use plasm_runtime::execution::effect_continuation::{
-        EffectContinuation, MAX_EFFECT_SELECTION_BYTES,
+        EffectContinuation, MAX_RETAINED_EXECUTION_BYTES,
     };
     use std::time::Duration;
     let OrderedFanoutFixture {
@@ -1240,7 +1315,7 @@ async fn oversized_fork_base_stops_before_mutation_dispatch() {
     session.lock_graph_cache().await.responses.store(
         fingerprint,
         plasm_runtime::replay::TransportOutcome {
-            response: json!({"private": "x".repeat(MAX_EFFECT_SELECTION_BYTES)}),
+            response: json!({"private": "x".repeat(MAX_RETAINED_EXECUTION_BYTES)}),
             next_link: None,
         },
         plasm_runtime::ExecutionSource::Cache,

@@ -369,30 +369,30 @@ mod tests {
 
     #[test]
     fn pagination_progress_counts_spare_digest_capacity() {
-        use super::super::effect_continuation::MAX_EFFECT_SELECTION_BYTES;
-        let mut digest = String::with_capacity(MAX_EFFECT_SELECTION_BYTES + 1);
+        use super::super::effect_continuation::MAX_RETAINED_EXECUTION_BYTES;
+        let mut digest = String::with_capacity(MAX_RETAINED_EXECUTION_BYTES + 1);
         digest.push('x');
         let mut guard = PaginationProgressGuard::default();
         guard.seen_ids.insert(digest);
-        assert!(guard.retention_capacity_bytes() > MAX_EFFECT_SELECTION_BYTES);
+        assert!(guard.retention_capacity_bytes() > MAX_RETAINED_EXECUTION_BYTES);
     }
 
     #[tokio::test]
     async fn pagination_progress_retention_accounts_for_seen_identities() {
         use super::super::effect_continuation::{
-            EffectContinuation, EffectContinuationError, MAX_EFFECT_SELECTION_BYTES,
+            EffectContinuation, EffectContinuationError, MAX_RETAINED_EXECUTION_BYTES,
         };
         let mut guard = PaginationProgressGuard::default();
         guard
             .seen_ids
-            .insert("x".repeat(MAX_EFFECT_SELECTION_BYTES));
+            .insert("x".repeat(MAX_RETAINED_EXECUTION_BYTES));
         let (control, _pauses) =
             EffectContinuation::new_native(std::time::Duration::from_secs(1)).unwrap();
         control
             .scope(async {
                 assert!(matches!(
                     EffectContinuation::reserve_retained(&guard.retained_components()),
-                    Err(EffectContinuationError::SelectionBudget(
+                    Err(EffectContinuationError::RetainedBudget(
                         plasm_core::ValueBudgetError::BytesExceeded
                     ))
                 ));

@@ -5,6 +5,8 @@
 //! rejection. It is not a repair certificate and does not prove selection
 //! coverage or completion of the enclosing plan.
 
+use super::retained_execution::RetainedExecutionBudget;
+pub use super::retained_execution::{RetainedExecutionReservation, MAX_RETAINED_EXECUTION_BYTES};
 use crate::{ExecutionFailure, MutationDispatchStatus};
 use std::collections::HashMap;
 use std::future::Future;
@@ -16,8 +18,6 @@ use uuid::Uuid;
 
 /// A reviewed execution cannot keep an unattended checkpoint indefinitely.
 pub const MAX_EFFECT_CONTINUATION_LEASE: Duration = Duration::from_secs(600);
-/// Accounted payload retained by active nested selection frames in one run.
-pub const MAX_EFFECT_SELECTION_BYTES: usize = 8 * 1024 * 1024;
 /// Bound the native occurrence audit independently of row payload size.
 pub const MAX_EFFECT_AUDIT_OCCURRENCES: usize = 65_536;
 
@@ -31,7 +31,7 @@ struct OccurrenceAudit {
 struct SelectionFrame {
     evidence: crate::execution_failure::EffectSelectionEvidence,
     parent: Option<Arc<SelectionFrame>>,
-    _reservation: Option<SelectionReservation>,
+    _reservation: Option<RetainedExecutionReservation>,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -60,7 +60,7 @@ pub enum EffectContinuationError {
     #[error("the continuation has already been resumed or expired")]
     AlreadyResolved,
     #[error("continuation payload cannot be retained within its byte budget: {0}")]
-    SelectionBudget(#[source] plasm_core::value::ValueBudgetError),
+    RetainedBudget(#[source] plasm_core::value::ValueBudgetError),
     #[error("continuation retained-state accounting failed")]
     RetainedSerialization(#[source] serde_json::Error),
     #[error("continuation execution scope has already been used")]
@@ -75,7 +75,7 @@ struct State {
     cancelled: AtomicBool,
     cancel_notify: Notify,
     pauses: mpsc::Sender<EffectPause>,
-    selection_bytes: Mutex<usize>,
+    retained_execution: Arc<RetainedExecutionBudget>,
     saw_selection: AtomicBool,
     incomplete_selection: AtomicBool,
     checkpoint_seen: AtomicBool,
@@ -116,7 +116,7 @@ impl RepairCertificate {
 /// presentation evidence; possession of this value is not a completion proof.
 pub struct EffectPause {
     failure: ExecutionFailure,
-    _retained_failure: SelectionReservation,
+    _retained_failure: RetainedExecutionReservation,
     workflow: Uuid,
     reference: Uuid,
     resume: Option<oneshot::Sender<()>>,
@@ -146,182 +146,6 @@ impl EffectPause {
 /// The execution owner consumes checkpoints; dropping it abandons a pending pause.
 pub struct EffectPauseReceiver {
     pauses: mpsc::Receiver<EffectPause>,
-}
-
-/// Keeps the accounting charge alive for precisely the selection frame's lifetime.
-pub struct SelectionReservation {
-    state: Option<Arc<State>>,
-    bytes: usize,
-}
-
-// Called only after charge_value_budget has validated the value's finite shape
-// and bounded its depth. Charge backing allocations in addition to its logical
-// payload, which may be much smaller than the capacity retained by the frame.
-fn charge_selection_capacity(
-    value: &plasm_core::Value,
-    remaining: &mut usize,
-) -> Result<(), plasm_core::ValueBudgetError> {
-    use plasm_core::{Value, ValueBudgetError};
-    let bytes = match value {
-        Value::String(s) => s.capacity().saturating_sub(s.len()),
-        Value::Array(values) => values
-            .capacity()
-            .saturating_mul(std::mem::size_of::<Value>()),
-        Value::Object(values) => values
-            .capacity()
-            .saturating_mul(std::mem::size_of::<(String, Value)>().saturating_add(16))
-            .saturating_mul(2),
-        _ => 0,
-    };
-    *remaining = remaining
-        .checked_sub(bytes)
-        .ok_or(ValueBudgetError::BytesExceeded)?;
-    match value {
-        Value::Array(values) => {
-            for value in values {
-                charge_selection_capacity(value, remaining)?;
-            }
-        }
-        Value::Object(values) => {
-            for (key, value) in values {
-                *remaining = remaining
-                    .checked_sub(key.capacity().saturating_sub(key.len()))
-                    .ok_or(ValueBudgetError::BytesExceeded)?;
-                charge_selection_capacity(value, remaining)?;
-            }
-        }
-        _ => {}
-    }
-    Ok(())
-}
-
-impl SelectionReservation {
-    /// Add one resolved value retained by an execution frame.
-    pub fn add_value(&mut self, value: &plasm_core::Value) -> Result<(), EffectContinuationError> {
-        let Some(state) = &self.state else {
-            return Ok(());
-        };
-        let mut used = state
-            .selection_bytes
-            .lock()
-            .unwrap_or_else(|e| e.into_inner());
-        let mut remaining = MAX_EFFECT_SELECTION_BYTES - *used;
-        let initial = remaining;
-        plasm_core::charge_value_budget(value, &mut remaining)
-            .map_err(EffectContinuationError::SelectionBudget)?;
-        charge_selection_capacity(value, &mut remaining)
-            .map_err(EffectContinuationError::SelectionBudget)?;
-        let bytes = initial - remaining;
-        *used += bytes;
-        self.bytes += bytes;
-        Ok(())
-    }
-    /// Add retained rows to this reservation without copying their payloads.
-    pub fn add_selection(
-        &mut self,
-        rows: &[plasm_core::ValueRow],
-    ) -> Result<(), EffectContinuationError> {
-        let Some(state) = &self.state else {
-            return Ok(());
-        };
-        let mut used = state
-            .selection_bytes
-            .lock()
-            .unwrap_or_else(|e| e.into_inner());
-        let mut remaining = MAX_EFFECT_SELECTION_BYTES - *used;
-        let initial = remaining;
-        for row in rows {
-            plasm_core::charge_value_budget(row, &mut remaining)
-                .map_err(EffectContinuationError::SelectionBudget)?;
-            charge_selection_capacity(row, &mut remaining)
-                .map_err(EffectContinuationError::SelectionBudget)?;
-        }
-        let bytes = initial - remaining;
-        *used += bytes;
-        self.bytes += bytes;
-        Ok(())
-    }
-
-    /// Charge known retained allocation capacity in addition to encoded payload.
-    /// On failure the reservation and the shared budget are unchanged.
-    pub fn add_capacity_bytes(&mut self, bytes: usize) -> Result<(), EffectContinuationError> {
-        let Some(state) = &self.state else {
-            return Ok(());
-        };
-        let mut used = state
-            .selection_bytes
-            .lock()
-            .unwrap_or_else(|e| e.into_inner());
-        if bytes > MAX_EFFECT_SELECTION_BYTES.saturating_sub(*used) {
-            return Err(EffectContinuationError::SelectionBudget(
-                plasm_core::ValueBudgetError::BytesExceeded,
-            ));
-        }
-        *used += bytes;
-        self.bytes += bytes;
-        Ok(())
-    }
-    /// Add a newly retained payload to this reservation without copying it.
-    pub fn add_retained<T: serde::Serialize + ?Sized>(
-        &mut self,
-        value: &T,
-    ) -> Result<(), EffectContinuationError> {
-        let Some(state) = &self.state else {
-            return Ok(());
-        };
-        struct Counter {
-            remaining: usize,
-            exceeded: bool,
-        }
-        impl std::io::Write for Counter {
-            fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
-                if let Some(remaining) = self.remaining.checked_sub(bytes.len()) {
-                    self.remaining = remaining;
-                    Ok(bytes.len())
-                } else {
-                    self.exceeded = true;
-                    Err(std::io::Error::other("continuation budget exceeded"))
-                }
-            }
-            fn flush(&mut self) -> std::io::Result<()> {
-                Ok(())
-            }
-        }
-        let mut used = state
-            .selection_bytes
-            .lock()
-            .unwrap_or_else(|e| e.into_inner());
-        let initial = MAX_EFFECT_SELECTION_BYTES - *used;
-        let mut counter = Counter {
-            remaining: initial,
-            exceeded: false,
-        };
-        if let Err(error) = serde_json::to_writer(&mut counter, value) {
-            return Err(if counter.exceeded {
-                EffectContinuationError::SelectionBudget(
-                    plasm_core::ValueBudgetError::BytesExceeded,
-                )
-            } else {
-                EffectContinuationError::RetainedSerialization(error)
-            });
-        }
-        let bytes = initial - counter.remaining;
-        *used += bytes;
-        self.bytes += bytes;
-        Ok(())
-    }
-}
-
-impl Drop for SelectionReservation {
-    fn drop(&mut self) {
-        if let Some(state) = &self.state {
-            let mut used = state
-                .selection_bytes
-                .lock()
-                .unwrap_or_else(|e| e.into_inner());
-            *used -= self.bytes;
-        }
-    }
 }
 
 impl EffectPauseReceiver {
@@ -405,7 +229,7 @@ impl EffectContinuation {
                     cancelled: AtomicBool::new(false),
                     cancel_notify: Notify::new(),
                     pauses,
-                    selection_bytes: Mutex::new(0),
+                    retained_execution: Arc::new(RetainedExecutionBudget::default()),
                     saw_selection: AtomicBool::new(false),
                     incomplete_selection: AtomicBool::new(false),
                     checkpoint_seen: AtomicBool::new(false),
@@ -470,7 +294,7 @@ impl EffectContinuation {
     /// checkpoint. This does not account for other state retained by the future.
     pub fn reserve_selection(
         rows: &[plasm_core::ValueRow],
-    ) -> Result<SelectionReservation, EffectContinuationError> {
+    ) -> Result<RetainedExecutionReservation, EffectContinuationError> {
         let mut reservation = Self::empty_retention();
         reservation.add_selection(rows)?;
         Ok(reservation)
@@ -481,60 +305,28 @@ impl EffectContinuation {
     /// This measures encoded payload, not the entire allocation of the future.
     pub fn reserve_retained<T: serde::Serialize + ?Sized>(
         value: &T,
-    ) -> Result<SelectionReservation, EffectContinuationError> {
+    ) -> Result<RetainedExecutionReservation, EffectContinuationError> {
         let mut reservation = Self::empty_retention();
         reservation.add_retained(value)?;
         Ok(reservation)
     }
 
     /// Start an incremental reservation for a growing interpreter frame.
-    pub fn empty_retention() -> SelectionReservation {
-        SelectionReservation {
-            state: Self::current().map(|control| control.state),
-            bytes: 0,
-        }
+    pub fn empty_retention() -> RetainedExecutionReservation {
+        RetainedExecutionReservation::new(
+            Self::current().map(|control| control.state.retained_execution.clone()),
+        )
     }
 
     /// Account host-only query continuation data without serializing it to a
     /// buffer or exposing its environment, template, URLs, or page digests.
     pub fn reserve_pagination(
         resume: &super::QueryPaginationResumeData,
-    ) -> Result<SelectionReservation, EffectContinuationError> {
-        let mut retained = Self::reserve_retained(&(
-            &resume.query,
-            &resume.capability_name,
-            &resume.env,
-            &resume.template,
-            &resume.config,
-            &resume.state,
-            resume.state.progress_guard.retained_components(),
-        ))?;
-        let mut capacity = crate::materialization::value_map_capacity(&resume.env, 0)
-            .saturating_add(resume.capability_name.capacity())
-            .saturating_add(
-                resume
-                    .state
-                    .next_absolute_url
-                    .as_ref()
-                    .map_or(0, String::capacity),
-            )
-            .saturating_add(resume.state.progress_guard.retention_capacity_bytes())
-            .saturating_add(
-                resume
-                    .state
-                    .param_values
-                    .capacity()
-                    .saturating_mul(std::mem::size_of::<(String, Option<serde_json::Value>)>()),
-            );
-        for (name, value) in &resume.state.param_values {
-            capacity = capacity.saturating_add(name.capacity()).saturating_add(
-                value.as_ref().map_or(0, |value| {
-                    crate::materialization::json_retention_capacity(value, 0)
-                }),
-            );
-        }
-        retained.add_capacity_bytes(capacity)?;
-        Ok(retained)
+    ) -> Result<RetainedExecutionReservation, EffectContinuationError> {
+        super::retained_execution::reserve_pagination(
+            Self::current().map(|control| control.state.retained_execution.clone()),
+            resume,
+        )
     }
 
     /// Carry public selection accounting into a checkpoint while the owning
@@ -565,25 +357,11 @@ impl EffectContinuation {
         let Some(control) = Self::current() else {
             return Ok(future.await);
         };
-        let reservation = (|| {
-            let mut guard = Self::reserve_retained(&selection)?;
-            let capacity = selection
-                .scope_path
-                .capacity()
-                .saturating_mul(std::mem::size_of::<String>())
-                .saturating_add(
-                    selection
-                        .occurrence_path
-                        .capacity()
-                        .saturating_mul(std::mem::size_of::<usize>()),
-                )
-                .saturating_add(std::mem::size_of::<SelectionFrame>())
-                .saturating_add(selection.scope_path.iter().fold(0usize, |total, value| {
-                    total.saturating_add(value.capacity())
-                }));
-            guard.add_capacity_bytes(capacity)?;
-            Ok(guard)
-        })();
+        let reservation = super::retained_execution::reserve_selection_evidence(
+            control.state.retained_execution.clone(),
+            &selection,
+            std::mem::size_of::<SelectionFrame>(),
+        );
         let reservation = match reservation {
             Ok(guard) => Some(guard),
             Err(error) if require_retention => return Err(error),
@@ -786,7 +564,7 @@ impl EffectContinuation {
         let mut frame = SELECTIONS.try_with(Clone::clone).ok();
         while let Some(current) = frame {
             if current._reservation.is_none() {
-                return Err(EffectContinuationError::SelectionBudget(
+                return Err(EffectContinuationError::RetainedBudget(
                     plasm_core::ValueBudgetError::BytesExceeded,
                 ));
             }
@@ -835,10 +613,7 @@ impl EffectContinuation {
         }
         // Failure evidence is held by the pause channel even after the caller
         // has returned. Include private provider evidence without exposing it.
-        let mut retained_failure = SelectionReservation {
-            state: Some(self.state.clone()),
-            bytes: 0,
-        };
+        let mut retained_failure = RetainedExecutionReservation::new(Some(self.state.retained_execution.clone()));
         retained_failure.add_retained(&failure.retention_view())?;
         if self.state.cancelled.load(Ordering::Acquire) {
             return Err(EffectContinuationError::Cancelled);
@@ -1095,7 +870,7 @@ mod tests {
     #[tokio::test]
     async fn selection_reservation_counts_spare_nested_capacity() {
         let (control, _pauses) = EffectContinuation::new_native(Duration::from_secs(2)).unwrap();
-        let mut text = String::with_capacity(MAX_EFFECT_SELECTION_BYTES + 1);
+        let mut text = String::with_capacity(MAX_RETAINED_EXECUTION_BYTES + 1);
         text.push('x');
         let mut string_row = plasm_core::ValueRow::new();
         string_row.insert("value".into(), plasm_core::Value::String(text));
@@ -1103,7 +878,7 @@ mod tests {
         array_row.insert(
             "value".into(),
             plasm_core::Value::Array(Vec::with_capacity(
-                MAX_EFFECT_SELECTION_BYTES / std::mem::size_of::<plasm_core::Value>() + 1,
+                MAX_RETAINED_EXECUTION_BYTES / std::mem::size_of::<plasm_core::Value>() + 1,
             )),
         );
         control
@@ -1111,7 +886,7 @@ mod tests {
                 for row in [&string_row, &array_row] {
                     assert!(matches!(
                         EffectContinuation::reserve_selection(std::slice::from_ref(row)),
-                        Err(EffectContinuationError::SelectionBudget(
+                        Err(EffectContinuationError::RetainedBudget(
                             plasm_core::ValueBudgetError::BytesExceeded
                         ))
                     ));
@@ -1130,7 +905,7 @@ mod tests {
                     "value".into(),
                     plasm_core::Value::String("small".into()),
                 )]);
-                let mut large = String::with_capacity(MAX_EFFECT_SELECTION_BYTES + 1);
+                let mut large = String::with_capacity(MAX_RETAINED_EXECUTION_BYTES + 1);
                 large.push('x');
                 let large = plasm_core::ValueRow::from_iter([(
                     "value".into(),
@@ -1140,7 +915,7 @@ mod tests {
                 reservation.add_selection(&[small]).unwrap();
                 assert!(matches!(
                     reservation.add_selection(&[large]),
-                    Err(EffectContinuationError::SelectionBudget(
+                    Err(EffectContinuationError::RetainedBudget(
                         plasm_core::ValueBudgetError::BytesExceeded
                     ))
                 ));
@@ -1157,7 +932,7 @@ mod tests {
         let mut row = plasm_core::ValueRow::new();
         row.insert(
             "payload".into(),
-            plasm_core::Value::String("x".repeat(MAX_EFFECT_SELECTION_BYTES / 2)),
+            plasm_core::Value::String("x".repeat(MAX_RETAINED_EXECUTION_BYTES / 2)),
         );
         control
             .scope(async {
@@ -1165,7 +940,7 @@ mod tests {
                     EffectContinuation::reserve_selection(std::slice::from_ref(&row)).unwrap();
                 assert!(matches!(
                     EffectContinuation::reserve_selection(std::slice::from_ref(&row)),
-                    Err(EffectContinuationError::SelectionBudget(
+                    Err(EffectContinuationError::RetainedBudget(
                         plasm_core::ValueBudgetError::BytesExceeded
                     ))
                 ));
@@ -1180,7 +955,7 @@ mod tests {
     async fn expired_queued_pause_keeps_budget_until_receiver_drops_it() {
         let (control, pauses) = EffectContinuation::new_native(Duration::from_millis(25)).unwrap();
         let failure = failure(MutationDispatchStatus::RejectedWithoutEffect)
-            .at("x".repeat(MAX_EFFECT_SELECTION_BYTES / 2), Vec::new());
+            .at("x".repeat(MAX_RETAINED_EXECUTION_BYTES / 2), Vec::new());
         let worker = control.clone();
         let run = tokio::spawn(
             control
@@ -1191,13 +966,13 @@ mod tests {
             run.await.unwrap(),
             Err(EffectContinuationError::Expired)
         ));
-        let payload = "x".repeat(MAX_EFFECT_SELECTION_BYTES / 2);
+        let payload = "x".repeat(MAX_RETAINED_EXECUTION_BYTES / 2);
         control
             .clone()
             .scope(async {
                 assert!(matches!(
                     EffectContinuation::reserve_retained(&payload),
-                    Err(EffectContinuationError::SelectionBudget(
+                    Err(EffectContinuationError::RetainedBudget(
                         plasm_core::ValueBudgetError::BytesExceeded
                     ))
                 ));
@@ -1215,7 +990,7 @@ mod tests {
     async fn cancelled_pause_keeps_failure_budget_until_owner_drops_it() {
         let (control, mut pauses) = EffectContinuation::new_native(Duration::from_secs(2)).unwrap();
         let failure = failure(MutationDispatchStatus::RejectedWithoutEffect)
-            .at("x".repeat(MAX_EFFECT_SELECTION_BYTES / 2), Vec::new());
+            .at("x".repeat(MAX_RETAINED_EXECUTION_BYTES / 2), Vec::new());
         let worker = control.clone();
         let run = control
             .clone()
@@ -1227,13 +1002,13 @@ mod tests {
         };
         control.cancel();
         assert!(matches!(run.await, Err(EffectContinuationError::Cancelled)));
-        let payload = "x".repeat(MAX_EFFECT_SELECTION_BYTES / 2);
+        let payload = "x".repeat(MAX_RETAINED_EXECUTION_BYTES / 2);
         control
             .clone()
             .scope(async {
                 assert!(matches!(
                     EffectContinuation::reserve_retained(&payload),
-                    Err(EffectContinuationError::SelectionBudget(
+                    Err(EffectContinuationError::RetainedBudget(
                         plasm_core::ValueBudgetError::BytesExceeded
                     ))
                 ));
@@ -1251,10 +1026,10 @@ mod tests {
     async fn oversized_checkpoint_failure_never_enters_the_pause_channel() {
         let (control, mut pauses) = EffectContinuation::new_native(Duration::from_secs(2)).unwrap();
         let mut failure = failure(MutationDispatchStatus::RejectedWithoutEffect);
-        failure = failure.at("x".repeat(MAX_EFFECT_SELECTION_BYTES), Vec::new());
+        failure = failure.at("x".repeat(MAX_RETAINED_EXECUTION_BYTES), Vec::new());
         assert!(matches!(
             control.checkpoint(failure).await,
-            Err(EffectContinuationError::SelectionBudget(
+            Err(EffectContinuationError::RetainedBudget(
                 plasm_core::ValueBudgetError::BytesExceeded
             ))
         ));
@@ -1268,7 +1043,7 @@ mod tests {
     #[tokio::test]
     async fn materialized_payload_and_selection_share_the_retention_budget() {
         let (control, _pauses) = EffectContinuation::new_native(Duration::from_secs(2)).unwrap();
-        let payload = "x".repeat(MAX_EFFECT_SELECTION_BYTES / 2);
+        let payload = "x".repeat(MAX_RETAINED_EXECUTION_BYTES / 2);
         let mut row = plasm_core::ValueRow::new();
         row.insert("payload".into(), plasm_core::Value::String(payload.clone()));
         control
@@ -1276,7 +1051,7 @@ mod tests {
                 let retained = EffectContinuation::reserve_retained(&payload).unwrap();
                 assert!(matches!(
                     EffectContinuation::reserve_selection(&[row.clone()]),
-                    Err(EffectContinuationError::SelectionBudget(
+                    Err(EffectContinuationError::RetainedBudget(
                         plasm_core::ValueBudgetError::BytesExceeded
                     ))
                 ));
@@ -1313,13 +1088,13 @@ mod tests {
         };
         resume.env.insert(
             "private".into(),
-            plasm_core::Value::String("x".repeat(MAX_EFFECT_SELECTION_BYTES)),
+            plasm_core::Value::String("x".repeat(MAX_RETAINED_EXECUTION_BYTES)),
         );
         control
             .scope(async {
                 assert!(matches!(
                     EffectContinuation::reserve_pagination(&resume),
-                    Err(EffectContinuationError::SelectionBudget(
+                    Err(EffectContinuationError::RetainedBudget(
                         plasm_core::ValueBudgetError::BytesExceeded
                     ))
                 ));
@@ -1350,14 +1125,14 @@ mod tests {
                 last_requested_to_block: None,
             },
         };
-        let mut private = String::with_capacity(MAX_EFFECT_SELECTION_BYTES + 1);
+        let mut private = String::with_capacity(MAX_RETAINED_EXECUTION_BYTES + 1);
         private.push('x');
         resume
             .env
             .insert("private".into(), plasm_core::Value::String(private));
         let mut url_resume = resume.clone();
         url_resume.env.clear();
-        let mut url = String::with_capacity(MAX_EFFECT_SELECTION_BYTES + 1);
+        let mut url = String::with_capacity(MAX_RETAINED_EXECUTION_BYTES + 1);
         url.push('x');
         url_resume.state.next_absolute_url = Some(url);
         let mut param_resume = url_resume.clone();
@@ -1365,7 +1140,7 @@ mod tests {
         param_resume.state.param_values.push((
             "cursor".into(),
             Some(serde_json::Value::Array(Vec::with_capacity(
-                MAX_EFFECT_SELECTION_BYTES / std::mem::size_of::<serde_json::Value>() + 1,
+                MAX_RETAINED_EXECUTION_BYTES / std::mem::size_of::<serde_json::Value>() + 1,
             ))),
         ));
         control
@@ -1373,7 +1148,7 @@ mod tests {
                 for value in [&resume, &url_resume, &param_resume] {
                     assert!(matches!(
                         EffectContinuation::reserve_pagination(value),
-                        Err(EffectContinuationError::SelectionBudget(
+                        Err(EffectContinuationError::RetainedBudget(
                             plasm_core::ValueBudgetError::BytesExceeded
                         ))
                     ));
@@ -1387,7 +1162,7 @@ mod tests {
         use plasm_core::collection_codec::{
             CollectionCodec, CollectionIdentity, Observation, RecordingCodec,
         };
-        let mut id = String::with_capacity(MAX_EFFECT_SELECTION_BYTES + 1);
+        let mut id = String::with_capacity(MAX_RETAINED_EXECUTION_BYTES + 1);
         id.push('x');
         let record = RecordingCodec::new()
             .record(
@@ -1404,7 +1179,7 @@ mod tests {
                     EffectContinuation::reserve_retained(&collection.retention_view()).unwrap();
                 assert!(matches!(
                     reservation.add_capacity_bytes(collection.retention_capacity_bytes()),
-                    Err(EffectContinuationError::SelectionBudget(
+                    Err(EffectContinuationError::RetainedBudget(
                         plasm_core::ValueBudgetError::BytesExceeded
                     ))
                 ));
@@ -1425,7 +1200,7 @@ mod tests {
                 identity.clone(),
                 vec![
                     plasm_core::Ref::new("Child", "small"),
-                    plasm_core::Ref::new("Child", "x".repeat(MAX_EFFECT_SELECTION_BYTES)),
+                    plasm_core::Ref::new("Child", "x".repeat(MAX_RETAINED_EXECUTION_BYTES)),
                 ],
                 Observation::Literal,
             )
@@ -1452,7 +1227,7 @@ mod tests {
             .scope(async {
                 assert!(matches!(
                     EffectContinuation::reserve_retained(&collection.retention_view()),
-                    Err(EffectContinuationError::SelectionBudget(
+                    Err(EffectContinuationError::RetainedBudget(
                         plasm_core::ValueBudgetError::BytesExceeded
                     ))
                 ));
@@ -1472,7 +1247,7 @@ mod tests {
                 crate::EntityCompleteness::Complete,
             )
         };
-        let huge = "z".repeat(MAX_EFFECT_SELECTION_BYTES);
+        let huge = "z".repeat(MAX_RETAINED_EXECUTION_BYTES);
         let collection = super::super::ExecutionCollection::observe(
             CollectionIdentity {
                 catalog: [1; 32],
@@ -1493,7 +1268,7 @@ mod tests {
                 for collection in [&capture, &delivery] {
                     assert!(matches!(
                         EffectContinuation::reserve_retained(&collection.retention_view()),
-                        Err(EffectContinuationError::SelectionBudget(
+                        Err(EffectContinuationError::RetainedBudget(
                             plasm_core::ValueBudgetError::BytesExceeded
                         ))
                     ));
@@ -1755,7 +1530,7 @@ mod tests {
     async fn mutating_selection_requires_retention_before_polling() {
         use plasm_core::collection_codec::{CollectionIdentity, ResultCoverage};
         let oversized = || {
-            let mut path = String::with_capacity(MAX_EFFECT_SELECTION_BYTES + 1);
+            let mut path = String::with_capacity(MAX_RETAINED_EXECUTION_BYTES + 1);
             path.push('x');
             crate::execution_failure::EffectSelectionEvidence {
                 collection: CollectionIdentity { catalog: [1; 32], expression: [2; 32], epoch: 0 },
@@ -1770,7 +1545,7 @@ mod tests {
         let result = control.clone().scope(EffectContinuation::selection_scope_mutating(
             oversized(), async { polled.store(true, Ordering::Relaxed); },
         )).await;
-        assert!(matches!(result, Err(EffectContinuationError::SelectionBudget(
+        assert!(matches!(result, Err(EffectContinuationError::RetainedBudget(
             plasm_core::ValueBudgetError::BytesExceeded
         ))));
         assert!(!polled.load(Ordering::Relaxed));
@@ -1785,7 +1560,7 @@ mod tests {
     async fn oversized_selection_ancestry_never_creates_a_checkpoint() {
         use plasm_core::collection_codec::{CollectionIdentity, ResultCoverage};
         let (control, mut pauses) = EffectContinuation::new_native(Duration::from_secs(2)).unwrap();
-        let mut path = String::with_capacity(MAX_EFFECT_SELECTION_BYTES + 1);
+        let mut path = String::with_capacity(MAX_RETAINED_EXECUTION_BYTES + 1);
         path.push('x');
         let selection = crate::execution_failure::EffectSelectionEvidence {
             collection: CollectionIdentity {
@@ -1809,7 +1584,7 @@ mod tests {
             .await;
         assert!(matches!(
             result,
-            Err(EffectContinuationError::SelectionBudget(
+            Err(EffectContinuationError::RetainedBudget(
                 plasm_core::ValueBudgetError::BytesExceeded
             ))
         ));

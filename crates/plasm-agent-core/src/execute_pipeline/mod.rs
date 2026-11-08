@@ -102,6 +102,7 @@ impl ExecutePipeline {
             Some(plasm_core::PreflightToken::VERIFIED),
             None,
             CompileSource::Authored,
+            None,
         )
         .await
     }

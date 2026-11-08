@@ -91,7 +91,7 @@ pub struct MutationJournal {
 /// Holds the journal immutable across one admitted checkpoint.
 pub(super) struct FrozenJournal {
     journal: MutationJournal,
-    _reservation: super::effect_continuation::SelectionReservation,
+    _reservation: super::effect_continuation::RetainedExecutionReservation,
 }
 
 impl Drop for FrozenJournal {
@@ -317,7 +317,7 @@ mod tests {
     #[tokio::test]
     async fn checkpoint_freeze_rejects_oversized_journal_capacity() {
         use super::super::effect_continuation::{
-            EffectContinuation, EffectContinuationError, MAX_EFFECT_SELECTION_BYTES,
+            EffectContinuation, EffectContinuationError, MAX_RETAINED_EXECUTION_BYTES,
         };
         let journal = MutationJournal::default();
         let first = MutationDispatch {
@@ -328,7 +328,7 @@ mod tests {
         };
         journal.change(|entries| {
             entries
-                .reserve(MAX_EFFECT_SELECTION_BYTES / std::mem::size_of::<MutationDispatch>() + 1);
+                .reserve(MAX_RETAINED_EXECUTION_BYTES / std::mem::size_of::<MutationDispatch>() + 1);
             entries.push(first.clone());
         });
         let (control, _pauses) =
@@ -337,7 +337,7 @@ mod tests {
             .scope(async {
                 assert!(matches!(
                     journal.freeze_retention(0, std::slice::from_ref(&first)),
-                    Err(EffectContinuationError::SelectionBudget(
+                    Err(EffectContinuationError::RetainedBudget(
                         plasm_core::ValueBudgetError::BytesExceeded
                     ))
                 ));

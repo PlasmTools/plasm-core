@@ -146,6 +146,7 @@ pub(crate) async fn materialize_relation_singleton_chain(
         None,
         plan_shared.as_deref(),
         crate::execute_pipeline::CompileSource::BoundRelation(&observed),
+        None,
     ))
     .await
     .map_err(ExecutionFailure::from)?;

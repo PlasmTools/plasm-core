@@ -247,6 +247,7 @@ pub async fn execute_plasm_parsed_expr(
     surface_read_budget: Option<crate::plan_read_bounds::PushedReadBudget>,
     rows_progress: Option<plasm_runtime::RowsProgressFn>,
     plan_shared: Option<&crate::plan_execute_shared::PlanLineExecuteShared>,
+    retained: Option<plasm_runtime::execution::effect_continuation::RetainedExecutionReservation>,
 ) -> Result<(ParsedExpr, ExecutionResult, Option<RunArtifactHandle>), plasm_runtime::ExecutionFailure>
 {
     crate::execute_pipeline::PlasmPreflight::preflight_parsed_line(sess, source_label, &parsed)
@@ -265,6 +266,7 @@ pub async fn execute_plasm_parsed_expr(
         Some(plasm_core::PreflightToken::VERIFIED),
         plan_shared,
         crate::execute_pipeline::CompileSource::Authored,
+        retained,
     )
     .await
     .map_err(|e| run_line_failure(e, sess))

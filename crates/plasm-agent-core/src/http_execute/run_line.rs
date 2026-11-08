@@ -43,6 +43,7 @@ fn run_line_error_metric_labels(err: &RunLineError) -> (&'static str, &'static s
         RunLineError::Normalize(_) => ("parse", "normalize"),
         RunLineError::Projection(_) => ("projection", "projection"),
         RunLineError::Runtime(_) => ("execute", "runtime"),
+        RunLineError::RetainedExpression(_) => ("execute", "retention"),
         RunLineError::ArtifactSerialization(_) => ("artifact", "serialization"),
         RunLineError::ArtifactPersist(_) | RunLineError::ArtifactRehydration(_) => {
             ("artifact", "persist")
@@ -176,6 +177,9 @@ pub(crate) async fn run_parsed_plasm_line(
     preflight: Option<plasm_core::PreflightToken>,
     plan_shared: Option<&crate::plan_execute_shared::PlanLineExecuteShared>,
     compile_source: crate::execute_pipeline::CompileSource<'_>,
+    mut retained: Option<
+        plasm_runtime::execution::effect_continuation::RetainedExecutionReservation,
+    >,
 ) -> Result<(ParsedExpr, ExecutionResult, Option<RunArtifactHandle>), RunLineError> {
     let preflight_token = match preflight {
         Some(token) => token,
@@ -207,6 +211,11 @@ pub(crate) async fn run_parsed_plasm_line(
         if !proj.is_empty() {
             log_expr.push_str(&format!("\n  projection: [{}]", proj.join(", ")));
         }
+    }
+    if let Some(retained) = retained.as_mut() {
+        retained.add_capacity_bytes(log_expr.capacity()).map_err(|error| {
+            RunLineError::RetainedExpression(error)
+        })?;
     }
     let expr_span =
         crate::spans::execute_expression_line(sess.entry_id.as_str(), line.len(), log_expr.len());
@@ -298,6 +307,11 @@ pub(crate) async fn run_parsed_plasm_line(
     .map_err(|error| {
         RunLineError::from(crate::program_diagnostic::ProgramStageError::from(error))
     })?;
+    if let Some(retained) = retained.as_mut() {
+        retained.add_parsed_expr(&parsed).map_err(|error| {
+            RunLineError::RetainedExpression(error)
+        })?;
+    }
     let fp_sink = Arc::new(Mutex::new(Vec::<String>::new()));
     let (_, operation) = trace_expr_api_meta(&parsed.expr);
 

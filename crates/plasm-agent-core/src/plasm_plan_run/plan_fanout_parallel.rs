@@ -117,7 +117,7 @@ fn fanout_retention_failure(
     error: plasm_runtime::execution::effect_continuation::EffectContinuationError,
 ) -> ExecutionFailure {
     use plasm_runtime::execution::effect_continuation::{
-        EffectContinuationError, MAX_EFFECT_SELECTION_BYTES,
+        EffectContinuationError, MAX_RETAINED_EXECUTION_BYTES,
     };
     let mut failure = ExecutionFailure::new(
         plasm_runtime::FailureCause::Program,
@@ -126,12 +126,12 @@ fn fanout_retention_failure(
     );
     if matches!(
         error,
-        EffectContinuationError::SelectionBudget(plasm_core::ValueBudgetError::BytesExceeded)
+        EffectContinuationError::RetainedBudget(plasm_core::ValueBudgetError::BytesExceeded)
     ) {
         failure.input_budget = Some(plasm_runtime::InputBudgetEvidence {
             unit: plasm_runtime::InputBudgetUnit::AccountedBytes,
-            limit: MAX_EFFECT_SELECTION_BYTES,
-            observed_at_least: MAX_EFFECT_SELECTION_BYTES + 1,
+            limit: MAX_RETAINED_EXECUTION_BYTES,
+            observed_at_least: MAX_RETAINED_EXECUTION_BYTES + 1,
             input: "ordered fanout".into(),
         });
     }
@@ -141,7 +141,7 @@ fn fanout_retention_failure(
 fn reserve_ordered_fanout_jobs(
     jobs: &Vec<PlanLineJob>,
 ) -> Result<
-    Vec<plasm_runtime::execution::effect_continuation::SelectionReservation>,
+    Vec<plasm_runtime::execution::effect_continuation::RetainedExecutionReservation>,
     ExecutionFailure,
 > {
     use plasm_runtime::execution::effect_continuation::EffectContinuation;
@@ -163,15 +163,23 @@ fn reserve_ordered_fanout_jobs(
                 job.index,
                 &job.expr_label,
                 job.trace_line_index,
-                &job.parsed,
                 &job.source_identity,
             ))
             .map_err(&failure)?;
+        // The scheduler keeps an independent expression for failure evidence.
+        reservation.add_parsed_expr(&job.parsed).map_err(&failure)?;
+        reservation.add_parsed_expr(&job.parsed).map_err(&failure)?;
+        reservation
+            .add_retained(&job.source_identity)
+            .map_err(&failure)?;
         reservation
             .add_capacity_bytes(
-                job.expr_label
-                    .capacity()
-                    .saturating_add(job.source_identity.as_ref().map_or(0, String::capacity)),
+                job.expr_label.capacity().saturating_add(
+                    job.source_identity
+                        .as_ref()
+                        .map_or(0, String::capacity)
+                        .saturating_mul(2),
+                ),
             )
             .map_err(&failure)?;
         if let Some(source) = &job.observed_relation_source {
@@ -196,8 +204,8 @@ fn reserve_ordered_fanout_jobs(
 }
 
 struct RetainedFanoutResults {
-    main: plasm_runtime::execution::effect_continuation::SelectionReservation,
-    pages: Vec<plasm_runtime::execution::effect_continuation::SelectionReservation>,
+    main: plasm_runtime::execution::effect_continuation::RetainedExecutionReservation,
+    pages: Vec<plasm_runtime::execution::effect_continuation::RetainedExecutionReservation>,
 }
 
 impl RetainedFanoutResults {
@@ -776,6 +784,8 @@ pub(crate) async fn run_plan_line_jobs_parallel(
                 let parsed = job.parsed.clone();
                 let index = job.index;
                 let source_identity = job.source_identity.clone();
+                let retained = matches!(admission, BatchAdmission::OrderedEffects)
+                    .then(plasm_runtime::execution::effect_continuation::EffectContinuation::empty_retention);
                 match run_plan_line_job(
                     &st,
                     &scoped_es,
@@ -783,6 +793,7 @@ pub(crate) async fn run_plan_line_jobs_parallel(
                     plan_shared,
                     preflight_mode,
                     job,
+                    retained,
                     trace_ctx.as_ref(),
                 )
                 .await
@@ -837,6 +848,7 @@ async fn run_plan_line_job(
     plan_shared: Option<Arc<PlanLineExecuteShared>>,
     preflight: PlanLinePreflight,
     job: PlanLineJob,
+    retained: Option<plasm_runtime::execution::effect_continuation::RetainedExecutionReservation>,
     trace: Option<&PlasmTraceContext>,
 ) -> Result<PlanLineJobResult, ExecutionFailure> {
     let PlanLineJob {
@@ -865,6 +877,7 @@ async fn run_plan_line_job(
                 crate::execute_pipeline::CompileSource::Authored,
                 crate::execute_pipeline::CompileSource::BoundRelation,
             ),
+            retained,
         )
         .await
         .map_err(ExecutionFailure::from)?,
@@ -881,6 +894,7 @@ async fn run_plan_line_job(
                 None,
                 None,
                 plan_shared.as_deref(),
+                retained,
             )
             .await?
         }
@@ -902,9 +916,9 @@ mod tests {
     #[tokio::test]
     async fn ordered_fanout_jobs_charge_spare_capacity_before_dispatch() {
         use plasm_runtime::execution::effect_continuation::{
-            EffectContinuation, MAX_EFFECT_SELECTION_BYTES,
+            EffectContinuation, MAX_RETAINED_EXECUTION_BYTES,
         };
-        let mut label = String::with_capacity(MAX_EFFECT_SELECTION_BYTES + 1);
+        let mut label = String::with_capacity(MAX_RETAINED_EXECUTION_BYTES + 1);
         label.push('x');
         let jobs = vec![PlanLineJob {
             index: 0,
@@ -932,10 +946,10 @@ mod tests {
     #[tokio::test]
     async fn completed_fanout_retention_failure_preserves_effect_occurrence() {
         use plasm_runtime::execution::effect_continuation::{
-            EffectContinuation, MAX_EFFECT_SELECTION_BYTES,
+            EffectContinuation, MAX_RETAINED_EXECUTION_BYTES,
         };
         let mut result = test_job_result(2, "item-2");
-        result.expr_label.reserve(MAX_EFFECT_SELECTION_BYTES + 1);
+        result.expr_label.reserve(MAX_RETAINED_EXECUTION_BYTES + 1);
         result.source_identity = Some("item-2".into());
         result.result.operations = OperationLedger::from_ack(OperationAck {
             resolved_effects: Vec::new(),

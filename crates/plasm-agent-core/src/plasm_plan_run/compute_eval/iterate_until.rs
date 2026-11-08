@@ -14,9 +14,9 @@ fn reserve_iteration_state(
     dependencies: &Vec<plasm_runtime::execution::ExecutionCollection>,
     fingerprints: &Vec<String>,
     operations: &plasm_runtime::OperationLedger,
-) -> Result<plasm_runtime::execution::effect_continuation::SelectionReservation, ExecutionFailure> {
+) -> Result<plasm_runtime::execution::effect_continuation::RetainedExecutionReservation, ExecutionFailure> {
     use plasm_runtime::execution::effect_continuation::{
-        EffectContinuation, EffectContinuationError, MAX_EFFECT_SELECTION_BYTES,
+        EffectContinuation, EffectContinuationError, MAX_RETAINED_EXECUTION_BYTES,
     };
     let map_failure = |error: EffectContinuationError| {
         let mut failure = ExecutionFailure::new(
@@ -26,12 +26,12 @@ fn reserve_iteration_state(
         );
         if matches!(
             error,
-            EffectContinuationError::SelectionBudget(plasm_core::ValueBudgetError::BytesExceeded)
+            EffectContinuationError::RetainedBudget(plasm_core::ValueBudgetError::BytesExceeded)
         ) {
             failure.input_budget = Some(plasm_runtime::InputBudgetEvidence {
                 unit: plasm_runtime::InputBudgetUnit::AccountedBytes,
-                limit: MAX_EFFECT_SELECTION_BYTES,
-                observed_at_least: MAX_EFFECT_SELECTION_BYTES + 1,
+                limit: MAX_RETAINED_EXECUTION_BYTES,
+                observed_at_least: MAX_RETAINED_EXECUTION_BYTES + 1,
                 input: "iteration state".into(),
             });
         }
@@ -205,16 +205,16 @@ mod predicate_contract_tests {
     async fn iteration_state_refuses_oversized_row_and_dependency_backing() {
         use plasm_core::collection_codec::{CollectionIdentity, Observation};
         use plasm_runtime::execution::effect_continuation::{
-            EffectContinuation, MAX_EFFECT_SELECTION_BYTES,
+            EffectContinuation, MAX_RETAINED_EXECUTION_BYTES,
         };
-        let mut text = String::with_capacity(MAX_EFFECT_SELECTION_BYTES + 1);
+        let mut text = String::with_capacity(MAX_RETAINED_EXECUTION_BYTES + 1);
         text.push('x');
         let rows = vec![plasm_core::ValueRow::from_iter([(
             "value".into(),
             Value::String(text),
         )])];
         let mut entity = plasm_runtime::CachedEntity::new(plasm_core::Ref::new("Item", "one"), 0);
-        let mut text = String::with_capacity(MAX_EFFECT_SELECTION_BYTES + 1);
+        let mut text = String::with_capacity(MAX_RETAINED_EXECUTION_BYTES + 1);
         text.push('x');
         entity
             .fields
@@ -408,8 +408,13 @@ pub(crate) async fn materialize_iterate_until_node(
             iteration_occurrence.push(step_idx as usize);
             if let Some(step) = crate::map_body::iteration_step(it)? {
                 // The synthetic map owns cloned scope and plan data through the nested pause.
-                let _retained_step =
-                    super::super::step_materialize::reserve_node_clone(ctx.node_clone_capacity)?;
+                let step = crate::plasm_plan::ValidatedPlanNode::MapBody(step);
+                let _retained_step = super::super::step_materialize::reserve_node_clone(|| {
+                    crate::plasm_plan::ValidatedPlanArtifact::retained_node_capacity_bytes(&step)
+                })?;
+                let crate::plasm_plan::ValidatedPlanNode::MapBody(step) = &step else {
+                    unreachable!("synthetic iteration step is a map body")
+                };
                 let mut environment = materialized.clone();
                 environment.insert(it.source.clone(), current.clone());
                 let mut occurrence_path = ctx.occurrence_path.clone();
@@ -432,11 +437,10 @@ pub(crate) async fn materialize_iterate_until_node(
                     occurrence_path,
                     rows_progress: ctx.rows_progress.clone(),
                     execution_scope: ctx.execution_scope,
-                    node_clone_capacity: ctx.node_clone_capacity,
                 };
                 let (result, _) = Box::pin(super::super::map_body::materialize(
                     &child_ctx,
-                    &step,
+                    step,
                     &environment,
                 ))
                 .await?;
@@ -646,6 +650,7 @@ async fn reobserve_seed(
         None,
         None,
         plan_shared.map(|p| p.as_ref()),
+        None,
     )
     .await?;
     let rows = result
@@ -730,7 +735,6 @@ async fn evaluate_stop(
         occurrence_path,
         rows_progress: ctx.rows_progress.clone(),
         execution_scope: ctx.execution_scope,
-        node_clone_capacity: ctx.node_clone_capacity,
     };
     let (result, _) = Box::pin(super::super::map_body::materialize(
         &child_ctx,

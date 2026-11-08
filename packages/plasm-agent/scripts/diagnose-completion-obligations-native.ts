@@ -14,7 +14,7 @@
  * PLASM_EFFECT_FIXTURE_ENGINE_AUTH=1, point the manifest at it, and pass --repair.
  * Optional flags: --loop, --answer, --repeat-rejection, --duplicates,
  * --two-obligations, --unknown, --cancel, --host-auth, --auth-change and --auth-loss exercise distinct offline boundaries.
- * --clone-budget-pause, --clone-budget-checkpoint and --clone-budget-refusal
+ * --clone-budget-pause, --clone-budget-checkpoint, --clone-budget-precision and --plan-budget-refusal
  * use the authenticated rejection fixture to exercise the retention boundary.
  * --observe prints all cases without failing; the default fails on any violation.
  */
@@ -36,9 +36,10 @@ import { runEveToolLoop } from "../src/telemetry/eve-tool-loop.js";
 const manifest = process.env.PLASM_EFFECT_FIXTURE_MANIFEST;
 if (!manifest) throw new Error("Set PLASM_EFFECT_FIXTURE_MANIFEST to the offline fixture manifest");
 const catalog = await loadPackedCatalog(manifest);
-const cloneBudgetMode = process.argv.includes("--clone-budget-pause") ? "pause"
+const cloneBudgetMode = process.argv.includes("--clone-budget-precision") ? "precision"
+  : process.argv.includes("--clone-budget-pause") ? "pause"
   : process.argv.includes("--clone-budget-checkpoint") ? "checkpoint"
-  : process.argv.includes("--clone-budget-refusal") ? "refusal" : undefined;
+  : process.argv.includes("--plan-budget-refusal") ? "refusal" : undefined;
 const allCases = [
   {name: "failure_then_complete", terminal: "complete_task", intervening: "none"},
   {name: "failure_then_answer", terminal: "submit_answer", intervening: "none"},
@@ -155,8 +156,8 @@ for (const scenario of cases) {
     }
     const entity = "e1";
     const create = "m1";
-    const planPadding = cloneBudgetMode ? 8192 : 0;
-    const planRepeats = cloneBudgetMode === "pause" ? 5 : cloneBudgetMode === "checkpoint" ? 6 : cloneBudgetMode === "refusal" ? 7 : 0;
+    const planPadding = cloneBudgetMode === "checkpoint" ? 12000 : cloneBudgetMode ? 8192 : 0;
+    const planRepeats = cloneBudgetMode === "pause" ? 5 : cloneBudgetMode === "checkpoint" ? 7 : cloneBudgetMode === "precision" ? 7 : cloneBudgetMode === "refusal" ? 8 : 0;
     const destination = `dest${"x".repeat(planPadding)}`;
     const filters = planRepeats ? `        marker = ${JSON.stringify(destination)}\n` +
       `        source = source.where(lambda row: row.description != marker)\n`.repeat(planRepeats) : "";
@@ -214,16 +215,24 @@ for (const scenario of cases) {
         if (process.argv.includes("--unknown")) assert.equal(error.failure.effects_unresolved, true);
         continuation = error.summary.match(/continuation_ref=([0-9a-f-]{36})/)?.[1];
       }
+      if (cloneBudgetMode === "precision") {
+        assert.equal(initialFailure?.code, "upstream_rejection", "unrelated plan nodes must not consume the cloned node's budget");
+        assert.equal(reads, 1);
+        assert.equal(posts, 2);
+        assert.ok(continuation, "the original selection remains resumable");
+        assert.deepEqual(rows.map(row => row.description), [process.argv.includes("--duplicates") ? "same-value" : "item-0"]);
+        await assert.rejects(live.sealEffectWorkflows(), /unfinished or uncertain effects/);
+      }
       if (cloneBudgetMode === "refusal") {
         assert.equal(initialFailure?.code, "effect_plan_retention_refused");
         assert.equal(initialFailure?.input_budget?.unit, "accounted_bytes");
         assert.equal(initialFailure?.input_budget?.limit, 8 * 1024 * 1024);
-        assert.equal(initialFailure?.input_budget?.input, "cloned plan", "refusal must come from the live node-clone reservation");
-        assert.equal(continuation, undefined, "an oversized node clone cannot grant a checkpoint");
-        assert.equal(reads, 1, "the read completed before the cloned write node was reserved");
-        assert.equal(posts, 0, "the oversized cloned node must be refused before dispatch");
+        assert.equal(initialFailure?.input_budget?.input, "plan frame", "the retained plan frame exceeds the remaining limit");
+        assert.equal(continuation, undefined, "an oversized plan frame cannot grant a checkpoint");
+        assert.equal(reads, 1, "the read completed before the frame was refused");
+        assert.equal(posts, 0, "the oversized plan frame must be refused before dispatch");
         assert.deepEqual(rows, []);
-        console.log(JSON.stringify({case: "native_oversized_clone_refused", contract: "bounded", posts, reads}));
+        console.log(JSON.stringify({case: "native_oversized_plan_frame_refused", contract: "bounded", posts, reads}));
         continue;
       }
       if (cloneBudgetMode === "checkpoint") {
@@ -330,7 +339,7 @@ for (const scenario of cases) {
         messages: [{role: "user", content: "Complete the reviewed copy"}], tools: terminals,
         maxSteps: 1, agentName: "certified-native-repair", telemetry: {isEnabled: false}});
       assert.equal(terminalResult.stopReason, "completed", "native certificate permits the requested terminal");
-      console.log(JSON.stringify({case: cloneBudgetMode === "pause" ? "native_large_clone_paused_and_repaired" : scenario.name, contract: "certified", posts, reads}));
+      console.log(JSON.stringify({case: cloneBudgetMode === "pause" ? "native_large_clone_paused_and_repaired" : cloneBudgetMode === "precision" ? "native_precise_node_repaired" : scenario.name, contract: "certified", posts, reads}));
       continue;
     }
     runConcurrent = async () => { await live.plasmRun({logicalSessionRef: session, runRef: unrelatedRef!}); };

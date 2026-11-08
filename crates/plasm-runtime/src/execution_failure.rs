@@ -805,15 +805,15 @@ impl From<crate::RuntimeError> for ExecutionFailure {
         if matches!(
             &error,
             ContinuationRetention(
-                crate::execution::effect_continuation::EffectContinuationError::SelectionBudget(
+                crate::execution::effect_continuation::EffectContinuationError::RetainedBudget(
                     plasm_core::ValueBudgetError::BytesExceeded
                 )
             )
         ) {
             failure.input_budget = Some(InputBudgetEvidence {
                 unit: InputBudgetUnit::AccountedBytes,
-                limit: crate::execution::effect_continuation::MAX_EFFECT_SELECTION_BYTES,
-                observed_at_least: crate::execution::effect_continuation::MAX_EFFECT_SELECTION_BYTES
+                limit: crate::execution::effect_continuation::MAX_RETAINED_EXECUTION_BYTES,
+                observed_at_least: crate::execution::effect_continuation::MAX_RETAINED_EXECUTION_BYTES
                     + 1,
                 input: "branch base".into(),
             });

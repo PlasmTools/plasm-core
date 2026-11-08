@@ -809,7 +809,7 @@ mod continuation_tests {
                 }
                 if self.oversized.load(Ordering::SeqCst) {
                     return Some(
-                        "x".repeat(super::super::effect_continuation::MAX_EFFECT_SELECTION_BYTES),
+                        "x".repeat(super::super::effect_continuation::MAX_RETAINED_EXECUTION_BYTES),
                     );
                 }
                 Some(if self.changed.load(Ordering::SeqCst) {
@@ -935,10 +935,10 @@ mod continuation_tests {
 
     #[tokio::test]
     async fn oversized_retained_mutation_environment_cannot_create_a_checkpoint() {
-        use crate::execution::effect_continuation::MAX_EFFECT_SELECTION_BYTES;
-        let mut spare = String::with_capacity(MAX_EFFECT_SELECTION_BYTES + 1);
+        use crate::execution::effect_continuation::MAX_RETAINED_EXECUTION_BYTES;
+        let mut spare = String::with_capacity(MAX_RETAINED_EXECUTION_BYTES + 1);
         spare.push('x');
-        for value in ["x".repeat(MAX_EFFECT_SELECTION_BYTES), spare] {
+        for value in ["x".repeat(MAX_RETAINED_EXECUTION_BYTES), spare] {
             let transport = Arc::new(Transport {
                 statuses: vec![422],
                 opaque: false,
@@ -992,7 +992,7 @@ mod continuation_tests {
 
     #[tokio::test]
     async fn oversized_operation_identity_capacity_cannot_create_a_checkpoint() {
-        use crate::execution::effect_continuation::MAX_EFFECT_SELECTION_BYTES;
+        use crate::execution::effect_continuation::MAX_RETAINED_EXECUTION_BYTES;
         let transport = Arc::new(Transport {
             statuses: vec![422],
             opaque: false,
@@ -1009,7 +1009,7 @@ mod continuation_tests {
         let compiled = request();
         let graph = SessionMaterialization::new();
         let capability = capability();
-        let mut entry_id = String::with_capacity(MAX_EFFECT_SELECTION_BYTES + 1);
+        let mut entry_id = String::with_capacity(MAX_RETAINED_EXECUTION_BYTES + 1);
         entry_id.push_str("matrix");
         let journal = super::super::mutation_evidence::MutationJournal::default();
         let (control, mut pauses) = EffectContinuation::new_native(Duration::from_secs(5)).unwrap();
@@ -1045,16 +1045,16 @@ mod continuation_tests {
 
     #[tokio::test]
     async fn oversized_retained_mutation_source_cannot_create_a_checkpoint() {
-        use crate::execution::effect_continuation::MAX_EFFECT_SELECTION_BYTES;
-        let mut spare = String::with_capacity(MAX_EFFECT_SELECTION_BYTES + 1);
+        use crate::execution::effect_continuation::MAX_RETAINED_EXECUTION_BYTES;
+        let mut spare = String::with_capacity(MAX_RETAINED_EXECUTION_BYTES + 1);
         spare.push('x');
-        let mut typed_spare = String::with_capacity(MAX_EFFECT_SELECTION_BYTES + 1);
+        let mut typed_spare = String::with_capacity(MAX_RETAINED_EXECUTION_BYTES + 1);
         typed_spare.push('x');
-        let mut nested_spare = String::with_capacity(MAX_EFFECT_SELECTION_BYTES + 1);
+        let mut nested_spare = String::with_capacity(MAX_RETAINED_EXECUTION_BYTES + 1);
         nested_spare.push('x');
         let inputs = [
             plasm_core::InvokeInputPayload::raw(Value::String(
-                "x".repeat(MAX_EFFECT_SELECTION_BYTES),
+                "x".repeat(MAX_RETAINED_EXECUTION_BYTES),
             )),
             plasm_core::InvokeInputPayload::raw(Value::String(spare)),
             plasm_core::InvokeInputPayload::typed(plasm_core::TypedInvokeInput::Leaf(
@@ -1134,7 +1134,7 @@ mod continuation_tests {
 
     #[tokio::test]
     async fn oversized_dotted_receiver_capacity_cannot_create_a_checkpoint() {
-        use crate::execution::effect_continuation::MAX_EFFECT_SELECTION_BYTES;
+        use crate::execution::effect_continuation::MAX_RETAINED_EXECUTION_BYTES;
         let transport = Arc::new(Transport {
             statuses: vec![422],
             opaque: false,
@@ -1148,7 +1148,7 @@ mod continuation_tests {
             Arc::clone(&transport) as Arc<dyn HttpTransport>,
             None,
         );
-        let mut id = String::with_capacity(MAX_EFFECT_SELECTION_BYTES + 1);
+        let mut id = String::with_capacity(MAX_RETAINED_EXECUTION_BYTES + 1);
         id.push('1');
         let source = plasm_core::CreateExpr {
             capability: "pwexpense_create".into(),
@@ -1215,18 +1215,18 @@ mod continuation_tests {
 
     #[test]
     fn rejection_retention_counts_spare_detail_and_body_capacity() {
-        use crate::execution::effect_continuation::MAX_EFFECT_SELECTION_BYTES;
+        use crate::execution::effect_continuation::MAX_RETAINED_EXECUTION_BYTES;
         let mut failure = crate::HttpStatusFailure::without_request(422, "fixture 422".into());
-        failure.detail.reserve(MAX_EFFECT_SELECTION_BYTES + 1);
-        assert!(retained_rejection_capacity(&failure, &None) > MAX_EFFECT_SELECTION_BYTES);
+        failure.detail.reserve(MAX_RETAINED_EXECUTION_BYTES + 1);
+        assert!(retained_rejection_capacity(&failure, &None) > MAX_RETAINED_EXECUTION_BYTES);
         let body = Some(Box::new(serde_json::Value::Array(Vec::with_capacity(
-            MAX_EFFECT_SELECTION_BYTES / std::mem::size_of::<serde_json::Value>() + 1,
+            MAX_RETAINED_EXECUTION_BYTES / std::mem::size_of::<serde_json::Value>() + 1,
         ))));
         assert!(
             retained_rejection_capacity(
                 &crate::HttpStatusFailure::without_request(422, "fixture 422".into()),
                 &body
-            ) > MAX_EFFECT_SELECTION_BYTES
+            ) > MAX_RETAINED_EXECUTION_BYTES
         );
         let mut request = request();
         let CompiledOperation::Http(http) = &mut request else {
@@ -1238,7 +1238,7 @@ mod continuation_tests {
 
     #[tokio::test]
     async fn oversized_rejected_request_capacity_cannot_create_a_checkpoint() {
-        use crate::execution::effect_continuation::MAX_EFFECT_SELECTION_BYTES;
+        use crate::execution::effect_continuation::MAX_RETAINED_EXECUTION_BYTES;
         let transport = Arc::new(Transport {
             statuses: vec![422],
             opaque: false,
@@ -1256,7 +1256,7 @@ mod continuation_tests {
         let CompiledOperation::Http(request) = &mut compiled else {
             unreachable!()
         };
-        request.path.reserve(MAX_EFFECT_SELECTION_BYTES + 1);
+        request.path.reserve(MAX_RETAINED_EXECUTION_BYTES + 1);
         let graph = SessionMaterialization::new();
         let journal = super::super::mutation_evidence::MutationJournal::default();
         let (control, mut pauses) = EffectContinuation::new_native(Duration::from_secs(5)).unwrap();
@@ -1294,7 +1294,7 @@ mod continuation_tests {
 
     #[tokio::test]
     async fn oversized_rejected_request_cannot_create_a_checkpoint() {
-        use crate::execution::effect_continuation::MAX_EFFECT_SELECTION_BYTES;
+        use crate::execution::effect_continuation::MAX_RETAINED_EXECUTION_BYTES;
         let transport = Arc::new(Transport {
             statuses: vec![422],
             opaque: false,
@@ -1312,7 +1312,7 @@ mod continuation_tests {
         let CompiledOperation::Http(request) = &mut compiled else {
             unreachable!()
         };
-        request.body = Some(Value::String("x".repeat(MAX_EFFECT_SELECTION_BYTES)));
+        request.body = Some(Value::String("x".repeat(MAX_RETAINED_EXECUTION_BYTES)));
         let graph = SessionMaterialization::new();
         let journal = super::super::mutation_evidence::MutationJournal::default();
         let (control, mut pauses) = EffectContinuation::new_native(Duration::from_secs(5)).unwrap();
@@ -1408,12 +1408,12 @@ mod continuation_tests {
 
     #[tokio::test]
     async fn lazy_fork_base_capacity_cannot_be_pinned_by_a_checkpoint() {
-        use crate::execution::effect_continuation::MAX_EFFECT_SELECTION_BYTES;
+        use crate::execution::effect_continuation::MAX_RETAINED_EXECUTION_BYTES;
         use plasm_core::collection_codec::{
             CollectionCodec, CollectionIdentity, Observation, RecordingCodec, Transform,
         };
         use plasm_core::row_contract::RelationMembership;
-        let mut hidden = String::with_capacity(MAX_EFFECT_SELECTION_BYTES + 1);
+        let mut hidden = String::with_capacity(MAX_RETAINED_EXECUTION_BYTES + 1);
         hidden.push('x');
         let codec = RecordingCodec::new();
         let identity = CollectionIdentity::for_untyped_observation(&"fork-base-capacity").unwrap();
@@ -1503,7 +1503,7 @@ mod continuation_tests {
 
     #[tokio::test]
     async fn hidden_relation_backing_cannot_be_pinned_by_a_checkpoint() {
-        use crate::execution::effect_continuation::MAX_EFFECT_SELECTION_BYTES;
+        use crate::execution::effect_continuation::MAX_RETAINED_EXECUTION_BYTES;
         use plasm_core::collection_codec::{
             CollectionCodec, CollectionIdentity, Observation, RecordingCodec, Transform,
         };
@@ -1516,7 +1516,7 @@ mod continuation_tests {
                 identity.clone(),
                 vec![
                     plasm_core::Ref::new("Child", "small"),
-                    plasm_core::Ref::new("Child", "x".repeat(MAX_EFFECT_SELECTION_BYTES)),
+                    plasm_core::Ref::new("Child", "x".repeat(MAX_RETAINED_EXECUTION_BYTES)),
                 ],
                 Observation::Literal,
             )
@@ -1587,7 +1587,7 @@ mod continuation_tests {
 
     #[tokio::test]
     async fn oversized_unrelated_branch_graph_cannot_be_pinned_by_a_checkpoint() {
-        use crate::execution::effect_continuation::MAX_EFFECT_SELECTION_BYTES;
+        use crate::execution::effect_continuation::MAX_RETAINED_EXECUTION_BYTES;
         let transport = Arc::new(Transport {
             statuses: vec![422],
             opaque: false,
@@ -1602,7 +1602,7 @@ mod continuation_tests {
             None,
         );
         let mut graph = crate::GraphCache::new();
-        let unrelated_id = "x".repeat(MAX_EFFECT_SELECTION_BYTES);
+        let unrelated_id = "x".repeat(MAX_RETAINED_EXECUTION_BYTES);
         graph
             .insert(crate::CachedEntity::new(
                 plasm_core::Ref::new("Unrelated", &unrelated_id),
@@ -1649,7 +1649,7 @@ mod continuation_tests {
 
     #[tokio::test]
     async fn oversized_auxiliary_branch_stores_cannot_be_pinned_by_a_checkpoint() {
-        use crate::execution::effect_continuation::MAX_EFFECT_SELECTION_BYTES;
+        use crate::execution::effect_continuation::MAX_RETAINED_EXECUTION_BYTES;
         use plasm_core::collection_codec::{CollectionCodec, Observation, RecordingCodec};
         for store_kind in 0..3 {
             let transport = Arc::new(Transport {
@@ -1667,7 +1667,7 @@ mod continuation_tests {
             );
             let compiled = request();
             let mut materialization = SessionMaterialization::new();
-            let payload = "x".repeat(MAX_EFFECT_SELECTION_BYTES);
+            let payload = "x".repeat(MAX_RETAINED_EXECUTION_BYTES);
             if store_kind == 0 {
                 let fingerprint = crate::RequestFingerprint::from_operation(&compiled).unwrap();
                 materialization.responses.store(

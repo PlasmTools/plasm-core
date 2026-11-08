@@ -13,6 +13,10 @@ pub fn graph_write_conflict_user_message() -> String {
 
 #[derive(Debug, thiserror::Error)]
 pub enum RunLineError {
+    #[error("cannot retain the execution expression: {0}")]
+    RetainedExpression(
+        #[source] plasm_runtime::execution::effect_continuation::EffectContinuationError,
+    ),
     #[error("{correction}")]
     Parse {
         #[source]
@@ -76,6 +80,15 @@ impl From<RunLineError> for plasm_runtime::ExecutionFailure {
     fn from(error: RunLineError) -> Self {
         use plasm_runtime::{ExecutionFailure, FailureCause};
         match error {
+            RunLineError::RetainedExpression(error) => {
+                let mut failure =
+                    ExecutionFailure::from(RuntimeError::ContinuationRetention(error));
+                failure.code = "effect_expression_retention_refused".into();
+                if let Some(budget) = &mut failure.input_budget {
+                    budget.input = "parsed expression".into();
+                }
+                failure
+            }
             RunLineError::PageHandle(fault) => fault.into(),
             RunLineError::CatalogOwnership(error) => ExecutionFailure::new(
                 FailureCause::Program,
@@ -152,6 +165,26 @@ mod tests {
     use super::*;
     use plasm_core::PagingHandle;
     use plasm_runtime::{FailureCause, RecoveryDisposition};
+
+    #[test]
+    fn retained_expression_keeps_typed_budget_evidence() {
+        use plasm_runtime::execution::effect_continuation::{
+            EffectContinuationError, MAX_RETAINED_EXECUTION_BYTES,
+        };
+        use std::error::Error;
+        let error = RunLineError::RetainedExpression(EffectContinuationError::RetainedBudget(
+            plasm_core::ValueBudgetError::BytesExceeded,
+        ));
+        assert!(error
+            .source()
+            .and_then(|source| source.downcast_ref::<EffectContinuationError>())
+            .is_some());
+        let failure = plasm_runtime::ExecutionFailure::from(error);
+        assert_eq!(failure.code, "effect_expression_retention_refused");
+        let budget = failure.input_budget.as_ref().unwrap();
+        assert_eq!(budget.input, "parsed expression");
+        assert_eq!(budget.limit, MAX_RETAINED_EXECUTION_BYTES);
+    }
 
     #[test]
     fn boxed_parse_keeps_source_and_bounds_error_footprint() {
