@@ -28,6 +28,12 @@ struct OccurrenceAudit {
     invalid: bool,
 }
 
+struct SelectionFrame {
+    evidence: crate::execution_failure::EffectSelectionEvidence,
+    parent: Option<Arc<SelectionFrame>>,
+    _reservation: Option<SelectionReservation>,
+}
+
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum OccurrenceDisposition {
     Pending,
@@ -283,7 +289,7 @@ impl Drop for PendingGuard {
 
 tokio::task_local! {
     static CURRENT: EffectContinuation;
-    static SELECTIONS: Vec<crate::execution_failure::EffectSelectionEvidence>;
+    static SELECTIONS: Arc<SelectionFrame>;
     static AUDIT_SCOPE: Option<usize>;
 }
 
@@ -517,10 +523,33 @@ impl EffectContinuation {
                 }
             }
         };
-        let mut selections = SELECTIONS.try_with(Clone::clone).unwrap_or_default();
-        selections.push(selection);
+        let mut reservation = Self::reserve_retained(&selection).ok();
+        if let Some(guard) = reservation.as_mut() {
+            let capacity = selection
+                .scope_path
+                .capacity()
+                .saturating_mul(std::mem::size_of::<String>())
+                .saturating_add(
+                    selection
+                        .occurrence_path
+                        .capacity()
+                        .saturating_mul(std::mem::size_of::<usize>()),
+                )
+                .saturating_add(std::mem::size_of::<SelectionFrame>())
+                .saturating_add(selection.scope_path.iter().fold(0usize, |total, value| {
+                    total.saturating_add(value.capacity())
+                }));
+            if guard.add_capacity_bytes(capacity).is_err() {
+                reservation = None;
+            }
+        }
+        let frame = Arc::new(SelectionFrame {
+            evidence: selection,
+            parent: SELECTIONS.try_with(Clone::clone).ok(),
+            _reservation: reservation,
+        });
         SELECTIONS
-            .scope(selections, AUDIT_SCOPE.scope(scope, future))
+            .scope(frame, AUDIT_SCOPE.scope(scope, future))
             .await
     }
 
@@ -676,7 +705,18 @@ impl EffectContinuation {
         {
             return Err(EffectContinuationError::NotRetryable);
         }
-        let selections = SELECTIONS.try_with(Clone::clone).unwrap_or_default();
+        let mut selections = Vec::new();
+        let mut frame = SELECTIONS.try_with(Clone::clone).ok();
+        while let Some(current) = frame {
+            if current._reservation.is_none() {
+                return Err(EffectContinuationError::SelectionBudget(
+                    plasm_core::ValueBudgetError::BytesExceeded,
+                ));
+            }
+            selections.push(current.evidence.clone());
+            frame = current.parent.clone();
+        }
+        selections.reverse();
         if !selections.is_empty() {
             for selection in selections {
                 failure = failure.with_effect_selection(selection);
@@ -1446,6 +1486,46 @@ mod tests {
             assert!(outcome.is_ok());
             assert_eq!(certificate.is_some(), expected);
         }
+    }
+
+    #[tokio::test]
+    async fn oversized_selection_ancestry_never_creates_a_checkpoint() {
+        use plasm_core::collection_codec::{CollectionIdentity, ResultCoverage};
+        let (control, mut pauses) = EffectContinuation::new_native(Duration::from_secs(2)).unwrap();
+        let mut path = String::with_capacity(MAX_EFFECT_SELECTION_BYTES + 1);
+        path.push('x');
+        let selection = crate::execution_failure::EffectSelectionEvidence {
+            collection: CollectionIdentity {
+                catalog: [1; 32],
+                expression: [2; 32],
+                epoch: 0,
+            },
+            coverage: ResultCoverage::Complete,
+            count: 1,
+            scope_path: vec![path],
+            occurrence_path: Vec::new(),
+        };
+        let worker = control.clone();
+        let result = control
+            .clone()
+            .scope(EffectContinuation::selection_scope(selection, async move {
+                worker
+                    .checkpoint(failure(MutationDispatchStatus::RejectedWithoutEffect))
+                    .await
+            }))
+            .await;
+        assert!(matches!(
+            result,
+            Err(EffectContinuationError::SelectionBudget(
+                plasm_core::ValueBudgetError::BytesExceeded
+            ))
+        ));
+        assert!(pauses.pauses.try_recv().is_err());
+        control
+            .scope(async {
+                assert!(EffectContinuation::reserve_retained(&"small").is_ok());
+            })
+            .await;
     }
 
     #[tokio::test]
