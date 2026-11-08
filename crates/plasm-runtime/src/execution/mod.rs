@@ -54,6 +54,7 @@ pub use collection::{ExecutionCollection, PayloadResidency, RowMaterialization};
 mod embed_cache;
 mod engine;
 mod resolved_effect;
+mod retained_mutation;
 pub use resolved_effect::{
     EffectInputReference, EffectOrigin, EffectSelectionReference, EffectTargetKind,
     ResolvedEffectEvidence,

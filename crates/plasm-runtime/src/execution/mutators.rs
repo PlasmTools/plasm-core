@@ -14,6 +14,7 @@ fn execution_mode_label(mode: ExecutionMode) -> &'static str {
 struct RetainedMutationFrame<'a> {
     materialization: &'a SessionMaterialization,
     env: &'a CmlEnv,
+    source: super::retained_mutation::RetainedMutationSource<'a>,
 }
 
 fn retained_http_request_capacity(operation: &CompiledOperation) -> usize {
@@ -152,6 +153,7 @@ impl ExecutionEngine {
         let RetainedMutationFrame {
             materialization,
             env: retained_env,
+            source,
         } = retained;
         let control = super::effect_continuation::EffectContinuation::current().filter(|_| {
             super::effect_continuation::EffectContinuation::supports_capability(capability)
@@ -220,11 +222,35 @@ impl ExecutionEngine {
                     // If they do not fit, return the original typed rejection:
                     // no continuation capability or retry is issued.
                     let mut retained_dispatch =
-                        match super::effect_continuation::EffectContinuation::reserve_retained(&(
+                        super::effect_continuation::EffectContinuation::empty_retention();
+                    if retained_dispatch
+                        .add_capacity_bytes(
+                            materialization
+                                .retention_capacity_bytes()
+                                .saturating_add(retained_http_request_capacity(compiled))
+                                .saturating_add(crate::materialization::value_map_capacity(
+                                    retained_env,
+                                    0,
+                                ))
+                                .saturating_add(operation.entry_id.capacity())
+                                .saturating_add(operation.capability.capacity())
+                                .saturating_add(source.retention_capacity_bytes())
+                                .saturating_add(original_identity.retention_auth_capacity())
+                                .saturating_add(retained_rejection_capacity(response, body)),
+                        )
+                        .is_err()
+                    {
+                        return result;
+                    }
+                    // Capacity is checked first: serializing a typed source can
+                    // otherwise materialize a large temporary value.
+                    if retained_dispatch
+                        .add_retained(&(
                             compiled,
                             entity,
                             &operation,
                             retained_env,
+                            &source,
                             original_identity.retention_auth(),
                             materialization.retention_view(),
                             (
@@ -243,24 +269,7 @@ impl ExecutionEngine {
                                 status,
                                 body,
                             ),
-                        )) {
-                            Ok(reservation) => reservation,
-                            Err(_) => return result,
-                        };
-                    if retained_dispatch
-                        .add_capacity_bytes(
-                            materialization
-                                .retention_capacity_bytes()
-                                .saturating_add(retained_http_request_capacity(compiled))
-                                .saturating_add(crate::materialization::value_map_capacity(
-                                    retained_env,
-                                    0,
-                                ))
-                                .saturating_add(operation.entry_id.capacity())
-                                .saturating_add(operation.capability.capacity())
-                                .saturating_add(original_identity.retention_auth_capacity())
-                                .saturating_add(retained_rejection_capacity(response, body)),
-                        )
+                        ))
                         .is_err()
                     {
                         return result;
@@ -352,6 +361,9 @@ impl ExecutionEngine {
                         RetainedMutationFrame {
                             materialization: mat,
                             env: &env,
+                            source: super::retained_mutation::RetainedMutationSource::Create(
+                                create,
+                            ),
                         },
                     )
                     .await;
@@ -483,6 +495,9 @@ impl ExecutionEngine {
                         RetainedMutationFrame {
                             materialization: mat,
                             env: &retained_env,
+                            source: super::retained_mutation::RetainedMutationSource::Delete(
+                                delete,
+                            ),
                         },
                     )
                     .await?;
@@ -602,6 +617,9 @@ impl ExecutionEngine {
                         RetainedMutationFrame {
                             materialization: mat,
                             env: &env,
+                            source: super::retained_mutation::RetainedMutationSource::Invoke(
+                                invoke,
+                            ),
                         },
                     )
                     .await;
@@ -880,6 +898,19 @@ mod continuation_tests {
         EMPTY.get_or_init(CmlEnv::new)
     }
 
+    fn test_source() -> super::super::retained_mutation::RetainedMutationSource<'static> {
+        static SOURCE: std::sync::OnceLock<plasm_core::CreateExpr> = std::sync::OnceLock::new();
+        super::super::retained_mutation::RetainedMutationSource::Create(SOURCE.get_or_init(|| {
+            plasm_core::CreateExpr {
+                capability: "pwexpense_create".into(),
+                entity: "PwExpense".into(),
+                input: plasm_core::InvokeInputPayload::raw(Value::Null),
+                catalog_entry_id: plasm_core::CatalogEntryStamp::none(),
+                dotted_receiver: None,
+            }
+        }))
+    }
+
     #[tokio::test]
     async fn mutation_uses_the_pinned_catalog_template_across_suspension() {
         let path = std::path::PathBuf::from(crate::test_manifest_dir())
@@ -940,6 +971,7 @@ mod continuation_tests {
                 RetainedMutationFrame {
                     materialization: &graph,
                     env: &env,
+                    source: test_source(),
                 },
             )));
             tokio::pin!(run);
@@ -993,6 +1025,7 @@ mod continuation_tests {
             RetainedMutationFrame {
                 materialization: &graph,
                 env: empty_env(),
+                source: test_source(),
             },
         )));
         tokio::pin!(run);
@@ -1008,6 +1041,95 @@ mod continuation_tests {
             })
         ));
         assert_eq!(transport.requests.lock().unwrap().len(), 1);
+    }
+
+    #[tokio::test]
+    async fn oversized_retained_mutation_source_cannot_create_a_checkpoint() {
+        use crate::execution::effect_continuation::MAX_EFFECT_SELECTION_BYTES;
+        let mut spare = String::with_capacity(MAX_EFFECT_SELECTION_BYTES + 1);
+        spare.push('x');
+        let mut typed_spare = String::with_capacity(MAX_EFFECT_SELECTION_BYTES + 1);
+        typed_spare.push('x');
+        let mut nested_spare = String::with_capacity(MAX_EFFECT_SELECTION_BYTES + 1);
+        nested_spare.push('x');
+        let inputs = [
+            plasm_core::InvokeInputPayload::raw(Value::String(
+                "x".repeat(MAX_EFFECT_SELECTION_BYTES),
+            )),
+            plasm_core::InvokeInputPayload::raw(Value::String(spare)),
+            plasm_core::InvokeInputPayload::typed(plasm_core::TypedInvokeInput::Leaf(
+                plasm_core::typed_literal::TypedLiteral::String(typed_spare),
+            )),
+            plasm_core::InvokeInputPayload::typed(plasm_core::TypedInvokeInput::Array(vec![
+                plasm_core::TypedInvokeInput::Object {
+                    fields: indexmap::IndexMap::from([(
+                        "field".into(),
+                        plasm_core::TypedInvokeInput::Leaf(
+                            plasm_core::typed_literal::TypedLiteral::String(nested_spare),
+                        ),
+                    )]),
+                    extra: None,
+                },
+            ])),
+        ];
+        for input in inputs {
+            let transport = Arc::new(Transport {
+                statuses: vec![422],
+                opaque: false,
+                requests: Mutex::new(Vec::new()),
+            });
+            let engine = ExecutionEngine::new_with_transport(
+                ExecutionConfig {
+                    base_url: Some("https://fixture.test".into()),
+                    ..Default::default()
+                },
+                Arc::clone(&transport) as Arc<dyn HttpTransport>,
+                None,
+            );
+            let source = plasm_core::CreateExpr {
+                capability: "pwexpense_create".into(),
+                entity: "PwExpense".into(),
+                input,
+                catalog_entry_id: plasm_core::CatalogEntryStamp::none(),
+                dotted_receiver: None,
+            };
+            let compiled = request();
+            let graph = SessionMaterialization::new();
+            let capability = capability();
+            let journal = super::super::mutation_evidence::MutationJournal::default();
+            let (control, mut pauses) =
+                EffectContinuation::new_native(Duration::from_secs(5)).unwrap();
+            let run = control.scope(journal.scope(engine.dispatch_compiled_mutation(
+                &compiled,
+                "PwExpense",
+                OperationIdentity {
+                    entry_id: "matrix".into(),
+                    capability: "pwexpense_create".into(),
+                },
+                &capability,
+                None,
+                RetainedMutationFrame {
+                    materialization: &graph,
+                    env: empty_env(),
+                    source: super::super::retained_mutation::RetainedMutationSource::Create(
+                        &source,
+                    ),
+                },
+            )));
+            tokio::pin!(run);
+            let result = tokio::select! {
+                result = &mut run => result,
+                pause = pauses.recv() => panic!("oversized retained source admitted checkpoint: {}", pause.is_some()),
+            };
+            assert!(matches!(
+                result,
+                Err(RuntimeError::RequestError {
+                    status: Some(422),
+                    ..
+                })
+            ));
+            assert_eq!(transport.requests.lock().unwrap().len(), 1);
+        }
     }
 
     fn request() -> CompiledOperation {
@@ -1087,6 +1209,7 @@ mod continuation_tests {
             RetainedMutationFrame {
                 materialization: &graph,
                 env: empty_env(),
+                source: test_source(),
             },
         )));
         tokio::pin!(run);
@@ -1141,6 +1264,7 @@ mod continuation_tests {
                 RetainedMutationFrame {
                     materialization: &graph,
                     env: empty_env(),
+                    source: test_source(),
                 },
             )))
             .await;
@@ -1199,6 +1323,7 @@ mod continuation_tests {
                 RetainedMutationFrame {
                     materialization: &graph,
                     env: empty_env(),
+                    source: test_source(),
                 },
             )))
             .await;
@@ -1291,6 +1416,7 @@ mod continuation_tests {
                 RetainedMutationFrame {
                     materialization: &graph,
                     env: empty_env(),
+                    source: test_source(),
                 },
             ))),
         )
@@ -1376,6 +1502,7 @@ mod continuation_tests {
                 RetainedMutationFrame {
                     materialization: &graph,
                     env: empty_env(),
+                    source: test_source(),
                 },
             )))
             .await;
@@ -1437,6 +1564,7 @@ mod continuation_tests {
                 RetainedMutationFrame {
                     materialization: &graph,
                     env: empty_env(),
+                    source: test_source(),
                 },
             )))
             .await;
@@ -1525,6 +1653,7 @@ mod continuation_tests {
                     RetainedMutationFrame {
                         materialization: &materialization,
                         env: empty_env(),
+                        source: test_source(),
                     },
                 )))
                 .await;
@@ -1578,6 +1707,7 @@ mod continuation_tests {
                 RetainedMutationFrame {
                     materialization: &graph,
                     env: empty_env(),
+                    source: test_source(),
                 },
             )));
         tokio::pin!(run);
@@ -1654,6 +1784,7 @@ mod continuation_tests {
                 RetainedMutationFrame {
                     materialization: &graph,
                     env: empty_env(),
+                    source: test_source(),
                 },
             )));
         tokio::pin!(run);
@@ -1819,6 +1950,7 @@ mod continuation_tests {
             RetainedMutationFrame {
                 materialization: &graph,
                 env: &env,
+                source: test_source(),
             },
         )));
         tokio::pin!(run);

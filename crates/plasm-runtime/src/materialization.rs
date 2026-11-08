@@ -40,6 +40,20 @@ pub fn resolved_value_retention_capacity(value: &Value) -> usize {
     value_retention_capacity(value, 0)
 }
 
+pub(crate) fn input_reference_retention_capacity(reference: &plasm_core::PlasmInputRef) -> usize {
+    let (name, path) = match reference {
+        plasm_core::PlasmInputRef::NodeInput { node, path } => (node, path),
+        plasm_core::PlasmInputRef::RowBinding { binding, path } => (binding, path),
+    };
+    path.iter().fold(
+        name.capacity().saturating_add(
+            path.capacity()
+                .saturating_mul(std::mem::size_of::<String>()),
+        ),
+        |sum, segment| sum.saturating_add(segment.capacity()),
+    )
+}
+
 pub(crate) fn value_retention_capacity(value: &Value, depth: usize) -> usize {
     if depth >= 64 {
         return usize::MAX;
@@ -60,19 +74,7 @@ pub(crate) fn value_retention_capacity(value: &Value, depth: usize) -> usize {
             .capacity()
             .saturating_add(value_map_capacity(ctor_fields, depth + 1)),
         Value::StringTemplate(template) => template.metadata_retention_capacity_bytes(),
-        Value::PlasmInputRef(reference) => {
-            let (name, path) = match reference {
-                plasm_core::PlasmInputRef::NodeInput { node, path } => (node, path),
-                plasm_core::PlasmInputRef::RowBinding { binding, path } => (binding, path),
-            };
-            path.iter().fold(
-                name.capacity().saturating_add(
-                    path.capacity()
-                        .saturating_mul(std::mem::size_of::<String>()),
-                ),
-                |sum, segment| sum.saturating_add(segment.capacity()),
-            )
-        }
+        Value::PlasmInputRef(reference) => input_reference_retention_capacity(reference),
         Value::GetScalarExtract(extract) => extract
             .entity
             .capacity()
