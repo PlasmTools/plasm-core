@@ -147,8 +147,17 @@ pub(super) async fn materialize(
     }
     let mut scope_path = ctx.scope_path.clone();
     scope_path.push(map.id.to_string());
+    let selection = plasm_runtime::execution_failure::EffectSelectionEvidence {
+        collection: source.result.collection.membership().identity().clone(),
+        coverage: source.result.collection.coverage(),
+        count: source.result.count(),
+        scope_path: scope_path.clone(),
+        occurrence_path: ctx.occurrence_path.clone(),
+    };
     let mut operations = plasm_runtime::OperationLedger::empty();
-    let execution: Result<_, ExecutionFailure> = async {
+    let execution: Result<_, ExecutionFailure> =
+        plasm_runtime::execution::effect_continuation::EffectContinuation::selection_scope(
+            selection.clone(), async {
     let mut execution_source = ExecutionSource::Cache;
     let layers = body.execution_layers()?;
     let mut rows = Vec::with_capacity(parents.len());
@@ -541,17 +550,10 @@ pub(super) async fn materialize(
         },
         evidence,
     ))
-    }.await;
-    execution.map_err(|failure| {
-        failure.with_effects(&operations).with_effect_selection(
-            plasm_runtime::execution_failure::EffectSelectionEvidence {
-                collection: source.result.collection.membership().identity().clone(),
-                coverage: source.result.collection.coverage(),
-                count: source.result.count(),
-                scope_path,
-                occurrence_path: ctx.occurrence_path.clone(),
             },
-        )
+        ).await;
+    execution.map_err(|failure| {
+        failure.with_effects(&operations).with_effect_selection(selection)
     })
 }
 

@@ -651,6 +651,11 @@ async fn resumed_fanout_case(cancel: bool) {
         pause = pauses.recv() => pause.expect("known rejection checkpoint"),
         result = &mut original => panic!("execution returned before checkpoint: {result:?}"),
     };
+    assert!(pause
+        .failure
+        .effect_selections
+        .iter()
+        .any(|selection| selection.count == 4));
     assert_eq!(store.lock().unwrap().attempts, 2);
     assert_eq!(store.lock().unwrap().rows[0]["description"], "item-0");
     if cancel {

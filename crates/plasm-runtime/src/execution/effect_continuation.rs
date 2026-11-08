@@ -95,6 +95,7 @@ impl Drop for PendingGuard {
 
 tokio::task_local! {
     static CURRENT: EffectContinuation;
+    static SELECTIONS: Vec<crate::execution_failure::EffectSelectionEvidence>;
 }
 
 impl EffectContinuation {
@@ -122,9 +123,24 @@ impl EffectContinuation {
         ))
     }
 
-    /// Install the native control for this future and its nested execution.
+    /// Install native control for this future. Independently spawned tasks must
+    /// explicitly install their own scope.
     pub async fn scope<T>(self, future: impl Future<Output = T>) -> T {
         CURRENT.scope(self, future).await
+    }
+
+    /// Carry public selection accounting into a checkpoint while the owning
+    /// execution future retains the actual rows. This is not a membership proof.
+    pub async fn selection_scope<T>(
+        selection: crate::execution_failure::EffectSelectionEvidence,
+        future: impl Future<Output = T>,
+    ) -> T {
+        if Self::current().is_none() {
+            return future.await;
+        }
+        let mut selections = SELECTIONS.try_with(Clone::clone).unwrap_or_default();
+        selections.push(selection);
+        SELECTIONS.scope(selections, future).await
     }
 
     pub(crate) fn current() -> Option<Self> {
@@ -162,13 +178,18 @@ impl EffectContinuation {
     /// not be retried by this mechanism.
     pub(crate) async fn checkpoint(
         &self,
-        failure: ExecutionFailure,
+        mut failure: ExecutionFailure,
     ) -> Result<(), EffectContinuationError> {
         if failure.effects_unresolved
             || failure.effects.iter().any(|effect| effect.completed > 0)
             || !matches!(failure.dispatches.as_slice(), [dispatch] if dispatch.status == MutationDispatchStatus::RejectedWithoutEffect)
         {
             return Err(EffectContinuationError::NotRetryable);
+        }
+        if let Ok(selections) = SELECTIONS.try_with(Clone::clone) {
+            for selection in selections {
+                failure = failure.with_effect_selection(selection);
+            }
         }
         if self.state.cancelled.load(Ordering::Acquire) {
             return Err(EffectContinuationError::Cancelled);
@@ -273,6 +294,43 @@ mod tests {
             pause.resume(workflow),
             Err(EffectContinuationError::AlreadyResolved)
         );
+        assert_eq!(pending.await, Ok(()));
+    }
+
+    #[tokio::test]
+    async fn checkpoint_reports_nested_selection_accounting() {
+        use plasm_core::collection_codec::{CollectionIdentity, ResultCoverage};
+
+        let workflow = Uuid::new_v4();
+        let (control, mut pauses) =
+            EffectContinuation::new(workflow, Duration::from_secs(2)).unwrap();
+        let selection = |count| crate::execution_failure::EffectSelectionEvidence {
+            collection: CollectionIdentity {
+                catalog: [1; 32],
+                expression: [count as u8; 32],
+                epoch: 0,
+            },
+            coverage: ResultCoverage::Complete,
+            count,
+            scope_path: vec![format!("map-{count}")],
+            occurrence_path: vec![],
+        };
+        let outer = selection(2);
+        let inner = selection(3);
+        let pending = control.clone().scope(EffectContinuation::selection_scope(
+            outer.clone(),
+            EffectContinuation::selection_scope(
+                inner.clone(),
+                control.checkpoint(failure(MutationDispatchStatus::RejectedWithoutEffect)),
+            ),
+        ));
+        tokio::pin!(pending);
+        let mut pause = tokio::select! {
+            pause = pauses.recv() => pause.unwrap(),
+            _ = &mut pending => panic!("checkpoint returned before resume"),
+        };
+        assert_eq!(pause.failure.effect_selections, vec![outer, inner]);
+        pause.resume(workflow).unwrap();
         assert_eq!(pending.await, Ok(()));
     }
 
