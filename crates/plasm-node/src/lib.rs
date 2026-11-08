@@ -1710,7 +1710,7 @@ impl PlasmEngine {
             result = worker.wait() => result.map_err(map_err)?.map_err(|error| self.workflow_error(error))?,
             pause = pauses.recv() => {
                 let pause = pause.ok_or_else(|| Error::from_reason("effect checkpoint channel closed"))?;
-                let failure_json = serde_json::to_string(&pause.failure).map_err(map_err)?;
+                let failure_json = serde_json::to_string(pause.failure()).map_err(map_err)?;
                 let continuation_ref = pause.native_reference();
                 let deadline = control.checkpoint_deadline().ok_or_else(|| Error::from_reason("effect checkpoint has no deadline"))?;
                 let entry = PendingEffectEntry {
@@ -1811,7 +1811,7 @@ impl PlasmEngine {
             result = worker.wait() => result,
             pause = pauses.recv() => {
                 let pause = pause.ok_or_else(|| Error::from_reason("effect checkpoint channel closed"))?;
-                let failure_json = serde_json::to_string(&pause.failure).map_err(map_err)?;
+                let failure_json = serde_json::to_string(pause.failure()).map_err(map_err)?;
                 let next_ref = pause.native_reference();
                 pending.pause = Some(pause);
                 pending.reference = next_ref.clone();

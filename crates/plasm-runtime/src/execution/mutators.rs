@@ -1470,9 +1470,9 @@ mod continuation_tests {
             pause = pauses.recv() => pause.expect("known rejection should suspend"),
             _ = &mut run => panic!("execution returned before the checkpoint"),
         };
-        assert_eq!(pause.failure.dispatches.len(), 1);
+        assert_eq!(pause.failure().dispatches.len(), 1);
         assert_eq!(
-            pause.failure.dispatches[0].status,
+            pause.failure().dispatches[0].status,
             crate::MutationDispatchStatus::RejectedWithoutEffect
         );
         assert!(matches!(
@@ -1502,7 +1502,7 @@ mod continuation_tests {
                 _ = &mut run => panic!("execution returned before the second checkpoint"),
             };
             assert_eq!(
-                second.failure.dispatches[0].status,
+                second.failure().dispatches[0].status,
                 crate::MutationDispatchStatus::RejectedWithoutEffect
             );
             second.resume(workflow).unwrap();

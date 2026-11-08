@@ -1002,7 +1002,7 @@ async fn resumed_fanout_case(cancel: bool, duplicate: bool) {
         result = &mut original => panic!("execution returned before checkpoint: {result:?}"),
     };
     assert!(pause
-        .failure
+        .failure()
         .effect_selections
         .iter()
         .any(|selection| selection.count == 4));

@@ -115,13 +115,18 @@ impl RepairCertificate {
 /// One-use native capability to resume the suspended future. The failure is
 /// presentation evidence; possession of this value is not a completion proof.
 pub struct EffectPause {
-    pub failure: ExecutionFailure,
+    failure: ExecutionFailure,
+    _retained_failure: SelectionReservation,
     workflow: Uuid,
     reference: Uuid,
     resume: Option<oneshot::Sender<()>>,
 }
 
 impl EffectPause {
+    /// Read the checkpoint evidence while its retention charge remains owned by the pause.
+    pub fn failure(&self) -> &ExecutionFailure {
+        &self.failure
+    }
     pub fn native_reference(&self) -> String {
         self.reference.to_string()
     }
@@ -842,6 +847,7 @@ impl EffectContinuation {
                 .pauses
                 .send(EffectPause {
                     failure,
+                    _retained_failure: retained_failure,
                     workflow: self.state.workflow,
                     reference: Uuid::new_v4(),
                     resume: Some(sender),
@@ -1143,6 +1149,77 @@ mod tests {
                 drop(first);
                 let _after_release =
                     EffectContinuation::reserve_selection(std::slice::from_ref(&row)).unwrap();
+            })
+            .await;
+    }
+
+    #[tokio::test]
+    async fn expired_queued_pause_keeps_budget_until_receiver_drops_it() {
+        let (control, pauses) = EffectContinuation::new_native(Duration::from_millis(25)).unwrap();
+        let failure = failure(MutationDispatchStatus::RejectedWithoutEffect)
+            .at("x".repeat(MAX_EFFECT_SELECTION_BYTES / 2), Vec::new());
+        let worker = control.clone();
+        let run = tokio::spawn(
+            control
+                .clone()
+                .scope(async move { worker.checkpoint(failure).await }),
+        );
+        assert!(matches!(
+            run.await.unwrap(),
+            Err(EffectContinuationError::Expired)
+        ));
+        let payload = "x".repeat(MAX_EFFECT_SELECTION_BYTES / 2);
+        control
+            .clone()
+            .scope(async {
+                assert!(matches!(
+                    EffectContinuation::reserve_retained(&payload),
+                    Err(EffectContinuationError::SelectionBudget(
+                        plasm_core::ValueBudgetError::BytesExceeded
+                    ))
+                ));
+            })
+            .await;
+        drop(pauses);
+        control
+            .scope(async {
+                assert!(EffectContinuation::reserve_retained(&payload).is_ok());
+            })
+            .await;
+    }
+
+    #[tokio::test]
+    async fn cancelled_pause_keeps_failure_budget_until_owner_drops_it() {
+        let (control, mut pauses) = EffectContinuation::new_native(Duration::from_secs(2)).unwrap();
+        let failure = failure(MutationDispatchStatus::RejectedWithoutEffect)
+            .at("x".repeat(MAX_EFFECT_SELECTION_BYTES / 2), Vec::new());
+        let worker = control.clone();
+        let run = control
+            .clone()
+            .scope(async move { worker.checkpoint(failure).await });
+        tokio::pin!(run);
+        let pause = tokio::select! {
+            pause = pauses.recv() => pause.unwrap(),
+            result = &mut run => panic!("checkpoint returned before pause: {result:?}"),
+        };
+        control.cancel();
+        assert!(matches!(run.await, Err(EffectContinuationError::Cancelled)));
+        let payload = "x".repeat(MAX_EFFECT_SELECTION_BYTES / 2);
+        control
+            .clone()
+            .scope(async {
+                assert!(matches!(
+                    EffectContinuation::reserve_retained(&payload),
+                    Err(EffectContinuationError::SelectionBudget(
+                        plasm_core::ValueBudgetError::BytesExceeded
+                    ))
+                ));
+            })
+            .await;
+        drop(pause);
+        control
+            .scope(async {
+                assert!(EffectContinuation::reserve_retained(&payload).is_ok());
             })
             .await;
     }
@@ -1723,7 +1800,7 @@ mod tests {
             pause = pauses.recv() => pause.unwrap(),
             _ = &mut pending => panic!("checkpoint returned before resume"),
         };
-        assert_eq!(pause.failure.effect_selections, vec![outer, inner]);
+        assert_eq!(pause.failure().effect_selections, vec![outer, inner]);
         pause.resume(workflow).unwrap();
         assert!(pending.await.is_ok());
     }
