@@ -314,7 +314,10 @@ impl ExecutionEngine {
         mode: ExecutionMode,
     ) -> Result<ExecutionResult, RuntimeError> {
         let (capability, mut env) = super::mutation_prepare::create(create, cgs)?;
-        let capability_template = compiled_capability_template(capability)?;
+        let catalog = super::session::compiled_catalog()?;
+        let capability_template = catalog
+            .capability(capability.name.as_str())
+            .map_err(RuntimeError::from)?;
 
         apply_preflight_steps(self, capability, cgs, mat, mode, &mut env, None, true).await?;
 
@@ -331,7 +334,7 @@ impl ExecutionEngine {
 
         merge_plasm_execute_session_env(&mut env);
 
-        let compiled = compile_operation_dispatch(&capability_template, &env)?;
+        let compiled = compile_operation_dispatch(capability_template, &env)?;
 
         match mode {
             ExecutionMode::Live => {
@@ -368,7 +371,7 @@ impl ExecutionEngine {
                     }
                 };
                 let response = narrow_http_graphql_response_for_entity_decode(
-                    &capability_template,
+                    capability_template,
                     response,
                     &env,
                 )?;
@@ -451,14 +454,17 @@ impl ExecutionEngine {
         mode: ExecutionMode,
     ) -> Result<ExecutionResult, RuntimeError> {
         let (capability, _, mut env) = super::mutation_prepare::targeted(delete, cgs, mat)?;
-        let capability_template = compiled_capability_template(capability)?;
+        let catalog = super::session::compiled_catalog()?;
+        let capability_template = catalog
+            .capability(capability.name.as_str())
+            .map_err(RuntimeError::from)?;
 
         merge_plasm_execute_session_env(&mut env);
 
-        let compiled = compile_operation_dispatch(&capability_template, &env)?;
+        let compiled = compile_operation_dispatch(capability_template, &env)?;
         // Delete needs neither the template nor its bindings after compilation.
         drop(env);
-        drop(capability_template);
+        drop(catalog);
 
         match mode {
             ExecutionMode::Live => {
@@ -536,7 +542,10 @@ impl ExecutionEngine {
         mode: ExecutionMode,
     ) -> Result<ExecutionResult, RuntimeError> {
         let (capability, _, mut env) = super::mutation_prepare::invoke(invoke, cgs, mat)?;
-        let capability_template = compiled_capability_template(capability)?;
+        let catalog = super::session::compiled_catalog()?;
+        let capability_template = catalog
+            .capability(capability.name.as_str())
+            .map_err(RuntimeError::from)?;
 
         apply_preflight_steps(
             self,
@@ -563,7 +572,7 @@ impl ExecutionEngine {
 
         merge_plasm_execute_session_env(&mut env);
 
-        let compiled = compile_operation_dispatch(&capability_template, &env)?;
+        let compiled = compile_operation_dispatch(capability_template, &env)?;
 
         match mode {
             ExecutionMode::Live => {
@@ -572,7 +581,7 @@ impl ExecutionEngine {
                     self.request_identity_for(
                         cgs,
                         invoke.target.entity_type.as_str(),
-                        &capability_template,
+                        capability_template,
                         &compiled,
                     )
                     .await?
@@ -612,7 +621,7 @@ impl ExecutionEngine {
                     }
                 };
                 let response = narrow_http_graphql_response_for_entity_decode(
-                    &capability_template,
+                    capability_template,
                     response,
                     &env,
                 )?;
@@ -869,6 +878,28 @@ mod continuation_tests {
     fn empty_env() -> &'static CmlEnv {
         static EMPTY: std::sync::OnceLock<CmlEnv> = std::sync::OnceLock::new();
         EMPTY.get_or_init(CmlEnv::new)
+    }
+
+    #[tokio::test]
+    async fn mutation_uses_the_pinned_catalog_template_across_suspension() {
+        let path = std::path::PathBuf::from(crate::test_manifest_dir())
+            .join("../../fixtures/schemas/partial_write_relation_matrix");
+        let cgs = plasm_core::loader::load_schema_dir(&path).unwrap();
+        let catalog = Arc::new(plasm_compile::compile_cgs_capability_templates(&cgs).unwrap());
+        EXECUTION_COMPILED_CATALOG
+            .scope(Arc::clone(&catalog), async {
+                let retained = super::super::session::compiled_catalog().unwrap();
+                assert!(Arc::ptr_eq(&catalog, &retained));
+                let before = retained.capability("pwexpense_create").unwrap();
+                tokio::task::yield_now().await;
+                let current = super::super::session::compiled_catalog().unwrap();
+                assert!(Arc::ptr_eq(&retained, &current));
+                assert!(std::ptr::eq(
+                    before,
+                    current.capability("pwexpense_create").unwrap()
+                ));
+            })
+            .await;
     }
 
     #[tokio::test]

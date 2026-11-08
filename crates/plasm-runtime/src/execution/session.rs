@@ -46,14 +46,18 @@ impl ExecuteSessionMaterial {
 pub(crate) fn compiled_capability_template(
     capability: &CapabilitySchema,
 ) -> Result<CapabilityTemplate, RuntimeError> {
+    compiled_catalog()?
+        .capability(capability.name.as_str())
+        .cloned()
+        .map_err(RuntimeError::from)
+}
+
+/// Retain the execution's pinned catalog so a caller can borrow a template
+/// without copying it into a suspended mutation frame.
+pub(super) fn compiled_catalog() -> Result<Arc<plasm_compile::CompiledCatalog>, RuntimeError> {
     EXECUTION_COMPILED_CATALOG
-        .try_with(|compiled| {
-            compiled
-                .capability(capability.name.as_str())
-                .cloned()
-                .map_err(RuntimeError::from)
-        })
-        .map_err(|_| RuntimeError::CompiledCatalogScopeMissing)?
+        .try_with(Arc::clone)
+        .map_err(|_| RuntimeError::CompiledCatalogScopeMissing)
 }
 
 /// Reserved CML env key: 64-char lowercase hex (rendered teaching prompt digest for the row).
