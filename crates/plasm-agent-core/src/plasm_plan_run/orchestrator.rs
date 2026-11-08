@@ -355,15 +355,15 @@ pub(crate) async fn run_executable_plan_phased(
         sink = Some(hooks.sink);
     }
     let step_total = executable.steps_topo.len() as u32;
-    let prepared_nodes: HashMap<StepId, ValidatedPlanNode> = dry
+    let prepared_nodes: HashMap<StepId, usize> = dry
         .validated_plan()
         .nodes
         .iter()
-        .cloned()
-        .map(|node| {
+        .enumerate()
+        .map(|(index, node)| {
             (
                 StepId::new(node.id().as_str().to_string()).expect("validated step id"),
-                node,
+                index,
             )
         })
         .collect();
@@ -473,7 +473,6 @@ pub(crate) async fn run_executable_plan_phased(
                 let st = st.clone();
                 let session_id = session_id.to_string();
                 let plan_shared = Arc::clone(&plan_shared);
-                let prepared_nodes = Arc::new(prepared_nodes.clone());
                 let approval_policy = approval_policy.clone();
                 let trace_ctx = trace.clone();
                 let sink = sink.clone();
@@ -481,7 +480,7 @@ pub(crate) async fn run_executable_plan_phased(
                 let mut joins = Vec::with_capacity(layer.len());
                 for step_id in &layer {
                     let step_idx = step_topo_index[step_id];
-                    let node = prepared_nodes[step_id].clone();
+                    let node = schema_nodes[prepared_nodes[step_id]].clone();
                     let step_id = step_id.clone();
                     let es = es.clone();
                     let st = st.clone();
@@ -571,6 +570,7 @@ pub(crate) async fn run_executable_plan_phased(
                     }
                     let node = prepared_nodes
                         .get(step_id)
+                        .and_then(|index| schema_nodes.get(*index))
                         .ok_or_else(|| {
                             ExecutionFailure::new(
                                 plasm_runtime::FailureCause::Program,
