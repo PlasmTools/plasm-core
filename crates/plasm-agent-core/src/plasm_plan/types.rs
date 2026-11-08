@@ -405,6 +405,13 @@ impl ValidatedPlanArtifact {
 
     /// Conservative allocation capacity of the accounted validated-plan structure.
     pub(crate) fn structural_retention_capacity_bytes(&self) -> usize {
+        self.structural_retention_capacity_bytes_at_depth(0)
+    }
+
+    fn structural_retention_capacity_bytes_at_depth(&self, depth: usize) -> usize {
+        if depth >= 64 {
+            return usize::MAX;
+        }
         fn vec_bytes<T>(value: &Vec<T>) -> usize {
             value.capacity().saturating_mul(std::mem::size_of::<T>())
         }
@@ -566,6 +573,26 @@ impl ValidatedPlanArtifact {
                 }
             }
         }
+        fn origin(value: &plasm_core::plasm_monad::RecordedOutputOrigin) -> usize {
+            let mut bytes = value
+                .run_id
+                .capacity()
+                .saturating_add(value.entry_id.capacity())
+                .saturating_add(value.entity.capacity());
+            for label in &value.labels {
+                bytes = bytes
+                    .saturating_add(1024)
+                    .saturating_add(16 * std::mem::size_of::<plasm_core::DataClassName>())
+                    .saturating_add(label.retention_capacity_bytes());
+            }
+            for source in &value.provenance {
+                bytes = bytes
+                    .saturating_add(1024)
+                    .saturating_add(16 * std::mem::size_of::<String>())
+                    .saturating_add(source.capacity());
+            }
+            bytes
+        }
         fn monad_entity(value: &plasm_core::plasm_monad::PlanQualifiedEntityKey) -> usize {
             value
                 .entry_id
@@ -596,6 +623,207 @@ impl ValidatedPlanArtifact {
                 .saturating_add(strings(&value.projection))
                 .saturating_add(monad_bindings(&value.input_bindings))
         }
+        fn view_proof(value: &plasm_core::ValidatedViewEmbedProof) -> usize {
+            value
+                .view
+                .capacity()
+                .saturating_add(value.producer_node.capacity())
+                .saturating_add(value.relation.capacity())
+        }
+        fn relation(value: &plasm_core::plasm_monad::PlanRelationTraversal) -> usize {
+            value.binding_proofs.iter().fold(
+                value
+                    .source
+                    .capacity()
+                    .saturating_add(value.relation.capacity())
+                    .saturating_add(monad_entity(&value.target))
+                    .saturating_add(value.expr.capacity())
+                    .saturating_add(monad_ir(&value.ir))
+                    .saturating_add(
+                        value
+                            .materialize
+                            .as_ref()
+                            .map_or(0, |materialize| materialize.retention_capacity_bytes()),
+                    )
+                    .saturating_add(value.view_embed_proof.as_ref().map_or(0, view_proof))
+                    .saturating_add(vec_bytes(&value.binding_proofs)),
+                |sum, proof| {
+                    sum.saturating_add(proof.cap_param.capacity())
+                        .saturating_add(proof.parent_field.capacity())
+                },
+            )
+        }
+        fn compute(value: &plasm_core::plasm_monad::ComputeTemplate) -> usize {
+            use plasm_core::plasm_monad::{ComputeOp, WithExpr, WithLiteral};
+            fn predicate(value: &plasm_core::BooleanExpr<PlanPredicate>, depth: usize) -> usize {
+                if depth >= 64 {
+                    return usize::MAX;
+                }
+                match value {
+                    plasm_core::BooleanExpr::Atom(value) => value
+                        .field_path
+                        .retention_capacity_bytes()
+                        .saturating_add(data(&value.value, 0)),
+                    plasm_core::BooleanExpr::And(values) | plasm_core::BooleanExpr::Or(values) => {
+                        values.iter().fold(vec_bytes(values), |sum, value| {
+                            sum.saturating_add(predicate(value, depth + 1))
+                        })
+                    }
+                    plasm_core::BooleanExpr::Not(value) => {
+                        std::mem::size_of::<plasm_core::BooleanExpr<PlanPredicate>>()
+                            .saturating_add(predicate(value, depth + 1))
+                    }
+                }
+            }
+            fn with_expr(value: &WithExpr, depth: usize) -> usize {
+                if depth >= 64 {
+                    return usize::MAX;
+                }
+                let boxed = |value: &WithExpr| {
+                    std::mem::size_of::<WithExpr>().saturating_add(with_expr(value, depth + 1))
+                };
+                match value {
+                    WithExpr::Field(path) | WithExpr::Len { field: path } => {
+                        path.retention_capacity_bytes()
+                    }
+                    WithExpr::Literal(WithLiteral::Number(value) | WithLiteral::String(value)) => {
+                        value.capacity()
+                    }
+                    WithExpr::Literal(_) | WithExpr::Now => 0,
+                    WithExpr::Arith { lhs, rhs, .. } => boxed(lhs).saturating_add(boxed(rhs)),
+                    WithExpr::When {
+                        lhs,
+                        rhs,
+                        then,
+                        else_,
+                        ..
+                    } => boxed(lhs)
+                        .saturating_add(boxed(rhs))
+                        .saturating_add(boxed(then))
+                        .saturating_add(boxed(else_)),
+                }
+            }
+            fn paths(values: &Vec<plasm_core::plasm_monad::FieldPath>) -> usize {
+                values.iter().fold(vec_bytes(values), |sum, value| {
+                    sum.saturating_add(value.retention_capacity_bytes())
+                })
+            }
+            fn aggregates(values: &Vec<plasm_core::plasm_monad::AggregateSpec>) -> usize {
+                values.iter().fold(vec_bytes(values), |sum, value| {
+                    sum.saturating_add(value.name.retention_capacity_bytes())
+                        .saturating_add(
+                            value
+                                .field
+                                .as_ref()
+                                .map_or(0, |field| field.retention_capacity_bytes()),
+                        )
+                })
+            }
+            fn names(values: &Vec<plasm_core::plasm_monad::OutputName>) -> usize {
+                values.iter().fold(vec_bytes(values), |sum, value| {
+                    sum.saturating_add(value.retention_capacity_bytes())
+                })
+            }
+            let op = match &value.op {
+                ComputeOp::NarrowEntity { target, .. } => monad_entity(target),
+                ComputeOp::Python {
+                    source,
+                    entry_id,
+                    entity,
+                    catalog_hash,
+                    language_profile,
+                    input_schema,
+                    output_type,
+                    selection,
+                    ..
+                } => {
+                    let selection = selection.as_ref().map_or(0, |selection| {
+                        selection.ports.iter().fold(
+                            std::mem::size_of::<plasm_core::plasm_monad::PythonRowSelection>()
+                                .saturating_add(monad_entity(&selection.owner))
+                                .saturating_add(vec_bytes(&selection.ports)),
+                            |sum, port| {
+                                sum.saturating_add(port.parameter.capacity())
+                                    .saturating_add(port.source.capacity())
+                                    .saturating_add(
+                                        port.packet_field.as_ref().map_or(0, String::capacity),
+                                    )
+                            },
+                        )
+                    });
+                    source
+                        .capacity()
+                        .saturating_add(entry_id.capacity())
+                        .saturating_add(entity.as_ref().map_or(0, String::capacity))
+                        .saturating_add(catalog_hash.capacity())
+                        .saturating_add(language_profile.capacity())
+                        .saturating_add(input_schema.as_ref().map_or(0, schema))
+                        .saturating_add(output_type.retention_capacity_bytes())
+                        .saturating_add(selection)
+                }
+                ComputeOp::Project { fields } => fields.iter().fold(0usize, |sum, (name, path)| {
+                    sum.saturating_add(1024)
+                        .saturating_add(
+                            16 * std::mem::size_of::<(
+                                plasm_core::plasm_monad::OutputName,
+                                plasm_core::plasm_monad::FieldPath,
+                            )>(),
+                        )
+                        .saturating_add(name.retention_capacity_bytes())
+                        .saturating_add(path.retention_capacity_bytes())
+                }),
+                ComputeOp::Filter { predicates } => predicate(predicates, 0),
+                ComputeOp::GroupBy {
+                    keys,
+                    aggregates: values,
+                } => paths(keys).saturating_add(aggregates(values)),
+                ComputeOp::Aggregate { aggregates: values } => aggregates(values),
+                ComputeOp::Sort { key, .. } => key.retention_capacity_bytes(),
+                ComputeOp::Limit { .. } => 0,
+                ComputeOp::DedupeBy { keys } => paths(keys),
+                ComputeOp::With { columns } => {
+                    columns.iter().fold(vec_bytes(columns), |sum, column| {
+                        sum.saturating_add(column.name.retention_capacity_bytes())
+                            .saturating_add(with_expr(&column.expr, 0))
+                    })
+                }
+                ComputeOp::Union { other } | ComputeOp::MergeBranches { other } => {
+                    other.retention_capacity_bytes()
+                }
+                ComputeOp::Render {
+                    columns,
+                    template,
+                    column_aliases,
+                    render_bindings,
+                } => column_aliases.iter().fold(
+                    names(columns)
+                        .saturating_add(template.capacity())
+                        .saturating_add(names(render_bindings)),
+                    |sum, (key, name)| {
+                        sum.saturating_add(1024)
+                            .saturating_add(
+                                16 * std::mem::size_of::<(
+                                    String,
+                                    plasm_core::plasm_monad::OutputName,
+                                )>(),
+                            )
+                            .saturating_add(key.capacity())
+                            .saturating_add(name.retention_capacity_bytes())
+                    },
+                ),
+            };
+            value
+                .source
+                .capacity()
+                .saturating_add(schema(&value.schema))
+                .saturating_add(
+                    value
+                        .collection_alias
+                        .as_ref()
+                        .map_or(0, |alias| alias.retention_capacity_bytes()),
+                )
+                .saturating_add(op)
+        }
         fn comp_structure(value: &plasm_core::plasm_monad::PlasmComp, depth: usize) -> usize {
             use plasm_core::plasm_monad::{PlasmReturn, PlasmStepPayload, StepId};
 
@@ -608,26 +836,8 @@ impl ValidatedPlanArtifact {
                 sum.saturating_add(tree_entry::<(String, PlasmStepPayload)>())
                     .saturating_add(id.capacity())
                     .saturating_add(match payload {
-                        PlasmStepPayload::Pure(pure) => {
-                            let mut retained = data(&pure.data, 0);
-                            if let Some(origin) = &pure.recorded_output {
-                                retained = retained
-                                    .saturating_add(origin.run_id.capacity())
-                                    .saturating_add(origin.entry_id.capacity())
-                                    .saturating_add(origin.entity.capacity());
-                                for label in &origin.labels {
-                                    retained = retained
-                                        .saturating_add(tree_entry::<plasm_core::DataClassName>())
-                                        .saturating_add(label.retention_capacity_bytes());
-                                }
-                                for source in &origin.provenance {
-                                    retained = retained
-                                        .saturating_add(tree_entry::<String>())
-                                        .saturating_add(source.capacity());
-                                }
-                            }
-                            retained
-                        }
+                        PlasmStepPayload::Pure(pure) => data(&pure.data, 0)
+                            .saturating_add(pure.recorded_output.as_ref().map_or(0, origin)),
                         PlasmStepPayload::Invoke(invoke) => invoke
                             .qualified_entity
                             .as_ref()
@@ -687,8 +897,8 @@ impl ValidatedPlanArtifact {
                             .saturating_add(iter.seed_ir.as_ref().map_or(0, monad_ir))
                             .saturating_add(iter.approval.as_ref().map_or(0, String::capacity)),
                         PlasmStepPayload::MapBody(body) => scope(body, depth + 1),
-                        // Compute and relation payload allocations remain to be accounted.
-                        PlasmStepPayload::Map(_) | PlasmStepPayload::FlatMapRelation(_) => 0,
+                        PlasmStepPayload::Map(map) => compute(&map.compute),
+                        PlasmStepPayload::FlatMapRelation(value) => relation(&value.relation),
                     })
             });
             bytes = value.metadata.iter().fold(bytes, |sum, (key, value)| {
@@ -806,6 +1016,15 @@ impl ValidatedPlanArtifact {
                     .saturating_mul(2)
                     .saturating_mul(std::mem::size_of::<(PlanNodeId, usize)>().saturating_add(1)),
             );
+        for (key, value) in &self.artifact.metadata {
+            bytes = bytes
+                .saturating_add(1024)
+                .saturating_add(16 * std::mem::size_of::<(String, serde_json::Value)>())
+                .saturating_add(key.capacity())
+                .saturating_add(plasm_runtime::materialization::retained_json_capacity(
+                    value,
+                ));
+        }
         bytes = bytes.saturating_add(match &self.artifact.return_value {
             ValidatedPlanReturn::Node(id) => id.0.capacity(),
             ValidatedPlanReturn::Parallel { parallel } => id_bytes(parallel),
@@ -837,7 +1056,9 @@ impl ValidatedPlanArtifact {
                     .saturating_add(strings(&n.projection))
                     .saturating_add(predicates(&n.predicates))
                     .saturating_add(n.approval.as_ref().map_or(0, String::capacity)),
-                ValidatedPlanNode::Data(n) => data(&n.data, 0),
+                ValidatedPlanNode::Data(n) => {
+                    data(&n.data, 0).saturating_add(n.recorded_output.as_ref().map_or(0, origin))
+                }
                 ValidatedPlanNode::Derive(n) => n
                     .inputs
                     .iter()
@@ -853,7 +1074,11 @@ impl ValidatedPlanArtifact {
                         },
                     )
                     .saturating_add(data(&n.value, 0)),
-                ValidatedPlanNode::Compute(n) => n.source_node.0.capacity(),
+                ValidatedPlanNode::Compute(n) => n
+                    .source_node
+                    .0
+                    .capacity()
+                    .saturating_add(compute(&n.compute)),
                 ValidatedPlanNode::ForEach(n) => n
                     .source
                     .0
@@ -882,6 +1107,8 @@ impl ValidatedPlanArtifact {
                         .saturating_add(n.relation.relation.0.capacity())
                         .saturating_add(entity(&n.relation.target))
                         .saturating_add(expr_ir(&n.relation.ir))
+                        .saturating_add(n.relation.materialize.retention_capacity_bytes())
+                        .saturating_add(n.relation.view_embed_proof.as_ref().map_or(0, view_proof))
                         .saturating_add(vec_bytes(&n.relation.binding_proofs)),
                     |sum, proof| {
                         sum.saturating_add(proof.cap_param.capacity())
@@ -889,13 +1116,15 @@ impl ValidatedPlanArtifact {
                     },
                 ),
                 ValidatedPlanNode::MapBody(n) => scope(&n.body, 0),
-                ValidatedPlanNode::Capture(n) => entity(&n.entity),
+                ValidatedPlanNode::Capture(n) => {
+                    entity(&n.entity).saturating_add(contract(&n.contract))
+                }
             };
             bytes = bytes.saturating_add(node_owned);
             for nested in node.nested_plans() {
                 bytes = bytes
                     .saturating_add(std::mem::size_of::<ValidatedPlanArtifact>())
-                    .saturating_add(nested.structural_retention_capacity_bytes());
+                    .saturating_add(nested.structural_retention_capacity_bytes_at_depth(depth + 1));
             }
         }
         bytes

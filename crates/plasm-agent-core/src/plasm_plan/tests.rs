@@ -88,12 +88,128 @@ async fn validated_plan_spare_node_capacity_obeys_the_continuation_budget() {
         .await;
 }
 
+#[test]
+fn deeply_nested_validated_plan_fails_closed_for_continuation() {
+    use plasm_core::plasm_monad::{
+        empty_comp, CaptureContract, CorrelatedBody, ParentCapture, PlanQualifiedEntityKey,
+        ScopedOutput, StepId,
+    };
+    let id = PlanNodeId::new("scope").unwrap();
+    let empty = || {
+        ValidatedPlanArtifact::from_parts(
+            Plan::new_program(
+                1,
+                None,
+                Vec::new(),
+                ValidatedPlanReturn::Node(id.clone()),
+                Default::default(),
+            ),
+            Vec::new(),
+            Default::default(),
+            Vec::new(),
+        )
+    };
+    let mut nested = empty();
+    for _ in 0..65 {
+        let body = CorrelatedBody {
+            parent: ParentCapture {
+                source: StepId("s".into()),
+                local: StepId("p".into()),
+                entity: PlanQualifiedEntityKey {
+                    entry_id: "e".into(),
+                    entity: "Item".into(),
+                },
+                contract: CaptureContract::Rows {
+                    schema: None,
+                    entity_authority: true,
+                },
+            },
+            output: ScopedOutput::Record,
+            max_parents: std::num::NonZeroU32::new(1).unwrap(),
+            captures: Vec::new(),
+            body: empty_comp(None),
+        };
+        let node = ValidatedPlanNode::MapBody(ValidatedMapBodyNode {
+            id: id.clone(),
+            body: Box::new(body),
+            plan: Box::new(nested),
+            depends_on: Vec::new(),
+            uses_result: Vec::new(),
+        });
+        nested = ValidatedPlanArtifact::from_parts(
+            Plan::new_program(
+                1,
+                None,
+                vec![node],
+                ValidatedPlanReturn::Node(id.clone()),
+                Default::default(),
+            ),
+            vec![id.clone()],
+            std::collections::HashMap::from([(id.clone(), 0)]),
+            Vec::new(),
+        );
+    }
+    assert_eq!(nested.structural_retention_capacity_bytes(), usize::MAX);
+}
+
+#[tokio::test]
+async fn validated_compute_capacity_obeys_the_continuation_budget() {
+    use plasm_runtime::execution::effect_continuation::{
+        EffectContinuation, EffectContinuationError, MAX_EFFECT_SELECTION_BYTES,
+    };
+    let mut source = String::with_capacity(MAX_EFFECT_SELECTION_BYTES + 1);
+    source.push('s');
+    let payload = plasm_core::plasm_monad::map_step_payload(
+        "x",
+        plasm_core::plasm_monad::ComputeOp::Limit { count: 1 },
+        ResultShape::List,
+    );
+    let plasm_core::plasm_monad::PlasmStepPayload::Map(mut map) = payload else {
+        panic!("map payload")
+    };
+    map.compute.source = source;
+    let id = PlanNodeId::new("compute").unwrap();
+    let node = ValidatedPlanNode::Compute(ValidatedComputeNode {
+        source_node: PlanNodeId::new("source").unwrap(),
+        id: id.clone(),
+        effect_class: EffectClass::Read,
+        result_shape: ResultShape::List,
+        compute: map.compute,
+        depends_on: Vec::new(),
+        uses_result: Vec::new(),
+    });
+    let plan = Plan::new_program(
+        1,
+        None,
+        vec![node],
+        ValidatedPlanReturn::Node(id.clone()),
+        Default::default(),
+    );
+    let artifact = ValidatedPlanArtifact::from_parts(
+        plan,
+        vec![id.clone()],
+        std::collections::HashMap::from([(id, 0)]),
+        Vec::new(),
+    );
+    let (control, _pauses) =
+        EffectContinuation::new_native(std::time::Duration::from_secs(2)).unwrap();
+    control
+        .scope(async {
+            let mut reservation = EffectContinuation::reserve_retained(&artifact).unwrap();
+            assert!(matches!(
+                reservation.add_capacity_bytes(artifact.structural_retention_capacity_bytes()),
+                Err(EffectContinuationError::SelectionBudget(_))
+            ));
+        })
+        .await;
+}
+
 #[tokio::test]
 async fn correlated_scope_capacity_obeys_the_continuation_budget() {
     use plasm_core::plasm_monad::{
-        empty_comp, invoke_step_payload, CaptureContract, CorrelatedBody, ParentCapture,
-        PlanQualifiedEntityKey, PlasmDataValue, PlasmStepPayload, PurePayload, ScopedCapture,
-        ScopedOutput, StepId,
+        empty_comp, invoke_step_payload, map_step_payload, CaptureContract, CorrelatedBody,
+        ParentCapture, PlanQualifiedEntityKey, PlasmDataValue, PlasmStepPayload, PurePayload,
+        ScopedCapture, ScopedOutput, StepId,
     };
     use plasm_runtime::execution::effect_continuation::{
         EffectContinuation, EffectContinuationError, MAX_EFFECT_SELECTION_BYTES,
@@ -128,6 +244,53 @@ async fn correlated_scope_capacity_obeys_the_continuation_budget() {
     }
     let mut comp_with_invocation = empty_comp(None);
     comp_with_invocation.steps.insert("get".into(), invocation);
+    let mut compute_source = String::with_capacity(MAX_EFFECT_SELECTION_BYTES + 1);
+    compute_source.push('x');
+    let mut compute = map_step_payload(
+        "x",
+        plasm_core::plasm_monad::ComputeOp::Limit { count: 1 },
+        ResultShape::List,
+    );
+    if let PlasmStepPayload::Map(ref mut map) = compute {
+        map.compute.source = compute_source;
+    }
+    let mut comp_with_compute = empty_comp(None);
+    comp_with_compute.steps.insert("map".into(), compute);
+    let mut relation_source = String::with_capacity(MAX_EFFECT_SELECTION_BYTES + 1);
+    relation_source.push('r');
+    let relation = plasm_core::plasm_monad::PlanRelationTraversal {
+        source: relation_source,
+        relation: "children".into(),
+        target: PlanQualifiedEntityKey {
+            entry_id: "e".into(),
+            entity: "Item".into(),
+        },
+        cardinality: plasm_core::plasm_monad::RelationCardinality::Many,
+        source_cardinality: plasm_core::plasm_monad::RelationSourceCardinality::Many,
+        expr: "x".into(),
+        ir: plasm_core::plasm_monad::PlanExprIr {
+            expr: plasm_core::Expr::Get(plasm_core::GetExpr {
+                reference: plasm_core::Ref::new("Item", "1"),
+                catalog_entry_id: plasm_core::CatalogEntryStamp::none(),
+                capability_name: None,
+                input: None,
+            }),
+            projection: None,
+            display_expr: None,
+        },
+        binding_proofs: Vec::new(),
+        materialize: None,
+        view_embed_proof: None,
+    };
+    let mut comp_with_relation = empty_comp(None);
+    comp_with_relation.steps.insert(
+        "relation".into(),
+        PlasmStepPayload::FlatMapRelation(plasm_core::plasm_monad::FlatMapRelationPayload {
+            relation,
+            effect_class: EffectClass::Read,
+            result_shape: ResultShape::List,
+        }),
+    );
     let entity = || PlanQualifiedEntityKey {
         entry_id: "e".into(),
         entity: "Item".into(),
@@ -137,6 +300,30 @@ async fn correlated_scope_capacity_obeys_the_continuation_budget() {
         entity_authority: true,
     };
     let bodies = [
+        CorrelatedBody {
+            parent: ParentCapture {
+                source: StepId("s".into()),
+                local: StepId("p".into()),
+                entity: entity(),
+                contract: contract(),
+            },
+            output: ScopedOutput::Record,
+            max_parents: std::num::NonZeroU32::new(1).unwrap(),
+            captures: Vec::new(),
+            body: comp_with_relation,
+        },
+        CorrelatedBody {
+            parent: ParentCapture {
+                source: StepId("s".into()),
+                local: StepId("p".into()),
+                entity: entity(),
+                contract: contract(),
+            },
+            output: ScopedOutput::Record,
+            max_parents: std::num::NonZeroU32::new(1).unwrap(),
+            captures: Vec::new(),
+            body: comp_with_compute,
+        },
         CorrelatedBody {
             parent: ParentCapture {
                 source: StepId("s".into()),
