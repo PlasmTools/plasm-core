@@ -23,7 +23,7 @@ pub(crate) fn retained_index_capacity<K, V>(capacity: usize) -> usize {
         .saturating_mul(2)
 }
 
-fn value_map_capacity(values: &IndexMap<String, Value>, depth: usize) -> usize {
+pub(crate) fn value_map_capacity(values: &IndexMap<String, Value>, depth: usize) -> usize {
     values.iter().fold(
         retained_index_capacity::<String, Value>(values.capacity()),
         |total, (key, value)| {

@@ -495,7 +495,7 @@ impl EffectContinuation {
     pub fn reserve_pagination(
         resume: &super::QueryPaginationResumeData,
     ) -> Result<SelectionReservation, EffectContinuationError> {
-        Self::reserve_retained(&(
+        let mut retained = Self::reserve_retained(&(
             &resume.query,
             &resume.capability_name,
             &resume.env,
@@ -503,7 +503,33 @@ impl EffectContinuation {
             &resume.config,
             &resume.state,
             resume.state.progress_guard.retained_components(),
-        ))
+        ))?;
+        let mut capacity = crate::materialization::value_map_capacity(&resume.env, 0)
+            .saturating_add(resume.capability_name.capacity())
+            .saturating_add(
+                resume
+                    .state
+                    .next_absolute_url
+                    .as_ref()
+                    .map_or(0, String::capacity),
+            )
+            .saturating_add(resume.state.progress_guard.retention_capacity_bytes())
+            .saturating_add(
+                resume
+                    .state
+                    .param_values
+                    .capacity()
+                    .saturating_mul(std::mem::size_of::<(String, Option<serde_json::Value>)>()),
+            );
+        for (name, value) in &resume.state.param_values {
+            capacity = capacity.saturating_add(name.capacity()).saturating_add(
+                value.as_ref().map_or(0, |value| {
+                    crate::materialization::json_retention_capacity(value, 0)
+                }),
+            );
+        }
+        retained.add_capacity_bytes(capacity)?;
+        Ok(retained)
     }
 
     /// Carry public selection accounting into a checkpoint while the owning
@@ -1197,6 +1223,61 @@ mod tests {
                         plasm_core::ValueBudgetError::BytesExceeded
                     ))
                 ));
+            })
+            .await;
+    }
+
+    #[tokio::test]
+    async fn pagination_reservation_counts_spare_private_environment_capacity() {
+        let (control, _pauses) = EffectContinuation::new_native(Duration::from_secs(2)).unwrap();
+        let mut resume = super::super::QueryPaginationResumeData {
+            query: plasm_core::QueryExpr::all("Item"),
+            capability_name: "items".into(),
+            env: Default::default(),
+            template: plasm_compile::CapabilityTemplate::View(plasm_compile::ViewTemplate {
+                view: "items".into(),
+            }),
+            config: serde_json::from_value(serde_json::json!({})).unwrap(),
+            state: super::super::QueryPaginationState {
+                progress_guard: Default::default(),
+                mcp_collection: Default::default(),
+                param_values: Vec::new(),
+                pages_observed: 0,
+                next_absolute_url: None,
+                last_requested_limit: 1,
+                from_block: None,
+                final_to_block: None,
+                last_requested_to_block: None,
+            },
+        };
+        let mut private = String::with_capacity(MAX_EFFECT_SELECTION_BYTES + 1);
+        private.push('x');
+        resume
+            .env
+            .insert("private".into(), plasm_core::Value::String(private));
+        let mut url_resume = resume.clone();
+        url_resume.env.clear();
+        let mut url = String::with_capacity(MAX_EFFECT_SELECTION_BYTES + 1);
+        url.push('x');
+        url_resume.state.next_absolute_url = Some(url);
+        let mut param_resume = url_resume.clone();
+        param_resume.state.next_absolute_url = None;
+        param_resume.state.param_values.push((
+            "cursor".into(),
+            Some(serde_json::Value::Array(Vec::with_capacity(
+                MAX_EFFECT_SELECTION_BYTES / std::mem::size_of::<serde_json::Value>() + 1,
+            ))),
+        ));
+        control
+            .scope(async {
+                for value in [&resume, &url_resume, &param_resume] {
+                    assert!(matches!(
+                        EffectContinuation::reserve_pagination(value),
+                        Err(EffectContinuationError::SelectionBudget(
+                            plasm_core::ValueBudgetError::BytesExceeded
+                        ))
+                    ));
+                }
             })
             .await;
     }

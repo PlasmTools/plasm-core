@@ -128,6 +128,13 @@ pub struct PaginationProgressGuard {
 }
 
 impl PaginationProgressGuard {
+    pub(super) fn retention_capacity_bytes(&self) -> usize {
+        let mut bytes = self.last_cursor_digest.as_ref().map_or(0, String::capacity);
+        for digest in self.seen_coords.iter().chain(&self.seen_ids) {
+            bytes = bytes.saturating_add(1024).saturating_add(digest.capacity());
+        }
+        bytes
+    }
     /// Internal accounting view; cursor and identity digests remain off the wire.
     pub(super) fn retained_components(
         &self,
@@ -359,6 +366,16 @@ impl std::fmt::Display for PaginationTerminalReason {
 mod tests {
     use super::*;
     use plasm_compile::{PaginationLocation, PaginationParam, PaginationParamRole};
+
+    #[test]
+    fn pagination_progress_counts_spare_digest_capacity() {
+        use super::super::effect_continuation::MAX_EFFECT_SELECTION_BYTES;
+        let mut digest = String::with_capacity(MAX_EFFECT_SELECTION_BYTES + 1);
+        digest.push('x');
+        let mut guard = PaginationProgressGuard::default();
+        guard.seen_ids.insert(digest);
+        assert!(guard.retention_capacity_bytes() > MAX_EFFECT_SELECTION_BYTES);
+    }
 
     #[tokio::test]
     async fn pagination_progress_retention_accounts_for_seen_identities() {
