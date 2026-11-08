@@ -34,7 +34,7 @@ fn value_map_capacity(values: &IndexMap<String, Value>, depth: usize) -> usize {
     )
 }
 
-fn value_retention_capacity(value: &Value, depth: usize) -> usize {
+pub(crate) fn value_retention_capacity(value: &Value, depth: usize) -> usize {
     if depth >= 64 {
         return usize::MAX;
     }
@@ -211,7 +211,7 @@ pub(crate) struct RetainedResponses<'a>(
 
 // Encoded size alone misses spare capacity, including after a provider body is
 // shortened. Bound the walk itself as well as the continuation it measures.
-fn json_retention_capacity(value: &serde_json::Value, depth: usize) -> usize {
+pub(crate) fn json_retention_capacity(value: &serde_json::Value, depth: usize) -> usize {
     if depth == 128 {
         return usize::MAX;
     }

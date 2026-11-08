@@ -10,6 +10,89 @@ fn execution_mode_label(mode: ExecutionMode) -> &'static str {
     }
 }
 
+fn retained_http_request_capacity(operation: &CompiledOperation) -> usize {
+    let request = match operation {
+        CompiledOperation::Http(request) | CompiledOperation::GraphQl(request) => request,
+        // A classified HTTP rejection must have an inspectable HTTP request.
+        _ => return usize::MAX,
+    };
+    let mut bytes = request.path.capacity();
+    for value in [&request.query, &request.body, &request.headers]
+        .into_iter()
+        .flatten()
+    {
+        bytes = bytes.saturating_add(crate::materialization::value_retention_capacity(value, 0));
+    }
+    if let Some(multipart) = &request.multipart {
+        bytes = bytes.saturating_add(
+            multipart
+                .parts
+                .capacity()
+                .saturating_mul(std::mem::size_of::<plasm_compile::CompiledMultipartPart>()),
+        );
+        for part in &multipart.parts {
+            bytes = bytes
+                .saturating_add(part.name.capacity())
+                .saturating_add(part.file_name.as_ref().map_or(0, String::capacity))
+                .saturating_add(part.content_type.as_ref().map_or(0, String::capacity))
+                .saturating_add(crate::materialization::value_retention_capacity(
+                    &part.content,
+                    0,
+                ));
+        }
+    }
+    if let Some(credential) = &request.credential {
+        bytes = bytes
+            .saturating_add(credential.slot.capacity())
+            .saturating_add(credential.reference.capacity())
+            .saturating_add(crate::materialization::json_retention_capacity(
+                &credential.resource,
+                0,
+            ));
+    }
+    bytes
+}
+
+fn retained_rejection_capacity(
+    response: &crate::HttpStatusFailure,
+    body: &Option<Box<serde_json::Value>>,
+) -> usize {
+    response
+        .method
+        .capacity()
+        .saturating_add(response.url.capacity())
+        .saturating_add(response.detail.capacity())
+        .saturating_add(
+            response
+                .mutation_request_fingerprint
+                .as_ref()
+                .map_or(0, String::capacity),
+        )
+        .saturating_add(
+            response
+                .authorization
+                .scheme
+                .as_ref()
+                .map_or(0, String::capacity),
+        )
+        .saturating_add(
+            response
+                .authorization
+                .token_tail
+                .as_ref()
+                .map_or(0, String::capacity),
+        )
+        .saturating_add(
+            response
+                .login_token_tail
+                .as_ref()
+                .map_or(0, String::capacity),
+        )
+        .saturating_add(body.as_ref().map_or(0, |value| {
+            crate::materialization::json_retention_capacity(value, 0)
+        }))
+}
+
 /// Copy only a catalog-classified HTTP rejection into public checkpoint
 /// evidence. The original error remains owned by the suspended dispatch.
 fn checkpoint_failure(
@@ -154,7 +237,13 @@ impl ExecutionEngine {
                             Err(_) => return result,
                         };
                     if retained_dispatch
-                        .add_capacity_bytes(materialization.retention_capacity_bytes())
+                        .add_capacity_bytes(
+                            materialization
+                                .retention_capacity_bytes()
+                                .saturating_add(retained_http_request_capacity(compiled))
+                                .saturating_add(original_identity.retention_auth_capacity())
+                                .saturating_add(retained_rejection_capacity(response, body)),
+                        )
                         .is_err()
                     {
                         return result;
@@ -761,6 +850,81 @@ mod continuation_tests {
             headers: None,
             credential: None,
         })
+    }
+
+    #[test]
+    fn rejection_retention_counts_spare_detail_and_body_capacity() {
+        use crate::execution::effect_continuation::MAX_EFFECT_SELECTION_BYTES;
+        let mut failure = crate::HttpStatusFailure::without_request(422, "fixture 422".into());
+        failure.detail.reserve(MAX_EFFECT_SELECTION_BYTES + 1);
+        assert!(retained_rejection_capacity(&failure, &None) > MAX_EFFECT_SELECTION_BYTES);
+        let body = Some(Box::new(serde_json::Value::Array(Vec::with_capacity(
+            MAX_EFFECT_SELECTION_BYTES / std::mem::size_of::<serde_json::Value>() + 1,
+        ))));
+        assert!(
+            retained_rejection_capacity(
+                &crate::HttpStatusFailure::without_request(422, "fixture 422".into()),
+                &body
+            ) > MAX_EFFECT_SELECTION_BYTES
+        );
+        let mut request = request();
+        let CompiledOperation::Http(http) = &mut request else {
+            unreachable!()
+        };
+        http.multipart = Some(plasm_compile::CompiledMultipartBody { parts: Vec::new() });
+        assert_ne!(retained_http_request_capacity(&request), usize::MAX);
+    }
+
+    #[tokio::test]
+    async fn oversized_rejected_request_capacity_cannot_create_a_checkpoint() {
+        use crate::execution::effect_continuation::MAX_EFFECT_SELECTION_BYTES;
+        let transport = Arc::new(Transport {
+            statuses: vec![422],
+            opaque: false,
+            requests: Mutex::new(Vec::new()),
+        });
+        let engine = ExecutionEngine::new_with_transport(
+            ExecutionConfig {
+                base_url: Some("https://fixture.test".into()),
+                ..Default::default()
+            },
+            Arc::clone(&transport) as Arc<dyn HttpTransport>,
+            None,
+        );
+        let mut compiled = request();
+        let CompiledOperation::Http(request) = &mut compiled else {
+            unreachable!()
+        };
+        request.path.reserve(MAX_EFFECT_SELECTION_BYTES + 1);
+        let graph = SessionMaterialization::new();
+        let journal = super::super::mutation_evidence::MutationJournal::default();
+        let (control, mut pauses) = EffectContinuation::new_native(Duration::from_secs(5)).unwrap();
+        let identity = OperationIdentity {
+            entry_id: "matrix".into(),
+            capability: "pwexpense_create".into(),
+        };
+        let capability = capability();
+        let run = control.scope(journal.scope(engine.dispatch_compiled_mutation(
+            &compiled,
+            "PwExpense",
+            identity,
+            &capability,
+            None,
+            &graph,
+        )));
+        tokio::pin!(run);
+        let result = tokio::select! {
+            result = &mut run => result,
+            _ = pauses.recv() => panic!("oversized retained request admitted a checkpoint"),
+        };
+        assert!(matches!(
+            result,
+            Err(RuntimeError::RequestError {
+                status: Some(422),
+                ..
+            })
+        ));
+        assert_eq!(transport.requests.lock().unwrap().len(), 1);
     }
 
     #[tokio::test]

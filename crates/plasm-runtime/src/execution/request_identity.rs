@@ -41,6 +41,25 @@ pub(super) struct RequestIdentity {
 }
 
 impl RequestIdentity {
+    pub(super) fn retention_auth_capacity(&self) -> usize {
+        self.auth.as_ref().map_or(0, |auth| {
+            [&auth.headers, &auth.query_params]
+                .into_iter()
+                .fold(0usize, |total, pairs| {
+                    pairs.iter().fold(
+                        total.saturating_add(
+                            pairs
+                                .capacity()
+                                .saturating_mul(std::mem::size_of::<(String, String)>()),
+                        ),
+                        |sum, (key, value)| {
+                            sum.saturating_add(key.capacity())
+                                .saturating_add(value.capacity())
+                        },
+                    )
+                })
+        })
+    }
     /// Authentication retained by the dispatch frame; intended only for the
     /// discard-only continuation budget counter, never for presentation.
     pub(super) fn retention_auth(&self) -> Option<(&[(String, String)], &[(String, String)])> {
