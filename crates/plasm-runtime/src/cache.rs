@@ -195,6 +195,26 @@ impl GraphCache {
             bytes =
                 bytes.saturating_add(values.capacity().saturating_mul(std::mem::size_of::<Ref>()));
         }
+        for entity in self.entities.values() {
+            let entity = &entity[0];
+            bytes = bytes
+                .saturating_add(crate::materialization::retained_index_capacity::<
+                    String,
+                    TypedFieldValue,
+                >(entity.fields.capacity()))
+                .saturating_add(crate::materialization::retained_index_capacity::<
+                    String,
+                    RelationMembership,
+                >(entity.relations.capacity()));
+            for (key, value) in &entity.fields {
+                bytes = bytes.saturating_add(key.capacity()).saturating_add(
+                    crate::materialization::typed_value_retention_capacity(value, 0),
+                );
+            }
+            for key in entity.relations.keys() {
+                bytes = bytes.saturating_add(key.capacity());
+            }
+        }
         if let Some(fork) = &self.branch_fork {
             bytes = bytes
                 .saturating_add(retained_hash_capacity::<Ref, ()>(

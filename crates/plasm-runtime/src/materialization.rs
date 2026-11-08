@@ -22,6 +22,100 @@ pub(crate) fn retained_index_capacity<K, V>(capacity: usize) -> usize {
         .saturating_mul(std::mem::size_of::<(K, V)>().saturating_add(16))
         .saturating_mul(2)
 }
+
+fn value_map_capacity(values: &IndexMap<String, Value>, depth: usize) -> usize {
+    values.iter().fold(
+        retained_index_capacity::<String, Value>(values.capacity()),
+        |total, (key, value)| {
+            total
+                .saturating_add(key.capacity())
+                .saturating_add(value_retention_capacity(value, depth))
+        },
+    )
+}
+
+fn value_retention_capacity(value: &Value, depth: usize) -> usize {
+    if depth >= 64 {
+        return usize::MAX;
+    }
+    match value {
+        Value::String(s) | Value::PhraseIdent(s) => s.capacity(),
+        Value::Array(values) => values.iter().fold(
+            values
+                .capacity()
+                .saturating_mul(std::mem::size_of::<Value>()),
+            |n, value| n.saturating_add(value_retention_capacity(value, depth + 1)),
+        ),
+        Value::Object(values) => value_map_capacity(values, depth + 1),
+        Value::UnionCtor {
+            ctor_label,
+            ctor_fields,
+        } => ctor_label
+            .capacity()
+            .saturating_add(value_map_capacity(ctor_fields, depth + 1)),
+        // These operands can retain private compiler state not represented by
+        // their serialized view, and should have been resolved before execution.
+        Value::StringTemplate(_) | Value::GetScalarExtract(_) | Value::PlasmInputRef(_) => {
+            usize::MAX
+        }
+        Value::Null
+        | Value::Bool(_)
+        | Value::Integer(_)
+        | Value::Unsigned(_)
+        | Value::Float(_)
+        | Value::Money(_) => 0,
+    }
+}
+
+pub(crate) fn typed_value_retention_capacity(
+    value: &plasm_core::TypedFieldValue,
+    depth: usize,
+) -> usize {
+    use plasm_core::TypedFieldValue as T;
+    if depth >= 64 {
+        return usize::MAX;
+    }
+    match value {
+        T::String(s) => s.capacity(),
+        T::Array(values) => values.iter().fold(
+            values.capacity().saturating_mul(std::mem::size_of::<T>()),
+            |n, value| n.saturating_add(typed_value_retention_capacity(value, depth + 1)),
+        ),
+        T::Object(values) => values.iter().fold(
+            retained_index_capacity::<String, T>(values.capacity()),
+            |n, (key, value)| {
+                n.saturating_add(key.capacity())
+                    .saturating_add(typed_value_retention_capacity(value, depth + 1))
+            },
+        ),
+        T::Json(value) => value_retention_capacity(value, depth + 1),
+        T::EntityRef(value) => entity_ref_retention_capacity(value, depth + 1),
+        // These forms contain opaque compiler state and should have been resolved.
+        T::StringTemplate(_) | T::PlasmInputRef(_) => usize::MAX,
+        T::Null | T::Bool(_) | T::Integer(_) | T::Float(_) | T::Money(_) => 0,
+    }
+}
+
+fn entity_ref_retention_capacity(
+    value: &plasm_core::entity_ref_value::EntityRefPayload,
+    depth: usize,
+) -> usize {
+    use plasm_core::entity_ref_value::{EntityRefAtom, EntityRefPayload};
+    if depth >= 64 {
+        return usize::MAX;
+    }
+    match value {
+        EntityRefPayload::Atom(EntityRefAtom::String(s)) => s.capacity(),
+        EntityRefPayload::Atom(_) => 0,
+        EntityRefPayload::Compound(values) => values.iter().fold(
+            retained_index_capacity::<String, EntityRefPayload>(values.capacity()),
+            |n, (key, value)| {
+                n.saturating_add(key.capacity())
+                    .saturating_add(entity_ref_retention_capacity(value, depth + 1))
+            },
+        ),
+    }
+}
 use std::sync::Arc;
 
 /// Honest cache consult counters (distinct from output row counts).
@@ -354,17 +448,16 @@ impl SessionMaterialization {
             .values()
             .chain(self.provided_session_params.values())
         {
-            bytes =
-                bytes.saturating_add(retained_index_capacity::<String, Value>(values.capacity()));
+            bytes = bytes.saturating_add(value_map_capacity(values, 0));
+        }
+        for key in self.provided_session_params.keys() {
+            bytes = bytes.saturating_add(key.capacity());
         }
         for observation in self.get_observations.values() {
             bytes = bytes
-                .saturating_add(retained_index_capacity::<String, Value>(
-                    observation.environment.capacity(),
-                ))
-                .saturating_add(retained_index_capacity::<String, Value>(
-                    observation.parameters.capacity(),
-                ))
+                .saturating_add(observation.catalog.capacity())
+                .saturating_add(value_map_capacity(&observation.environment, 0))
+                .saturating_add(value_map_capacity(&observation.parameters, 0))
                 .saturating_add(
                     observation
                         .authoritative_parameters
@@ -373,6 +466,11 @@ impl SessionMaterialization {
                             v.capacity().saturating_mul(std::mem::size_of::<String>())
                         }),
                 );
+            if let Some(parameters) = &observation.authoritative_parameters {
+                for parameter in parameters {
+                    bytes = bytes.saturating_add(parameter.capacity());
+                }
+            }
         }
         bytes.saturating_add(
             self.prerequisite_deployments
@@ -849,6 +947,49 @@ pub fn replay_store_lookup(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    async fn graph_and_binding_payload_capacities_are_charged() {
+        use crate::execution::effect_continuation::{
+            EffectContinuation, EffectContinuationError, MAX_EFFECT_SELECTION_BYTES,
+        };
+        let mut graph = SessionMaterialization::new();
+        let mut entity = CachedEntity::new(Ref::new("Thing", "one"), 0);
+        let mut text = String::with_capacity(MAX_EFFECT_SELECTION_BYTES + 1);
+        text.push('x');
+        entity
+            .fields
+            .insert("field".into(), plasm_core::TypedFieldValue::String(text));
+        graph.graph.overwrite(entity).unwrap();
+        let mut binding = SessionMaterialization::new();
+        let values = vec![(
+            "field".into(),
+            Value::Array(Vec::with_capacity(
+                MAX_EFFECT_SELECTION_BYTES / std::mem::size_of::<Value>() + 1,
+            )),
+        )]
+        .into_iter()
+        .collect();
+        binding
+            .provided_session_params
+            .insert("catalog".into(), values);
+        let (control, _pauses) =
+            EffectContinuation::new_native(std::time::Duration::from_secs(2)).unwrap();
+        control
+            .scope(async {
+                for state in [&graph, &binding] {
+                    let mut reservation =
+                        EffectContinuation::reserve_retained(&state.retention_view()).unwrap();
+                    assert!(matches!(
+                        reservation.add_capacity_bytes(state.retention_capacity_bytes()),
+                        Err(EffectContinuationError::SelectionBudget(
+                            plasm_core::ValueBudgetError::BytesExceeded
+                        ))
+                    ));
+                }
+            })
+            .await;
+    }
 
     #[test]
     fn response_capacity_walk_counts_arrays_and_limits_depth() {
