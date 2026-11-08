@@ -607,12 +607,17 @@ async fn known_rejection_leaves_the_selected_suffix_unattempted() {
 
 #[tokio::test]
 async fn resumed_fanout_retains_original_selected_occurrences() {
-    resumed_fanout_case(false).await;
+    resumed_fanout_case(false, false).await;
 }
 
 #[tokio::test]
 async fn cancelled_fanout_retains_its_completed_prefix() {
-    resumed_fanout_case(true).await;
+    resumed_fanout_case(true, false).await;
+}
+
+#[tokio::test]
+async fn resumed_fanout_preserves_duplicate_occurrences() {
+    resumed_fanout_case(false, true).await;
 }
 
 #[tokio::test]
@@ -660,7 +665,7 @@ async fn oversized_continuation_selection_stops_before_scoped_writes() {
     assert_eq!(store.lock().unwrap().attempts, 0);
 }
 
-async fn resumed_fanout_case(cancel: bool) {
+async fn resumed_fanout_case(cancel: bool, duplicate: bool) {
     use plasm_runtime::execution::effect_continuation::EffectContinuation;
     use std::time::Duration;
     use uuid::Uuid;
@@ -671,6 +676,14 @@ async fn resumed_fanout_case(cancel: bool) {
         opened,
         store,
     } = ordered_fanout_fixture(4, 1, true).await;
+    if duplicate {
+        let mut data = store.lock().unwrap();
+        data.source_rows[0]["description"] = json!("same-value");
+        let repeated = data.source_rows[0].clone();
+        for row in &mut data.source_rows {
+            *row = repeated.clone();
+        }
+    }
     let symbols = session.teaching_exposure.as_ref().unwrap().to_symbol_map();
     let entity = symbols.entity_sym_for("matrix", "PwExpense");
     let create = symbols.method_sym_for("matrix", "PwExpense", "create");
@@ -680,17 +693,19 @@ async fn resumed_fanout_case(cancel: bool) {
         .unwrap();
     let workflow = Uuid::new_v4();
     let (control, mut pauses) = EffectContinuation::new(workflow, Duration::from_secs(10)).unwrap();
-    let original = control.clone().scope(Box::pin(ExecutePipeline::run_program(
-        &session,
-        &host,
-        &opened.prompt_hash,
-        &opened.session_id,
-        &bundle,
-        ExecutionIntent::Live,
-        None,
-        None,
-        None,
-    )));
+    let original = control
+        .clone()
+        .scope_for_repair(Box::pin(ExecutePipeline::run_program(
+            &session,
+            &host,
+            &opened.prompt_hash,
+            &opened.session_id,
+            &bundle,
+            ExecutionIntent::Live,
+            None,
+            None,
+            None,
+        )));
     tokio::pin!(original);
     let mut pause = tokio::select! {
         pause = pauses.recv() => pause.expect("known rejection checkpoint"),
@@ -701,13 +716,17 @@ async fn resumed_fanout_case(cancel: bool) {
         .effect_selections
         .iter()
         .any(|selection| selection.count == 4));
+    assert!(!control.selected_occurrences_completed());
     assert_eq!(store.lock().unwrap().attempts, 2);
-    assert_eq!(store.lock().unwrap().rows[0]["description"], "item-0");
+    assert_eq!(
+        store.lock().unwrap().rows[0]["description"],
+        if duplicate { "same-value" } else { "item-0" }
+    );
     if cancel {
         control.cancel();
-        let failure = original
-            .await
-            .expect_err("cancelled continuation must stop");
+        let (outcome, certificate) = original.await.expect("owned continuation scope");
+        assert!(certificate.is_none());
+        let failure = outcome.expect_err("cancelled continuation must stop");
         assert_eq!(failure.cause, plasm_runtime::FailureCause::Cancelled);
         assert_eq!(
             failure
@@ -750,7 +769,10 @@ async fn resumed_fanout_case(cancel: bool) {
     .expect("unrelated write completes while the original is paused");
 
     pause.resume(workflow).unwrap();
-    let result = original.await.expect("the original continuation completes");
+    let (outcome, certificate) = original.await.expect("owned continuation scope");
+    let result = outcome.expect("the original continuation completes");
+    assert!(certificate.is_some_and(|cert| cert.consume_for(&control)));
+    assert!(control.selected_occurrences_completed());
     let descriptions: Vec<_> = store
         .lock()
         .unwrap()
@@ -758,10 +780,18 @@ async fn resumed_fanout_case(cancel: bool) {
         .iter()
         .map(|row| row["description"].as_str().unwrap().to_owned())
         .collect();
-    assert_eq!(
-        descriptions,
+    let expected = if duplicate {
+        [
+            "same-value",
+            "unrelated",
+            "same-value",
+            "same-value",
+            "same-value",
+        ]
+    } else {
         ["item-0", "unrelated", "item-1", "item-2", "item-3"]
-    );
+    };
+    assert_eq!(descriptions, expected);
     assert_eq!(
         store.lock().unwrap().attempts,
         6,

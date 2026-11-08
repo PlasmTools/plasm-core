@@ -433,6 +433,7 @@ pub(super) async fn materialize(
             }
             rows.extend(values);
             identities.extend(output.row_identities.clone());
+            plasm_runtime::execution::effect_continuation::EffectContinuation::complete_selection_occurrence(occurrence);
             instances.push(serde_json::json!({"occurrence_path":occurrence_path, "steps":steps}));
             continue;
         }
@@ -465,6 +466,7 @@ pub(super) async fn materialize(
                 Vec::new(),
                 None,
             );
+            plasm_runtime::execution::effect_continuation::EffectContinuation::complete_selection_occurrence(occurrence);
             instances.push(serde_json::json!({"occurrence_path":occurrence_path, "steps":steps}));
             if quantifying.is_some_and(|all| keep != all) {
                 quantified = keep;
@@ -480,6 +482,7 @@ pub(super) async fn materialize(
         value_shapes.push(MaterializedValueShape::Record);
         completed += 1;
         invocation.finish(OccurrencePhase::Done, Some(1), None, Vec::new(), None);
+        plasm_runtime::execution::effect_continuation::EffectContinuation::complete_selection_occurrence(occurrence);
         instances.push(serde_json::json!({"occurrence_path":occurrence_path, "steps":steps}));
     }
     let node = ValidatedPlanNode::MapBody(map.clone());
