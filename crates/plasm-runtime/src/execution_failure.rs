@@ -280,6 +280,11 @@ impl From<plasm_core::plasm_monad::StepIdError> for ExecutionFailure {
     }
 }
 impl ExecutionFailure {
+    /// Account private provider evidence as well as the public failure without
+    /// adding the private data to its wire serialization.
+    pub(crate) fn retention_view(&self) -> impl serde::Serialize + '_ {
+        (self, &self.0.provider_rejection)
+    }
     pub fn new(cause: FailureCause, code: &str, diagnostic: impl Into<String>) -> Self {
         Self(Box::new(ExecutionFailureDetails {
             cause,

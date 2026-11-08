@@ -41,6 +41,13 @@ pub(super) struct RequestIdentity {
 }
 
 impl RequestIdentity {
+    /// Authentication retained by the dispatch frame; intended only for the
+    /// discard-only continuation budget counter, never for presentation.
+    pub(super) fn retention_auth(&self) -> Option<(&[(String, String)], &[(String, String)])> {
+        self.auth
+            .as_ref()
+            .map(|auth| (auth.headers.as_slice(), auth.query_params.as_slice()))
+    }
     pub(super) fn same_scope(&self, other: &Self) -> bool {
         self.fingerprint == other.fingerprint
     }

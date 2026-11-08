@@ -43,6 +43,22 @@ tokio::task_local! {
 }
 
 impl MutationJournal {
+    pub(super) fn len(&self) -> usize {
+        self.entries
+            .lock()
+            .expect("mutation journal poisoned")
+            .len()
+    }
+
+    pub(super) fn reserve_retention(
+        &self,
+    ) -> Result<
+        super::effect_continuation::SelectionReservation,
+        super::effect_continuation::EffectContinuationError,
+    > {
+        let entries = self.entries.lock().expect("mutation journal poisoned");
+        super::effect_continuation::EffectContinuation::reserve_retained(&*entries)
+    }
     pub(super) fn current() -> Option<Self> {
         JOURNAL.try_with(Clone::clone).ok()
     }

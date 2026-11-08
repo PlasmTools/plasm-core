@@ -646,6 +646,13 @@ impl EffectContinuation {
                     .store(true, Ordering::Release),
             }
         }
+        // Failure evidence is held by the pause channel even after the caller
+        // has returned. Include private provider evidence without exposing it.
+        let mut retained_failure = SelectionReservation {
+            state: Some(self.state.clone()),
+            bytes: 0,
+        };
+        retained_failure.add_retained(&failure.retention_view())?;
         if self.state.cancelled.load(Ordering::Acquire) {
             return Err(EffectContinuationError::Cancelled);
         }
@@ -921,6 +928,24 @@ mod tests {
                     EffectContinuation::reserve_selection(std::slice::from_ref(&row)).unwrap();
             })
             .await;
+    }
+
+    #[tokio::test]
+    async fn oversized_checkpoint_failure_never_enters_the_pause_channel() {
+        let (control, mut pauses) = EffectContinuation::new_native(Duration::from_secs(2)).unwrap();
+        let mut failure = failure(MutationDispatchStatus::RejectedWithoutEffect);
+        failure = failure.at("x".repeat(MAX_EFFECT_SELECTION_BYTES), Vec::new());
+        assert!(matches!(
+            control.checkpoint(failure).await,
+            Err(EffectContinuationError::SelectionBudget(
+                plasm_core::ValueBudgetError::BytesExceeded
+            ))
+        ));
+        assert!(
+            tokio::time::timeout(Duration::from_millis(20), pauses.recv())
+                .await
+                .is_err()
+        );
     }
 
     #[tokio::test]

@@ -89,7 +89,7 @@ impl ExecutionEngine {
             None
         };
         loop {
-            let start = journal.as_ref().map(|journal| journal.snapshot().len());
+            let start = journal.as_ref().map(|journal| journal.len());
             let dispatch = with_dispatch_entity(
                 Some(entity),
                 super::mutation_evidence::with_mutation_identity(
@@ -113,6 +113,52 @@ impl ExecutionEngine {
                 let attempt =
                     journal.classify_attempt(start, error, &capability.no_effect_rejections);
                 if let Some(failure) = checkpoint_failure(error, attempt) {
+                    let Some(original_identity) = identity.or(pinned.as_ref()) else {
+                        return result;
+                    };
+                    let RuntimeError::RequestError {
+                        source: crate::RequestFailure::HttpStatus(response),
+                        attempts,
+                        status,
+                        body,
+                    } = error
+                    else {
+                        return result;
+                    };
+                    // The request, pinned authority and original rejection all
+                    // remain in this frame while checkpoint() awaits a resume.
+                    // If they do not fit, return the original typed rejection:
+                    // no continuation capability or retry is issued.
+                    let _retained_dispatch =
+                        match super::effect_continuation::EffectContinuation::reserve_retained(&(
+                            compiled,
+                            entity,
+                            &operation,
+                            original_identity.retention_auth(),
+                            (
+                                &response.mutation_request_fingerprint,
+                                &response.method,
+                                &response.url,
+                                response.status,
+                                &response.detail,
+                                response.empty_body,
+                                response.authorization.present,
+                                &response.authorization.scheme,
+                                &response.authorization.token_tail,
+                                &response.login_token_tail,
+                                response.retry_budget_exhausted,
+                                attempts,
+                                status,
+                                body,
+                            ),
+                        )) {
+                            Ok(reservation) => reservation,
+                            Err(_) => return result,
+                        };
+                    let _retained_journal = match journal.reserve_retention() {
+                        Ok(reservation) => reservation,
+                        Err(_) => return result,
+                    };
                     match control.checkpoint(failure).await {
                         Ok(()) => {
                             // The original request and auth remain pinned, but
@@ -593,6 +639,7 @@ mod continuation_tests {
     struct Secrets {
         changed: AtomicBool,
         missing: AtomicBool,
+        oversized: AtomicBool,
         reads: AtomicUsize,
     }
 
@@ -605,6 +652,11 @@ mod continuation_tests {
                 self.reads.fetch_add(1, Ordering::SeqCst);
                 if self.missing.load(Ordering::SeqCst) {
                     return None;
+                }
+                if self.oversized.load(Ordering::SeqCst) {
+                    return Some(
+                        "x".repeat(super::super::effect_continuation::MAX_EFFECT_SELECTION_BYTES),
+                    );
                 }
                 Some(if self.changed.load(Ordering::SeqCst) {
                     "second-token".into()
@@ -701,6 +753,108 @@ mod continuation_tests {
             headers: None,
             credential: None,
         })
+    }
+
+    #[tokio::test]
+    async fn oversized_rejected_request_cannot_create_a_checkpoint() {
+        use crate::execution::effect_continuation::MAX_EFFECT_SELECTION_BYTES;
+        let transport = Arc::new(Transport {
+            statuses: vec![422],
+            opaque: false,
+            requests: Mutex::new(Vec::new()),
+        });
+        let engine = ExecutionEngine::new_with_transport(
+            ExecutionConfig {
+                base_url: Some("https://fixture.test".into()),
+                ..Default::default()
+            },
+            Arc::clone(&transport) as Arc<dyn HttpTransport>,
+            None,
+        );
+        let mut compiled = request();
+        let CompiledOperation::Http(request) = &mut compiled else {
+            unreachable!()
+        };
+        request.body = Some(Value::String("x".repeat(MAX_EFFECT_SELECTION_BYTES)));
+        let journal = super::super::mutation_evidence::MutationJournal::default();
+        let (control, mut pauses) = EffectContinuation::new_native(Duration::from_secs(5)).unwrap();
+        let result = control
+            .scope(journal.scope(engine.dispatch_compiled_mutation(
+                &compiled,
+                "PwExpense",
+                OperationIdentity {
+                    entry_id: "matrix".into(),
+                    capability: "pwexpense_create".into(),
+                },
+                &capability(),
+                None,
+            )))
+            .await;
+        assert!(matches!(
+            result,
+            Err(RuntimeError::RequestError {
+                status: Some(422),
+                ..
+            })
+        ));
+        assert_eq!(transport.requests.lock().unwrap().len(), 1);
+        assert!(!matches!(
+            tokio::time::timeout(Duration::from_millis(20), pauses.recv()).await,
+            Ok(Some(_))
+        ));
+    }
+
+    #[tokio::test]
+    async fn oversized_private_authority_cannot_create_a_checkpoint() {
+        let secrets = Arc::new(Secrets::default());
+        secrets.oversized.store(true, Ordering::SeqCst);
+        let transport = Arc::new(Transport {
+            statuses: vec![422],
+            opaque: false,
+            requests: Mutex::new(Vec::new()),
+        });
+        let engine = ExecutionEngine::new_with_transport(
+            ExecutionConfig {
+                base_url: Some("https://fixture.test".into()),
+                ..Default::default()
+            },
+            Arc::clone(&transport) as Arc<dyn HttpTransport>,
+            Some(crate::auth::AuthResolver::new(
+                plasm_core::AuthScheme::BearerToken {
+                    env: Some("fixture".into()),
+                    hosted_kv: None,
+                    optional_env: false,
+                },
+                Arc::clone(&secrets) as Arc<dyn crate::auth::SecretProvider>,
+            )),
+        );
+        let compiled = request();
+        let journal = super::super::mutation_evidence::MutationJournal::default();
+        let (control, mut pauses) = EffectContinuation::new_native(Duration::from_secs(5)).unwrap();
+        let result = control
+            .scope(journal.scope(engine.dispatch_compiled_mutation(
+                &compiled,
+                "PwExpense",
+                OperationIdentity {
+                    entry_id: "matrix".into(),
+                    capability: "pwexpense_create".into(),
+                },
+                &capability(),
+                None,
+            )))
+            .await;
+        assert!(matches!(
+            result,
+            Err(RuntimeError::RequestError {
+                status: Some(422),
+                ..
+            })
+        ));
+        assert_eq!(transport.requests.lock().unwrap().len(), 1);
+        assert!(!matches!(
+            tokio::time::timeout(Duration::from_millis(20), pauses.recv()).await,
+            Ok(Some(_))
+        ));
     }
 
     async fn exercise_resume(
