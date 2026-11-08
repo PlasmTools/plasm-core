@@ -49,6 +49,8 @@ struct State {
     cancel_notify: Notify,
     pauses: mpsc::Sender<EffectPause>,
     selection_bytes: Mutex<usize>,
+    saw_selection: AtomicBool,
+    incomplete_selection: AtomicBool,
 }
 
 /// Native owner of one execution's suspension channel and lifetime.
@@ -122,6 +124,18 @@ tokio::task_local! {
 }
 
 impl EffectContinuation {
+    /// Construct a private native continuation identity for a single run.
+    pub fn new_native(
+        lease: Duration,
+    ) -> Result<(Self, EffectPauseReceiver), EffectContinuationError> {
+        Self::new(Uuid::new_v4(), lease)
+    }
+
+    /// Consume a checkpoint only when it belongs to this native continuation.
+    pub fn resume(&self, pause: &mut EffectPause) -> Result<(), EffectContinuationError> {
+        pause.resume(self.state.workflow)
+    }
+
     pub fn new(
         workflow: Uuid,
         lease: Duration,
@@ -141,6 +155,8 @@ impl EffectContinuation {
                     cancel_notify: Notify::new(),
                     pauses,
                     selection_bytes: Mutex::new(0),
+                    saw_selection: AtomicBool::new(false),
+                    incomplete_selection: AtomicBool::new(false),
                 }),
             },
             EffectPauseReceiver { pauses: receiver },
@@ -191,12 +207,26 @@ impl EffectContinuation {
         selection: crate::execution_failure::EffectSelectionEvidence,
         future: impl Future<Output = T>,
     ) -> T {
-        if Self::current().is_none() {
+        let Some(control) = Self::current() else {
             return future.await;
+        };
+        control.state.saw_selection.store(true, Ordering::Release);
+        if selection.coverage != plasm_core::collection_codec::ResultCoverage::Complete {
+            control
+                .state
+                .incomplete_selection
+                .store(true, Ordering::Release);
         }
         let mut selections = SELECTIONS.try_with(Clone::clone).unwrap_or_default();
         selections.push(selection);
         SELECTIONS.scope(selections, future).await
+    }
+
+    /// Conservative run-wide coverage fact. This is necessary but not
+    /// sufficient for a repair certificate: it contains no occurrence proof.
+    pub fn selections_have_complete_coverage(&self) -> bool {
+        self.state.saw_selection.load(Ordering::Acquire)
+            && !self.state.incomplete_selection.load(Ordering::Acquire)
     }
 
     pub(crate) fn current() -> Option<Self> {
@@ -331,6 +361,48 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn selection_coverage_is_conservative_across_the_whole_run() {
+        use plasm_core::collection_codec::{CollectionIdentity, ResultCoverage};
+        let (control, _pauses) =
+            EffectContinuation::new(Uuid::new_v4(), Duration::from_secs(2)).unwrap();
+        let selection = |coverage| crate::execution_failure::EffectSelectionEvidence {
+            collection: CollectionIdentity {
+                catalog: [1; 32],
+                expression: [2; 32],
+                epoch: 0,
+            },
+            coverage,
+            count: 1,
+            scope_path: vec!["map".into()],
+            occurrence_path: vec![],
+        };
+        assert!(!control.selections_have_complete_coverage());
+        control
+            .clone()
+            .scope(async {
+                EffectContinuation::selection_scope(selection(ResultCoverage::Complete), async {})
+                    .await;
+                assert!(control.selections_have_complete_coverage());
+                EffectContinuation::selection_scope(selection(ResultCoverage::Partial), async {})
+                    .await;
+                EffectContinuation::selection_scope(selection(ResultCoverage::Complete), async {})
+                    .await;
+            })
+            .await;
+        assert!(!control.selections_have_complete_coverage());
+        let (unknown, _pauses) =
+            EffectContinuation::new(Uuid::new_v4(), Duration::from_secs(2)).unwrap();
+        unknown
+            .clone()
+            .scope(async {
+                EffectContinuation::selection_scope(selection(ResultCoverage::Unknown), async {})
+                    .await;
+            })
+            .await;
+        assert!(!unknown.selections_have_complete_coverage());
+    }
+
+    #[tokio::test]
     async fn nested_selection_reservations_share_a_bounded_budget() {
         let (control, _pauses) =
             EffectContinuation::new(Uuid::new_v4(), Duration::from_secs(2)).unwrap();
@@ -376,6 +448,25 @@ mod tests {
             pause.resume(workflow),
             Err(EffectContinuationError::AlreadyResolved)
         );
+        assert_eq!(pending.await, Ok(()));
+    }
+
+    #[tokio::test]
+    async fn native_control_cannot_resume_another_runs_checkpoint() {
+        let (owner, mut pauses) = EffectContinuation::new_native(Duration::from_secs(2)).unwrap();
+        let (other, _other_pauses) =
+            EffectContinuation::new_native(Duration::from_secs(2)).unwrap();
+        let pending = owner.checkpoint(failure(MutationDispatchStatus::RejectedWithoutEffect));
+        tokio::pin!(pending);
+        let mut pause = tokio::select! {
+            pause = pauses.recv() => pause.unwrap(),
+            _ = &mut pending => panic!("checkpoint returned before resume"),
+        };
+        assert_eq!(
+            other.resume(&mut pause),
+            Err(EffectContinuationError::WorkflowMismatch)
+        );
+        owner.resume(&mut pause).unwrap();
         assert_eq!(pending.await, Ok(()));
     }
 
