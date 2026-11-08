@@ -34,8 +34,8 @@ pub(crate) fn value_map_capacity(values: &IndexMap<String, Value>, depth: usize)
     )
 }
 
-/// Account a resolved value's owned heap capacity; unsupported opaque operands
-/// or excessive nesting conservatively return `usize::MAX`.
+/// Account a value's owned heap capacity; excessive nesting conservatively
+/// returns `usize::MAX`.
 pub fn resolved_value_retention_capacity(value: &Value) -> usize {
     value_retention_capacity(value, 0)
 }
@@ -59,17 +59,36 @@ pub(crate) fn value_retention_capacity(value: &Value, depth: usize) -> usize {
         } => ctor_label
             .capacity()
             .saturating_add(value_map_capacity(ctor_fields, depth + 1)),
-        // These operands can retain private compiler state not represented by
-        // their serialized view, and should have been resolved before execution.
-        Value::StringTemplate(_) | Value::GetScalarExtract(_) | Value::PlasmInputRef(_) => {
-            usize::MAX
+        Value::StringTemplate(template) => template.metadata_retention_capacity_bytes(),
+        Value::PlasmInputRef(reference) => {
+            let (name, path) = match reference {
+                plasm_core::PlasmInputRef::NodeInput { node, path } => (node, path),
+                plasm_core::PlasmInputRef::RowBinding { binding, path } => (binding, path),
+            };
+            path.iter().fold(
+                name.capacity().saturating_add(
+                    path.capacity()
+                        .saturating_mul(std::mem::size_of::<String>()),
+                ),
+                |sum, segment| sum.saturating_add(segment.capacity()),
+            )
         }
-        Value::Null
-        | Value::Bool(_)
-        | Value::Integer(_)
-        | Value::Unsigned(_)
-        | Value::Float(_)
-        | Value::Money(_) => 0,
+        Value::GetScalarExtract(extract) => extract
+            .entity
+            .capacity()
+            .saturating_add(extract.wire.capacity())
+            .saturating_add(
+                extract
+                    .catalog_entry_id
+                    .as_ref()
+                    .map_or(0, String::capacity),
+            )
+            .saturating_add(std::mem::size_of::<Value>())
+            .saturating_add(value_retention_capacity(&extract.identity, depth + 1)),
+        Value::Money(money) => money.retention_capacity_bytes(),
+        Value::Null | Value::Bool(_) | Value::Integer(_) | Value::Unsigned(_) | Value::Float(_) => {
+            0
+        }
     }
 }
 
@@ -958,6 +977,36 @@ pub fn replay_store_lookup(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn executable_operand_capacity_counts_retained_storage() {
+        use crate::execution::effect_continuation::MAX_EFFECT_SELECTION_BYTES;
+        let large = || {
+            let mut text = String::with_capacity(MAX_EFFECT_SELECTION_BYTES + 1);
+            text.push('x');
+            text
+        };
+        let operands = [
+            Value::StringTemplate(plasm_core::CompiledProgramString::compile(large()).unwrap()),
+            Value::PlasmInputRef(plasm_core::PlasmInputRef::RowBinding {
+                binding: large(),
+                path: Vec::new(),
+            }),
+            Value::GetScalarExtract(plasm_core::GetScalarExtract {
+                entity: "Item".into(),
+                identity: Box::new(Value::String(large())),
+                wire: "id".into(),
+                catalog_entry_id: None,
+            }),
+        ];
+        for value in &operands {
+            assert!(value_retention_capacity(value, 0) > MAX_EFFECT_SELECTION_BYTES);
+        }
+        let small = Value::StringTemplate(
+            plasm_core::CompiledProgramString::compile("{{ name }}".into()).unwrap(),
+        );
+        assert!(value_retention_capacity(&small, 0) < MAX_EFFECT_SELECTION_BYTES);
+    }
 
     #[tokio::test]
     async fn lazy_fork_base_charges_hidden_identity_capacity() {

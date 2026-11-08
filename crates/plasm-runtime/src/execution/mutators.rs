@@ -1783,6 +1783,57 @@ mod continuation_tests {
     }
 
     #[tokio::test]
+    async fn bounded_template_environment_can_resume_known_rejection() {
+        let transport = Arc::new(Transport {
+            statuses: vec![422, 200],
+            opaque: false,
+            requests: Mutex::new(Vec::new()),
+        });
+        let engine = ExecutionEngine::new_with_transport(
+            ExecutionConfig {
+                base_url: Some("https://fixture.test".into()),
+                ..Default::default()
+            },
+            Arc::clone(&transport) as Arc<dyn HttpTransport>,
+            None,
+        );
+        let compiled = request();
+        let graph = SessionMaterialization::new();
+        let capability = capability();
+        let template =
+            plasm_core::CompiledProgramString::compile("Hello {{ name }}".into()).unwrap();
+        let env = CmlEnv::from([("unused".into(), Value::StringTemplate(template))]);
+        let journal = super::super::mutation_evidence::MutationJournal::default();
+        let workflow = Uuid::new_v4();
+        let (control, mut pauses) =
+            EffectContinuation::new(workflow, Duration::from_secs(5)).unwrap();
+        let run = control.scope(journal.scope(engine.dispatch_compiled_mutation(
+            &compiled,
+            "PwExpense",
+            OperationIdentity {
+                entry_id: "matrix".into(),
+                capability: "pwexpense_create".into(),
+            },
+            &capability,
+            None,
+            RetainedMutationFrame {
+                materialization: &graph,
+                env: &env,
+            },
+        )));
+        tokio::pin!(run);
+        let mut pause = tokio::select! {
+            pause = pauses.recv() => pause.expect("known rejection should pause"),
+            result = &mut run => panic!("bounded template environment refused the checkpoint: {result:?}"),
+        };
+        pause.resume(workflow).unwrap();
+        assert!(run.await.is_ok());
+        let requests = transport.requests.lock().unwrap();
+        assert_eq!(requests.len(), 2);
+        assert_eq!(requests[0].0, requests[1].0);
+    }
+
+    #[tokio::test]
     async fn repeated_known_rejections_preserve_each_attempt() {
         exercise_resume(false, false, 422, false, 2, false).await;
     }

@@ -247,6 +247,13 @@ impl PartialEq for MoneyValue {
 }
 
 impl MoneyValue {
+    /// Heap capacity retained by the optional currency code.
+    pub fn retention_capacity_bytes(&self) -> usize {
+        self.currency
+            .as_ref()
+            .map_or(0, |currency| currency.0.capacity())
+    }
+
     #[must_use]
     pub fn new(amount: Decimal, currency: Option<String>) -> Self {
         Self {
