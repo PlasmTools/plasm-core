@@ -7,6 +7,51 @@ use crate::plasm_plan::{
     enrich_uses_result_provenance, parse_plan_value, validate_plan_artifact, validate_plan_value,
 };
 
+#[tokio::test]
+async fn validated_plan_payload_obeys_the_continuation_budget() {
+    use plasm_runtime::execution::effect_continuation::{
+        EffectContinuation, EffectContinuationError, MAX_EFFECT_SELECTION_BYTES,
+    };
+
+    let id = PlanNodeId::new("value").unwrap();
+    let node = ValidatedPlanNode::Data(ValidatedDataNode {
+        recorded_output: None,
+        id: id.clone(),
+        effect_class: EffectClass::Read,
+        result_shape: ResultShape::Single,
+        data: PlanValue::BindingSymbol {
+            binding: "x".repeat(MAX_EFFECT_SELECTION_BYTES + 1),
+            path: Vec::new(),
+        },
+        depends_on: Vec::new(),
+        uses_result: Vec::new(),
+    });
+    let plan = Plan::new_program(
+        1,
+        None,
+        vec![node],
+        ValidatedPlanReturn::Node(id.clone()),
+        Default::default(),
+    );
+    let artifact = ValidatedPlanArtifact::from_parts(
+        plan,
+        vec![id.clone()],
+        std::collections::HashMap::from([(id, 0)]),
+        Vec::new(),
+    );
+    let (control, _pauses) =
+        EffectContinuation::new_native(std::time::Duration::from_secs(2)).unwrap();
+    control
+        .scope(async {
+            assert!(matches!(
+                EffectContinuation::reserve_retained(&artifact),
+                Err(EffectContinuationError::SelectionBudget(_))
+            ));
+            assert!(EffectContinuation::reserve_retained(&"small").is_ok());
+        })
+        .await;
+}
+
 #[test]
 fn dependency_chain_growth_does_not_grow_native_stack() {
     let count = 65_536;

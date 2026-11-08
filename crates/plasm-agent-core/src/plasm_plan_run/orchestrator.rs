@@ -398,6 +398,7 @@ pub(crate) async fn run_executable_plan_phased(
             (
                 &dry.artifact().comp,
                 &dry.artifact().approval_gates,
+                dry.validated(),
                 &executable,
                 &payload_by_step,
             ),
