@@ -414,6 +414,35 @@ impl ValidatedPlanArtifact {
                 sum.saturating_add(id.0.capacity())
             })
         }
+        fn strings(values: &Vec<String>) -> usize {
+            values.iter().fold(vec_bytes(values), |sum, value| {
+                sum.saturating_add(value.capacity())
+            })
+        }
+        fn entity(value: &QualifiedEntityKey) -> usize {
+            value
+                .entry_id
+                .capacity()
+                .saturating_add(value.entity.capacity())
+        }
+        fn bindings(values: &Vec<PlanInputBinding>) -> usize {
+            values.iter().fold(vec_bytes(values), |sum, value| {
+                sum.saturating_add(value.from.capacity())
+                    .saturating_add(value.to.capacity())
+            })
+        }
+        fn projection(value: &Option<Vec<String>>) -> usize {
+            value.as_ref().map_or(0, strings)
+        }
+        fn template(value: &ValidatedPlanExprTemplate) -> usize {
+            projection(&value.projection).saturating_add(bindings(&value.input_bindings))
+        }
+        fn effect(value: &ValidatedEffectTemplate) -> usize {
+            entity(&value.qualified_entity)
+                .saturating_add(template(&value.ir_template))
+                .saturating_add(strings(&value.projection))
+                .saturating_add(bindings(&value.input_bindings))
+        }
         fn common(dependencies: &Vec<PlanNodeId>, uses: &Vec<PlanResultUse>) -> usize {
             uses.iter().fold(
                 id_bytes(dependencies).saturating_add(vec_bytes(uses)),
@@ -461,6 +490,77 @@ impl ValidatedPlanArtifact {
                 ValidatedPlanNode::Capture(_) => 0,
             };
             bytes = bytes.saturating_add(node_common);
+            let node_owned = match node {
+                ValidatedPlanNode::Surface(n) => n
+                    .qualified_entity
+                    .as_ref()
+                    .map_or(0, entity)
+                    .saturating_add(n.ir.as_ref().map_or(0, |ir| projection(&ir.projection)))
+                    .saturating_add(n.ir_template.as_ref().map_or(0, template))
+                    .saturating_add(strings(&n.projection))
+                    .saturating_add(vec_bytes(&n.predicates))
+                    .saturating_add(n.approval.as_ref().map_or(0, String::capacity)),
+                ValidatedPlanNode::Data(_) => 0,
+                ValidatedPlanNode::Derive(n) => n.inputs.iter().fold(
+                    n.source
+                        .0
+                        .capacity()
+                        .saturating_add(n.item_binding.0.capacity())
+                        .saturating_add(vec_bytes(&n.inputs)),
+                    |sum, input| {
+                        sum.saturating_add(input.node.0.capacity())
+                            .saturating_add(input.alias.0.capacity())
+                    },
+                ),
+                ValidatedPlanNode::Compute(n) => n.source_node.0.capacity(),
+                ValidatedPlanNode::ForEach(n) => n
+                    .source
+                    .0
+                    .capacity()
+                    .saturating_add(n.item_binding.0.capacity())
+                    .saturating_add(effect(&n.effect_template))
+                    .saturating_add(strings(&n.projection))
+                    .saturating_add(vec_bytes(&n.predicates))
+                    .saturating_add(n.approval.as_ref().map_or(0, String::capacity)),
+                ValidatedPlanNode::IterateUntil(n) => n
+                    .source
+                    .0
+                    .capacity()
+                    .saturating_add(n.item_binding.0.capacity())
+                    .saturating_add(effect(&n.effect_template))
+                    .saturating_add(vec_bytes(&n.until_predicates))
+                    .saturating_add(n.approval.as_ref().map_or(0, String::capacity))
+                    .saturating_add(
+                        n.seed_ir
+                            .as_ref()
+                            .map_or(0, |ir| projection(&ir.projection)),
+                    )
+                    .saturating_add(usize::from(n.until_scope.is_some()).saturating_mul(
+                        std::mem::size_of::<plasm_core::plasm_monad::CorrelatedBody>(),
+                    ))
+                    .saturating_add(usize::from(n.step_scope.is_some()).saturating_mul(
+                        std::mem::size_of::<plasm_core::plasm_monad::CorrelatedBody>(),
+                    )),
+                ValidatedPlanNode::RelationTraversal(n) => n.relation.binding_proofs.iter().fold(
+                    n.relation
+                        .source
+                        .0
+                        .capacity()
+                        .saturating_add(n.relation.relation.0.capacity())
+                        .saturating_add(entity(&n.relation.target))
+                        .saturating_add(projection(&n.relation.ir.projection))
+                        .saturating_add(vec_bytes(&n.relation.binding_proofs)),
+                    |sum, proof| {
+                        sum.saturating_add(proof.cap_param.capacity())
+                            .saturating_add(proof.parent_field.capacity())
+                    },
+                ),
+                ValidatedPlanNode::MapBody(_) => {
+                    std::mem::size_of::<plasm_core::plasm_monad::CorrelatedBody>()
+                }
+                ValidatedPlanNode::Capture(n) => entity(&n.entity),
+            };
+            bytes = bytes.saturating_add(node_owned);
             for nested in node.nested_plans() {
                 bytes = bytes
                     .saturating_add(std::mem::size_of::<ValidatedPlanArtifact>())

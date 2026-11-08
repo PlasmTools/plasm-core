@@ -88,6 +88,64 @@ async fn validated_plan_spare_node_capacity_obeys_the_continuation_budget() {
         .await;
 }
 
+#[tokio::test]
+async fn validated_node_projection_capacity_obeys_the_continuation_budget() {
+    use plasm_runtime::execution::effect_continuation::{
+        EffectContinuation, EffectContinuationError, MAX_EFFECT_SELECTION_BYTES,
+    };
+
+    let mut field = String::with_capacity(MAX_EFFECT_SELECTION_BYTES + 1);
+    field.push('x');
+    let projections = [
+        Vec::with_capacity(MAX_EFFECT_SELECTION_BYTES / std::mem::size_of::<String>() + 1),
+        vec![field],
+    ];
+    let (control, _pauses) =
+        EffectContinuation::new_native(std::time::Duration::from_secs(2)).unwrap();
+    control
+        .scope(async {
+            for projection in projections {
+                let id = PlanNodeId::new("read").unwrap();
+                let node = ValidatedPlanNode::Surface(ValidatedSurfaceNode {
+                    id: id.clone(),
+                    kind: PlanNodeKind::Query,
+                    qualified_entity: None,
+                    ir: None,
+                    ir_template: None,
+                    effect_class: EffectClass::Read,
+                    result_shape: ResultShape::List,
+                    projection,
+                    predicates: Vec::new(),
+                    depends_on: Vec::new(),
+                    uses_result: Vec::new(),
+                    approval: None,
+                    page_size: None,
+                    pushed_read_budget: None,
+                });
+                let plan = Plan::new_program(
+                    1,
+                    None,
+                    vec![node],
+                    ValidatedPlanReturn::Node(id.clone()),
+                    Default::default(),
+                );
+                let artifact = ValidatedPlanArtifact::from_parts(
+                    plan,
+                    vec![id.clone()],
+                    std::collections::HashMap::from([(id, 0)]),
+                    Vec::new(),
+                );
+                let mut reservation = EffectContinuation::reserve_retained(&artifact).unwrap();
+                assert!(matches!(
+                    reservation.add_capacity_bytes(artifact.structural_retention_capacity_bytes()),
+                    Err(EffectContinuationError::SelectionBudget(_))
+                ));
+            }
+            assert!(EffectContinuation::reserve_retained(&"small").is_ok());
+        })
+        .await;
+}
+
 #[test]
 fn dependency_chain_growth_does_not_grow_native_stack() {
     let count = 65_536;
