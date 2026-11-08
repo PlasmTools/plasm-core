@@ -128,6 +128,13 @@ pub struct PaginationProgressGuard {
 }
 
 impl PaginationProgressGuard {
+    /// Internal accounting view; cursor and identity digests remain off the wire.
+    pub(super) fn retained_components(
+        &self,
+    ) -> (&BTreeSet<String>, &BTreeSet<String>, &Option<String>) {
+        (&self.seen_coords, &self.seen_ids, &self.last_cursor_digest)
+    }
+
     fn observe_page(
         &mut self,
         coordinate_digest: &str,
@@ -352,6 +359,29 @@ impl std::fmt::Display for PaginationTerminalReason {
 mod tests {
     use super::*;
     use plasm_compile::{PaginationLocation, PaginationParam, PaginationParamRole};
+
+    #[tokio::test]
+    async fn pagination_progress_retention_accounts_for_seen_identities() {
+        use super::super::effect_continuation::{
+            EffectContinuation, EffectContinuationError, MAX_EFFECT_SELECTION_BYTES,
+        };
+        let mut guard = PaginationProgressGuard::default();
+        guard
+            .seen_ids
+            .insert("x".repeat(MAX_EFFECT_SELECTION_BYTES));
+        let (control, _pauses) =
+            EffectContinuation::new_native(std::time::Duration::from_secs(1)).unwrap();
+        control
+            .scope(async {
+                assert!(matches!(
+                    EffectContinuation::reserve_retained(&guard.retained_components()),
+                    Err(EffectContinuationError::SelectionBudget(
+                        plasm_core::ValueBudgetError::BytesExceeded
+                    ))
+                ));
+            })
+            .await;
+    }
 
     fn page(
         driver: &mut PaginationDriver,

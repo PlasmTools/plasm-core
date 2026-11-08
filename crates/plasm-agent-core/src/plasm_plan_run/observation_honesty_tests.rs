@@ -17,6 +17,7 @@ struct Store {
     attempts: usize,
     rows: Vec<serde_json::Value>,
     source_rows: Vec<serde_json::Value>,
+    response_padding: usize,
 }
 struct Transport {
     store: Arc<Mutex<Store>>,
@@ -51,7 +52,16 @@ impl HttpTransport for Transport {
             let Value::Object(body) = req.body.as_ref().expect("POST body") else {
                 panic!("object body")
             };
-            let row = json!({"expense_id": format!("e{}", attempt+1), "group_id": "g1", "description": body.get("description").unwrap().as_str().unwrap()});
+            let description = if store.response_padding == 0 {
+                body.get("description")
+                    .unwrap()
+                    .as_str()
+                    .unwrap()
+                    .to_owned()
+            } else {
+                "x".repeat(store.response_padding)
+            };
+            let row = json!({"expense_id": format!("e{}", attempt+1), "group_id": "g1", "description": description});
             store.rows.push(row.clone());
             return Ok((row, None));
         }
@@ -663,6 +673,53 @@ async fn oversized_continuation_inputs_stop_before_scoped_writes() {
     assert_eq!(budget.unit, plasm_runtime::InputBudgetUnit::AccountedBytes);
     assert_eq!(budget.limit, MAX_EFFECT_SELECTION_BYTES);
     assert_eq!(store.lock().unwrap().attempts, 0);
+}
+
+#[tokio::test]
+async fn oversized_accumulated_scope_output_keeps_completed_effect_and_stops_suffix() {
+    use plasm_runtime::execution::effect_continuation::{
+        EffectContinuation, MAX_EFFECT_SELECTION_BYTES,
+    };
+    use std::time::Duration;
+    let OrderedFanoutFixture {
+        host,
+        session,
+        opened,
+        store,
+    } = ordered_fanout_fixture(3, usize::MAX, true).await;
+    store.lock().unwrap().response_padding = MAX_EFFECT_SELECTION_BYTES;
+    let symbols = session.teaching_exposure.as_ref().unwrap().to_symbol_map();
+    let entity = symbols.entity_sym_for("matrix", "PwExpense");
+    let create = symbols.method_sym_for("matrix", "PwExpense", "create");
+    let source = format!("class Observe(Program):\n    def build(self):\n        source = {entity}.query(group_id=\"source\")\n        return source.flat_map(lambda row: {entity}.{create}(group_id=\"dest\", description=row.description))\n");
+    let bundle = crate::plasm_compile::compile_python_program(&session, &source)
+        .await
+        .unwrap();
+    let (control, _pauses) = EffectContinuation::new_native(Duration::from_secs(10)).unwrap();
+    let failure = control
+        .scope(Box::pin(ExecutePipeline::run_program(
+            &session,
+            &host,
+            &opened.prompt_hash,
+            &opened.session_id,
+            &bundle,
+            ExecutionIntent::Live,
+            None,
+            None,
+            None,
+        )))
+        .await
+        .expect_err("oversized accumulated output must stop the suffix");
+    assert_eq!(failure.code, "effect_scope_retention_refused");
+    assert_eq!(
+        failure
+            .effects
+            .iter()
+            .map(|ack| ack.completed)
+            .sum::<usize>(),
+        1
+    );
+    assert_eq!(store.lock().unwrap().attempts, 1);
 }
 
 async fn resumed_fanout_case(cancel: bool, duplicate: bool) {

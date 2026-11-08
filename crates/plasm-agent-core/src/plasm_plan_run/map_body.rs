@@ -40,6 +40,33 @@ fn scope_failure(code: &'static str, diagnostic: impl Into<String>) -> Execution
     ExecutionFailure::new(plasm_runtime::FailureCause::Program, code, diagnostic)
 }
 
+fn charge_scope_payload<T: serde::Serialize + ?Sized>(
+    reservation: &mut Option<plasm_runtime::execution::effect_continuation::SelectionReservation>,
+    payload: &T,
+) -> Result<(), ExecutionFailure> {
+    let Some(reservation) = reservation else {
+        return Ok(());
+    };
+    reservation.add_retained(payload).map_err(|error| {
+        let mut failure = scope_failure("effect_scope_retention_refused", error.to_string());
+        if matches!(
+            error,
+            plasm_runtime::execution::effect_continuation::EffectContinuationError::SelectionBudget(
+                plasm_core::ValueBudgetError::BytesExceeded
+            )
+        ) {
+            failure.input_budget = Some(plasm_runtime::InputBudgetEvidence {
+                unit: plasm_runtime::InputBudgetUnit::AccountedBytes,
+                limit: plasm_runtime::execution::effect_continuation::MAX_EFFECT_SELECTION_BYTES,
+                observed_at_least: plasm_runtime::execution::effect_continuation::MAX_EFFECT_SELECTION_BYTES
+                    + 1,
+                input: "scope output".into(),
+            });
+        }
+        failure
+    })
+}
+
 fn scope_rehydration_failure(
     error: crate::graph_rehydrate::GraphRehydrateError,
 ) -> ExecutionFailure {
@@ -180,6 +207,11 @@ pub(super) async fn materialize(
         occurrence_path: ctx.occurrence_path.clone(),
     };
     let mut operations = plasm_runtime::OperationLedger::empty();
+    let mut retained_outputs = matches!(
+        body.effect_class(),
+        EffectClass::Write | EffectClass::SideEffect
+    )
+    .then(plasm_runtime::execution::effect_continuation::EffectContinuation::empty_retention);
     let execution: Result<_, ExecutionFailure> =
         plasm_runtime::execution::effect_continuation::EffectContinuation::selection_scope(
             selection.clone(), async {
@@ -361,14 +393,22 @@ pub(super) async fn materialize(
                         address.qualify_ack(&mut ack);
                         operations.merge_ack(ack);
                     }
+                    charge_scope_payload(&mut retained_outputs, &outcome.mat.result.operations)?;
+                    for _ in outcome.mat.result.operations.entries() {
+                        charge_scope_payload(&mut retained_outputs, &address)?;
+                    }
                 }
                 execution_source = super::plan_fanout_parallel::combine_execution_source(
                     execution_source,
                     outcome.mat.result.source,
                 );
+                charge_scope_payload(
+                    &mut retained_outputs,
+                    &outcome.mat.result.request_fingerprints,
+                )?;
                 fingerprints.extend(outcome.mat.result.request_fingerprints.iter().cloned());
                 stats.network_requests += outcome.mat.result.stats.network_requests;
-                steps.push(serde_json::json!({
+                let step_evidence = serde_json::json!({
                     "address": {"scope_path": scope_path, "local_step": step.as_str()},
                     "occurrence_path": occurrence_path, "phase": "done",
                     "rows": outcome.mat.result.count(),
@@ -376,7 +416,10 @@ pub(super) async fn materialize(
                     "request_fingerprints": outcome.mat.result.request_fingerprints,
                     "operations": outcome.mat.result.operations,
                     "scope_instances": outcome.scope_instances,
-                }));
+                });
+                charge_scope_payload(&mut retained_outputs, &step_evidence)?;
+                steps.push(step_evidence);
+                charge_scope_payload(&mut retained_outputs, &outcome.mat.result.collection)?;
                 dependencies.push(outcome.mat.result.collection.clone());
                 environment.insert(outcome.node_id, outcome.mat);
             }
@@ -431,6 +474,12 @@ pub(super) async fn materialize(
                         scope_failure("scope_output_value_shape_invalid", diagnostic.to_string())
                     })?);
             }
+            charge_scope_payload(&mut retained_outputs, &values)?;
+            charge_scope_payload(
+                &mut retained_outputs,
+                &super::step_materialize::RetainedIdentities(&output.row_identities),
+            )?;
+            charge_scope_payload(&mut retained_outputs, &occurrence_path)?;
             rows.extend(values);
             identities.extend(output.row_identities.clone());
             plasm_runtime::execution::effect_continuation::EffectContinuation::complete_selection_occurrence(occurrence);
@@ -480,6 +529,8 @@ pub(super) async fn materialize(
             .map_err(|diagnostic| {
                 scope_failure("scope_record_materialization_failed", diagnostic.to_string())
             })?;
+        charge_scope_payload(&mut retained_outputs, &row)?;
+        charge_scope_payload(&mut retained_outputs, &occurrence_path)?;
         rows.push(plasm_core::ValueRow::from(row));
         value_shapes.push(MaterializedValueShape::Record);
         completed += 1;

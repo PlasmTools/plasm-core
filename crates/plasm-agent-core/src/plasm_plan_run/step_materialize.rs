@@ -13,7 +13,7 @@ fn step_failure(code: &'static str, diagnostic: impl Into<String>) -> ExecutionF
     ExecutionFailure::new(plasm_runtime::FailureCause::Program, code, diagnostic)
 }
 
-struct RetainedIdentities<'a>(&'a [Option<plasm_core::RowIdentity>]);
+pub(super) struct RetainedIdentities<'a>(pub(super) &'a [Option<plasm_core::RowIdentity>]);
 
 impl serde::Serialize for RetainedIdentities<'_> {
     fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
@@ -33,8 +33,7 @@ impl serde::Serialize for RetainedIdentities<'_> {
 
 /// These values remain reachable through the step's borrowed environment while
 /// a nested dispatch is suspended. Charge their wire payload without retaining
-/// an additional copy. Host-only pagination state and other future frames are
-/// not included by this accounting.
+/// an additional copy. Other future frames are not included by this accounting.
 fn reserve_materialized_inputs(
     materialized: &BTreeMap<PlanNodeId, MaterializedNode>,
     step_id: &StepId,
@@ -70,6 +69,9 @@ fn reserve_materialized_inputs(
     for value in materialized.values() {
         reservations
             .push(EffectContinuation::reserve_retained(value.result.as_ref()).map_err(&failure)?);
+        if let Some(resume) = &value.result.pagination_resume {
+            reservations.push(EffectContinuation::reserve_pagination(resume).map_err(&failure)?);
+        }
         match &value.row_source {
             MaterializedRowSource::Inline(rows) => {
                 reservations.push(EffectContinuation::reserve_retained(rows).map_err(&failure)?)

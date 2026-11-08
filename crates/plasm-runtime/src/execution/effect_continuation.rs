@@ -143,6 +143,58 @@ pub struct SelectionReservation {
     bytes: usize,
 }
 
+impl SelectionReservation {
+    /// Add a newly retained payload to this reservation without copying it.
+    pub fn add_retained<T: serde::Serialize + ?Sized>(
+        &mut self,
+        value: &T,
+    ) -> Result<(), EffectContinuationError> {
+        let Some(state) = &self.state else {
+            return Ok(());
+        };
+        struct Counter {
+            remaining: usize,
+            exceeded: bool,
+        }
+        impl std::io::Write for Counter {
+            fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
+                if let Some(remaining) = self.remaining.checked_sub(bytes.len()) {
+                    self.remaining = remaining;
+                    Ok(bytes.len())
+                } else {
+                    self.exceeded = true;
+                    Err(std::io::Error::other("continuation budget exceeded"))
+                }
+            }
+            fn flush(&mut self) -> std::io::Result<()> {
+                Ok(())
+            }
+        }
+        let mut used = state
+            .selection_bytes
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        let initial = MAX_EFFECT_SELECTION_BYTES - *used;
+        let mut counter = Counter {
+            remaining: initial,
+            exceeded: false,
+        };
+        if let Err(error) = serde_json::to_writer(&mut counter, value) {
+            return Err(if counter.exceeded {
+                EffectContinuationError::SelectionBudget(
+                    plasm_core::ValueBudgetError::BytesExceeded,
+                )
+            } else {
+                EffectContinuationError::RetainedSerialization(error)
+            });
+        }
+        let bytes = initial - counter.remaining;
+        *used += bytes;
+        self.bytes += bytes;
+        Ok(())
+    }
+}
+
 impl Drop for SelectionReservation {
     fn drop(&mut self) {
         if let Some(state) = &self.state {
@@ -326,56 +378,33 @@ impl EffectContinuation {
     pub fn reserve_retained<T: serde::Serialize + ?Sized>(
         value: &T,
     ) -> Result<SelectionReservation, EffectContinuationError> {
-        let Some(control) = Self::current() else {
-            return Ok(SelectionReservation {
-                state: None,
-                bytes: 0,
-            });
-        };
-        struct Counter {
-            remaining: usize,
-            exceeded: bool,
+        let mut reservation = Self::empty_retention();
+        reservation.add_retained(value)?;
+        Ok(reservation)
+    }
+
+    /// Start an incremental reservation for a growing interpreter frame.
+    pub fn empty_retention() -> SelectionReservation {
+        SelectionReservation {
+            state: Self::current().map(|control| control.state),
+            bytes: 0,
         }
-        impl std::io::Write for Counter {
-            fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
-                if let Some(remaining) = self.remaining.checked_sub(bytes.len()) {
-                    self.remaining = remaining;
-                    Ok(bytes.len())
-                } else {
-                    self.exceeded = true;
-                    Err(std::io::Error::other("continuation budget exceeded"))
-                }
-            }
-            fn flush(&mut self) -> std::io::Result<()> {
-                Ok(())
-            }
-        }
-        let mut used = control
-            .state
-            .selection_bytes
-            .lock()
-            .unwrap_or_else(|e| e.into_inner());
-        let initial = MAX_EFFECT_SELECTION_BYTES - *used;
-        let mut counter = Counter {
-            remaining: initial,
-            exceeded: false,
-        };
-        if let Err(error) = serde_json::to_writer(&mut counter, value) {
-            return Err(if counter.exceeded {
-                EffectContinuationError::SelectionBudget(
-                    plasm_core::ValueBudgetError::BytesExceeded,
-                )
-            } else {
-                EffectContinuationError::RetainedSerialization(error)
-            });
-        }
-        let bytes = initial - counter.remaining;
-        *used += bytes;
-        drop(used);
-        Ok(SelectionReservation {
-            state: Some(control.state),
-            bytes,
-        })
+    }
+
+    /// Account host-only query continuation data without serializing it to a
+    /// buffer or exposing its environment, template, URLs, or page digests.
+    pub fn reserve_pagination(
+        resume: &super::QueryPaginationResumeData,
+    ) -> Result<SelectionReservation, EffectContinuationError> {
+        Self::reserve_retained(&(
+            &resume.query,
+            &resume.capability_name,
+            &resume.env,
+            &resume.template,
+            &resume.config,
+            &resume.state,
+            resume.state.progress_guard.retained_components(),
+        ))
     }
 
     /// Carry public selection accounting into a checkpoint while the owning
@@ -913,6 +942,45 @@ mod tests {
                 let selection = EffectContinuation::reserve_selection(&[row]).unwrap();
                 drop(selection);
                 assert!(EffectContinuation::reserve_retained(&payload).is_ok());
+            })
+            .await;
+    }
+
+    #[tokio::test]
+    async fn host_only_pagination_environment_is_charged_without_wire_serialization() {
+        let (control, _pauses) = EffectContinuation::new_native(Duration::from_secs(2)).unwrap();
+        let mut resume = super::super::QueryPaginationResumeData {
+            query: plasm_core::QueryExpr::all("Item"),
+            capability_name: "items".into(),
+            env: Default::default(),
+            template: plasm_compile::CapabilityTemplate::View(plasm_compile::ViewTemplate {
+                view: "items".into(),
+            }),
+            config: serde_json::from_value(serde_json::json!({})).unwrap(),
+            state: super::super::QueryPaginationState {
+                progress_guard: Default::default(),
+                mcp_collection: Default::default(),
+                param_values: Vec::new(),
+                pages_observed: 0,
+                next_absolute_url: None,
+                last_requested_limit: 1,
+                from_block: None,
+                final_to_block: None,
+                last_requested_to_block: None,
+            },
+        };
+        resume.env.insert(
+            "private".into(),
+            plasm_core::Value::String("x".repeat(MAX_EFFECT_SELECTION_BYTES)),
+        );
+        control
+            .scope(async {
+                assert!(matches!(
+                    EffectContinuation::reserve_pagination(&resume),
+                    Err(EffectContinuationError::SelectionBudget(
+                        plasm_core::ValueBudgetError::BytesExceeded
+                    ))
+                ));
             })
             .await;
     }
