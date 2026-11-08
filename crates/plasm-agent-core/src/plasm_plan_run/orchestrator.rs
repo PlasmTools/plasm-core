@@ -880,6 +880,78 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn oversized_plan_evidence_capacity_retains_the_completed_effect() {
+        use plasm_runtime::execution::effect_continuation::{
+            EffectContinuation, MAX_EFFECT_SELECTION_BYTES,
+        };
+        let (control, _pauses) =
+            EffectContinuation::new_native(std::time::Duration::from_secs(2)).unwrap();
+        control
+            .scope(async {
+                for json_case in [false, true] {
+                    let mut mat = test_node("write");
+                    Arc::get_mut(&mut mat.result).unwrap().operations =
+                        plasm_runtime::OperationLedger::from_ack(plasm_runtime::OperationAck {
+                            resolved_effects: Vec::new(),
+                            entry_id: "test".into(),
+                            capability: "write".into(),
+                            entity: "Item".into(),
+                            logical_invocations: 1,
+                            completed: 1,
+                            failed: 0,
+                            source: ExecutionSource::Live,
+                            description: "write".into(),
+                            outcomes: Vec::new(),
+                        });
+                    let mut text = String::with_capacity(MAX_EFFECT_SELECTION_BYTES + 1);
+                    text.push('x');
+                    let outcome = PlanStepMaterializeOutcome {
+                        node_id: PlanNodeId::new("write").unwrap(),
+                        mat,
+                        evidence: StepExecutedRecord {
+                            step_id: "write".into(),
+                            step_index: 0,
+                            entry_id: None,
+                            source_line: if json_case {
+                                "x".into()
+                            } else {
+                                std::mem::take(&mut text)
+                            },
+                            parsed: plasm_core::expr_parser::ParsedExpr::from_expr(
+                                plasm_core::Expr::Query(plasm_core::QueryExpr::all("Item")),
+                            ),
+                            request_fingerprints: Vec::new(),
+                        },
+                        approval: None,
+                        scope_instances: json_case.then_some(serde_json::Value::String(text)),
+                    };
+                    let mut retained = Some(EffectContinuation::empty_retention());
+                    let failure = apply_step_materialize_outcomes(
+                        &mut BTreeMap::new(),
+                        &mut Vec::new(),
+                        &mut Vec::new(),
+                        &mut Vec::new(),
+                        [outcome],
+                        None,
+                        &mut retained,
+                    )
+                    .expect_err("oversized evidence allocation must be refused");
+                    assert_eq!(failure.code, "effect_plan_retention_refused");
+                    assert_eq!(
+                        failure
+                            .effects
+                            .iter()
+                            .map(|ack| ack.completed)
+                            .sum::<usize>(),
+                        1
+                    );
+                    assert!(failure.input_budget.is_some());
+                }
+            })
+            .await;
+    }
+
+    #[tokio::test]
     async fn oversized_plan_evidence_retains_the_completed_effect() {
         use plasm_runtime::execution::effect_continuation::{
             EffectContinuation, MAX_EFFECT_SELECTION_BYTES,

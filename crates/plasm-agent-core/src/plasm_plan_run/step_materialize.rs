@@ -362,24 +362,59 @@ pub(super) fn charge_plan_payload<T: serde::Serialize + ?Sized>(
     let Some(reservation) = reservation else {
         return Ok(());
     };
-    reservation.add_retained(payload).map_err(|error| {
-        use plasm_runtime::execution::effect_continuation::{
-            EffectContinuationError, MAX_EFFECT_SELECTION_BYTES,
-        };
-        let mut failure = step_failure("effect_plan_retention_refused", error.to_string());
-        if matches!(
-            error,
-            EffectContinuationError::SelectionBudget(plasm_core::ValueBudgetError::BytesExceeded)
-        ) {
-            failure.input_budget = Some(plasm_runtime::InputBudgetEvidence {
-                unit: plasm_runtime::InputBudgetUnit::AccountedBytes,
-                limit: MAX_EFFECT_SELECTION_BYTES,
-                observed_at_least: MAX_EFFECT_SELECTION_BYTES + 1,
-                input: "plan frame".into(),
-            });
-        }
-        failure
-    })
+    reservation
+        .add_retained(payload)
+        .map_err(plan_retention_failure)
+}
+
+fn plan_retention_failure(
+    error: plasm_runtime::execution::effect_continuation::EffectContinuationError,
+) -> ExecutionFailure {
+    use plasm_runtime::execution::effect_continuation::{
+        EffectContinuationError, MAX_EFFECT_SELECTION_BYTES,
+    };
+    let mut failure = step_failure("effect_plan_retention_refused", error.to_string());
+    if matches!(
+        error,
+        EffectContinuationError::SelectionBudget(plasm_core::ValueBudgetError::BytesExceeded)
+    ) {
+        failure.input_budget = Some(plasm_runtime::InputBudgetEvidence {
+            unit: plasm_runtime::InputBudgetUnit::AccountedBytes,
+            limit: MAX_EFFECT_SELECTION_BYTES,
+            observed_at_least: MAX_EFFECT_SELECTION_BYTES + 1,
+            input: "plan frame".into(),
+        });
+    }
+    failure
+}
+
+fn plan_evidence_capacity(outcome: &PlanStepMaterializeOutcome) -> usize {
+    let evidence = &outcome.evidence;
+    let mut bytes = evidence
+        .step_id
+        .capacity()
+        .saturating_add(evidence.source_line.capacity())
+        .saturating_add(evidence.entry_id.as_ref().map_or(0, String::capacity))
+        .saturating_add(
+            evidence
+                .request_fingerprints
+                .capacity()
+                .saturating_mul(std::mem::size_of::<String>()),
+        );
+    for fingerprint in &evidence.request_fingerprints {
+        bytes = bytes.saturating_add(fingerprint.capacity());
+    }
+    if let Some(instances) = &outcome.scope_instances {
+        bytes = bytes.saturating_add(plasm_runtime::materialization::retained_json_capacity(
+            instances,
+        ));
+    }
+    if let Some(approval) = &outcome.approval {
+        bytes = bytes.saturating_add(plasm_runtime::materialization::retained_json_capacity(
+            &approval.gate,
+        ));
+    }
+    bytes
 }
 
 /// Shared session/host context for live plan step materialization.
@@ -424,6 +459,12 @@ pub(crate) fn apply_step_materialize_outcomes(
             ),
         )
         .map_err(|failure| failure.with_effects(&outcome.mat.result.operations))?;
+        if let Some(reservation) = retained_evidence.as_mut() {
+            reservation
+                .add_capacity_bytes(plan_evidence_capacity(&outcome))
+                .map_err(plan_retention_failure)
+                .map_err(|failure| failure.with_effects(&outcome.mat.result.operations))?;
+        }
         if let Some(instances) = outcome.scope_instances {
             scope_instances.push(instances);
         }

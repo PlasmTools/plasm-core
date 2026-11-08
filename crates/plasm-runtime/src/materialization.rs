@@ -236,6 +236,11 @@ pub(crate) fn json_retention_capacity(value: &serde_json::Value, depth: usize) -
     }
 }
 
+/// Conservative capacity charge for a retained JSON value.
+pub fn retained_json_capacity(value: &serde_json::Value) -> usize {
+    json_retention_capacity(value, 0)
+}
+
 pub(crate) fn response_retention_capacity(
     entries: &std::collections::HashMap<RequestFingerprint, Arc<StoredResponse>>,
 ) -> usize {
