@@ -222,6 +222,8 @@ pub enum ContinuationAuthorizationReason {
 
 #[derive(Error, Debug)]
 pub enum RuntimeError {
+    #[error("mutation dispatch refused while its journal is suspended")]
+    MutationJournalPaused,
     #[error(transparent)]
     Mcp(#[from] Box<crate::mcp_execution::McpExecutionError>),
     #[error("request-owned identity requires observable resolved authentication")]

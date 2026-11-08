@@ -579,7 +579,16 @@ impl From<crate::RuntimeError> for ExecutionFailure {
             {
                 (FailureCause::Catalog, "mcp_binding_missing")
             }
+            Mcp(source)
+                if matches!(
+                    source.as_ref(),
+                    crate::mcp_execution::McpExecutionError::MutationJournalPaused
+                ) =>
+            {
+                (FailureCause::Runtime, "mutation_journal_paused")
+            }
             Mcp(_) => (FailureCause::ResponseContract, "mcp_response_contract"),
+            MutationJournalPaused => (FailureCause::Runtime, "mutation_journal_paused"),
             FieldUnavailable { .. } => (FailureCause::ResponseContract, "field_unavailable"),
             DecodeError {
                 source: plasm_compile::DecodeError::EntityAssertionMismatch { .. },
@@ -637,6 +646,7 @@ impl From<crate::RuntimeError> for ExecutionFailure {
                 crate::mcp_execution::McpExecutionError::Transport(_) =>
                     "MCP transport failed. Inspect the recorded transport evidence before another execution; dispatched effects may require reconciliation.".into(),
                 crate::mcp_execution::McpExecutionError::QueryArrayRequired
+                | crate::mcp_execution::McpExecutionError::MutationJournalPaused
                 | crate::mcp_execution::McpExecutionError::IncompleteCollection { .. }
                 | crate::mcp_execution::McpExecutionError::InvalidCollectionTotal { .. }
                 | crate::mcp_execution::McpExecutionError::CollectionLimit { .. }
@@ -708,7 +718,8 @@ impl From<crate::RuntimeError> for ExecutionFailure {
             CredentialProvider { .. } | Credential(_) | AuthenticationError(_) => "Configured authorization could not be resolved or used. Check the configured account and inspect the authorization evidence before another execution.".into(),
             // Explicit semantic-display whitelist: adding a runtime variant must
             // select its agent projection; no wildcard can promote a new payload.
-            RequestIdentityAuthOpaque
+            MutationJournalPaused
+            | RequestIdentityAuthOpaque
             | RequestIdentityCardinality { .. }
             | DeclaredOutputCardinality { .. }
             | ResponseNarrowing(_)

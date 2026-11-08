@@ -5,7 +5,10 @@ use super::OperationIdentity;
 use serde::{Deserialize, Serialize};
 use std::{
     future::Future,
-    sync::{Arc, Mutex},
+    sync::{
+        atomic::{AtomicBool, Ordering},
+        Arc, Mutex,
+    },
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -34,7 +37,29 @@ type Observer = Arc<dyn Fn(Vec<MutationDispatch>) + Send + Sync>;
 pub struct MutationJournal {
     entries: Arc<Mutex<Vec<MutationDispatch>>>,
     observer: Option<Observer>,
+    frozen: Arc<AtomicBool>,
 }
+
+/// Holds the journal immutable across one admitted checkpoint.
+pub(super) struct FrozenJournal {
+    journal: MutationJournal,
+    _reservation: super::effect_continuation::SelectionReservation,
+}
+
+impl Drop for FrozenJournal {
+    fn drop(&mut self) {
+        let _entries = self
+            .journal
+            .entries
+            .lock()
+            .expect("mutation journal poisoned");
+        self.journal.frozen.store(false, Ordering::Release);
+    }
+}
+
+#[derive(Debug, thiserror::Error)]
+#[error("mutation journal is suspended at a checkpoint")]
+pub(crate) struct JournalPaused;
 
 tokio::task_local! {
     static JOURNAL: MutationJournal;
@@ -50,14 +75,33 @@ impl MutationJournal {
             .len()
     }
 
-    pub(super) fn reserve_retention(
+    pub(super) fn freeze_retention(
         &self,
-    ) -> Result<
-        super::effect_continuation::SelectionReservation,
-        super::effect_continuation::EffectContinuationError,
-    > {
+        start: usize,
+        expected: &[MutationDispatch],
+    ) -> Result<FrozenJournal, super::effect_continuation::EffectContinuationError> {
         let entries = self.entries.lock().expect("mutation journal poisoned");
-        super::effect_continuation::EffectContinuation::reserve_retained(&*entries)
+        let candidate = expected.first();
+        let stable = matches!(expected, [entry] if entry.status == MutationDispatchStatus::RejectedWithoutEffect)
+            && entries.get(start..) == Some(expected)
+            && candidate.is_some_and(|candidate| {
+                entries[..start].iter().all(|previous| {
+                    previous.status == MutationDispatchStatus::RejectedWithoutEffect
+                        && previous.operation == candidate.operation
+                        && previous.request_fingerprint == candidate.request_fingerprint
+                        && previous.resolved_effect == candidate.resolved_effect
+                })
+            });
+        if !stable || self.frozen.load(Ordering::Acquire) {
+            return Err(super::effect_continuation::EffectContinuationError::ConcurrentCheckpoint);
+        }
+        let reservation =
+            super::effect_continuation::EffectContinuation::reserve_retained(&*entries)?;
+        self.frozen.store(true, Ordering::Release);
+        Ok(FrozenJournal {
+            journal: self.clone(),
+            _reservation: reservation,
+        })
     }
     pub(super) fn current() -> Option<Self> {
         JOURNAL.try_with(Clone::clone).ok()
@@ -68,6 +112,7 @@ impl MutationJournal {
     pub fn observed(observer: impl Fn(Vec<MutationDispatch>) + Send + Sync + 'static) -> Self {
         Self {
             observer: Some(Arc::new(observer)),
+            frozen: Arc::new(AtomicBool::new(false)),
             ..Self::default()
         }
     }
@@ -121,15 +166,25 @@ impl MutationJournal {
         JOURNAL.scope(self.clone(), future).await
     }
 
+    #[cfg(test)]
     fn change<T>(&self, change: impl FnOnce(&mut Vec<MutationDispatch>) -> T) -> T {
-        // Serialize publication with mutation so concurrent completions cannot
-        // publish an older snapshot after a newer one.
+        match self.try_change(|entries| Ok::<_, std::convert::Infallible>(change(entries))) {
+            Ok(result) => result,
+            Err(never) => match never {},
+        }
+    }
+
+    fn try_change<T, E>(
+        &self,
+        change: impl FnOnce(&mut Vec<MutationDispatch>) -> Result<T, E>,
+    ) -> Result<T, E> {
+        // Publish under the mutation lock so an older snapshot cannot overtake a newer one.
         let mut entries = self.entries.lock().expect("mutation journal poisoned");
-        let result = change(&mut entries);
+        let result = change(&mut entries)?;
         if let Some(observer) = &self.observer {
             observer(entries.clone());
         }
-        result
+        Ok(result)
     }
 }
 
@@ -148,10 +203,17 @@ pub(crate) struct DispatchReceipt {
 
 impl DispatchReceipt {
     /// Called after authentication and admission, immediately before transport.
-    pub(crate) fn begin(request_fingerprint: String) -> Option<Self> {
-        let operation = IDENTITY.try_with(Clone::clone).ok()?;
-        let journal = JOURNAL.try_with(Clone::clone).ok()?;
-        let index = journal.change(|entries| {
+    pub(crate) fn begin(request_fingerprint: String) -> Result<Option<Self>, JournalPaused> {
+        let Some(operation) = IDENTITY.try_with(Clone::clone).ok() else {
+            return Ok(None);
+        };
+        let Some(journal) = JOURNAL.try_with(Clone::clone).ok() else {
+            return Ok(None);
+        };
+        let index = journal.try_change(|entries| {
+            if journal.frozen.load(Ordering::Acquire) {
+                return Err(JournalPaused);
+            }
             let index = entries.len();
             entries.push(MutationDispatch {
                 resolved_effect: super::resolved_effect::current_effect(),
@@ -159,14 +221,19 @@ impl DispatchReceipt {
                 request_fingerprint,
                 status: MutationDispatchStatus::Unresolved,
             });
-            index
-        });
-        Some(Self { journal, index })
+            Ok(index)
+        })?;
+        Ok(Some(Self { journal, index }))
     }
 
     pub(crate) fn response_received(&self) {
-        self.journal.change(|entries| {
-            entries[self.index].status = MutationDispatchStatus::ResponseReceived
+        let _ = self.journal.try_change(|entries| {
+            if entries[self.index].status == MutationDispatchStatus::Unresolved {
+                entries[self.index].status = MutationDispatchStatus::ResponseReceived;
+                Ok(())
+            } else {
+                Err(())
+            }
         });
     }
 }
@@ -196,6 +263,80 @@ mod tests {
             entry_id: "fixture".into(),
             capability: "write".into(),
         }
+    }
+
+    #[tokio::test]
+    async fn checkpoint_freeze_rejects_new_dispatch_and_unfreezes_on_drop() {
+        let journal = MutationJournal::default();
+        let first = MutationDispatch {
+            resolved_effect: None,
+            operation: identity(),
+            request_fingerprint: "first".into(),
+            status: MutationDispatchStatus::RejectedWithoutEffect,
+        };
+        journal.change(|entries| entries.push(first.clone()));
+        let (control, _pauses) = super::super::effect_continuation::EffectContinuation::new_native(
+            std::time::Duration::from_secs(2),
+        )
+        .unwrap();
+        control
+            .scope(async {
+                let frozen = journal
+                    .freeze_retention(0, std::slice::from_ref(&first))
+                    .unwrap();
+                DispatchReceipt {
+                    journal: journal.clone(),
+                    index: 0,
+                }
+                .response_received();
+                assert_eq!(
+                    journal.snapshot()[0].status,
+                    MutationDispatchStatus::RejectedWithoutEffect
+                );
+                journal
+                    .scope(with_mutation_identity(identity(), async {
+                        assert!(matches!(
+                            DispatchReceipt::begin("blocked".into()),
+                            Err(JournalPaused)
+                        ));
+                    }))
+                    .await;
+                assert_eq!(journal.len(), 1);
+                drop(frozen);
+                journal
+                    .scope(with_mutation_identity(identity(), async {
+                        assert!(DispatchReceipt::begin("after".into()).unwrap().is_some());
+                    }))
+                    .await;
+                assert_eq!(journal.len(), 2);
+            })
+            .await;
+    }
+
+    #[tokio::test]
+    async fn checkpoint_freeze_rejects_a_journal_that_changed_after_classification() {
+        let journal = MutationJournal::default();
+        let first = MutationDispatch {
+            resolved_effect: None,
+            operation: identity(),
+            request_fingerprint: "first".into(),
+            status: MutationDispatchStatus::RejectedWithoutEffect,
+        };
+        journal.change(|entries| entries.push(first.clone()));
+        journal.change(|entries| {
+            entries.push(MutationDispatch {
+                status: MutationDispatchStatus::Unresolved,
+                ..first.clone()
+            })
+        });
+        let (control, _pauses) = super::super::effect_continuation::EffectContinuation::new_native(
+            std::time::Duration::from_secs(2),
+        )
+        .unwrap();
+        control.scope(async {
+            assert!(matches!(journal.freeze_retention(0, std::slice::from_ref(&first)),
+                Err(super::super::effect_continuation::EffectContinuationError::ConcurrentCheckpoint)));
+        }).await;
     }
 
     #[test]
@@ -245,14 +386,14 @@ mod tests {
         let journal = MutationJournal::default();
         journal
             .scope(with_mutation_identity(identity(), async {
-                let receipt = DispatchReceipt::begin("rejected".into());
+                let receipt = DispatchReceipt::begin("rejected".into()).unwrap();
                 let result: Result<(), ()> = with_dispatch_receipt(receipt, async {
                     record_transport_response_received();
                     Err(())
                 })
                 .await;
                 assert!(result.is_err());
-                let receipt = DispatchReceipt::begin("body-interrupted".into());
+                let receipt = DispatchReceipt::begin("body-interrupted".into()).unwrap();
                 let mut body = Box::pin(with_dispatch_receipt(receipt, async {
                     record_transport_response_received();
                     std::future::pending::<()>().await;
@@ -290,7 +431,7 @@ mod tests {
         let journal = MutationJournal::default();
         journal
             .scope(with_mutation_identity(identity(), async {
-                with_dispatch_receipt(DispatchReceipt::begin("request".into()), async {
+                with_dispatch_receipt(DispatchReceipt::begin("request".into()).unwrap(), async {
                     let response = reqwest::Client::new()
                         .get(format!("http://{address}"))
                         .send()
@@ -316,10 +457,10 @@ mod tests {
         let inner = MutationJournal::default();
         outer
             .scope(async {
-                assert!(DispatchReceipt::begin("read".into()).is_none());
+                assert!(DispatchReceipt::begin("read".into()).unwrap().is_none());
                 inner
                     .scope(with_mutation_identity(identity(), async {
-                        let receipt = DispatchReceipt::begin("write".into()).unwrap();
+                        let receipt = DispatchReceipt::begin("write".into()).unwrap().unwrap();
                         assert_eq!(
                             inner.snapshot()[0].status,
                             MutationDispatchStatus::Unresolved
@@ -341,7 +482,7 @@ mod tests {
     async fn interrupted_dispatch_remains_unresolved_without_fabricating_failure() {
         let journal = MutationJournal::default();
         let mut future = Box::pin(journal.scope(with_mutation_identity(identity(), async {
-            let _receipt = DispatchReceipt::begin("sent".into()).unwrap();
+            let _receipt = DispatchReceipt::begin("sent".into()).unwrap().unwrap();
             std::future::pending::<()>().await;
         })));
         tokio::select! {

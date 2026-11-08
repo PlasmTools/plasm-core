@@ -31,7 +31,8 @@ impl ExecutionEngine {
             return Err(RuntimeError::Cancelled);
         }
         let request_fingerprint = crate::RequestFingerprint::from_request(request)?.to_hex();
-        let receipt = super::mutation_evidence::DispatchReceipt::begin(request_fingerprint.clone());
+        let receipt = super::mutation_evidence::DispatchReceipt::begin(request_fingerprint.clone())
+            .map_err(|_| RuntimeError::MutationJournalPaused)?;
         let mut result = super::mutation_evidence::with_dispatch_receipt(
             receipt.clone(),
             self.transport

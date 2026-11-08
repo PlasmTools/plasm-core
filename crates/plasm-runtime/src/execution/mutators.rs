@@ -112,7 +112,7 @@ impl ExecutionEngine {
             {
                 let attempt =
                     journal.classify_attempt(start, error, &capability.no_effect_rejections);
-                if let Some(failure) = checkpoint_failure(error, attempt) {
+                if let Some(failure) = checkpoint_failure(error, attempt.clone()) {
                     let Some(original_identity) = identity.or(pinned.as_ref()) else {
                         return result;
                     };
@@ -155,7 +155,7 @@ impl ExecutionEngine {
                             Ok(reservation) => reservation,
                             Err(_) => return result,
                         };
-                    let _retained_journal = match journal.reserve_retention() {
+                    let _retained_journal = match journal.freeze_retention(start, &attempt) {
                         Ok(reservation) => reservation,
                         Err(_) => return result,
                     };
@@ -855,6 +855,62 @@ mod continuation_tests {
             tokio::time::timeout(Duration::from_millis(20), pauses.recv()).await,
             Ok(Some(_))
         ));
+    }
+
+    #[tokio::test]
+    async fn paused_mutation_blocks_competing_dispatch_then_resumes_original() {
+        let transport = Arc::new(Transport {
+            statuses: vec![422, 200],
+            opaque: false,
+            requests: Mutex::new(Vec::new()),
+        });
+        let engine = ExecutionEngine::new_with_transport(
+            ExecutionConfig {
+                base_url: Some("https://fixture.test".into()),
+                ..Default::default()
+            },
+            Arc::clone(&transport) as Arc<dyn HttpTransport>,
+            None,
+        );
+        let compiled = request();
+        let capability = capability();
+        let identity = OperationIdentity {
+            entry_id: "matrix".into(),
+            capability: "pwexpense_create".into(),
+        };
+        let journal = super::super::mutation_evidence::MutationJournal::default();
+        let (control, mut pauses) = EffectContinuation::new_native(Duration::from_secs(5)).unwrap();
+        let run = control
+            .clone()
+            .scope(journal.scope(engine.dispatch_compiled_mutation(
+                &compiled,
+                "PwExpense",
+                identity.clone(),
+                &capability,
+                None,
+            )));
+        tokio::pin!(run);
+        let mut pause = tokio::select! {
+            pause = pauses.recv() => pause.expect("first rejection must pause"),
+            _ = &mut run => panic!("original returned before checkpoint"),
+        };
+        let CompiledOperation::Http(request) = &compiled else {
+            unreachable!()
+        };
+        let competing = journal
+            .scope(super::super::mutation_evidence::with_mutation_identity(
+                identity,
+                engine.execute_http_request_full(request),
+            ))
+            .await;
+        assert!(matches!(
+            competing,
+            Err(RuntimeError::MutationJournalPaused)
+        ));
+        assert_eq!(transport.requests.lock().unwrap().len(), 1);
+        control.resume(&mut pause).unwrap();
+        assert!(run.await.is_ok());
+        assert_eq!(transport.requests.lock().unwrap().len(), 2);
     }
 
     async fn exercise_resume(

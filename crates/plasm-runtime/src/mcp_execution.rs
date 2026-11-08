@@ -7,6 +7,8 @@ use tokio::sync::Mutex;
 
 #[derive(Debug, thiserror::Error)]
 pub enum McpExecutionError {
+    #[error("MCP mutation dispatch refused while its journal is suspended")]
+    MutationJournalPaused,
     #[error("MCP query projection must be an array")]
     QueryArrayRequired,
     #[error("MCP collection completeness evidence is missing or indicates an incomplete response at {pointer}")]
@@ -138,7 +140,11 @@ impl McpBindings {
                     server: call.server.clone(),
                 })?;
         let mut session = session.lock().await;
-        let receipt = fingerprint.and_then(crate::execution::DispatchReceipt::begin);
+        let receipt = match fingerprint {
+            Some(fingerprint) => crate::execution::DispatchReceipt::begin(fingerprint)
+                .map_err(|_| McpExecutionError::MutationJournalPaused)?,
+            None => None,
+        };
         let result = crate::execution::with_dispatch_receipt(receipt, async {
             let result = session
                 .call_tool(

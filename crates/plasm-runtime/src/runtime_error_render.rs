@@ -9,7 +9,9 @@ use crate::RuntimeError;
 /// Convert a runtime failure into a structured [`StepError`].
 pub fn step_error_from_runtime(err: &RuntimeError, cgs: &CGS) -> StepError {
     match err {
-        RuntimeError::Mcp(_) => StepError::new(StepErrorCategory::Runtime, err.to_string(), None),
+        RuntimeError::Mcp(_) | RuntimeError::MutationJournalPaused => {
+            StepError::new(StepErrorCategory::Runtime, err.to_string(), None)
+        }
         RuntimeError::RequestIdentityAuthOpaque => {
             StepError::new(StepErrorCategory::Config, err.to_string(), None)
         }
