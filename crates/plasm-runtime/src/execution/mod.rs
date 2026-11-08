@@ -61,6 +61,7 @@ pub use resolved_effect::{
 mod engine_get;
 mod resolved_get;
 use resolved_get::{GetBindings, GetPurpose, ResolvedGet};
+pub mod effect_continuation;
 mod engine_query;
 mod entity_decoder;
 mod expr_executor;

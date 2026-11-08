@@ -43,6 +43,10 @@ tokio::task_local! {
 }
 
 impl MutationJournal {
+    pub(super) fn current() -> Option<Self> {
+        JOURNAL.try_with(Clone::clone).ok()
+    }
+
     /// Observe ordered snapshots synchronously. The callback must be nonblocking
     /// and must not reenter this journal; publication holds its mutation lock.
     pub fn observed(observer: impl Fn(Vec<MutationDispatch>) + Send + Sync + 'static) -> Self {
@@ -57,6 +61,44 @@ impl MutationJournal {
             .lock()
             .expect("mutation journal poisoned")
             .clone()
+    }
+
+    /// Classify only the dispatches made since this attempt began. The shared
+    /// journal remains the authority for later failure and progress evidence.
+    pub(super) fn classify_attempt(
+        &self,
+        start: usize,
+        error: &crate::RuntimeError,
+        contracts: &[plasm_core::schema::NoEffectRejection],
+    ) -> Vec<MutationDispatch> {
+        let mut entries = self.entries.lock().expect("mutation journal poisoned");
+        if start > entries.len() {
+            return Vec::new();
+        }
+        let (prefix, attempt) = entries.split_at_mut(start);
+        let before = attempt.to_vec();
+        crate::execution_failure::classify_runtime_no_effect_rejection(error, contracts, attempt);
+        // A checkpoint may retry only this invocation. An earlier unknown or
+        // different dispatch in the same step cannot be hidden by a later
+        // known rejection.
+        let unsafe_prefix = attempt.first().is_some_and(|candidate| {
+            prefix.iter().any(|previous| {
+                previous.status != MutationDispatchStatus::RejectedWithoutEffect
+                    || previous.operation != candidate.operation
+                    || previous.request_fingerprint != candidate.request_fingerprint
+                    || previous.resolved_effect != candidate.resolved_effect
+            })
+        });
+        if unsafe_prefix {
+            attempt.clone_from_slice(&before);
+        }
+        let result = attempt.to_vec();
+        if result != before {
+            if let Some(observer) = &self.observer {
+                observer(entries.clone());
+            }
+        }
+        result
     }
 
     pub async fn scope<T>(&self, future: impl Future<Output = T>) -> T {
@@ -138,6 +180,48 @@ mod tests {
             entry_id: "fixture".into(),
             capability: "write".into(),
         }
+    }
+
+    #[test]
+    fn attempt_classification_never_hides_an_earlier_unknown_dispatch() {
+        use plasm_core::schema::{NoEffectRejection, RejectionDetail};
+        let rule = NoEffectRejection {
+            status: 422,
+            detail: RejectionDetail::Exact {
+                value: "fixture rejection".into(),
+            },
+        };
+        let mut response =
+            crate::HttpStatusFailure::without_request(422, "fixture rejection".into());
+        response.mutation_request_fingerprint = Some("fingerprint".into());
+        let error = crate::RuntimeError::RequestError {
+            source: crate::RequestFailure::HttpStatus(Box::new(response)),
+            attempts: 1,
+            status: Some(422),
+            body: None,
+        };
+        let dispatch = MutationDispatch {
+            resolved_effect: None,
+            operation: identity(),
+            request_fingerprint: "fingerprint".into(),
+            status: MutationDispatchStatus::ResponseReceived,
+        };
+        let journal = MutationJournal::default();
+        journal.change(|entries| entries.extend([dispatch.clone(), dispatch.clone()]));
+        let attempt = journal.classify_attempt(1, &error, std::slice::from_ref(&rule));
+        assert_eq!(attempt[0].status, MutationDispatchStatus::ResponseReceived);
+        journal.change(|entries| entries[0].status = MutationDispatchStatus::RejectedWithoutEffect);
+        let attempt = journal.classify_attempt(1, &error, std::slice::from_ref(&rule));
+        assert_eq!(
+            attempt[0].status,
+            MutationDispatchStatus::RejectedWithoutEffect
+        );
+        journal.change(|entries| {
+            entries[0].operation.capability = "other".into();
+            entries[1].status = MutationDispatchStatus::ResponseReceived;
+        });
+        let attempt = journal.classify_attempt(1, &error, &[rule]);
+        assert_eq!(attempt[0].status, MutationDispatchStatus::ResponseReceived);
     }
 
     #[tokio::test]

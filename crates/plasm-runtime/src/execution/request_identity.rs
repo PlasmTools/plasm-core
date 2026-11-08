@@ -41,6 +41,10 @@ pub(super) struct RequestIdentity {
 }
 
 impl RequestIdentity {
+    pub(super) fn same_scope(&self, other: &Self) -> bool {
+        self.fingerprint == other.fingerprint
+    }
+
     pub(super) fn key(&self) -> String {
         self.fingerprint.to_hex()
     }
@@ -52,6 +56,12 @@ impl RequestIdentity {
                 RESPONSE_FINGERPRINT.scope(self.fingerprint.clone(), future),
             )
             .await
+    }
+
+    /// Pin only dispatch authentication when response identity is not owned by
+    /// the request. This keeps a resumed mutation in the same auth scope.
+    pub(super) async fn scope_auth<F: std::future::Future>(&self, future: F) -> F::Output {
+        DISPATCH_AUTH.scope(self.auth.clone(), future).await
     }
 
     pub(super) fn validate_rows(&self, entity: &str, rows: usize) -> Result<(), RuntimeError> {

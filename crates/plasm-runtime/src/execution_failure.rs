@@ -463,18 +463,61 @@ impl ExecutionFailure {
         contracts: &[plasm_core::schema::NoEffectRejection],
         dispatches: &mut [crate::MutationDispatch],
     ) {
-        let (Some((status, detail, fingerprint)), [dispatch]) =
-            (&self.provider_rejection, dispatches)
-        else {
-            return;
-        };
-        if dispatch.status == crate::MutationDispatchStatus::ResponseReceived
-            && dispatch.request_fingerprint == *fingerprint
-            && contracts
-                .iter()
-                .any(|contract| contract.matches(*status, detail))
-        {
-            dispatch.status = crate::MutationDispatchStatus::RejectedWithoutEffect;
+        let rejection = self
+            .provider_rejection
+            .as_ref()
+            .map(|(status, detail, fingerprint)| (*status, detail.as_str(), fingerprint.as_str()));
+        classify_no_effect_rejection(rejection, contracts, dispatches);
+    }
+}
+
+/// Inspect the same provider evidence before an owning runtime error is moved
+/// across the execution boundary. The compiled dispatch can then retain its
+/// operands while the enclosing future is suspended.
+pub(crate) fn classify_runtime_no_effect_rejection(
+    error: &crate::RuntimeError,
+    contracts: &[plasm_core::schema::NoEffectRejection],
+    dispatches: &mut [crate::MutationDispatch],
+) {
+    classify_no_effect_rejection(provider_rejection(error), contracts, dispatches);
+}
+
+fn classify_no_effect_rejection(
+    rejection: Option<(u16, &str, &str)>,
+    contracts: &[plasm_core::schema::NoEffectRejection],
+    dispatches: &mut [crate::MutationDispatch],
+) {
+    let (Some((status, detail, fingerprint)), [dispatch]) = (rejection, dispatches) else {
+        return;
+    };
+    if dispatch.status == crate::MutationDispatchStatus::ResponseReceived
+        && dispatch.request_fingerprint == fingerprint
+        && contracts
+            .iter()
+            .any(|contract| contract.matches(status, detail))
+    {
+        dispatch.status = crate::MutationDispatchStatus::RejectedWithoutEffect;
+    }
+}
+
+fn provider_rejection(mut error: &crate::RuntimeError) -> Option<(u16, &str, &str)> {
+    loop {
+        match error {
+            crate::RuntimeError::HydrationGet { source, .. }
+            | crate::RuntimeError::ViewNode { source, .. }
+            | crate::RuntimeError::ContinuationAuthorization {
+                rejection: source, ..
+            } => error = source,
+            crate::RuntimeError::RequestError {
+                source: crate::RequestFailure::HttpStatus(response),
+                ..
+            } => {
+                return response
+                    .mutation_request_fingerprint
+                    .as_deref()
+                    .map(|fingerprint| (response.status, response.detail.as_str(), fingerprint));
+            }
+            _ => return None,
         }
     }
 }
@@ -561,6 +604,20 @@ impl From<crate::RuntimeError> for ExecutionFailure {
             HostTransport { .. } | HttpTransport { .. } | RequestError { .. } => {
                 (FailureCause::Transport, "transport_failure")
             }
+            ContinuationAuthorization {
+                reason: crate::error::ContinuationAuthorizationReason::ScopeChanged,
+                ..
+            } => (
+                FailureCause::Authorization,
+                "continuation_auth_scope_changed",
+            ),
+            ContinuationAuthorization {
+                reason: crate::error::ContinuationAuthorizationReason::RevalidationFailed(_),
+                ..
+            } => (
+                FailureCause::Authorization,
+                "continuation_auth_revalidation_failed",
+            ),
             CredentialProvider { .. } | AuthenticationError(_) => {
                 (FailureCause::Authorization, "authorization_required")
             }
@@ -568,6 +625,7 @@ impl From<crate::RuntimeError> for ExecutionFailure {
             _ => (FailureCause::Unclassified, "unclassified_execution_failure"),
         };
         let diagnostic = match &error {
+            ContinuationAuthorization { .. } => "The original authentication scope changed or could not be revalidated; no retry was dispatched.".into(),
             Mcp(source) => match source.as_ref() {
                 // Transport causes may contain raw remote content or connection details.
                 // Mapping diagnostics contain host-owned structure, not rejected payloads.
@@ -726,19 +784,10 @@ impl From<crate::RuntimeError> for ExecutionFailure {
             | HydrationGet { .. } => error.to_string(),
         };
         let mut failure = Self::new(cause, code, diagnostic);
-        if let RequestError {
-            source: crate::RequestFailure::HttpStatus(response),
-            ..
-        } = &error
-        {
-            if let Some(fingerprint) = &response.mutation_request_fingerprint {
-                failure.provider_rejection = Some((
-                    response.status,
-                    response.detail.clone(),
-                    fingerprint.clone(),
-                ));
-            }
-        }
+        failure.provider_rejection =
+            provider_rejection(&error).map(|(status, detail, fingerprint)| {
+                (status, detail.to_owned(), fingerprint.to_owned())
+            });
         if let Mcp(source) = &error {
             if let crate::mcp_execution::McpExecutionError::ToolFailure { result, .. } =
                 source.as_ref()
@@ -835,12 +884,12 @@ mod tests {
             "Your Venmo balance does not have $250.00 to make this transaction.".into(),
         );
         response.mutation_request_fingerprint = Some("request".into());
-        let failure = ExecutionFailure::from(crate::RuntimeError::RequestError {
+        let runtime_error = crate::RuntimeError::RequestError {
             source: crate::RequestFailure::HttpStatus(Box::new(response)),
             attempts: 1,
             status: Some(422),
             body: None,
-        });
+        };
         let dispatch = crate::MutationDispatch {
             resolved_effect: None,
             operation: crate::OperationIdentity {
@@ -850,8 +899,16 @@ mod tests {
             request_fingerprint: "request".into(),
             status: crate::MutationDispatchStatus::ResponseReceived,
         };
+        let mut borrowed = vec![dispatch.clone()];
+        classify_runtime_no_effect_rejection(
+            &runtime_error,
+            std::slice::from_ref(&rule),
+            &mut borrowed,
+        );
+        let failure = ExecutionFailure::from(runtime_error);
         let mut one = vec![dispatch.clone()];
         failure.classify_no_effect_rejection(std::slice::from_ref(&rule), &mut one);
+        assert_eq!(borrowed, one, "borrowed and owned error paths share policy");
         assert_eq!(
             one[0].status,
             crate::MutationDispatchStatus::RejectedWithoutEffect

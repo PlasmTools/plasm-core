@@ -213,7 +213,7 @@ pub fn step_error_from_runtime(err: &RuntimeError, cgs: &CGS) -> StepError {
         RuntimeError::SerializationError(_) => {
             StepError::new(StepErrorCategory::Runtime, err.to_string(), None)
         }
-        RuntimeError::CredentialProvider { .. } | RuntimeError::AuthenticationError(_) => StepError::new(
+        RuntimeError::CredentialProvider { .. } | RuntimeError::AuthenticationError(_) | RuntimeError::ContinuationAuthorization { .. } => StepError::new(
             StepErrorCategory::Auth,
             append_correction_lines(
                 err.to_string(),

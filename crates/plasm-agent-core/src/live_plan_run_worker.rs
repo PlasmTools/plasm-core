@@ -129,6 +129,25 @@ pub struct LivePlanRunPool {
     permits: Arc<Semaphore>,
 }
 
+/// Owns the result of an admitted worker independently of any single waiter.
+/// Cancelling a wait does not cancel the worker or release its permit.
+pub struct LivePlanRunHandle<T, E: std::error::Error + 'static> {
+    result: Option<oneshot::Receiver<Result<T, LivePlanRunError<E>>>>,
+}
+
+impl<T, E: std::error::Error + 'static> LivePlanRunHandle<T, E> {
+    /// Wait for the worker result. This wait can be cancelled and retried.
+    pub async fn wait(&mut self) -> Result<T, LivePlanRunError<E>> {
+        let receiver = self
+            .result
+            .as_mut()
+            .ok_or(LivePlanRunError::ResultDropped)?;
+        let result = receiver.await;
+        self.result = None;
+        result.map_err(|_| LivePlanRunError::ResultDropped)?
+    }
+}
+
 impl Default for LivePlanRunPool {
     fn default() -> Self {
         Self::new()
@@ -181,7 +200,38 @@ impl LivePlanRunPool {
             .await
     }
 
+    /// Admit a local future while retaining its result for later polling.
+    /// Dropping the handle does not cancel the worker.
+    pub async fn start_local<F, Fut, T>(
+        &self,
+        f: F,
+    ) -> Result<
+        LivePlanRunHandle<T, std::convert::Infallible>,
+        LivePlanRunError<std::convert::Infallible>,
+    >
+    where
+        F: FnOnce() -> Fut + Send + 'static,
+        Fut: Future<Output = T>,
+        T: Send + 'static,
+    {
+        self.start_impl(|| async move { Ok::<T, std::convert::Infallible>(f().await) })
+            .await
+    }
+
     async fn run_impl<F, Fut, T, E>(&self, f: F) -> Result<T, LivePlanRunError<E>>
+    where
+        F: FnOnce() -> Fut + Send + 'static,
+        Fut: Future<Output = Result<T, E>>,
+        T: Send + 'static,
+        E: std::error::Error + Send + Sync + 'static,
+    {
+        self.start_impl(f).await?.wait().await
+    }
+
+    async fn start_impl<F, Fut, T, E>(
+        &self,
+        f: F,
+    ) -> Result<LivePlanRunHandle<T, E>, LivePlanRunError<E>>
     where
         F: FnOnce() -> Fut + Send + 'static,
         Fut: Future<Output = Result<T, E>>,
@@ -215,8 +265,9 @@ impl LivePlanRunPool {
                 let _ = done_tx.send(result);
             })
             .map_err(LivePlanRunError::Spawn)?;
-        let result = done_rx.await.map_err(|_| LivePlanRunError::ResultDropped)?;
-        result
+        Ok(LivePlanRunHandle {
+            result: Some(done_rx),
+        })
     }
 }
 
@@ -306,6 +357,32 @@ mod tests {
                 .expect("worker released its permit")
                 .unwrap();
         drop(permit);
+    }
+
+    #[tokio::test]
+    async fn started_worker_result_survives_a_cancelled_wait() {
+        let pool = LivePlanRunPool::new();
+        let (started, started_rx) = oneshot::channel();
+        let (release, release_rx) = oneshot::channel();
+        let mut handle = pool
+            .start_local(move || async move {
+                let _ = started.send(());
+                let _ = release_rx.await;
+                42
+            })
+            .await
+            .unwrap();
+        started_rx.await.unwrap();
+        tokio::select! {
+            _ = handle.wait() => panic!("worker returned before release"),
+            _ = tokio::task::yield_now() => {}
+        }
+        release.send(()).unwrap();
+        assert_eq!(handle.wait().await.unwrap(), 42);
+        assert!(matches!(
+            handle.wait().await,
+            Err(LivePlanRunError::ResultDropped)
+        ));
     }
 
     #[test]

@@ -72,12 +72,18 @@ impl HttpTransport for Transport {
     }
 }
 
-async fn ordered_fanout_case(
+struct OrderedFanoutFixture {
+    host: crate::server_state::PlasmHostState,
+    session: Arc<crate::execute_session::ExecuteSession>,
+    opened: crate::http_execute::ApplyCapabilitySeedsOutcome,
+    store: Arc<Mutex<Store>>,
+}
+
+async fn ordered_fanout_fixture(
     count: usize,
     fail_at: usize,
     known_rejection: bool,
-    unrelated_write: bool,
-) -> plasm_runtime::ExecutionFailure {
+) -> OrderedFanoutFixture {
     let mut cgs = load_schema_dir(
         &std::path::PathBuf::from(crate::test_manifest_dir())
             .join("../../fixtures/schemas/partial_write_relation_matrix"),
@@ -157,6 +163,26 @@ async fn ordered_fanout_case(
         .get_execute_session(&opened.prompt_hash, &opened.session_id)
         .await
         .unwrap();
+    OrderedFanoutFixture {
+        host,
+        session,
+        opened,
+        store,
+    }
+}
+
+async fn ordered_fanout_case(
+    count: usize,
+    fail_at: usize,
+    known_rejection: bool,
+    unrelated_write: bool,
+) -> plasm_runtime::ExecutionFailure {
+    let OrderedFanoutFixture {
+        host,
+        session,
+        opened,
+        store,
+    } = ordered_fanout_fixture(count, fail_at, known_rejection).await;
     if count > crate::plan_read_bounds::DEFAULT_HOST_PAGE_SIZE {
         // No fanout/aggregate consumer forces fetch-all here. The backend returns
         // one complete body larger than the presentation budget.
@@ -577,6 +603,130 @@ async fn known_rejection_leaves_the_selected_suffix_unattempted() {
     if let Some(path) = std::env::var_os("PLASM_EFFECT_FIXTURE_DIR") {
         export_effect_fixture(std::path::Path::new(&path));
     }
+}
+
+#[tokio::test]
+async fn resumed_fanout_retains_original_selected_occurrences() {
+    resumed_fanout_case(false).await;
+}
+
+#[tokio::test]
+async fn cancelled_fanout_retains_its_completed_prefix() {
+    resumed_fanout_case(true).await;
+}
+
+async fn resumed_fanout_case(cancel: bool) {
+    use plasm_runtime::execution::effect_continuation::EffectContinuation;
+    use std::time::Duration;
+    use uuid::Uuid;
+
+    let OrderedFanoutFixture {
+        host,
+        session,
+        opened,
+        store,
+    } = ordered_fanout_fixture(4, 1, true).await;
+    let symbols = session.teaching_exposure.as_ref().unwrap().to_symbol_map();
+    let entity = symbols.entity_sym_for("matrix", "PwExpense");
+    let create = symbols.method_sym_for("matrix", "PwExpense", "create");
+    let source = format!("class Observe(Program):\n    def build(self):\n        source = {entity}.query(group_id=\"source\")\n        return source.flat_map(lambda row: {entity}.{create}(group_id=\"dest\", description=row.description))\n");
+    let bundle = crate::plasm_compile::compile_python_program(&session, &source)
+        .await
+        .unwrap();
+    let workflow = Uuid::new_v4();
+    let (control, mut pauses) = EffectContinuation::new(workflow, Duration::from_secs(10)).unwrap();
+    let original = control.clone().scope(Box::pin(ExecutePipeline::run_program(
+        &session,
+        &host,
+        &opened.prompt_hash,
+        &opened.session_id,
+        &bundle,
+        ExecutionIntent::Live,
+        None,
+        None,
+        None,
+    )));
+    tokio::pin!(original);
+    let mut pause = tokio::select! {
+        pause = pauses.recv() => pause.expect("known rejection checkpoint"),
+        result = &mut original => panic!("execution returned before checkpoint: {result:?}"),
+    };
+    assert_eq!(store.lock().unwrap().attempts, 2);
+    assert_eq!(store.lock().unwrap().rows[0]["description"], "item-0");
+    if cancel {
+        control.cancel();
+        let failure = original
+            .await
+            .expect_err("cancelled continuation must stop");
+        assert_eq!(failure.cause, plasm_runtime::FailureCause::Cancelled);
+        assert_eq!(
+            failure
+                .effects
+                .iter()
+                .map(|effect| effect.completed)
+                .sum::<usize>(),
+            1
+        );
+        assert!(failure
+            .effect_selections
+            .iter()
+            .any(|selection| selection.count == 4));
+        assert_eq!(store.lock().unwrap().attempts, 2);
+        assert!(pause.resume(workflow).is_err());
+        return;
+    }
+
+    // Change the provider's source after selection and execute a separate write
+    // in the same session before resuming the original future.
+    for row in &mut store.lock().unwrap().source_rows {
+        row["description"] = json!("changed-after-selection");
+    }
+    let other = format!("class Other(Program):\n    def build(self):\n        return {entity}.{create}(group_id=\"other\", description=\"unrelated\")\n");
+    let other_bundle = crate::plasm_compile::compile_python_program(&session, &other)
+        .await
+        .unwrap();
+    Box::pin(ExecutePipeline::run_program(
+        &session,
+        &host,
+        &opened.prompt_hash,
+        &opened.session_id,
+        &other_bundle,
+        ExecutionIntent::Live,
+        None,
+        None,
+        None,
+    ))
+    .await
+    .expect("unrelated write completes while the original is paused");
+
+    pause.resume(workflow).unwrap();
+    let result = original.await.expect("the original continuation completes");
+    let descriptions: Vec<_> = store
+        .lock()
+        .unwrap()
+        .rows
+        .iter()
+        .map(|row| row["description"].as_str().unwrap().to_owned())
+        .collect();
+    assert_eq!(
+        descriptions,
+        ["item-0", "unrelated", "item-1", "item-2", "item-3"]
+    );
+    assert_eq!(
+        store.lock().unwrap().attempts,
+        6,
+        "one rejected and five successful writes"
+    );
+    assert_eq!(
+        result
+            .return_steps
+            .iter()
+            .flat_map(|step| step.result.operations.entries())
+            .map(|ack| ack.completed)
+            .sum::<usize>(),
+        4,
+        "the original execution retains its own four occurrence receipts"
+    );
 }
 
 /// Build an offline packed catalog for the NAPI/host obligation diagnostic.

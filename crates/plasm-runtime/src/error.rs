@@ -213,12 +213,25 @@ impl std::fmt::Display for ReplayStoreOperation {
     }
 }
 
+/// Why the original dispatch authority could not be reused after a pause.
+#[derive(Debug)]
+pub enum ContinuationAuthorizationReason {
+    ScopeChanged,
+    RevalidationFailed(Box<RuntimeError>),
+}
+
 #[derive(Error, Debug)]
 pub enum RuntimeError {
     #[error(transparent)]
     Mcp(#[from] Box<crate::mcp_execution::McpExecutionError>),
     #[error("request-owned identity requires observable resolved authentication")]
     RequestIdentityAuthOpaque,
+    #[error("effect continuation authorization changed or could not be revalidated; no retry was dispatched")]
+    ContinuationAuthorization {
+        reason: ContinuationAuthorizationReason,
+        #[source]
+        rejection: Box<RuntimeError>,
+    },
     #[error("request-owned identity for {entity} requires one response row, got {rows}")]
     RequestIdentityCardinality { entity: String, rows: usize },
     #[error(
