@@ -143,6 +143,47 @@ pub struct SelectionReservation {
     bytes: usize,
 }
 
+// Called only after charge_value_budget has validated the value's finite shape
+// and bounded its depth. Charge backing allocations in addition to its logical
+// payload, which may be much smaller than the capacity retained by the frame.
+fn charge_selection_capacity(
+    value: &plasm_core::Value,
+    remaining: &mut usize,
+) -> Result<(), plasm_core::ValueBudgetError> {
+    use plasm_core::{Value, ValueBudgetError};
+    let bytes = match value {
+        Value::String(s) => s.capacity().saturating_sub(s.len()),
+        Value::Array(values) => values
+            .capacity()
+            .saturating_mul(std::mem::size_of::<Value>()),
+        Value::Object(values) => values
+            .capacity()
+            .saturating_mul(std::mem::size_of::<(String, Value)>().saturating_add(16))
+            .saturating_mul(2),
+        _ => 0,
+    };
+    *remaining = remaining
+        .checked_sub(bytes)
+        .ok_or(ValueBudgetError::BytesExceeded)?;
+    match value {
+        Value::Array(values) => {
+            for value in values {
+                charge_selection_capacity(value, remaining)?;
+            }
+        }
+        Value::Object(values) => {
+            for (key, value) in values {
+                *remaining = remaining
+                    .checked_sub(key.capacity().saturating_sub(key.len()))
+                    .ok_or(ValueBudgetError::BytesExceeded)?;
+                charge_selection_capacity(value, remaining)?;
+            }
+        }
+        _ => {}
+    }
+    Ok(())
+}
+
 impl SelectionReservation {
     /// Charge known retained allocation capacity in addition to encoded payload.
     /// On failure the reservation and the shared budget are unchanged.
@@ -388,6 +429,8 @@ impl EffectContinuation {
         let initial = remaining;
         for row in rows {
             plasm_core::charge_value_budget(row, &mut remaining)
+                .map_err(EffectContinuationError::SelectionBudget)?;
+            charge_selection_capacity(row, &mut remaining)
                 .map_err(EffectContinuationError::SelectionBudget)?;
         }
         let bytes = initial - remaining;
@@ -929,6 +972,35 @@ mod tests {
             .scope(EffectContinuation::selection_scope(too_many, async {}))
             .await;
         assert!(!oversized.selected_occurrences_completed());
+    }
+
+    #[tokio::test]
+    async fn selection_reservation_counts_spare_nested_capacity() {
+        let (control, _pauses) = EffectContinuation::new_native(Duration::from_secs(2)).unwrap();
+        let mut text = String::with_capacity(MAX_EFFECT_SELECTION_BYTES + 1);
+        text.push('x');
+        let mut string_row = plasm_core::ValueRow::new();
+        string_row.insert("value".into(), plasm_core::Value::String(text));
+        let mut array_row = plasm_core::ValueRow::new();
+        array_row.insert(
+            "value".into(),
+            plasm_core::Value::Array(Vec::with_capacity(
+                MAX_EFFECT_SELECTION_BYTES / std::mem::size_of::<plasm_core::Value>() + 1,
+            )),
+        );
+        control
+            .scope(async {
+                for row in [&string_row, &array_row] {
+                    assert!(matches!(
+                        EffectContinuation::reserve_selection(std::slice::from_ref(row)),
+                        Err(EffectContinuationError::SelectionBudget(
+                            plasm_core::ValueBudgetError::BytesExceeded
+                        ))
+                    ));
+                }
+                assert!(EffectContinuation::reserve_selection(&[]).is_ok());
+            })
+            .await;
     }
 
     #[tokio::test]

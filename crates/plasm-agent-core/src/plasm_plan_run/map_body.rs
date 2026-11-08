@@ -58,8 +58,8 @@ fn charge_scope_payload<T: serde::Serialize + ?Sized>(
             failure.input_budget = Some(plasm_runtime::InputBudgetEvidence {
                 unit: plasm_runtime::InputBudgetUnit::AccountedBytes,
                 limit: plasm_runtime::execution::effect_continuation::MAX_EFFECT_SELECTION_BYTES,
-                observed_at_least: plasm_runtime::execution::effect_continuation::MAX_EFFECT_SELECTION_BYTES
-                    + 1,
+                observed_at_least:
+                    plasm_runtime::execution::effect_continuation::MAX_EFFECT_SELECTION_BYTES + 1,
                 input: "scope output".into(),
             });
         }
@@ -148,6 +148,14 @@ pub(super) async fn materialize(
         plasm_runtime::execution::effect_continuation::EffectContinuation::reserve_selection(
             &parents,
         )
+        .and_then(|mut reservation| {
+            reservation.add_capacity_bytes(
+                parents
+                    .capacity()
+                    .saturating_mul(std::mem::size_of::<plasm_core::ValueRow>()),
+            )?;
+            Ok(reservation)
+        })
         .map_err(|error| {
             use plasm_runtime::execution::effect_continuation::{
                 EffectContinuationError, MAX_EFFECT_SELECTION_BYTES,
@@ -156,7 +164,9 @@ pub(super) async fn materialize(
                 scope_failure("effect_selection_retention_refused", error.to_string());
             if matches!(
                 error,
-                EffectContinuationError::SelectionBudget(plasm_core::ValueBudgetError::BytesExceeded)
+                EffectContinuationError::SelectionBudget(
+                    plasm_core::ValueBudgetError::BytesExceeded
+                )
             ) {
                 failure.input_budget = Some(plasm_runtime::InputBudgetEvidence {
                     unit: plasm_runtime::InputBudgetUnit::AccountedBytes,
@@ -634,7 +644,9 @@ pub(super) async fn materialize(
             },
         ).await;
     execution.map_err(|failure| {
-        failure.with_effects(&operations).with_effect_selection(selection)
+        failure
+            .with_effects(&operations)
+            .with_effect_selection(selection)
     })
 }
 
