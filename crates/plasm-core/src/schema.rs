@@ -2899,12 +2899,14 @@ impl CGS {
     /// Stable hex digest (SHA-256) of canonical JSON for this CGS, used for session pinning and plugin integrity.
     pub fn catalog_cgs_hash_hex(&self) -> String {
         self.catalog_hash_hex
-            .get_or_init(|| {
-                let v = serde_json::to_vec(self).expect("CGS JSON serialization for catalog hash");
-                let digest = Sha256::digest(&v);
-                hex::encode(digest)
-            })
+            .get_or_init(|| self.current_catalog_cgs_hash_hex())
             .clone()
+    }
+
+    /// Hash the current contents, including edits made after the cached pin was computed.
+    pub(crate) fn current_catalog_cgs_hash_hex(&self) -> String {
+        let v = serde_json::to_vec(self).expect("CGS JSON serialization for catalog hash");
+        hex::encode(Sha256::digest(&v))
     }
 
     /// When [`Self::oauth`] is set and lists a requirement for `capability`, returns whether

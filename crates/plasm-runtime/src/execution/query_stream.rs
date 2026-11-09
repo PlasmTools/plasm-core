@@ -220,6 +220,7 @@ impl ExecutionEngine {
                 consume,
                 None,
                 graph_page_spill,
+                super::session::compiled_catalog()?.cgs_hash().to_owned(),
             );
         }
 
@@ -405,6 +406,7 @@ impl ExecutionEngine {
         consume: StreamConsumeOpts,
         resume_state: Option<PaginationLoopState>,
         graph_page_spill: Option<crate::graph_page_spill::GraphPageSpillHandle>,
+        compiled_catalog_hash: String,
     ) -> Result<QueryStream<'a>, RuntimeError> {
         const MAX_PAGES: usize = 10_000;
 
@@ -633,8 +635,17 @@ impl ExecutionEngine {
                     let resume = if more && !expression_done {
                         let mut state = driver.snapshot();
                         state.mcp_collection = mcp_collection.clone();
-                        Some(Box::new(QueryPaginationResumeData { query: query.clone(), capability_name: capability.name.to_string(), env: env.clone(),
-                            template: capability_template.clone(), config: pconf.clone(), state }))
+                        Some(Box::new(QueryPaginationResumeData {
+                            query: query.clone(),
+                            residual: residual.clone(),
+                            catalog_hash: cgs.current_execution_catalog_hash_hex(),
+                            compiled_catalog_hash: compiled_catalog_hash.clone(),
+                            capability_name: capability.name.to_string(),
+                            env: env.clone(),
+                            template: capability_template.clone(),
+                            config: pconf.clone(),
+                            state,
+                        }))
                     } else { None };
                     break (more && !expression_done, resume);
                 }

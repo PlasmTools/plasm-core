@@ -2634,6 +2634,9 @@ mod tests {
         .expect("template");
         QueryPaginationResumeData {
             query: plasm_core::QueryExpr::all("Pet"),
+            residual: None,
+            catalog_hash: "fixture".into(),
+            compiled_catalog_hash: "fixture".into(),
             capability_name: "list".into(),
             env: CmlEnv::new(),
             template,

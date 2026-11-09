@@ -222,6 +222,10 @@ pub enum ContinuationAuthorizationReason {
 
 #[derive(Error, Debug)]
 pub enum RuntimeError {
+    #[error("pagination continuation belongs to catalog revision {expected}, not {actual}")]
+    PaginationCatalogMismatch { expected: String, actual: String },
+    #[error("pagination continuation belongs to compiled catalog revision {expected}, not {actual}")]
+    PaginationCompiledCatalogMismatch { expected: String, actual: String },
     #[error("effect continuation cannot retain branch state")]
     ContinuationRetention(#[source] crate::execution::effect_continuation::EffectContinuationError),
     #[error("mutation dispatch refused while its journal is suspended")]

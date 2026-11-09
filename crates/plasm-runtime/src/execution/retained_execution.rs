@@ -212,6 +212,9 @@ pub(super) fn reserve_pagination(
     let mut retained = RetainedExecutionReservation::new(budget);
     retained.add_retained(&(
         &resume.query,
+        &resume.residual,
+        &resume.catalog_hash,
+        &resume.compiled_catalog_hash,
         &resume.capability_name,
         &resume.env,
         &resume.template,
@@ -220,6 +223,13 @@ pub(super) fn reserve_pagination(
         resume.state.progress_guard.retained_components(),
     ))?;
     let mut capacity = crate::materialization::value_map_capacity(&resume.env, 0)
+        .saturating_add(std::mem::size_of::<super::QueryPaginationResumeData>())
+        .saturating_add(resume.catalog_hash.capacity())
+        .saturating_add(resume.compiled_catalog_hash.capacity())
+        .saturating_add(resume.residual.as_ref().map_or(
+            0,
+            super::retained_mutation::predicate_retention_capacity_bytes,
+        ))
         .saturating_add(resume.capability_name.capacity())
         .saturating_add(
             resume

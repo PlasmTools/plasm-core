@@ -1068,6 +1068,9 @@ mod tests {
         let (control, _pauses) = EffectContinuation::new_native(Duration::from_secs(2)).unwrap();
         let mut resume = super::super::QueryPaginationResumeData {
             query: plasm_core::QueryExpr::all("Item"),
+            residual: None,
+            catalog_hash: "fixture".into(),
+            compiled_catalog_hash: "fixture".into(),
             capability_name: "items".into(),
             env: Default::default(),
             template: plasm_compile::CapabilityTemplate::View(plasm_compile::ViewTemplate {
@@ -1107,6 +1110,9 @@ mod tests {
         let (control, _pauses) = EffectContinuation::new_native(Duration::from_secs(2)).unwrap();
         let mut resume = super::super::QueryPaginationResumeData {
             query: plasm_core::QueryExpr::all("Item"),
+            residual: None,
+            catalog_hash: "fixture".into(),
+            compiled_catalog_hash: "fixture".into(),
             capability_name: "items".into(),
             env: Default::default(),
             template: plasm_compile::CapabilityTemplate::View(plasm_compile::ViewTemplate {
@@ -1143,9 +1149,29 @@ mod tests {
                 MAX_RETAINED_EXECUTION_BYTES / std::mem::size_of::<serde_json::Value>() + 1,
             ))),
         ));
+        let mut residual_resume = resume.clone();
+        let mut field = String::with_capacity(MAX_RETAINED_EXECUTION_BYTES + 1);
+        field.push('n');
+        residual_resume.residual = Some(plasm_core::Predicate::Comparison {
+            field,
+            op: plasm_core::CompOp::Eq,
+            value: plasm_core::typed_literal::TypedComparisonValue::from_value(
+                plasm_core::Value::Integer(1),
+            ),
+        });
+        let mut hash_resume = resume.clone();
+        let mut hash = String::with_capacity(MAX_RETAINED_EXECUTION_BYTES + 1);
+        hash.push('a');
+        hash_resume.compiled_catalog_hash = hash;
         control
             .scope(async {
-                for value in [&resume, &url_resume, &param_resume] {
+                for value in [
+                    &resume,
+                    &url_resume,
+                    &param_resume,
+                    &residual_resume,
+                    &hash_resume,
+                ] {
                     assert!(matches!(
                         EffectContinuation::reserve_pagination(value),
                         Err(EffectContinuationError::RetainedBudget(

@@ -606,6 +606,12 @@ impl From<crate::RuntimeError> for ExecutionFailure {
                 FailureCause::ResponseContract,
                 "pagination_progress_violation",
             ),
+            PaginationCatalogMismatch { .. } => {
+                (FailureCause::Catalog, "pagination_catalog_mismatch")
+            }
+            PaginationCompiledCatalogMismatch { .. } => {
+                (FailureCause::Catalog, "pagination_compiled_catalog_mismatch")
+            }
             CatalogTemplate(_)
             | RelationDependency(_)
             | CompilationError { .. }
@@ -797,6 +803,8 @@ impl From<crate::RuntimeError> for ExecutionFailure {
             | DerivedGetSourceFieldMissing { .. }
             | DerivedGetIncompleteSource { .. }
             | PaginationProgress { .. }
+            | PaginationCatalogMismatch { .. }
+            | PaginationCompiledCatalogMismatch { .. }
             | SerializationError(_)
             | Cancelled
             | HydrationGet { .. } => error.to_string(),
@@ -1281,6 +1289,30 @@ mod tests {
             failure.node.as_ref().unwrap().contains("__py"),
             "machine scope survives projection"
         );
+    }
+
+    #[test]
+    fn pagination_catalog_mismatch_retains_a_catalog_failure_code() {
+        for (error, code) in [
+            (
+                crate::RuntimeError::PaginationCatalogMismatch {
+                    expected: "old".into(),
+                    actual: "new".into(),
+                },
+                "pagination_catalog_mismatch",
+            ),
+            (
+                crate::RuntimeError::PaginationCompiledCatalogMismatch {
+                    expected: "old".into(),
+                    actual: "new".into(),
+                },
+                "pagination_compiled_catalog_mismatch",
+            ),
+        ] {
+            let failure = ExecutionFailure::from(error);
+            assert_eq!(failure.cause, FailureCause::Catalog);
+            assert_eq!(failure.code, code);
+        }
     }
 
     #[test]

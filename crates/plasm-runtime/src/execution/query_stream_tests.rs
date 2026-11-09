@@ -446,6 +446,85 @@ async fn replay_query_returns_all_recorded_pages() {
     assert_eq!(result.count(), 21);
     assert_eq!(result.coverage(), ResultCoverage::Complete);
     assert_eq!(result.source, ExecutionSource::Replay);
+
+    let mut materialization = SessionMaterialization::new();
+    let first = engine
+        .execute(
+            &Expr::Query(QueryExpr::all("Item")),
+            &cgs,
+            &mut materialization,
+            Some(ExecutionMode::Replay),
+            StreamConsumeOpts {
+                one_page: true,
+                ..Default::default()
+            },
+            ExecuteOptions::for_catalog(&cgs).unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(first.count(), 20);
+    let rest = engine
+        .execute_pagination_resume(
+            *first.pagination_resume.expect("replay continuation"),
+            &cgs,
+            &mut materialization,
+            Some(ExecutionMode::Replay),
+            StreamConsumeOpts {
+                fetch_all: true,
+                ..Default::default()
+            },
+            ExecuteOptions::for_catalog(&cgs).unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(rest.count(), 1);
+    assert_eq!(rest.source, ExecutionSource::Replay);
+
+    // Direct runtime seam: source-brace admission normally forbids row predicates.
+    let mut query = QueryExpr::all("Item");
+    query.predicate = Some(plasm_core::Predicate::Comparison {
+        field: "n".into(),
+        op: plasm_core::CompOp::Eq,
+        value: plasm_core::typed_literal::TypedComparisonValue::from_value(Value::Integer(20)),
+    });
+    let mut opts = ExecuteOptions::for_catalog(&cgs).unwrap();
+    opts.preflight = Some(plasm_core::PreflightToken::VERIFIED);
+    let mut materialization = SessionMaterialization::new();
+    let first = engine
+        .execute(
+            &Expr::Query(query.clone()),
+            &cgs,
+            &mut materialization,
+            Some(ExecutionMode::Replay),
+            StreamConsumeOpts {
+                one_page: true,
+                ..Default::default()
+            },
+            opts.clone(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(first.count(), 0);
+    let resume = first
+        .pagination_resume
+        .expect("filtered replay continuation");
+    assert_eq!(resume.residual, query.predicate);
+    let rest = engine
+        .execute_pagination_resume(
+            *resume,
+            &cgs,
+            &mut materialization,
+            Some(ExecutionMode::Replay),
+            StreamConsumeOpts {
+                fetch_all: true,
+                ..Default::default()
+            },
+            opts,
+        )
+        .await
+        .unwrap();
+    assert_eq!(rest.count(), 1);
+    assert_eq!(rest.source, ExecutionSource::Replay);
 }
 
 #[async_trait]

@@ -209,7 +209,9 @@ pub fn step_error_from_runtime(err: &RuntimeError, cgs: &CGS) -> StepError {
         RuntimeError::ReplayStoreError(_) => {
             StepError::new(StepErrorCategory::Config, err.to_string(), None)
         }
-        RuntimeError::PaginationProgress { .. } => {
+        RuntimeError::PaginationProgress { .. }
+        | RuntimeError::PaginationCatalogMismatch { .. }
+        | RuntimeError::PaginationCompiledCatalogMismatch { .. } => {
             StepError::new(StepErrorCategory::Runtime, err.to_string(), None)
         }
         RuntimeError::SerializationError(_) => {

@@ -219,6 +219,12 @@ pub struct QueryPaginationState {
 #[derive(Debug, Clone, PartialEq)]
 pub struct QueryPaginationResumeData {
     pub query: plasm_core::QueryExpr,
+    /// Residual resolved at acquisition, never re-partitioned at resume.
+    pub residual: Option<plasm_core::Predicate>,
+    /// Pinned execution catalog, including overlay and its scope index.
+    pub catalog_hash: String,
+    /// Pinned compiled request catalog (which may be the overlay's base catalog).
+    pub compiled_catalog_hash: String,
     pub capability_name: String,
     pub env: plasm_compile::CmlEnv,
     pub template: plasm_compile::CapabilityTemplate,

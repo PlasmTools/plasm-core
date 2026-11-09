@@ -79,6 +79,10 @@ fn invoke(expr: &InvokeExpr, depth: usize) -> usize {
         )
 }
 
+pub(super) fn predicate_retention_capacity_bytes(value: &Predicate) -> usize {
+    predicate(value, 0)
+}
+
 fn predicate(value: &Predicate, depth: usize) -> usize {
     if depth >= 64 {
         return usize::MAX;
