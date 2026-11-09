@@ -67,7 +67,8 @@ pub(in crate::plasm_dag) fn infer_render_columns_for_node(
                 cols.extend(aggregates.iter().map(|a| a.name.clone()));
                 Ok(cols)
             }
-            ComputeOp::Sort { .. }
+            ComputeOp::RequireOne
+            | ComputeOp::Sort { .. }
             | ComputeOp::Limit { .. }
             | ComputeOp::DedupeBy { .. }
             | ComputeOp::Filter { .. } => {

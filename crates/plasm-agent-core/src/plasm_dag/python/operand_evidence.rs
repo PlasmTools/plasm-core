@@ -145,7 +145,8 @@ impl Lower<'_> {
             DagNodeSource::Compute {
                 source,
                 op:
-                    ComputeOp::Limit { .. }
+                    ComputeOp::RequireOne
+                    | ComputeOp::Limit { .. }
                     | ComputeOp::Project { .. }
                     | ComputeOp::Filter { .. }
                     | ComputeOp::Sort { .. }

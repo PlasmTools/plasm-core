@@ -133,6 +133,7 @@ pub(crate) fn render_input_cardinality(
 
 pub(crate) fn render_compute_template(compute: &ComputeTemplate) -> String {
     match &compute.op {
+        ComputeOp::RequireOne => "require exactly one row".into(),
         ComputeOp::Python {
             entity,
             per_row,

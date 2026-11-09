@@ -170,6 +170,7 @@ record!(ComputeTemplate {
     collection_alias
 });
 variants!(ComputeOp {
+    RequireOne,
     NarrowEntity { source_at_most_one, target },
     Python { source, entry_id, entity, catalog_hash, contract_version, language_profile, input_schema, output_type, per_row, selection },
     Project { fields }, Filter { predicates }, GroupBy { keys, aggregates },

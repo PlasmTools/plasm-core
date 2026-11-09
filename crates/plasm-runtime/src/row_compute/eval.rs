@@ -194,6 +194,13 @@ fn apply_node(
                 return Err(plasm_core::RowComputeError::Ordering(error));
             }
         }
+        PlanNode::RequireOne => {
+            if state.rows.len() != 1 {
+                return Err(plasm_core::RowComputeError::SingletonUnpackCardinality {
+                    actual: state.rows.len(),
+                });
+            }
+        }
         PlanNode::Limit { count } => state.rows.truncate(*count),
         PlanNode::Distinct { keys } | PlanNode::Dedupe { keys } => {
             super::aggregate::distinct(state, keys)?

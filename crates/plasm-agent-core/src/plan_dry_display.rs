@@ -160,6 +160,7 @@ pub struct PlanDryStep {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum PlanDryOp {
+    RequireOne,
     MapBody {
         source: String,
         effects: Vec<PlanDryEffect>,
@@ -627,6 +628,7 @@ pub(crate) fn human_ux_headline_for_op(op: &PlanDryOp) -> String {
                 format!("Keep {} fields", fields.len())
             }
         }
+        PlanDryOp::RequireOne => "Require exactly one row".into(),
         PlanDryOp::Filter { .. } => "Filter rows".into(),
         PlanDryOp::GroupBy { keys, .. } => format!("Group by {}", keys.join(", ")),
         PlanDryOp::Aggregate { .. } => "Summarize".into(),
@@ -672,6 +674,7 @@ pub(crate) fn human_ux_summary_for_op(op: &PlanDryOp) -> String {
                 .map(|v| format!(" · input {v}"))
                 .unwrap_or_default()
         ),
+        PlanDryOp::RequireOne => "Require exactly one row".into(),
         PlanDryOp::Filter { predicates } if !predicates.is_empty() => {
             format!("Where {}", predicates.join(", "))
         }
@@ -768,6 +771,7 @@ pub(crate) fn render_plan_dry_op(op: &PlanDryOp) -> String {
             description,
         ),
         PlanDryOp::Project { fields } => format!("project {}", fields.join(", ")),
+        PlanDryOp::RequireOne => "require exactly one row".into(),
         PlanDryOp::Filter { predicates } => format!("filter {}", predicates.join(", ")),
         PlanDryOp::GroupBy { keys, aggregates } => {
             format!("group_by {} → {{{aggregates}}}", keys.join(", "))
@@ -901,6 +905,7 @@ fn compact_op_from_compute(
 ) -> PlanDryOp {
     let _ = display_map;
     match &compute.op {
+        ComputeOp::RequireOne => PlanDryOp::RequireOne,
         ComputeOp::NarrowEntity { target, .. } => PlanDryOp::Filter {
             predicates: vec![format!("entity type {}:{}", target.entry_id, target.entity)],
         },

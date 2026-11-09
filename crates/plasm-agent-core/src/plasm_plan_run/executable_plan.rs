@@ -276,6 +276,15 @@ impl PureStep {
     ) -> Result<BTreeMap<String, Vec<plasm_core::ValueRow>>, PureStepError> {
         match self {
             PureStep::Compute(c) => {
+                if matches!(c.compute.op, ComputeOp::RequireOne) {
+                    let source = PlanNodeId::new(c.compute.source.clone())?;
+                    let value = materialized.get(&source).ok_or_else(|| {
+                        PureStepError::MissingComputeBranch {
+                            branch: c.compute.source.clone(),
+                        }
+                    })?;
+                    crate::python_compute::require_complete_collection(&value.result)?;
+                }
                 binding_rows_for_compute(&c.compute, materialized).map_err(Into::into)
             }
             PureStep::Data(d) => {

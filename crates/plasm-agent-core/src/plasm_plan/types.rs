@@ -770,6 +770,7 @@ impl ValidatedPlanArtifact {
                 })
             }
             let op = match &value.op {
+                ComputeOp::RequireOne => 0,
                 ComputeOp::NarrowEntity { target, .. } => monad_entity(target),
                 ComputeOp::Python {
                     source,
@@ -1154,14 +1155,18 @@ impl ValidatedPlanArtifact {
             for nested in node.nested_plans() {
                 bytes = bytes
                     .saturating_add(std::mem::size_of::<ValidatedPlanArtifact>())
-                    .saturating_add(
-                        ValidatedPlanArtifact::retention_capacity_impl(Some(nested), None, depth + 1, None),
-                    );
+                    .saturating_add(ValidatedPlanArtifact::retention_capacity_impl(
+                        Some(nested),
+                        None,
+                        depth + 1,
+                        None,
+                    ));
             }
             bytes
         }
         if let Some(node) = selected {
-            return std::mem::size_of::<ValidatedPlanNode>().saturating_add(node_capacity(node, depth));
+            return std::mem::size_of::<ValidatedPlanNode>()
+                .saturating_add(node_capacity(node, depth));
         }
         let plan = plan.expect("plan or selected node");
         let mut bytes = program

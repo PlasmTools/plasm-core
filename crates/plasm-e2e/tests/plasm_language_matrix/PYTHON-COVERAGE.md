@@ -315,6 +315,13 @@ these abstract fixture witnesses to typed arrays: split results, nested targets,
 duplicate names, and too few/many values. One Python check validates the entire
 target before exposing any leaf; failures carry `python_exception` and dispatch
 no dependent writes. This does not admit starred or nullable container targets.
+
+`entity_singleton_unpack_checks_cardinality_before_later_effects` covers
+single-target unpacking of catalog-backed entity rowsets. The typed
+`require_one` row operation checks the complete input for exactly one occurrence,
+retains that occurrence's identity, and orders later work after the check,
+including in callback scopes and when the target is unused. Structural
+projection rowsets are not admitted by this path.
 `explicit_unique_selection_checks_candidates_before_effects` checks zero, one,
 and two candidates using an explicit pure assertion; ambiguous/empty selections
 dispatch no writes. `explicit_membership_difference_excludes_existing_effect_targets`

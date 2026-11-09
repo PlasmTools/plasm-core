@@ -218,6 +218,7 @@ fn derive_kind_label(k: super::templates::DeriveKind) -> &'static str {
 fn compute_op_label(op: &super::compute::ComputeOp) -> String {
     use super::compute::ComputeOp;
     match op {
+        ComputeOp::RequireOne => "require exactly one row".into(),
         ComputeOp::NarrowEntity { target, .. } => {
             format!("of_type {}:{}", target.entry_id, target.entity)
         }

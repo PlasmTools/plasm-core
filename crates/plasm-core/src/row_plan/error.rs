@@ -8,6 +8,8 @@ use crate::value_contract::ValueContract;
 
 #[derive(Debug, Clone, Error)]
 pub enum RowComputeError {
+    #[error("singleton unpack requires exactly one row, found {actual}")]
+    SingletonUnpackCardinality { actual: usize },
     #[error(transparent)]
     Contract(#[from] crate::row_plan::contracts::RowContractError),
     #[error(transparent)]

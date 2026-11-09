@@ -205,7 +205,8 @@ pub(in crate::plasm_dag) fn program_binding_contract_for_source(
         DagNodeSource::Compute {
             source,
             op:
-                op @ (ComputeOp::Limit { .. }
+                op @ (ComputeOp::RequireOne
+                | ComputeOp::Limit { .. }
                 | ComputeOp::Filter { .. }
                 | ComputeOp::Sort { .. }
                 | ComputeOp::DedupeBy { .. }),

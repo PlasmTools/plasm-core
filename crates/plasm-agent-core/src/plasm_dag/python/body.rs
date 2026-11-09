@@ -353,6 +353,7 @@ impl Lower<'_> {
             compute_origins: self.compute_origins.clone(),
             recorded_outputs: BTreeMap::new(),
             admitted_operands: Vec::new(),
+            cardinality_checks: Vec::new(),
             frame,
             static_sequences: self.static_sequences.clone(),
         };
@@ -432,12 +433,13 @@ impl Lower<'_> {
                 },
             )
         };
-        let nodes = scoped
+        let mut nodes = scoped
             .state
             .nodes
             .iter()
             .map(|n| super::super::plan_serialize::lower_plan_node(n))
             .collect::<Vec<_>>();
+        add_cardinality_dependencies(&mut nodes, &scoped.cardinality_checks);
         let mut plan = crate::plasm_plan::Plan::from_nodes(
             None,
             nodes,

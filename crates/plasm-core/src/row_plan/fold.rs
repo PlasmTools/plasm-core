@@ -99,5 +99,6 @@ pub fn plan_node_from_compute(op: &ComputeOp) -> Result<PlanNode, RowComputeErro
         }
         ComputeOp::Python { .. } => Err(FusionError::PythonInPipeline.into()),
         ComputeOp::NarrowEntity { .. } => Err(FusionError::EntityNarrowingInPipeline.into()),
+        ComputeOp::RequireOne => Ok(PlanNode::RequireOne),
     }
 }

@@ -32,6 +32,8 @@ pub struct ComputeTemplate {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum ComputeOp {
+    /// Return the original row occurrence only when the complete input has exactly one row.
+    RequireOne,
     /// Select original catalog row occurrences belonging to one declared output
     /// variant. This uses identity evidence, never a field-value discriminator.
     NarrowEntity {
@@ -130,7 +132,8 @@ impl ComputeOp {
     pub fn collection_demand(&self) -> crate::collection_codec::Demand {
         use crate::collection_codec::Demand;
         match self {
-            Self::Python { .. }
+            Self::RequireOne
+            | Self::Python { .. }
             | Self::GroupBy { .. }
             | Self::Aggregate { .. }
             | Self::Sort { .. }
@@ -170,7 +173,8 @@ impl ComputeOp {
     pub fn preserves_row_identity(&self) -> bool {
         matches!(
             self,
-            Self::Project { .. }
+            Self::RequireOne
+                | Self::Project { .. }
                 | Self::Filter { .. }
                 | Self::Sort { .. }
                 | Self::Limit { .. }

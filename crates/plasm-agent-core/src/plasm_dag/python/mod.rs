@@ -68,6 +68,7 @@ fn lower_python_program(
         compute_origins: BTreeMap::new(),
         recorded_outputs: BTreeMap::new(),
         admitted_operands: Vec::new(),
+        cardinality_checks: Vec::new(),
     };
     // Upstream lexical scope includes declarations after return. Reserved host
     // bindings cannot be shadowed even by an unreachable local assignment.
@@ -164,12 +165,16 @@ fn lower_python_program(
     if roots.is_empty() {
         return Err(PythonProgramError::EmptyReturn.into());
     }
-    let nodes = lower
+    let mut nodes = lower
         .state
         .nodes
         .iter()
         .map(|n| super::plan_serialize::lower_plan_node(n))
         .collect::<Vec<_>>();
+    // A Python unpack is an eager assertion, even when its target is unused.
+    // Preserve program order by making every subsequently authored node wait
+    // for the check before any of its work can be dispatched.
+    add_cardinality_dependencies(&mut nodes, &lower.cardinality_checks);
     let ret = if roots.len() > 1 {
         crate::plasm_plan::PlanReturn::Parallel {
             nodes: roots.clone(),
@@ -308,6 +313,25 @@ struct Lower<'a> {
     compute_origins: BTreeMap<String, crate::program_rejection::ReceiverIdentityOrigin>,
     recorded_outputs: BTreeMap<String, RecordedOutputOrigin>,
     admitted_operands: Vec<operand_evidence::AdmittedOperand>,
+    cardinality_checks: Vec<CardinalityCheck>,
+}
+
+struct CardinalityCheck {
+    node: String,
+    insertion_index: usize,
+}
+
+fn add_cardinality_dependencies(
+    nodes: &mut [crate::plasm_plan::PlanNode],
+    checks: &[CardinalityCheck],
+) {
+    for check in checks {
+        for node in nodes.iter_mut().skip(check.insertion_index + 1) {
+            if !node.depends_on.contains(&check.node) {
+                node.depends_on.push(check.node.clone());
+            }
+        }
+    }
 }
 impl Lower<'_> {
     fn expression_placement(&self, expression: &PyExpr) -> ExpressionPlacement {
