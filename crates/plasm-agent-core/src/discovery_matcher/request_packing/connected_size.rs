@@ -40,7 +40,7 @@ impl PreparedLocal {
         let context = Context {
             rule: super::super::RUBRIC.into(),
             discovery_need: intent.current().into(),
-            outcome: intent.current().into(),
+            outcome: intent.selection_request(),
         };
         let questions = BTreeMap::from([(
             format!("q{}", &id[1..]),

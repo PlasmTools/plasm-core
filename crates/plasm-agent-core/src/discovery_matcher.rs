@@ -448,11 +448,12 @@ fn issue_scope(
         .get(&question.reference)
         .ok_or(DiscoveryMatcherError::MissingAnswer)?;
     let key = format!("q{}", &id[1..]);
+    let selection_request = intent.selection_request();
     let state = SharedEvidence {
         rule: RUBRIC,
         capabilities: scope.cards,
         discovery_need: intent.current(),
-        outcome: intent.current(),
+        outcome: &selection_request,
         types: scope.types,
         type_refs: scope.references,
         bindings: scope.bindings,
@@ -1185,24 +1186,21 @@ mod tests {
 
     proptest! {
         #[test]
-        fn direct_judgment_uses_only_current_request(turns in prop::collection::vec("[a-zA-Z ]{1,80}", 1..32)) {
+        fn direct_judgment_preserves_ordered_requests(turns in prop::collection::vec("[a-zA-Z ]{1,80}", 1..32)) {
             let turns: Vec<_> = turns.into_iter().map(|text| format!("Need {text}")).collect();
             let provenance = IntentProvenance::from_turns(turns.clone()).unwrap();
             let (_, retrieval) = fixture();
             let batches = issue_batches(RELEVANCE_MODEL, &provenance, &retrieval).unwrap();
             let content = question_content(&batches[0]);
             prop_assert!(content["context"].get("intent_turns").is_none());
-            let current = IntentProvenance::from_turns([provenance.current().to_owned()]).unwrap();
-            let direct = issue_batches(RELEVANCE_MODEL, &current, &retrieval).unwrap();
-            prop_assert_eq!(batches[0].body(), direct[0].body());
             prop_assert_eq!(provenance.turns().collect::<Vec<_>>(), turns.iter().map(String::as_str).collect::<Vec<_>>());
             prop_assert_eq!(&content["context"]["discovery_need"], &json!(provenance.current()));
-            prop_assert_eq!(&content["context"]["outcome"], &json!(provenance.current()));
+            prop_assert_eq!(&content["context"]["outcome"], &json!(provenance.selection_request()));
         }
     }
 
     #[test]
-    fn current_request_packets_ignore_ancestry_but_preserve_conditions_and_full_evidence() {
+    fn oversized_selection_history_fails_explicitly() {
         let (_, retrieval) = fixture();
         let current = "Inspect λ specimens; preserve originals. If validation fails, report missing inputs. Do not execute changes.";
         let short = IntentProvenance::from_turns([current.into()]).unwrap();
@@ -1225,9 +1223,11 @@ mod tests {
             packet
         };
         let a = build(&short);
-        let b = build(&long);
-        assert_eq!(a.body(), b.body());
-        let body: serde_json::Value = serde_json::from_str(b.body()).unwrap();
+        assert!(matches!(
+            issue_batches(RELEVANCE_MODEL, &long, &retrieval),
+            Err(DiscoveryMatcherError::ScopeLimit { .. })
+        ));
+        let body: serde_json::Value = serde_json::from_str(a.body()).unwrap();
         assert_eq!(body["state"]["outcome"], current);
         assert!(body["state"].get("intent_history").is_none());
         assert!(body["state"].get("intent_turns").is_none());
@@ -1273,7 +1273,7 @@ mod tests {
                 );
                 assert!(evidence.get("collection_meaning").is_none());
                 assert_eq!(content["context"]["discovery_need"], "First");
-                assert_eq!(content["context"]["outcome"], "First");
+                assert_eq!(content["context"]["outcome"], intent.selection_request());
                 assert!(content["context"].get("intent_turns").is_none());
                 assert_eq!(content["context"]["rule"], RUBRIC);
                 assert!(content["context"].get("intent_interpretation").is_none());
@@ -1430,7 +1430,7 @@ mod tests {
         assert_eq!(seen.lock().unwrap()[0], expected_body);
         for body in seen.lock().unwrap().iter() {
             let request: serde_json::Value = serde_json::from_str(body).unwrap();
-            assert_eq!(request["state"]["outcome"], intent.current());
+            assert_eq!(request["state"]["outcome"], intent.selection_request());
             assert_eq!(request["state"]["discovery_need"], intent.current());
             assert!(request["state"].get("intent_turns").is_none());
             assert!(request["state"].get("current_intent").is_none());

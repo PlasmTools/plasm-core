@@ -4,7 +4,7 @@ use crate::discovery_scheduling as scheduling;
 pub(crate) mod decision_checkpoint;
 mod metrics;
 use plasm_core::prerequisites::{
-    prerequisite_closure, CapabilityRef, PrerequisiteClosure, PrerequisiteError,
+    CapabilityRef, PrerequisiteClosure, PrerequisiteError, prerequisite_closure,
 };
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
@@ -588,9 +588,8 @@ impl DiscoveryService {
             request.new_generation.to_owned()
         };
         let policy_models = format!("{}:{}", self.match_model, self.operation_model);
-        let intent_id = plasm_core::catalog_discovery::content_hash(
-            request.intent_provenance.current().as_bytes(),
-        );
+        let selection_request = request.intent_provenance.selection_request();
+        let intent_id = plasm_core::catalog_discovery::content_hash(selection_request.as_bytes());
         let backlog_key =
             deferred_backlog_key(&pin_id, &generation, request.allowed, &policy_models)?;
         let backlog = self
@@ -609,7 +608,7 @@ impl DiscoveryService {
             &generation,
             request.allowed,
             &policy_models,
-            request.intent_provenance.current(),
+            &selection_request,
         )?;
         let search = search_key(
             &generation,
@@ -1020,25 +1019,24 @@ impl DiscoveryService {
             .cloned()
             .collect();
         let authorized = index.authorized_capabilities(allowed);
-        let extraction = matcher::operations::ExtractionRequest::new(
-            &self.operation_model,
-            provenance.current(),
-        )?;
+        let selection_request = provenance.selection_request();
+        let extraction =
+            matcher::operations::ExtractionRequest::new(&self.operation_model, &selection_request)?;
         let scope = matcher::operations::MatrixScope::new(
             session,
             generation,
             &authorized,
             extraction.identity(),
         )?;
-        let mut matrix = match operation_state.load(&scope, provenance.current(), &authorized)? {
+        let mut matrix = match operation_state.load(&scope, &selection_request, &authorized)? {
             OperationFrontierLoad::Resume(matrix) => *matrix,
             OperationFrontierLoad::AwaitingExtraction | OperationFrontierLoad::ChangedRevision => {
                 let started = std::time::Instant::now();
-                let operations = self.operation_extractor.extract(provenance.current()).await;
+                let operations = self.operation_extractor.extract(&selection_request).await;
                 metrics::record_extraction(started.elapsed(), operations.is_ok());
                 matcher::operations::OperationMatrix::new(
                     scope.clone(),
-                    provenance.current(),
+                    &selection_request,
                     operations?,
                     &authorized,
                     Vec::new(),
@@ -1211,7 +1209,7 @@ impl DiscoveryService {
         } else {
             None
         };
-        let intent_analysis = if search.has_unavailable_provider() {
+        let mut intent_analysis = if search.has_unavailable_provider() {
             "**Capability discovery:** a later assessment was unavailable; earlier verified contributions remain available."
         } else if search.has_pending_operation_judgments() {
             "**Capability discovery:** additional candidates remain unassessed. Use declared operations if they satisfy the task, or extend the session to assess more."
@@ -1219,11 +1217,27 @@ impl DiscoveryService {
             "**Capability discovery:** some candidate contributions remain uncertain."
         } else {
             "**Capability contribution** (bounded online search; unvisited capabilities remain unexplored):"
-        };
+        }.to_owned();
+        let uncovered: Vec<_> = matrix.uncovered_operations().take(4).collect();
+        if !uncovered.is_empty() {
+            intent_analysis.push_str("\n\nThis discovery pass established no candidate contribution for these extracted request spans (up to four shown). Earlier declarations remain available; this does not establish that a capability is unavailable:");
+            for span in uncovered {
+                intent_analysis.push_str("\n- ");
+                intent_analysis.push_str(span);
+            }
+            let partial_recovery = DiscoveryRecovery::from_unmatched(
+                &matching,
+                &retrieval,
+                &catalogs,
+                allowed.catalogs.iter(),
+            );
+            intent_analysis.push_str("\n\n");
+            intent_analysis.push_str(&partial_recovery.render_partial_catalogs());
+        }
         Ok(RoutingReceipt {
             intent_provenance: provenance.clone(),
             authorization: allowed.clone(),
-            intent_analysis: intent_analysis.to_owned(),
+            intent_analysis,
             intent: provenance.current().to_owned(),
             pin_id: String::new(),
             retrieval,

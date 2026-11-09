@@ -21,6 +21,29 @@ const runtime = {
 const options = {toolCallId: "fixture", messages: [], context: {}};
 const tools = createPlasmTools(runtime);
 {
+  const paused = executionFailureSchema.parse({
+    cause: "upstream", recovery: "replan_after_rejection", code: "upstream_rejection",
+    diagnostic: "status 422: quota unavailable", node: null, occurrence_path: [], catalog_digest: null,
+    effects_unresolved: false, effects: [],
+    dispatches: [{operation: {entry_id: "matrix", capability: "change"}, request_fingerprint: "opaque", status: "rejected_without_effect"}],
+  });
+  const pausedTools = createPlasmTools({...runtime, plasmRun: async () => {
+    throw new AgentExecutionFailure(paused, "Execution paused after a confirmed no-effect rejection. Resume the original selection with plasm_resume.");
+  }});
+  const output = await pausedTools.plasm_run!.execute!({logical_session_ref: "l_AAAAAAAAQACAAAAAAAAAAQ", run_ref: "pc0"}, options);
+  const text = plasmModelOutput({output}).value;
+  assert.match(text, /status 422: quota unavailable/);
+  assert.match(text, /plasm_resume/);
+}
+{
+  const small = executionFailureSchema.parse({cause: "program", recovery: "repair_program", code: "program_syntax",
+    diagnostic: "Missing input", node: null, occurrence_path: [], catalog_digest: null,
+    effects_unresolved: false, effects: [], dispatches: []});
+  const smallTools = createPlasmTools({...runtime, plasm: async () => { throw new AgentExecutionFailure(small, "Program rejected."); }});
+  const output = await smallTools.plasm!.execute!({logical_session_ref: "l_AAAAAAAAQACAAAAAAAAAAQ", program: "example"}, options);
+  assert.match(plasmModelOutput({output}).value, /Missing input/);
+}
+{
   const parseFailure = executionFailureSchema.parse({cause: "program", recovery: "repair_program", code: "program_syntax",
     diagnostic: "Expected an indented block", node: null, occurrence_path: [], catalog_digest: null,
     effects: [], dispatches: [], effects_unresolved: false});
@@ -28,6 +51,16 @@ const tools = createPlasmTools(runtime);
   const result = await parseTools.plasm!.execute!({logical_session_ref: "l_AAAAAAAAQACAAAAAAAAAAQ", program: "class P(Program):\n    # incomplete"}, options);
   const text = plasmModelOutput({output: result}).value;
   assert.equal((text.match(/Expected an indented block/g) ?? []).length, 1);
+  assert.doesNotMatch(text, /Recorded failure details/);
+}
+{
+  const failure = executionFailureSchema.parse({cause: "program", recovery: "repair_program", code: "effect_plan_retention_refused",
+    diagnostic: "continuation retained-state accounting failed", node: null, occurrence_path: [], catalog_digest: null,
+    effects: [], dispatches: [], effects_unresolved: false});
+  const noEffectTools = createPlasmTools({...runtime, plasmRun: async () => { throw new AgentExecutionFailure(failure, "Execution stopped: continuation retained-state accounting failed."); }});
+  const result = await noEffectTools.plasm_run!.execute!({logical_session_ref: "l_AAAAAAAAQACAAAAAAAAAAQ", run_ref: "pc0"}, options);
+  const text = plasmModelOutput({output: result}).value;
+  assert.equal((text.match(/continuation retained-state accounting failed/g) ?? []).length, 1);
   assert.doesNotMatch(text, /Recorded failure details/);
 }
 const output = await tools.plasm_run!.execute!({logical_session_ref: "l_AAAAAAAAQACAAAAAAAAAAQ", run_ref: "pc0"}, options);
@@ -80,9 +113,10 @@ for (const recovery of ["repair_program", "obtain_authorization", "reconcile_eff
     const result = failureObservationSchema.parse(await matrixTools[name]!.execute!(args, options));
     assert.deepEqual(result.failure, small, "presentation does not change typed recovery authority");
     const text = plasmModelOutput({output: result}).value;
-    assert.match(text, /End of recorded failure details/);
+    if (small.effects_unresolved) assert.match(text, /End of recorded failure details/);
+    else assert.doesNotMatch(text, /Recorded failure details/);
     assert.doesNotMatch(text, /call plasm_failure/);
-    assert.match(text, /Earlier completed changes were not undone/);
+    if (small.effects_unresolved) assert.match(text, /Earlier completed changes were not undone/);
     if (small.effects_unresolved) {
       assert.match(text, /matrix\/stage: 1 completed; 0 failed/);
       assert.match(text, /Some state changes remain unknown/);

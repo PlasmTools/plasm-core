@@ -58,14 +58,14 @@ export class FailureResults {
     return ref;
   }
 
-  read(ref: string, offset: number): string {
+  read(ref: string, offset: number, omitRepeatedDiagnostic = false): string {
     const lines = this.records.get(ref);
     if (!lines) throw new Error("Failure result is unknown or expired on this runtime. No operation was executed.");
     if (!Number.isSafeInteger(offset) || offset < 0 || offset >= lines.length) throw new Error("Failure result offset is outside the recorded result.");
     const end = Math.min(offset + 40, lines.length);
     return [
       `Recorded failure details (${offset + 1}–${end} of ${lines.length} entries).`,
-      ...lines.slice(offset, end),
+      ...lines.slice(offset, end).filter((_, index) => !(omitRepeatedDiagnostic && offset === 0 && index === 0)),
       end < lines.length ? `More: call plasm_failure with failure_ref=${ref} and offset=${end}.` : "End of recorded failure details.",
     ].join("\n");
   }

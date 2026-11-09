@@ -9,19 +9,19 @@ use serde_json::json;
 use tracing::Instrument;
 
 use crate::http_execute::{
-    apply_capability_seeds_for_mcp, build_plasm_context_agent_markdown,
-    build_plasm_context_tool_meta, ApplyCapabilitySeedsOutcome, PlasmContextToolMetaParams,
+    ApplyCapabilitySeedsOutcome, PlasmContextToolMetaParams, apply_capability_seeds_for_mcp,
+    build_plasm_context_agent_markdown, build_plasm_context_tool_meta,
 };
 use crate::incoming_auth::tenant_scope;
 use crate::mcp_logical_ref::format_logical_session_wire_ref;
 use crate::session_identity::{
-    accumulated_intent_meta_preview, LogicalSessionId, PlasmContextSessionMode,
+    LogicalSessionId, PlasmContextSessionMode, accumulated_intent_meta_preview,
 };
 use crate::trace_hub::PlasmContextTrace;
 
 use super::tool_parse::{parse_optional_principal, parse_plasm_context_session_mode};
 use super::transport::PlasmExecBinding;
-use super::{PlasmMcpHandler, MAX_MCP_EXEC_BINDINGS};
+use super::{MAX_MCP_EXEC_BINDINGS, PlasmMcpHandler};
 use crate::discovery_service::{DiscoveryService, RouteTurn};
 use plasm_core::discovery::CgsCatalog;
 
@@ -553,8 +553,10 @@ impl PlasmMcpHandler {
             } else {
                 ""
             };
-            let content =
-                format!("{content}\n\n**logical_session_ref:** `{wire_ref}`{pending}{unavailable}");
+            let content = format!(
+                "{}\n\n{content}\n\n**logical_session_ref:** `{wire_ref}`{pending}{unavailable}",
+                receipt.intent_analysis
+            );
             let mut meta = serde_json::Map::new();
             meta.insert("logical_session_ref".into(), json!(wire_ref));
             meta.insert(

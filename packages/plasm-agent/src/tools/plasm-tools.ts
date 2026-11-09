@@ -58,16 +58,25 @@ export function createPlasmTools(
     try { return await run(); } catch (error) {
       const observation = failureObservation(error);
       await runtime.recordExecutionFailure(name, observation.failure);
-      // Parse rejection occurs before planning or dispatch. Its diagnostic is
-      // complete; repeating it as an empty effect ledger obscures the error.
-      if (observation.failure.code === "program_syntax" && !observation.failure.effects_unresolved
+      const diagnosticIncluded = observation.summary.includes(observation.failure.diagnostic);
+      // A complete no-effect failure has no ledger to expand; its compact
+      // summary already contains the diagnostic and recovery instruction.
+      if (!observation.failure.effects_unresolved
         && !observation.failure.input_occurrence && observation.failure.effects.length === 0 && observation.failure.dispatches.length === 0) {
-        return observation;
+        const action = {
+          repair_program: "Correct the program before retrying.",
+          obtain_authorization: "Obtain authorization before retrying.",
+          reconcile_effects: "Check the prior execution before further writes.",
+          replan_after_rejection: "Consider another authorized plan.",
+          stop: "Stop and resolve the reported blocker.",
+        }[observation.failure.recovery];
+        const diagnostic = diagnosticIncluded ? "" : `\n${observation.failure.diagnostic}`;
+        return {...observation, summary: `${observation.summary}${diagnostic}\n${action}`};
       }
       const ref = failures.record(observation.failure);
       // Deliver evidence already held by the host in the failing call itself.
       // The existing bounded page supplies a continuation only when needed.
-      return {...observation, summary: `${observation.summary}\n${failures.read(ref, 0)}`};
+      return {...observation, summary: `${observation.summary}\n${failures.read(ref, 0, diagnosticIncluded)}`};
     }
   }
 

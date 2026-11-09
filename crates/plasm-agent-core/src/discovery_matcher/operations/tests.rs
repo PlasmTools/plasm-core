@@ -150,12 +150,14 @@ async fn operation_decisions_use_the_shared_validated_checkpoint() {
         .await
         .insert(bad_packet.cache_key().into(), "{}".into());
     let checkpoint = DecisionCheckpoint::new(&poisoned, &locks);
-    assert!(checkpoint
-        .receive(bad_packet, || async {
-            panic!("corrupt cache must not trigger implicit replay")
-        })
-        .await
-        .is_err());
+    assert!(
+        checkpoint
+            .receive(bad_packet, || async {
+                panic!("corrupt cache must not trigger implicit replay")
+            })
+            .await
+            .is_err()
+    );
 }
 
 #[async_trait::async_trait]
@@ -192,7 +194,13 @@ impl plasm_runtime::provider_transport::ProviderTransport for MockExtraction {
         let packet: serde_json::Value = serde_json::from_str(body).unwrap();
         let input: serde_json::Value =
             serde_json::from_str(packet["messages"][1]["content"].as_str().unwrap()).unwrap();
-        assert_eq!(input["request"], "Read the sensor and send a notice.");
+        assert!(
+            input["spans"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|span| span[1] == "Read the sensor and send a notice.")
+        );
         Ok(plasm_runtime::provider_transport::ProviderResponse {
             status: reqwest::StatusCode::OK,
             retry_after: None,
@@ -213,9 +221,11 @@ async fn provider_boundary_binds_operation_excerpts_to_the_request() {
         .await
         .unwrap();
     assert_eq!(operations.operations().len(), 2);
-    assert!(operations
-        .validate_revision("Read the sensor and send a notice.")
-        .is_ok());
+    assert!(
+        operations
+            .validate_revision("Read the sensor and send a notice.")
+            .is_ok()
+    );
     assert_eq!(
         operations.validate_revision("Read the sensor."),
         Err(OperationError::IntentMismatch)
@@ -392,6 +402,127 @@ fn operation_recall_ranks_prioritize_questions_without_granting_relevance() {
 }
 
 #[test]
+fn recalled_pair_precedes_unrecalled_pair_after_other_operation_was_judged() {
+    use plasm_core::prerequisites::CapabilityRef;
+    let intent = "Inspect the archive. Find a replacement key.";
+    let operations = OperationSet::from_excerpts(
+        intent,
+        &[
+            "Inspect the archive".into(),
+            "Find a replacement key".into(),
+        ],
+    )
+    .unwrap();
+    let first = CapabilityRef {
+        catalog: "matrix".into(),
+        capability: "inspect".into(),
+    };
+    let second = CapabilityRef {
+        catalog: "matrix".into(),
+        capability: "find_key".into(),
+    };
+    let authorized = BTreeSet::from([first.clone(), second.clone()]);
+    let scope = MatrixScope::new(
+        "session",
+        "generation",
+        &authorized,
+        ExtractionRequest::new("fixture", intent)
+            .unwrap()
+            .identity(),
+    )
+    .unwrap();
+    let mut matrix = OperationMatrix::new(
+        scope,
+        intent,
+        operations.clone(),
+        &authorized,
+        vec![first.clone(), second.clone()],
+    )
+    .unwrap();
+    let historical = operations.operations()[0].id().clone();
+    let current = operations.operations()[1].id().clone();
+    matrix
+        .set_recall_ranks(
+            &authorized,
+            BTreeMap::from([((current.clone(), second.clone()), 0)]),
+        )
+        .unwrap();
+    let earlier = (current.clone(), first.clone());
+    matrix
+        .record_packet(
+            &issued(&matrix, BTreeSet::from([earlier.clone()])),
+            &[OperationJudgment {
+                operation: earlier.0,
+                capability: earlier.1,
+                contribution: DirectContribution::Unrelated,
+            }],
+        )
+        .unwrap();
+    assert_eq!(
+        matrix.next_packet_for(&[second.clone()], 1).unwrap(),
+        vec![(current, second)]
+    );
+    assert!(!matrix.answers.contains_key(&(historical, first)));
+}
+
+#[test]
+fn uncovered_spans_distinguish_uncertain_from_affirmative_contributions() {
+    use plasm_core::prerequisites::CapabilityRef;
+    let intent = "Read the archive. Identify its owner.";
+    let operations = OperationSet::from_excerpts(
+        intent,
+        &["Read the archive".into(), "Identify its owner".into()],
+    )
+    .unwrap();
+    let candidate = CapabilityRef {
+        catalog: "matrix".into(),
+        capability: "inspect".into(),
+    };
+    let authorized = BTreeSet::from([candidate.clone()]);
+    let scope = MatrixScope::new(
+        "session",
+        "generation",
+        &authorized,
+        ExtractionRequest::new("fixture", intent)
+            .unwrap()
+            .identity(),
+    )
+    .unwrap();
+    let mut matrix = OperationMatrix::new(
+        scope,
+        intent,
+        operations.clone(),
+        &authorized,
+        vec![candidate.clone()],
+    )
+    .unwrap();
+    let pairs = matrix.next_packet(2).unwrap();
+    let judgments: Vec<_> = pairs
+        .iter()
+        .enumerate()
+        .map(|(i, (operation, capability))| OperationJudgment {
+            operation: operation.clone(),
+            capability: capability.clone(),
+            contribution: if i == 0 {
+                DirectContribution::Relevant
+            } else {
+                DirectContribution::Uncertain
+            },
+        })
+        .collect();
+    matrix
+        .record_packet(
+            &issued(&matrix, pairs.iter().cloned().collect()),
+            &judgments,
+        )
+        .unwrap();
+    assert_eq!(
+        matrix.uncovered_operations().collect::<Vec<_>>(),
+        vec!["Identify its owner"]
+    );
+}
+
+#[test]
 fn bounded_matrix_retains_unjudged_pairs_and_commits_packets_atomically() {
     use plasm_core::prerequisites::CapabilityRef;
     let intent = "Find the signed document and send it to the reviewer.";
@@ -430,9 +561,11 @@ fn bounded_matrix_retains_unjudged_pairs_and_commits_packets_atomically() {
     .unwrap();
     let admitted = matrix.next_packet_for(&candidates[1..2], 4).unwrap();
     assert_eq!(admitted.len(), 2);
-    assert!(admitted
-        .iter()
-        .all(|(_, candidate)| candidate == &candidates[1]));
+    assert!(
+        admitted
+            .iter()
+            .all(|(_, candidate)| candidate == &candidates[1])
+    );
     assert!(matches!(
         matrix.progress(&candidates[0]),
         Ok(CandidateProgress::Incomplete { .. })
@@ -484,9 +617,11 @@ fn bounded_matrix_retains_unjudged_pairs_and_commits_packets_atomically() {
         .record_packet(&self::issued(&matrix, remaining), &more)
         .unwrap();
     assert!(matrix.next_packet(4).unwrap().is_empty());
-    assert!(candidates
-        .iter()
-        .all(|candidate| matrix.progress(candidate).unwrap() == CandidateProgress::Unrelated));
+    assert!(
+        candidates
+            .iter()
+            .all(|candidate| matrix.progress(candidate).unwrap() == CandidateProgress::Unrelated)
+    );
 }
 
 #[test]
@@ -884,7 +1019,13 @@ fn extraction_contract_distinguishes_discovery_from_the_requested_action() {
             assert!(instruction.contains("listing capabilities is itself the actual task"));
             let input: serde_json::Value =
                 serde_json::from_str(body["messages"][1]["content"].as_str().unwrap()).unwrap();
-            assert_eq!(input["request"], intent);
+            assert!(
+                input["spans"]
+                    .as_array()
+                    .unwrap()
+                    .iter()
+                    .any(|span| span[1] == intent)
+            );
         }
     }
 }
@@ -896,9 +1037,11 @@ fn extraction_rejects_invented_text_and_truncated_responses() {
     let response = |finish, operations: Vec<&str>| {
         serde_json::json!({"model":"fixture","choices":[{"finish_reason":finish,"message":{"content":serde_json::json!({"operations":operations}).to_string()}}]}).to_string()
     };
-    assert!(request
-        .decode(intent, &response("stop", vec!["s0", "s1"]))
-        .is_ok());
+    assert!(
+        request
+            .decode(intent, &response("stop", vec!["s0", "s1"]))
+            .is_ok()
+    );
     assert_eq!(
         request.decode(intent, &response("stop", vec!["delete it"])),
         Err(OperationError::InvalidExcerpt)
@@ -921,10 +1064,12 @@ fn extraction_selects_host_issued_intent_spans() {
         serde_json::json!({"model":"fixture","choices":[{"finish_reason":"stop","message":{"content":serde_json::json!({"operations":ids}).to_string()}}]}).to_string()
     };
     let result = request.decode(intent, &response(vec!["s0", "s1"])).unwrap();
-    assert!(result
-        .operations()
-        .iter()
-        .any(|v| v.text().contains("send £25 only if approved")));
+    assert!(
+        result
+            .operations()
+            .iter()
+            .any(|v| v.text().contains("send £25 only if approved"))
+    );
     assert!(request.decode(intent, &response(vec!["invented"])).is_err());
     assert!(request.decode(intent, &response(vec!["s0", "s0"])).is_err());
 }
@@ -940,9 +1085,11 @@ fn issued_spans_are_exact_utf8_bounded_and_keep_decimal_amounts() {
         && span.len() <= MAX_OPERATION_BYTES
         && intent.contains(span)));
     assert!(spans.values().any(|span| span.contains("£25.50")));
-    assert!(spans
-        .values()
-        .any(|span| span.contains("do not pay without approval")));
+    assert!(
+        spans
+            .values()
+            .any(|span| span.contains("do not pay without approval"))
+    );
 }
 
 #[test]
@@ -982,14 +1129,18 @@ async fn malformed_semantic_proposal_gets_one_corrective_request() {
             if n == 1 {
                 assert!(body.contains("preceding proposal"));
                 let request: serde_json::Value = serde_json::from_str(body).unwrap();
-                assert!(request["messages"][2]["content"]
-                    .as_str()
-                    .unwrap()
-                    .contains("Invent an action"));
-                assert!(request["messages"][3]["content"]
-                    .as_str()
-                    .unwrap()
-                    .contains("not an exact intent excerpt"));
+                assert!(
+                    request["messages"][2]["content"]
+                        .as_str()
+                        .unwrap()
+                        .contains("Invent an action")
+                );
+                assert!(
+                    request["messages"][3]["content"]
+                        .as_str()
+                        .unwrap()
+                        .contains("not an exact intent excerpt")
+                );
             }
             let operation = if n == 0 { "Invent an action" } else { "s0" };
             Ok(plasm_runtime::provider_transport::ProviderResponse { status: reqwest::StatusCode::OK, retry_after: None, body: serde_json::json!({"model":"fixture","choices":[{"finish_reason":"stop","message":{"content":serde_json::json!({"operations":[operation]}).to_string()}}]}).to_string() })
@@ -1060,14 +1211,18 @@ fn decision_packet_binds_authorized_candidate_and_exact_operation() {
     .unwrap();
     let wire: serde_json::Value = serde_json::from_str(batch.body()).unwrap();
     assert_eq!(wire["state"]["operations"]["o1"], "Inspect the parcel");
-    assert!(wire["questions"]["q1"]["instructions"]
-        .as_str()
-        .unwrap()
-        .contains("necessary component"));
-    assert!(wire["state"]["capabilities"]["c1"]["operation"]["contract"]
-        .as_str()
-        .unwrap()
-        .starts_with("Inspect a parcel"));
+    assert!(
+        wire["questions"]["q1"]["instructions"]
+            .as_str()
+            .unwrap()
+            .contains("necessary component")
+    );
+    assert!(
+        wire["state"]["capabilities"]["c1"]["operation"]["contract"]
+            .as_str()
+            .unwrap()
+            .starts_with("Inspect a parcel")
+    );
     assert!(
         !batch.body().contains(question.operation.as_str()),
         "provider receives compact labels, not internal digests"
@@ -1244,6 +1399,79 @@ fn relationship_scope_is_explicit_in_extraction_and_decision_packets() {
     )
     .unwrap();
     assert!(packet.body().contains("target-selection condition"));
+}
+
+#[test]
+fn extraction_receives_ordered_conditions_and_does_not_offer_host_header() {
+    let provenance = crate::intent_provenance::IntentProvenance::from_turns([
+        "Update records belonging to the selected team.".into(),
+        "Use the other team instead; preserve unrelated records.".into(),
+    ])
+    .unwrap();
+    let request = provenance.selection_request();
+    let extraction = ExtractionRequest::new("fixture", &request).unwrap();
+    let packet: serde_json::Value = serde_json::from_str(extraction.body()).unwrap();
+    let user = packet["messages"][1]["content"].as_str().unwrap();
+    let data: serde_json::Value = serde_json::from_str(user).unwrap();
+    assert!(data["spans"].to_string().contains("selected team"));
+    assert!(data["spans"].to_string().contains("other team"));
+    assert!(
+        packet["messages"][0]["content"]
+            .as_str()
+            .unwrap()
+            .contains("Do not select superseded requirements")
+    );
+    assert!(
+        data["spans"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .all(|span| !span[1].as_str().unwrap().starts_with("Ordered requests:"))
+    );
+}
+
+#[test]
+fn bounded_extraction_preserves_long_ordered_history_without_duplicate_request_copy() {
+    let mut turns = vec!["Select records belonging to the original owner.".to_owned()];
+    turns.extend((0..16).map(|i| format!("Turn detail {i}: Inspect documents and retain the ownership condition. Do not alter records in group {i}. Observation {i} has not established a qualifying match. Check source {i} before selecting a target and preserve identity through comparison. Continue step {i} only after the relevant inputs have been inspected and the matching relation is established.")));
+    let provenance = crate::intent_provenance::IntentProvenance::from_turns(turns).unwrap();
+    let request = provenance.selection_request();
+    let extraction = ExtractionRequest::new("fixture", &request).unwrap();
+    assert!(extraction.body().len() <= MAX_EXTRACTION_INPUT_BYTES);
+    let wire: serde_json::Value = serde_json::from_str(extraction.body()).unwrap();
+    let input: serde_json::Value =
+        serde_json::from_str(wire["messages"][1]["content"].as_str().unwrap()).unwrap();
+    let text = input.to_string();
+    assert!(text.contains("original owner"));
+    assert!(text.contains("Turn detail 15"));
+}
+
+#[test]
+fn extraction_preserves_repeated_spans_in_temporal_order() {
+    let provenance = crate::intent_provenance::IntentProvenance::from_turns([
+        "Inspect records. Preserve the source.".into(),
+        "Cancel inspection.".into(),
+        "Resume inspection. Preserve the source.".into(),
+    ])
+    .unwrap();
+    let extraction = ExtractionRequest::new("fixture", &provenance.selection_request()).unwrap();
+    let wire: serde_json::Value = serde_json::from_str(extraction.body()).unwrap();
+    let input: serde_json::Value =
+        serde_json::from_str(wire["messages"][1]["content"].as_str().unwrap()).unwrap();
+    let spans = input["spans"].as_array().unwrap();
+    let texts: Vec<_> = spans.iter().map(|span| span[1].as_str().unwrap()).collect();
+    let repeats: Vec<_> = texts
+        .iter()
+        .enumerate()
+        .filter(|(_, text)| **text == "Preserve the source.")
+        .map(|(i, _)| i)
+        .collect();
+    assert_eq!(repeats.len(), 2);
+    let cancel = texts
+        .iter()
+        .position(|text| text.contains("Cancel inspection"))
+        .unwrap();
+    assert!(repeats[0] < cancel && cancel < repeats[1]);
 }
 
 #[test]

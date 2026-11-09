@@ -39,7 +39,7 @@ use crate::discovery_store::{DiscoveryAuthorization, RetrievalReceipt};
 use plasm_core::{prerequisites::DeploymentBindings, CGS};
 
 pub(crate) const SEARCH_POLICY: &str =
-    "additive-connected-frontier-current-hybrid-evidence-3-judgments-3-attempts-16000-byte-packet-v37";
+    "additive-connected-frontier-current-hybrid-evidence-3-judgments-3-attempts-16000-byte-packet-v40";
 
 #[derive(Clone, Copy)]
 pub struct SearchContext<'a> {
@@ -560,8 +560,8 @@ where
 {
     let index = CatalogueSearch::new(context.catalogs, context.deployments, context.allowed)?;
     let authorized = index.authorized_capabilities(context.allowed);
-    let extraction =
-        operations::ExtractionRequest::new("caller-provided", context.intent.current())?;
+    let selection_request = context.intent.selection_request();
+    let extraction = operations::ExtractionRequest::new("caller-provided", &selection_request)?;
     let scope = operations::MatrixScope::new(
         "isolated-selection",
         context.generation,
@@ -570,7 +570,7 @@ where
     )?;
     let mut matrix = operations::OperationMatrix::new(
         scope,
-        context.intent.current(),
+        &selection_request,
         operations,
         &authorized,
         recall

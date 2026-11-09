@@ -4,7 +4,7 @@ use crate::discovery_store::RetrievalReceipt;
 use plasm_core::{prerequisites::CapabilityRef, schema::CGS};
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet};
-pub const RECOVERY_GUIDANCE:&str="No relevant capability was selected from this bounded packet. Previously taught capabilities remain available. Extend the same logical_session_ref with the current discovery need. This result does not establish that the capability is absent from the catalog or that the task is complete.";
+pub const RECOVERY_GUIDANCE: &str = "No relevant capability was selected from this bounded packet. Previously taught capabilities remain available. Extend the same logical_session_ref with the current discovery need. This result does not establish that the capability is absent from the catalog or that the task is complete.";
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(deny_unknown_fields)]
 pub struct CandidateJudgment {
@@ -70,14 +70,94 @@ impl DiscoveryRecovery {
         }
         lines.join("\n\n")
     }
+
+    /// Describe authorized integrations when some request spans remain unresolved.
+    pub fn render_partial_catalogs(&self) -> String {
+        let mut lines = vec!["Available integrations (entity descriptions are examples, not an exhaustive capability list):".to_owned()];
+        for catalog in &self.available_catalogs {
+            lines.push(format!("- `{}`: {}", catalog.entry_id, catalog.description));
+        }
+        lines.push("Extend the same logical session to assess a relevant integration; these descriptions do not establish that a capability is available or selected.".to_owned());
+        lines.join("\n")
+    }
 }
 fn catalog_app_description(entry_id: &str, cgs: &CGS) -> CatalogAppDescription {
+    let examples = cgs
+        .entities
+        .values()
+        .filter(|entity| !entity.description.trim().is_empty())
+        .take(4)
+        .map(|entity| {
+            let description = entity.description.trim();
+            let mut chars = description.chars();
+            let excerpt: String = chars.by_ref().take(200).collect();
+            let suffix = if chars.next().is_some() { "…" } else { "" };
+            format!("{}: {excerpt}{suffix}", entity.name)
+        })
+        .collect::<Vec<_>>()
+        .join("; ");
     CatalogAppDescription {
         entry_id: entry_id.into(),
-        description: format!(
-            "Catalog {entry_id}: {} entities, {} capabilities",
-            cgs.entities.len(),
-            cgs.capabilities.len()
-        ),
+        description: if examples.is_empty() {
+            "No entity descriptions supplied.".into()
+        } else {
+            examples
+        },
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn partial_recovery_describes_integrations_without_claiming_selection() {
+        let recovery = DiscoveryRecovery {
+            candidates: Vec::new(),
+            available_catalogs: vec![CatalogAppDescription {
+                entry_id: "inventory".into(),
+                description: "Asset: An owned asset.".into(),
+            }],
+            guidance: RECOVERY_GUIDANCE.into(),
+        };
+        let text = recovery.render_partial_catalogs();
+        assert!(text.contains("`inventory`: Asset: An owned asset."));
+        assert!(text.contains("not an exhaustive capability list"));
+        assert!(text.contains("same logical session"));
+        assert!(text.contains("do not establish"));
+    }
+
+    #[test]
+    fn partial_recovery_only_describes_authorized_catalogs() {
+        let fixture: serde_json::Value = serde_json::from_str(include_str!(
+            "../../../fixtures/discovery/partial-routing.json"
+        ))
+        .unwrap();
+        let routing: crate::discovery_service::RoutingReceipt =
+            serde_json::from_value(fixture["routing"].clone()).unwrap();
+        let cgs = plasm_core::loader::load_schema_dir(
+            &std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+                .join("../../fixtures/schemas/plasm_prompt_matrix"),
+        )
+        .unwrap();
+        let catalogs = BTreeMap::from([("allowed".into(), cgs.clone()), ("denied".into(), cgs)]);
+        let matching = CapabilityMatchReceipt {
+            matches: Vec::new(),
+            budget_retained: Vec::new(),
+        };
+        let recovery = DiscoveryRecovery::from_unmatched(
+            &matching,
+            &routing.retrieval,
+            &catalogs,
+            ["allowed"],
+        );
+        let text = recovery.render_partial_catalogs();
+        assert!(text.contains("`allowed`:"));
+        assert!(!text.contains("`denied`:"));
+        assert!(
+            !recovery.available_catalogs[0]
+                .description
+                .contains("entities, ")
+        );
     }
 }

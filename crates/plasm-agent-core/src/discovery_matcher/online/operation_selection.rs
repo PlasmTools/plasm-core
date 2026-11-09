@@ -272,7 +272,10 @@ where
         ))
         .await
         .map_err(DiscoveryMatcherError::Checkpoint)?;
-        if !matrix.has_uncovered_operations() || budget.requests() >= search_budget::MAX_ATTEMPTS {
+        // One affirmative contribution does not establish that the request's
+        // information needs are complete. Keep assessing admitted pairs within
+        // the same bounded budget, without granting unjudged candidates access.
+        if budget.requests() >= search_budget::MAX_ATTEMPTS {
             break;
         }
     }

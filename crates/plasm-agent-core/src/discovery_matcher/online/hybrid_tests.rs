@@ -83,10 +83,12 @@ fn deferred_recall_precedes_unrelated_graph_nominations_at_the_backlog_bound() {
     let ordered = ordered_deferred(deferred, &recall(&index, &["opaque"]));
     assert_eq!(ordered.len(), 151);
     assert_eq!(ordered[0].reference, target);
-    assert!(ordered
-        .iter()
-        .take(crate::discovery_store::CANDIDATE_LIMIT)
-        .any(|item| item.reference == target));
+    assert!(
+        ordered
+            .iter()
+            .take(crate::discovery_store::CANDIDATE_LIMIT)
+            .any(|item| item.reference == target)
+    );
 }
 
 #[test]
@@ -158,6 +160,60 @@ fn overdue_deferrals_use_current_recall_order_instead_of_unbounded_age() {
     let deferred = BTreeMap::from([(roots[1].clone(), 3), (roots[2].clone(), 99)]);
     let order = connected::order_recalled(&index, context, roots.clone(), &deferred);
     assert_eq!(order, roots);
+}
+
+#[tokio::test]
+async fn affirmative_contribution_does_not_end_bounded_candidate_assessment() {
+    use super::super::operations::{ExtractionRequest, MatrixScope, OperationMatrix, OperationSet};
+    let mut catalogs = tests::fixture();
+    let cgs = catalogs.get_mut("matrix").unwrap();
+    let source = cgs.capabilities["source_read"].clone();
+    let names: Vec<_> = (0..8).map(|i| format!("read_alternative_{i}")).collect();
+    for name in &names {
+        let mut candidate = source.clone();
+        candidate.name = name.clone().into();
+        candidate.description = format!("Read alternative {name}.");
+        cgs.capabilities.insert(name.clone().into(), candidate);
+    }
+    let allowed = DiscoveryAuthorization::catalogs(BTreeSet::from(["matrix".into()]));
+    let deployments = DeploymentBindings::default();
+    let index = CatalogueSearch::new(&catalogs, &deployments, &allowed).unwrap();
+    let request = "Read the source.";
+    let intent = IntentProvenance::from_turns([request.into()]).unwrap();
+    let operations = OperationSet::from_excerpts(request, &[request.into()]).unwrap();
+    let authorized = index.candidates.keys().cloned().collect();
+    let scope = MatrixScope::new(
+        "session",
+        "frozen",
+        &authorized,
+        ExtractionRequest::new("fixture", request)
+            .unwrap()
+            .identity(),
+    )
+    .unwrap();
+    let mut matrix = OperationMatrix::new(scope, request, operations, &authorized, vec![]).unwrap();
+    let visits = BTreeMap::new();
+    let context = SearchContext {
+        model: RELEVANCE_MODEL,
+        intent: &intent,
+        generation: "frozen",
+        catalogs: &catalogs,
+        deployments: &deployments,
+        allowed: &allowed,
+        exposed: &[],
+        visits: &visits,
+    };
+    let refs: Vec<_> = names.iter().map(String::as_str).collect();
+    let (_, _, search) = select_operations_indexed(context, &index, &recall(&index, &refs), &mut matrix, &BTreeMap::new(), |batch| async move {
+        let wire: serde_json::Value = serde_json::from_str(batch.body()).unwrap();
+        let answers: serde_json::Map<String, serde_json::Value> = wire["questions"].as_object().unwrap().keys().map(|key| (key.clone(), serde_json::json!({"type":"choice","choice":"relevant","confidence":1.0,"probabilities":{"relevant":1.0,"unrelated":0.0,"uncertain":0.0}}))).collect();
+        Ok(serde_json::json!({"model":RELEVANCE_MODEL,"provider":"OpenAI","answers":answers}).to_string())
+    }, |_| async { Ok(()) }).await.unwrap();
+    assert!(
+        search.requests >= 2,
+        "an affirmative judgment must not stop assessment of other recalled candidates"
+    );
+    assert!(search.requests <= 3);
 }
 
 #[tokio::test]
@@ -249,10 +305,12 @@ async fn one_discovery_call_advances_multiple_bounded_operation_waves() {
             Ok(serde_json::json!({"model":RELEVANCE_MODEL,"provider":"OpenAI","answers":answers}).to_string())
         }
     }, |_| async { Ok(()) }).await.unwrap();
-    assert!(matching
-        .matches
-        .iter()
-        .any(|item| item.choice == MatchChoice::Relevant));
+    assert!(
+        matching
+            .matches
+            .iter()
+            .any(|item| item.choice == MatchChoice::Relevant)
+    );
     assert!(search.has_unavailable_provider());
 }
 
@@ -345,11 +403,13 @@ async fn connected_planner_schedules_operation_pairs_and_keeps_the_rest_pending(
         },
         |_| async { Ok(()) },
     ).await.unwrap();
-    assert_eq!(search.requests, 1);
-    assert!(matching
-        .matches
-        .iter()
-        .any(|decision| decision.choice == MatchChoice::Relevant));
+    assert!((1..=3).contains(&search.requests));
+    assert!(
+        matching
+            .matches
+            .iter()
+            .any(|decision| decision.choice == MatchChoice::Relevant)
+    );
 }
 
 #[tokio::test]
@@ -451,10 +511,12 @@ async fn hybrid_recall_advances_rejected_roots_without_lexical_overlap() {
         .await
         .unwrap();
         if turn == 0 {
-            assert!(result
-                .candidates
-                .iter()
-                .any(|c| c.reference.capability == "d"));
+            assert!(
+                result
+                    .candidates
+                    .iter()
+                    .any(|c| c.reference.capability == "d")
+            );
             assert!(result.candidates.len() < 4);
         }
         assert_eq!(result.lexical_count, 0);
@@ -552,19 +614,23 @@ async fn hybrid_recall_keeps_typed_suppliers_distinct_from_vector_admission() {
     )
     .await
     .unwrap();
-    assert!(result
-        .candidates
-        .iter()
-        .any(|c| c.reference.capability == "prepared_read"));
+    assert!(
+        result
+            .candidates
+            .iter()
+            .any(|c| c.reference.capability == "prepared_read")
+    );
     assert_eq!(result.vector_count, 1);
     assert_eq!(result.lexical_count, 0);
     for candidate in result.candidates {
-        assert!(candidate
-            .admissions
-            .contains(if candidate.reference.capability == "process" {
-                "vector"
-            } else {
-                "typed_relationship"
-            }));
+        assert!(
+            candidate
+                .admissions
+                .contains(if candidate.reference.capability == "process" {
+                    "vector"
+                } else {
+                    "typed_relationship"
+                })
+        );
     }
 }

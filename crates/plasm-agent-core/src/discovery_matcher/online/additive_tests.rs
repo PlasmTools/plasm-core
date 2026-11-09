@@ -566,7 +566,7 @@ async fn completed_judgments_advance_to_an_affordable_deferred_target() {
 }
 
 #[test]
-fn repeated_ancestry_keeps_an_affordable_target_within_budget() {
+fn oversized_ancestry_is_not_silently_discarded() {
     let catalogs = fixture();
     let deployments = Default::default();
     let allowed = DiscoveryAuthorization::catalogs(BTreeSet::from(["matrix".into()]));
@@ -606,7 +606,7 @@ fn repeated_ancestry_keeps_an_affordable_target_within_budget() {
             .len()
     };
     assert!(size(&initial) <= search_budget::MAX_INPUT_BYTES);
-    assert!(size(&accumulated) <= search_budget::MAX_INPUT_BYTES);
+    assert!(size(&accumulated) > search_budget::MAX_INPUT_BYTES);
 }
 
 #[tokio::test]

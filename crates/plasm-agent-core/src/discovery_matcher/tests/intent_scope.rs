@@ -2,6 +2,29 @@
 use super::*;
 
 #[test]
+fn selection_receives_original_conditions_and_later_revision() {
+    let (_, retrieval) = fixture();
+    let intent = IntentProvenance::from_turns([
+        "Inspect records belonging to the selected team.".into(),
+        "Use the other team instead; inspect its members.".into(),
+    ])
+    .unwrap();
+    let batches = issue_batches(RELEVANCE_MODEL, &intent, &retrieval).unwrap();
+    let body: serde_json::Value = serde_json::from_str(batches[0].body()).unwrap();
+    let selection = body["state"]["outcome"].as_str().unwrap();
+    assert!(selection.contains("records belonging to the selected team"));
+    assert!(selection.contains("Use the other team instead"));
+    assert!(selection.contains("later"));
+    let different = IntentProvenance::from_turns([
+        "Inspect records belonging to a different department.".into(),
+        "Use the other team instead; inspect its members.".into(),
+    ])
+    .unwrap();
+    let other = issue_batches(RELEVANCE_MODEL, &different, &retrieval).unwrap();
+    assert_ne!(batches[0].cache_key, other[0].cache_key);
+}
+
+#[test]
 fn current_request_preserves_explicit_revisions_constraints_and_unknown_state() {
     let policy: serde_json::Value = serde_json::from_str(include_str!(
         "../../../../../fixtures/discovery/contribution-only-policy.json"
@@ -78,25 +101,18 @@ fn current_request_preserves_explicit_revisions_constraints_and_unknown_state() 
                 candidate
             })
             .collect();
-        let mut cache_keys = std::collections::BTreeMap::new();
         for turns in &histories {
             let intent = IntentProvenance::from_turns(turns.iter().map(|s| (*s).into())).unwrap();
             let batches = issue_batches(RELEVANCE_MODEL, &intent, &retrieval).unwrap();
-            if let Some(previous) =
-                cache_keys.insert(intent.current().to_owned(), batches[0].cache_key.clone())
-            {
-                assert_eq!(previous, batches[0].cache_key);
-            }
             for batch in batches {
                 let body: serde_json::Value = serde_json::from_str(batch.body()).unwrap();
                 let state = &body["state"];
-                assert_eq!(state["outcome"], *turns.last().unwrap());
-                assert_eq!(state["discovery_need"], *turns.last().unwrap());
+                assert_eq!(state["outcome"], intent.selection_request());
+                assert_eq!(state["discovery_need"], intent.current());
                 assert!(state.get("intent_turns").is_none());
                 assert_eq!(state["rule"], policy["rule"]);
-                // The live outcome is verbatim text, not the experimental
-                // structured outcome. Do not synthesize an empty alternatives
-                // field or interpret branches from earlier requests.
+                // Preserve ordered source text without inventing a structured
+                // interpretation or synthesized alternatives.
                 assert!(state["outcome"].is_string());
                 assert!(state.get("conditional_alternatives").is_none());
                 assert!(state.get("intent_interpretation").is_none());
@@ -153,7 +169,7 @@ fn contribution_selection_preserves_effect_limits_without_issuing_permission() {
         let batches = issue_batches(RELEVANCE_MODEL, &intent, &retrieval).unwrap();
         for batch in &batches {
             let body: serde_json::Value = serde_json::from_str(batch.body()).unwrap();
-            assert_eq!(body["state"]["discovery_need"], constraint);
+            assert_eq!(body["state"]["discovery_need"], intent.current());
             for candidate in retrieval
                 .candidates
                 .iter()
