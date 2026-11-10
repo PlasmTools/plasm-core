@@ -561,12 +561,12 @@ where
     let index = CatalogueSearch::new(context.catalogs, context.deployments, context.allowed)?;
     let authorized = index.authorized_capabilities(context.allowed);
     let selection_request = context.intent.selection_request();
-    let extraction = operations::ExtractionRequest::new("caller-provided", &selection_request)?;
+    let request = operations::RequestIdentity::from_request(&selection_request);
     let scope = operations::MatrixScope::new(
         "isolated-selection",
         context.generation,
         &authorized,
-        extraction.identity(),
+        request,
     )?;
     let mut matrix = operations::OperationMatrix::new(
         scope,

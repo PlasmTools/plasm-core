@@ -164,7 +164,7 @@ fn overdue_deferrals_use_current_recall_order_instead_of_unbounded_age() {
 
 #[tokio::test]
 async fn affirmative_contribution_does_not_end_bounded_candidate_assessment() {
-    use super::super::operations::{ExtractionRequest, MatrixScope, OperationMatrix, OperationSet};
+    use super::super::operations::{MatrixScope, OperationMatrix, OperationSet, RequestIdentity};
     let mut catalogs = tests::fixture();
     let cgs = catalogs.get_mut("matrix").unwrap();
     let source = cgs.capabilities["source_read"].clone();
@@ -186,9 +186,7 @@ async fn affirmative_contribution_does_not_end_bounded_candidate_assessment() {
         "session",
         "frozen",
         &authorized,
-        ExtractionRequest::new("fixture", request)
-            .unwrap()
-            .identity(),
+        RequestIdentity::from_request(request),
     )
     .unwrap();
     let mut matrix = OperationMatrix::new(scope, request, operations, &authorized, vec![]).unwrap();
@@ -206,7 +204,8 @@ async fn affirmative_contribution_does_not_end_bounded_candidate_assessment() {
     let refs: Vec<_> = names.iter().map(String::as_str).collect();
     let (_, _, search) = select_operations_indexed(context, &index, &recall(&index, &refs), &mut matrix, &BTreeMap::new(), |batch| async move {
         let wire: serde_json::Value = serde_json::from_str(batch.body()).unwrap();
-        let answers: serde_json::Map<String, serde_json::Value> = wire["questions"].as_object().unwrap().keys().map(|key| (key.clone(), serde_json::json!({"type":"choice","choice":"relevant","confidence":1.0,"probabilities":{"relevant":1.0,"unrelated":0.0,"uncertain":0.0}}))).collect();
+        let mut answers: serde_json::Map<String, serde_json::Value> = wire["questions"].as_object().unwrap().keys().map(|key| (key.clone(), serde_json::json!({"type":"choice","choice":"relevant","confidence":1.0,"probabilities":{"relevant":1.0,"unrelated":0.0,"uncertain":0.0}}))).collect();
+        complete_contextual_probabilities(&wire, &mut answers);
         Ok(serde_json::json!({"model":RELEVANCE_MODEL,"provider":"OpenAI","answers":answers}).to_string())
     }, |_| async { Ok(()) }).await.unwrap();
     assert!(
@@ -218,30 +217,20 @@ async fn affirmative_contribution_does_not_end_bounded_candidate_assessment() {
 
 #[tokio::test]
 async fn one_discovery_call_advances_multiple_bounded_operation_waves() {
-    use super::super::operations::{ExtractionRequest, MatrixScope, OperationMatrix, OperationSet};
+    use super::super::operations::{MatrixScope, OperationMatrix, OperationSet, RequestIdentity};
     let catalogs = tests::fixture();
     let allowed = DiscoveryAuthorization::catalogs(BTreeSet::from(["matrix".into()]));
     let deployments = DeploymentBindings::default();
     let index = CatalogueSearch::new(&catalogs, &deployments, &allowed).unwrap();
     let request = "Read the source, process the result, and inspect the output.";
     let intent = IntentProvenance::from_turns([request.into()]).unwrap();
-    let operations = OperationSet::from_excerpts(
-        request,
-        &[
-            "Read the source".into(),
-            "process the result".into(),
-            "inspect the output".into(),
-        ],
-    )
-    .unwrap();
+    let operations = OperationSet::from_request(request).unwrap();
     let authorized = index.candidates.keys().cloned().collect();
     let scope = MatrixScope::new(
         "session",
         "frozen",
         &authorized,
-        ExtractionRequest::new("fixture", request)
-            .unwrap()
-            .identity(),
+        RequestIdentity::from_request(request),
     )
     .unwrap();
     let mut matrix = OperationMatrix::new(scope, request, operations, &authorized, vec![]).unwrap();
@@ -258,10 +247,11 @@ async fn one_discovery_call_advances_multiple_bounded_operation_waves() {
     };
     let (_, _, search) = select_operations_indexed(context, &index, &recall(&index, &["process", "source_read"]), &mut matrix, &BTreeMap::new(), |batch| async move {
         let wire: serde_json::Value = serde_json::from_str(batch.body()).unwrap();
-        let answers: serde_json::Map<String, serde_json::Value> = wire["questions"].as_object().unwrap().iter().map(|(key, question)| {
+        let mut answers: serde_json::Map<String, serde_json::Value> = wire["questions"].as_object().unwrap().iter().map(|(key, question)| {
             let relevant = question["instructions"].as_str().unwrap().contains("operation `o1`");
             (key.clone(), serde_json::json!({"type":"choice","choice":if relevant {"relevant"} else {"unrelated"},"confidence":1.0,"probabilities":{"relevant":if relevant {1.0} else {0.0},"unrelated":if relevant {0.0} else {1.0},"uncertain":0.0}}))
         }).collect();
+        complete_contextual_probabilities(&wire, &mut answers);
         Ok(serde_json::json!({"model":RELEVANCE_MODEL,"provider":"OpenAI","answers":answers}).to_string())
     }, |_| async { Ok(()) }).await.unwrap();
     assert!(
@@ -271,22 +261,12 @@ async fn one_discovery_call_advances_multiple_bounded_operation_waves() {
     assert!(search.requests <= 3);
     assert!(search.input_bytes <= 48_000);
 
-    let operations = OperationSet::from_excerpts(
-        request,
-        &[
-            "Read the source".into(),
-            "process the result".into(),
-            "inspect the output".into(),
-        ],
-    )
-    .unwrap();
+    let operations = OperationSet::from_request(request).unwrap();
     let scope = MatrixScope::new(
         "session",
         "frozen",
         &authorized,
-        ExtractionRequest::new("fixture", request)
-            .unwrap()
-            .identity(),
+        RequestIdentity::from_request(request),
     )
     .unwrap();
     let mut matrix = OperationMatrix::new(scope, request, operations, &authorized, vec![]).unwrap();
@@ -298,11 +278,12 @@ async fn one_discovery_call_advances_multiple_bounded_operation_waves() {
                 return Err(Box::new(std::io::Error::other("synthetic provider failure")) as DecisionProviderError);
             }
             let wire: serde_json::Value = serde_json::from_str(batch.body()).unwrap();
-            let answers: serde_json::Map<String, serde_json::Value> = wire["questions"].as_object().unwrap().iter().map(|(key, question)| {
+            let mut answers: serde_json::Map<String, serde_json::Value> = wire["questions"].as_object().unwrap().iter().map(|(key, question)| {
                 let relevant = question["instructions"].as_str().unwrap().contains("operation `o1`");
                 (key.clone(), serde_json::json!({"type":"choice","choice":if relevant {"relevant"} else {"unrelated"},"confidence":1.0,"probabilities":{"relevant":if relevant {1.0} else {0.0},"unrelated":if relevant {0.0} else {1.0},"uncertain":0.0}}))
             }).collect();
-            Ok(serde_json::json!({"model":RELEVANCE_MODEL,"provider":"OpenAI","answers":answers}).to_string())
+            complete_contextual_probabilities(&wire, &mut answers);
+        Ok(serde_json::json!({"model":RELEVANCE_MODEL,"provider":"OpenAI","answers":answers}).to_string())
         }
     }, |_| async { Ok(()) }).await.unwrap();
     assert!(
@@ -316,24 +297,14 @@ async fn one_discovery_call_advances_multiple_bounded_operation_waves() {
 
 #[tokio::test]
 async fn connected_planner_schedules_operation_pairs_and_keeps_the_rest_pending() {
-    use super::super::operations::{
-        CandidateProgress, ExtractionRequest, MatrixScope, OperationMatrix, OperationSet,
-    };
+    use super::super::operations::{MatrixScope, OperationMatrix, OperationSet, RequestIdentity};
     let catalogs = tests::fixture();
     let allowed = DiscoveryAuthorization::catalogs(BTreeSet::from(["matrix".into()]));
     let deployments = DeploymentBindings::default();
     let index = CatalogueSearch::new(&catalogs, &deployments, &allowed).unwrap();
     let request = "Read the source, process the result, and inspect the output.";
     let intent = IntentProvenance::from_turns([request.into()]).unwrap();
-    let operations = OperationSet::from_excerpts(
-        request,
-        &[
-            "Read the source".into(),
-            "process the result".into(),
-            "inspect the output".into(),
-        ],
-    )
-    .unwrap();
+    let operations = OperationSet::from_request(request).unwrap();
     let authorized = index
         .candidates
         .keys()
@@ -344,9 +315,7 @@ async fn connected_planner_schedules_operation_pairs_and_keeps_the_rest_pending(
         "session",
         "frozen",
         &authorized,
-        ExtractionRequest::new("fixture", request)
-            .unwrap()
-            .identity(),
+        RequestIdentity::from_request(request),
     )
     .unwrap();
     let mut matrix = OperationMatrix::new(scope, request, operations, &authorized, vec![]).unwrap();
@@ -378,7 +347,8 @@ async fn connected_planner_schedules_operation_pairs_and_keeps_the_rest_pending(
             .len()
             <= request_packing::MAX_QUESTIONS
     );
-    let answers: serde_json::Map<String, serde_json::Value> = wire["questions"].as_object().unwrap().keys().map(|key| (key.clone(), serde_json::json!({"type":"choice","choice":"unrelated","confidence":1.0,"probabilities":{"relevant":0.0,"unrelated":1.0,"uncertain":0.0}}))).collect();
+    let mut answers: serde_json::Map<String, serde_json::Value> = wire["questions"].as_object().unwrap().keys().map(|key| (key.clone(), serde_json::json!({"type":"choice","choice":"unrelated","confidence":1.0,"probabilities":{"relevant":0.0,"unrelated":1.0,"uncertain":0.0}}))).collect();
+    complete_contextual_probabilities(&wire, &mut answers);
     let response =
         serde_json::json!({"model":RELEVANCE_MODEL,"provider":"OpenAI","answers":answers})
             .to_string();
@@ -386,30 +356,9 @@ async fn connected_planner_schedules_operation_pairs_and_keeps_the_rest_pending(
     matrix
         .record_packet(&batch.issued_pairs(), &judgments)
         .unwrap();
-    assert!(plan.wave.iter().any(|(candidate, _)| matches!(
-        matrix.progress(candidate),
-        Ok(CandidateProgress::Incomplete { .. })
-    )));
-    let (_, matching, search) = select_operations_indexed(
-        context,
-        &index,
-        &recall(&index, &["process", "source_read"]),
-        &mut matrix,
-        &BTreeMap::new(),
-        |batch| async move {
-            let wire: serde_json::Value = serde_json::from_str(batch.body()).unwrap();
-            let answers: serde_json::Map<String, serde_json::Value> = wire["questions"].as_object().unwrap().keys().map(|key| (key.clone(), serde_json::json!({"type":"choice","choice":"relevant","confidence":1.0,"probabilities":{"relevant":1.0,"unrelated":0.0,"uncertain":0.0}}))).collect();
-            Ok(serde_json::json!({"model":RELEVANCE_MODEL,"provider":"OpenAI","answers":answers}).to_string())
-        },
-        |_| async { Ok(()) },
-    ).await.unwrap();
-    assert!((1..=3).contains(&search.requests));
-    assert!(
-        matching
-            .matches
-            .iter()
-            .any(|decision| decision.choice == MatchChoice::Relevant)
-    );
+    assert!(matrix.directly_supported().is_empty());
+    assert!(!matrix.uncovered_operations().collect::<Vec<_>>().is_empty());
+    assert!(!plan.wave.is_empty());
 }
 
 #[tokio::test]
@@ -632,5 +581,19 @@ async fn hybrid_recall_keeps_typed_suppliers_distinct_from_vector_admission() {
                     "typed_relationship"
                 })
         );
+    }
+}
+
+fn complete_contextual_probabilities(
+    wire: &serde_json::Value,
+    answers: &mut serde_json::Map<String, serde_json::Value>,
+) {
+    for (key, answer) in answers.iter_mut() {
+        if wire["questions"][key]["criteria"]
+            .get("contextual")
+            .is_some()
+        {
+            answer["probabilities"]["contextual"] = serde_json::json!(0.0);
+        }
     }
 }

@@ -142,20 +142,19 @@ pub(crate) struct SearchFrontier {
     active_request: Option<String>,
 }
 
-/// A session frontier never treats absent extraction as an empty operation set.
+/// A session frontier never treats an absent request as an empty coverage set.
 /// The prepared state is scoped and revalidated by `OperationMatrix::restore`.
 #[derive(Default, Clone, Serialize, Deserialize)]
 #[serde(tag = "state", content = "checkpoint", rename_all = "snake_case")]
 pub(crate) enum OperationFrontier {
     #[default]
-    AwaitingExtraction,
+    AwaitingRequest,
     Prepared(Box<matcher::operations::MatrixCheckpoint>),
 }
 
-/// Extraction failures leave the previous revision intact. A changed request
-/// requires new semantic proposals; it never inherits prior operation answers.
+/// A changed request never inherits prior coverage answers.
 enum OperationFrontierLoad {
-    AwaitingExtraction,
+    AwaitingRequest,
     ChangedRevision,
     Resume(Box<matcher::operations::OperationMatrix>),
 }
@@ -165,7 +164,7 @@ impl OperationFrontier {
         &self,
     ) -> std::collections::BTreeSet<(matcher::operations::OperationId, CapabilityRef)> {
         match self {
-            Self::AwaitingExtraction => Default::default(),
+            Self::AwaitingRequest => Default::default(),
             Self::Prepared(checkpoint) => checkpoint.answered_pairs(),
         }
     }
@@ -177,7 +176,7 @@ impl OperationFrontier {
         authorized: &std::collections::BTreeSet<CapabilityRef>,
     ) -> std::result::Result<OperationFrontierLoad, matcher::operations::OperationError> {
         match self {
-            Self::AwaitingExtraction => Ok(OperationFrontierLoad::AwaitingExtraction),
+            Self::AwaitingRequest => Ok(OperationFrontierLoad::AwaitingRequest),
             Self::Prepared(checkpoint) => {
                 if !checkpoint.scope().same_host_scope(scope) {
                     return Err(matcher::operations::OperationError::ScopeMismatch);
@@ -406,8 +405,6 @@ pub enum DiscoveryServiceError {
     #[error(transparent)]
     Operation(#[from] matcher::operations::OperationError),
     #[error(transparent)]
-    OperationExtraction(#[from] matcher::operations::ExtractionError),
-    #[error(transparent)]
     ProviderTransport(#[from] plasm_runtime::provider_transport::ProviderTransportError),
     #[error(transparent)]
     DecisionRecord(#[from] plasm_runtime::provider_transport::ProviderRecordError),
@@ -467,8 +464,6 @@ pub struct DiscoveryService {
     store: DiscoveryStore,
     transport: std::sync::Arc<dyn plasm_runtime::provider_transport::ProviderTransport>,
     match_model: String,
-    operation_model: String,
-    operation_extractor: std::sync::Arc<dyn matcher::operations::OperationExtractor>,
     rejection_dir: Option<std::path::PathBuf>,
     guided_capabilities: std::collections::BTreeSet<CapabilityRef>,
     lane: DiscoveryLane,
@@ -497,22 +492,6 @@ impl DiscoveryService {
                 ),
             ),
             match_model: matcher::RELEVANCE_MODEL.into(),
-            operation_model: "openai/gpt-6-luna".into(),
-            operation_extractor: std::sync::Arc::new(
-                matcher::operations::ProviderOperationExtractor::new(
-                    "openai/gpt-6-luna",
-                    std::sync::Arc::new(
-                        plasm_runtime::provider_transport::ReqwestProviderTransport::new(
-                            reqwest::Client::builder()
-                                .proxy(reqwest::Proxy::all("http://127.0.0.1:1").unwrap())
-                                .build()
-                                .unwrap(),
-                            "https://openrouter.ai/api/v1/chat/completions",
-                            "no-provider-calls-permitted",
-                        ),
-                    ),
-                ),
-            ),
             rejection_dir: None,
             guided_capabilities: Default::default(),
             lane: DiscoveryLane::Ordinary,
@@ -524,24 +503,6 @@ impl DiscoveryService {
         if api_key.trim().is_empty() {
             return Err(DiscoveryServiceError::EmptyApiKey);
         }
-        let operation_model = std::env::var("PLASM_DISCOVERY_OPERATION_MODEL")
-            .unwrap_or_else(|_| "openai/gpt-6-luna".into());
-        let operation_extractor =
-            std::sync::Arc::new(matcher::operations::ProviderOperationExtractor::new(
-                operation_model.clone(),
-                std::sync::Arc::new(scheduling::ScheduledProviderTransport::new(
-                    std::sync::Arc::new(
-                        plasm_runtime::provider_transport::ReqwestProviderTransport::new(
-                            reqwest::Client::builder()
-                                .timeout(std::time::Duration::from_secs(45))
-                                .build()?,
-                            "https://openrouter.ai/api/v1/chat/completions",
-                            api_key.clone(),
-                        ),
-                    ),
-                    scheduling::Workload::OperationExtraction,
-                )),
-            ));
         Ok(Self {
             guided_capabilities: Default::default(),
             lane: DiscoveryLane::Ordinary,
@@ -563,8 +524,6 @@ impl DiscoveryService {
             )),
             match_model: std::env::var("PLASM_DISCOVERY_CAPABILITY_MATCH_MODEL")
                 .unwrap_or_else(|_| matcher::RELEVANCE_MODEL.into()),
-            operation_model,
-            operation_extractor,
         })
     }
 
@@ -610,7 +569,7 @@ impl DiscoveryService {
                 .await?;
             request.new_generation.to_owned()
         };
-        let policy_models = format!("{}:{}", self.match_model, self.operation_model);
+        let policy_models = self.match_model.clone();
         let selection_request = request.intent_provenance.selection_request();
         let intent_id = plasm_core::catalog_discovery::content_hash(selection_request.as_bytes());
         let backlog_key =
@@ -733,7 +692,7 @@ impl DiscoveryService {
         if !exposed.iter().all(|reference| allowed.permits(reference)) {
             return Err(DiscoveryServiceError::ExposedCapabilityUnauthorized);
         }
-        let policy_models = format!("{}:{}", self.match_model, self.operation_model);
+        let policy_models = self.match_model.clone();
         let base = search_key(generation, provenance, allowed, &policy_models, exposed)?;
         let key = if self.guided_capabilities.is_empty() && self.lane == DiscoveryLane::Ordinary {
             base
@@ -801,7 +760,7 @@ impl DiscoveryService {
         if !exposed.iter().all(|reference| allowed.permits(reference)) {
             return Err(DiscoveryServiceError::ExposedCapabilityUnauthorized);
         }
-        let policy_models = format!("{}:{}", self.match_model, self.operation_model);
+        let policy_models = self.match_model.clone();
         let frontier = supplemental_frontier_key(session, generation, allowed, &policy_models)?;
         let request = search_key(generation, provenance, allowed, &policy_models, exposed)?;
         let key = plasm_core::catalog_discovery::content_hash(&serde_json::to_vec(&(
@@ -1043,20 +1002,19 @@ impl DiscoveryService {
             .collect();
         let authorized = index.authorized_capabilities(allowed);
         let selection_request = provenance.selection_request();
-        let extraction =
-            matcher::operations::ExtractionRequest::new(&self.operation_model, &selection_request)?;
+        let request_identity =
+            matcher::operations::RequestIdentity::from_request(&selection_request);
         let scope = matcher::operations::MatrixScope::new(
             session,
             generation,
             &authorized,
-            extraction.identity(),
+            request_identity,
         )?;
         let mut matrix = match operation_state.load(&scope, &selection_request, &authorized)? {
             OperationFrontierLoad::Resume(matrix) => *matrix,
-            OperationFrontierLoad::AwaitingExtraction | OperationFrontierLoad::ChangedRevision => {
-                let started = std::time::Instant::now();
-                let operations = self.operation_extractor.extract(&selection_request).await;
-                metrics::record_extraction(started.elapsed(), operations.is_ok());
+            OperationFrontierLoad::AwaitingRequest | OperationFrontierLoad::ChangedRevision => {
+                let operations =
+                    matcher::operations::OperationSet::from_request(&selection_request);
                 matcher::operations::OperationMatrix::new(
                     scope.clone(),
                     &selection_request,
@@ -1235,13 +1193,23 @@ impl DiscoveryService {
         } else {
             "**Capability contribution** (bounded online search; unvisited capabilities remain unexplored):"
         }.to_owned();
-        let uncovered: Vec<_> = matrix.uncovered_operations().take(4).collect();
+        let uncovered: Vec<_> = matrix
+            .uncovered_operations()
+            .filter(|text| !matrix.contextual_fragment(text))
+            .take(4)
+            .collect();
+        let has_contextual_fragments = matrix.has_contextual_fragments();
+        if has_contextual_fragments {
+            intent_analysis.push_str("\n\nSome request fragments were assessed as context rather than independent requirements; their coverage remains unverified.");
+        }
         if !uncovered.is_empty() {
-            intent_analysis.push_str("\n\nThis discovery pass established no candidate contribution for these extracted request spans (up to four shown). Earlier declarations remain available; this does not establish that a capability is unavailable:");
-            for span in uncovered {
+            intent_analysis.push_str("\n\nThese request fragments have no affirmative independent coverage assessment (up to four shown). Fragments are mechanical text ranges, not interpreted requirements. Earlier declarations remain available; this does not establish that a capability is unavailable:");
+            for span in &uncovered {
                 intent_analysis.push_str("\n- ");
                 intent_analysis.push_str(span);
             }
+        }
+        if !uncovered.is_empty() || has_contextual_fragments {
             let partial_recovery = DiscoveryRecovery::from_unmatched(
                 &matching,
                 &retrieval,

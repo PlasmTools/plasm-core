@@ -1,14 +1,12 @@
 //! Provider admission and service timings with bounded attributes.
 use opentelemetry::{
-    global,
+    KeyValue, global,
     metrics::{Counter, Histogram},
-    KeyValue,
 };
 use std::{sync::OnceLock, time::Instant};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum Workload {
-    OperationExtraction,
     DiscoveryDecision,
     LearningNormalization,
     LearningApplicability,
@@ -18,7 +16,6 @@ pub(crate) enum Workload {
 impl Workload {
     fn label(self) -> &'static str {
         match self {
-            Self::OperationExtraction => "operation_extraction",
             Self::DiscoveryDecision => "discovery_decision",
             Self::LearningNormalization => "learning_normalization",
             Self::LearningApplicability => "learning_applicability",
@@ -109,7 +106,6 @@ mod tests {
     #[test]
     fn labels_are_closed_and_distinguish_workloads_and_phases() {
         let operations = [
-            Workload::OperationExtraction,
             Workload::DiscoveryDecision,
             Workload::LearningNormalization,
             Workload::LearningApplicability,
@@ -117,7 +113,7 @@ mod tests {
         ];
         let labels: std::collections::BTreeSet<_> =
             operations.into_iter().map(Workload::label).collect();
-        assert_eq!(labels.len(), 5);
+        assert_eq!(labels.len(), operations.len());
         assert_ne!(Phase::PermitWait.label(), Phase::ProviderService.label());
     }
 }

@@ -1,7 +1,7 @@
 use super::*;
 use std::sync::{
-    atomic::{AtomicUsize, Ordering},
     Arc,
+    atomic::{AtomicUsize, Ordering},
 };
 use tokio::sync::Notify;
 
@@ -233,6 +233,20 @@ struct AcceptContribution(AtomicUsize);
 
 struct AcceptBusinessRead;
 
+fn add_contextual_probability(
+    request: &serde_json::Value,
+    answers: &mut serde_json::Map<String, serde_json::Value>,
+) {
+    for (key, answer) in answers.iter_mut() {
+        if request["questions"][key]["criteria"]
+            .get("contextual")
+            .is_some()
+        {
+            answer["probabilities"]["contextual"] = serde_json::json!(0.0);
+        }
+    }
+}
+
 #[async_trait::async_trait]
 impl plasm_runtime::provider_transport::ProviderTransport for AcceptBusinessRead {
     async fn send(
@@ -244,7 +258,7 @@ impl plasm_runtime::provider_transport::ProviderTransport for AcceptBusinessRead
         plasm_runtime::provider_transport::ProviderTransportError,
     > {
         let body: serde_json::Value = serde_json::from_str(body).unwrap();
-        let answers: serde_json::Map<String, serde_json::Value> = body["questions"].as_object().unwrap().iter().map(|(key, question)| {
+        let mut answers: serde_json::Map<String, serde_json::Value> = body["questions"].as_object().unwrap().iter().map(|(key, question)| {
             let instruction = question["instructions"].as_str().unwrap();
             let witness = instruction.split("question_evidence.").nth(1).unwrap();
             let (scope, tail) = witness.split_once(".capabilities.").unwrap();
@@ -254,11 +268,10 @@ impl plasm_runtime::provider_transport::ProviderTransport for AcceptBusinessRead
             let (choice, yes, no) = if relevant { ("relevant", 1.0, 0.0) } else { ("unrelated", 0.0, 1.0) };
             (key.clone(), serde_json::json!({"type":"choice","choice":choice,"confidence":1.0,"probabilities":{"relevant":yes,"unrelated":no,"uncertain":0.0}}))
         }).collect();
+        add_contextual_probability(&body, &mut answers);
         Ok(plasm_runtime::provider_transport::ProviderResponse { status: reqwest::StatusCode::OK, retry_after: None, body: serde_json::json!({"model":matcher::RELEVANCE_MODEL,"provider":"OpenAI","answers":answers}).to_string() })
     }
 }
-
-struct AcceptOperation;
 
 struct DelayedContribution {
     packets: std::sync::Mutex<Vec<String>>,
@@ -279,12 +292,14 @@ async fn decision_fill_ownership_is_keyed_and_released_on_cancellation() {
     .unwrap()
     .unwrap();
     let repo = b.store.searches();
-    assert!(tokio::time::timeout(
-        std::time::Duration::from_millis(100),
-        repo.claim_decision(&key)
-    )
-    .await
-    .is_err());
+    assert!(
+        tokio::time::timeout(
+            std::time::Duration::from_millis(100),
+            repo.claim_decision(&key)
+        )
+        .await
+        .is_err()
+    );
     let spare_a = format!("{key}-spare-a");
     let spare_b = format!("{key}-spare-b");
     let spare_a = tokio::time::timeout(
@@ -379,12 +394,14 @@ async fn decision_fill_owner_is_released_when_another_process_dies() {
     .await
     .expect("child must acquire decision ownership");
     let repo = service.store.searches();
-    assert!(tokio::time::timeout(
-        std::time::Duration::from_millis(150),
-        repo.claim_decision(&key)
-    )
-    .await
-    .is_err());
+    assert!(
+        tokio::time::timeout(
+            std::time::Duration::from_millis(150),
+            repo.claim_decision(&key)
+        )
+        .await
+        .is_err()
+    );
     child.kill().unwrap();
     child.wait().unwrap();
     tokio::time::timeout(std::time::Duration::from_secs(5), repo.claim_decision(&key))
@@ -412,13 +429,15 @@ async fn lost_decision_fill_owner_cannot_publish_a_stale_response() {
     assert!(killed);
     assert!(stale.persist(&key, "stale").await.is_err());
     drop(stale);
-    assert!(service
-        .store
-        .searches()
-        .decision(&key)
-        .await
-        .unwrap()
-        .is_none());
+    assert!(
+        service
+            .store
+            .searches()
+            .decision(&key)
+            .await
+            .unwrap()
+            .is_none()
+    );
     let mut owner = service.store.searches().claim_decision(&key).await.unwrap();
     owner.persist(&key, "canonical").await.unwrap();
     assert_eq!(
@@ -512,7 +531,8 @@ impl plasm_runtime::provider_transport::ProviderTransport for DelayedContributio
         self.packets.lock().unwrap().push(body.to_owned());
         tokio::time::sleep(std::time::Duration::from_millis(600)).await;
         let request: serde_json::Value = serde_json::from_str(body).unwrap();
-        let answers: serde_json::Map<_, _> = request["questions"].as_object().unwrap().keys().map(|key| (key.clone(), serde_json::json!({"type":"choice","choice":"relevant","confidence":1.0,"probabilities":{"relevant":1.0,"uncertain":0.0,"unrelated":0.0}}))).collect();
+        let mut answers: serde_json::Map<_, _> = request["questions"].as_object().unwrap().keys().map(|key| (key.clone(), serde_json::json!({"type":"choice","choice":"relevant","confidence":1.0,"probabilities":{"relevant":1.0,"uncertain":0.0,"unrelated":0.0}}))).collect();
+        add_contextual_probability(&request, &mut answers);
         Ok(plasm_runtime::provider_transport::ProviderResponse { status: reqwest::StatusCode::OK, retry_after: None, body: serde_json::json!({"model":matcher::RELEVANCE_MODEL,"provider":"OpenAI","answers":answers}).to_string() })
     }
 }
@@ -520,7 +540,7 @@ impl plasm_runtime::provider_transport::ProviderTransport for DelayedContributio
 #[tokio::test]
 #[ignore = "requires an isolated PLASM_TEST_POSTGRES_URL with pgvector"]
 async fn ordinary_and_supplemental_frontiers_share_one_decision_fill() {
-    use plasm_core::catalog_discovery::{content_hash, EmbeddingProfile};
+    use plasm_core::catalog_discovery::{EmbeddingProfile, content_hash};
     use std::collections::{BTreeMap, BTreeSet};
     let url = std::env::var("PLASM_TEST_POSTGRES_URL").unwrap();
     let first = DiscoveryStore::connect(&url).await.unwrap();
@@ -579,10 +599,10 @@ async fn ordinary_and_supplemental_frontiers_share_one_decision_fill() {
         packets: std::sync::Mutex::new(Vec::new()),
     });
     let mut ordinary = DiscoveryService::cached_test_service(first);
-    ordinary.operation_extractor = Arc::new(AcceptOperation);
+
     ordinary.transport = provider.clone();
     let mut supplemental = DiscoveryService::cached_test_service(second).supplemental([reference]);
-    supplemental.operation_extractor = Arc::new(AcceptOperation);
+
     supplemental.transport = provider.clone();
     let provenance = crate::intent_provenance::IntentProvenance::from_turns([intent]).unwrap();
     ordinary
@@ -627,20 +647,6 @@ async fn ordinary_and_supplemental_frontiers_share_one_decision_fill() {
 }
 
 #[async_trait::async_trait]
-impl matcher::operations::OperationExtractor for AcceptOperation {
-    async fn extract(
-        &self,
-        intent: &str,
-    ) -> std::result::Result<matcher::operations::OperationSet, matcher::operations::ExtractionError>
-    {
-        Ok(matcher::operations::OperationSet::from_excerpts(
-            intent,
-            &[intent.into()],
-        )?)
-    }
-}
-
-#[async_trait::async_trait]
 impl plasm_runtime::provider_transport::ProviderTransport for AcceptContribution {
     async fn send(
         &self,
@@ -655,13 +661,12 @@ impl plasm_runtime::provider_transport::ProviderTransport for AcceptContribution
         let answers: std::collections::BTreeMap<_, _> = body["questions"]
             .as_object()
             .unwrap()
-            .keys()
-            .map(|key| {
-                (
-                    key.clone(),
-                    serde_json::json!({"type":"choice","choice":"relevant","confidence":1.0,
-                "probabilities":{"relevant":1.0,"uncertain":0.0,"unrelated":0.0}}),
-                )
+            .iter()
+            .map(|(key, question)| {
+                let mut answer = serde_json::json!({"type":"choice","choice":"relevant","confidence":1.0,
+                    "probabilities":{"relevant":1.0,"uncertain":0.0,"unrelated":0.0}});
+                if question["criteria"].get("contextual").is_some() { answer["probabilities"]["contextual"] = serde_json::json!(0.0); }
+                (key.clone(), answer)
             })
             .collect();
         Ok(plasm_runtime::provider_transport::ProviderResponse {
@@ -676,7 +681,7 @@ impl plasm_runtime::provider_transport::ProviderTransport for AcceptContribution
 #[tokio::test]
 #[ignore = "requires an isolated PLASM_TEST_POSTGRES_URL with pgvector"]
 async fn hybrid_service_admits_vector_only_candidate() {
-    use plasm_core::catalog_discovery::{content_hash, EmbeddingProfile};
+    use plasm_core::catalog_discovery::{EmbeddingProfile, content_hash};
     use std::collections::{BTreeMap, BTreeSet};
     if std::env::var_os("PLASM_DISCOVERY_OTEL_TEST").is_some() {
         crate::init_embedded_metrics().unwrap();
@@ -730,7 +735,7 @@ async fn hybrid_service_admits_vector_only_candidate() {
     assert_eq!(recall.lexical_count, 0);
     assert_eq!(recall.vector_count, 1);
     let mut service = DiscoveryService::cached_test_service(store);
-    service.operation_extractor = Arc::new(AcceptOperation);
+
     let transport = Arc::new(AcceptContribution(AtomicUsize::new(0)));
     service.transport = transport.clone();
     let provenance =
@@ -766,11 +771,13 @@ async fn hybrid_service_admits_vector_only_candidate() {
         .find(|c| c.reference == reference)
         .unwrap();
     assert!(candidate.admissions.contains("vector"));
-    assert!(receipt
-        .matching
-        .matches
-        .iter()
-        .any(|m| m.capability_id == candidate.id));
+    assert!(
+        receipt
+            .matching
+            .matches
+            .iter()
+            .any(|m| m.capability_id == candidate.id)
+    );
     assert_eq!(transport.0.load(Ordering::SeqCst), 1);
     let other = DiscoveryService::cached_test_service(DiscoveryStore::connect(&url).await.unwrap());
     let reused = other
@@ -791,7 +798,7 @@ async fn hybrid_service_admits_vector_only_candidate() {
 #[tokio::test]
 #[ignore = "requires an isolated PLASM_TEST_POSTGRES_URL with pgvector"]
 async fn operation_selection_accounts_for_required_acquisitions() {
-    use plasm_core::catalog_discovery::{content_hash, EmbeddingProfile};
+    use plasm_core::catalog_discovery::{EmbeddingProfile, content_hash};
     use std::collections::{BTreeMap, BTreeSet};
     let url = std::env::var("PLASM_TEST_POSTGRES_URL").unwrap();
     let store = DiscoveryStore::connect(&url).await.unwrap();
@@ -834,7 +841,7 @@ async fn operation_selection_accounts_for_required_acquisitions() {
         )]),
     };
     let mut service = DiscoveryService::cached_test_service(store);
-    service.operation_extractor = Arc::new(AcceptOperation);
+
     service.transport = Arc::new(AcceptBusinessRead);
     let provenance = crate::intent_provenance::IntentProvenance::from_turns([intent]).unwrap();
     let request_key = uuid::Uuid::new_v4().to_string();
@@ -854,11 +861,13 @@ async fn operation_selection_accounts_for_required_acquisitions() {
         .unwrap();
     let closure = receipt.closure.expect("relevant read must have a closure");
     assert!(closure.prerequisites.contains(&source));
-    assert!(closure.prerequisites.iter().all(|reference| receipt
-        .search
-        .considered
-        .contains(reference)
-        && !receipt.search.unexplored.contains(reference)));
+    assert!(
+        closure
+            .prerequisites
+            .iter()
+            .all(|reference| receipt.search.considered.contains(reference)
+                && !receipt.search.unexplored.contains(reference))
+    );
 }
 
 fn receipt() -> RoutingReceipt {
@@ -919,17 +928,21 @@ fn deferred_backlog_is_scoped_idempotent_and_never_grants_relevance() {
     backlog.observe(1, "old".into(), &receipt, "late".into());
     assert_eq!(backlog.last_intent, "new");
     assert_eq!(backlog.entries[0].age, 2);
-    assert!(backlog
-        .priorities(
-            "another",
-            &DiscoveryAuthorization::catalogs(BTreeSet::new())
-        )
-        .is_empty());
-    assert!(receipt
-        .matching
-        .matches
-        .iter()
-        .all(|judgment| judgment.capability_id != "deferred"));
+    assert!(
+        backlog
+            .priorities(
+                "another",
+                &DiscoveryAuthorization::catalogs(BTreeSet::new())
+            )
+            .is_empty()
+    );
+    assert!(
+        receipt
+            .matching
+            .matches
+            .iter()
+            .all(|judgment| judgment.capability_id != "deferred")
+    );
 }
 
 #[test]
@@ -994,18 +1007,18 @@ fn supplemental_frontier_tracks_judged_candidates_once_and_is_scoped() {
 fn new_frontier_records_unprepared_operation_state_explicitly() {
     let state = SearchFrontier::default();
     let wire = serde_json::to_value(&state).unwrap();
-    assert_eq!(wire["operation_state"]["state"], "awaiting_extraction");
+    assert_eq!(wire["operation_state"]["state"], "awaiting_request");
     let restored: SearchFrontier = serde_json::from_value(wire).unwrap();
     assert!(matches!(
         restored.operation_state,
-        OperationFrontier::AwaitingExtraction
+        OperationFrontier::AwaitingRequest
     ));
 }
 
 #[test]
 fn operation_frontier_reuses_only_the_same_request_and_preserves_old_state_on_revision() {
     use crate::discovery_matcher::operations::{
-        ExtractionRequest, MatrixScope, OperationMatrix, OperationSet,
+        MatrixScope, OperationMatrix, OperationSet, RequestIdentity,
     };
     use std::collections::BTreeSet;
     let intent = "Read the sensor and send a notice.";
@@ -1013,17 +1026,14 @@ fn operation_frontier_reuses_only_the_same_request_and_preserves_old_state_on_re
         catalog: "matrix".into(),
         capability: "read".into(),
     }]);
-    let extraction = ExtractionRequest::new("fixture", intent).unwrap();
-    let scope =
-        MatrixScope::new("session", "generation", &authorized, extraction.identity()).unwrap();
+    let extraction = RequestIdentity::from_request(intent);
+    let scope = MatrixScope::new("session", "generation", &authorized, extraction.clone()).unwrap();
     let mut frontier = OperationFrontier::default();
     assert!(matches!(
         frontier.load(&scope, intent, &authorized),
-        Ok(OperationFrontierLoad::AwaitingExtraction)
+        Ok(OperationFrontierLoad::AwaitingRequest)
     ));
-    let operations =
-        OperationSet::from_excerpts(intent, &["Read the sensor".into(), "send a notice".into()])
-            .unwrap();
+    let operations = OperationSet::from_request(intent).unwrap();
     let matrix = OperationMatrix::new(
         scope.clone(),
         intent,
@@ -1043,9 +1053,7 @@ fn operation_frontier_reuses_only_the_same_request_and_preserves_old_state_on_re
         "session",
         "generation",
         &authorized,
-        ExtractionRequest::new("fixture", changed_intent)
-            .unwrap()
-            .identity(),
+        RequestIdentity::from_request(changed_intent),
     )
     .unwrap();
     assert!(matches!(
@@ -1059,13 +1067,7 @@ fn operation_frontier_reuses_only_the_same_request_and_preserves_old_state_on_re
         ),
         "failed or pending extraction cannot overwrite the previous checkpoint"
     );
-    let foreign = MatrixScope::new(
-        "other-session",
-        "generation",
-        &authorized,
-        extraction.identity(),
-    )
-    .unwrap();
+    let foreign = MatrixScope::new("other-session", "generation", &authorized, extraction).unwrap();
     assert!(matches!(
         frontier.load(&foreign, intent, &authorized),
         Err(crate::discovery_matcher::operations::OperationError::ScopeMismatch)
@@ -1076,7 +1078,7 @@ fn operation_frontier_reuses_only_the_same_request_and_preserves_old_state_on_re
 #[ignore = "requires an isolated PLASM_TEST_POSTGRES_URL with discovery_selector_cache"]
 async fn replay_of_an_old_completion_cannot_roll_back_operation_revision() {
     use crate::discovery_matcher::operations::{
-        ExtractionRequest, MatrixScope, OperationMatrix, OperationSet,
+        MatrixScope, OperationMatrix, OperationSet, RequestIdentity,
     };
     let url = std::env::var("PLASM_TEST_POSTGRES_URL").unwrap();
     let store = DiscoveryStore::connect(&url).await.unwrap();
@@ -1092,9 +1094,7 @@ async fn replay_of_an_old_completion_cannot_roll_back_operation_revision() {
             "session",
             "generation",
             &authorized,
-            ExtractionRequest::new("fixture", intent)
-                .unwrap()
-                .identity(),
+            RequestIdentity::from_request(intent),
         )
         .unwrap();
         let operations = OperationSet::from_excerpts(intent, &[intent.into()]).unwrap();
@@ -1140,7 +1140,7 @@ async fn replay_of_an_old_completion_cannot_roll_back_operation_revision() {
 #[ignore = "requires an isolated PLASM_TEST_POSTGRES_URL with discovery_selector_cache"]
 async fn same_request_continues_once_per_changed_operation_checkpoint() {
     use crate::discovery_matcher::operations::{
-        ExtractionRequest, MatrixScope, OperationMatrix, OperationSet,
+        MatrixScope, OperationMatrix, OperationSet, RequestIdentity,
     };
     let url = std::env::var("PLASM_TEST_POSTGRES_URL").unwrap();
     let store = DiscoveryStore::connect(&url).await.unwrap();
@@ -1157,9 +1157,7 @@ async fn same_request_continues_once_per_changed_operation_checkpoint() {
         "session",
         "generation",
         &authorized,
-        ExtractionRequest::new("fixture", intent)
-            .unwrap()
-            .identity(),
+        RequestIdentity::from_request(intent),
     )
     .unwrap();
     let matrix = OperationMatrix::new(
@@ -1493,20 +1491,22 @@ async fn failed_frontier_write_is_repaired_from_the_durable_completion() {
         .await;
     assert!(matches!(failed, Err(DiscoveryServiceError::Store(_))));
     assert_eq!(calls.load(Ordering::SeqCst), 1);
-    assert!(a
-        .store
-        .searches()
-        .completion(SearchKey(&key))
-        .await
-        .unwrap()
-        .is_some());
-    assert!(a
-        .store
-        .searches()
-        .frontier(FrontierKey(&scope))
-        .await
-        .unwrap()
-        .is_none());
+    assert!(
+        a.store
+            .searches()
+            .completion(SearchKey(&key))
+            .await
+            .unwrap()
+            .is_some()
+    );
+    assert!(
+        a.store
+            .searches()
+            .frontier(FrontierKey(&scope))
+            .await
+            .unwrap()
+            .is_none()
+    );
     sqlx::query(&format!("DROP TRIGGER {name} ON discovery_selector_cache"))
         .execute(&pool)
         .await
@@ -1589,12 +1589,13 @@ async fn concurrent_search_waits_for_other_store_and_reuses_completion() {
         let calls = calls.clone();
         tokio::spawn(async move {
             a.route_cached(&key, &[], || async {
-                assert!(a
-                    .store
-                    .searches()
-                    .reserve(SearchKey(&key))
-                    .await?
-                    .is_fresh());
+                assert!(
+                    a.store
+                        .searches()
+                        .reserve(SearchKey(&key))
+                        .await?
+                        .is_fresh()
+                );
                 calls.fetch_add(1, Ordering::SeqCst);
                 started.notify_one();
                 release.notified().await;
@@ -1652,12 +1653,13 @@ async fn cancelled_or_failed_owner_releases_waiters_without_replaying_budget() {
                 a.route_frontier(&format!("{key}:frontier"), &key, &[], |visits, _, _| {
                     assert!(visits.is_empty());
                     async {
-                        assert!(a
-                            .store
-                            .searches()
-                            .reserve(SearchKey(&key))
-                            .await?
-                            .is_fresh());
+                        assert!(
+                            a.store
+                                .searches()
+                                .reserve(SearchKey(&key))
+                                .await?
+                                .is_fresh()
+                        );
                         a.store
                             .searches()
                             .checkpoint(SearchKey(&key), &progress(1))
@@ -1717,12 +1719,13 @@ async fn cancelled_waiter_does_not_cancel_owner_or_block_distinct_searches() {
         let release = release.clone();
         tokio::spawn(async move {
             a.route_cached(&key, &[], || async {
-                assert!(a
-                    .store
-                    .searches()
-                    .reserve(SearchKey(&key))
-                    .await?
-                    .is_fresh());
+                assert!(
+                    a.store
+                        .searches()
+                        .reserve(SearchKey(&key))
+                        .await?
+                        .is_fresh()
+                );
                 started.notify_one();
                 release.notified().await;
                 Ok(receipt())
@@ -1765,12 +1768,13 @@ async fn distinct_searches_leave_pool_capacity_for_progress_and_completion() {
         tasks.spawn(async move {
             let key = uuid::Uuid::new_v4().to_string();
             a.route_cached(&key, &[], || async {
-                assert!(a
-                    .store
-                    .searches()
-                    .reserve(SearchKey(&key))
-                    .await?
-                    .is_fresh());
+                assert!(
+                    a.store
+                        .searches()
+                        .reserve(SearchKey(&key))
+                        .await?
+                        .is_fresh()
+                );
                 tokio::task::yield_now().await;
                 a.store
                     .searches()
