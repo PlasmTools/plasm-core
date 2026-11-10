@@ -192,6 +192,33 @@ fn prune_expired_effects(entries: &mut HashMap<String, PendingEffectEntry>) {
     });
 }
 
+fn completion_blocked_message<'a>(
+    workflows: &[String],
+    pauses: impl IntoIterator<Item = (&'a str, &'a str)>,
+) -> String {
+    let requested: std::collections::HashSet<_> = workflows.iter().map(String::as_str).collect();
+    let mut matching: Vec<_> = pauses
+        .into_iter()
+        .filter(|(_, workflow)| requested.contains(workflow))
+        .collect();
+    matching.sort_unstable();
+    let mut message = "workflow has unfinished or uncertain effects".to_owned();
+    if !matching.is_empty() {
+        message.push_str("; retained paused executions (workflow, continuation_ref): ");
+        for (index, (reference, workflow)) in matching.iter().take(8).enumerate() {
+            if index > 0 {
+                message.push_str(", ");
+            }
+            message.push_str(&format!("({workflow}, {reference})"));
+        }
+        if matching.len() > 8 {
+            message.push_str("; additional pauses omitted");
+        }
+        message.push_str(". Inspect the original execution and resulting state before deciding whether to resume; resuming retries its original effects. Other unresolved executions may also exist.");
+    }
+    message
+}
+
 fn rotate_effect_entry(
     entries: &mut HashMap<String, PendingEffectEntry>,
     old_ref: &str,
@@ -1761,9 +1788,20 @@ impl PlasmEngine {
     pub async fn seal_effect_workflows(&self, workflows_json: String) -> Result<()> {
         let _admission = self.admit().await?;
         let ids: Vec<String> = parse_archive_metadata(&workflows_json)?;
-        self.effect_obligations
-            .seal(&ids)
-            .map_err(Error::from_reason)
+        self.effect_obligations.seal(&ids).map_err(|reason| {
+            if reason != "workflow has unfinished or uncertain effects" {
+                return Error::from_reason(reason);
+            }
+            let entries = lock(&self.effect_pauses);
+            let now = std::time::Instant::now();
+            Error::from_reason(completion_blocked_message(
+                &ids,
+                entries
+                    .iter()
+                    .filter(|(_, entry)| entry.deadline > now)
+                    .map(|(reference, entry)| (reference.as_str(), entry.workflow.as_str())),
+            ))
+        })
     }
 
     /// Resume only the retained native execution belonging to this workflow.
@@ -1857,6 +1895,21 @@ fn parse_archive_metadata<T: serde::de::DeserializeOwned>(json: &str) -> Result<
 #[cfg(test)]
 mod mutex_law_tests {
     use super::*;
+
+    #[test]
+    fn completion_diagnostic_scopes_paused_references_to_requested_workflows() {
+        let ids = vec!["allowed".to_owned()];
+        let message =
+            completion_blocked_message(&ids, [("ref-allowed", "allowed"), ("ref-other", "other")]);
+        assert!(message.contains("ref-allowed"));
+        assert!(!message.contains("ref-other"));
+        assert!(message.contains("resuming retries its original effects"));
+        assert!(message.contains("Other unresolved executions may also exist"));
+        assert_eq!(
+            completion_blocked_message(&ids, []),
+            "workflow has unfinished or uncertain effects"
+        );
+    }
 
     #[tokio::test]
     async fn unattended_effect_expiry_reclaims_rotated_entry() {

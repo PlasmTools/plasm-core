@@ -909,6 +909,8 @@ pub struct OperationMatrix {
     answers: BTreeMap<(OperationId, plasm_core::prerequisites::CapabilityRef), DirectContribution>,
     /// Request-local retrieval ranks guide scheduling; they are not judgments.
     recall_ranks: BTreeMap<(OperationId, plasm_core::prerequisites::CapabilityRef), usize>,
+    /// Current-turn priority does not change historical obligations or judgments.
+    current_operations: BTreeSet<OperationId>,
 }
 
 /// Identity of the trusted discovery session and its immutable catalogue and
@@ -1031,7 +1033,20 @@ impl OperationMatrix {
             candidates,
             answers: BTreeMap::new(),
             recall_ranks: BTreeMap::new(),
+            current_operations: BTreeSet::new(),
         })
+    }
+
+    pub(crate) fn prioritize_current_request(&mut self, current: &str) {
+        self.current_operations = self
+            .operations
+            .operations
+            .iter()
+            .filter(|operation| {
+                crate::intent_provenance::current_request_contains_span(current, &operation.text)
+            })
+            .map(|operation| operation.id.clone())
+            .collect();
     }
 
     /// Install authorized, revision-bound operation recall ranks. These ranks
@@ -1195,6 +1210,7 @@ impl OperationMatrix {
                     let priority = (
                         !self.recall_ranks.contains_key(&pair),
                         operation_visits[&operation.id],
+                        !self.current_operations.contains(&operation.id),
                         self.recall_ranks.get(&pair).copied().unwrap_or(usize::MAX),
                         candidate_visits[candidate],
                         rank,

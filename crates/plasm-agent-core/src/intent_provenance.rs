@@ -4,6 +4,19 @@ use thiserror::Error;
 
 pub(crate) const SELECTION_HISTORY_HEADER: &str = "Ordered requests: later explicit revisions supersede earlier requirements while unchanged conditions remain applicable\n";
 
+/// Whether an exact extracted history span also occurs in the current request.
+/// This is a scheduling hint, not a semantic decision or authorization.
+pub(crate) fn current_request_contains_span(current: &str, span: &str) -> bool {
+    let excerpt = span
+        .strip_prefix("Turn ")
+        .and_then(|s| {
+            let (number, text) = s.split_once(": ")?;
+            number.parse::<usize>().ok().map(|_| text)
+        })
+        .unwrap_or(span);
+    !excerpt.is_empty() && current.contains(excerpt)
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Error)]
 pub enum IntentProvenanceError {
     #[error("intent provenance must contain at least one turn")]

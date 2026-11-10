@@ -110,6 +110,29 @@ fn deferred_backlog_key(
     ))
 }
 
+/// Keep current request fragments ahead of historical recall, while retaining
+/// every distinct source span as a query. Ordering nominates candidates only.
+fn ordered_recall_queries<'a>(
+    current: &'a str,
+    spans: impl IntoIterator<Item = &'a str>,
+) -> Vec<&'a str> {
+    let mut recent = Vec::new();
+    let mut historical = Vec::new();
+    for span in spans {
+        if crate::intent_provenance::current_request_contains_span(current, span) {
+            recent.push(span);
+        } else {
+            historical.push(span);
+        }
+    }
+    let mut seen = std::collections::BTreeSet::new();
+    std::iter::once(current)
+        .chain(recent)
+        .chain(historical)
+        .filter(|query| seen.insert(*query))
+        .collect()
+}
+
 /// Completed searches advance priority once within a self-contained request.
 /// No negative relevance decisions are applied to exposure or permissions.
 #[derive(Default, Clone, Serialize, Deserialize)]
@@ -1043,24 +1066,18 @@ impl DiscoveryService {
                 )?
             }
         };
+        matrix.prioritize_current_request(provenance.current());
         let stage_started = std::time::Instant::now();
         let recall = match self.lane {
             DiscoveryLane::Ordinary => {
                 let frontier = crate::discovery_store::RecallFrontier::from_state(exposed, visits);
-                let queries = std::iter::once(provenance.current())
-                    .chain(
-                        matrix
-                            .operations()
-                            .operations()
-                            .iter()
-                            .map(|operation| operation.text()),
-                    )
-                    .collect::<std::collections::BTreeSet<_>>();
-                let mut ordered = vec![provenance.current()];
-                ordered.extend(
-                    queries
-                        .into_iter()
-                        .filter(|query| *query != provenance.current()),
+                let ordered = ordered_recall_queries(
+                    provenance.current(),
+                    matrix
+                        .operations()
+                        .operations()
+                        .iter()
+                        .map(|operation| operation.text()),
                 );
                 let receipts = self
                     .store
@@ -1321,6 +1338,30 @@ mod concurrency_tests;
 mod tests {
     use super::*;
     use std::collections::BTreeSet;
+
+    #[test]
+    fn recall_prioritizes_current_spans_without_dropping_history() {
+        let current = "Read the device. Inspect its owner.";
+        let ordered = ordered_recall_queries(
+            current,
+            [
+                "Turn 1: Archive the record.",
+                "Turn 2: Read the device.",
+                "Inspect its owner.",
+                "Turn 1: Archive the record.",
+                current,
+            ],
+        );
+        assert_eq!(
+            ordered,
+            vec![
+                current,
+                "Turn 2: Read the device.",
+                "Inspect its owner.",
+                "Turn 1: Archive the record."
+            ]
+        );
+    }
 
     #[test]
     fn nominated_guidance_requires_individual_discovery_judgment() {

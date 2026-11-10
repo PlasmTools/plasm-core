@@ -336,6 +336,66 @@ fn operations_for_fixture(matrix: &OperationMatrix, index: usize) -> OperationId
 }
 
 #[test]
+fn current_operation_is_assessed_first_without_starving_historical_condition() {
+    let intent = "Turn 1: Check ownership.\nTurn 2: Read the device.";
+    let operations = OperationSet::from_excerpts(
+        intent,
+        &[
+            "Turn 1: Check ownership.".into(),
+            "Turn 2: Read the device.".into(),
+        ],
+    )
+    .unwrap();
+    let candidate = plasm_core::prerequisites::CapabilityRef {
+        catalog: "matrix".into(),
+        capability: "read".into(),
+    };
+    let authorized = BTreeSet::from([candidate.clone()]);
+    let scope = MatrixScope::new(
+        "session",
+        "generation",
+        &authorized,
+        ExtractionRequest::new("fixture", intent)
+            .unwrap()
+            .identity(),
+    )
+    .unwrap();
+    let mut matrix = OperationMatrix::new(
+        scope,
+        intent,
+        operations,
+        &authorized,
+        vec![candidate.clone()],
+    )
+    .unwrap();
+    let older = operations_for_fixture(&matrix, 0);
+    let current = operations_for_fixture(&matrix, 1);
+    matrix.prioritize_current_request("Read the device.");
+    matrix
+        .set_recall_ranks(
+            &authorized,
+            BTreeMap::from([
+                ((older.clone(), candidate.clone()), 0),
+                ((current.clone(), candidate.clone()), 0),
+            ]),
+        )
+        .unwrap();
+    let first = matrix.next_packet(1).unwrap();
+    assert_eq!(first, vec![(current.clone(), candidate.clone())]);
+    matrix
+        .record_packet(
+            &issued(&matrix, BTreeSet::from([first[0].clone()])),
+            &[OperationJudgment {
+                operation: current,
+                capability: candidate.clone(),
+                contribution: DirectContribution::Unrelated,
+            }],
+        )
+        .unwrap();
+    assert_eq!(matrix.next_packet(1).unwrap(), vec![(older, candidate)]);
+}
+
+#[test]
 fn operation_recall_ranks_prioritize_questions_without_granting_relevance() {
     use plasm_core::prerequisites::CapabilityRef;
     let intent = "Read the sensor and reset the alarm.";

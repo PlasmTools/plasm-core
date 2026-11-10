@@ -483,6 +483,8 @@ pub(crate) async fn run_executable_plan_phased(
                 .map_err(plan_retention_failure)?;
         }
     }
+    // Flow column paths are vector keys, which JSON cannot encode as object
+    // keys. Their retained capacity was charged above using the typed method.
     charge_plan_payload(
         &mut retained_frame,
         &(
@@ -501,7 +503,6 @@ pub(crate) async fn run_executable_plan_phased(
                 &dry.staged_nodes,
                 &dry.execution_unsupported,
                 &dry.review,
-                &flow,
             ),
         ),
     )?;
@@ -956,6 +957,38 @@ mod tests {
     use super::*;
     use crate::evidence_chain::StepExecutedRecord;
     use crate::plasm_plan_run::step_materialize::PlanStepMaterializeOutcome;
+
+    #[tokio::test]
+    async fn structured_flow_paths_are_accounted_without_json_object_keys() {
+        use plasm_runtime::execution::effect_continuation::EffectContinuation;
+        let flow = crate::plan_flow::PlanFlowAnalysis {
+            policy_revision: None,
+            verdict: crate::plan_flow::FlowVerdict::Clean,
+            node_facts: BTreeMap::from([(
+                "projection".into(),
+                crate::plan_flow::NodeFlowFacts {
+                    columns: BTreeMap::from([(
+                        vec!["id".to_owned()],
+                        crate::plan_flow::FlowFacts::default(),
+                    )]),
+                    residual: Default::default(),
+                },
+            )]),
+            node_dispositions: Default::default(),
+            sink_proofs: Default::default(),
+            violations: Vec::new(),
+        };
+        assert!(serde_json::to_vec(&flow).is_err());
+        let (control, _pauses) =
+            EffectContinuation::new_native(std::time::Duration::from_secs(2)).unwrap();
+        control
+            .scope(async {
+                let mut reservation = EffectContinuation::empty_retention();
+                assert!(flow.retention_capacity_bytes() > 0);
+                reservation.add_capacity_bytes(flow.retention_capacity_bytes()).unwrap();
+            })
+            .await;
+    }
 
     #[test]
     fn retained_frame_counts_spare_index_and_flow_capacity() {
