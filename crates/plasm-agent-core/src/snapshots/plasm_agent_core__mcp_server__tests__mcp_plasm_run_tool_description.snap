@@ -1,18 +1,17 @@
 ---
 source: plasm-oss/crates/plasm-agent-core/src/mcp_server/tests.rs
-assertion_line: 108
 expression: "plasm_core::prompt_render::PLASM_RUN_TOOL_DESCRIPTION"
 ---
-**Run Plasm**: `logical_session_ref` + `run_ref` from a reviewed Python plan, or a continuation handle returned by an earlier run. This executes real API operations.
+**Run Plasm** executes real API operations: pass `logical_session_ref` and the exact `run_ref` from a reviewed plan or a returned page handle. Send Python source to `plasm`.
 
-Send Python source to `plasm`, never to `plasm_run`. Call `plasm_run` only with the exact run_ref returned by `plasm` or a returned page handle; never guess a reference. Clean read-only `plasm` calls already execute; do not execute them again.
+Clean read-only `plasm` calls already execute. Never guess a reference or execute those reads again.
 
-Each reviewed commit authorizes one execution. Once started, that run_ref cannot dispatch again. A deliberate repeat requires a fresh plan review and its new run_ref. If a reference is missing, expired or mismatched, submit the program to `plasm` again. Preserve the logical session and selection criteria.
+Each reviewed commit authorizes one execution. A deliberate repeat requires a fresh plan review and new run_ref. If a reference is missing, expired or mismatched, resubmit the program to `plasm` in the same session with the same selection criteria.
 
-Return only needed results: select and aggregate rowsets, and use typed @compute for rendering and processing inside the DAG. TSV is a result format. A preview may omit rows or fields; it does not establish absence or collection completeness. Inspect coverage and follow a returned continuation with the same logical_session_ref.
+A preview may omit rows or fields; it does not establish absence or collection completeness. Inspect coverage and follow a returned continuation with the same logical_session_ref.
 
-A failed or cancelled run may have completed writes. Inspect operation outcomes before issuing further effects; do not blindly replay a program. A rejected duplicate dispatches nothing new and does not undo the earlier execution.
+A failed or cancelled run may have completed writes. Inspect operation outcomes and reconcile uncertainty before further effects; do not blindly replay a program. A rejected duplicate dispatches nothing and does not undo the earlier execution.
 
-Failure evidence belongs to one execution. A new program may perform reads or writes in the same logical session; it does not resume or roll back an earlier execution. Service diagnostics inform the agent but do not determine effect status.
+Failure evidence belongs to one execution. A new program does not resume or roll back an earlier execution; service diagnostics do not determine effect status.
 
 **Artifact (optional):** when you need data omitted from **`content`**, use the `plasm://…` snapshot referenced by `(in artifact)` / `snapshot_only`. Call MCP **`resources/read`** on that URI. When delivery is `inline` without those markers, rows are already in **`content`**.

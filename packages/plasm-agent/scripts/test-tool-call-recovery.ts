@@ -10,6 +10,25 @@ import { ToolCallRecovery } from "../src/telemetry/tool-call-recovery.js";
 import { toolValidationFeedback } from "../src/telemetry/tool-validation-feedback.js";
 import { createTaskLedgerTool, TaskLedgerStore, emptyTaskLedger } from "../src/tools/task-ledger.js";
 
+// Repair retains the registered constraints, including fields named description,
+// without repeating prose already present in the tool schema.
+{
+  const schema = z.object({
+    description: z.string().regex(/^item-[0-9]+$/).describe("Repeated field guidance."),
+    options: z.object({description: z.string()}).default({description: "default-value"}),
+  }).strict().describe("Repeated tool guidance.");
+  const parsed = schema.safeParse({description: "bad"});
+  assert(!parsed.success);
+  const feedback = toolValidationFeedback(parsed.error, "example", {
+    example: tool({description: "Repeated tool guidance.", inputSchema: schema, execute: async () => "ok"}),
+  });
+  const encoded = JSON.stringify(feedback.acceptedArguments);
+  assert.match(encoded, /item-/);
+  assert.match(encoded, /"description":\{/);
+  assert.match(encoded, /"description":"default-value"/);
+  assert.doesNotMatch(encoded, /Repeated field guidance|Repeated tool guidance/);
+}
+
 
 // Evidence grammar must be provider-visible and recoverable without echoing rejected bytes.
 {

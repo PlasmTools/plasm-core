@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
-import { buildDefaultSystemLiturgy, buildPlasmToolDescription } from "../src/prompts/index.js";
+import { buildDefaultSystemLiturgy, buildPlasmRunToolDescription, buildPlasmToolDescription } from "../src/prompts/index.js";
 const card = buildPlasmToolDescription();
 const liturgy = buildDefaultSystemLiturgy();
 const context = readFileSync(new URL("../src/prompts/assets/plasm_context_tool.txt", import.meta.url), "utf8");
@@ -16,11 +16,12 @@ for (const asset of ["initialize_workflow.txt", "plasm_context_tool.txt", "plasm
   );
 }
 for (const text of [card]) {
-  for (const required of ["Program", "build(self)", "explicit return", "Session declarations", "same logical session", "completed writes", "self.recorded("])
+  for (const required of ["Program", "build(self)", "explicit return", "Session declarations", "same logical session", "self.recorded("])
     assert.ok(text.includes(required), `Missing Python protocol instruction: ${required}`);
   for (const retired of ["rows =>", "<<TAG", "e#(<id>)", "| where"])
     assert.ok(!text.includes(retired), `Retired syntax leaked: ${retired}`);
 }
+assert.ok(buildPlasmRunToolDescription().includes("completed writes"));
 assert.match(card, /^build: immutable DAG/m);
 assert.match(card, /Declarations: eN\/mN\/rN\/vN session-local\/append-only/);
 assert.ok(!liturgy.includes("**Plasm** —"), "system instructions must not duplicate the tool protocol");

@@ -1,5 +1,5 @@
 Returns incremental typed domain declarations, session symbols, prerequisite bindings, and corrections for the current `intent`. The static Python semantic reference is in the `plasm` tool description. Call before `plasm` / `plasm_run`; discovery performs no acquisition or business calls.
 
-The host opens the workflow before your first turn. Use `session_mode: "extend"`, its `logical_session_ref`, and a self-contained current request including relevant conditions and amendments. Prior requests remain audit/search state, not judgment context. Existing symbols retain their meaning. Intent does not select the session.
+Use `session_mode: "new"` with the original intent once per workflow. Later discovery uses `session_mode: "extend"`, the same `logical_session_ref`, and a self-contained current request including relevant conditions and amendments. Prior requests remain audit/search state, not judgment context. Existing symbols retain their meaning. Intent does not select the session.
 
 Use declared reads in a Program to observe current account data; extend discovery for missing capabilities or a changed need.

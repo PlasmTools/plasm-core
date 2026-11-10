@@ -21,6 +21,26 @@ const issueSchema = z.object({
 });
 const issuesSchema = z.object({ issues: z.array(issueSchema) });
 
+// Tool descriptions are already supplied with the registered schema. Keep
+// machine constraints in repair feedback without sending their prose again.
+const schemaMaps = new Set(["properties", "patternProperties", "$defs", "definitions", "dependentSchemas"]);
+const schemaLists = new Set(["allOf", "anyOf", "oneOf", "prefixItems"]);
+const schemaChildren = new Set(["items", "additionalProperties", "not", "if", "then", "else", "contains", "propertyNames"]);
+
+function withoutDescriptions(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map(withoutDescriptions);
+  if (value === null || typeof value !== "object") return value;
+  return Object.fromEntries(Object.entries(value).flatMap(([key, nested]) => {
+    if (key === "description") return [];
+    if (schemaMaps.has(key) && nested && typeof nested === "object" && !Array.isArray(nested)) {
+      return [[key, Object.fromEntries(Object.entries(nested).map(([name, child]) => [name, withoutDescriptions(child)]))]];
+    }
+    if (schemaLists.has(key) && Array.isArray(nested)) return [[key, nested.map(withoutDescriptions)]];
+    if (schemaChildren.has(key)) return [[key, withoutDescriptions(nested)]];
+    return [[key, nested]];
+  }));
+}
+
 export function toolValidationFeedback(error: unknown, toolName: string, tools: ToolSet) {
   const seen = new Set<unknown>();
   let current = error;
@@ -38,6 +58,6 @@ export function toolValidationFeedback(error: unknown, toolName: string, tools: 
     kind,
     issues,
     // The registered schema is the authority; do not maintain a repair schema.
-    ...(definition ? { acceptedArguments: asSchema(definition.inputSchema).jsonSchema } : {}),
+    ...(definition ? { acceptedArguments: withoutDescriptions(asSchema(definition.inputSchema).jsonSchema) } : {}),
   };
 }

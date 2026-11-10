@@ -14,16 +14,14 @@ export function formatPlasmContextMarkdown(
   };
   // The native delta can contain prerequisite guidance without new declarations.
   // Preserve that text, and use the native exposure result rather than its byte length.
-  return [header, notes[exposure],
-    "Discovery exposes capabilities; it does not read or refresh account data. Use declared reads in a Program for current data; extend discovery when capabilities are missing or the need changes.",
-    delta].filter(Boolean).join("\n\n");
+  return [header, notes[exposure], delta].filter(Boolean).join("\n\n");
 }
 
 /** Protocol-only dry surface — domain meaning lives in the language card / CGS. */
 export function formatPlasmDryRunMarkdown(summary: string, runRef: string): string {
   return (
     `\`\`\`text\n${summary.trim()}\n\`\`\`\n\n` +
-    `**Run:** pass \`run_ref\`: \`${runRef}\` to **\`plasm_run\`**. Do not echo the program.`
+    `**Run:** pass \`run_ref\`: \`${runRef}\` to **\`plasm_run\`**.`
   );
 }
 
