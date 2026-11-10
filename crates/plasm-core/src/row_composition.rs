@@ -44,26 +44,6 @@ pub struct RowIdentity {
 }
 
 impl RowIdentity {
-    /// Conservative heap capacity retained by this identity and its scope slots.
-    pub fn retention_capacity_bytes(&self) -> usize {
-        self.ambient.iter().fold(
-            self.reference
-                .retention_capacity_bytes()
-                .saturating_add(self.qualified_entity.entry_id.retained_capacity())
-                .saturating_add(self.qualified_entity.entity.retained_capacity())
-                .saturating_add(
-                    self.ambient
-                        .capacity()
-                        .saturating_mul(std::mem::size_of::<(String, String)>() + 16)
-                        .saturating_mul(2),
-                ),
-            |total, (key, value)| {
-                total
-                    .saturating_add(key.capacity())
-                    .saturating_add(value.capacity())
-            },
-        )
-    }
     pub fn new(
         qualified_entity: QualifiedEntityKey,
         reference: Ref,
@@ -248,20 +228,6 @@ pub fn resolve_relation_target_id(
 mod tests {
     use super::*;
 
-    #[test]
-    fn row_identity_counts_reserved_scope_and_reference_capacity() {
-        let mut id = String::with_capacity(100_000);
-        id.push('x');
-        let mut scope = String::with_capacity(200_000);
-        scope.push('y');
-        let identity = RowIdentity::new(
-            QualifiedEntityKey::new("catalog", "Item"),
-            Ref::new("Item", id),
-            IndexMap::from([("scope".into(), scope)]),
-            IdEncoding::Simple,
-        );
-        assert!(identity.retention_capacity_bytes() >= 300_000);
-    }
     use crate::schema::EntityDef;
 
     #[test]

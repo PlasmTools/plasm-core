@@ -14,7 +14,7 @@ const failure = executionFailureSchema.parse({
 });
 let executions = 0;
 const runtime = {
-  plasmContext: async () => "context", plasm: async () => "plan", plasmResume: async () => { throw new Error("unexpected repair"); },
+  plasmContext: async () => "context", plasm: async () => "plan",
   plasmRun: async () => { executions++; throw new AgentExecutionFailure(failure, "Execution stopped: status 422: Already set. 75 completed; earlier effects were not rolled back."); },
   recordExecutionFailure: async () => {},
 };
@@ -22,19 +22,19 @@ const options = {toolCallId: "fixture", messages: [], context: {}};
 const tools = createPlasmTools(runtime);
 assert.deepEqual(Object.keys(tools).sort(), ["plasm", "plasm_context", "plasm_failure", "plasm_run"]);
 {
-  const paused = executionFailureSchema.parse({
+  const rejected = executionFailureSchema.parse({
     cause: "upstream", recovery: "replan_after_rejection", code: "upstream_rejection",
     diagnostic: "status 422: quota unavailable", node: null, occurrence_path: [], catalog_digest: null,
     effects_unresolved: false, effects: [],
     dispatches: [{operation: {entry_id: "matrix", capability: "change"}, request_fingerprint: "opaque", status: "rejected_without_effect"}],
   });
-  const pausedTools = createPlasmTools({...runtime, plasmRun: async () => {
-    throw new AgentExecutionFailure(paused, "Execution paused after a confirmed no-effect rejection. The original execution remains suspended and cannot be continued through the agent tools.");
+  const rejectedTools = createPlasmTools({...runtime, plasmRun: async () => {
+    throw new AgentExecutionFailure(rejected, "Execution stopped after a confirmed no-effect rejection.");
   }});
-  const output = await pausedTools.plasm_run!.execute!({logical_session_ref: "l_AAAAAAAAQACAAAAAAAAAAQ", run_ref: "pc0"}, options);
+  const output = await rejectedTools.plasm_run!.execute!({logical_session_ref: "l_AAAAAAAAQACAAAAAAAAAAQ", run_ref: "pc0"}, options);
   const text = plasmModelOutput({output}).value;
   assert.match(text, /status 422: quota unavailable/);
-  assert.match(text, /remains suspended/);
+  assert.match(text, /Execution stopped/);
   assert.doesNotMatch(text, /plasm_resume/);
 }
 {
@@ -53,16 +53,6 @@ assert.deepEqual(Object.keys(tools).sort(), ["plasm", "plasm_context", "plasm_fa
   const result = await parseTools.plasm!.execute!({logical_session_ref: "l_AAAAAAAAQACAAAAAAAAAAQ", program: "class P(Program):\n    # incomplete"}, options);
   const text = plasmModelOutput({output: result}).value;
   assert.equal((text.match(/Expected an indented block/g) ?? []).length, 1);
-  assert.doesNotMatch(text, /Recorded failure details/);
-}
-{
-  const failure = executionFailureSchema.parse({cause: "program", recovery: "repair_program", code: "effect_plan_retention_refused",
-    diagnostic: "continuation retained-state accounting failed", node: null, occurrence_path: [], catalog_digest: null,
-    effects: [], dispatches: [], effects_unresolved: false});
-  const noEffectTools = createPlasmTools({...runtime, plasmRun: async () => { throw new AgentExecutionFailure(failure, "Execution stopped: continuation retained-state accounting failed."); }});
-  const result = await noEffectTools.plasm_run!.execute!({logical_session_ref: "l_AAAAAAAAQACAAAAAAAAAAQ", run_ref: "pc0"}, options);
-  const text = plasmModelOutput({output: result}).value;
-  assert.equal((text.match(/continuation retained-state accounting failed/g) ?? []).length, 1);
   assert.doesNotMatch(text, /Recorded failure details/);
 }
 const output = await tools.plasm_run!.execute!({logical_session_ref: "l_AAAAAAAAQACAAAAAAAAAAQ", run_ref: "pc0"}, options);

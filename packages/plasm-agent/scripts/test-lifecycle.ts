@@ -22,7 +22,7 @@ try {
   const archived = deferred<void>();
   const releaseArchive = deferred<void>();
   const events: string[] = [];
-  const engine: PlasmEngine = { sealEffectWorkflows: async () => {}, resumeEffectRun: async () => { throw new Error("unexpected repair"); }, takeCompletedTeaching: async () => "",
+  const engine: PlasmEngine = { sealEffectWorkflows: async () => {}, takeCompletedTeaching: async () => "",
     loadCatalog: unused, activateDiscovery: unused, routeIntent: unused,
     synthesizeTeaching: unused, dryRun: unused, run: unused, introspectCatalog: unused,
     close: async () => { events.push("closed"); },

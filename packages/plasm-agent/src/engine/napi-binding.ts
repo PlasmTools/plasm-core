@@ -73,7 +73,6 @@ export type HostTransportFn = ((request: HostTransportRequest) => Promise<HostTr
 export interface PlasmEngine {
   /** Atomically refuse completion while any named workflow has unfinished effects. */
   sealEffectWorkflows(logicalSessionIds: string[]): Promise<void>;
-  resumeEffectRun(continuationRef: string, logicalSessionId?: string): Promise<{ ok: boolean; message: string; rowsJson?: string; metaJson?: string; artifactsJson?: string; failureJson?: string; continuationRef?: string }>;
   readonly learning?: WorkflowLearningEngine;
   /** Close admission and drain all accepted native work before releasing workers. */
   close(): Promise<void>;
@@ -86,19 +85,18 @@ export interface PlasmEngine {
   activateDiscovery(deploymentId: string, bindingsJson: string): Promise<string>;
   routeIntent(provenance: IntentProvenance, logicalSessionId?: string, sessionClock?: string): Promise<RoutingPacket>;
   takeCompletedTeaching(logicalSessionId: string, includeExamples?: boolean): Promise<string>;
-  runPlan(planCommitRef: string, logicalSessionId?: string): Promise<{ ok: boolean; message: string; rowsJson?: string; metaJson?: string; artifactsJson?: string; failureJson?: string; continuationRef?: string }>;
+  runPlan(planCommitRef: string, logicalSessionId?: string): Promise<{ ok: boolean; message: string; rowsJson?: string; metaJson?: string; artifactsJson?: string; failureJson?: string }>;
   runPlanLive?(
     planCommitRef: string,
     transport: HostTransportFn,
     logicalSessionId?: string,
-  ): Promise<{ ok: boolean; message: string; rowsJson?: string; metaJson?: string; artifactsJson?: string; failureJson?: string; continuationRef?: string }>;
+  ): Promise<{ ok: boolean; message: string; rowsJson?: string; metaJson?: string; artifactsJson?: string; failureJson?: string }>;
   run(resolved: ResolvedPlanPayload, transport: HostTransportFn): Promise<unknown>;
   introspectCatalog(entryId: string): Promise<string>;
 }
 
 type NativePlasmEngine = {
   sealEffectWorkflows(workflowsJson: string): Promise<void>;
-  resumeEffectRun(continuationRef: string, logicalSessionId?: string): Promise<{ ok: boolean; message: string; rowsJson?: string; metaJson?: string; artifactsJson?: string; failureJson?: string; continuationRef?: string }>;
   configureWorkflowLearning(configJson: string): Promise<void>;
   configureTraining(grantJson: string): Promise<void>;
   sealTrainingEvaluation(logicalSessionId: string): Promise<void>;
@@ -149,7 +147,7 @@ type NativePlasmEngine = {
     ok: boolean;
     message: string;
     rowsJson?: string;
-    metaJson?: string; artifactsJson?: string; failureJson?: string; continuationRef?: string;
+    metaJson?: string; artifactsJson?: string; failureJson?: string;
   }>;
   introspectCatalog(entryId: string): Promise<string>;
 };
@@ -171,9 +169,6 @@ export class NapiPlasmEngine implements PlasmEngine {
   private loaded: LoadedCatalog[] = [];
   sealEffectWorkflows(ids: string[]): Promise<void> {
     return this.native.sealEffectWorkflows(JSON.stringify(ids));
-  }
-  resumeEffectRun(ref: string, logicalSessionId?: string) {
-    return this.native.resumeEffectRun(ref, logicalSessionId);
   }
   readonly learning: WorkflowLearningEngine = {
     configure: config => this.native.configureWorkflowLearning(JSON.stringify(config)),
@@ -269,7 +264,7 @@ export class NapiPlasmEngine implements PlasmEngine {
     planCommitRef: string,
     transport: HostTransportFn,
     logicalSessionId?: string,
-  ): Promise<{ ok: boolean; message: string; rowsJson?: string; metaJson?: string; artifactsJson?: string; failureJson?: string; continuationRef?: string }> {
+  ): Promise<{ ok: boolean; message: string; rowsJson?: string; metaJson?: string; artifactsJson?: string; failureJson?: string }> {
     return this.native.runPlanLive(planCommitRef, toNapiHostTransport(transport), logicalSessionId, transport.resolveAuth?.bind(transport));
   }
 

@@ -9,7 +9,7 @@ import type { PlasmEngine } from "../src/engine/napi-binding.js";
 import { classifyNonTerminalStop, runEveToolLoop } from "../src/telemetry/eve-tool-loop.js";
 
 const unused = async (): Promise<never> => { throw new Error("unexpected engine call"); };
-const engine: PlasmEngine = { sealEffectWorkflows: async () => {}, resumeEffectRun: async () => { throw new Error("unexpected repair"); }, takeCompletedTeaching: async () => "",
+const engine: PlasmEngine = { sealEffectWorkflows: async () => {}, takeCompletedTeaching: async () => "",
   close: async () => {},
   loadCatalog: unused, activateDiscovery: unused, routeIntent: unused,
   synthesizeTeaching: unused, dryRun: unused, runPlan: unused, run: unused,

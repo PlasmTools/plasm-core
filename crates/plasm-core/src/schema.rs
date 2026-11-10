@@ -177,11 +177,6 @@ impl ValueDomainKey {
     pub fn as_str(&self) -> &str {
         &self.0
     }
-
-    /// Heap capacity owned by this domain key.
-    pub fn retention_capacity_bytes(&self) -> usize {
-        self.0.capacity()
-    }
 }
 
 impl<'de> Deserialize<'de> for ValueDomainKey {
@@ -273,11 +268,6 @@ impl DataClassName {
     pub fn as_str(&self) -> &str {
         &self.0
     }
-
-    /// Heap capacity retained by this owned name.
-    pub fn retention_capacity_bytes(&self) -> usize {
-        self.0.capacity()
-    }
 }
 
 impl Deref for DataClassName {
@@ -316,11 +306,6 @@ impl SinkClassName {
     #[inline]
     pub fn as_str(&self) -> &str {
         &self.0
-    }
-
-    /// Heap capacity retained by this owned name.
-    pub fn retention_capacity_bytes(&self) -> usize {
-        self.0.capacity()
     }
 }
 
@@ -820,93 +805,6 @@ pub enum RelationMaterialization {
 }
 
 impl RelationMaterialization {
-    /// Conservative heap capacity of the frozen relation policy and its owned inputs.
-    pub fn retention_capacity_bytes(&self) -> usize {
-        fn path(value: &Vec<JsonPathSegment>) -> usize {
-            value.iter().fold(
-                value
-                    .capacity()
-                    .saturating_mul(std::mem::size_of::<JsonPathSegment>()),
-                |sum, segment| {
-                    sum.saturating_add(match segment {
-                        JsonPathSegment::Key { key } => key.capacity(),
-                        JsonPathSegment::Wildcard { .. } => 0,
-                    })
-                },
-            )
-        }
-        fn bindings(value: &IndexMap<CapabilityParamName, EntityFieldName>) -> usize {
-            let storage = value
-                .capacity()
-                .saturating_mul(
-                    std::mem::size_of::<(CapabilityParamName, EntityFieldName)>()
-                        .saturating_add(32),
-                )
-                .saturating_mul(4);
-            value.iter().fold(storage, |sum, (param, field)| {
-                sum.saturating_add(param.retention_capacity_bytes())
-                    .saturating_add(field.retention_capacity_bytes())
-            })
-        }
-        fn fallback(value: &RelationScopedFallback) -> usize {
-            match value {
-                RelationScopedFallback::QueryScoped { capability, param } => capability
-                    .retention_capacity_bytes()
-                    .saturating_add(param.retention_capacity_bytes()),
-                RelationScopedFallback::QueryScopedBindings {
-                    capability,
-                    bindings: values,
-                } => capability
-                    .retention_capacity_bytes()
-                    .saturating_add(bindings(values)),
-                RelationScopedFallback::HydrateFromEmbedPath {
-                    path: value,
-                    get_capability,
-                } => path(value).saturating_add(get_capability.retention_capacity_bytes()),
-            }
-        }
-        match self {
-            Self::Unavailable => 0,
-            Self::FromParentGet { path: value, .. } => path(value),
-            Self::PreferFromParentGet {
-                path: value,
-                fallback: nested,
-                ..
-            } => path(value).saturating_add(fallback(nested)),
-            Self::QueryScoped {
-                capability,
-                param,
-                select_entity,
-            } => capability
-                .retention_capacity_bytes()
-                .saturating_add(param.retention_capacity_bytes())
-                .saturating_add(
-                    select_entity
-                        .as_ref()
-                        .map_or(0, |entity| entity.retention_capacity_bytes()),
-                ),
-            Self::QueryScopedBindings {
-                capability,
-                bindings: values,
-                select_entity,
-            } => capability
-                .retention_capacity_bytes()
-                .saturating_add(bindings(values))
-                .saturating_add(
-                    select_entity
-                        .as_ref()
-                        .map_or(0, |entity| entity.retention_capacity_bytes()),
-                ),
-            Self::GetScopedBindings {
-                capability,
-                bindings: values,
-            } => capability
-                .retention_capacity_bytes()
-                .saturating_add(bindings(values)),
-            Self::ViewEmbed { view } => view.capacity(),
-        }
-    }
-
     /// Explicit nominal selection after a scoped capability has decoded its output.
     pub fn selected_entity(&self) -> Option<&EntityName> {
         match self {

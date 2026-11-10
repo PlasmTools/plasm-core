@@ -13,345 +13,6 @@ fn step_failure(code: &'static str, diagnostic: impl Into<String>) -> ExecutionF
     ExecutionFailure::new(plasm_runtime::FailureCause::Program, code, diagnostic)
 }
 
-pub(super) struct RetainedIdentities<'a>(pub(super) &'a [Option<plasm_core::RowIdentity>]);
-
-fn materialized_metadata_capacity(value: &MaterializedNode) -> usize {
-    let mut bytes = value
-        .display
-        .capacity()
-        .saturating_add(value.qualified_entity.entry_id.capacity())
-        .saturating_add(value.qualified_entity.entity.capacity())
-        .saturating_add(
-            value
-                .value_shapes
-                .capacity()
-                .saturating_mul(std::mem::size_of::<
-                    super::orchestrator::MaterializedValueShape,
-                >()),
-        )
-        .saturating_add(
-            value
-                .row_identities
-                .capacity()
-                .saturating_mul(std::mem::size_of::<Option<plasm_core::RowIdentity>>()),
-        );
-    for field in &value.optional_fields {
-        bytes = bytes.saturating_add(1024).saturating_add(field.capacity());
-    }
-    if let Some(projection) = &value.projection {
-        bytes = bytes.saturating_add(
-            projection
-                .capacity()
-                .saturating_mul(std::mem::size_of::<String>()),
-        );
-        for field in projection {
-            bytes = bytes.saturating_add(field.capacity());
-        }
-    }
-    if let Some(artifact) = &value.artifact {
-        bytes = bytes
-            .saturating_add(artifact.plasm_uri.capacity())
-            .saturating_add(artifact.canonical_plasm_uri.capacity())
-            .saturating_add(artifact.http_path.capacity())
-            .saturating_add(
-                artifact
-                    .request_fingerprints
-                    .capacity()
-                    .saturating_mul(std::mem::size_of::<String>()),
-            );
-        for fingerprint in &artifact.request_fingerprints {
-            bytes = bytes.saturating_add(fingerprint.capacity());
-        }
-    }
-    bytes
-}
-
-#[cfg(test)]
-mod retention_tests {
-    use super::*;
-    use plasm_runtime::execution::effect_continuation::{
-        EffectContinuation, MAX_RETAINED_EXECUTION_BYTES,
-    };
-
-    #[tokio::test]
-    async fn cloned_plan_reservations_accumulate_and_release() {
-        let (control, _pauses) =
-            EffectContinuation::new_native(std::time::Duration::from_secs(2)).unwrap();
-        control
-            .scope(async {
-                let retained = reserve_node_clone(|| MAX_RETAINED_EXECUTION_BYTES / 2).unwrap();
-                let Err(failure) = reserve_node_clone(|| MAX_RETAINED_EXECUTION_BYTES / 2 + 1) else {
-                    panic!("clone budget should reject")
-                };
-                assert_eq!(failure.code, "effect_plan_retention_refused");
-                assert_eq!(failure.input_budget.as_ref().unwrap().input, "cloned plan");
-                drop(retained);
-                assert!(reserve_node_clone(|| MAX_RETAINED_EXECUTION_BYTES / 2 + 1).is_ok());
-            })
-            .await;
-    }
-
-    #[tokio::test]
-    async fn inline_materialized_rows_charge_spare_capacity() {
-        let mut text = String::with_capacity(MAX_RETAINED_EXECUTION_BYTES + 1);
-        text.push('x');
-        let mut row = plasm_core::ValueRow::new();
-        row.insert("payload".into(), plasm_core::Value::String(text));
-        let node = MaterializedNode {
-            value_shapes: Vec::new(),
-            optional_fields: Default::default(),
-            qualified_entity: crate::plasm_plan::QualifiedEntityKey {
-                entry_id: "test".into(),
-                entity: "Item".into(),
-            },
-            result: Arc::new(plasm_runtime::ExecutionResult {
-                collection: crate::test_support::execution_fixtures::collection(
-                    Vec::new(),
-                    plasm_runtime::ResultCoverage::Unknown,
-                ),
-                has_more: false,
-                pagination_resume: None,
-                paging_handle: None,
-                source: plasm_runtime::ExecutionSource::Cache,
-                stats: plasm_runtime::ExecutionStats::default(),
-                request_fingerprints: Vec::new(),
-                operations: plasm_runtime::OperationLedger::empty(),
-            }),
-            row_source: MaterializedRowSource::Inline(vec![row]),
-            row_identities: Vec::new(),
-            artifact: None,
-            display: "test".into(),
-            projection: None,
-        };
-        let mut nodes = BTreeMap::from([(PlanNodeId::new("source").unwrap(), node)]);
-        let (control, _pauses) =
-            EffectContinuation::new_native(std::time::Duration::from_secs(2)).unwrap();
-        control
-            .clone()
-            .scope(async {
-                let failure = reserve_materialized_inputs(&nodes, &StepId("step".into()))
-                    .err()
-                    .expect("oversized retained input must fail");
-                assert!(failure.input_budget.is_some());
-            })
-            .await;
-        let node = nodes.values_mut().next().unwrap();
-        node.row_source = MaterializedRowSource::Inline(Vec::new());
-        node.display = String::with_capacity(MAX_RETAINED_EXECUTION_BYTES + 1);
-        control
-            .clone()
-            .scope(async {
-                let failure = reserve_materialized_inputs(&nodes, &StepId("step".into()))
-                    .err()
-                    .expect("oversized retained metadata must fail");
-                assert!(failure.input_budget.is_some());
-            })
-            .await;
-        use plasm_core::collection_codec::{
-            CollectionCodec, CollectionIdentity, Observation, RecordingCodec,
-        };
-        let node = nodes.values_mut().next().unwrap();
-        node.display = String::new();
-        let mut entity = plasm_runtime::CachedEntity::new(plasm_core::Ref::new("Item", "one"), 0);
-        let mut text = String::with_capacity(MAX_RETAINED_EXECUTION_BYTES + 1);
-        text.push('x');
-        entity
-            .fields
-            .insert("payload".into(), plasm_core::TypedFieldValue::String(text));
-        let membership = RecordingCodec::new()
-            .record(
-                CollectionIdentity::for_untyped_observation(&"snapshot").unwrap(),
-                vec![plasm_core::Ref::new("Item", "one")],
-                Observation::Literal,
-            )
-            .unwrap();
-        node.row_source = MaterializedRowSource::GraphBacked {
-            entity_type: "Item".into(),
-            membership,
-            hot_snapshot: Arc::from([entity]),
-        };
-        control
-            .clone()
-            .scope(async {
-                let failure = reserve_materialized_inputs(&nodes, &StepId("step".into()))
-                    .err()
-                    .expect("oversized retained snapshot must fail");
-                assert!(failure.input_budget.is_some());
-            })
-            .await;
-        let node = nodes.values_mut().next().unwrap();
-        node.row_source = MaterializedRowSource::Inline(Vec::new());
-        let mut entity = plasm_runtime::CachedEntity::new(plasm_core::Ref::new("Item", "one"), 0);
-        let mut text = String::with_capacity(MAX_RETAINED_EXECUTION_BYTES + 1);
-        text.push('x');
-        entity
-            .fields
-            .insert("payload".into(), plasm_core::TypedFieldValue::String(text));
-        Arc::get_mut(&mut node.result).unwrap().collection =
-            crate::test_support::execution_fixtures::collection(
-                vec![entity],
-                plasm_runtime::ResultCoverage::Unknown,
-            );
-        control
-            .clone()
-            .scope(async {
-                let failure = reserve_materialized_inputs(&nodes, &StepId("step".into()))
-                    .err()
-                    .expect("oversized retained collection must fail");
-                assert!(failure.input_budget.is_some());
-            })
-            .await;
-        let node = nodes.values_mut().next().unwrap();
-        Arc::get_mut(&mut node.result).unwrap().collection =
-            crate::test_support::execution_fixtures::collection(
-                Vec::new(),
-                plasm_runtime::ResultCoverage::Unknown,
-            );
-        let mut id = String::with_capacity(MAX_RETAINED_EXECUTION_BYTES + 1);
-        id.push('x');
-        node.row_identities = vec![Some(plasm_core::RowIdentity::new(
-            plasm_core::QualifiedEntityKey::new("test", "Item"),
-            plasm_core::Ref::new("Item", id),
-            Default::default(),
-            plasm_core::row_composition::IdEncoding::Simple,
-        ))];
-        control
-            .scope(async {
-                let failure = reserve_materialized_inputs(&nodes, &StepId("step".into()))
-                    .err()
-                    .expect("oversized retained identity must fail");
-                assert!(failure.input_budget.is_some());
-            })
-            .await;
-    }
-}
-
-impl serde::Serialize for RetainedIdentities<'_> {
-    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
-        use serde::ser::SerializeSeq;
-        let mut sequence = serializer.serialize_seq(None)?;
-        for identity in self.0 {
-            match identity {
-                Some(identity) => {
-                    sequence.serialize_element(&(&identity.reference, &identity.ambient))?
-                }
-                None => sequence.serialize_element(&Option::<()>::None)?,
-            }
-        }
-        sequence.end()
-    }
-}
-
-/// These values remain reachable through the step's borrowed environment while
-/// a nested dispatch is suspended. Charge their wire payload without retaining
-/// an additional copy. Other future frames are not included by this accounting.
-fn reserve_materialized_inputs(
-    materialized: &BTreeMap<PlanNodeId, MaterializedNode>,
-    step_id: &StepId,
-) -> Result<
-    Vec<plasm_runtime::execution::effect_continuation::RetainedExecutionReservation>,
-    ExecutionFailure,
-> {
-    use plasm_runtime::execution::effect_continuation::{
-        EffectContinuation, EffectContinuationError, MAX_RETAINED_EXECUTION_BYTES,
-    };
-    let mut reservations = Vec::new();
-    if !EffectContinuation::is_active() {
-        return Ok(reservations);
-    }
-    let failure = |error| {
-        let mut result = step_failure(
-            "effect_materialization_retention_refused",
-            format!("retained inputs exceed the continuation budget: {error}"),
-        );
-        if matches!(
-            error,
-            EffectContinuationError::RetainedBudget(plasm_core::ValueBudgetError::BytesExceeded)
-        ) {
-            result.input_budget = Some(plasm_runtime::InputBudgetEvidence {
-                unit: plasm_runtime::InputBudgetUnit::AccountedBytes,
-                limit: MAX_RETAINED_EXECUTION_BYTES,
-                observed_at_least: MAX_RETAINED_EXECUTION_BYTES + 1,
-                input: step_id.to_string(),
-            });
-        }
-        result
-    };
-    for value in materialized.values() {
-        let mut metadata = EffectContinuation::empty_retention();
-        metadata
-            .add_capacity_bytes(materialized_metadata_capacity(value))
-            .map_err(&failure)?;
-        reservations.push(metadata);
-        let mut result = EffectContinuation::reserve_retained(&(
-            value.result.collection.retention_view(),
-            value.result.has_more,
-            value.result.source,
-            &value.result.stats,
-            &value.result.request_fingerprints,
-            &value.result.operations,
-        ))
-        .map_err(&failure)?;
-        result
-            .add_capacity_bytes(value.result.collection.retention_capacity_bytes())
-            .map_err(&failure)?;
-        reservations.push(result);
-        if let Some(resume) = &value.result.pagination_resume {
-            reservations.push(EffectContinuation::reserve_pagination(resume).map_err(&failure)?);
-        }
-        match &value.row_source {
-            MaterializedRowSource::Inline(rows) => {
-                let mut reservation =
-                    EffectContinuation::reserve_selection(rows).map_err(&failure)?;
-                reservation
-                    .add_capacity_bytes(
-                        rows.capacity()
-                            .saturating_mul(std::mem::size_of::<plasm_core::ValueRow>()),
-                    )
-                    .map_err(&failure)?;
-                reservations.push(reservation);
-            }
-            MaterializedRowSource::GraphBacked {
-                entity_type,
-                membership,
-                hot_snapshot,
-            } => {
-                let mut reservation = EffectContinuation::reserve_retained(&(
-                    entity_type,
-                    membership.retention_view(),
-                    plasm_runtime::cache::retained_entities(hot_snapshot.as_ref()),
-                ))
-                .map_err(&failure)?;
-                reservation
-                    .add_capacity_bytes(
-                        entity_type
-                            .capacity()
-                            .saturating_add(plasm_runtime::cache::retained_entities_capacity(
-                                hot_snapshot.as_ref(),
-                            ))
-                            .saturating_add(
-                                plasm_runtime::cache::retained_reference_collection_capacity(
-                                    membership,
-                                ),
-                            ),
-                    )
-                    .map_err(&failure)?;
-                reservations.push(reservation);
-            }
-        }
-        let mut identities =
-            EffectContinuation::reserve_retained(&RetainedIdentities(&value.row_identities))
-                .map_err(&failure)?;
-        for identity in value.row_identities.iter().flatten() {
-            identities
-                .add_capacity_bytes(identity.retention_capacity_bytes())
-                .map_err(&failure)?;
-        }
-        reservations.push(identities);
-    }
-    Ok(reservations)
-}
-
 fn selection_identities(
     selection: &plasm_core::plasm_monad::PythonRowSelection,
     occurrences: &[Option<crate::python_pool::SelectedOccurrence>],
@@ -410,68 +71,6 @@ pub(crate) struct PlanStepMaterializeOutcome {
     pub(crate) scope_instances: Option<serde_json::Value>,
 }
 
-pub(super) fn charge_plan_payload<T: serde::Serialize + ?Sized>(
-    reservation: &mut Option<plasm_runtime::execution::effect_continuation::RetainedExecutionReservation>,
-    payload: &T,
-) -> Result<(), ExecutionFailure> {
-    let Some(reservation) = reservation else {
-        return Ok(());
-    };
-    reservation
-        .add_retained(payload)
-        .map_err(plan_retention_failure)
-}
-
-pub(super) fn plan_retention_failure(
-    error: plasm_runtime::execution::effect_continuation::EffectContinuationError,
-) -> ExecutionFailure {
-    use plasm_runtime::execution::effect_continuation::{
-        EffectContinuationError, MAX_RETAINED_EXECUTION_BYTES,
-    };
-    let mut failure = step_failure("effect_plan_retention_refused", error.to_string());
-    if matches!(
-        error,
-        EffectContinuationError::RetainedBudget(plasm_core::ValueBudgetError::BytesExceeded)
-    ) {
-        failure.input_budget = Some(plasm_runtime::InputBudgetEvidence {
-            unit: plasm_runtime::InputBudgetUnit::AccountedBytes,
-            limit: MAX_RETAINED_EXECUTION_BYTES,
-            observed_at_least: MAX_RETAINED_EXECUTION_BYTES + 1,
-            input: "plan frame".into(),
-        });
-    }
-    failure
-}
-
-fn plan_evidence_capacity(outcome: &PlanStepMaterializeOutcome) -> usize {
-    let evidence = &outcome.evidence;
-    let mut bytes = evidence
-        .step_id
-        .capacity()
-        .saturating_add(evidence.source_line.capacity())
-        .saturating_add(evidence.entry_id.as_ref().map_or(0, String::capacity))
-        .saturating_add(
-            evidence
-                .request_fingerprints
-                .capacity()
-                .saturating_mul(std::mem::size_of::<String>()),
-        );
-    for fingerprint in &evidence.request_fingerprints {
-        bytes = bytes.saturating_add(fingerprint.capacity());
-    }
-    if let Some(instances) = &outcome.scope_instances {
-        bytes = bytes.saturating_add(plasm_runtime::materialization::retained_json_capacity(
-            instances,
-        ));
-    }
-    if let Some(approval) = &outcome.approval {
-        bytes = bytes.saturating_add(plasm_runtime::materialization::retained_json_capacity(
-            &approval.gate,
-        ));
-    }
-    bytes
-}
-
 /// Shared session/host context for live plan step materialization.
 pub(crate) struct PlanStepMaterializeCtx<'a> {
     pub es: &'a ExecuteSession,
@@ -491,27 +90,6 @@ pub(crate) struct PlanStepMaterializeCtx<'a> {
     pub execution_scope: Option<&'a crate::operation::ExecutionScope>,
 }
 
-pub(super) fn reserve_node_clone(
-    measure: impl FnOnce() -> usize,
-) -> Result<
-    Option<plasm_runtime::execution::effect_continuation::RetainedExecutionReservation>,
-    ExecutionFailure,
-> {
-    use plasm_runtime::execution::effect_continuation::EffectContinuation;
-    if !EffectContinuation::is_active() {
-        return Ok(None);
-    }
-    let mut reservation = EffectContinuation::empty_retention();
-    reservation.add_capacity_bytes(measure()).map_err(|error| {
-        let mut failure = plan_retention_failure(error);
-        if let Some(budget) = &mut failure.input_budget {
-            budget.input = "cloned plan".into();
-        }
-        failure
-    })?;
-    Ok(Some(reservation))
-}
-
 pub(crate) fn apply_step_materialize_outcomes(
     materialized: &mut BTreeMap<PlanNodeId, MaterializedNode>,
     evidence_steps: &mut Vec<StepExecutedRecord>,
@@ -519,28 +97,8 @@ pub(crate) fn apply_step_materialize_outcomes(
     approval_receipts: &mut Vec<PlasmPlanApprovalReceipt>,
     outcomes: impl IntoIterator<Item = PlanStepMaterializeOutcome>,
     execution_scope: Option<&crate::operation::ExecutionScope>,
-    retained_evidence: &mut Option<
-        plasm_runtime::execution::effect_continuation::RetainedExecutionReservation,
-    >,
 ) -> Result<(), ExecutionFailure> {
     for outcome in outcomes {
-        // Preserve the successful outcome's receipts even if its evidence
-        // cannot be retained for a later checkpoint.
-        charge_plan_payload(
-            retained_evidence,
-            &(
-                &outcome.evidence,
-                &outcome.scope_instances,
-                &outcome.approval,
-            ),
-        )
-        .map_err(|failure| failure.with_effects(&outcome.mat.result.operations))?;
-        if let Some(reservation) = retained_evidence.as_mut() {
-            reservation
-                .add_capacity_bytes(plan_evidence_capacity(&outcome))
-                .map_err(plan_retention_failure)
-                .map_err(|failure| failure.with_effects(&outcome.mat.result.operations))?;
-        }
         if let Some(instances) = outcome.scope_instances {
             scope_instances.push(instances);
         }
@@ -570,23 +128,6 @@ pub(crate) async fn materialize_executable_plan_step(
     schema_nodes: &[ValidatedPlanNode],
     materialized: &BTreeMap<PlanNodeId, MaterializedNode>,
 ) -> Result<PlanStepMaterializeOutcome, ExecutionFailure> {
-    // The executable step owns a cloned node across await points.
-    let _retained_node = if matches!(
-        node.effect_class(),
-        EffectClass::Write | EffectClass::SideEffect
-    ) {
-        reserve_node_clone(|| crate::plasm_plan::ValidatedPlanArtifact::retained_node_capacity_bytes(&node))?
-    } else {
-        None
-    };
-    let _retained_inputs = if matches!(
-        node.effect_class(),
-        EffectClass::Write | EffectClass::SideEffect
-    ) {
-        reserve_materialized_inputs(materialized, step_id)?
-    } else {
-        Vec::new()
-    };
     use crate::occurrence_progress::{OccurrenceGuard, OccurrencePhase, OccurrenceProgress};
     let mut occurrence = OccurrenceGuard::new(
         ctx.execution_scope,
@@ -1183,24 +724,6 @@ pub(super) async fn live_materialize_io(
                 parsed.projection.as_deref(),
                 Some(&scoped_es),
             );
-            let retained_parsed = if matches!(
-                surface.effect_class,
-                EffectClass::Write | EffectClass::SideEffect
-            )
-                && plasm_runtime::execution::effect_continuation::EffectContinuation::is_active()
-            {
-                let mut retained = plasm_runtime::execution::effect_continuation::EffectContinuation::empty_retention();
-                // Dispatch retains its input; the runtime separately reserves the normalized mutation source.
-                retained
-                    .add_parsed_expr(&parsed)
-                    .map_err(plan_retention_failure)?;
-                retained
-                    .add_capacity_bytes(expr_label.capacity())
-                    .map_err(plan_retention_failure)?;
-                Some(retained)
-            } else {
-                None
-            };
             let host_page = crate::plan_read_bounds::effective_host_page_size(&surface);
             // Surface IO is a deep async execution tree, just like relation and
             // control-flow IO below. Keep it out of the dispatcher's future so
@@ -1217,7 +740,6 @@ pub(super) async fn live_materialize_io(
                 surface.pushed_read_budget.clone(),
                 ctx.rows_progress.clone(),
                 Some(ctx.plan_shared.as_ref()),
-                retained_parsed,
             ))
             .await?;
             let entity_type = surface
@@ -1309,16 +831,6 @@ pub(super) async fn live_materialize_io(
         IoStep::Relation(relation) => {
             let relation = (**relation).clone();
             let node = ValidatedPlanNode::RelationTraversal(relation);
-            let _retained_relation = if matches!(
-                node.effect_class(),
-                EffectClass::Write | EffectClass::SideEffect
-            ) {
-                reserve_node_clone(|| {
-                    crate::plasm_plan::ValidatedPlanArtifact::retained_node_capacity_bytes(&node)
-                })?
-            } else {
-                None
-            };
             let ValidatedPlanNode::RelationTraversal(relation_ref) = &node else {
                 unreachable!("relation traversal node");
             };

@@ -37,19 +37,6 @@ pub struct BranchMaterializationBase {
 }
 
 impl BranchMaterializationBase {
-    /// Conservative capacity charge for the fork's snapshot hash tables.
-    pub fn retention_capacity_bytes(&self) -> usize {
-        crate::materialization::response_retention_capacity(&self.responses).saturating_add(
-            crate::query_index::retained_query_capacity(&self.query_index),
-        )
-    }
-    /// Internal discard-only view of the fork's retained response and query bases.
-    pub fn retention_view(&self) -> impl serde::Serialize + '_ {
-        (
-            crate::materialization::RetainedResponses(&self.responses),
-            crate::query_index::RetainedQueryEntries(&self.query_index),
-        )
-    }
     pub fn fork_from(hot: &SessionMaterialization) -> (SessionMaterialization, Self) {
         let base = Self {
             responses: hot.responses.entries_snapshot(),

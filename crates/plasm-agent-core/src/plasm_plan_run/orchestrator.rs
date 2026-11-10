@@ -4,8 +4,7 @@ use super::*;
 use crate::evidence_chain::{active_chain, attach_evidence_meta, persist_evidence_sidecars};
 use crate::http_execute::run_seal_record_for_handle;
 use crate::plasm_plan_run::step_materialize::{
-    apply_step_materialize_outcomes, charge_plan_payload, materialize_executable_plan_step,
-    plan_retention_failure, PlanStepMaterializeCtx,
+    apply_step_materialize_outcomes, materialize_executable_plan_step, PlanStepMaterializeCtx,
 };
 use futures::future::join_all;
 use plasm_core::plasm_monad::StepId;
@@ -13,39 +12,6 @@ use plasm_core::PlasmReturn;
 use std::collections::{BTreeMap, HashMap};
 use std::sync::Arc;
 use tracing::Instrument;
-
-fn retained_vec_storage<T>(values: &Vec<T>) -> usize {
-    values.capacity().saturating_mul(std::mem::size_of::<T>())
-}
-
-fn retained_strings(values: &Vec<String>) -> usize {
-    values
-        .iter()
-        .fold(retained_vec_storage(values), |sum, value| {
-            sum.saturating_add(value.capacity())
-        })
-}
-
-fn retained_step_index(values: &HashMap<StepId, usize>) -> usize {
-    values.keys().fold(
-        values
-            .capacity()
-            .saturating_mul(std::mem::size_of::<(StepId, usize)>().saturating_add(2))
-            .saturating_mul(2),
-        |sum, id| sum.saturating_add(id.0.capacity()),
-    )
-}
-
-fn retained_layers(values: &Vec<Vec<StepId>>) -> usize {
-    values
-        .iter()
-        .fold(retained_vec_storage(values), |sum, layer| {
-            layer.iter().fold(
-                sum.saturating_add(retained_vec_storage(layer)),
-                |sum, id| sum.saturating_add(id.0.capacity()),
-            )
-        })
-}
 
 #[allow(clippy::too_many_arguments)]
 pub async fn run_plasm_comp(
@@ -416,96 +382,6 @@ pub(crate) async fn run_executable_plan_phased(
         .map(|(i, (id, _))| (id.clone(), i))
         .collect();
     let layers = super::plan_schedule::bind_topo_execution_layers(&executable.bind)?;
-    // These reviewed structures and later evidence remain in the enclosing
-    // async frame while a nested write is suspended. Read-only plans cannot
-    // create an effect checkpoint and do not need this reservation.
-    let mut retained_frame = crate::plan_flow::validated_plan_has_remote_mutation(
-        dry.validated_plan(),
-    )
-    .then(plasm_runtime::execution::effect_continuation::EffectContinuation::empty_retention);
-    if plasm_runtime::execution::effect_continuation::EffectContinuation::is_active() {
-        if let Some(retained) = retained_frame.as_mut() {
-            let nodes =
-                node_results
-                    .iter()
-                    .fold(retained_vec_storage(&node_results), |sum, value| {
-                        sum.saturating_add(plasm_runtime::materialization::retained_json_capacity(
-                            value,
-                        ))
-                    });
-            let metadata = plasm_runtime::materialization::retained_json_capacity(&dry.version)
-                .saturating_add(dry.name.as_ref().map_or(0, String::capacity))
-                .saturating_add(nodes)
-                .saturating_add(plasm_runtime::materialization::retained_json_capacity(
-                    &dry.graph_summary,
-                ))
-                .saturating_add(retained_strings(&dry.topological_order))
-                .saturating_add(retained_strings(&dry.staged_nodes))
-                .saturating_add(retained_strings(&dry.execution_unsupported))
-                .saturating_add(retained_strings(&dry.review.unused_seeds))
-                .saturating_add(retained_strings(&dry.review.unused_bindings))
-                .saturating_add(dry.flow.retention_capacity_bytes())
-                .saturating_add(flow.retention_capacity_bytes())
-                .saturating_add(retained_step_index(&prepared_nodes))
-                .saturating_add(retained_step_index(&step_topo_index))
-                .saturating_add(retained_layers(&layers))
-                .saturating_add(plan_shared.retention_capacity_bytes())
-                .saturating_add(trace.as_ref().map_or(0, |trace| {
-                    trace
-                        .mcp_session_id
-                        .as_ref()
-                        .map_or(0, String::capacity)
-                        .saturating_add(
-                            trace
-                                .logical_session_id
-                                .as_ref()
-                                .map_or(0, String::capacity),
-                        )
-                        .saturating_add(
-                            trace
-                                .logical_session_ref
-                                .as_ref()
-                                .map_or(0, String::capacity),
-                        )
-                }))
-                .saturating_add(sink.as_ref().map_or(0, |sink| sink.mcp_key.capacity()))
-                .saturating_add(retained_vec_storage(&evidence_steps))
-                .saturating_add(retained_vec_storage(&scope_instances))
-                .saturating_add(retained_vec_storage(&approval_receipts));
-            retained
-                .add_capacity_bytes(
-                    dry.validated()
-                        .retention_capacity_bytes_with_program(dry.artifact(), executable),
-                )
-                .map_err(plan_retention_failure)?;
-            retained
-                .add_capacity_bytes(metadata)
-                .map_err(plan_retention_failure)?;
-        }
-    }
-    // Flow column paths are vector keys, which JSON cannot encode as object
-    // keys. Their retained capacity was charged above using the typed method.
-    charge_plan_payload(
-        &mut retained_frame,
-        &(
-            (
-                &dry.artifact().comp,
-                &dry.artifact().approval_gates,
-                dry.validated(),
-                &executable,
-            ),
-            (
-                &dry.version,
-                &dry.name,
-                &node_results,
-                &dry.graph_summary,
-                &dry.topological_order,
-                &dry.staged_nodes,
-                &dry.execution_unsupported,
-                &dry.review,
-            ),
-        ),
-    )?;
     // PEC witness: the executable schedule is a total function of the semantic DAG (`steps` + `bind`)
     // that the durable commit id already seals, so this digest is identical at `plasm` (dry) and
     // `plasm_run` (replay). Emitting it makes the plan-vs-run schedule identity observable.
@@ -525,13 +401,7 @@ pub(crate) async fn run_executable_plan_phased(
     );
     let rows_progress = execution_scope.and_then(|s| s.rows_progress_fn());
     let scope_budget = Arc::new(super::map_body::ScopeBudget::default());
-    let prepared_computes = if retained_frame.is_some()
-        && plasm_runtime::execution::effect_continuation::EffectContinuation::is_active()
-    {
-        crate::python_compute::prepared_scope::PreparedComputeScope::without_retention(es)
-    } else {
-        crate::python_compute::prepared_scope::PreparedComputeScope::new(es)
-    };
+    let prepared_computes = crate::python_compute::prepared_scope::PreparedComputeScope::new(es);
     let mat_ctx = PlanStepMaterializeCtx {
         es,
         st,
@@ -664,7 +534,6 @@ pub(crate) async fn run_executable_plan_phased(
                     &mut approval_receipts,
                     outcomes,
                     execution_scope,
-                    &mut retained_frame,
                 )?;
             } else {
                 for step_id in &layer {
@@ -703,7 +572,6 @@ pub(crate) async fn run_executable_plan_phased(
                         &mut approval_receipts,
                         [outcome],
                         execution_scope,
-                        &mut retained_frame,
                     )?;
                 }
             }
@@ -955,67 +823,6 @@ fn error_with_completed_operations(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::evidence_chain::StepExecutedRecord;
-    use crate::plasm_plan_run::step_materialize::PlanStepMaterializeOutcome;
-
-    #[tokio::test]
-    async fn structured_flow_paths_are_accounted_without_json_object_keys() {
-        use plasm_runtime::execution::effect_continuation::EffectContinuation;
-        let flow = crate::plan_flow::PlanFlowAnalysis {
-            policy_revision: None,
-            verdict: crate::plan_flow::FlowVerdict::Clean,
-            node_facts: BTreeMap::from([(
-                "projection".into(),
-                crate::plan_flow::NodeFlowFacts {
-                    columns: BTreeMap::from([(
-                        vec!["id".to_owned()],
-                        crate::plan_flow::FlowFacts::default(),
-                    )]),
-                    residual: Default::default(),
-                },
-            )]),
-            node_dispositions: Default::default(),
-            sink_proofs: Default::default(),
-            violations: Vec::new(),
-        };
-        assert!(serde_json::to_vec(&flow).is_err());
-        let (control, _pauses) =
-            EffectContinuation::new_native(std::time::Duration::from_secs(2)).unwrap();
-        control
-            .scope(async {
-                let mut reservation = EffectContinuation::empty_retention();
-                assert!(flow.retention_capacity_bytes() > 0);
-                reservation.add_capacity_bytes(flow.retention_capacity_bytes()).unwrap();
-            })
-            .await;
-    }
-
-    #[test]
-    fn retained_frame_counts_spare_index_and_flow_capacity() {
-        use plasm_runtime::execution::effect_continuation::MAX_RETAINED_EXECUTION_BYTES;
-        let mut id = String::with_capacity(MAX_RETAINED_EXECUTION_BYTES + 1);
-        id.push('x');
-        let index = HashMap::from([(StepId(id), 0)]);
-        assert!(retained_step_index(&index) > MAX_RETAINED_EXECUTION_BYTES);
-
-        let mut reason = String::with_capacity(MAX_RETAINED_EXECUTION_BYTES + 1);
-        reason.push('x');
-        let flow = crate::plan_flow::PlanFlowAnalysis {
-            policy_revision: None,
-            verdict: crate::plan_flow::FlowVerdict::Clean,
-            node_facts: Default::default(),
-            node_dispositions: Default::default(),
-            sink_proofs: Default::default(),
-            violations: vec![crate::plan_flow::FlowViolation {
-                node: "n".into(),
-                kind: None,
-                sink_param: None,
-                labels: Default::default(),
-                reason,
-            }],
-        };
-        assert!(flow.retention_capacity_bytes() > MAX_RETAINED_EXECUTION_BYTES);
-    }
 
     fn test_node(display: &str) -> MaterializedNode {
         MaterializedNode {
@@ -1044,142 +851,6 @@ mod tests {
             display: display.into(),
             projection: None,
         }
-    }
-
-    #[tokio::test]
-    async fn oversized_plan_evidence_capacity_retains_the_completed_effect() {
-        use plasm_runtime::execution::effect_continuation::{
-            EffectContinuation, MAX_RETAINED_EXECUTION_BYTES,
-        };
-        let (control, _pauses) =
-            EffectContinuation::new_native(std::time::Duration::from_secs(2)).unwrap();
-        control
-            .scope(async {
-                for json_case in [false, true] {
-                    let mut mat = test_node("write");
-                    Arc::get_mut(&mut mat.result).unwrap().operations =
-                        plasm_runtime::OperationLedger::from_ack(plasm_runtime::OperationAck {
-                            resolved_effects: Vec::new(),
-                            entry_id: "test".into(),
-                            capability: "write".into(),
-                            entity: "Item".into(),
-                            logical_invocations: 1,
-                            completed: 1,
-                            failed: 0,
-                            source: ExecutionSource::Live,
-                            description: "write".into(),
-                            outcomes: Vec::new(),
-                        });
-                    let mut text = String::with_capacity(MAX_RETAINED_EXECUTION_BYTES + 1);
-                    text.push('x');
-                    let outcome = PlanStepMaterializeOutcome {
-                        node_id: PlanNodeId::new("write").unwrap(),
-                        mat,
-                        evidence: StepExecutedRecord {
-                            step_id: "write".into(),
-                            step_index: 0,
-                            entry_id: None,
-                            source_line: if json_case {
-                                "x".into()
-                            } else {
-                                std::mem::take(&mut text)
-                            },
-                            parsed: plasm_core::expr_parser::ParsedExpr::from_expr(
-                                plasm_core::Expr::Query(plasm_core::QueryExpr::all("Item")),
-                            ),
-                            request_fingerprints: Vec::new(),
-                        },
-                        approval: None,
-                        scope_instances: json_case.then_some(serde_json::Value::String(text)),
-                    };
-                    let mut retained = Some(EffectContinuation::empty_retention());
-                    let failure = apply_step_materialize_outcomes(
-                        &mut BTreeMap::new(),
-                        &mut Vec::new(),
-                        &mut Vec::new(),
-                        &mut Vec::new(),
-                        [outcome],
-                        None,
-                        &mut retained,
-                    )
-                    .expect_err("oversized evidence allocation must be refused");
-                    assert_eq!(failure.code, "effect_plan_retention_refused");
-                    assert_eq!(
-                        failure
-                            .effects
-                            .iter()
-                            .map(|ack| ack.completed)
-                            .sum::<usize>(),
-                        1
-                    );
-                    assert!(failure.input_budget.is_some());
-                }
-            })
-            .await;
-    }
-
-    #[tokio::test]
-    async fn oversized_plan_evidence_retains_the_completed_effect() {
-        use plasm_runtime::execution::effect_continuation::{
-            EffectContinuation, MAX_RETAINED_EXECUTION_BYTES,
-        };
-        let (control, _pauses) =
-            EffectContinuation::new_native(std::time::Duration::from_secs(2)).unwrap();
-        control
-            .scope(async {
-                let mut mat = test_node("write");
-                Arc::get_mut(&mut mat.result).unwrap().operations =
-                    plasm_runtime::OperationLedger::from_ack(plasm_runtime::OperationAck {
-                        resolved_effects: Vec::new(),
-                        entry_id: "test".into(),
-                        capability: "write".into(),
-                        entity: "Item".into(),
-                        logical_invocations: 1,
-                        completed: 1,
-                        failed: 0,
-                        source: ExecutionSource::Live,
-                        description: "write".into(),
-                        outcomes: Vec::new(),
-                    });
-                let outcome = PlanStepMaterializeOutcome {
-                    node_id: PlanNodeId::new("write").unwrap(),
-                    mat,
-                    evidence: StepExecutedRecord {
-                        step_id: "write".into(),
-                        step_index: 0,
-                        entry_id: Some("test".into()),
-                        source_line: "x".repeat(MAX_RETAINED_EXECUTION_BYTES),
-                        parsed: plasm_core::expr_parser::ParsedExpr::from_expr(
-                            plasm_core::Expr::Query(plasm_core::QueryExpr::all("Item")),
-                        ),
-                        request_fingerprints: Vec::new(),
-                    },
-                    approval: None,
-                    scope_instances: None,
-                };
-                let mut retained = Some(EffectContinuation::empty_retention());
-                let failure = apply_step_materialize_outcomes(
-                    &mut BTreeMap::new(),
-                    &mut Vec::new(),
-                    &mut Vec::new(),
-                    &mut Vec::new(),
-                    [outcome],
-                    None,
-                    &mut retained,
-                )
-                .expect_err("oversized evidence must be refused");
-                assert_eq!(failure.code, "effect_plan_retention_refused");
-                assert_eq!(
-                    failure
-                        .effects
-                        .iter()
-                        .map(|ack| ack.completed)
-                        .sum::<usize>(),
-                    1
-                );
-                assert!(failure.input_budget.is_some());
-            })
-            .await;
     }
 
     #[test]

@@ -174,17 +174,6 @@ impl<R: Serialize> Serialize for RecordedCollection<R> {
     }
 }
 impl<R> RecordedCollection<R> {
-    /// Internal accounting view of membership evidence and all pinned row batches.
-    pub fn retention_view(&self) -> impl Serialize + '_
-    where
-        R: Serialize,
-    {
-        (
-            &self.identity,
-            self.rows.retention_view(),
-            self.evidence.as_ref(),
-        )
-    }
     fn from_parts(identity: CollectionIdentity, rows: SharedRows<R>, evidence: Evidence) -> Self {
         Self {
             identity,

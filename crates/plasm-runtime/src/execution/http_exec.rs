@@ -25,14 +25,8 @@ impl ExecutionEngine {
         let auth = self.resolve_compiled_http_auth(request).await?;
         let destination = crate::http_transport::compiled_http_url(base_url.as_ref(), request);
         let _permit = self.acquire_backend_http_permit(&destination).await?;
-        if super::effect_continuation::EffectContinuation::current()
-            .is_some_and(|control| control.is_cancelled())
-        {
-            return Err(RuntimeError::Cancelled);
-        }
         let request_fingerprint = crate::RequestFingerprint::from_request(request)?.to_hex();
-        let receipt = super::mutation_evidence::DispatchReceipt::begin(request_fingerprint.clone())
-            .map_err(|_| RuntimeError::MutationJournalPaused)?;
+        let receipt = super::mutation_evidence::DispatchReceipt::begin(request_fingerprint.clone());
         let mut result = super::mutation_evidence::with_dispatch_receipt(
             receipt.clone(),
             self.transport

@@ -220,7 +220,7 @@ async function proveBootstrap(wire: unknown): Promise<void> {
   const root = await mkdtemp(path.join(tmpdir(), "plasm-budget-routing-"));
   const unused = async (): Promise<never> => {throw new Error("unexpected execution");};
   let routes = 0;
-  const engine: PlasmEngine = { sealEffectWorkflows: async () => {}, resumeEffectRun: async () => { throw new Error("unexpected repair"); }, takeCompletedTeaching: async () => "",
+  const engine: PlasmEngine = { sealEffectWorkflows: async () => {}, takeCompletedTeaching: async () => "",
     close: async () => {}, loadCatalog: unused, activateDiscovery: unused,
     synthesizeTeaching: unused, dryRun: unused, runPlan: unused, run: unused, introspectCatalog: unused,
     routeIntent: async provenance => {

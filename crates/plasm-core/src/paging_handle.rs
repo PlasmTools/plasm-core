@@ -120,11 +120,6 @@ impl PagingHandle {
     pub fn as_str(&self) -> &str {
         &self.0
     }
-
-    /// Heap capacity owned by the handle.
-    pub fn retention_capacity_bytes(&self) -> usize {
-        self.0.capacity()
-    }
 }
 
 impl fmt::Display for PagingHandle {

@@ -23,10 +23,6 @@ macro_rules! string_id {
                 &self.0
             }
 
-            /// Heap capacity owned by this identity.
-            pub fn retention_capacity_bytes(&self) -> usize {
-                self.0.capacity()
-            }
 
             pub fn into_inner(self) -> String {
                 self.0
@@ -112,17 +108,6 @@ string_id! {
     EntityId
 }
 
-impl EntityName {
-    pub(crate) fn retained_capacity(&self) -> usize {
-        self.0.capacity()
-    }
-}
-
-impl EntityId {
-    pub(crate) fn retained_capacity(&self) -> usize {
-        self.0.capacity()
-    }
-}
 string_id! {
     /// Capability operation name (e.g. `list_pets`, `update_account`).
     CapabilityName
@@ -147,12 +132,6 @@ string_id! {
 string_id! {
     /// Registry / catalog row id (`entry_id` in YAML and HTTP/MCP).
     RegistryEntryId
-}
-
-impl RegistryEntryId {
-    pub(crate) fn retained_capacity(&self) -> usize {
-        self.0.capacity()
-    }
 }
 
 impl From<&EntityName> for EntityName {

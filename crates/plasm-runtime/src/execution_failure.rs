@@ -280,11 +280,6 @@ impl From<plasm_core::plasm_monad::StepIdError> for ExecutionFailure {
     }
 }
 impl ExecutionFailure {
-    /// Account private provider evidence as well as the public failure without
-    /// adding the private data to its wire serialization.
-    pub(crate) fn retention_view(&self) -> impl serde::Serialize + '_ {
-        (self, &self.0.provider_rejection)
-    }
     pub fn new(cause: FailureCause, code: &str, diagnostic: impl Into<String>) -> Self {
         Self(Box::new(ExecutionFailureDetails {
             cause,
@@ -476,17 +471,6 @@ impl ExecutionFailure {
     }
 }
 
-/// Inspect the same provider evidence before an owning runtime error is moved
-/// across the execution boundary. The compiled dispatch can then retain its
-/// operands while the enclosing future is suspended.
-pub(crate) fn classify_runtime_no_effect_rejection(
-    error: &crate::RuntimeError,
-    contracts: &[plasm_core::schema::NoEffectRejection],
-    dispatches: &mut [crate::MutationDispatch],
-) {
-    classify_no_effect_rejection(provider_rejection(error), contracts, dispatches);
-}
-
 fn classify_no_effect_rejection(
     rejection: Option<(u16, &str, &str)>,
     contracts: &[plasm_core::schema::NoEffectRejection],
@@ -509,10 +493,7 @@ fn provider_rejection(mut error: &crate::RuntimeError) -> Option<(u16, &str, &st
     loop {
         match error {
             crate::RuntimeError::HydrationGet { source, .. }
-            | crate::RuntimeError::ViewNode { source, .. }
-            | crate::RuntimeError::ContinuationAuthorization {
-                rejection: source, ..
-            } => error = source,
+            | crate::RuntimeError::ViewNode { source, .. } => error = source,
             crate::RuntimeError::RequestError {
                 source: crate::RequestFailure::HttpStatus(response),
                 ..
@@ -579,17 +560,7 @@ impl From<crate::RuntimeError> for ExecutionFailure {
             {
                 (FailureCause::Catalog, "mcp_binding_missing")
             }
-            Mcp(source)
-                if matches!(
-                    source.as_ref(),
-                    crate::mcp_execution::McpExecutionError::MutationJournalPaused
-                ) =>
-            {
-                (FailureCause::Runtime, "mutation_journal_paused")
-            }
             Mcp(_) => (FailureCause::ResponseContract, "mcp_response_contract"),
-            MutationJournalPaused => (FailureCause::Runtime, "mutation_journal_paused"),
-            ContinuationRetention(_) => (FailureCause::Runtime, "effect_branch_retention_refused"),
             FieldUnavailable { .. } => (FailureCause::ResponseContract, "field_unavailable"),
             DecodeError {
                 source: plasm_compile::DecodeError::EntityAssertionMismatch { .. },
@@ -609,9 +580,10 @@ impl From<crate::RuntimeError> for ExecutionFailure {
             PaginationCatalogMismatch { .. } => {
                 (FailureCause::Catalog, "pagination_catalog_mismatch")
             }
-            PaginationCompiledCatalogMismatch { .. } => {
-                (FailureCause::Catalog, "pagination_compiled_catalog_mismatch")
-            }
+            PaginationCompiledCatalogMismatch { .. } => (
+                FailureCause::Catalog,
+                "pagination_compiled_catalog_mismatch",
+            ),
             CatalogTemplate(_)
             | RelationDependency(_)
             | CompilationError { .. }
@@ -625,20 +597,6 @@ impl From<crate::RuntimeError> for ExecutionFailure {
             HostTransport { .. } | HttpTransport { .. } | RequestError { .. } => {
                 (FailureCause::Transport, "transport_failure")
             }
-            ContinuationAuthorization {
-                reason: crate::error::ContinuationAuthorizationReason::ScopeChanged,
-                ..
-            } => (
-                FailureCause::Authorization,
-                "continuation_auth_scope_changed",
-            ),
-            ContinuationAuthorization {
-                reason: crate::error::ContinuationAuthorizationReason::RevalidationFailed(_),
-                ..
-            } => (
-                FailureCause::Authorization,
-                "continuation_auth_revalidation_failed",
-            ),
             CredentialProvider { .. } | AuthenticationError(_) => {
                 (FailureCause::Authorization, "authorization_required")
             }
@@ -646,14 +604,12 @@ impl From<crate::RuntimeError> for ExecutionFailure {
             _ => (FailureCause::Unclassified, "unclassified_execution_failure"),
         };
         let diagnostic = match &error {
-            ContinuationAuthorization { .. } => "The original authentication scope changed or could not be revalidated; no retry was dispatched.".into(),
             Mcp(source) => match source.as_ref() {
                 // Transport causes may contain raw remote content or connection details.
                 // Mapping diagnostics contain host-owned structure, not rejected payloads.
                 crate::mcp_execution::McpExecutionError::Transport(_) =>
                     "MCP transport failed. Inspect the recorded transport evidence before another execution; dispatched effects may require reconciliation.".into(),
                 crate::mcp_execution::McpExecutionError::QueryArrayRequired
-                | crate::mcp_execution::McpExecutionError::MutationJournalPaused
                 | crate::mcp_execution::McpExecutionError::IncompleteCollection { .. }
                 | crate::mcp_execution::McpExecutionError::InvalidCollectionTotal { .. }
                 | crate::mcp_execution::McpExecutionError::CollectionLimit { .. }
@@ -725,9 +681,7 @@ impl From<crate::RuntimeError> for ExecutionFailure {
             CredentialProvider { .. } | Credential(_) | AuthenticationError(_) => "Configured authorization could not be resolved or used. Check the configured account and inspect the authorization evidence before another execution.".into(),
             // Explicit semantic-display whitelist: adding a runtime variant must
             // select its agent projection; no wildcard can promote a new payload.
-            MutationJournalPaused
-            | ContinuationRetention(_)
-            | RequestIdentityAuthOpaque
+            RequestIdentityAuthOpaque
             | RequestIdentityCardinality { .. }
             | DeclaredOutputCardinality { .. }
             | ResponseNarrowing(_)
@@ -810,22 +764,6 @@ impl From<crate::RuntimeError> for ExecutionFailure {
             | HydrationGet { .. } => error.to_string(),
         };
         let mut failure = Self::new(cause, code, diagnostic);
-        if matches!(
-            &error,
-            ContinuationRetention(
-                crate::execution::effect_continuation::EffectContinuationError::RetainedBudget(
-                    plasm_core::ValueBudgetError::BytesExceeded
-                )
-            )
-        ) {
-            failure.input_budget = Some(InputBudgetEvidence {
-                unit: InputBudgetUnit::AccountedBytes,
-                limit: crate::execution::effect_continuation::MAX_RETAINED_EXECUTION_BYTES,
-                observed_at_least: crate::execution::effect_continuation::MAX_RETAINED_EXECUTION_BYTES
-                    + 1,
-                input: "branch base".into(),
-            });
-        }
         failure.provider_rejection =
             provider_rejection(&error).map(|(status, detail, fingerprint)| {
                 (status, detail.to_owned(), fingerprint.to_owned())
@@ -941,16 +879,9 @@ mod tests {
             request_fingerprint: "request".into(),
             status: crate::MutationDispatchStatus::ResponseReceived,
         };
-        let mut borrowed = vec![dispatch.clone()];
-        classify_runtime_no_effect_rejection(
-            &runtime_error,
-            std::slice::from_ref(&rule),
-            &mut borrowed,
-        );
         let failure = ExecutionFailure::from(runtime_error);
         let mut one = vec![dispatch.clone()];
         failure.classify_no_effect_rejection(std::slice::from_ref(&rule), &mut one);
-        assert_eq!(borrowed, one, "borrowed and owned error paths share policy");
         assert_eq!(
             one[0].status,
             crate::MutationDispatchStatus::RejectedWithoutEffect

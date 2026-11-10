@@ -118,7 +118,7 @@ export function plasmModelOutput({ output }: { output: unknown }) {
 /** Only structured host observations own recovery authority; prose cannot grant it. */
 export function terminalExecutionFailure(results: readonly { toolName: string; output: unknown }[]): ExecutionFailure | undefined {
   for (const part of results) {
-    if (!["plasm", "plasm_run", "plasm_resume", "plasm_context"].includes(part.toolName)) continue;
+    if (!["plasm", "plasm_run", "plasm_context"].includes(part.toolName)) continue;
     if (!part.output || typeof part.output !== "object" || !("status" in part.output) || part.output.status !== "execution_failed") continue;
     const result = failureObservationSchema.safeParse(part.output);
     if (!result.success) return failureObservation(undefined).failure;

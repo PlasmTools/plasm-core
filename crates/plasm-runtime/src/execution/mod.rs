@@ -54,17 +54,13 @@ pub use collection::{ExecutionCollection, PayloadResidency, RowMaterialization};
 mod embed_cache;
 mod engine;
 mod resolved_effect;
-mod retained_mutation;
 pub use resolved_effect::{
     EffectInputReference, EffectOrigin, EffectSelectionReference, EffectTargetKind,
     ResolvedEffectEvidence,
 };
-pub use retained_mutation::expression_retention_capacity_bytes;
 mod engine_get;
 mod resolved_get;
 use resolved_get::{GetBindings, GetPurpose, ResolvedGet};
-pub mod effect_continuation;
-mod retained_execution;
 mod engine_query;
 mod entity_decoder;
 mod expr_executor;

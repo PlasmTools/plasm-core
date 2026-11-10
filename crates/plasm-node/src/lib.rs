@@ -77,8 +77,6 @@ pub struct JsRunPlanResult {
     pub artifacts_json: Option<String>,
     #[napi(js_name = "failureJson")]
     pub failure_json: Option<String>,
-    #[napi(js_name = "continuationRef")]
-    pub continuation_ref: Option<String>,
 }
 
 #[derive(Debug, Error)]
@@ -142,144 +140,8 @@ pub struct PlasmEngine {
     sessions: Mutex<HashMap<String, Arc<AsyncMutex<InnerEngine>>>>,
     session_admission: Mutex<HashMap<String, Arc<SessionAdmission>>>,
     effect_obligations: effect_obligations::EffectObligations,
-    effect_controls: Arc<
-        Mutex<
-            HashMap<
-                String,
-                (
-                    String,
-                    plasm_runtime::execution::effect_continuation::EffectContinuation,
-                ),
-            >,
-        >,
-    >,
-    effect_pauses: Arc<Mutex<HashMap<String, PendingEffectEntry>>>,
     discovery_store: Arc<OnceCell<DiscoveryStore>>,
     activated: tokio::sync::RwLock<Option<(String, std::collections::BTreeSet<String>)>>,
-}
-
-type EffectWorker = plasm_agent_core::live_plan_run_worker::LivePlanRunHandle<
-    std::result::Result<engine::RunPlanResult, engine::AgentEngineError>,
-    std::convert::Infallible,
->;
-
-struct PendingEffect {
-    workflow: String,
-    reference: String,
-    control: plasm_runtime::execution::effect_continuation::EffectContinuation,
-    pause: Option<plasm_runtime::execution::effect_continuation::EffectPause>,
-    pauses: plasm_runtime::execution::effect_continuation::EffectPauseReceiver,
-    worker: EffectWorker,
-}
-
-#[derive(Clone)]
-struct PendingEffectEntry {
-    workflow: String,
-    deadline: std::time::Instant,
-    control: plasm_runtime::execution::effect_continuation::EffectContinuation,
-    pending: Arc<AsyncMutex<PendingEffect>>,
-}
-
-fn prune_expired_effects(entries: &mut HashMap<String, PendingEffectEntry>) {
-    let now = std::time::Instant::now();
-    entries.retain(|_, entry| {
-        if now >= entry.deadline {
-            entry.control.cancel();
-            false
-        } else {
-            true
-        }
-    });
-}
-
-fn completion_blocked_message<'a>(
-    workflows: &[String],
-    pauses: impl IntoIterator<Item = (&'a str, &'a str)>,
-) -> String {
-    let requested: std::collections::HashSet<_> = workflows.iter().map(String::as_str).collect();
-    let mut matching: Vec<_> = pauses
-        .into_iter()
-        .filter(|(_, workflow)| requested.contains(workflow))
-        .collect();
-    matching.sort_unstable();
-    let mut message = "workflow has unfinished or uncertain effects".to_owned();
-    if !matching.is_empty() {
-        message.push_str("; retained paused executions (workflow, continuation_ref): ");
-        for (index, (reference, workflow)) in matching.iter().take(8).enumerate() {
-            if index > 0 {
-                message.push_str(", ");
-            }
-            message.push_str(&format!("({workflow}, {reference})"));
-        }
-        if matching.len() > 8 {
-            message.push_str("; additional pauses omitted");
-        }
-        message.push_str(". Inspect the original execution and resulting state before deciding whether to resume; resuming retries its original effects. Other unresolved executions may also exist.");
-    }
-    message
-}
-
-fn rotate_effect_entry(
-    entries: &mut HashMap<String, PendingEffectEntry>,
-    old_ref: &str,
-    next_ref: String,
-    entry: &PendingEffectEntry,
-) -> std::result::Result<(), &'static str> {
-    let registered = entries
-        .get(old_ref)
-        .is_some_and(|current| Arc::ptr_eq(&current.pending, &entry.pending));
-    if !registered || std::time::Instant::now() >= entry.deadline {
-        if registered {
-            entries.remove(old_ref);
-        }
-        entry.control.cancel();
-        return Err("effect continuation is closed or expired");
-    }
-    if entries.contains_key(&next_ref) {
-        entry.control.cancel();
-        entries.remove(old_ref);
-        return Err("effect continuation identity collision");
-    }
-    entries.remove(old_ref);
-    entries.insert(next_ref, entry.clone());
-    Ok(())
-}
-
-/// Reclaim an unattended checkpoint at its original deadline, even when no
-/// subsequent request arrives to trigger opportunistic pruning. A weak handle
-/// avoids keeping the engine (or other entries) alive solely for this timer.
-fn schedule_effect_expiry(
-    entries: &Arc<Mutex<HashMap<String, PendingEffectEntry>>>,
-    deadline: std::time::Instant,
-) {
-    let entries = Arc::downgrade(entries);
-    tokio::spawn(async move {
-        tokio::time::sleep_until(deadline.into()).await;
-        if let Some(entries) = entries.upgrade() {
-            prune_expired_effects(&mut lock(&entries));
-        }
-    });
-}
-
-struct ActiveEffectGuard {
-    reference: String,
-    controls: Arc<
-        Mutex<
-            HashMap<
-                String,
-                (
-                    String,
-                    plasm_runtime::execution::effect_continuation::EffectContinuation,
-                ),
-            >,
-        >,
-    >,
-}
-
-impl Drop for ActiveEffectGuard {
-    fn drop(&mut self) {
-        lock(&self.controls).remove(&self.reference);
-    }
 }
 
 struct SessionAdmission {
@@ -313,13 +175,6 @@ impl Default for PlasmEngine {
 }
 
 impl PlasmEngine {
-    fn cancel_effect_continuations(&self, workflow: Option<&str>) {
-        for (owner, control) in lock(&self.effect_controls).values() {
-            if workflow.is_none_or(|workflow| workflow == owner) {
-                control.cancel();
-            }
-        }
-    }
     pub fn new() -> Self {
         Self::with_runtime(None)
     }
@@ -538,8 +393,6 @@ impl PlasmEngine {
             sessions: Mutex::new(HashMap::new()),
             session_admission: Mutex::new(HashMap::new()),
             effect_obligations: Default::default(),
-            effect_controls: Default::default(),
-            effect_pauses: Default::default(),
             discovery_store: Arc::new(OnceCell::new()),
             activated: Default::default(),
         }
@@ -741,8 +594,6 @@ impl PlasmEngine {
             })?;
         gate.sealed
             .store(true, std::sync::atomic::Ordering::Release);
-        self.cancel_effect_continuations(Some(&logical_session_id));
-        lock(&self.effect_pauses).retain(|_, entry| entry.workflow != logical_session_id);
         let _exclusive = gate.in_flight.write().await;
         Ok(())
     }
@@ -1110,8 +961,6 @@ impl PlasmEngine {
     pub async fn close(&self) {
         self.closing
             .store(true, std::sync::atomic::Ordering::Release);
-        self.cancel_effect_continuations(None);
-        lock(&self.effect_pauses).clear();
         let mut drained = self.drained.write().await;
         if !*drained {
             self.python_pool.close().await;
@@ -1640,7 +1489,6 @@ impl PlasmEngine {
             meta_json: result.meta_json,
             artifacts_json: result.artifacts_json,
             failure_json: result.failure_json,
-            continuation_ref: None,
         })
     }
 
@@ -1660,36 +1508,15 @@ impl PlasmEngine {
         let callback =
             JsCallbackHttpTransport::new(transport.0, engine.primary_entry_id(), resolve_auth);
         let workflow = logical_session_id.unwrap_or_default();
-        let (control, mut pauses) =
-            plasm_runtime::execution::effect_continuation::EffectContinuation::new_native(
-                plasm_runtime::execution::effect_continuation::MAX_EFFECT_CONTINUATION_LEASE,
-            )
-            .map_err(map_err)?;
         let mut reservation = self
             .effect_obligations
-            .admit(&workflow, control.clone())
+            .admit(&workflow)
             .map_err(Error::from_reason)?;
-        let reference = control.native_reference();
-        lock(&self.effect_controls).insert(reference.clone(), (workflow.clone(), control.clone()));
-        if self.closing.load(std::sync::atomic::Ordering::Acquire)
-            || (!workflow.is_empty()
-                && lock(&self.session_admission)
-                    .get(&workflow)
-                    .is_some_and(|gate| gate.sealed.load(std::sync::atomic::Ordering::Acquire)))
-        {
-            control.cancel();
-        }
-        let active = ActiveEffectGuard {
-            reference: reference.clone(),
-            controls: self.effect_controls.clone(),
-        };
-        let worker_control = control.clone();
         let mut worker = self
             .learning_pool
             .start_local(move || async move {
                 let _admission = _admission;
                 let _session_admission = _session_admission;
-                let _active = active;
                 let prepared = match engine.prepare_live_run(&plan_commit_ref, callback).await {
                     Ok(value) => value,
                     Err(error) => {
@@ -1702,173 +1529,19 @@ impl PlasmEngine {
                     engine::PreparedLiveRunResult::Rejected(result) => Ok(result),
                     engine::PreparedLiveRunResult::Ready(prepared) => {
                         reservation.begin_execution();
-                        let (outcome, certificate) = worker_control
-                            .clone()
-                            .scope_for_repair(async move {
-                                match prepared.execute().await {
-                                    Ok(result) if result.ok => Ok(result),
-                                    other => Err(other),
-                                }
-                            })
-                            .await
-                            .map_err(engine::AgentEngineError::EffectContinuation)?;
-                        match outcome {
-                            Ok(mut result) => {
-                                let resumed = worker_control.has_checkpoint();
-                                let discharged = reservation.finish(&result, certificate);
-                                if resumed && !discharged {
-                                    result.message.push_str("\n\nThe original run returned, but its native repair evidence was incomplete, expired, or invalid. No repair certificate was issued; the obligation remains open. Do not repeat effects without reconciliation.");
-                                }
-                                return Ok(result);
-                            }
-                            Err(result) => result,
-                        }
+                        prepared.execute().await
                     }
                 };
                 if let Ok(value) = &result {
-                    reservation.finish(value, None);
+                    reservation.finish(value);
                 }
                 result
             })
             .await
             .map_err(map_err)?;
-        let result = tokio::select! {
-            biased;
-            result = worker.wait() => result.map_err(map_err)?.map_err(|error| self.workflow_error(error))?,
-            pause = pauses.recv() => {
-                let pause = pause.ok_or_else(|| Error::from_reason("effect checkpoint channel closed"))?;
-                let failure_json = serde_json::to_string(pause.failure()).map_err(map_err)?;
-                let continuation_ref = pause.native_reference();
-                let deadline = control.checkpoint_deadline().ok_or_else(|| Error::from_reason("effect checkpoint has no deadline"))?;
-                let entry = PendingEffectEntry {
-                    workflow: workflow.clone(), deadline, control: control.clone(),
-                    pending: Arc::new(AsyncMutex::new(PendingEffect { workflow, reference: continuation_ref.clone(), control, pause: Some(pause), pauses, worker })),
-                };
-                let mut retained = lock(&self.effect_pauses);
-                prune_expired_effects(&mut retained);
-                if self.closing.load(std::sync::atomic::Ordering::Acquire)
-                    || (!entry.workflow.is_empty() && lock(&self.session_admission).get(&entry.workflow)
-                        .is_none_or(|gate| gate.sealed.load(std::sync::atomic::Ordering::Acquire)))
-                {
-                    entry.control.cancel();
-                    return Err(Error::from_reason("workflow closed while effect was suspended"));
-                }
-                if retained.len() >= 128 {
-                    entry.control.cancel();
-                    return Err(Error::from_reason("effect continuation capacity exhausted; the original run remains unresolved"));
-                }
-                if retained.contains_key(&continuation_ref) {
-                    entry.control.cancel();
-                    return Err(Error::from_reason("effect continuation identity collision"));
-                }
-                retained.insert(continuation_ref.clone(), entry);
-                drop(retained);
-                schedule_effect_expiry(&self.effect_pauses, deadline);
-                return Ok(JsRunPlanResult {
-                    ok: false,
-                    message: "Execution paused after a confirmed no-effect rejection. Earlier effects may have completed. Resume only this original execution.".into(),
-                    rows_json: None, meta_json: None, artifacts_json: None,
-                    failure_json: Some(failure_json), continuation_ref: Some(continuation_ref),
-                });
-            }
-        };
-        Ok(JsRunPlanResult {
-            ok: result.ok,
-            message: result.message,
-            rows_json: result.rows_json,
-            meta_json: result.meta_json,
-            artifacts_json: result.artifacts_json,
-            failure_json: result.failure_json,
-            continuation_ref: None,
-        })
-    }
-
-    /// Atomically accept a terminal across the caller's native workflows.
-    #[napi]
-    pub async fn seal_effect_workflows(&self, workflows_json: String) -> Result<()> {
-        let _admission = self.admit().await?;
-        let ids: Vec<String> = parse_archive_metadata(&workflows_json)?;
-        self.effect_obligations.seal(&ids).map_err(|reason| {
-            if reason != "workflow has unfinished or uncertain effects" {
-                return Error::from_reason(reason);
-            }
-            let entries = lock(&self.effect_pauses);
-            let now = std::time::Instant::now();
-            Error::from_reason(completion_blocked_message(
-                &ids,
-                entries
-                    .iter()
-                    .filter(|(_, entry)| entry.deadline > now)
-                    .map(|(reference, entry)| (reference.as_str(), entry.workflow.as_str())),
-            ))
-        })
-    }
-
-    /// Resume only the retained native execution belonging to this workflow.
-    #[napi]
-    pub async fn resume_effect_run(
-        &self,
-        continuation_ref: String,
-        logical_session_id: Option<String>,
-    ) -> Result<JsRunPlanResult> {
-        let _admission = self.admit().await?;
-        let _session_admission = self.admit_session(logical_session_id.as_deref()).await?;
-        let entry = {
-            let mut retained = lock(&self.effect_pauses);
-            prune_expired_effects(&mut retained);
-            retained
-                .get(&continuation_ref)
-                .cloned()
-                .ok_or_else(|| Error::from_reason("effect continuation is unknown or expired"))?
-        };
-        if entry.workflow != logical_session_id.as_deref().unwrap_or("") {
-            return Err(Error::from_reason(
-                "effect continuation belongs to another workflow",
-            ));
-        }
-        let mut pending = entry.pending.lock().await;
-        if pending.workflow != logical_session_id.as_deref().unwrap_or("") {
-            return Err(Error::from_reason(
-                "effect continuation belongs to another workflow",
-            ));
-        }
-        if pending.reference != continuation_ref {
-            return Err(Error::from_reason(
-                "effect continuation has already been consumed",
-            ));
-        }
-        if let Some(mut pause) = pending.pause.take() {
-            match pending.control.resume(&mut pause) {
-                Ok(()) | Err(plasm_runtime::execution::effect_continuation::EffectContinuationError::AlreadyResolved) => {}
-                Err(error) => return Err(map_err(error)),
-            }
-        }
-        let PendingEffect { worker, pauses, .. } = &mut *pending;
-        let result = tokio::select! {
-            biased;
-            result = worker.wait() => result,
-            pause = pauses.recv() => {
-                let pause = pause.ok_or_else(|| Error::from_reason("effect checkpoint channel closed"))?;
-                let failure_json = serde_json::to_string(pause.failure()).map_err(map_err)?;
-                let next_ref = pause.native_reference();
-                pending.pause = Some(pause);
-                pending.reference = next_ref.clone();
-                drop(pending);
-                let mut retained = lock(&self.effect_pauses);
-                // Expiry or session closure may have removed the entry while
-                // this resume was awaiting the worker. Never resurrect it.
-                rotate_effect_entry(&mut retained, &continuation_ref, next_ref.clone(), &entry)
-                    .map_err(Error::from_reason)?;
-                return Ok(JsRunPlanResult { ok: false,
-                    message: "Execution paused again after a confirmed no-effect rejection. Resume only this original execution.".into(),
-                    rows_json: None, meta_json: None, artifacts_json: None,
-                    failure_json: Some(failure_json), continuation_ref: Some(next_ref) });
-            }
-        };
-        pending.reference.clear();
-        drop(pending);
-        lock(&self.effect_pauses).remove(&continuation_ref);
-        let result = result
+        let result = worker
+            .wait()
+            .await
             .map_err(map_err)?
             .map_err(|error| self.workflow_error(error))?;
         Ok(JsRunPlanResult {
@@ -1878,8 +1551,17 @@ impl PlasmEngine {
             meta_json: result.meta_json,
             artifacts_json: result.artifacts_json,
             failure_json: result.failure_json,
-            continuation_ref: None,
         })
+    }
+
+    /// Atomically accept a terminal across the caller's native workflows.
+    #[napi]
+    pub async fn seal_effect_workflows(&self, workflows_json: String) -> Result<()> {
+        let _admission = self.admit().await?;
+        let ids: Vec<String> = parse_archive_metadata(&workflows_json)?;
+        self.effect_obligations
+            .seal(&ids)
+            .map_err(Error::from_reason)
     }
 }
 
@@ -1895,73 +1577,6 @@ fn parse_archive_metadata<T: serde::de::DeserializeOwned>(json: &str) -> Result<
 #[cfg(test)]
 mod mutex_law_tests {
     use super::*;
-
-    #[test]
-    fn completion_diagnostic_scopes_paused_references_to_requested_workflows() {
-        let ids = vec!["allowed".to_owned()];
-        let message =
-            completion_blocked_message(&ids, [("ref-allowed", "allowed"), ("ref-other", "other")]);
-        assert!(message.contains("ref-allowed"));
-        assert!(!message.contains("ref-other"));
-        assert!(message.contains("resuming retries its original effects"));
-        assert!(message.contains("Other unresolved executions may also exist"));
-        assert_eq!(
-            completion_blocked_message(&ids, []),
-            "workflow has unfinished or uncertain effects"
-        );
-    }
-
-    #[tokio::test]
-    async fn unattended_effect_expiry_reclaims_rotated_entry() {
-        let pool = plasm_agent_core::live_plan_run_worker::LivePlanRunPool::new();
-        let worker: EffectWorker = pool
-            .start_local(|| async { Err(engine::AgentEngineError::WorkflowEvidenceMissing) })
-            .await
-            .unwrap();
-        let (control, pauses) =
-            plasm_runtime::execution::effect_continuation::EffectContinuation::new_native(
-                std::time::Duration::from_secs(1),
-            )
-            .unwrap();
-        let deadline = std::time::Instant::now() + std::time::Duration::from_millis(50);
-        let pending = Arc::new(AsyncMutex::new(PendingEffect {
-            workflow: "workflow".into(),
-            reference: "rotated".into(),
-            control: control.clone(),
-            pause: None,
-            pauses,
-            worker,
-        }));
-        let weak_pending = Arc::downgrade(&pending);
-        let entries = Arc::new(Mutex::new(HashMap::from([(
-            "original".into(),
-            PendingEffectEntry {
-                workflow: "workflow".into(),
-                deadline,
-                control,
-                pending,
-            },
-        )])));
-        let entry = lock(&entries).get("original").unwrap().clone();
-        rotate_effect_entry(&mut lock(&entries), "original", "rotated".into(), &entry).unwrap();
-        schedule_effect_expiry(&entries, deadline);
-        tokio::time::timeout(std::time::Duration::from_secs(3), async {
-            loop {
-                if lock(&entries).is_empty() {
-                    break;
-                }
-                tokio::task::yield_now().await;
-            }
-        })
-        .await
-        .expect("expired entry retained the worker without another request");
-        assert!(
-            rotate_effect_entry(&mut lock(&entries), "rotated", "stale".into(), &entry).is_err()
-        );
-        assert!(lock(&entries).is_empty());
-        drop(entry);
-        assert!(weak_pending.upgrade().is_none());
-    }
 
     #[test]
     fn node_error_retains_catalog_failure_cause() {

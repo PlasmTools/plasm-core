@@ -12,8 +12,6 @@ assert.equal(observation.failure.diagnostic, failure.diagnostic);
 assert.equal(observation.failure.recovery, "reconcile_effects");
 assert(observation.summary.includes("did not roll back"));
 assert.equal(terminalExecutionFailure([{toolName: "plasm_run", output: observation}]), undefined);
-const fatalResume = {...failure, cause: "authorization" as const, recovery: "stop" as const};
-assert.deepEqual(terminalExecutionFailure([{toolName: "plasm_resume", output: failureObservation(new AgentExecutionFailure(fatalResume, "Resume refused."))}]), fatalResume);
 await checkSessionExtension(async () => {}, async (runtime, ref, engine) => {
   let calls = 0;
   let next = 0;

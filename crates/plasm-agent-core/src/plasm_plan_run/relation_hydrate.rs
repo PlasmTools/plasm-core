@@ -101,7 +101,6 @@ async fn fetch_entity_get_by_ref(
         None,
         None,
         plan_shared,
-        None,
     ))
     .await?;
     let entity = result.entities().first().cloned().ok_or_else(|| {

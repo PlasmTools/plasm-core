@@ -37,39 +37,22 @@ pub(super) fn record_execution_admission() {
 pub(crate) struct PreparedComputeScope<'session> {
     session: &'session ExecuteSession,
     entries: Mutex<Vec<(ComputeOp, Arc<PreparedCompute>)>>,
-    retain_preparations: bool,
 }
 
 impl<'session> PreparedComputeScope<'session> {
     pub(crate) fn new(session: &'session ExecuteSession) -> Self {
-        Self::with_retention(session, true)
-    }
-
-    /// Effect-bearing plans may suspend later; do not retain generated stubs
-    /// and checked definitions in the enclosing continuation frame.
-    pub(crate) fn without_retention(session: &'session ExecuteSession) -> Self {
-        Self::with_retention(session, false)
-    }
-
-    fn with_retention(session: &'session ExecuteSession, retain_preparations: bool) -> Self {
         Self {
             session,
             entries: Mutex::new(Vec::new()),
-            retain_preparations,
         }
     }
 
     /// Prepare on first reach, preserving rejection timing for skipped branches.
     /// Exact operation equality includes source, contracts, catalog pin, language
     /// version, input mode and selection evidence; no digest can alias proofs.
-    /// When retention is enabled, the lock spans synchronous checking so
+    /// The lock spans synchronous checking so
     /// concurrent branches prepare once.
     pub(crate) fn check(&self, op: &ComputeOp) -> Result<Arc<PreparedCompute>, ExecutionFailure> {
-        if !self.retain_preparations {
-            #[cfg(test)]
-            PREPARATIONS.set(PREPARATIONS.get() + 1);
-            return Ok(Arc::new(super::check_op(self.session, op)?));
-        }
         let mut entries = self.entries.lock().map_err(|_| {
             ExecutionFailure::new(
                 FailureCause::Runtime,
@@ -222,16 +205,5 @@ mod tests {
         assert!(PreparedComputeScope::new(&other_session)
             .check(&op)
             .is_err());
-    }
-
-    #[test]
-    fn effect_scope_does_not_retain_prepared_definitions() {
-        let es = session();
-        let op = operation(&es);
-        let scope = PreparedComputeScope::without_retention(&es);
-        let first = scope.check(&op).unwrap();
-        let second = scope.check(&op).unwrap();
-        assert!(!Arc::ptr_eq(&first, &second));
-        assert!(scope.entries.lock().unwrap().is_empty());
     }
 }

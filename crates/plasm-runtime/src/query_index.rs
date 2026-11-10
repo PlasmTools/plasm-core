@@ -46,50 +46,7 @@ pub struct QueryIndex {
     entries: HashMap<QueryCacheKey, QueryObservation>,
 }
 
-pub(crate) struct RetainedQueryEntries<'a>(pub(crate) &'a HashMap<QueryCacheKey, QueryObservation>);
-
-pub(crate) fn retained_query_capacity(entries: &HashMap<QueryCacheKey, QueryObservation>) -> usize {
-    entries.iter().fold(
-        crate::materialization::retained_hash_capacity::<QueryCacheKey, QueryObservation>(
-            entries.capacity(),
-        ),
-        |total, (key, observation)| {
-            let total = total.saturating_add(key.entity.capacity());
-            match observation {
-                QueryObservation::Observed(record) => total
-                    .saturating_add(crate::cache::retained_reference_collection_capacity(record)),
-                QueryObservation::Disputed => total,
-            }
-        },
-    )
-}
-impl serde::Serialize for RetainedQueryEntries<'_> {
-    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
-        use serde::ser::SerializeSeq;
-        let mut sequence = serializer.serialize_seq(Some(self.0.len()))?;
-        for (key, observation) in self.0 {
-            match observation {
-                QueryObservation::Observed(record) => sequence.serialize_element(&(
-                    &key.entity,
-                    &key.identity,
-                    Some(record.retention_view()),
-                ))?,
-                QueryObservation::Disputed => {
-                    sequence.serialize_element(&(&key.entity, &key.identity, Option::<()>::None))?
-                }
-            }
-        }
-        sequence.end()
-    }
-}
-
 impl QueryIndex {
-    pub(crate) fn retention_capacity_bytes(&self) -> usize {
-        retained_query_capacity(&self.entries)
-    }
-    pub(crate) fn retention_view(&self) -> impl serde::Serialize + '_ {
-        RetainedQueryEntries(&self.entries)
-    }
     pub fn get(&self, key: &QueryCacheKey) -> Option<&RecordedCollection<Ref>> {
         match self.entries.get(key)? {
             QueryObservation::Observed(record) => Some(record),

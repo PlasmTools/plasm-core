@@ -16,28 +16,6 @@ pub struct SharedRows<R> {
     order: Arc<[Occurrence]>,
 }
 
-struct RetainedRows<'a, R>(&'a SharedRows<R>);
-struct RetainedBatches<'a, R>(&'a [Arc<[R]>]);
-
-impl<R: Serialize> Serialize for RetainedBatches<'_, R> {
-    fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
-        let mut sequence = serializer.serialize_seq(Some(self.0.len()))?;
-        for batch in self.0 {
-            sequence.serialize_element(batch.as_ref())?;
-        }
-        sequence.end()
-    }
-}
-
-impl<R: Serialize> Serialize for RetainedRows<'_, R> {
-    fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
-        use serde::ser::SerializeTuple;
-        let mut tuple = serializer.serialize_tuple(2)?;
-        tuple.serialize_element(&RetainedBatches(&self.0.sources))?;
-        tuple.serialize_element(self.0.order.as_ref())?;
-        tuple.end()
-    }
-}
 impl<R> Default for SharedRows<R> {
     fn default() -> Self {
         Vec::new().into()
@@ -83,37 +61,6 @@ impl<R> From<Arc<[R]>> for SharedRows<R> {
     }
 }
 impl<R> SharedRows<R> {
-    /// Physical batches retained by this occurrence set, including unselected rows.
-    /// Intended for internal retention accounting, not membership traversal.
-    pub fn retention_batches(&self) -> impl Iterator<Item = &[R]> {
-        self.sources.iter().map(AsRef::as_ref)
-    }
-
-    /// Occurrence coordinates for a retention view with a custom batch serializer.
-    pub fn retention_order_view(&self) -> impl Serialize + '_ {
-        self.order.as_ref()
-    }
-
-    /// Inline allocation sizes; nested allocations owned by rows are separate.
-    pub fn retention_allocation_bytes(&self) -> usize {
-        self.sources
-            .len()
-            .saturating_mul(std::mem::size_of::<Arc<[R]>>())
-            .saturating_add(
-                self.order
-                    .len()
-                    .saturating_mul(std::mem::size_of::<Occurrence>()),
-            )
-    }
-
-    /// Internal retention accounting view. This includes backing batches even
-    /// when only a subset of their rows is visible. It is not a wire format.
-    pub fn retention_view(&self) -> impl Serialize + '_
-    where
-        R: Serialize,
-    {
-        RetainedRows(self)
-    }
     pub fn len(&self) -> usize {
         self.order.len()
     }
@@ -319,7 +266,7 @@ mod tests {
 }
 
 #[cfg(test)]
-mod retention_tests {
+mod sharing_tests {
     use super::*;
 
     #[test]

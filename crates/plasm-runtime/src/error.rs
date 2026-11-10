@@ -213,33 +213,18 @@ impl std::fmt::Display for ReplayStoreOperation {
     }
 }
 
-/// Why the original dispatch authority could not be reused after a pause.
-#[derive(Debug)]
-pub enum ContinuationAuthorizationReason {
-    ScopeChanged,
-    RevalidationFailed(Box<RuntimeError>),
-}
-
 #[derive(Error, Debug)]
 pub enum RuntimeError {
     #[error("pagination continuation belongs to catalog revision {expected}, not {actual}")]
     PaginationCatalogMismatch { expected: String, actual: String },
-    #[error("pagination continuation belongs to compiled catalog revision {expected}, not {actual}")]
+    #[error(
+        "pagination continuation belongs to compiled catalog revision {expected}, not {actual}"
+    )]
     PaginationCompiledCatalogMismatch { expected: String, actual: String },
-    #[error("effect continuation cannot retain branch state")]
-    ContinuationRetention(#[source] crate::execution::effect_continuation::EffectContinuationError),
-    #[error("mutation dispatch refused while its journal is suspended")]
-    MutationJournalPaused,
     #[error(transparent)]
     Mcp(#[from] Box<crate::mcp_execution::McpExecutionError>),
     #[error("request-owned identity requires observable resolved authentication")]
     RequestIdentityAuthOpaque,
-    #[error("effect continuation authorization changed or could not be revalidated; no retry was dispatched")]
-    ContinuationAuthorization {
-        reason: ContinuationAuthorizationReason,
-        #[source]
-        rejection: Box<RuntimeError>,
-    },
     #[error("request-owned identity for {entity} requires one response row, got {rows}")]
     RequestIdentityCardinality { entity: String, rows: usize },
     #[error(

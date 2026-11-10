@@ -75,11 +75,6 @@ impl OperationHandle {
         &self.0
     }
 
-    /// Heap capacity owned by the handle.
-    pub fn retention_capacity_bytes(&self) -> usize {
-        self.0.capacity()
-    }
-
     /// `true` if this is a plain `oN` handle (HTTP path).
     #[must_use]
     pub fn is_plain(&self) -> bool {

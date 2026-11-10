@@ -128,20 +128,6 @@ pub struct PaginationProgressGuard {
 }
 
 impl PaginationProgressGuard {
-    pub(super) fn retention_capacity_bytes(&self) -> usize {
-        let mut bytes = self.last_cursor_digest.as_ref().map_or(0, String::capacity);
-        for digest in self.seen_coords.iter().chain(&self.seen_ids) {
-            bytes = bytes.saturating_add(1024).saturating_add(digest.capacity());
-        }
-        bytes
-    }
-    /// Internal accounting view; cursor and identity digests remain off the wire.
-    pub(super) fn retained_components(
-        &self,
-    ) -> (&BTreeSet<String>, &BTreeSet<String>, &Option<String>) {
-        (&self.seen_coords, &self.seen_ids, &self.last_cursor_digest)
-    }
-
     fn observe_page(
         &mut self,
         coordinate_digest: &str,
@@ -366,39 +352,6 @@ impl std::fmt::Display for PaginationTerminalReason {
 mod tests {
     use super::*;
     use plasm_compile::{PaginationLocation, PaginationParam, PaginationParamRole};
-
-    #[test]
-    fn pagination_progress_counts_spare_digest_capacity() {
-        use super::super::effect_continuation::MAX_RETAINED_EXECUTION_BYTES;
-        let mut digest = String::with_capacity(MAX_RETAINED_EXECUTION_BYTES + 1);
-        digest.push('x');
-        let mut guard = PaginationProgressGuard::default();
-        guard.seen_ids.insert(digest);
-        assert!(guard.retention_capacity_bytes() > MAX_RETAINED_EXECUTION_BYTES);
-    }
-
-    #[tokio::test]
-    async fn pagination_progress_retention_accounts_for_seen_identities() {
-        use super::super::effect_continuation::{
-            EffectContinuation, EffectContinuationError, MAX_RETAINED_EXECUTION_BYTES,
-        };
-        let mut guard = PaginationProgressGuard::default();
-        guard
-            .seen_ids
-            .insert("x".repeat(MAX_RETAINED_EXECUTION_BYTES));
-        let (control, _pauses) =
-            EffectContinuation::new_native(std::time::Duration::from_secs(1)).unwrap();
-        control
-            .scope(async {
-                assert!(matches!(
-                    EffectContinuation::reserve_retained(&guard.retained_components()),
-                    Err(EffectContinuationError::RetainedBudget(
-                        plasm_core::ValueBudgetError::BytesExceeded
-                    ))
-                ));
-            })
-            .await;
-    }
 
     fn page(
         driver: &mut PaginationDriver,
