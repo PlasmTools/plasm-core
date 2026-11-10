@@ -384,32 +384,41 @@ impl RetrievalReceipt {
         }
         let mut candidates: Vec<RetrievedCapability> = Vec::new();
         let mut seen = BTreeMap::new();
+        let mut first_round = true;
         loop {
             let mut advanced = false;
-            for source in &mut sources {
-                let Some(candidate) = source.next() else {
-                    continue;
-                };
-                advanced = true;
-                if let Some(&position) = seen.get(&candidate.id) {
-                    let existing: &mut RetrievedCapability = &mut candidates[position];
-                    if existing.reference != candidate.reference
-                        || existing.document != candidate.document
-                    {
-                        return Err(RetrievalValidationError::ChannelDocumentMismatch);
-                    }
-                    existing.admissions.extend(candidate.admissions);
-                } else if candidates.len() < CANDIDATE_LIMIT {
-                    seen.insert(candidate.id.clone(), candidates.len());
-                    candidates.push(candidate);
+            for (source_index, source) in sources.iter_mut().enumerate() {
+                let quota = if first_round && source_index == 0 {
+                    2
                 } else {
-                    lexical_truncated = true;
-                    vector_truncated = true;
+                    1
+                };
+                for _ in 0..quota {
+                    let Some(candidate) = source.next() else {
+                        break;
+                    };
+                    advanced = true;
+                    if let Some(&position) = seen.get(&candidate.id) {
+                        let existing: &mut RetrievedCapability = &mut candidates[position];
+                        if existing.reference != candidate.reference
+                            || existing.document != candidate.document
+                        {
+                            return Err(RetrievalValidationError::ChannelDocumentMismatch);
+                        }
+                        existing.admissions.extend(candidate.admissions);
+                    } else if candidates.len() < CANDIDATE_LIMIT {
+                        seen.insert(candidate.id.clone(), candidates.len());
+                        candidates.push(candidate);
+                    } else {
+                        lexical_truncated = true;
+                        vector_truncated = true;
+                    }
                 }
             }
             if !advanced {
                 break;
             }
+            first_round = false;
         }
         let result = Self {
             generation: generation.into(),
@@ -986,7 +995,7 @@ pub(crate) mod tests {
         )
         .unwrap();
         assert_eq!(result.candidates.len(), CANDIDATE_LIMIT);
-        assert_eq!(result.candidates[1].reference, specific.reference);
+        assert_eq!(result.candidates[2].reference, specific.reference);
         assert!(result.lexical_truncated && result.vector_truncated);
         assert!(matches!(
             RetrievalReceipt::interleave("other", vec![receipt(vec![specific.clone()])], &allowed),
@@ -997,6 +1006,33 @@ pub(crate) mod tests {
             RetrievalReceipt::interleave("generation", vec![receipt(vec![specific])], &denied),
             Err(RetrievalValidationError::UnauthorizedCandidate)
         ));
+    }
+
+    #[test]
+    fn current_request_keeps_both_leading_recall_channels_ahead_of_fragments() {
+        let current_lexical = union_fixture(0);
+        let current_vector = union_fixture(1);
+        let fragments: Vec<_> = (2..10).map(union_fixture).collect();
+        let allowed = DiscoveryAuthorization::catalogs(BTreeSet::from([current_lexical
+            .reference
+            .catalog
+            .clone()]));
+        let receipt = |candidates| RetrievalReceipt {
+            generation: "generation".into(),
+            candidates,
+            lexical_count: 0,
+            vector_count: 0,
+            lexical_truncated: false,
+            vector_truncated: false,
+        };
+        let mut inputs = vec![receipt(vec![current_lexical, current_vector.clone()])];
+        inputs.extend(
+            fragments
+                .into_iter()
+                .map(|candidate| receipt(vec![candidate])),
+        );
+        let result = RetrievalReceipt::interleave("generation", inputs, &allowed).unwrap();
+        assert_eq!(result.candidates[1].reference, current_vector.reference);
     }
 
     #[test]

@@ -41,7 +41,7 @@ export async function checkSessionExtension(observe: (intent: string) => Promise
             }]
           },
           matching: {matches},
-          search: {policy: "additive-connected-frontier-current-hybrid-evidence-3-judgments-3-attempts-16000-byte-packet-v42",
+          search: {policy: "additive-connected-frontier-current-hybrid-evidence-3-judgments-3-attempts-16000-byte-packet-v43",
             exposed: [],
             considered: [{catalog:"matrix",capability:"read"}], unexplored: [], deferred: [],
             requests: 1, input_bytes: 1000, reported_input_tokens: 200, missing_usage: 0},
