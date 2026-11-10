@@ -8,7 +8,7 @@ const tools = createPlasmTools({
   recordExecutionFailure: async () => {},
   plasmContext: async () => "context",
   plasm: async (input) => { received.push(input.program); return "planned"; },
-  plasmRun: async () => "executed", plasmResume: async () => { throw new Error("unexpected repair"); },
+  plasmRun: async () => "executed",
 });
 const source = 'class P(Program):\n    """Explain the workflow."""\n    def build(self):\n        # Valid Python commentary\n        return "</parameter>"';
 const session = "l_AAAAAAAAQACAAAAAAAAAAQ";

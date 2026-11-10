@@ -50,12 +50,12 @@ await checkSessionExtension(async () => {}, async (runtime, ref, engine) => {
 });
 // The tool wrapper must not blanket-lock discovery or inspection on reconciliation.
 let reads = 0;
-const tools = createPlasmTools({recordExecutionFailure: async () => {}, plasmContext: async () => "context", plasm: async () => {reads++; return "read plan";}, plasmResume: async () => {throw new Error("unexpected repair");}, plasmRun: async () => {throw new AgentExecutionFailure(failure, "Execution stopped: service rejected the write. Check completed and unresolved effects; this run did not roll back.");}});
+const tools = createPlasmTools({recordExecutionFailure: async () => {}, plasmContext: async () => "context", plasm: async () => {reads++; return "read plan";}, plasmRun: async () => {throw new AgentExecutionFailure(failure, "Execution stopped: service rejected the write. Check completed and unresolved effects; this run did not roll back.");}});
 const options = {toolCallId: "fixture", messages: [], context: {}};
 await tools.plasm_run!.execute!({logical_session_ref:"fixture",run_ref:"pc1"}, options);
 await tools.plasm!.execute!({logical_session_ref:"fixture",program:"read"}, options);
 assert.equal(reads, 1);
-const fatalTools = createPlasmTools({recordExecutionFailure: async () => {}, plasmContext: async () => "context", plasm: async () => {reads++; return "new plan";}, plasmResume: async () => {throw new Error("unexpected repair");}, plasmRun: async () => {throw new AgentExecutionFailure({...failure, recovery: "stop", cause: "runtime"}, "Execution stopped: runtime failure. Stop this execution.");}});
+const fatalTools = createPlasmTools({recordExecutionFailure: async () => {}, plasmContext: async () => "context", plasm: async () => {reads++; return "new plan";}, plasmRun: async () => {throw new AgentExecutionFailure({...failure, recovery: "stop", cause: "runtime"}, "Execution stopped: runtime failure. Stop this execution.");}});
 await fatalTools.plasm_run!.execute!({logical_session_ref:"fixture",run_ref:"pc1"}, options);
 await fatalTools.plasm!.execute!({logical_session_ref:"fixture",program:"new write"}, options);
 assert.equal(reads, 2, "even terminal execution failures do not latch the session tool wrapper");

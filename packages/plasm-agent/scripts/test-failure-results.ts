@@ -20,6 +20,7 @@ const runtime = {
 };
 const options = {toolCallId: "fixture", messages: [], context: {}};
 const tools = createPlasmTools(runtime);
+assert.deepEqual(Object.keys(tools).sort(), ["plasm", "plasm_context", "plasm_failure", "plasm_run"]);
 {
   const paused = executionFailureSchema.parse({
     cause: "upstream", recovery: "replan_after_rejection", code: "upstream_rejection",
@@ -28,12 +29,13 @@ const tools = createPlasmTools(runtime);
     dispatches: [{operation: {entry_id: "matrix", capability: "change"}, request_fingerprint: "opaque", status: "rejected_without_effect"}],
   });
   const pausedTools = createPlasmTools({...runtime, plasmRun: async () => {
-    throw new AgentExecutionFailure(paused, "Execution paused after a confirmed no-effect rejection. Resume the original selection with plasm_resume.");
+    throw new AgentExecutionFailure(paused, "Execution paused after a confirmed no-effect rejection. The original execution remains suspended and cannot be continued through the agent tools.");
   }});
   const output = await pausedTools.plasm_run!.execute!({logical_session_ref: "l_AAAAAAAAQACAAAAAAAAAAQ", run_ref: "pc0"}, options);
   const text = plasmModelOutput({output}).value;
   assert.match(text, /status 422: quota unavailable/);
-  assert.match(text, /plasm_resume/);
+  assert.match(text, /remains suspended/);
+  assert.doesNotMatch(text, /plasm_resume/);
 }
 {
   const small = executionFailureSchema.parse({cause: "program", recovery: "repair_program", code: "program_syntax",
@@ -104,7 +106,7 @@ for (const recovery of ["repair_program", "obtain_authorization", "reconcile_eff
     let calls = 0;
     let recorded = 0;
     const fail = async () => { calls++; throw new AgentExecutionFailure(small, "Matrix operation stopped."); };
-    const matrixTools = createPlasmTools({plasmContext: fail, plasm: fail, plasmRun: fail, plasmResume: fail,
+    const matrixTools = createPlasmTools({plasmContext: fail, plasm: fail, plasmRun: fail,
       recordExecutionFailure: async (_name, evidence) => { recorded++; assert.deepEqual(evidence, small); },
     });
     const args = name === "plasm_context" ? {session_mode: "extend", logical_session_ref: "l_AAAAAAAAQACAAAAAAAAAAQ", intent: "Observe abstract records"}
@@ -127,7 +129,7 @@ for (const recovery of ["repair_program", "obtain_authorization", "reconcile_eff
   }
 }
 const successTools = createPlasmTools({plasmContext: async () => "declarations",
-  plasm: async () => "review pc0", plasmRun: async () => "observed rows", plasmResume: async () => { throw new Error("unexpected repair"); },
+  plasm: async () => "review pc0", plasmRun: async () => "observed rows",
   recordExecutionFailure: async () => { assert.fail("success recorded as failure"); },
 });
 assert.equal(await successTools.plasm_context!.execute!({session_mode: "extend", logical_session_ref: "l_AAAAAAAAQACAAAAAAAAAAQ", intent: "Read records"}, options), "declarations");

@@ -149,7 +149,7 @@ for (const raw of ["{", JSON.stringify({...packet, routing: {...packet.routing, 
 }
 const failingTools = createPlasmTools({
   plasmContext: async () => { decodeRoutingPacket("{"); return "unreachable"; },
-  plasm: async () => "unused", plasmRun: async () => "unused", plasmResume: async () => { throw new Error("unexpected repair"); },
+  plasm: async () => "unused", plasmRun: async () => "unused",
   recordExecutionFailure: async () => {},
 });
 const failedContext = failureObservationSchema.parse(await failingTools.plasm_context!.execute!(
@@ -157,7 +157,7 @@ const failedContext = failureObservationSchema.parse(await failingTools.plasm_co
 ));
 assert.equal(failedContext.failure.code, "discovery_response_contract");
 assert.match(failedContext.summary, /not valid JSON/);
-assert.match(failedContext.summary, /End of recorded failure details/);
+assert.match(failedContext.summary, /Stop and resolve the reported blocker/);
 assert.doesNotMatch(failedContext.summary, /call plasm_failure/);
 assert.equal(failedContext.failure.effects_unresolved, false);
 for (const corrupt of [

@@ -41,7 +41,7 @@ const plasmRunInputSchema = z.object({
 }).strict();
 
 export function createPlasmTools(
-  runtime: Pick<AgentRuntime, "plasmContext" | "plasm" | "plasmRun" | "plasmResume" | "recordExecutionFailure"> & Partial<Pick<AgentRuntime, "workflowExampleServingEnabled" | "plasmExample">>,
+  runtime: Pick<AgentRuntime, "plasmContext" | "plasm" | "plasmRun" | "recordExecutionFailure"> & Partial<Pick<AgentRuntime, "workflowExampleServingEnabled" | "plasmExample">>,
 ): ToolSet {
   const tools: ToolSet = {};
   if (runtime.workflowExampleServingEnabled?.()) {
@@ -118,17 +118,6 @@ export function createPlasmTools(
         logicalSessionRef: logical_session_ref,
         runRef: run_ref,
       })),
-  });
-
-  tools.plasm_resume = tool({
-    toModelOutput: plasmModelOutput,
-    description: "Resume the exact original reviewed execution after a confirmed no-effect rejection. Copy its continuation_ref and logical_session_ref verbatim; this does not change its selection or operands.",
-    inputSchema: toolInput(z.object({
-      logical_session_ref: logicalSessionRefSchema,
-      continuation_ref: z.string().uuid(),
-    }).strict()),
-    execute: async ({logical_session_ref, continuation_ref}) => invoke("plasm_resume", () =>
-      runtime.plasmResume({logicalSessionRef: logical_session_ref, continuationRef: continuation_ref})),
   });
 
   tools.plasm_failure = tool({

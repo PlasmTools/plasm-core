@@ -890,7 +890,7 @@ export class AgentRuntime {
                 throw new Error("Effect continuation capacity exhausted; the original run remains unresolved.");
               }
               this.effectContinuations.set(result.continuationRef, {logicalSessionRef: input.logicalSessionRef, runRef: input.runRef, expiresAt: continuationDeadline ?? performance.now() + 600_000});
-              throw new AgentExecutionFailure(failure, `${result.message}\nResume the original selection with plasm_resume using continuation_ref=${result.continuationRef}.`);
+              throw new AgentExecutionFailure(failure, `Execution remains suspended after a confirmed no-effect rejection; earlier effects may have completed. No agent tool can continue this execution. Stop and reconcile prior effects before further writes. Host diagnostic reference: continuation_ref=${result.continuationRef}.`);
             }
             throw new AgentExecutionFailure(failure, result.message);
           }

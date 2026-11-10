@@ -176,35 +176,7 @@ for (const scenario of cases) {
     const recorded: ExecutionFailure[] = [];
     const live = runtime;
     if (scenario.intervening === "repair") {
-      if (process.argv.includes("--loop")) {
-        let step = 0;
-        const model = new MockLanguageModelV3({doStream: async request => {
-          const current = step++;
-          if (current === 2) for (const row of source) row.description = "changed-after-selection";
-          const continuation = JSON.stringify(request.prompt).match(/continuation_ref=([0-9a-f-]{36})/)?.[1];
-          if (current === 2) assert.ok(continuation, "checkpoint must reach the model as a usable reference");
-          const name = current < 2 ? "plasm_run" : current === 2 ? "plasm_resume" : "complete_task";
-          const input = current < 2 ? {logical_session_ref: session, run_ref: current === 0 ? originalRef : unrelatedRef}
-            : current === 2 ? {logical_session_ref: session, continuation_ref: continuation} : {};
-          return {stream: new ReadableStream({start(controller) {
-            controller.enqueue({type: "tool-call", toolCallId: `repair-${current}`, toolName: name, input: JSON.stringify(input)});
-            controller.enqueue({type: "finish", finishReason: {unified: "tool-calls", raw: undefined},
-              usage: {inputTokens: {total: 0, noCache: 0, cacheRead: 0, cacheWrite: 0}, outputTokens: {total: 0, text: 0, reasoning: 0}}});
-            controller.close();
-          }})};
-        }});
-        const result = await runEveToolLoop({model, system: "Native repair fixture",
-          messages: [{role: "user", content: "Copy the selected records"}],
-          tools: {...createPlasmTools(live), ...createHarnessTools({includeEvalTerminals: true,
-            discoveryCompleted: () => live.hasOpenWorkflow(), sealEffectWorkflows: () => live.sealEffectWorkflows(),
-            responseObligation: {resolve: async () => "no_answer"}})},
-          maxSteps: 4, agentName: "native-repair-loop", telemetry: {isEnabled: false}});
-        assert.equal(result.stopReason, "completed");
-        assert.deepEqual(rows.map(row => row.description), ["item-0", "unrelated", "item-1", "item-2", "item-3"]);
-        assert.equal(posts, 6);
-        console.log(JSON.stringify({case: "native_repair_agent_loop", contract: "certified", posts, reads}));
-        continue;
-      }
+      assert.equal(createPlasmTools(live).plasm_resume, undefined, "resume is not an agent tool");
       let continuation: string | undefined;
       let initialFailure: ExecutionFailure | undefined;
       try { await live.plasmRun({logicalSessionRef: session, runRef: originalRef}); }
@@ -308,10 +280,8 @@ for (const scenario of cases) {
         await assert.rejects(live.plasmResume({logicalSessionRef: session, continuationRef: continuation}), /unknown or belongs/);
         continuation = next;
       }
-      const resumeTool = createPlasmTools(live).plasm_resume?.execute;
-      assert.ok(resumeTool);
-      const resumed = await resumeTool({logical_session_ref: session, continuation_ref: continuation}, {toolCallId: "native-repair", messages: [], context: {}});
-      assert.equal(typeof resumed, "string", "the public repair tool must deliver the resumed result");
+      const resumed = await live.plasmResume({logicalSessionRef: session, continuationRef: continuation});
+      assert.equal(typeof resumed, "string", "the internal native repair fixture must deliver the resumed result");
       const originals = process.argv.includes("--duplicates") ? ["same-value", "same-value", "same-value", "same-value"] : ["item-0", "item-1", "item-2", "item-3"];
       assert.deepEqual(rows.map(row => row.description), process.argv.includes("--two-obligations")
         ? originals : [originals[0], "unrelated", ...originals.slice(1)]);
@@ -344,7 +314,7 @@ for (const scenario of cases) {
     }
     runConcurrent = async () => { await live.plasmRun({logicalSessionRef: session, runRef: unrelatedRef!}); };
     const tools = createPlasmTools({plasmContext: live.plasmContext.bind(live), plasm: live.plasm.bind(live),
-      plasmRun: live.plasmRun.bind(live), plasmResume: live.plasmResume.bind(live), recordExecutionFailure: async (name, failure) => {
+      plasmRun: live.plasmRun.bind(live), recordExecutionFailure: async (name, failure) => {
         recorded.push(failure);
         await live.recordExecutionFailure(name, failure);
       }});
