@@ -66,41 +66,14 @@ is product overlay — not where language law lives.
 
 ## Tool loop (production-shaped)
 
-Malformed-call recovery is owned by `telemetry/tool-call-recovery.ts`. SDK
-argument rejection and native `program_syntax` failures enter a typed repair
-episode; diagnostic prose cannot grant this authority. Native type, planning,
-provider and service failures retain their existing recovery policies.
+Malformed tool inputs and native syntax failures remain ordinary tool errors in
+the conversation. All registered tools remain available on the next generation;
+the agent decides how to proceed within its normal step budget. Rejected inputs
+are not executed, and successful sibling results and effect receipts remain in
+the conversation. The host does not extract or execute a partial program.
 
-```mermaid
-flowchart LR
-  G[Model generation] --> V[Tool input and native admission]
-  V -->|Valid| E[Reviewed execution lifecycle]
-  V -->|Malformed arguments or syntax| R[Bounded call repair]
-  R -->|At most two repair generations| G
-  R -->|Allowance exhausted| X[repair_exhausted]
-  G --> A[Immutable audit and usage]
-  A --> P[Model context projection]
-  P --> G
-```
-
-Repair consumes the existing turn generation/token budgets; it grants no extra
-calls. During repair only the rejected tools are available, and tool choice is
-required unless `forceToolChoice: false` explicitly disables forced choice for
-the provider. Ignored tool choice and reasoning-only responses still consume the
-same two-attempt repair allowance; no effect is dispatched by the host. Failed call/result
-pairs remain verbatim in the audit but are omitted from assistant replay. The
-latest rejected input and authoritative diagnostic are supplied as temporary
-repair context. Successful sibling calls/results are preserved, including their
-effects. The host never truncates source, extracts embedded calls or executes a
-parsed prefix. Python comments and string literals remain legal.
-
-`AgentTurnResult.toolCallRecovery` and step events distinguish required,
-retrying, recovered and exhausted episodes. Recovered means the same tool left
-malformed-input repair, not that the task succeeded. Every generation remains in
-the ordinary usage and step totals. Recovery state is scoped to one turn.
-
-Run `npm run test:tool-call-recovery` for the abstract runtime/SDK witness, which
-also checks that an unexpected effectful tool cannot execute during repair.
+Run `npm run test:invalid-tool-input-retry` and `npm run test:tool-errors` for
+the runtime/SDK boundary witnesses.
 
 MCP parity, Vercel AI SDK v6:
 

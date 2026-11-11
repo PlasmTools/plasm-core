@@ -4,9 +4,7 @@ import { z } from "zod";
 import type { SkillDefinition } from "../authoring/define-skill.js";
 import type { SubagentRegistry } from "../authoring/subagent-loader.js";
 import { COMPLETE_TASK_TOOL_NAME, SUBMIT_ANSWER_TOOL_NAME } from "./format.js";
-import { createTaskLedgerTool, type TaskLedgerStore } from "./task-ledger.js";
 import { toolInput } from "./tool-input.js";
-import type { ObligationEvidence } from "./obligation-evidence.js";
 
 const readSkillInputSchema = z.object({
   name: z.string().min(1).describe("Skill name from the index"),
@@ -137,14 +135,6 @@ export function createHarnessTools(options: {
    * `complete_task` / `submit_answer` succeed. Pass `() => runtime.hasOpenWorkflow()`.
    */
   discoveryCompleted?: () => boolean;
-  /**
-   * Register `task_ledger`. Same gate as
-   * `buildDefaultSystemLiturgy({ includeTaskLedger })`.
-   * Requires `taskLedgerStore` — host persist only, no invented obligations.
-   */
-  includeTaskLedger?: boolean;
-  taskLedgerStore?: TaskLedgerStore;
-  obligationEvidence?: ObligationEvidence;
 }): ToolSet {
   const tools: ToolSet = {};
   const skillByName = new Map((options.skills ?? []).map((s) => [s.name, s]));
@@ -191,13 +181,6 @@ export function createHarnessTools(options: {
       tools,
       createEvalTerminalTools({ discoveryCompleted: options.discoveryCompleted, responseObligation: options.responseObligation, sealEffectWorkflows: options.sealEffectWorkflows }),
     );
-  }
-
-  if (options.includeTaskLedger) {
-    if (!options.taskLedgerStore) {
-      throw new Error("includeTaskLedger requires taskLedgerStore");
-    }
-    Object.assign(tools, createTaskLedgerTool(options.taskLedgerStore, options.obligationEvidence));
   }
 
   return tools;

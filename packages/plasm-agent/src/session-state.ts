@@ -40,7 +40,6 @@ export interface AgentSessionState {
   symbolRegistry?: SymbolRegistrySnapshot;
   planCommits: Array<{ ref: string; program: string; at: string; writeCount?: number }>;
   updatedAt: string;
-  observationRevision?: string;
 }
 
 /** Strict, versioned boundary shared by every persistence adapter. */
@@ -73,7 +72,6 @@ const sessionSchema = z.object({
     ref: z.string(), program: z.string(), at: z.string(), writeCount: z.number().int().nonnegative().optional(),
   }).strict()),
   updatedAt: z.string(),
-  observationRevision: z.string().uuid().optional(),
 }).strict();
 
 function validateJsonText(value: unknown): void {

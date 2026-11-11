@@ -39,7 +39,7 @@ try {
       id: i % 7, content: `ARTIFACT_ONLY_${i}: 漢字🦾\n${"x".repeat(256)}`,
     })) };
     const run = await runtime.plasmRun({ logicalSessionRef: session.logicalSessionRef, runRef: "pc0" });
-    assert.ok(run.startsWith(message), "native response must be preserved");
+    assert.ok(run.includes(message), "native response must be preserved");
     assert.ok(!run.includes("ARTIFACT_ONLY_"));
     if (previousRun !== undefined) assert.equal(run, previousRun, "snapshot size cannot affect tool response");
     previousRun = run;
@@ -60,7 +60,7 @@ try {
   assert.equal(executions, 5, "labelling outputs never replays or fetches a producer");
   assert.deepEqual(Object.keys(createPlasmTools(runtime)).sort(), ["plasm", "plasm_context", "plasm_failure", "plasm_run"]);
   for (const prompt of [buildDefaultSystemLiturgy(), buildDefaultSystemLiturgy({includeEvalTerminals: true})]) {
-    assert.match(prompt, /@compute/);
+    assert.match(prompt, /plasm_context/);
     assert.doesNotMatch(prompt, /plasm_read_run_artifact|plasm_artefact_transform|resources\/read/);
   }
   console.log("PASS: snapshots stay outside agent context; ordered Unicode evidence survives in host archives");

@@ -12,7 +12,7 @@ for (const state of ["Running", "Succeeded", "Failed", "Indeterminate"]) {
   const store = new FailureResults();
   const text = store.read(store.record(failure), 0);
   assert.match(text, /this call dispatched nothing/);
-  assert.match(text, /Check completed and unknown changes/);
+  assert.match(text, /A prior effect completed\. Check its receipt/);
   assert.doesNotMatch(text, /Correct the program|Revise the program|Obtain the required authorization/);
   const observation = failureObservation(new AgentExecutionFailure(failure, text));
   assert.deepEqual(observation.failure, failure);

@@ -43,11 +43,6 @@ export type SystemLiturgyOptions = {
    * (`complete_task` / `submit_answer`) — never “Stop with no tool call.”
    */
   includeEvalTerminals?: boolean;
-  /**
-   * Same gate as `createHarnessTools({ includeTaskLedger })`.
-   * Eval/A-B factor only — product default is unset (corrected current loop).
-   */
-  includeTaskLedger?: boolean;
 };
 
 /**
@@ -112,35 +107,6 @@ export function overlayWorkflowCompletion(workflow: string, completion: string):
   return overlayNamedSlot(workflow, WORKFLOW_COMPLETION_SLOT, completion, "WORKFLOW_COMPLETION_SLOT");
 }
 
-/**
- * Named plan-memory sentence in `initialize_workflow.txt` (already in the
- * crates asset). Overlay only when the task-ledger experiment is on.
- */
-export const TASK_LEDGER_PLAN_SLOT =
-  "After call or terminal rejection, repair the unfinished requirement in-session; changing call shape alone does not complete it.";
-
-export const TASK_LEDGER_PLAN_OVERLAY =
-  "After call or terminal rejection, repair the unfinished requirement in-session and update the ledger only when facts or remaining work change. Changing call shape alone does not complete it. Do not reconstruct scope from conversation alone.";
-
-/**
- * Static ledger rite — composed as its own section, not spliced into a
- * paragraph index. The current record is *not* system law; each loop
- * iteration presents a separate model-authored state echo.
- */
-export const TASK_LEDGER_LITURGY = [
-  "## Task ledger",
-  "",
-  "`task_ledger` writes the host record for this instruction: requested outcomes and scope, conditions that authorize alternatives, observed facts, interpretations, completed effects (with evidence refs), unresolved questions, and remaining work.",
-  "",
-  "Write only changed fields. Obligations update by ID; omitted IDs persist. Other supplied arrays replace that field. The host validates and stores the update atomically; it does not decide that the instruction is satisfied.",
-  "",
-  "Write `observed_facts` only for tool-cited observations (`kind` is `fact`). Every fact requires `evidence_ref` citing a run_id, plasm:// URI, run_ref, or tool name. The host checks that the citation is a known shape; it does not treat the citation as proof. Write `interpretations` separately (`kind` is `interpretation`). `completed_effects.satisfaction` is always an interpretation.",
-  "",
-  "Different means may achieve the same authorized outcome if they respect the user's constraints and preserve unrelated state. If the user makes an alternative conditional, establish that condition before taking it; do not substitute failure of one attempt for a different stated condition. Uncertain authorization remains unresolved; do not expand scope.",
-  "",
-  "Each decision sees a host echo of your last accepted write as model-authored state — not host law and not a completion contract. Revise the record when evidence changes. Completion still follows the contract above — the ledger is not a terminal.",
-  "Keep preservation constraints in scope, tool-cited original state in observed_facts, and unfinished restoration or verification in obligations. A temporary change does not discharge its restoration obligation. Before ending the task, check obligations against observed results; record verified completion or report what remains unresolved.",
-].join("\n");
 
 /**
  * Framework system liturgy for every PlasmAgent turn.
@@ -155,19 +121,7 @@ export function buildDefaultSystemLiturgy(options: SystemLiturgyOptions = {}): s
     : workflowAsset;
   workflow = overlayNamedSlot(workflow, WORKFLOW_INITIALIZATION_SLOT,
     EVAL_WORKFLOW_INITIALIZATION, "WORKFLOW_INITIALIZATION_SLOT");
-  if (options.includeTaskLedger) {
-    workflow = overlayNamedSlot(
-      workflow,
-      TASK_LEDGER_PLAN_SLOT,
-      TASK_LEDGER_PLAN_OVERLAY,
-      "TASK_LEDGER_PLAN_SLOT",
-    );
-  }
-  const sections = [workflow];
-  if (options.includeTaskLedger) {
-    sections.push("", TASK_LEDGER_LITURGY);
-  }
-  return sections.join("\n");
+  return workflow;
 }
 
 export function buildPlasmToolDescription(): string {

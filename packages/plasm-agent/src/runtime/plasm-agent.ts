@@ -23,11 +23,6 @@ import { createPlasmTools } from "../tools/plasm-tools.js";
 import { buildDefaultSystemLiturgy } from "../prompts/index.js";
 import { runEveToolLoop, type AgentStepEvent } from "../telemetry/eve-tool-loop.js";
 import type { EveChannelKind } from "../telemetry/eve-agent-runs.js";
-import {
-  renderTaskLedgerState,
-  TaskLedgerStore,
-  type TaskLedgerRecord,
-} from "../tools/task-ledger.js";
 
 export type { AgentStepEvent };
 
@@ -53,13 +48,6 @@ export interface PlasmAgentConfig extends AgentRuntimeConfig {
    * `buildDefaultSystemLiturgy`. Product hosts must leave this unset.
    */
   includeEvalTerminals?: boolean;
-  /**
-   * Register `task_ledger` and compose the ledger rite. Eval/A-B factor
-   * (`PLASM_EVAL_TASK_LEDGER=1` on the TS eval host). Product default unset.
-   */
-  includeTaskLedger?: boolean;
-  /** One workflow-owned checkpoint. Defaults to agentRoot/task-ledger.json. */
-  taskLedgerPath?: string;
 }
 
 export interface AgentGenerateOptions {
@@ -111,7 +99,6 @@ export interface AgentTurnResult {
   messages: ModelMessage[];
   stopReason: Awaited<ReturnType<typeof runEveToolLoop>>["stopReason"];
   executionFailure?: Awaited<ReturnType<typeof runEveToolLoop>>["executionFailure"];
-  toolCallRecovery: Awaited<ReturnType<typeof runEveToolLoop>>["toolCallRecovery"];
   /** Per-model-step finish reasons from the tool loop. */
   stepFinishReasons: Awaited<ReturnType<typeof runEveToolLoop>>["stepFinishReasons"];
   /** Per-generation output ceiling applied to the model (if configured). */
@@ -157,8 +144,6 @@ export class PlasmAgent {
   private readonly subagentRegistry?: SubagentRegistry;
   private readonly getAuthoringContext?: () => AuthoringContext;
   private readonly includeEvalTerminals: boolean;
-  private readonly includeTaskLedger: boolean;
-  private readonly taskLedgerStore: TaskLedgerStore;
   private readonly agentName: string;
   private conversation: ModelMessage[] = [];
 
@@ -188,15 +173,6 @@ export class PlasmAgent {
     this.subagentRegistry = config.subagentRegistry;
     this.getAuthoringContext = config.getAuthoringContext;
     this.includeEvalTerminals = config.includeEvalTerminals === true;
-    this.includeTaskLedger = config.includeTaskLedger === true;
-    this.taskLedgerStore = new TaskLedgerStore(this.includeTaskLedger
-      ? config.taskLedgerPath ?? path.join(config.agentRoot, "task-ledger.json")
-      : undefined);
-  }
-
-  /** Last accepted model write, or `null` when the experiment flag is off. */
-  get taskLedger(): TaskLedgerRecord | null {
-    return this.includeTaskLedger ? this.taskLedgerStore.record : null;
   }
 
   async bootstrap(): Promise<void> {
@@ -207,7 +183,6 @@ export class PlasmAgent {
     // Framework core: language law + resource rites (same bytes as MCP tool cards).
     const core = buildDefaultSystemLiturgy({
       includeEvalTerminals: this.includeEvalTerminals,
-      includeTaskLedger: this.includeTaskLedger,
     });
     let project = "";
     try {
@@ -253,10 +228,6 @@ export class PlasmAgent {
       await this.hookRunner.emit("agent:start", this.getAuthoringContext(), { prompt });
     }
 
-    if (options.resetConversation) {
-      this.taskLedgerStore.clear();
-    }
-
     const system = await this.loadInstructions();
     const plasmTools = createPlasmTools(this.runtime);
     const harnessTools = createHarnessTools({
@@ -268,12 +239,6 @@ export class PlasmAgent {
       discoveryCompleted: this.includeEvalTerminals
         ? () => this.runtime.hasOpenWorkflow()
         : undefined,
-      includeTaskLedger: this.includeTaskLedger,
-      taskLedgerStore: this.includeTaskLedger ? this.taskLedgerStore : undefined,
-      obligationEvidence: {
-        check: (verification, runId) => this.runtime.checkObligation(verification, runId),
-        samePredicate: (previous, next) => this.runtime.sameObligationPredicate(previous, next),
-      },
     });
     let tools = {
       ...plasmTools,
@@ -329,7 +294,6 @@ export class PlasmAgent {
 
     if (!externalMessages) this.conversation = messages;
     messages = await maybeCompactMessages(messages, this.compaction, this.model);
-
     const toolInvocations: string[] = [];
     const onStepFinish = async (step: AgentStepEvent) => {
       for (const call of step.toolCalls ?? []) {
@@ -346,15 +310,6 @@ export class PlasmAgent {
       model,
       system,
       tools: () => tools,
-      prepareMessages: this.includeTaskLedger
-        ? (history, { stepIndex }) => [
-            ...history,
-            {
-              role: "user" as const,
-              content: `Generation budget: ${maxSteps - stepIndex}/${maxSteps} remaining (including this call).\n\n${renderTaskLedgerState(this.taskLedgerStore.record)}`,
-            },
-          ]
-        : undefined,
       messages,
       maxSteps,
       generationTimeoutMs: options.generationTimeoutMs,
@@ -389,7 +344,6 @@ export class PlasmAgent {
       messages: result.messages,
       stopReason: result.stopReason,
       executionFailure: result.executionFailure,
-      toolCallRecovery: result.toolCallRecovery,
       stepFinishReasons: result.stepFinishReasons,
       maxOutputTokens: result.maxOutputTokens,
       lengthTruncationCount: result.lengthTruncationCount,

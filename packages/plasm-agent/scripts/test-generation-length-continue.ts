@@ -220,7 +220,6 @@ const repaired = await runEveToolLoop({
 
 assert.equal(truncExecuted, 1, "only the repaired call may execute");
 assert.equal(repaired.stopReason, "completed");
-assert.ok(repaired.toolCallRecovery.some(event => event.state === "required"), "invalid arguments enter typed recovery");
 assert.ok(
   !repaired.messages.some(
     (m) =>
@@ -312,7 +311,6 @@ assert.ok(
   ),
   "must not claim budget exhausted before a complete tool call when a tool succeeded",
 );
-assert.equal(mixedContinued.toolCallRecovery.length, 0, "successful tool + length must not enter call repair");
 assert.ok(
   mixedContinued.messages.some((m) => {
     if (m.role !== "tool" || !Array.isArray(m.content)) return false;

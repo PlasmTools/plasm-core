@@ -14,7 +14,6 @@ import {
 import { successfulEvalTerminalInStep } from "../tools/format.js";
 import { transientProviderFailure } from "./provider-failure.js";
 import { withProviderCompletion, type ProviderRequestEvent } from "./provider-completion.js";
-import { ToolCallRecovery, type ToolCallRecoveryEvent } from "./tool-call-recovery.js";
 import { ensureOtelIntegration } from "../instrumentation.js";
 import {
   buildEveRuntimeContext,
@@ -33,7 +32,6 @@ export interface AgentStepEvent {
   usage?: LanguageModelUsage;
   /** Accumulated turn messages after this step's response delta. */
   messages?: ModelMessage[];
-  toolCallRecovery?: ToolCallRecoveryEvent;
 }
 
 export interface EveToolLoopModelOptions {
@@ -132,7 +130,6 @@ export type EveToolLoopStopReason =
   | "error"
   /** The configured consecutive provider-failure allowance was exhausted. */
   | "provider_exhausted"
-  | "repair_exhausted"
   | "execution_failed";
 
 export interface EveToolLoopResult {
@@ -142,7 +139,6 @@ export interface EveToolLoopResult {
   messages: ModelMessage[];
   stopReason: EveToolLoopStopReason;
   executionFailure?: ExecutionFailure;
-  toolCallRecovery: ToolCallRecoveryEvent[];
   /** Per-model-step finish reasons; raw provider `error` overrides mapped `other`. */
   stepFinishReasons: FinishReason[];
   /**
@@ -465,7 +461,6 @@ export async function runEveToolLoop(
   let forceTool = false;
   let consecutiveProviderFailures = 0;
   let generationTimeoutCount = 0;
-  const recovery = new ToolCallRecovery();
 
   while (stepIndex < options.maxSteps) {
     await options.onStepStart?.();
@@ -494,14 +489,13 @@ export async function runEveToolLoop(
         functionId: options.agentName,
       },
       async () => {
-        const availableTools = typeof options.tools === "function"
+        const stepTools = typeof options.tools === "function"
           ? options.tools({ stepIndex })
           : options.tools;
-        const stepTools = recovery.toolsForStep(availableTools);
         const stepToolChoice =
           stepIndex === 0 && options.toolChoice !== undefined
             ? options.toolChoice
-            : (forceTool || recovery.activeToolNames !== undefined) && options.forceToolChoice !== false
+            : forceTool && options.forceToolChoice !== false
               ? ("required" as const)
               : undefined;
         let providerStreamErrorCount = 0;
@@ -543,9 +537,9 @@ export async function runEveToolLoop(
           model: options.model,
           system: options.system,
           tools: stepTools,
-          messages: recovery.modelMessages(messagesForStep(messages, options.prepareMessages, {
+          messages: messagesForStep(messages, options.prepareMessages, {
             stepIndex,
-          })),
+          }),
           stopWhen: stepCountIs(1),
           abortSignal: abortController.signal,
           runtimeContext,
@@ -669,7 +663,6 @@ export async function runEveToolLoop(
       };
     });
     messages = [...messages, ...delta];
-    if (!stepResult.providerFailed || recovery.hasAdmittedReplacements) recovery.observe(stepIndex, stepCalls, stepToolResults);
 
     await options.onStepFinish?.({
       toolCalls: stepCalls.length > 0 ? stepCalls : undefined,
@@ -678,7 +671,6 @@ export async function runEveToolLoop(
       rawFinishReason: stepResult.rawFinishReason,
       usage: stepResult.usage,
       messages,
-      toolCallRecovery: recovery.events.at(-1)?.stepIndex === stepIndex ? recovery.events.at(-1) : undefined,
     });
     applyRunRefLedger(outstandingRunRefs, delta);
     forceTool = outstandingRunRefs.size > 0;
@@ -698,7 +690,7 @@ export async function runEveToolLoop(
       messages: delta,
     });
     const hasValidatedTerminal = Boolean(terminal);
-    if (hasValidatedTerminal && !recovery.activeToolNames) {
+    if (hasValidatedTerminal) {
       stopReason = "completed";
       break;
     }
@@ -722,11 +714,7 @@ export async function runEveToolLoop(
       ];
       continue;
     }
-    if (recovery.exhausted) {
-      stopReason = "repair_exhausted";
-      break;
-    }
-    if (recovery.activeToolNames && stepIndex < options.maxSteps) continue;
+    if (stepCalls.some(call => "invalid" in call && call.invalid === true) && stepIndex < options.maxSteps) continue;
     if (stepResult.finishReason !== "tool-calls") {
       // Providers can finish reasoning with `stop` and emit no usable response.
       // This is not a task decision; preserve history and consume normal budget.
@@ -795,7 +783,6 @@ export async function runEveToolLoop(
     messages,
     stopReason,
     executionFailure,
-    toolCallRecovery: recovery.events,
     stepFinishReasons,
     maxOutputTokens: options.modelOptions?.maxOutputTokens,
     lengthTruncationCount: stepFinishReasons.filter((r) => r === "length")
