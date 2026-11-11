@@ -1,4 +1,6 @@
 //! Intentional provider-catalog integration witness; not a language conformance test.
+#![recursion_limit = "256"]
+
 use plasm_agent_core::http_execute::CapabilitySeed;
 use plasm_compile::CompiledRequest;
 use plasm_node::AgentEngine;
