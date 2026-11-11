@@ -9,6 +9,23 @@ Entries before **0.4.35** live in [`CHANGELOG-ARCHIVE.md`](CHANGELOG-ARCHIVE.md)
 
 ## [Unreleased]
 
+## [0.6.0] - 2026-11-11
+
+### Breaking
+
+- Remove the task-ledger tool and exported ledger APIs, hidden malformed-call repair state, and agent-controlled effect continuation.
+
+### Changed
+
+- Simplify discovery and agent instructions, removing the separate extraction call and repeated tool-call repair state.
+- Retain native execution receipts and typed failure handling without agent-owned continuation state.
+- Improve Python program admission, typed rowset execution and incremental discovery coverage.
+
+### Fixed
+
+- Preserve discovery intent and expose relevant capabilities across incremental session extensions.
+- Keep reviewed execution and failure evidence consistent across mutation and retrieval flows.
+
 ## [0.5.5] - 2026-10-20
 
 ### Changed
