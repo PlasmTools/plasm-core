@@ -347,7 +347,7 @@ async fn workflow_apps_e2e_async() {
         .post(format!(
             "{base}/v1/workflows/workflow_matrix_parallel/instantiate"
         ))
-        .json(&json!({ "parameters": { "limit": 3 } }))
+        .json(&json!({ "logical_session_ref": ls, "parameters": { "limit": 3 } }))
         .send()
         .await
         .expect("instantiate");

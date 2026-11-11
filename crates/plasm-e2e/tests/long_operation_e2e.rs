@@ -213,11 +213,13 @@ async fn long_operation_dual_surface_e2e_async() {
         .await;
         tokio::time::sleep(Duration::from_millis(100)).await;
         let mut cancelled = false;
+        let mut last_wait = None;
         for _ in 0..80 {
             let wait_body = fixture
                 .run_program(surface, &wait_program(&handle), RunOpts::default())
                 .await
                 .expect("wait before cancel");
+            last_wait = Some(wait_body.clone());
             match continuity_phase(&wait_body) {
                 Some("running") => {
                     let body = fixture
@@ -237,7 +239,8 @@ async fn long_operation_dual_surface_e2e_async() {
                     cancelled = true;
                     break;
                 }
-                None if wait_body.get("operation").and_then(|v| v.as_bool()) != Some(true) => {
+                None => {
+                    assert_terminal_success(&wait_body);
                     eprintln!("note: plan finished before cancel on {surface:?}");
                     cancelled = true;
                     break;
@@ -246,7 +249,10 @@ async fn long_operation_dual_surface_e2e_async() {
             }
             tokio::time::sleep(Duration::from_millis(50)).await;
         }
-        assert!(cancelled, "failed to cancel mid-run on {surface:?}");
+        assert!(
+            cancelled,
+            "failed to cancel mid-run on {surface:?}: {last_wait:?}"
+        );
         fixture.cleanup().await;
     }
 
