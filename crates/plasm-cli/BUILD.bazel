@@ -14,7 +14,7 @@ rust_binary(
     crate_root = "src/bin/cache_demo.rs",
     edition = "2021",
     proc_macro_deps = all_crate_deps(proc_macro = True),
-    version = "0.5.5",
+    version = "0.6.0",
     visibility = ["//visibility:public"],
     deps = [
         "//crates/plasm-compile:plasm_compile",
@@ -38,7 +38,7 @@ rust_binary(
     crate_root = "src/bin/demo.rs",
     edition = "2021",
     proc_macro_deps = all_crate_deps(proc_macro = True),
-    version = "0.5.5",
+    version = "0.6.0",
     visibility = ["//visibility:public"],
     deps = [
         "//crates/plasm-compile:plasm_compile",
@@ -62,7 +62,7 @@ rust_binary(
     crate_root = "src/bin/input_validation_demo.rs",
     edition = "2021",
     proc_macro_deps = all_crate_deps(proc_macro = True),
-    version = "0.5.5",
+    version = "0.6.0",
     visibility = ["//visibility:public"],
     deps = [
         "//crates/plasm-compile:plasm_compile",
@@ -86,7 +86,7 @@ rust_binary(
     crate_root = "src/bin/mock_server_demo.rs",
     edition = "2021",
     proc_macro_deps = all_crate_deps(proc_macro = True),
-    version = "0.5.5",
+    version = "0.6.0",
     visibility = ["//visibility:public"],
     deps = [
         "//crates/plasm-compile:plasm_compile",
@@ -110,7 +110,7 @@ rust_binary(
     crate_root = "src/main.rs",
     edition = "2021",
     proc_macro_deps = all_crate_deps(proc_macro = True),
-    version = "0.5.5",
+    version = "0.6.0",
     visibility = ["//visibility:public"],
     deps = [
         "//crates/plasm-compile:plasm_compile",

@@ -28,7 +28,7 @@ rust_library(
     crate_root = "src/lib.rs",
     edition = "2021",
     proc_macro_deps = all_crate_deps(proc_macro = True),
-    version = "0.5.5",
+    version = "0.6.0",
     visibility = ["//visibility:public"],
     deps = [
         "//crates/plasm-agent-core:plasm_agent_core",
@@ -72,7 +72,7 @@ rust_binary(
     crate_root = "src/bin/plasm.rs",
     edition = "2021",
     proc_macro_deps = all_crate_deps(proc_macro = True),
-    version = "0.5.5",
+    version = "0.6.0",
     visibility = ["//visibility:public"],
     deps = [
         ":plasm_agent",
@@ -101,7 +101,7 @@ rust_binary(
     crate_root = "src/bin/plasm_import_catalogs.rs",
     edition = "2021",
     proc_macro_deps = all_crate_deps(proc_macro = True),
-    version = "0.5.5",
+    version = "0.6.0",
     visibility = ["//visibility:public"],
     deps = [
         ":plasm_agent",
@@ -130,7 +130,7 @@ rust_binary(
     crate_root = "src/bin/plasm_mcp.rs",
     edition = "2021",
     proc_macro_deps = all_crate_deps(proc_macro = True),
-    version = "0.5.5",
+    version = "0.6.0",
     visibility = ["//visibility:public"],
     deps = [
         ":plasm_agent",
