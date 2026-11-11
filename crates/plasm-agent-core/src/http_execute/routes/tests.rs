@@ -733,9 +733,9 @@ async fn same_inputs_same_prompt_hash() {
     let a = create_session(&app).await;
     let b = create_session(&app).await;
     assert_eq!(a.prompt_hash, b.prompt_hash);
-    assert_eq!(
+    assert_ne!(
         a.session, b.session,
-        "server should reuse session id for same entry + entities"
+        "independent HTTP opens must have separate logical sessions"
     );
     assert!(!a.reused, "first GET should not set reused");
     assert!(

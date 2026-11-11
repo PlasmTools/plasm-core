@@ -1772,9 +1772,11 @@ mod mutex_law_tests {
         use std::task::Poll;
         let engine = PlasmEngine::new();
         let mut held = engine.inner.lock().await;
+        let cgs = plasm_core::CGS::new();
+        let compiled = plasm_compile::compile_cgs_capability_templates(&cgs).unwrap();
         *held = InnerEngine::from_generation(
-            [("fixture".into(), plasm_core::CGS::new())].into(),
-            Default::default(),
+            [("fixture".into(), cgs)].into(),
+            [("fixture".into(), Arc::new(compiled))].into(),
             "queued-session".into(),
             engine.python_pool.clone(),
         );
@@ -1791,9 +1793,10 @@ mod mutex_law_tests {
         // Cancelling a queued caller must not obstruct those behind it.
         drop(cancelled);
         drop(held);
+        let first_result = first.await.expect("invalid program returns a diagnostic");
         assert!(
-            first.await.is_err(),
-            "invalid program should fail after admission"
+            first_result.failure_json.is_some(),
+            "invalid program must fail"
         );
         let result = tokio::time::timeout(std::time::Duration::from_secs(2), second)
             .await

@@ -136,7 +136,7 @@ mod tests {
         let routing: crate::discovery_service::RoutingReceipt =
             serde_json::from_value(fixture["routing"].clone()).unwrap();
         let cgs = plasm_core::loader::load_schema_dir(
-            &std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            &std::path::Path::new(crate::test_manifest_dir())
                 .join("../../fixtures/schemas/plasm_prompt_matrix"),
         )
         .unwrap();
@@ -154,10 +154,8 @@ mod tests {
         let text = recovery.render_partial_catalogs();
         assert!(text.contains("`allowed`:"));
         assert!(!text.contains("`denied`:"));
-        assert!(
-            !recovery.available_catalogs[0]
-                .description
-                .contains("entities, ")
-        );
+        assert!(!recovery.available_catalogs[0]
+            .description
+            .contains("entities, "));
     }
 }

@@ -262,7 +262,7 @@ async fn run_native_hydration() {
                 .unwrap();
             assert!(!duplicate.ok);
             assert!(
-                duplicate.message.contains("Failed"),
+                duplicate.message.contains("is failed"),
                 "{}",
                 duplicate.message
             );
