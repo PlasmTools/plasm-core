@@ -8,7 +8,7 @@ def build_targets():
         crate_root = "src/lib.rs",
         edition = "2021",
         proc_macro_deps = all_crate_deps(proc_macro = True),
-        version = "0.5.5",
+        version = "0.6.0",
         visibility = ["//visibility:public"],
         deps = [] + all_crate_deps(normal = True),
     )
