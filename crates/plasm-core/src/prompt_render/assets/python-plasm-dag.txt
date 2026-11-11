@@ -20,8 +20,8 @@ class P(Program):
     def build(self):
         return e1.query().where(lambda r: r.score is not None and r.score > 0).select("title")
 
-Absent fields: AttributeError; guard nulls.
-Budgets: projection reduces bytes, not rows; nested inputs share the row budget. Never truncate required complete sets.
+Absent: AttributeError; guard nulls.
+Budgets: projection reduces bytes, not rows; inputs share the row budget. Never truncate required sets.
 
 `rows.of_type(eN)`: select a declared variant before its fields/relations/actions; preserves original identity, never turns computed records into entities.
 
