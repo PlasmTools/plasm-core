@@ -195,7 +195,7 @@ async fn run_case(case: &Case, reverse: bool, mode: &str) -> serde_json::Value {
         let packets = RefCell::new(Vec::<serde_json::Value>::new());
         let start = std::time::Instant::now();
         let selected = select_indexed(context, &index, |request| {
-            assert!(request.body().len() <= 16_000);
+            assert!(request.body().len() <= search_budget::MAX_INPUT_BYTES);
             let body: serde_json::Value = serde_json::from_str(request.body()).unwrap();
             assert_eq!(request.body(), serde_json::to_string(&body).unwrap());
             for (question_id, local) in body["state"]["question_evidence"].as_object().unwrap() {
@@ -237,7 +237,7 @@ async fn run_case(case: &Case, reverse: bool, mode: &str) -> serde_json::Value {
                 "error":error.to_string(),"stage":"native_pipeline_fault","turns":turns})
             }
         };
-        assert!(receipt.input_bytes <= 16_000 && receipt.requests <= 1);
+        assert!(receipt.input_bytes <= search_budget::MAX_INPUT_BYTES && receipt.requests <= 1);
         assert_eq!(receipt.requests, packets.borrow().len());
         let mut decisions = BTreeMap::new();
         for candidate in &retrieval.candidates {

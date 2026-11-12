@@ -39,7 +39,7 @@ use crate::discovery_store::{DiscoveryAuthorization, RetrievalReceipt};
 use plasm_core::{prerequisites::DeploymentBindings, CGS};
 
 pub(crate) const SEARCH_POLICY: &str =
-    "additive-connected-frontier-current-hybrid-evidence-3-judgments-3-attempts-16000-byte-packet-v44";
+    "additive-connected-frontier-current-hybrid-evidence-3-judgments-3-attempts-32000-byte-packet-v45";
 
 #[derive(Clone, Copy)]
 pub struct SearchContext<'a> {
@@ -1078,7 +1078,7 @@ pub(super) mod tests {
             cap.description = format!(
                 "{} {}",
                 "spectrometer ".repeat(repetitions),
-                "neutral ".repeat(1000)
+                "neutral ".repeat(2100)
             );
             cgs.capabilities.insert(name.into(), cap);
         }
@@ -1107,7 +1107,7 @@ pub(super) mod tests {
             .deferred
             .iter()
             .any(|d| d.reference.capability == "a_secondary"));
-        assert!(receipt.input_bytes <= 16_000);
+        assert!(receipt.input_bytes <= search_budget::MAX_INPUT_BYTES);
     }
 
     #[tokio::test]

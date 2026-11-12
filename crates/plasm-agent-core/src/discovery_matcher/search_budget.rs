@@ -4,8 +4,10 @@ use std::collections::BTreeSet;
 
 pub(super) const MAX_REQUESTS: usize = 1;
 pub(super) const MAX_ATTEMPTS: usize = 3;
-pub(super) const MAX_INPUT_BYTES: usize = 16_000;
-pub(super) const MAX_TRANSMITTED_BYTES: usize = MAX_INPUT_BYTES * MAX_ATTEMPTS;
+pub(super) const MAX_INPUT_BYTES: usize = 32_000;
+// The packet allowance is independent of the per-search transmission budget.
+// A larger packet consumes more of the same fixed budget, including on retry.
+pub(super) const MAX_TRANSMITTED_BYTES: usize = 48_000;
 pub(super) const MAX_REPORTED_INPUT_TOKENS: u64 = 16_000;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -142,6 +144,22 @@ mod tests {
     use super::*;
 
     #[test]
+    fn larger_packets_share_the_unchanged_total_budget() {
+        let large = "x".repeat(30_000);
+        let mut budget = SearchBudget::default();
+        budget.reserve([0], &[&large]).unwrap();
+        let before = budget.clone();
+        assert_eq!(budget.reserve_retry(&large), Err(BudgetStop::InputBytes));
+        assert_eq!(budget, before);
+        budget.reserve_followup([1], &"x".repeat(18_000)).unwrap();
+        assert_eq!(budget.input_bytes(), 48_000);
+        assert_eq!(
+            budget.reserve_followup([2], "x"),
+            Err(BudgetStop::InputBytes)
+        );
+    }
+
+    #[test]
     fn distinct_followups_share_the_turn_attempt_and_byte_budget() {
         let mut budget = SearchBudget::default();
         budget.reserve([1], &["first"]).unwrap();
@@ -160,7 +178,7 @@ mod tests {
     #[test]
     fn retries_charge_full_packet_without_readmitting_a_judgment() {
         let mut budget = SearchBudget::default();
-        let body = "x".repeat(MAX_INPUT_BYTES);
+        let body = "x".repeat(16_000);
         assert_eq!(budget.reserve_retry(&body), Err(BudgetStop::Requests));
         budget.reserve([0], &[&body]).unwrap();
         for _ in 1..MAX_ATTEMPTS {
@@ -180,7 +198,7 @@ mod tests {
         budget.reserve([0], &["first"]).unwrap();
         let before = budget.clone();
         assert_eq!(
-            budget.reserve_retry(&(body + "x")),
+            budget.reserve_retry(&"x".repeat(MAX_INPUT_BYTES + 1)),
             Err(BudgetStop::InputBytes)
         );
         assert_eq!(budget, before);
@@ -209,7 +227,7 @@ mod tests {
     #[test]
     fn repeated_context_and_utf8_are_charged_without_truncation() {
         let mut budget = SearchBudget::default();
-        let body = "é".repeat(8_000);
+        let body = "é".repeat(MAX_INPUT_BYTES / 2);
         budget.reserve([0], &[&body]).unwrap();
         assert_eq!(budget.input_bytes(), MAX_INPUT_BYTES);
         let mut budget = SearchBudget::default();

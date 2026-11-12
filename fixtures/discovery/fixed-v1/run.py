@@ -47,7 +47,7 @@ def summarize(path):
         family['cases'] += 1
         for turn in case['turns']:
             receipt = turn['receipt']
-            assert receipt['input_bytes'] <= 16000 and receipt['requests'] <= 1
+            assert receipt['input_bytes'] <= 32000 and receipt['requests'] <= 1
             bytes_used += receipt['input_bytes']; requests += receipt['requests']
             if str(turn['search']) in complete:
                 bucket = complete[str(turn['search'])]

@@ -400,7 +400,7 @@ async fn admission_diagnostic_oversized_target_never_reaches_judgment() {
         cap.description = "Inspect calibration telemetry.".into();
         if oversized {
             cap.description
-                .push_str(&" Authored calibration details.".repeat(700));
+                .push_str(&" Authored calibration details.".repeat(1400));
         }
         let allowed = DiscoveryAuthorization::catalogs(BTreeSet::from(["matrix".into()]));
         for need in [
@@ -511,7 +511,7 @@ async fn completed_judgments_advance_to_an_affordable_deferred_target() {
         cap.name = name.into();
         cap.description = format!(
             "Inspect calibration.{}",
-            " Authored specimen detail.".repeat(400)
+            " Authored specimen detail.".repeat(800)
         );
         cgs.capabilities.insert(name.into(), cap);
     }
@@ -577,7 +577,7 @@ fn oversized_ancestry_is_not_silently_discarded() {
         IntentProvenance::from_turns(std::iter::once(original).chain((0..32).map(|n| {
             format!(
                 "Refinement {n}: {}",
-                "Inspect calibration telemetry without changing unrelated resources. ".repeat(12)
+                "Inspect calibration telemetry without changing unrelated resources. ".repeat(24)
             )
         })))
         .unwrap();

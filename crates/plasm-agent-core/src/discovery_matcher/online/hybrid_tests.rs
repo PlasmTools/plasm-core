@@ -430,7 +430,7 @@ async fn hybrid_recall_advances_rejected_roots_without_lexical_overlap() {
         let mut cap = cap.clone();
         cap.name = name.into();
         // Force bounded allocation rather than fitting every independent root.
-        cap.description = "authored purpose ".repeat(300);
+        cap.description = "authored purpose ".repeat(650);
         cgs.capabilities.insert(name.into(), cap);
     }
     let allowed = DiscoveryAuthorization::catalogs(BTreeSet::from(["matrix".into()]));
@@ -472,7 +472,7 @@ async fn hybrid_recall_advances_rejected_roots_without_lexical_overlap() {
         assert_eq!(result.vector_count, result.candidates.len());
         assert_eq!(matching.matches.len(), result.candidates.len());
         assert_eq!(search.requests, 1);
-        assert!(search.input_bytes <= 16000);
+        assert!(search.input_bytes <= search_budget::MAX_INPUT_BYTES);
         for c in result.candidates {
             assert!(
                 seen.insert(c.reference.clone()),

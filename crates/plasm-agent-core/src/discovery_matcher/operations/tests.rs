@@ -410,7 +410,7 @@ fn oversized_canonical_contract_is_reported_as_budget_pressure() {
         .capabilities
         .get_mut("source_read")
         .unwrap()
-        .description = "Detailed contract information. ".repeat(800);
+        .description = "Detailed contract information. ".repeat(1600);
     let authorization =
         crate::discovery_store::DiscoveryAuthorization::catalogs(BTreeSet::from(["matrix".into()]));
     let index = super::super::catalogue_search::CatalogueSearch::new(

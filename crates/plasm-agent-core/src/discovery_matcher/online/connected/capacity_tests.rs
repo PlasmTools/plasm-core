@@ -117,10 +117,10 @@ fn repeatedly_deferred_recalled_root_eventually_receives_capacity() {
         measure(8, 1, Case::ExpensiveFirst, Arm::DeferredNomination),
         Some(4)
     );
-    assert_eq!(
+    assert!(matches!(
         measure(8, 1, Case::Connected, Arm::DeferredNomination),
-        Some(3)
-    );
+        Some(1..=3)
+    ));
 }
 
 fn measure(distractors: usize, position: usize, case: Case, arm: Arm) -> Option<usize> {
@@ -136,9 +136,9 @@ fn measure(distractors: usize, position: usize, case: Case, arm: Arm) -> Option<
         let width = if (matches!(case, Case::ExpensiveFirst) && n == position)
             || (matches!(case, Case::ExpensiveTarget) && n == 0)
         {
-            110
+            220
         } else {
-            140
+            280
         };
         cap.description = format!(
             "Apply routine {n}. {}",

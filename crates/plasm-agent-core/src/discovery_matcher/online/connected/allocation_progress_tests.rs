@@ -132,7 +132,7 @@ fn allocate(previous_visits: usize, width: usize) -> Plan {
         <= search_budget::MAX_INPUT_BYTES;
     assert_eq!(
         fits,
-        width < 400,
+        width < 800,
         "control must distinguish fitting and oversized roots"
     );
     let plan = plan_recalled(
@@ -189,7 +189,7 @@ fn equal_visit_round_keeps_connected_path_priority() {
 
 #[test]
 fn oversized_unjudged_root_does_not_block_optional_paths() {
-    let plan = allocate(3, 400);
+    let plan = allocate(3, 800);
     assert!(fresh_position(&plan).is_none());
     assert!(plan.diagnostic.iter().any(|e| e["kind"] == "optional_path"));
     assert!(plan

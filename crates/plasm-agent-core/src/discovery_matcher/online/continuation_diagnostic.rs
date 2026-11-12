@@ -71,7 +71,10 @@ async fn frozen_continuation_diagnostic() {
                                 async move { Ok(answer.to_string()) }
                             }, |_| async { Ok(()) },
                         ).await.unwrap();
-                        assert!(receipt.requests <= 1 && receipt.input_bytes <= 16000);
+                        assert!(
+                            receipt.requests <= 1
+                                && receipt.input_bytes <= search_budget::MAX_INPUT_BYTES
+                        );
                         let mut repeated = 0;
                         let mut admitted = Vec::new();
                         for c in &retrieval.candidates {

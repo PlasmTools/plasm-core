@@ -4,7 +4,7 @@ use crate::discovery_scheduling as scheduling;
 pub(crate) mod decision_checkpoint;
 mod metrics;
 use plasm_core::prerequisites::{
-    CapabilityRef, PrerequisiteClosure, PrerequisiteError, prerequisite_closure,
+    prerequisite_closure, CapabilityRef, PrerequisiteClosure, PrerequisiteError,
 };
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
@@ -1184,15 +1184,7 @@ impl DiscoveryService {
         } else {
             None
         };
-        let mut intent_analysis = if search.has_unavailable_provider() {
-            "**Capability discovery:** a later assessment was unavailable; earlier verified contributions remain available."
-        } else if search.has_pending_operation_judgments() {
-            "**Capability discovery:** additional candidates remain unassessed. Use declared operations if they satisfy the task, or extend the session to assess more."
-        } else if search.has_incomplete_operation_judgments() {
-            "**Capability discovery:** some candidate contributions remain uncertain."
-        } else {
-            "**Capability contribution** (bounded online search; unvisited capabilities remain unexplored):"
-        }.to_owned();
+        let mut intent_analysis = discovery_assessment_summary(&search);
         let uncovered: Vec<_> = matrix
             .uncovered_operations()
             .filter(|text| !matrix.contextual_fragment(text))
@@ -1260,6 +1252,26 @@ impl DiscoveryService {
     }
 }
 
+fn discovery_assessment_summary(search: &matcher::online::SearchReceipt) -> String {
+    let mut summary = if search.has_unavailable_provider() {
+        "**Capability discovery:** a later assessment was unavailable; earlier verified contributions remain available."
+    } else if search.has_pending_operation_judgments() {
+        "**Capability discovery:** additional candidates remain unassessed. Use declared operations if they satisfy the task, or extend the session to assess more."
+    } else if search.has_incomplete_operation_judgments() {
+        "**Capability discovery:** some candidate contributions remain uncertain."
+    } else {
+        "**Capability contribution** (bounded online search; unvisited capabilities remain unexplored):"
+    }.to_owned();
+    if search
+        .deferred
+        .iter()
+        .any(|item| matches!(item.reason, matcher::online::DeferredReason::InputBytes))
+    {
+        summary.push_str("\n\nSome candidates could not be assessed within the discovery packet limit; their relevance remains unknown. A later search may help if their complete evidence fits on its own.");
+    }
+    summary
+}
+
 fn save_rejection(
     directory: &std::path::Path,
     record: &serde_json::Value,
@@ -1306,6 +1318,23 @@ mod concurrency_tests;
 mod tests {
     use super::*;
     use std::collections::BTreeSet;
+
+    #[test]
+    fn assessment_summary_reports_packet_deferral_without_claiming_relevance() {
+        let mut search = matcher::online::SearchReceipt::default();
+        assert!(!discovery_assessment_summary(&search).contains("packet limit"));
+        search.deferred.push(matcher::online::DeferredCandidate {
+            reference: CapabilityRef {
+                catalog: "matrix".into(),
+                capability: "candidate".into(),
+            },
+            reason: matcher::online::DeferredReason::InputBytes,
+        });
+        let summary = discovery_assessment_summary(&search);
+        assert!(summary.contains("could not be assessed within the discovery packet limit"));
+        assert!(summary.contains("relevance remains unknown"));
+        assert!(summary.contains("if their complete evidence fits on its own"));
+    }
 
     #[test]
     fn recall_prioritizes_current_spans_without_dropping_history() {
