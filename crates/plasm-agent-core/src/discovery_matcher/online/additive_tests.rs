@@ -204,7 +204,7 @@ fn trial_packet_size_matches_dispatch_encoding_and_stable_labels() {
     // same-name definitions with different contents, and distinct current fields.
     let template = local[0].clone();
     let mut variants = Vec::new();
-    for n in 0..16 {
+    for n in 0..105 {
         let mut batch = template.clone();
         let mut body: serde_json::Value = serde_json::from_str(batch.body()).unwrap();
         let question = body["questions"]
@@ -242,6 +242,32 @@ fn trial_packet_size_matches_dispatch_encoding_and_stable_labels() {
                 .body()
                 .len()
         );
+    }
+    let prepared = variants
+        .iter()
+        .map(request_packing::PreparedLocal::new)
+        .collect::<Result<Vec<_>, _>>()
+        .unwrap();
+    for size in [1, 9, 10, 11, 15, 98, 99, 100, 104] {
+        let subset: Vec<_> = prepared[..size].iter().collect();
+        let exact = request_packing::connected_size(&subset).unwrap();
+        let lower = request_packing::connected_lower_bound(&subset, exact);
+        assert!(lower <= exact);
+        let positions: Vec<_> = if size <= 15 {
+            (0..=size).collect()
+        } else {
+            vec![0, size / 2, size]
+        };
+        for inserted in [&prepared[size], &prepared[prepared.len() - 1]] {
+            for &position in &positions {
+                let mut full = subset.clone();
+                full.insert(position, inserted);
+                assert!(
+                    lower <= request_packing::connected_size(&full).unwrap(),
+                    "size={size} position={position}"
+                );
+            }
+        }
     }
     let prepared = request_packing::PreparedLocal::new(&template).unwrap();
     assert!(matches!(

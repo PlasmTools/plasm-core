@@ -3,6 +3,8 @@ use super::*;
 
 type Route = Vec<Edge<CapabilityRef>>;
 type Bundle = BTreeMap<CapabilityRef, Route>;
+type InputGroups = BTreeMap<NominationSlot, Vec<Edge<CapabilityRef>>>;
+type GroupCache = BTreeMap<CapabilityRef, std::sync::Arc<InputGroups>>;
 
 /// Lexicographic scheduling order: fairness precedes cost and recall rank.
 #[derive(PartialEq, Eq, PartialOrd, Ord)]
@@ -61,19 +63,14 @@ pub(super) struct Plan {
     pub diagnostic: Vec<serde_json::Value>,
 }
 
-fn variants(
+fn input_groups(
     key: &CapabilityRef,
-    route: &Route,
     index: &CatalogueSearch,
     context: SearchContext<'_>,
-    proposed: &Bundle,
-    ancestors: &BTreeSet<CapabilityRef>,
-) -> Result<Vec<Bundle>, DiscoveryMatcherError> {
-    if proposed.contains_key(key) {
-        return Ok(vec![Bundle::new()]);
-    }
-    if ancestors.contains(key) {
-        return Ok(Vec::new());
+    cache: &mut GroupCache,
+) -> Result<std::sync::Arc<InputGroups>, DiscoveryMatcherError> {
+    if let Some(groups) = cache.get(key) {
+        return Ok(std::sync::Arc::clone(groups));
     }
     let dependencies = required_closure(
         &BTreeSet::from([key.clone()]),
@@ -108,8 +105,77 @@ fn variants(
             .or_insert_with(Vec::new)
             .push(edge.clone());
     }
+    let groups = std::sync::Arc::new(groups);
+    cache.insert(key.clone(), std::sync::Arc::clone(&groups));
+    Ok(groups)
+}
+
+/// Count the same bounded combinations as `variants` without building bundles.
+/// This preserves cycle detection and error traversal for an oversized root.
+fn variant_count(
+    key: &CapabilityRef,
+    index: &CatalogueSearch,
+    context: SearchContext<'_>,
+    proposed: &Bundle,
+    ancestors: &BTreeSet<CapabilityRef>,
+    cache: &mut GroupCache,
+) -> Result<usize, DiscoveryMatcherError> {
+    if proposed.contains_key(key) {
+        return Ok(1);
+    }
+    if ancestors.contains(key) {
+        return Ok(0);
+    }
+    let groups = input_groups(key, index, context, cache)?;
     let mut next_ancestors = ancestors.clone();
     next_ancestors.insert(key.clone());
+    let mut states = 1usize;
+    for options in groups.values() {
+        let mut next = 0usize;
+        for edge in options {
+            let children = variant_count(
+                &edge.source,
+                index,
+                context,
+                proposed,
+                &next_ancestors,
+                cache,
+            )?;
+            next = next
+                .saturating_add(children.saturating_mul(states))
+                .min(MAX_VARIANTS);
+            if next == MAX_VARIANTS {
+                break;
+            }
+        }
+        states = next;
+        if states == 0 {
+            break;
+        }
+    }
+    Ok(states)
+}
+
+fn variants(
+    key: &CapabilityRef,
+    route: &Route,
+    index: &CatalogueSearch,
+    context: SearchContext<'_>,
+    proposed: &Bundle,
+    ancestors: &BTreeSet<CapabilityRef>,
+    cache: &mut GroupCache,
+) -> Result<Vec<Bundle>, DiscoveryMatcherError> {
+    if proposed.contains_key(key) {
+        return Ok(vec![Bundle::new()]);
+    }
+    if ancestors.contains(key) {
+        return Ok(Vec::new());
+    }
+    let groups = input_groups(key, index, context, cache)?;
+    let mut next_ancestors = ancestors.clone();
+    next_ancestors.insert(key.clone());
+    // Every returned bundle retains this root and route; recursive suppliers
+    // that are already proposed return an empty bundle and cannot replace them.
     let mut states = vec![Bundle::from([(key.clone(), route.clone())])];
     for options in groups.values() {
         let mut next = Vec::new();
@@ -123,6 +189,7 @@ fn variants(
                 context,
                 proposed,
                 &next_ancestors,
+                cache,
             )? {
                 for state in &states {
                     let mut combined = state.clone();
@@ -208,6 +275,23 @@ fn body_size_up_to(
     }
     let prepared: Vec<_> = local.iter().map(|key| &cache[key].prepared).collect();
     request_packing::connected_size(&prepared)
+}
+
+fn body_size_lower_bound(
+    selected: &Bundle,
+    index: &CatalogueSearch,
+    context: SearchContext<'_>,
+    cache: &mut BTreeMap<(CapabilityRef, Route), LocalPacket>,
+) -> Result<usize, DiscoveryMatcherError> {
+    // Prepare every item in the subset, then allow for the maximum possible
+    // reduction in shared-reference ID widths after other items are inserted.
+    let exact = body_size(selected, index, context, cache)?;
+    let prepared: Vec<_> = selected
+        .iter()
+        .filter(|(key, _)| !context.exposed.contains(key))
+        .map(|(key, path)| &cache[&(key.clone(), path.clone())].prepared)
+        .collect();
+    Ok(request_packing::connected_lower_bound(&prepared, exact))
 }
 
 #[cfg(test)]
@@ -349,6 +433,7 @@ pub(super) fn plan_ordered(
     // large. Only direct admission failures can suppress another root trial.
     let mut root_deferred = BTreeSet::new();
     let mut cache = BTreeMap::new();
+    let mut group_cache = GroupCache::new();
     let mut served = BTreeMap::<NominationSlot, usize>::new();
     #[cfg(test)]
     let mut diagnostic = Vec::new();
@@ -424,11 +509,39 @@ pub(super) fn plan_ordered(
         let mut best: Option<(BundlePriority, Bundle)> = None;
         for (key, path) in &candidates {
             let mut fits = false;
-            let alternatives = variants(key, path, index, context, &proposed, &BTreeSet::new())?;
-            if alternatives.is_empty() {
+            let count = variant_count(
+                key,
+                index,
+                context,
+                &proposed,
+                &BTreeSet::new(),
+                &mut group_cache,
+            )?;
+            if count == 0 {
                 deferred.insert(key.clone(), DeferredReason::AcquisitionCycle);
                 continue;
             }
+            // Every variant contains this candidate and all proposed items.
+            // If even their conservative size is too large, avoid building the
+            // combinations while preserving the original cycle classification.
+            let mut minimum = proposed.clone();
+            minimum.insert(key.clone(), path.clone());
+            if body_size_lower_bound(&minimum, index, context, &mut cache)?
+                > search_budget::MAX_INPUT_BYTES
+            {
+                deferred.insert(key.clone(), DeferredReason::InputBytes);
+                continue;
+            }
+            let alternatives = variants(
+                key,
+                path,
+                index,
+                context,
+                &proposed,
+                &BTreeSet::new(),
+                &mut group_cache,
+            )?;
+            debug_assert_eq!(count, alternatives.len());
             for bundle in alternatives {
                 let mut trial = proposed.clone();
                 trial.extend(bundle.clone());
