@@ -26,6 +26,13 @@ read spec/docs -> design graph -> author domain.yaml -> author mappings.yaml -> 
 
 Do not add scripts or generator crates that mechanically emit canonical `domain.yaml` or `mappings.yaml` from a spec.
 
+## Build and test
+
+The pinned Bazel graph supplies CI-parity quality checks, registered nextest suites,
+and release exports. See [build and test](doc-site/docs/reference/build-and-test.md)
+and the detailed [Bazel reference](build/bazel/README.md). Cargo remains useful
+for focused local development and catalog authoring.
+
 ## Validation Commands
 
 Use these commands as appropriate:

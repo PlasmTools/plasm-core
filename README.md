@@ -12,7 +12,7 @@ Most agent stacks still center on **ad hoc JSON tools**: large schemas in contex
 
 ## Quick start
 
-Prerequisites: **Rust** (`cargo`). Optional: **Just**, **Elixir** (for downstream Phoenix workflows).
+Prerequisites: **Rust** (`cargo`). For CI-parity checks and release builds, see [Build and test](doc-site/docs/reference/build-and-test.md). Optional: **Just**, **Elixir** (for downstream Phoenix workflows).
 
 **OSS appliance (native binary)** — **`plasm-server`** (Cargo package `plasm-server`): in-process kernel, HTTP + MCP, optional Ratatui UI. No OSS container image is shipped from this repo; run with Cargo:
 

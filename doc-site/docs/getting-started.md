@@ -17,7 +17,7 @@ Full walkthrough: [Appliance quick start](appliance/quickstart.md).
 
 ## Track B — From source (catalog authors)
 
-**Prerequisites:** Rust (`cargo`), repo cloned with `apis/` populated.
+**Prerequisites:** Rust (`cargo`), repo cloned with `apis/` populated. Contributors can use the [build and test guide](reference/build-and-test.md) for CI-parity checks.
 
 ### Step 1 — Validate a catalog
 
