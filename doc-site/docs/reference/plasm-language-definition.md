@@ -111,6 +111,15 @@ a presentation page must not truncate it. Fixed backend page coordinates remain 
 A singleton proof permits scalar field extraction; plural traversal uses
 `flat_map`. A projected id-shaped object does not acquire receiver authority.
 
+### Nominal entity unions
+
+Some capabilities return a closed union of entity variants. Narrow such a rowset
+with `.of_type(eA)`, using an exposed entity symbol in the union, before operations
+that require that particular variant. Narrowing selects original occurrences;
+constructing a dictionary does not grant the same entity authority. See
+[closed nominal entity outputs](../authoring/reference.md#closed-nominal-entity-outputs)
+and the `entity_union` cases in the [coverage ledger](https://github.com/PlasmTools/plasm-core/blob/main/crates/plasm-e2e/tests/plasm_language_matrix/PYTHON-COVERAGE.md).
+
 Scoped record fields may embed a bound rowset (`{"items": rows}`) as a complete
 observed array. The binding is captured explicitly; absence is retained and no
 receiver authority is granted to the embedded values.
@@ -130,6 +139,11 @@ and upstream checker, subject to explicit Plasm boundary policy. The current
 implementation uses upstream admission. Compute returns preserve primitive,
 nominal `vN`, record, array and union contracts; validation occurs before dependent
 effects. The outer class is never instantiated in the worker.
+
+Within an execution, compatible compute occurrences can reuse static preparation.
+The [compute contract](python-compute-contract.md#execution-scoped-static-preparation)
+defines the reuse boundary and per-occurrence checks.
+
 Python multiline, raw and formatted string forms replace tagged heredocs and
 source-level Jinja rendering. A formatting expression becomes a reviewed render
 node through its declared compute dependency.
