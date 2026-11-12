@@ -39,7 +39,7 @@ use crate::discovery_store::{DiscoveryAuthorization, RetrievalReceipt};
 use plasm_core::{prerequisites::DeploymentBindings, CGS};
 
 pub(crate) const SEARCH_POLICY: &str =
-    "additive-connected-frontier-current-hybrid-evidence-3-judgments-3-attempts-16000-byte-packet-v43";
+    "additive-connected-frontier-current-hybrid-evidence-3-judgments-3-attempts-16000-byte-packet-v44";
 
 #[derive(Clone, Copy)]
 pub struct SearchContext<'a> {
@@ -60,7 +60,6 @@ pub struct SearchContext<'a> {
 pub enum DeferredReason {
     Requests,
     InputBytes,
-    AcquisitionCycle,
     ReportedInputTokens,
     OperationPending,
     OperationUncertain,
@@ -1166,7 +1165,7 @@ pub(super) mod tests {
     }
 
     #[tokio::test]
-    async fn unavailable_receiver_is_unexplored_not_a_byte_failure() {
+    async fn caller_supplied_receiver_does_not_require_a_discovered_producer() {
         let mut catalogs = fixture();
         catalogs
             .get_mut("matrix")
@@ -1178,13 +1177,13 @@ pub(super) mod tests {
             .receiver = Some(plasm_core::CapabilityReceiver::Entity {
             entity: "Prepared".into(),
         });
-        let (_, _, search) = select(
+        let (retrieval, _, search) = select(
             SearchContext {
                 visits: &Default::default(),
                 exposed: &[],
                 model: RELEVANCE_MODEL,
-                intent: &IntentProvenance::from_turns(["spectrum".into()]).unwrap(),
-                generation: "receiver-cycle",
+                intent: &IntentProvenance::from_turns(["Read prepared resources.".into()]).unwrap(),
+                generation: "caller-receiver",
                 catalogs: &catalogs,
                 deployments: &Default::default(),
                 allowed: &DiscoveryAuthorization::catalogs(BTreeSet::from(["matrix".into()])),
@@ -1193,16 +1192,14 @@ pub(super) mod tests {
         )
         .await
         .unwrap();
-        assert!(search
+        assert!(retrieval
+            .candidates
+            .iter()
+            .any(|c| c.reference.capability == "prepared_read"));
+        assert!(!search
             .unexplored
             .iter()
             .any(|key| key.capability == "prepared_read"));
-        assert!(search
-            .deferred
-            .iter()
-            .any(|item| item.reference.capability == "prepared_read"
-                && matches!(item.reason, DeferredReason::AcquisitionCycle)));
-        assert_eq!(search.requests, 1);
     }
 
     #[tokio::test]

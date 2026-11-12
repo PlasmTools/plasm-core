@@ -8,7 +8,7 @@ use serde_json::Value;
 use std::collections::BTreeMap;
 
 mod connected_size;
-pub(super) use connected_size::{connected_lower_bound, connected_size, PreparedLocal};
+pub(super) use connected_size::{connected_size, PreparedLocal};
 
 pub(super) const MAX_QUESTIONS: usize = 4;
 

@@ -3,168 +3,6 @@ use super::*;
 use crate::discovery_matcher::online::tests::fixture;
 
 #[test]
-fn bounded_variant_count_matches_materialized_combinations_and_cycles() {
-    let catalogs = fixture();
-    let deployments = Default::default();
-    let allowed = DiscoveryAuthorization::catalogs(BTreeSet::from(["matrix".into()]));
-    let index = CatalogueSearch::new(&catalogs, &deployments, &allowed).unwrap();
-    let intent = IntentProvenance::from_turns(["Inspect and prepare the sample.".into()]).unwrap();
-    let visits = BTreeMap::new();
-    let context = SearchContext {
-        model: RELEVANCE_MODEL,
-        intent: &intent,
-        generation: "variant-count",
-        catalogs: &catalogs,
-        deployments: &deployments,
-        allowed: &allowed,
-        exposed: &[],
-        visits: &visits,
-    };
-    for key in index.candidates.keys() {
-        for proposed in [Bundle::new(), Bundle::from([(key.clone(), Vec::new())])] {
-            for ancestors in [BTreeSet::new(), BTreeSet::from([key.clone()])] {
-                let count = variant_count(
-                    key,
-                    &index,
-                    context,
-                    &proposed,
-                    &ancestors,
-                    &mut GroupCache::new(),
-                )
-                .unwrap();
-                let materialized = variants(
-                    key,
-                    &Vec::new(),
-                    &index,
-                    context,
-                    &proposed,
-                    &ancestors,
-                    &mut GroupCache::new(),
-                )
-                .unwrap();
-                assert_eq!(count, materialized.len(), "{key:?}");
-            }
-        }
-    }
-}
-
-#[test]
-fn variant_count_preserves_cap_and_recursive_cycle() {
-    use crate::discovery_matcher::search_graph::SearchGraph;
-    use plasm_core::prerequisites::{InputSourceBinding, InputSourceTarget};
-
-    let mut catalogs = fixture();
-    let cgs = catalogs.get_mut("matrix").unwrap();
-    let template = cgs.capabilities["opaque"].clone();
-    for name in std::iter::once("root".to_owned()).chain((0..8).map(|i| format!("supplier_{i}"))) {
-        let mut capability = template.clone();
-        capability.name = name.clone().into();
-        cgs.capabilities.insert(name.into(), capability);
-    }
-    let deployments = Default::default();
-    let allowed = DiscoveryAuthorization::catalogs(BTreeSet::from(["matrix".into()]));
-    let mut index = CatalogueSearch::new(&catalogs, &deployments, &allowed).unwrap();
-    let reference = |name: &str| CapabilityRef {
-        catalog: "matrix".into(),
-        capability: name.into(),
-    };
-    let root = reference("root");
-    let suppliers: Vec<_> = (0..8)
-        .map(|i| reference(&format!("supplier_{i}")))
-        .collect();
-    let mut edges = Vec::new();
-    {
-        let mut add_edge = |provider: CapabilityRef, consumer: CapabilityRef, slot: String| {
-            let provenance = format!("{provider:?}:{consumer:?}:{slot}");
-            let binding = InputSourceBinding {
-                provider: provider.clone(),
-                consumer: consumer.clone(),
-                input: InputSourceTarget::Receiver {
-                    entity: slot.into(),
-                },
-                output_field: "id".into(),
-                collect: false,
-            };
-            index.input_bindings.insert(provenance.clone(), binding);
-            edges.push(Edge {
-                source: provider,
-                consumer,
-                relationship: Relationship::SuppliesInput,
-                provenance,
-            });
-        };
-        for slot in 0..3 {
-            for supplier in &suppliers {
-                add_edge(supplier.clone(), root.clone(), format!("seat_{slot}"));
-            }
-        }
-        add_edge(root.clone(), suppliers[0].clone(), "cycle".into());
-    }
-    let authorized = index.candidates.keys().cloned().collect();
-    index.graph = SearchGraph::new(authorized, edges.clone()).unwrap();
-    let intent = IntentProvenance::from_turns(["Inspect the sample.".into()]).unwrap();
-    let visits = BTreeMap::new();
-    let context = SearchContext {
-        model: RELEVANCE_MODEL,
-        intent: &intent,
-        generation: "variant-cap",
-        catalogs: &catalogs,
-        deployments: &deployments,
-        allowed: &allowed,
-        exposed: &[],
-        visits: &visits,
-    };
-    let count = variant_count(
-        &root,
-        &index,
-        context,
-        &Bundle::new(),
-        &BTreeSet::new(),
-        &mut GroupCache::new(),
-    )
-    .unwrap();
-    let materialized = variants(
-        &root,
-        &Vec::new(),
-        &index,
-        context,
-        &Bundle::new(),
-        &BTreeSet::new(),
-        &mut GroupCache::new(),
-    )
-    .unwrap();
-    assert_eq!(count, MAX_VARIANTS);
-    assert_eq!(count, materialized.len());
-
-    edges.retain(|edge| {
-        (edge.source == suppliers[0] && edge.consumer == root)
-            || (edge.source == root && edge.consumer == suppliers[0])
-    });
-    index.graph = SearchGraph::new(index.candidates.keys().cloned().collect(), edges).unwrap();
-    let count = variant_count(
-        &root,
-        &index,
-        context,
-        &Bundle::new(),
-        &BTreeSet::new(),
-        &mut GroupCache::new(),
-    )
-    .unwrap();
-    let materialized = variants(
-        &root,
-        &Vec::new(),
-        &index,
-        context,
-        &Bundle::new(),
-        &BTreeSet::new(),
-        &mut GroupCache::new(),
-    )
-    .unwrap();
-    assert_eq!(count, 0);
-    assert_eq!(count, materialized.len());
-}
-
-#[test]
 fn bounded_packet_sizing_rejects_only_when_full_packet_exceeds_limit() {
     let catalogs = fixture();
     let deployments = Default::default();
@@ -370,4 +208,67 @@ fn compact_unjudged_root_also_precedes_repeated_optional_paths() {
         .iter()
         .position(|e| e["kind"] == "optional_path")
         .is_none_or(|optional| fresh < optional));
+}
+
+#[test]
+fn input_supply_cycles_do_not_suppress_a_connected_candidate() {
+    use crate::discovery_matcher::search_graph::SearchGraph;
+    let mut catalogs = fixture();
+    let cgs = catalogs.get_mut("matrix").unwrap();
+    let mut alternate = cgs.capabilities["source_read"].clone();
+    alternate.name = "source_alternate".into();
+    cgs.capabilities.insert(alternate.name.clone(), alternate);
+    let deployments = Default::default();
+    let allowed = DiscoveryAuthorization::catalogs(BTreeSet::from(["matrix".into()]));
+    let mut index = CatalogueSearch::new(&catalogs, &deployments, &allowed).unwrap();
+    let reference = |name: &str| CapabilityRef {
+        catalog: "matrix".into(),
+        capability: name.into(),
+    };
+    let root = reference("process");
+    let source = reference("source_read");
+    let alternate = reference("source_alternate");
+    use plasm_core::prerequisites::{InputSourceBinding, InputSourceTarget};
+    let mut edges = Vec::new();
+    for (provider, consumer, provenance) in [
+        (source.clone(), root.clone(), "forward"),
+        (alternate.clone(), root.clone(), "alternate"),
+        (root.clone(), source.clone(), "reverse"),
+    ] {
+        index.input_bindings.insert(
+            provenance.into(),
+            InputSourceBinding {
+                provider: provider.clone(),
+                consumer: consumer.clone(),
+                input: InputSourceTarget::Receiver {
+                    entity: "Prepared".into(),
+                },
+                output_field: "id".into(),
+                collect: false,
+            },
+        );
+        edges.push(Edge {
+            source: provider,
+            consumer,
+            relationship: Relationship::SuppliesInput,
+            provenance: provenance.into(),
+        });
+    }
+    index.graph = SearchGraph::new(index.candidates.keys().cloned().collect(), edges).unwrap();
+    let intent = IntentProvenance::from_turns(["Inspect the sample.".into()]).unwrap();
+    let exposed = [root.clone()];
+    let visits = BTreeMap::new();
+    let context = SearchContext {
+        model: RELEVANCE_MODEL,
+        intent: &intent,
+        generation: "input-cycle",
+        catalogs: &catalogs,
+        deployments: &deployments,
+        allowed: &allowed,
+        exposed: &exposed,
+        visits: &visits,
+    };
+    let plan = plan_ordered(&index, context, vec![root]).unwrap();
+    assert!(plan.wave.iter().any(|(key, _)| key == &source));
+    assert!(plan.wave.iter().any(|(key, _)| key == &alternate));
 }

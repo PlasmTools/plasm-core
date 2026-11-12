@@ -57,7 +57,7 @@
       ]
     },
     "search": {
-      "policy": "additive-connected-frontier-current-hybrid-evidence-3-judgments-3-attempts-16000-byte-packet-v43",
+      "policy": "additive-connected-frontier-current-hybrid-evidence-3-judgments-3-attempts-16000-byte-packet-v44",
       "exposed": [],
       "considered": [{"catalog":"matrix","capability":"record_read"}],
       "unexplored": [],
