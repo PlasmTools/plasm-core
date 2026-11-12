@@ -23,7 +23,7 @@ cargo_build_script(
     srcs = ["build.rs"],
     edition = "2021",
     proc_macro_deps = all_crate_deps(build_proc_macro = True),
-    version = "0.6.0",
+    version = "0.6.1",
     deps = all_crate_deps(build = True),
 )
 
@@ -40,7 +40,7 @@ rust_shared_library(
         "@platforms//os:macos": ["-Clink-arg=-Wl,-undefined,dynamic_lookup"],
         "//conditions:default": [],
     }),
-    version = "0.6.0",
+    version = "0.6.1",
     visibility = ["//visibility:public"],
     deps = [
         ":build_script",
@@ -68,7 +68,7 @@ rust_library(
     crate_root = "src/lib.rs",
     edition = "2021",
     proc_macro_deps = all_crate_deps(proc_macro = True),
-    version = "0.6.0",
+    version = "0.6.1",
     deps = [
         ":build_script",
         "//crates/plasm-agent-core:plasm_agent_core",

@@ -277,6 +277,71 @@ fn test_app_execute(st: PlasmHostState) -> Router<()> {
 }
 
 #[tokio::test]
+async fn archived_plan_source_requires_the_owning_session_tenant() {
+    let st = test_state_with_registry();
+    let app = test_app_execute(st.clone());
+    let request = Request::builder()
+        .method("POST")
+        .uri("/execute")
+        .header("content-type", "application/json")
+        .body(Body::from(
+            serde_json::json!({"entry_id": "overshow", "entities": ["Profile"]}).to_string(),
+        ))
+        .unwrap();
+    let response = app.clone().oneshot(request).await.unwrap();
+    assert_eq!(response.status(), StatusCode::SEE_OTHER);
+    let location = response
+        .headers()
+        .get(LOCATION)
+        .unwrap()
+        .to_str()
+        .unwrap()
+        .to_owned();
+    let parts: Vec<_> = location.trim_start_matches('/').split('/').collect();
+    let (prompt, session) = (parts[1], parts[2]);
+    let plan_id = Uuid::new_v4();
+    let source = "class P(Program):\n    def build(self):\n        return e1.query()";
+    let doc: crate::run_artifacts::CodePlanArchiveDocument =
+        serde_json::from_value(serde_json::json!({
+            "kind": "code_plan", "plan_id": plan_id.to_string(), "prompt_hash": prompt,
+            "session_id": session, "entry_id": "overshow", "plan_index": 1, "plan_handle": "p1",
+            "name": "P", "code": source, "plan_hash": "hash", "comp": {},
+            "catalog_cgs_hash": "hash", "domain_revision": 1, "entities": ["Profile"],
+            "created_at": "2026-01-01T00:00:00Z"
+        }))
+        .unwrap();
+    st.run_artifacts
+        .insert_code_plan(prompt, session, plan_id, 1, &doc)
+        .await
+        .unwrap();
+    let uri = format!("{location}/plans/{plan_id}");
+    let request = Request::builder().uri(&uri).body(Body::empty()).unwrap();
+    let response = app.oneshot(request).await.unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    let result: serde_json::Value = serde_json::from_slice(&body).unwrap();
+    assert_eq!(result["code"], source);
+    assert_eq!(result["prompt_hash"], prompt);
+    assert_eq!(result["session_id"], session);
+    assert_eq!(result["plan_id"], plan_id.to_string());
+
+    let other = execute_routes()
+        .layer(Extension(st))
+        .layer(Extension(IncomingPrincipal(Some(
+            crate::incoming_auth::TenantPrincipal {
+                tenant_id: "other".into(),
+                subject: "other".into(),
+                method: crate::incoming_auth::IncomingAuthMethod::Jwt,
+            },
+        ))));
+    let request = Request::builder().uri(uri).body(Body::empty()).unwrap();
+    let response = other.oneshot(request).await.unwrap();
+    assert_eq!(response.status(), StatusCode::FORBIDDEN);
+}
+
+#[tokio::test]
 async fn invalid_prompt_hash_path_segment_is_400() {
     let st = test_state_with_registry();
     let app = test_app_execute(st);

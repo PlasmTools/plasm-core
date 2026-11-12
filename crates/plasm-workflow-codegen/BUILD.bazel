@@ -14,7 +14,7 @@ rust_library(
     crate_root = "src/lib.rs",
     edition = "2021",
     proc_macro_deps = all_crate_deps(proc_macro = True),
-    version = "0.6.0",
+    version = "0.6.1",
     visibility = ["//visibility:public"],
     deps = ["//crates/plasm-agent-core:plasm_agent_core"] + all_crate_deps(normal = True),
 )
@@ -32,7 +32,7 @@ rust_binary(
     crate_root = "src/bin/plasm_gen_workflow_ts.rs",
     edition = "2021",
     proc_macro_deps = all_crate_deps(proc_macro = True),
-    version = "0.6.0",
+    version = "0.6.1",
     visibility = ["//visibility:public"],
     deps = [
         ":plasm_workflow_codegen",

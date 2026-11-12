@@ -7,10 +7,10 @@ def build_targets():
     cargo_build_script(
         name = "build_script",
         srcs = ["build.rs"],
-        build_script_env = {"PLASM_RELEASE_VERSION": "0.6.0"},
+        build_script_env = {"PLASM_RELEASE_VERSION": "0.6.1"},
         data = native.glob(["src/assets/**"]),
         edition = "2021",
-        version = "0.6.0",
+        version = "0.6.1",
     )
 
     _COMMON = dict(
@@ -30,7 +30,7 @@ def build_targets():
         }),
         edition = "2021",
         proc_macro_deps = all_crate_deps(proc_macro = True),
-        version = "0.6.0",
+        version = "0.6.1",
         visibility = ["//visibility:public"],
         deps = [
             ":build_script",
