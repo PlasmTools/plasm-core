@@ -227,6 +227,7 @@ pub fn resolve_relation_target_id(
 #[cfg(test)]
 mod tests {
     use super::*;
+
     use crate::schema::EntityDef;
 
     #[test]

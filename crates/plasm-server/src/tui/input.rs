@@ -11,6 +11,84 @@ pub(crate) struct UpdateDeps<'a> {
 pub(crate) fn update_modal_key(state: &mut RunState, key: KeyEvent, deps: &UpdateDeps<'_>) -> bool {
     let admin_busy = state.admin_busy();
     match &mut state.mode {
+        InputMode::TrainingSelect { logical_ref } => match key.code {
+            KeyCode::Esc => state.mode = InputMode::Normal,
+            KeyCode::Backspace => {
+                logical_ref.pop();
+            }
+            KeyCode::Char(c) => logical_ref.push(c),
+            KeyCode::Enter => {
+                match plasm_agent_core::mcp_logical_ref::parse_logical_session_wire_ref(
+                    logical_ref.trim(),
+                ) {
+                    Ok(logical) => {
+                        state.mode = InputMode::TrainingOwner {
+                            logical,
+                            action: TrainingAction::Status,
+                            secret: OwnerSetupSecret::default(),
+                        }
+                    }
+                    Err(_) => {
+                        state.mode = InputMode::Normal;
+                        set_notice(state, RunNotice::new(NoticeSeverity::Warning, "Invalid logical session reference", "Paste the logical_session_ref returned when the session was created."));
+                    }
+                }
+            }
+            _ => {}
+        },
+        InputMode::TrainingOwner {
+            logical,
+            action,
+            secret,
+        } => match key.code {
+            KeyCode::Esc => state.mode = InputMode::Normal,
+            KeyCode::Backspace => secret.pop(),
+            KeyCode::Char(c) => secret.push(c),
+            KeyCode::Enter if !admin_busy => {
+                let job = TrainingJob {
+                    logical: *logical,
+                    action: *action,
+                    secret: std::mem::take(secret),
+                };
+                state.mode = InputMode::Normal;
+                if let Some(bridge) = deps.admin_bridge {
+                    submit_inline_admin_job(state, bridge, AdminTaskKind::Training, |corr| {
+                        AdminJob::Training { corr, job }
+                    });
+                } else {
+                    set_notice(
+                        state,
+                        RunNotice::new(
+                            NoticeSeverity::Warning,
+                            "Admin bridge unavailable",
+                            "Training control requires the active appliance admin service.",
+                        ),
+                    );
+                }
+            }
+            _ => {}
+        },
+        InputMode::TrainingReview { request_ref } => match key.code {
+            KeyCode::Esc => state.mode = InputMode::Normal,
+            KeyCode::Backspace => {
+                request_ref.pop();
+            }
+            KeyCode::Char(c) if c.is_ascii_hexdigit() || c == '-' => request_ref.push(c),
+            KeyCode::Enter => {
+                let reference = Uuid::parse_str(request_ref.trim());
+                state.mode = InputMode::Normal;
+                match reference {
+                    Ok(reference) => {
+                        match super::screens::runs::training_review_url(reference) {
+                            Some(url) => set_notice(state, copy_notice("Authenticated review link copied", "Review link copy failed", deps.clipboard.copy_text(&url))),
+                            None => set_notice(state, RunNotice::new(NoticeSeverity::Warning, "Review host unavailable", "Set PLASM_TRAINING_APPROVAL_BASE_URL to the authenticated owner review host. No decision was made.")),
+                        }
+                    }
+                    Err(_) => set_notice(state, RunNotice::new(NoticeSeverity::Warning, "Invalid request reference", "Use the immutable request UUID returned by training consent or candidate review.")),
+                }
+            }
+            _ => {}
+        },
         InputMode::ApiFilter => match key.code {
             KeyCode::Enter | KeyCode::Tab | KeyCode::BackTab => state.mode = InputMode::Normal,
             KeyCode::Esc => {
@@ -486,6 +564,42 @@ pub(crate) fn update_normal_key(
 ) -> bool {
     let snap = state.resources.snapshot.clone();
     match key.code {
+        KeyCode::Char('l') if state.screen == RunScreen::Runs && !state.admin_busy() => {
+            state.mode = InputMode::TrainingSelect {
+                logical_ref: String::new(),
+            };
+        }
+        KeyCode::Char('f' | 'x' | 'a')
+            if state.screen == RunScreen::Runs && !state.admin_busy() =>
+        {
+            if let Some(snapshot) = &state.training {
+                let action = if key.code == KeyCode::Char('x') {
+                    TrainingAction::Stop {
+                        expected_revision: snapshot.status.revision,
+                        idempotency_key: Uuid::new_v4(),
+                    }
+                } else if key.code == KeyCode::Char('a') {
+                    TrainingAction::AuthorizeController {
+                        expected_revision: snapshot.status.revision,
+                        idempotency_key: Uuid::new_v4(),
+                    }
+                } else {
+                    TrainingAction::Status
+                };
+                state.mode = InputMode::TrainingOwner {
+                    logical: snapshot.logical,
+                    action,
+                    secret: OwnerSetupSecret::default(),
+                };
+            } else {
+                set_notice(state, RunNotice::new(NoticeSeverity::Info, "Select a session", "Press l to select and authenticate a logical session before controlling capture."));
+            }
+        }
+        KeyCode::Char('t') if state.screen == RunScreen::Runs => {
+            state.mode = InputMode::TrainingReview {
+                request_ref: String::new(),
+            };
+        }
         KeyCode::Char('q') => return true,
         KeyCode::Char('#') if state.screen == RunScreen::Clients => {
             let url = deps.listen.client_mcp_streamable_url();
@@ -1209,7 +1323,10 @@ pub(crate) fn update(state: &mut RunState, msg: UiMsg, deps: &UpdateDeps<'_>) ->
             false
         }
         UiMsg::Key(key) => match state.mode {
-            InputMode::ApiFilter
+            InputMode::TrainingSelect { .. }
+            | InputMode::TrainingOwner { .. }
+            | InputMode::TrainingReview { .. }
+            | InputMode::ApiFilter
             | InputMode::ApiSecretEdit { .. }
             | InputMode::CatalogConnect { .. }
             | InputMode::AddKeyLabel { .. }

@@ -1,4 +1,4 @@
-//! Materialized entity graph for execute sessions: [`GraphCache`], [`CachedEntity`], [`CacheStore`].
+//! Materialized entity graph for execute sessions: [`GraphCache`] and [`CachedEntity`].
 //!
 //! # Cache invariants (semi-formal)
 //!
@@ -457,32 +457,6 @@ impl CachedEntity {
             }
         }
         changed
-    }
-}
-
-/// Cache abstraction for execution ([`GraphCache`] is the default in-memory store).
-pub trait CacheStore {
-    fn get(&self, reference: &Ref) -> Option<&CachedEntity>;
-    fn insert(&mut self, entity: CachedEntity) -> Result<bool, RuntimeError>;
-    fn merge(&mut self, entities: Vec<CachedEntity>) -> Result<usize, RuntimeError>;
-    fn remove(&mut self, reference: &Ref) -> Option<CachedEntity>;
-}
-
-impl CacheStore for GraphCache {
-    fn get(&self, reference: &Ref) -> Option<&CachedEntity> {
-        GraphCache::get(self, reference)
-    }
-
-    fn insert(&mut self, entity: CachedEntity) -> Result<bool, RuntimeError> {
-        GraphCache::insert(self, entity)
-    }
-
-    fn merge(&mut self, entities: Vec<CachedEntity>) -> Result<usize, RuntimeError> {
-        GraphCache::merge(self, entities)
-    }
-
-    fn remove(&mut self, reference: &Ref) -> Option<CachedEntity> {
-        GraphCache::remove(self, reference)
     }
 }
 
@@ -1000,68 +974,6 @@ mod tests {
     }
 
     #[test]
-    fn test_cache_insert_and_get() {
-        let mut cache = GraphCache::new();
-        let entity = create_test_entity("test-1", "TestEntity");
-        let reference = entity.reference.clone();
-
-        assert!(cache.insert(entity).unwrap());
-        assert!(cache.contains(&reference));
-
-        let retrieved = cache.get(&reference).unwrap();
-        assert_eq!(retrieved.reference, reference);
-        assert_eq!(
-            retrieved.get_field("name").map(TypedFieldValue::to_value),
-            Some(Value::String("Entity test-1".to_string()))
-        );
-    }
-
-    #[test]
-    fn test_cache_merge() {
-        let mut cache = GraphCache::new();
-        let entity1 = create_test_entity("test-1", "TestEntity");
-        let reference = entity1.reference.clone();
-
-        // Insert initial entity
-        cache.insert(entity1).unwrap();
-
-        // Create updated version
-        let mut entity2 = create_test_entity("test-1", "TestEntity");
-        entity2.update_field(
-            "name".to_string(),
-            Value::String("Updated Entity".to_string()),
-            2,
-        );
-
-        // Merge should update the cached entity
-        cache.insert(entity2).unwrap();
-
-        let retrieved = cache.get(&reference).unwrap();
-        assert_eq!(
-            retrieved.get_field("name").map(TypedFieldValue::to_value),
-            Some(Value::String("Updated Entity".to_string()))
-        );
-    }
-
-    #[test]
-    fn test_cache_type_index() {
-        let mut cache = GraphCache::new();
-        let entity1 = create_test_entity("test-1", "TestEntity");
-        let entity2 = create_test_entity("test-2", "TestEntity");
-        let entity3 = create_test_entity("test-3", "OtherEntity");
-
-        cache.insert(entity1).unwrap();
-        cache.insert(entity2).unwrap();
-        cache.insert(entity3).unwrap();
-
-        let test_entities = cache.get_entities_by_type("TestEntity");
-        assert_eq!(test_entities.len(), 2);
-
-        let other_entities = cache.get_entities_by_type("OtherEntity");
-        assert_eq!(other_entities.len(), 1);
-    }
-
-    #[test]
     fn proximal_repeated_insert_does_not_duplicate_type_index() {
         let mut cache = GraphCache::new();
         let e = create_test_entity("1", "Item");
@@ -1071,71 +983,6 @@ mod tests {
             cache.get_entities_by_type("Item").len(),
             1,
             "same Ref must enumerate once"
-        );
-    }
-
-    #[test]
-    fn test_cache_relations() {
-        let mut cache = GraphCache::new();
-
-        // Create entities with relations
-        let account_ref = Ref::new("Account", "acc-1");
-        let contact1_ref = Ref::new("Contact", "c-1");
-        let contact2_ref = Ref::new("Contact", "c-2");
-
-        let mut account_fields = IndexMap::new();
-        account_fields.insert("name".to_string(), Value::String("Acme Corp".to_string()));
-
-        let mut account_relations = IndexMap::new();
-        account_relations.insert(
-            "contacts".to_string(),
-            DecodedRelation::Specified(
-                plasm_core::row_contract::RelationMembership::observe(
-                    None,
-                    &"relation_fixture",
-                    vec![contact1_ref.clone(), contact2_ref.clone()],
-                    None,
-                )
-                .unwrap(),
-            ),
-        );
-
-        let account = CachedEntity::from_decoded(
-            account_ref.clone(),
-            account_fields,
-            account_relations,
-            1,
-            EntityCompleteness::Complete,
-        );
-        cache.insert(account).unwrap();
-
-        let retrieved = cache.get(&account_ref).unwrap();
-        let contacts = retrieved.get_relations("contacts").unwrap();
-        assert_eq!(contacts.len(), 2);
-        assert!(contacts.contains(&contact1_ref));
-        assert!(contacts.contains(&contact2_ref));
-    }
-
-    #[test]
-    fn test_entity_merge() {
-        let mut entity1 = create_test_entity("test-1", "TestEntity");
-        let mut entity2 = create_test_entity("test-1", "TestEntity");
-
-        // Make entity2 newer
-        entity2.last_updated = 2;
-        entity2.fields.insert(
-            "new_field".to_string(),
-            TypedFieldValue::from(Value::String("new_value".to_string())),
-        );
-
-        let changed = entity1.merge(&entity2).unwrap();
-        assert!(changed);
-        assert_eq!(entity1.last_updated, 2);
-        assert_eq!(
-            entity1
-                .get_field("new_field")
-                .map(TypedFieldValue::to_value),
-            Some(Value::String("new_value".to_string()))
         );
     }
 
@@ -1210,57 +1057,6 @@ mod tests {
         assert!(full.merge(&partial).unwrap());
         let kids = full.get_relations("children").expect("children preserved");
         assert_eq!(kids.iter().collect::<Vec<_>>(), vec![&r1]);
-    }
-
-    #[test]
-    fn test_cache_invalidation() {
-        let mut cache = GraphCache::new();
-        let entity1 = create_test_entity("test-1", "TestEntity");
-        let entity2 = create_test_entity("test-2", "TestEntity");
-        let entity3 = create_test_entity("test-3", "OtherEntity");
-
-        cache.insert(entity1).unwrap();
-        cache.insert(entity2).unwrap();
-        cache.insert(entity3).unwrap();
-
-        // Invalidate all TestEntity entities
-        let invalidated =
-            cache.invalidate_matching(|entity| entity.reference.entity_type == "TestEntity");
-        assert_eq!(invalidated, 2);
-
-        let remaining = cache.get_entities_by_type("TestEntity");
-        assert_eq!(remaining.len(), 0);
-
-        let other_remaining = cache.get_entities_by_type("OtherEntity");
-        assert_eq!(other_remaining.len(), 1);
-    }
-
-    #[test]
-    fn test_cache_stats() {
-        let mut cache = GraphCache::new();
-        assert_eq!(cache.stats().total_entities, 0);
-
-        let entity1 = create_test_entity("test-1", "TestEntity");
-        let entity2 = create_test_entity("test-2", "OtherEntity");
-
-        cache.insert(entity1).unwrap();
-        cache.insert(entity2).unwrap();
-
-        let stats = cache.stats();
-        assert_eq!(stats.total_entities, 2);
-        assert_eq!(stats.entity_types, 2);
-        assert!(stats.version > 0);
-    }
-
-    #[test]
-    fn merge_from_graph_pulls_entities_from_other() {
-        let mut a = GraphCache::new();
-        let mut b = GraphCache::new();
-        let e = create_test_entity("x1", "TestEntity");
-        b.insert(e.clone()).unwrap();
-        a.merge_from_graph(&b).unwrap();
-        assert!(a.contains(&e.reference));
-        assert_eq!(a.stats().total_entities, 1);
     }
 
     fn assert_i1_key_reference(cache: &GraphCache) {

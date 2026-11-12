@@ -160,6 +160,14 @@ pub async fn persist_execute_run(
         .core
         .append_run_artifact(run_id, graph_epoch, resource_index, payload)
         .await;
+    sess.core
+        .retain_output_archive(
+            &appended,
+            st.run_artifacts.as_ref().clone(),
+            &sess.prompt_hash,
+            session_id,
+        )
+        .await;
     if let Some(persistence) = &st.session_graph_persistence {
         if let Err(e) = persistence
             .append_delta(

@@ -5,8 +5,32 @@ use crate::symbol_tuning::{
     ExposureSurfaceDelta,
 };
 use crate::{CapabilityKind, CGS};
-use std::collections::BTreeSet;
 use thiserror::Error;
+
+/// Complete navigation between already admitted endpoints in one catalog.
+/// This does not admit endpoint entities, fields, or capabilities.
+pub(crate) fn admit_exposed_relations(cgs: &CGS, entry_id: &str, surface: &mut ExposureSurface) {
+    for (name, entity) in &cgs.entities {
+        let source = ExposureEntityKey {
+            entry_id: entry_id.into(),
+            entity: name.clone(),
+        };
+        if !surface.entities.contains(&source) {
+            continue;
+        }
+        for (name, relation) in &entity.relations {
+            if surface.entities.contains(&ExposureEntityKey {
+                entry_id: entry_id.into(),
+                entity: relation.target_resource.clone(),
+            }) {
+                surface.slots.insert(ExposureSlotKey::Relation {
+                    source: source.clone(),
+                    relation: name.clone(),
+                });
+            }
+        }
+    }
+}
 
 #[derive(Debug, Error, Clone, PartialEq, Eq)]
 pub enum CapabilityExposureError {
@@ -117,6 +141,37 @@ pub fn selected_capability_surface(
         // RA-12: Get/Query/Search `[…]` is the full authored field set, not `provides`.
         // Mutators still teach that write's `provides`. Identity stays bindable either way.
         admit_teaching_entity_fields(cgs, cap, entity, &entity_key, &mut surface);
+        // Embedded rows are part of the selected Get response, not another
+        // capability. Expose their typed navigation without granting a target
+        // query, a sibling operation, or an implicit source Get.
+        if cap.kind == CapabilityKind::Get {
+            for (relation_name, relation) in &entity.relations {
+                if !matches!(
+                    relation.materialize,
+                    Some(crate::schema::RelationMaterialization::FromParentGet { .. })
+                ) {
+                    continue;
+                }
+                let Some(target) = cgs.entities.get(relation.target_resource.as_str()) else {
+                    continue;
+                };
+                let target_key = ExposureEntityKey {
+                    entry_id: entry_id.into(),
+                    entity: relation.target_resource.clone(),
+                };
+                surface.entities.insert(target_key.clone());
+                surface.slots.insert(ExposureSlotKey::Relation {
+                    source: entity_key.clone(),
+                    relation: relation_name.clone(),
+                });
+                for field in CGS::default_ordered_entity_field_names(target) {
+                    surface.slots.insert(ExposureSlotKey::EntityField {
+                        entity: target_key.clone(),
+                        field: field.into(),
+                    });
+                }
+            }
+        }
         if let Some(output) = &cap.output_schema {
             let output_names: Vec<&str> = match &output.output_type {
                 crate::schema::OutputType::Entity { entity_type }
@@ -143,25 +198,7 @@ pub fn selected_capability_surface(
             }
         }
     }
-    let entities: BTreeSet<_> = surface.entities.iter().cloned().collect();
-    for key in &entities {
-        let entity = cgs.entities.get(key.entity.as_str()).ok_or_else(|| {
-            CapabilityExposureError::ExposedEntityMissing {
-                entity: key.entity.to_string(),
-            }
-        })?;
-        for (name, relation) in &entity.relations {
-            if entities.contains(&ExposureEntityKey {
-                entry_id: entry_id.into(),
-                entity: relation.target_resource.clone(),
-            }) {
-                surface.slots.insert(ExposureSlotKey::Relation {
-                    source: key.clone(),
-                    relation: name.clone(),
-                });
-            }
-        }
-    }
+    admit_exposed_relations(cgs, entry_id, &mut surface);
     Ok(ExposureSurfaceDelta { required: surface })
 }
 
@@ -190,6 +227,7 @@ mod tests {
     use super::*;
     use crate::loader::load_schema_dir;
     use crate::symbol_tuning::{ExposureSlotKey, ExposureSurfaceDelta};
+    use std::collections::BTreeSet;
 
     fn auth_bearer_search_dir() -> std::path::PathBuf {
         std::path::Path::new(crate::test_manifest_dir())
@@ -207,12 +245,12 @@ mod tests {
             .find(|c| c.domain.as_str() == "LangItem" && c.kind == CapabilityKind::Get)
             .unwrap();
         let delta = selected_capability_surface(&cgs, "fixture", &[read.name.to_string()]).unwrap();
-        assert!(!delta
+        assert!(delta
             .required
             .entities
             .iter()
             .any(|e| e.entity.as_str() == "LangSummary"));
-        assert!(!delta.required.slots.iter().any(|s| matches!(s, ExposureSlotKey::Relation { source, relation } if source.entity.as_str() == "LangItem" && relation.as_str() == "summary")));
+        assert!(delta.required.slots.iter().any(|s| matches!(s, ExposureSlotKey::Relation { source, relation } if source.entity.as_str() == "LangItem" && relation.as_str() == "summary")));
         assert_eq!(capability_names(&delta), vec![read.name.as_str()]);
     }
     fn plasm_core_fixture_load(path: &std::path::Path) -> CGS {

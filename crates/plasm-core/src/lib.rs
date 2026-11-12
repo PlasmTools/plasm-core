@@ -316,10 +316,8 @@ pub use row_membership::{
 };
 pub use row_plan::{
     fold_compute_ops, parse_with_body, CatalogFilter, CollectCardinality, CollectReason,
-    CollectRows, CollectedFrame, CompileRowPlan, EnginePlanId, FrameId, FrameShape, IngestBatch,
-    IngestRows, PlanNode, PlasmFrameSchema, PredicateCompileError, ProjectSpec, RowComputeEngine,
-    RowComputeError, RowCorrespondenceError, RowFilter, RowPlan, ScanError, ScanSource,
-    TypedAggregate,
+    CollectedFrame, FrameShape, PlanNode, PlasmFrameSchema, PredicateCompileError, ProjectSpec,
+    RowComputeError, RowCorrespondenceError, RowFilter, RowPlan, TypedAggregate,
 };
 pub use row_predicate::{
     entity_def_for_row_predicate, parse_row_predicate_list, row_predicate_from_expr,
@@ -350,8 +348,8 @@ pub mod relation_materialize;
 pub mod view_embed_proof;
 pub use capability_input::validate_capability_invocation_input;
 pub use expr_surface_render::{
-    render_expr_surface, render_expr_surface_federated, wire_surface_from_teaching_line,
-    wire_surface_from_teaching_session_line,
+    render_expr_surface, render_expr_surface_federated, render_expr_surface_named,
+    wire_surface_from_teaching_line, wire_surface_from_teaching_session_line,
 };
 pub use money::{
     json_amount_to_value, CrossCurrencyError, MoneyDecodeSpec, MoneyError, MoneyValue,
@@ -486,9 +484,11 @@ macro_rules! fixture_row { ($($tt:tt)*) => { $crate::ValueRow::try_from($crate::
 #[cfg(test)]
 pub(crate) use {fixture_row, fixture_value};
 
+pub mod program_identity;
 pub mod value_arithmetic;
 pub mod value_equality;
 pub mod value_order;
+pub use program_identity::{CompiledProgramId, InvalidCompiledProgramId};
 
 #[cfg(test)]
 pub(crate) fn test_manifest_dir() -> &'static str {

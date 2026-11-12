@@ -5,7 +5,7 @@
 mod backend;
 mod seed_resolve;
 mod seeds;
-mod session;
+pub(crate) mod session;
 mod session_churn;
 
 #[cfg(test)]
@@ -30,7 +30,6 @@ pub(crate) use seeds::{
 pub(crate) use session::execute_session_create_response_inner;
 #[cfg(test)]
 pub(crate) use session::replay_teaching_exposure_waves;
-pub(crate) use session::upsert_logical_ledger_from_snapshot;
 pub use session::SessionMutateError;
 pub use session::{apply_capability_seeds, apply_capability_seeds_for_mcp};
 pub(crate) use session::{

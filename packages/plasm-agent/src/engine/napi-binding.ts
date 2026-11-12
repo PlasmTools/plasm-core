@@ -7,6 +7,7 @@ import type { LoadedCatalog } from "../catalog/loader.js";
 import { decodeRoutingPacket, type RoutingPacket } from "./routing.js";
 import { toNapiHostTransport } from "./host-transport-bridge.js";
 import { workflowIntentSchema, intentProvenanceSchema, type IntentProvenance } from "../runtime/session-contract.js";
+import { completedWorkflowExecutionsSchema, workflowReviewReceiptSchema, servedWorkflowExampleSchema, trainingStatusSchema, reviewPacketSchema, type WorkflowLearningEngine } from "../runtime/workflow-learning.js";
 
 const nodeRequire = createRequire(import.meta.url);
 
@@ -62,9 +63,17 @@ export type HostTransportResponse = {
  * this engine-visible contract; their runtime transport must attest Opaque so
  * request-owned identity fails with typed RequestIdentityAuthOpaque.
  */
-export type HostTransportFn = (request: HostTransportRequest) => Promise<HostTransportResponse>;
+export type HostTransportFn = ((request: HostTransportRequest) => Promise<HostTransportResponse>) & {
+  /** Resolve the same bearer the transport would inject now. The transport must
+   * preserve a supplied Authorization without adding any other credentials.
+   * Absence means host-injected authentication remains opaque. */
+  resolveAuth?: (request: { entryId?: string }) => Promise<string | null>;
+};
 
 export interface PlasmEngine {
+  /** Atomically refuse completion while any named workflow has unfinished effects. */
+  sealEffectWorkflows(logicalSessionIds: string[]): Promise<void>;
+  readonly learning?: WorkflowLearningEngine;
   /** Close admission and drain all accepted native work before releasing workers. */
   close(): Promise<void>;
   loadCatalog(catalog: LoadedCatalog): Promise<void>;
@@ -74,7 +83,8 @@ export interface PlasmEngine {
   ): Promise<TeachingExposureResult>;
   dryRun(program: string, executeSessionRef?: string): Promise<DryRunResult>;
   activateDiscovery(deploymentId: string, bindingsJson: string): Promise<string>;
-  routeIntent(provenance: IntentProvenance, logicalSessionId?: string): Promise<RoutingPacket>;
+  routeIntent(provenance: IntentProvenance, logicalSessionId?: string, sessionClock?: string): Promise<RoutingPacket>;
+  takeCompletedTeaching(logicalSessionId: string, includeExamples?: boolean): Promise<string>;
   runPlan(planCommitRef: string, logicalSessionId?: string): Promise<{ ok: boolean; message: string; rowsJson?: string; metaJson?: string; artifactsJson?: string; failureJson?: string }>;
   runPlanLive?(
     planCommitRef: string,
@@ -86,6 +96,19 @@ export interface PlasmEngine {
 }
 
 type NativePlasmEngine = {
+  sealEffectWorkflows(workflowsJson: string): Promise<void>;
+  configureWorkflowLearning(configJson: string): Promise<void>;
+  configureTraining(grantJson: string): Promise<void>;
+  sealTrainingEvaluation(logicalSessionId: string): Promise<void>;
+  trainingStatus(logicalSessionId: string): Promise<string>;
+  trainingCommand(commandJson: string, logicalSessionId: string): Promise<string>;
+  trainingCandidates(commandJson: string, logicalSessionId: string): Promise<string>;
+  drainSession(logicalSessionId: string): Promise<void>;
+  releaseSession(logicalSessionId: string): Promise<void>;
+  completedWorkflowExecutions(logicalSessionId: string): Promise<string>;
+  readTeachingProgram(executionId: string, logicalSessionId: string): Promise<string>;
+  reviewWorkflow(requestJson: string, logicalSessionId: string): Promise<string>;
+  fetchWorkflowExample(revisionRef: string, logicalSessionId: string): Promise<string>;
   close(): Promise<void>;
   loadCatalog(catalogDir: string): Promise<{
     entryId: string;
@@ -107,7 +130,8 @@ type NativePlasmEngine = {
     fusedCleanRead?: boolean;
   }>;
   activateDiscovery(deploymentId: string, bindingsJson: string): Promise<string>;
-  routeIntent(intentProvenanceJson: string, logicalSessionId?: string): Promise<string>;
+  routeIntent(intentProvenanceJson: string, logicalSessionId?: string, sessionClock?: string): Promise<string>;
+  takeCompletedTeaching(logicalSessionId: string, includeExamples?: boolean): Promise<string>;
   runPlan(planCommitRef: string, logicalSessionId?: string): Promise<{
     ok: boolean;
     message: string;
@@ -118,6 +142,7 @@ type NativePlasmEngine = {
     planCommitRef: string,
     transport: (request: HostTransportRequest) => Promise<HostTransportResponse>,
     logicalSessionId?: string,
+    resolveAuth?: (request: { entryId?: string }) => Promise<string | null>,
   ): Promise<{
     ok: boolean;
     message: string;
@@ -142,6 +167,26 @@ function loadNativeConstructor(): NativeConstructor | null {
 export class NapiPlasmEngine implements PlasmEngine {
   private readonly native: NativePlasmEngine;
   private loaded: LoadedCatalog[] = [];
+  sealEffectWorkflows(ids: string[]): Promise<void> {
+    return this.native.sealEffectWorkflows(JSON.stringify(ids));
+  }
+  readonly learning: WorkflowLearningEngine = {
+    configure: config => this.native.configureWorkflowLearning(JSON.stringify(config)),
+    configureTraining: grant => this.native.configureTraining(JSON.stringify(grant)),
+    sealTrainingEvaluation: id => this.native.sealTrainingEvaluation(id),
+    trainingStatus: async id => trainingStatusSchema.parse(JSON.parse(await this.native.trainingStatus(id))),
+    trainingCommand: async (id, command) => trainingStatusSchema.parse(JSON.parse(await this.native.trainingCommand(JSON.stringify(command), id))),
+    trainingCandidates: async (id, command) => JSON.parse(await this.native.trainingCandidates(JSON.stringify(command), id)) as unknown,
+    drainSession: id => this.native.drainSession(id),
+    releaseSession: id => this.native.releaseSession(id),
+    completedExecutions: async id => completedWorkflowExecutionsSchema.parse(JSON.parse(await this.native.completedWorkflowExecutions(id))),
+    readProgram: async (id, execution) => reviewPacketSchema.parse(JSON.parse(await this.native.readTeachingProgram(execution, id))),
+    review: async (id, subtasks, expectedRevision, idempotencyKey) => {
+      const request = { subtasks, expected_revision: expectedRevision, idempotency_key: idempotencyKey };
+      return workflowReviewReceiptSchema.parse(JSON.parse(await this.native.reviewWorkflow(JSON.stringify(request), id)));
+    },
+    fetchExample: async (id, revision) => servedWorkflowExampleSchema.parse(JSON.parse(await this.native.fetchWorkflowExample(revision, id))),
+  };
 
   close(): Promise<void> {
     return this.native.close();
@@ -202,9 +247,13 @@ export class NapiPlasmEngine implements PlasmEngine {
     return this.native.activateDiscovery(deploymentId, bindingsJson);
   }
 
-  async routeIntent(provenance: IntentProvenance, logicalSessionId?: string): Promise<RoutingPacket> {
-    const raw = await this.native.routeIntent(JSON.stringify(intentProvenanceSchema.parse(provenance)), logicalSessionId);
+  async routeIntent(provenance: IntentProvenance, logicalSessionId?: string, sessionClock?: string): Promise<RoutingPacket> {
+    const raw = await this.native.routeIntent(JSON.stringify(intentProvenanceSchema.parse(provenance)), logicalSessionId, sessionClock);
     return decodeRoutingPacket(raw);
+  }
+
+  async takeCompletedTeaching(logicalSessionId: string, includeExamples?: boolean): Promise<string> {
+    return this.native.takeCompletedTeaching(logicalSessionId, includeExamples);
   }
 
   async runPlan(planCommitRef: string, logicalSessionId?: string): Promise<{ ok: boolean; message: string; rowsJson?: string }> {
@@ -216,7 +265,7 @@ export class NapiPlasmEngine implements PlasmEngine {
     transport: HostTransportFn,
     logicalSessionId?: string,
   ): Promise<{ ok: boolean; message: string; rowsJson?: string; metaJson?: string; artifactsJson?: string; failureJson?: string }> {
-    return this.native.runPlanLive(planCommitRef, toNapiHostTransport(transport), logicalSessionId);
+    return this.native.runPlanLive(planCommitRef, toNapiHostTransport(transport), logicalSessionId, transport.resolveAuth?.bind(transport));
   }
 
   async run(_resolved: ResolvedPlanPayload, transport: HostTransportFn): Promise<unknown> {

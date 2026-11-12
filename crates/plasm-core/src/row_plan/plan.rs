@@ -8,11 +8,10 @@ use super::collect::{CollectCardinality, CollectReason};
 use super::error::{FrameSchemaError, FusionError};
 use super::expr::{ProjectSpec, WithColumn};
 use super::filter::RowFilter;
-use super::ids::{FrameId, RowNodeId, SurfaceMeaningId};
+use super::ids::{RowNodeId, SurfaceMeaningId};
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct RowPlan {
-    source: FrameId,
     nodes: Pipeline,
     collect: CollectReason,
     cardinality: CollectCardinality,
@@ -21,7 +20,6 @@ pub struct RowPlan {
 
 impl RowPlan {
     pub fn new(
-        source: FrameId,
         nodes: Pipeline,
         collect: CollectReason,
         cardinality: CollectCardinality,
@@ -31,17 +29,11 @@ impl RowPlan {
             // Identity collect (return ingested rows) is legal.
         }
         Ok(Self {
-            source,
             nodes,
             collect,
             cardinality,
             meaning,
         })
-    }
-
-    #[must_use]
-    pub fn source(&self) -> FrameId {
-        self.source
     }
 
     #[must_use]
@@ -98,6 +90,7 @@ impl Pipeline {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum PlanNode {
+    RequireOne,
     Filter(RowFilter),
     Sort {
         key: FieldPath,

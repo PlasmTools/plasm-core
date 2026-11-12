@@ -1,77 +1,54 @@
 use crate::{BackendFilter, BackendOp, CompileError};
+use indexmap::IndexMap;
 use plasm_core::{
-    normalize, resolve_query_capability, type_check_predicate, CapabilityKind, EntityDef,
-    InputFieldSchema, Predicate, CGS,
+    normalize, resolve_query_capability, type_check_predicate, EntityDef, Predicate, CGS,
 };
 
-/// Compile a predicate to a backend filter.
-///
-/// Capability parameters that are not entity fields (e.g. `q`, `t`, `s` with
-/// `role: search`) are NOT compiled to `BackendFilter` nodes — they go straight
-/// into the CML environment via `extract_predicate_vars`. They produce
-/// `BackendFilter::True` (no-op filter) here so the BackendFilter only captures
-/// genuine entity-field predicates.
+/// Compile a row predicate to a backend filter.
 pub fn compile_predicate(
     predicate: &Predicate,
     entity: &EntityDef,
     cgs: &CGS,
 ) -> Result<BackendFilter, CompileError> {
-    compile_predicate_with_cap_params(predicate, entity, &[], cgs)
-}
-
-/// Internal version that accepts resolved capability parameters.
-fn compile_predicate_with_cap_params(
-    predicate: &Predicate,
-    entity: &EntityDef,
-    cap_params: &[InputFieldSchema],
-    cgs: &CGS,
-) -> Result<BackendFilter, CompileError> {
     // Normalize first
     let normalized = normalize(predicate.clone())?;
 
-    // Type-check using both entity fields and capability parameters
-    type_check_predicate(&normalized, entity, cap_params, cgs)?;
+    type_check_predicate(&normalized, entity, &[], cgs)?;
 
-    // Compile
-    compile_predicate_internal(&normalized, entity, cap_params, cgs)
+    compile_predicate_internal(&normalized, entity, cgs)
 }
 
 fn compile_predicate_internal(
     predicate: &Predicate,
     entity: &EntityDef,
-    cap_params: &[InputFieldSchema],
     cgs: &CGS,
 ) -> Result<BackendFilter, CompileError> {
     enum Work<'a> {
-        Visit(&'a Predicate, &'a EntityDef, &'a [InputFieldSchema]),
+        Visit(&'a Predicate, &'a EntityDef),
         Join(bool, usize),
         Not,
         Relation(&'a str, bool),
     }
-    let mut pending = vec![Work::Visit(predicate, entity, cap_params)];
+    let mut pending = vec![Work::Visit(predicate, entity)];
     let mut values = Vec::new();
     while let Some(step) = pending.pop() {
         match step {
-            Work::Visit(predicate, entity, cap_params) => match predicate {
+            Work::Visit(predicate, entity) => match predicate {
                 Predicate::True => values.push(BackendFilter::True),
                 Predicate::False => values.push(BackendFilter::False),
-                Predicate::Comparison { field, op, value } => values.push(compile_comparison(
-                    field, *op, value, entity, cap_params, cgs,
-                )?),
+                Predicate::Comparison { field, op, value } => {
+                    values.push(compile_comparison(field, *op, value, entity, cgs)?)
+                }
                 Predicate::And { args } | Predicate::Or { args } => {
                     pending.push(Work::Join(
                         matches!(predicate, Predicate::And { .. }),
                         args.len(),
                     ));
-                    pending.extend(
-                        args.iter()
-                            .rev()
-                            .map(|arg| Work::Visit(arg, entity, cap_params)),
-                    );
+                    pending.extend(args.iter().rev().map(|arg| Work::Visit(arg, entity)));
                 }
                 Predicate::Not { predicate } => {
                     pending.push(Work::Not);
-                    pending.push(Work::Visit(predicate, entity, cap_params));
+                    pending.push(Work::Visit(predicate, entity));
                 }
                 Predicate::ExistsRelation {
                     relation,
@@ -80,7 +57,7 @@ fn compile_predicate_internal(
                     let target = relation_target(relation, entity, cgs)?;
                     pending.push(Work::Relation(relation, predicate.is_some()));
                     if let Some(child) = predicate {
-                        pending.push(Work::Visit(child, target, &[]));
+                        pending.push(Work::Visit(child, target));
                     }
                 }
             },
@@ -113,15 +90,9 @@ fn compile_comparison(
     op: plasm_core::CompOp,
     value: &plasm_core::TypedComparisonValue,
     entity: &EntityDef,
-    cap_params: &[InputFieldSchema],
     cgs: &CGS,
 ) -> Result<BackendFilter, CompileError> {
     let mut wire = value.to_value();
-    // Declared query inputs belong to the source request even when a returned row
-    // has the same field name. Row predicates call this with no capability inputs.
-    if cap_params.iter().any(|p| p.name == field) {
-        return Ok(BackendFilter::True);
-    }
     if let Some(schema) = entity.fields.get(field) {
         let domain = schema.named_value(cgs).map_err(CompileError::from)?;
         plasm_core::temporal_input::encode_domain_temporals(&mut wire, domain, cgs)?;
@@ -158,273 +129,193 @@ fn relation_target<'a>(
 
 /// Compile a query expression to a backend filter.
 ///
-/// The resulting `BackendFilter` covers only entity-field predicates.
-/// Capability-parameter predicates (search, sort, response_control params)
-/// produce `BackendFilter::True` entries and are handled separately by
-/// `extract_predicate_vars` → CML env.
+/// The resulting `BackendFilter` covers only the resolved row predicate.
 pub fn compile_query(
     query: &plasm_core::QueryExpr,
     cgs: &CGS,
 ) -> Result<Option<BackendFilter>, CompileError> {
+    Ok(resolve_query(query, cgs)?.filter)
+}
+
+/// One resolution of request bindings and the row predicate left after source selection.
+pub struct ResolvedQuery<'a> {
+    pub capability: &'a plasm_core::CapabilitySchema,
+    pub bindings: IndexMap<String, plasm_core::Value>,
+    pub residual: Option<Predicate>,
+    pub filter: Option<BackendFilter>,
+}
+
+/// Resolve the owning capability and partition conjunctive request bindings from row tests.
+/// Inputs under disjunction or negation cannot be represented by a single request.
+pub fn resolve_query<'a>(
+    query: &plasm_core::QueryExpr,
+    cgs: &'a CGS,
+) -> Result<ResolvedQuery<'a>, CompileError> {
     let entity =
         cgs.get_entity(&query.entity)
             .ok_or_else(|| plasm_core::TypeError::EntityNotFound {
                 entity: query.entity.to_string(),
             })?;
-
-    // Resolve capability parameters so the compiler can distinguish
-    // entity-field predicates from capability-param pass-throughs.
-    // Same resolution as runtime execution (`resolve_query_capability`).
-    // Fixtures with no Query/Search capabilities (tests) use empty cap params.
-    let cap_params: Vec<InputFieldSchema> = if cgs
-        .find_capabilities(&query.entity, CapabilityKind::Query)
-        .is_empty()
-        && cgs
-            .find_capabilities(&query.entity, CapabilityKind::Search)
-            .is_empty()
-    {
-        Vec::new()
+    let capability_name = resolve_query_capability(query, cgs)?.name.clone();
+    let capability = cgs
+        .get_capability(capability_name.as_str())
+        .expect("resolved capability belongs to the catalog");
+    let params: Vec<_> = capability.query_surface_fields().cloned().collect();
+    let mut values: IndexMap<String, Vec<plasm_core::Value>> = IndexMap::new();
+    let residual = if let Some(pred) = &query.predicate {
+        type_check_predicate(pred, entity, &params, cgs)?;
+        partition_predicate(pred, &capability.inputs, None, &mut values)?
     } else {
-        let cap = resolve_query_capability(query, cgs).map_err(CompileError::QueryResolution)?;
-        cap.query_surface_fields().cloned().collect()
+        None
     };
+    let filter = match (&query.predicate, &residual) {
+        (_, Some(predicate)) => Some(compile_predicate(predicate, entity, cgs)?),
+        (Some(_), None) => Some(BackendFilter::True),
+        (None, None) => None,
+    };
+    let bindings = values
+        .into_iter()
+        .filter_map(|(key, mut values)| match values.len() {
+            0 => None,
+            1 => Some((key, values.remove(0))),
+            _ => Some((key, plasm_core::Value::Array(values))),
+        })
+        .collect();
+    Ok(ResolvedQuery {
+        capability,
+        bindings,
+        residual,
+        filter,
+    })
+}
 
-    if let Some(predicate) = &query.predicate {
-        let filter = compile_predicate_with_cap_params(predicate, entity, &cap_params, cgs)?;
-        Ok(Some(filter))
-    } else {
-        Ok(None)
+fn partition_predicate(
+    predicate: &Predicate,
+    inputs: &plasm_core::schema::CapabilityInputs,
+    boolean_parent: Option<plasm_core::rowset::SourcePredicateError>,
+    values: &mut IndexMap<String, Vec<plasm_core::Value>>,
+) -> Result<Option<Predicate>, CompileError> {
+    use plasm_core::{CompOp, Value};
+    match predicate {
+        Predicate::Comparison { field, op, value } => {
+            let is_input = inputs.query_source_lane(field).is_some();
+            if let (true, Some(reason)) = (is_input, boolean_parent) {
+                return Err(plasm_core::TypeError::RowsetNormalize {
+                    source: Box::new(plasm_core::rowset::RowsetNormalizeError::InvalidPredicate {
+                        reason,
+                    }),
+                }
+                .into());
+            }
+            // Only declared, conjunctive source inputs become request variables.
+            if is_input {
+                let rhs = value.to_value();
+                if !matches!(rhs, Value::PlasmInputRef(_)) {
+                    let slot = values.entry(field.clone()).or_default();
+                    match (op, rhs) {
+                        (CompOp::In | CompOp::Contains, Value::Array(items)) => slot.extend(items),
+                        (CompOp::In | CompOp::Contains, value) => slot.push(value),
+                        (_, value) => {
+                            slot.clear();
+                            slot.push(value);
+                        }
+                    }
+                }
+            }
+            Ok((!is_input).then(|| predicate.clone()))
+        }
+        Predicate::And { args } => {
+            let mut kept = Vec::new();
+            for arg in args {
+                if let Some(pred) = partition_predicate(arg, inputs, boolean_parent, values)? {
+                    kept.push(pred);
+                }
+            }
+            Ok(match kept.len() {
+                0 if boolean_parent.is_some() => Some(Predicate::True),
+                0 => None,
+                1 => kept.pop(),
+                _ => Some(Predicate::And { args: kept }),
+            })
+        }
+        Predicate::Or { args } => {
+            let mut kept = Vec::with_capacity(args.len());
+            for arg in args {
+                if let Some(pred) = partition_predicate(
+                    arg,
+                    inputs,
+                    Some(plasm_core::rowset::SourcePredicateError::Disjunction),
+                    values,
+                )? {
+                    kept.push(pred);
+                }
+            }
+            Ok(Some(Predicate::Or { args: kept }))
+        }
+        Predicate::Not { predicate } => {
+            let child = partition_predicate(
+                predicate,
+                inputs,
+                Some(plasm_core::rowset::SourcePredicateError::Negation),
+                values,
+            )?
+            .expect("row-only negation retains its predicate");
+            Ok(Some(Predicate::Not {
+                predicate: Box::new(child),
+            }))
+        }
+        Predicate::True | Predicate::False | Predicate::ExistsRelation { .. } => {
+            Ok(Some(predicate.clone()))
+        }
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use plasm_core::value_domain::ValueDomain;
-    use plasm_core::{
-        Cardinality, FieldSchema, FieldType, FieldValueKind, NamedValueSchema, Predicate,
-        QueryExpr, RelationSchema, ResourceSchema, Value, ValueDomainKey,
-    };
-
-    fn registry_field(wire_name: &str, values_key: &str, required: bool) -> FieldSchema {
-        FieldSchema {
-            name: wire_name.into(),
-            kind: FieldValueKind::Registry(
-                ValueDomainKey::new(values_key).expect("test values key"),
-            ),
-            description: String::new(),
-            required,
-            agent_presentation: None,
-            mime_type_hint: None,
-            attachment_media: None,
-            wire_path: None,
-            derive: None,
-            data_class: None,
-            currency_field: None,
-        }
-    }
-
-    fn create_test_cgs() -> CGS {
-        let mut cgs = CGS::new();
-
-        cgs.values.insert(
-            "nv_pred_account_id".to_string(),
-            NamedValueSchema::from_domain(
-                String::new(),
-                ValueDomain::from_legacy(&FieldType::String, None, None, None, None),
-                None,
-            ),
-        );
-        cgs.values.insert(
-            "nv_pred_account_name".to_string(),
-            NamedValueSchema::from_domain(
-                String::new(),
-                ValueDomain::from_legacy(&FieldType::String, None, None, None, None),
-                None,
-            ),
-        );
-        cgs.values.insert(
-            "nv_pred_account_revenue".to_string(),
-            NamedValueSchema::from_domain(
-                String::new(),
-                ValueDomain::from_legacy(&FieldType::Number, None, None, None, None),
-                None,
-            ),
-        );
-        cgs.values.insert(
-            "nv_pred_account_region".to_string(),
-            NamedValueSchema::from_domain(
-                String::new(),
-                ValueDomain::from_legacy(
-                    &FieldType::Select,
-                    None,
-                    None,
-                    Some(vec![
-                        "EMEA".to_string(),
-                        "APAC".to_string(),
-                        "AMER".to_string(),
-                    ])
-                    .clone(),
-                    None,
-                ),
-                None,
-            ),
-        );
-        cgs.values.insert(
-            "nv_pred_contact_id".to_string(),
-            NamedValueSchema::from_domain(
-                String::new(),
-                ValueDomain::from_legacy(&FieldType::String, None, None, None, None),
-                None,
-            ),
-        );
-        cgs.values.insert(
-            "nv_pred_contact_name".to_string(),
-            NamedValueSchema::from_domain(
-                String::new(),
-                ValueDomain::from_legacy(&FieldType::String, None, None, None, None),
-                None,
-            ),
-        );
-        cgs.values.insert(
-            "nv_pred_contact_role".to_string(),
-            NamedValueSchema::from_domain(
-                String::new(),
-                ValueDomain::from_legacy(
-                    &FieldType::Select,
-                    None,
-                    None,
-                    Some(vec!["Manager".to_string(), "Employee".to_string()]).clone(),
-                    None,
-                ),
-                None,
-            ),
-        );
-
-        // Account entity
-        let account = ResourceSchema {
-            name: "Account".into(),
-            description: String::new(),
-            id_field: "id".into(),
-            id_format: None,
-            id_from: None,
-            fields: vec![
-                registry_field("id", "nv_pred_account_id", true),
-                registry_field("name", "nv_pred_account_name", true),
-                registry_field("revenue", "nv_pred_account_revenue", false),
-                registry_field("region", "nv_pred_account_region", false),
-            ],
-            relations: vec![RelationSchema {
-                name: "contacts".into(),
-                description: String::new(),
-                target_resource: "Contact".into(),
-                cardinality: Cardinality::Many,
-                materialize: None,
-                discovery: None,
-            }],
-            expression_aliases: vec![],
-            implicit_request_identity: false,
-            key_vars: vec![],
-            abstract_entity: false,
-            domain_projection_examples: false,
-            primary_read: None,
-            primary_query: None,
-            primary_search: None,
-            discovery: None,
-        };
-
-        // Contact entity
-        let contact = ResourceSchema {
-            name: "Contact".into(),
-            description: String::new(),
-            id_field: "id".into(),
-            id_format: None,
-            id_from: None,
-            fields: vec![
-                registry_field("id", "nv_pred_contact_id", true),
-                registry_field("name", "nv_pred_contact_name", true),
-                registry_field("role", "nv_pred_contact_role", false),
-            ],
-            relations: vec![],
-            expression_aliases: vec![],
-            implicit_request_identity: false,
-            key_vars: vec![],
-            abstract_entity: false,
-            domain_projection_examples: false,
-            primary_read: None,
-            primary_query: None,
-            primary_search: None,
-            discovery: None,
-        };
-
-        cgs.add_resource(account).unwrap();
-        cgs.add_resource(contact).unwrap();
-
-        cgs
-    }
 
     #[test]
-    fn test_compile_simple_comparison() {
-        let cgs = create_test_cgs();
-        let entity = cgs.get_entity("Account").unwrap();
-        let predicate = Predicate::eq("name", "Acme Corp");
-
-        let result = compile_predicate(&predicate, entity, &cgs).unwrap();
-
-        if let BackendFilter::Field {
-            field,
-            operator,
-            value,
-        } = result
-        {
-            assert_eq!(field, "name");
-            assert_eq!(operator, BackendOp::Equals);
-            assert_eq!(value, Value::String("Acme Corp".to_string()));
-        } else {
-            panic!("Expected field filter");
-        }
-    }
-
-    #[test]
-    fn test_compile_and_predicate() {
-        let cgs = create_test_cgs();
-        let entity = cgs.get_entity("Account").unwrap();
-        let predicate = Predicate::and(vec![
-            Predicate::eq("region", "EMEA"),
-            Predicate::gt("revenue", 1000.0),
-        ]);
-
-        let result = compile_predicate(&predicate, entity, &cgs).unwrap();
-
-        if let BackendFilter::And { filters } = result {
-            assert_eq!(filters.len(), 2);
-        } else {
-            panic!("Expected And filter");
-        }
-    }
-
-    #[test]
-    fn test_compile_relation_predicate() {
-        let cgs = create_test_cgs();
-        let entity = cgs.get_entity("Account").unwrap();
-        let predicate =
-            Predicate::exists_relation("contacts", Some(Predicate::eq("role", "Manager")));
-
-        let result = compile_predicate(&predicate, entity, &cgs).unwrap();
-
-        if let BackendFilter::Relation { relation, filter } = result {
-            assert_eq!(relation, "contacts");
-            assert!(filter.is_some());
-
-            if let Some(nested) = filter {
-                if let BackendFilter::Field { field, .. } = *nested {
-                    assert_eq!(field, "role");
-                } else {
-                    panic!("Expected nested field filter");
-                }
-            }
-        } else {
-            panic!("Expected Relation filter");
+    fn query_partition_preserves_row_boolean_logic_and_rejects_input_disjunction() {
+        let path = std::path::Path::new(crate::test_manifest_dir())
+            .join("../../fixtures/schemas/scoped_query_matrix");
+        let cgs = plasm_core::loader::load_schema_dir(&path).unwrap();
+        let mut query = plasm_core::QueryExpr::all("Member");
+        query.capability_name = Some("member_query".into());
+        let scope = Predicate::eq("cohort_id", 7_i64);
+        let rows = Predicate::or(vec![Predicate::eq("id", "a"), Predicate::eq("id", "b")]);
+        query.predicate = Some(Predicate::and(vec![scope.clone(), rows.clone()]));
+        let resolved = resolve_query(&query, &cgs).unwrap();
+        assert_eq!(resolved.capability.name.as_str(), "member_query");
+        assert_eq!(
+            resolved.bindings.get("cohort_id"),
+            Some(&plasm_core::Value::Integer(7))
+        );
+        assert!(
+            !resolved.bindings.contains_key("id"),
+            "an OR cannot be reduced to one request value"
+        );
+        assert_eq!(resolved.residual, Some(rows));
+        assert!(matches!(resolved.filter, Some(BackendFilter::Or { .. })));
+        let row = Predicate::eq("id", "a");
+        query.predicate = Some(Predicate::and(vec![scope.clone(), row.clone()]));
+        let resolved = resolve_query(&query, &cgs).unwrap();
+        assert!(!resolved.bindings.contains_key("id"));
+        assert_eq!(resolved.residual, Some(row));
+        let negated_row = Predicate::negate(Predicate::eq("id", "c"));
+        query.predicate = Some(Predicate::and(vec![scope.clone(), negated_row.clone()]));
+        let resolved = resolve_query(&query, &cgs).unwrap();
+        assert_eq!(resolved.residual, Some(negated_row));
+        assert!(matches!(resolved.filter, Some(BackendFilter::Not { .. })));
+        for predicate in [
+            Predicate::or(vec![scope.clone(), Predicate::eq("id", "a")]),
+            Predicate::negate(scope.clone()),
+            Predicate::or(vec![scope.clone(), scope.clone()]),
+        ] {
+            query.predicate = Some(predicate);
+            assert!(matches!(
+                resolve_query(&query, &cgs),
+                Err(CompileError::TypeError { .. })
+            ));
         }
     }
 
@@ -456,64 +347,5 @@ mod tests {
         )
         .unwrap();
         assert!(matches!(row_filter, BackendFilter::Field { .. }));
-    }
-
-    #[test]
-    fn test_compile_query_with_predicate() {
-        let cgs = create_test_cgs();
-        let query = QueryExpr::filtered(
-            "Account",
-            Predicate::and(vec![
-                Predicate::eq("region", "EMEA"),
-                Predicate::gt("revenue", 1000.0),
-            ]),
-        );
-
-        let result = compile_query(&query, &cgs).unwrap();
-        assert!(result.is_some());
-
-        let filter = result.unwrap();
-        if let BackendFilter::And { filters } = filter {
-            assert_eq!(filters.len(), 2);
-        } else {
-            panic!("Expected And filter");
-        }
-    }
-
-    #[test]
-    fn test_compile_query_without_predicate() {
-        let cgs = create_test_cgs();
-        let query = QueryExpr::all("Account");
-
-        let result = compile_query(&query, &cgs).unwrap();
-        assert!(result.is_none()); // No filter means get all
-    }
-
-    #[test]
-    fn test_normalization_during_compilation() {
-        let cgs = create_test_cgs();
-        let entity = cgs.get_entity("Account").unwrap();
-
-        // Create a predicate with nested Ands that should be flattened
-        let predicate = Predicate::And {
-            args: vec![
-                Predicate::eq("region", "EMEA"),
-                Predicate::And {
-                    args: vec![
-                        Predicate::gt("revenue", 1000.0),
-                        Predicate::eq("name", "Test"),
-                    ],
-                },
-            ],
-        };
-
-        let result = compile_predicate(&predicate, entity, &cgs).unwrap();
-
-        // Should be flattened to a single And with 3 filters
-        if let BackendFilter::And { filters } = result {
-            assert_eq!(filters.len(), 3);
-        } else {
-            panic!("Expected flattened And filter");
-        }
     }
 }

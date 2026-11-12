@@ -4,7 +4,6 @@ import { z } from "zod";
 import type { SkillDefinition } from "../authoring/define-skill.js";
 import type { SubagentRegistry } from "../authoring/subagent-loader.js";
 import { COMPLETE_TASK_TOOL_NAME, SUBMIT_ANSWER_TOOL_NAME } from "./format.js";
-import { createTaskLedgerTool, type TaskLedgerStore } from "./task-ledger.js";
 import { toolInput } from "./tool-input.js";
 
 const readSkillInputSchema = z.object({
@@ -38,10 +37,11 @@ export const SUBMIT_ANSWER_TOOL_DESCRIPTION =
 /** Structural gate: environment-action evals must discover before abandon / no-access claims. */
 export const EVAL_TERMINAL_REQUIRES_DISCOVERY =
   "Initial discovery is required before ending an environment-action evaluation. " +
-  "Call plasm_context with session_mode new and the task intent first. " +
+  "The host must initialize the workflow before the model continues. " +
   "Do not claim unsupported access or abandon before discovery.";
 
 export type EvalTerminalGate = {
+  sealEffectWorkflows?: () => Promise<void>;
   responseObligation?: {
     /** Host-owned resolution. Terminal payloads and agent quotes are not evidence. */
     resolve: (terminal: "no_answer" | "value_required") => Promise<"no_answer" | "value_required" | "uncertain">;
@@ -76,6 +76,13 @@ function assertDiscoveryCompleted(gate?: EvalTerminalGate): void {
   throw new Error(EVAL_TERMINAL_REQUIRES_DISCOVERY);
 }
 
+async function sealEffectWorkflows(gate?: EvalTerminalGate): Promise<void> {
+  if (!gate?.sealEffectWorkflows) {
+    throw new Error("Native effect-obligation enforcement is unavailable; no terminal was recorded.");
+  }
+  await gate.sealEffectWorkflows();
+}
+
 export function createCompleteTaskTool(gate?: EvalTerminalGate): ToolSet {
   return {
     [COMPLETE_TASK_TOOL_NAME]: tool({
@@ -84,6 +91,7 @@ export function createCompleteTaskTool(gate?: EvalTerminalGate): ToolSet {
       execute: async () => {
         assertDiscoveryCompleted(gate);
         await assertResponseObligation("no_answer", gate);
+        await sealEffectWorkflows(gate);
         return "Completion claim recorded; task success has not been independently verified.";
       },
     }),
@@ -98,6 +106,7 @@ export function createSubmitAnswerTool(gate?: EvalTerminalGate): ToolSet {
       execute: async () => {
         assertDiscoveryCompleted(gate);
         await assertResponseObligation("value_required", gate);
+        await sealEffectWorkflows(gate);
         return "Answer submission recorded; correctness and requested effects have not been independently verified.";
       },
     }),
@@ -112,6 +121,7 @@ export function createEvalTerminalTools(gate?: EvalTerminalGate): ToolSet {
 }
 
 export function createHarnessTools(options: {
+  sealEffectWorkflows?: () => Promise<void>;
   responseObligation?: EvalTerminalGate["responseObligation"];
   skills?: SkillDefinition[];
   subagents?: SubagentRegistry;
@@ -125,13 +135,6 @@ export function createHarnessTools(options: {
    * `complete_task` / `submit_answer` succeed. Pass `() => runtime.hasOpenWorkflow()`.
    */
   discoveryCompleted?: () => boolean;
-  /**
-   * Register `task_ledger`. Same gate as
-   * `buildDefaultSystemLiturgy({ includeTaskLedger })`.
-   * Requires `taskLedgerStore` — host persist only, no invented obligations.
-   */
-  includeTaskLedger?: boolean;
-  taskLedgerStore?: TaskLedgerStore;
 }): ToolSet {
   const tools: ToolSet = {};
   const skillByName = new Map((options.skills ?? []).map((s) => [s.name, s]));
@@ -176,15 +179,8 @@ export function createHarnessTools(options: {
   if (options.includeEvalTerminals) {
     Object.assign(
       tools,
-      createEvalTerminalTools({ discoveryCompleted: options.discoveryCompleted, responseObligation: options.responseObligation }),
+      createEvalTerminalTools({ discoveryCompleted: options.discoveryCompleted, responseObligation: options.responseObligation, sealEffectWorkflows: options.sealEffectWorkflows }),
     );
-  }
-
-  if (options.includeTaskLedger) {
-    if (!options.taskLedgerStore) {
-      throw new Error("includeTaskLedger requires taskLedgerStore");
-    }
-    Object.assign(tools, createTaskLedgerTool(options.taskLedgerStore));
   }
 
   return tools;

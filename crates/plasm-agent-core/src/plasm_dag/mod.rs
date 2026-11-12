@@ -2,6 +2,7 @@
 
 mod binding_continuation;
 mod binding_contract;
+pub mod dependencies;
 pub(crate) mod error;
 mod invoke_cardinality;
 pub(crate) mod plan_serialize;
@@ -18,7 +19,7 @@ pub(crate) mod view_embed_proof;
 mod render_dag;
 
 mod pipeline;
-mod python;
+pub(crate) mod python;
 pub use python::admission::DeclarationKind as PythonDeclaration;
 pub use python::build_statements::BuildStatementKind as PythonBuildStatement;
 pub use python::catalog_operations::CatalogOperation as PythonCatalogOperation;

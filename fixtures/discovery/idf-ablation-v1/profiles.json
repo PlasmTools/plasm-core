@@ -1,0 +1,22 @@
+[
+  {
+    "id": "demagnetize",
+    "effect": "Demagnetize the component.",
+    "distractor": "Inspect component transport packaging identifier condition and dispatch readiness."
+  },
+  {
+    "id": "desiccate",
+    "effect": "Desiccate the specimen.",
+    "distractor": "Inspect specimen storage container identifier condition and shipment readiness."
+  },
+  {
+    "id": "notarize",
+    "effect": "Notarize the document.",
+    "distractor": "Inspect document delivery envelope identifier condition and submission readiness."
+  },
+  {
+    "id": "inspect",
+    "effect": "Inspect the component.",
+    "distractor": "Record component transport packaging identifier condition and dispatch readiness."
+  }
+]

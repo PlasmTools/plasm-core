@@ -94,6 +94,8 @@ pub struct PlasmOssHostState {
     pub outbound_secret_provider: Option<Arc<dyn SecretProvider>>,
     /// Tenant workflow manifests for MCP Apps (`GET /v1/workflows/:id/view-model`).
     pub workflows: Arc<crate::workflow_registry::WorkflowRegistry>,
+    /// Optional tenant/project-scoped verified workflow library.
+    pub workflow_learning: Arc<crate::workflow_learning::WorkflowLearning>,
     /// Shared Redis backend for MCP transport + execute session externalization (when configured).
     pub redis_backend: Option<Arc<crate::mcp_transport_store::RedisBackend>>,
     /// Large-stack worker pool for live `run_plasm_comp` (injected at bootstrap; shared via `Arc`).
@@ -398,6 +400,25 @@ impl PlasmHostState {
             Ok(session) => {
                 crate::metrics::record_execute_rehydrate("ok", "");
                 session.bind_operation_wire(session_id);
+                if let (Some(id), Some(teaching)) = (
+                    desc.reuse_key
+                        .logical_session_id
+                        .as_deref()
+                        .and_then(|id| Uuid::parse_str(id).ok()),
+                    session.teaching_exposure.as_ref(),
+                ) {
+                    self.logical_symbol_ledgers
+                        .cache_committed(
+                            id,
+                            desc.catalog_cgs_hashes_by_entry
+                                .iter()
+                                .map(|(entry, hash)| (entry.clone(), hash.clone()))
+                                .collect(),
+                            teaching.clone(),
+                            desc.symbol_ledger_bytes.clone(),
+                        )
+                        .await;
+                }
                 let reuse_key: SessionReuseKey = desc.reuse_key.into();
                 self.sessions
                     .insert_rehydrated(
@@ -507,6 +528,68 @@ impl PlasmHostState {
         Ok(())
     }
 
+    pub(crate) async fn publish_example_fetch(
+        &self,
+        prompt_hash: &str,
+        session_id: &str,
+        session: ExecuteSession,
+        receipt: crate::workflow_learning::serving::ServedExample,
+    ) -> Result<(), crate::mcp_transport_store::execute_session_registry::ExecuteSessionPersistError>
+    {
+        use crate::mcp_transport_store::execute_session_registry::ExecuteSessionPersistError;
+        let ph = prompt_hash
+            .parse::<PromptHashHex>()
+            .map_err(|_| ExecuteSessionPersistError::SessionUnavailable)?;
+        let sid = session_id
+            .parse::<ExecuteSessionId>()
+            .map_err(|_| ExecuteSessionPersistError::SessionUnavailable)?;
+        let reuse_key = self
+            .sessions
+            .reuse_key_for_execute_pair(prompt_hash, session_id)
+            .await
+            .ok_or(ExecuteSessionPersistError::MissingReuseKey)?;
+        let pins = session
+            .contexts_by_entry
+            .iter()
+            .map(|(entry, context)| {
+                (
+                    entry.clone(),
+                    crate::catalog_hash::EffectiveCatalogHash::from_effective_cgs(&context.cgs),
+                )
+            })
+            .collect();
+        let exposure =
+            crate::execute_session_materialize::build_durable_exposure_snapshot_reusing_pins(
+                &session, pins,
+            )
+            .await?;
+        self.execute_session_registry
+            .persist_example_fetch(&session, session_id, &reuse_key, &exposure, receipt)
+            .await?;
+        if let (Some(id), Some(teaching)) = (
+            reuse_key
+                .logical_session_id
+                .as_deref()
+                .and_then(|id| Uuid::parse_str(id).ok()),
+            session.teaching_exposure.as_ref(),
+        ) {
+            self.logical_symbol_ledgers
+                .cache_committed(
+                    id,
+                    exposure
+                        .catalog_cgs_hashes_by_entry
+                        .iter()
+                        .map(|(entry, hash)| (entry.clone(), hash.as_str().to_owned()))
+                        .collect(),
+                    teaching.clone(),
+                    exposure.symbol_ledger_bytes.clone(),
+                )
+                .await;
+        }
+        self.sessions.replace_session(&ph, &sid, session).await;
+        Ok(())
+    }
+
     async fn durable_snapshot_and_write(
         &self,
         session: &ExecuteSession,
@@ -523,14 +606,6 @@ impl PlasmHostState {
         let exposure =
             crate::execute_session_materialize::build_durable_exposure_snapshot(self, session)
                 .await?;
-        self.upsert_logical_ledger_for_execute(
-            prompt_hash,
-            session_id,
-            reuse_key,
-            session,
-            &exposure,
-        )
-        .await?;
         let durable_configured = self
             .execute_session_registry
             .durable_backend_configured()
@@ -551,32 +626,28 @@ impl PlasmHostState {
         if durable_configured && outcome == ExecuteSessionPersistOutcome::InMemoryOnly {
             return Err(ExecuteSessionPersistError::MissingSymbolLedger);
         }
-        Ok(())
-    }
-
-    async fn upsert_logical_ledger_for_execute(
-        &self,
-        prompt_hash: &str,
-        session_id: &str,
-        reuse_key: Option<&SessionReuseKey>,
-        session: &ExecuteSession,
-        exposure: &crate::execute_session_materialize::DurableExposureSnapshot,
-    ) -> Result<(), crate::mcp_transport_store::execute_session_registry::ExecuteSessionPersistError>
-    {
         let logical_id = reuse_key
-            .and_then(|k| k.logical_session_id.as_ref())
-            .and_then(|s| Uuid::parse_str(s).ok())
+            .and_then(|key| key.logical_session_id.as_ref())
+            .and_then(|id| Uuid::parse_str(id).ok())
             .or(self
                 .logical_execute_bindings
                 .find_by_execute(prompt_hash, session_id)
                 .await);
-        let Some(logical_id) = logical_id else {
-            return Ok(());
-        };
-        crate::http_execute::upsert_logical_ledger_from_snapshot(
-            self, logical_id, session, exposure,
-        )
-        .await?;
+        if let (Some(logical_id), Some(teaching)) = (logical_id, session.teaching_exposure.as_ref())
+        {
+            self.logical_symbol_ledgers
+                .cache_committed(
+                    logical_id,
+                    exposure
+                        .catalog_cgs_hashes_by_entry
+                        .iter()
+                        .map(|(entry, hash)| (entry.clone(), hash.as_str().to_owned()))
+                        .collect(),
+                    teaching.clone(),
+                    exposure.symbol_ledger_bytes.clone(),
+                )
+                .await;
+        }
         Ok(())
     }
 }

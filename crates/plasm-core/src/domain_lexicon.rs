@@ -294,10 +294,18 @@ pub fn tokens(input: &str) -> Vec<String> {
 ///
 /// Used for catalog / API routing where product names must remain visible to deterministic matchers.
 pub fn tokens_keep_brands(input: &str) -> Vec<String> {
+    retrieval_tokens(input)
+        .into_iter()
+        .filter(|w| w.len() >= 3)
+        .collect()
+}
+
+/// Authored retrieval text shares lexical normalization without discarding
+/// short domain terms such as UV or pH. Does not infer meaning from identities.
+pub fn retrieval_tokens(input: &str) -> Vec<String> {
     raw_words(input)
         .into_iter()
         .map(stem)
-        .filter(|w| w.len() >= 3)
         .filter(|w| !COMMON_STOPWORDS.contains(&w.as_str()))
         .collect()
 }
@@ -324,8 +332,6 @@ mod tests {
     #[test]
     fn tokenises_snake_case() {
         let t = tokens("team_id");
-        assert!(t.contains(&"team".to_string()));
-        assert!(t.contains(&"id".to_string()) || t.is_empty() || !t.contains(&"id".to_string()));
         // "id" is 2 chars — filtered by length >= 3 — that's intentional
         assert!(!t.contains(&"id".to_string()));
         assert!(t.contains(&"team".to_string()));

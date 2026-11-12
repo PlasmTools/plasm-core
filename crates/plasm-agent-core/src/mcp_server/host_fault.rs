@@ -141,7 +141,7 @@ mod tests {
             HostFault(failure).into_tool_result(crate::mcp_delivery::McpDeliveryProfile::FullApps);
         let wire = serde_json::to_string(&result).unwrap();
         assert!(wire.contains("Some effects remain unresolved"));
-        assert!(wire.contains("Check completed and unresolved effects"));
+        assert!(wire.contains("Reconcile them before retrying"));
         assert!(wire.contains("service rejected the requested state"));
         assert!(serde_json::to_string(&result.content)
             .unwrap()

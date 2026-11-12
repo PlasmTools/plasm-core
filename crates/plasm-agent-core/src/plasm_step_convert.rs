@@ -146,6 +146,7 @@ fn surface_to_invoke(
 
 fn data_to_pure(node: &ValidatedDataNode) -> PurePayload {
     PurePayload {
+        recorded_output: node.recorded_output.clone(),
         data: plan_value_to_data(&node.data),
         effect_class: effect_class(node.effect_class),
         result_shape: result_shape(node.result_shape),
@@ -405,6 +406,7 @@ fn step_payload_to_validated_node(
             pushed_read_budget: None,
         })),
         PlasmStepPayload::Pure(p) => Ok(ValidatedPlanNode::Data(ValidatedDataNode {
+            recorded_output: p.recorded_output.clone(),
             id,
             effect_class: plan_effect_class(p.effect_class),
             result_shape: plan_result_shape(p.result_shape),
@@ -1002,6 +1004,7 @@ mod tests {
             Some("forged-cardinality".into()),
             vec![
                 ValidatedPlanNode::Data(ValidatedDataNode {
+                    recorded_output: None,
                     id: rows.clone(),
                     effect_class: EffectClass::ArtifactRead,
                     result_shape: ResultShape::Artifact,

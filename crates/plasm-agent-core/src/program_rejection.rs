@@ -9,8 +9,11 @@ pub enum PythonComputeError {
     Selection(#[from] crate::python_compute::selection::SelectionContractError),
     #[error(transparent)]
     Inference(#[from] Box<crate::python_compute::inference::InferenceError>),
-    #[error("compute source budget exceeded")]
-    SourceBudgetExceeded,
+    #[error("checked compute source is {actual_bytes} bytes; limit is {limit_bytes} bytes (including imports and generated line padding). Pass data as inputs instead of embedding it, or split the computation into smaller typed functions.")]
+    SourceBudgetExceeded {
+        actual_bytes: usize,
+        limit_bytes: usize,
+    },
     #[error("expected one compute function")]
     FunctionCount,
     #[error("expected a synchronous @compute function")]
@@ -226,8 +229,31 @@ pub enum PythonInputError {
     InvalidUnionDiscriminator,
 }
 
+/// Authored provenance only; never infer identity from a record's field names.
+#[derive(Debug, Clone, thiserror::Error)]
+pub enum ReceiverIdentityOrigin {
+    #[error("`{method}` called on line {line} has an explicit return annotation; its result carries values, not entity identity")]
+    AnnotatedCompute { method: String, line: usize },
+    #[error("`{method}` called on line {line} did not prove selection of unchanged input entity occurrences; its result carries values, not entity identity")]
+    InferredCompute { method: String, line: usize },
+    #[error("this expression has no proven entity identity")]
+    Unproven,
+}
+
 #[derive(Debug, Clone, thiserror::Error)]
 pub enum PythonSourceError {
+    #[error("`{binding}` is an action acknowledgement (EffectAck), not rows.\nhelp: Put subsequent actions and verification reads in source order in the same callback (or build), preserving the original guard. Do not chain row operations from this acknowledgement.")]
+    AcknowledgementRowReceiver { binding: String },
+    #[error("recorded requires one literal run reference and no other arguments")]
+    RecordedOutputReference,
+    #[error("bind recorded output in build before capturing it in a callback")]
+    RecordedOutputScope,
+    #[error("`{binding}.{field}` needs one recorded row; `{binding}` is a rowset.\nhelp: Select and verify the intended row before reading `{field}`, or map over the rows. Do not repeat the producer to repair this field access.")]
+    RecordedOutputFieldNeedsSingleton { binding: String, field: String },
+    #[error("{0}")]
+    RecordedOutput(#[source] std::sync::Arc<crate::run_artifacts::CompletedOutputError>),
+    #[error("only catalog row outputs are reusable; this output has no retained catalog contract")]
+    RecordedOutputContract,
     #[error("of_type requires an exposed entity symbol from the source's declared entity union")]
     EntityNarrowingTarget,
     #[error("of_type requires catalog union rows with retained identity; constructed values cannot confer entity authority")]
@@ -471,10 +497,13 @@ pub enum PythonSourceError {
     ExpectedRowsetExpression,
     #[error("Python source is invalid: dynamic calls are not admitted")]
     DynamicCall,
-    #[error(
-        "Python source is invalid: write receiver requires a proven singleton with entity identity"
-    )]
-    WriteReceiverNeedsIdentitySingleton,
+    #[error("cannot write through `{binding}`: {origin}. Keep the original entity receiver. For verification-dependent writes, return a one-row gate after verification succeeds (raise on failure), then use gate.flat_map(lambda _: original.method(...)). Do not bypass verification by writing directly through the original receiver.")]
+    WriteReceiverMissingIdentity {
+        binding: String,
+        origin: ReceiverIdentityOrigin,
+    },
+    #[error("cannot write through `{binding}`: entity identity is retained, but the receiver is not a proven singleton. Invoke the method per row with flat_map, or select one row before invoking it; retain any verification dependency.")]
+    WriteReceiverNeedsSingleton { binding: String },
     #[error("Python source is invalid: method is not a mutation or action")]
     ExpectedWriteMethod { method: String },
     #[error("Python source is invalid: unsupported rowset operation: `{operation}`")]
@@ -668,7 +697,7 @@ pub enum PythonProgramError {
     ValueExpressionWriteAuthority,
     #[error("membership requires an explicit one-column rowset")]
     MembershipNeedsOneColumn,
-    #[error("callback branches cannot mix rows and acknowledgements")]
+    #[error("callback branches mix rows with an action acknowledgement (EffectAck).\nhelp: For an action/no-action guard, return None instead of [] on the no-action branch, or filter rows before the action. Keep the action inside the guard.")]
     CallbackBranchKindMismatch,
     #[error("callback branches must return the same record fields")]
     CallbackBranchFieldMismatch,
@@ -764,8 +793,13 @@ mod python_compute_rejection_tests {
 }
 
 /// Boundary-specific correction attached without replacing the semantic cause.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum PythonLoweringContext {
+    #[error("compute `{function}`: authored declaration is {authored_bytes} UTF-8 bytes")]
+    ComputeSource {
+        function: String,
+        authored_bytes: usize,
+    },
     #[error("method defaults require scalar constant metadata; definition-time execution and mutable default state have no Program representation")]
     MethodDefaultRequiresScalar,
     #[error("materialized dictionaries require string keys")]

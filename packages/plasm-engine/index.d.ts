@@ -8,6 +8,34 @@
  * executor instead of blocking it. Independent logical sessions remain concurrent.
  */
 export declare class PlasmEngine {
+  configureWorkflowLearning(configJson: string): Promise<void>
+  /** Trusted host grant; does not activate training for any session. */
+  configureTraining(grantJson: string): Promise<void>
+  trainingStatus(logicalSessionId?: string | undefined | null): Promise<string>
+  sealTrainingEvaluation(logicalSessionId?: string | undefined | null): Promise<void>
+  trainingCommand(commandJson: string, logicalSessionId?: string | undefined | null): Promise<string>
+  trainingCandidates(commandJson: string, logicalSessionId?: string | undefined | null): Promise<string>
+  /** Close solve admission while preserving review/evidence calls. */
+  drainSession(logicalSessionId: string): Promise<void>
+  releaseSession(logicalSessionId: string): Promise<void>
+  completedWorkflowExecutions(logicalSessionId?: string | undefined | null): Promise<string>
+  readTeachingProgram(executionId: string, logicalSessionId?: string | undefined | null): Promise<string>
+  reviewWorkflow(requestJson: string, logicalSessionId?: string | undefined | null): Promise<string>
+  fetchWorkflowExample(revisionRef: string, logicalSessionId?: string | undefined | null): Promise<string>
+  /** Host-only corpus administration; not an agent tool. */
+  runWorkflowPromotion(timeoutSeconds: number): Promise<string>
+  /** JSON review batches include examples, catalogue_guidance, and its immutable batch digest, including zero-example reviews. */
+  exportWorkflowProposals(): Promise<string>
+  publishFrozenWorkflowReview(requestJson: string): Promise<string>
+  /** Host-only task assessment, never a program-success assertion. */
+  exportWorkflowArchive(kind: string, destination: string): Promise<string>
+  authorizeImportedWorkflowReview(requestJson: string): Promise<void>
+  validateWorkflowArchive(source: string): Promise<string>
+  /** Requires an activated catalogue generation and an explicit source policy. */
+  importWorkflowArchive(source: string, policyJson: string): Promise<string>
+  /** Host-only normal serving validation in fresh pinned contexts; no execution. */
+  verifyWorkflowLibrary(limit: number): Promise<string>
+
   /** Stop admission, drain native calls and close pooled Monty workers. */
   close(): Promise<void>
   constructor(montyBinary?: string | undefined | null)
@@ -18,12 +46,14 @@ export declare class PlasmEngine {
    * Typed intent provenance with its current discovery need; selection runs
    * outside the execution mutex.
    */
-  routeIntent(intentProvenanceJson: string, logicalSessionId?: string | undefined | null): Promise<string>
+  routeIntent(intentProvenanceJson: string, logicalSessionId?: string | undefined | null, sessionClock?: string | undefined | null): Promise<string>
+  takeCompletedTeaching(logicalSessionId: string, includeExamples?: boolean): Promise<string>
   exposeSeeds(intent: string, seeds: Array<JsSeed>): Promise<JsTeachingResult>
   introspectCatalog(entryId: string): Promise<string>
   dryRun(program: string, logicalSessionId?: string | undefined | null): Promise<JsDryRunResult>
   runPlan(planCommitRef: string, logicalSessionId?: string | undefined | null): Promise<JsRunPlanResult>
-  runPlanLive(planCommitRef: string, transport: (request: JsTransportRequest) => JsTransportResponse | Promise<JsTransportResponse>, logicalSessionId?: string): Promise<JsRunPlanResult>
+  runPlanLive(planCommitRef: string, transport: (request: JsTransportRequest) => Promise<JsTransportResponse>, logicalSessionId?: string, resolveAuth?: (request: { entryId?: string }) => Promise<string | null>): Promise<JsRunPlanResult>
+  sealEffectWorkflows(workflowsJson: string): Promise<void>
 }
 
 /** Wire-schema parity gate, using the same parser as MCP and native execution. */
@@ -58,6 +88,7 @@ export interface JsSeed {
 }
 
 export interface JsTeachingResult {
+  declarationsChanged: boolean
   prompt: string
   deltaRefs: Array<string>
 }

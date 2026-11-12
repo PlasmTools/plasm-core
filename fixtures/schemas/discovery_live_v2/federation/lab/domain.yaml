@@ -1,0 +1,125 @@
+{
+  "version": 1,
+  "entry_id": "lab",
+  "http_backend": "http://127.0.0.1:9",
+  "auth": {
+    "scheme": "none"
+  },
+  "values": {
+    "sample": {
+      "type": "string",
+      "description": "Reference sample used to calibrate a spectrometer."
+    },
+    "calibration": {
+      "type": "string",
+      "description": "Completed spectrometer calibration."
+    },
+    "invoice": {
+      "type": "string",
+      "description": "Accounting invoice number identifying a billed service."
+    }
+  },
+  "entities": {
+    "Sample": {
+      "id_field": "value",
+      "description": "Reference sample used to calibrate a spectrometer.",
+      "fields": {
+        "value": {
+          "value_ref": "sample",
+          "required": true
+        }
+      }
+    },
+    "Calibration": {
+      "id_field": "value",
+      "description": "Completed spectrometer calibration.",
+      "fields": {
+        "value": {
+          "value_ref": "calibration",
+          "required": true
+        }
+      }
+    },
+    "Invoice": {
+      "id_field": "value",
+      "description": "Accounting invoice number identifying a billed service.",
+      "fields": {
+        "value": {
+          "value_ref": "invoice",
+          "required": true
+        }
+      }
+    }
+  },
+  "capabilities": {
+    "calibrate": {
+      "entity": "Calibration",
+      "kind": "action",
+      "description": "Calibrate the spectrometer using a reference sample.",
+      "arguments": {
+        "input_type": {
+          "type": "object",
+          "fields": [
+            {
+              "name": "input0",
+              "value_ref": "sample",
+              "required": true
+            }
+          ]
+        }
+      },
+      "provides": [
+        "value"
+      ],
+      "output": {
+        "type": "entity",
+        "entity_type": "Calibration"
+      }
+    },
+    "invoice_read": {
+      "entity": "Invoice",
+      "kind": "get",
+      "description": "Read accounting invoice numbers for billed services.",
+      "receiver": {
+        "kind": "none"
+      },
+      "provides": [
+        "value"
+      ],
+      "output": {
+        "type": "entity",
+        "entity_type": "Invoice"
+      }
+    }
+  },
+  "prerequisites": {
+    "contracts": {
+      "reference_feed": {
+        "version": 1,
+        "inputs": {},
+        "outputs": {
+          "sample": "sample"
+        }
+      }
+    },
+    "requirements": {
+      "calibrate": [
+        {
+          "id": "reference",
+          "contract": "reference_feed",
+          "bindings": [
+            {
+              "input": {
+                "lane": "arguments",
+                "path": [
+                  "input0"
+                ]
+              },
+              "output": "sample"
+            }
+          ]
+        }
+      ]
+    }
+  }
+}

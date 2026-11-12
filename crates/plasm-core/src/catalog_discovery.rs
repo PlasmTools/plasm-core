@@ -11,6 +11,7 @@ mod relation_use;
 mod retrieval_text;
 pub use input_projection::{InputProjectionError, InputProjectionFault};
 pub use retrieval_text::RetrievalTextError;
+pub use retrieval_text::{capability_observation_meaning, capability_relation_uses};
 pub mod semantic_wire;
 pub mod structured;
 
@@ -216,6 +217,105 @@ pub fn capability_documents(
 mod tests {
     use super::*;
 
+    #[test]
+    fn optional_source_meaning_survives_discovery_without_inventing_readiness() {
+        let fixture = std::path::Path::new(crate::test_manifest_dir())
+            .join("../../fixtures/schemas/resource_registration");
+        for meaning in [
+            "Routing coordinates",
+            "Calibration coefficients",
+            "Rendering parameters",
+        ] {
+            for required in [false, true] {
+                let mut cgs = crate::load_schema(&fixture).unwrap();
+                cgs.values
+                    .get_mut("definition")
+                    .unwrap()
+                    .description
+                    .clear();
+                let field = cgs
+                    .entities
+                    .get_mut("ResourceSource")
+                    .unwrap()
+                    .fields
+                    .get_mut("definition")
+                    .unwrap();
+                field.required = required;
+                field.description = meaning.into();
+                let before = serde_json::to_value(&cgs).unwrap();
+                let docs = capability_documents(&cgs).unwrap();
+                let source = docs
+                    .iter()
+                    .find(|d| d.capability == "source_query")
+                    .unwrap();
+                assert!(source.operation.contract.contains(meaning));
+                assert!(!source.operation.contract.contains("Observed readiness"));
+                assert_eq!(before, serde_json::to_value(&cgs).unwrap());
+                assert_eq!(
+                    cgs.entities["ResourceSource"].fields["definition"].required,
+                    required
+                );
+                let roundtrip: CapabilityDocument =
+                    serde_json::from_slice(&serde_json::to_vec(source).unwrap()).unwrap();
+                assert_eq!(*source, roundtrip);
+            }
+        }
+    }
+
+    #[test]
+    fn resource_source_registration_and_readiness_remain_distinct() {
+        let fixture = std::path::Path::new(crate::test_manifest_dir())
+            .join("../../fixtures/schemas/resource_registration");
+        for definition in [
+            "Routing definition",
+            "Calibration profile",
+            "Rendering preset",
+        ] {
+            let mut cgs = crate::load_schema(&fixture).expect("abstract registration fixture");
+            cgs.values.get_mut("definition").unwrap().description = definition.into();
+            let docs = capability_documents(&cgs).unwrap();
+            let source = docs
+                .iter()
+                .find(|d| d.capability == "source_query")
+                .unwrap();
+            let register = docs
+                .iter()
+                .find(|d| d.capability == "register_resource")
+                .unwrap();
+            let inspect = docs
+                .iter()
+                .find(|d| d.capability == "inspect_resource")
+                .unwrap();
+            assert_ne!(source.entity, register.entity);
+            assert!(source.operation.contract.contains(definition));
+            assert!(register.operation.contract.contains(definition));
+            assert!(register
+                .operation
+                .contract
+                .contains("Does not establish readiness or permission"));
+            assert!(!register.operation.contract.contains("Observed readiness"));
+            assert!(inspect.operation.contract.contains("Observed readiness"));
+            assert!(source
+                .collection
+                .meaning
+                .contains("does not establish destination registration"));
+            assert!(register
+                .collection
+                .meaning
+                .contains("registration alone does not establish"));
+            assert_eq!(
+                cgs.capabilities["register_resource"].provides,
+                vec!["handle"]
+            );
+            assert!(!cgs.entities["RegisteredResource"].fields["ready"].required);
+            for doc in docs {
+                let roundtrip: CapabilityDocument =
+                    serde_json::from_slice(&serde_json::to_vec(&doc).unwrap()).unwrap();
+                assert_eq!(doc, roundtrip);
+            }
+        }
+    }
+
     fn role_fixture() -> crate::CGS {
         let mut cgs = crate::load_schema(
             &std::path::Path::new(crate::test_manifest_dir())
@@ -338,6 +438,45 @@ mod tests {
             proptest::prop_assert_eq!(&doc, &decoded);
             proptest::prop_assert!(decoded.text.contains(&description));
             proptest::prop_assert_eq!(decoded.text_hash, content_hash(decoded.text.as_bytes()));
+        }
+    }
+
+    #[test]
+    fn artifact_information_and_effects_survive_contract_projection() {
+        for information in [
+            "The text file contains sample identifiers and measured wavelengths.",
+            "The text file contains component identifiers and calibration coefficients.",
+            "The text file contains segment identifiers and measured durations.",
+        ] {
+            let mut cgs = role_fixture();
+            let old = capability_documents(&cgs).unwrap();
+            let description = format!(
+                "Save a text file and return its path, not its contents. {information} \
+                 Creates a file and increments an export counter. Requires a credential."
+            );
+            cgs.capabilities
+                .get_mut("record_create")
+                .unwrap()
+                .description = description.clone();
+            cgs.capabilities.get_mut("record_get").unwrap().description =
+                "Read the text contents at a supplied file path; does not create files.".into();
+            let docs = capability_documents(&cgs).unwrap();
+            let exported = docs
+                .iter()
+                .find(|d| d.capability == "record_create")
+                .unwrap();
+            let previous = old
+                .iter()
+                .find(|d| d.capability == "record_create")
+                .unwrap();
+            assert!(exported.operation.contract.contains(&description));
+            assert_ne!(exported.text_hash, previous.text_hash);
+            let decoded: CapabilityDocument =
+                serde_json::from_slice(&serde_json::to_vec(exported).unwrap()).unwrap();
+            assert_eq!(&decoded, exported);
+            let reader = docs.iter().find(|d| d.capability == "record_get").unwrap();
+            assert!(reader.operation.contract.contains("Read the text contents"));
+            assert!(!reader.operation.contract.contains(information));
         }
     }
 

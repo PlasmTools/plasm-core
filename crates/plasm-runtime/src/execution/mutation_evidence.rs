@@ -15,6 +15,8 @@ pub enum MutationDispatchStatus {
     Unresolved,
     /// The transport received a response. Status, decoding and effects are separate.
     ResponseReceived,
+    /// A catalogue contract matched this particular provider rejection.
+    RejectedWithoutEffect,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -61,15 +63,17 @@ impl MutationJournal {
         JOURNAL.scope(self.clone(), future).await
     }
 
-    fn change<T>(&self, change: impl FnOnce(&mut Vec<MutationDispatch>) -> T) -> T {
-        // Serialize publication with mutation so concurrent completions cannot
-        // publish an older snapshot after a newer one.
+    fn try_change<T, E>(
+        &self,
+        change: impl FnOnce(&mut Vec<MutationDispatch>) -> Result<T, E>,
+    ) -> Result<T, E> {
+        // Publish under the mutation lock so an older snapshot cannot overtake a newer one.
         let mut entries = self.entries.lock().expect("mutation journal poisoned");
-        let result = change(&mut entries);
+        let result = change(&mut entries)?;
         if let Some(observer) = &self.observer {
             observer(entries.clone());
         }
-        result
+        Ok(result)
     }
 }
 
@@ -89,24 +93,35 @@ pub(crate) struct DispatchReceipt {
 impl DispatchReceipt {
     /// Called after authentication and admission, immediately before transport.
     pub(crate) fn begin(request_fingerprint: String) -> Option<Self> {
-        let operation = IDENTITY.try_with(Clone::clone).ok()?;
-        let journal = JOURNAL.try_with(Clone::clone).ok()?;
-        let index = journal.change(|entries| {
-            let index = entries.len();
-            entries.push(MutationDispatch {
-                resolved_effect: super::resolved_effect::current_effect(),
-                operation,
-                request_fingerprint,
-                status: MutationDispatchStatus::Unresolved,
-            });
-            index
-        });
+        let Some(operation) = IDENTITY.try_with(Clone::clone).ok() else {
+            return None;
+        };
+        let Some(journal) = JOURNAL.try_with(Clone::clone).ok() else {
+            return None;
+        };
+        let index = journal
+            .try_change(|entries| {
+                let index = entries.len();
+                entries.push(MutationDispatch {
+                    resolved_effect: super::resolved_effect::current_effect(),
+                    operation,
+                    request_fingerprint,
+                    status: MutationDispatchStatus::Unresolved,
+                });
+                Ok::<_, std::convert::Infallible>(index)
+            })
+            .unwrap();
         Some(Self { journal, index })
     }
 
     pub(crate) fn response_received(&self) {
-        self.journal.change(|entries| {
-            entries[self.index].status = MutationDispatchStatus::ResponseReceived
+        let _ = self.journal.try_change(|entries| {
+            if entries[self.index].status == MutationDispatchStatus::Unresolved {
+                entries[self.index].status = MutationDispatchStatus::ResponseReceived;
+                Ok(())
+            } else {
+                Err(())
+            }
         });
     }
 }
@@ -239,7 +254,7 @@ mod tests {
     async fn interrupted_dispatch_remains_unresolved_without_fabricating_failure() {
         let journal = MutationJournal::default();
         let mut future = Box::pin(journal.scope(with_mutation_identity(identity(), async {
-            let _receipt = DispatchReceipt::begin("sent".into()).unwrap();
+            let _receipt = DispatchReceipt::begin("sent".into());
             std::future::pending::<()>().await;
         })));
         tokio::select! {

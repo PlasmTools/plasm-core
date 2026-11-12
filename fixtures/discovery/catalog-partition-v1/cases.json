@@ -1,0 +1,51 @@
+{
+  "version": 1,
+  "horizon": 24,
+  "gate": 4,
+  "growth": [
+    120
+  ],
+  "cases": [
+    {
+      "id": "membership_inventory",
+      "requests": [
+        "List all specimens currently belonging to cabinet K and retain their identities. Preserve every specimen and cabinet membership; historical records cannot establish current membership.",
+        "Expose the current cabinet K membership read and member identities. Do not change the cabinet or specimens and do not replace the current inventory with historical records."
+      ],
+      "labels": {
+        "cabinet_read": "relevant",
+        "specimen_read": "relevant"
+      },
+      "outcomes": [
+        [
+          "cabinet_read"
+        ]
+      ],
+      "relation": true
+    },
+    {
+      "id": "parallel_information",
+      "requests": [
+        "Read the current source samples, publish the bulletin Inspection scheduled, and expose the configured laboratory routine for inspection even if its effect is unspecified. Preserve the samples; historical records are not these requested outcomes.",
+        "I still need three independent capabilities: current sample reads, public bulletin publication, and inspection of the unspecified configured routine. Do not modify samples or substitute historical records."
+      ],
+      "labels": {
+        "sample_read": "relevant",
+        "publish": "relevant",
+        "routine": "uncertain"
+      },
+      "outcomes": [
+        [
+          "sample_read"
+        ],
+        [
+          "publish"
+        ],
+        [
+          "routine"
+        ]
+      ],
+      "relation": false
+    }
+  ]
+}

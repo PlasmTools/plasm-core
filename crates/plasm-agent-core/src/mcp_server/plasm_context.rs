@@ -9,21 +9,43 @@ use serde_json::json;
 use tracing::Instrument;
 
 use crate::http_execute::{
-    apply_capability_seeds_for_mcp, build_plasm_context_agent_markdown,
-    build_plasm_context_tool_meta, ApplyCapabilitySeedsOutcome, PlasmContextToolMetaParams,
+    ApplyCapabilitySeedsOutcome, PlasmContextToolMetaParams, apply_capability_seeds_for_mcp,
+    build_plasm_context_agent_markdown, build_plasm_context_tool_meta,
 };
 use crate::incoming_auth::tenant_scope;
 use crate::mcp_logical_ref::format_logical_session_wire_ref;
 use crate::session_identity::{
-    accumulated_intent_meta_preview, LogicalSessionId, PlasmContextSessionMode,
+    LogicalSessionId, PlasmContextSessionMode, accumulated_intent_meta_preview,
 };
 use crate::trace_hub::PlasmContextTrace;
 
 use super::tool_parse::{parse_optional_principal, parse_plasm_context_session_mode};
 use super::transport::PlasmExecBinding;
-use super::{PlasmMcpHandler, MAX_MCP_EXEC_BINDINGS};
+use super::{MAX_MCP_EXEC_BINDINGS, PlasmMcpHandler};
 use crate::discovery_service::{DiscoveryService, RouteTurn};
 use plasm_core::discovery::CgsCatalog;
+
+#[derive(Default)]
+pub(super) struct DiscoveryGates(
+    tokio::sync::Mutex<
+        std::collections::HashMap<uuid::Uuid, std::sync::Weak<tokio::sync::Mutex<()>>>,
+    >,
+);
+
+impl DiscoveryGates {
+    async fn for_session(&self, id: uuid::Uuid) -> Arc<tokio::sync::Mutex<()>> {
+        let mut gates = self.0.lock().await;
+        gates.retain(|_, gate| gate.strong_count() > 0);
+        match gates.get(&id).and_then(std::sync::Weak::upgrade) {
+            Some(gate) => gate,
+            None => {
+                let gate = Arc::new(tokio::sync::Mutex::new(()));
+                gates.insert(id, Arc::downgrade(&gate));
+                gate
+            }
+        }
+    }
+}
 
 impl PlasmMcpHandler {
     pub(crate) async fn handle_mcp_tool_plasm_context(
@@ -32,12 +54,166 @@ impl PlasmMcpHandler {
         runtime: &Arc<McpRequest>,
         v: &serde_json::Value,
     ) -> Result<CallToolResult, ToolFailure> {
+        let mut previous = None;
+        let (_, extend_ref) = parse_plasm_context_session_mode("plasm_context", v)?;
+        if let Some(wire) = extend_ref.as_deref() {
+            if let Ok(id) = self.resolve_logical_session_ref_to_uuid("plasm_context", wire) {
+                let principal = self.ensure_mcp_principal(key, runtime).await?;
+                let scope = tenant_scope(principal.as_ref());
+                if self
+                    .plasm
+                    .logical_sessions
+                    .verify_tenant(LogicalSessionId(id), &scope)
+                    .await
+                    && self
+                        .plasm
+                        .workflow_learning
+                        .deferred_recalls
+                        .has_delivery(&id.to_string(), false)
+                {
+                    if let Some(record) =
+                        self.plasm.logical_sessions.get(LogicalSessionId(id)).await
+                    {
+                        let mut request = v.clone();
+                        if let Some(args) = request.as_object_mut() {
+                            args.insert("intent".into(), json!(record.intent_provenance.current()));
+                            if let Ok(update) = self
+                                .handle_mcp_tool_plasm_context_locked(key, runtime, &request, true)
+                                .await
+                            {
+                                previous = Some(update);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        let mut result = match self
+            .handle_mcp_tool_plasm_context_locked(key, runtime, v, false)
+            .await
+        {
+            Ok(result) => result,
+            Err(error) => {
+                if let Some(update) = previous {
+                    let mut content = vec![rmcp::model::ContentBlock::text(
+                        "Completed discovery for the previous request:",
+                    )];
+                    content.extend(update.content);
+                    content.push(rmcp::model::ContentBlock::text(format!(
+                        "Current discovery failed: {error}"
+                    )));
+                    return Ok(CallToolResult::error(content));
+                }
+                return Err(error);
+            }
+        };
+        if let Some(update) = previous {
+            result.content.push(rmcp::model::ContentBlock::text(
+                "Completed discovery for the previous request:",
+            ));
+            result.content.extend(update.content);
+        }
+        let ready = v
+            .get("logical_session_ref")
+            .and_then(|value| value.as_str())
+            .and_then(|wire| {
+                self.resolve_logical_session_ref_to_uuid("plasm_context", wire)
+                    .ok()
+            })
+            .is_some_and(|id| {
+                self.plasm
+                    .workflow_learning
+                    .deferred_recalls
+                    .has_delivery(&id.to_string(), false)
+            });
+        if ready {
+            if let Ok(update) = self
+                .handle_mcp_tool_plasm_context_locked(key, runtime, v, true)
+                .await
+            {
+                result.content.extend(update.content);
+            }
+        }
+        Ok(result)
+    }
+
+    pub(crate) async fn handle_mcp_supplemental_context(
+        &self,
+        key: &str,
+        runtime: &Arc<McpRequest>,
+        v: &serde_json::Value,
+    ) -> Result<CallToolResult, ToolFailure> {
+        self.handle_mcp_tool_plasm_context_locked(key, runtime, v, true)
+            .await
+    }
+
+    async fn handle_mcp_tool_plasm_context_locked(
+        &self,
+        key: &str,
+        runtime: &Arc<McpRequest>,
+        v: &serde_json::Value,
+        supplemental_only: bool,
+    ) -> Result<CallToolResult, ToolFailure> {
+        if !matches!(
+            self.plasm.workflow_learning.mode,
+            crate::workflow_learning::LearningMode::Serving
+                | crate::workflow_learning::LearningMode::ShadowWithRecall
+        ) {
+            return self
+                .handle_mcp_tool_plasm_context_inner(key, runtime, v, supplemental_only)
+                .await;
+        }
+        let (_, extend_ref) = parse_plasm_context_session_mode("plasm_context", v)?;
+        let Some(wire) = extend_ref else {
+            return self
+                .handle_mcp_tool_plasm_context_inner(key, runtime, v, supplemental_only)
+                .await;
+        };
+        let id = self.resolve_logical_session_ref_to_uuid("plasm_context", &wire)?;
+        let principal = self.ensure_mcp_principal(key, runtime).await?;
+        let scope = tenant_scope(principal.as_ref());
+        if !self
+            .plasm
+            .logical_sessions
+            .verify_tenant(LogicalSessionId(id), &scope)
+            .await
+        {
+            return Err(ToolFailure::rejected(
+                "logical_session_ref is unknown or belongs to another tenant",
+            ));
+        }
+        let gate = self.discovery_gates.for_session(id).await;
+        let _guard = gate.lock().await;
+        self.handle_mcp_tool_plasm_context_inner(key, runtime, v, supplemental_only)
+            .await
+    }
+
+    async fn handle_mcp_tool_plasm_context_inner(
+        &self,
+        key: &str,
+        runtime: &Arc<McpRequest>,
+        v: &serde_json::Value,
+        supplemental_only: bool,
+    ) -> Result<CallToolResult, ToolFailure> {
         let tname = "plasm_context";
         let principal_incoming = self.ensure_mcp_principal(key, runtime).await?;
         let intent = v.get("intent").and_then(|x| x.as_str()).ok_or_else(|| {
             ToolFailure::invalid_arguments(tname, Some("missing `intent`".into()))
         })?;
         let (session_mode, extend_ref) = parse_plasm_context_session_mode(tname, v)?;
+        let training = v
+            .get("training")
+            .map(|value| {
+                serde_json::from_value::<crate::workflow_training_wire::CreationTrainingIntent>(
+                    value.clone(),
+                )
+            })
+            .transpose()
+            .map_err(|error| ToolFailure::invalid_arguments(tname, Some(error.to_string())))?;
+        if training.is_some() && session_mode == PlasmContextSessionMode::Extend {
+            return Err(ToolFailure::invalid_arguments(tname, Some("creation training intent requires session_mode new; use plasm_training for later opt-in".into())));
+        }
+
         if v.get("seeds").is_some()
             || v.get("ranked_capabilities").is_some()
             || v.get("effect_slots").is_some()
@@ -166,32 +342,175 @@ impl PlasmMcpHandler {
             .discovery_store()
             .await
             .map_err(|e| ToolFailure::rejected(e.to_string()))?;
-        let provenance = if let Some(id) = logical_id.as_deref() {
+        let (provenance, _recall_continuation) = if let Some(id) = logical_id.as_deref() {
             let chain = store
                 .intent_provenance(id)
                 .await
                 .map_err(|error| ToolFailure::rejected(error.to_string()))?;
-            chain
-                .derived(intent.to_owned())
-                .map_err(|error| ToolFailure::rejected(error.to_string()))?
+            let continuation = chain.current() == intent;
+            (
+                if supplemental_only {
+                    if !continuation {
+                        return Err(ToolFailure::rejected(
+                            "supplemental discovery intent is stale",
+                        ));
+                    }
+                    chain
+                } else {
+                    chain
+                        .derived(intent.to_owned())
+                        .map_err(|error| ToolFailure::rejected(error.to_string()))?
+                },
+                continuation,
+            )
         } else {
-            crate::intent_provenance::IntentProvenance::from_turns([intent.to_owned()])
-                .map_err(|error| ToolFailure::rejected(error.to_string()))?
+            (
+                crate::intent_provenance::IntentProvenance::from_turns([intent.to_owned()])
+                    .map_err(|error| ToolFailure::rejected(error.to_string()))?,
+                false,
+            )
         };
-        let service = DiscoveryService::from_env(store.clone())
-            .map_err(|e| ToolFailure::rejected(e.to_string()))?;
-        let receipt = service
-            .route_turn(RouteTurn {
-                new_generation: &generation,
-                intent_provenance: &provenance,
-                logical_session: logical_id.as_deref(),
-                allowed: &allowed,
-                exposed: &exposed,
-                expires_at: std::time::SystemTime::now()
-                    + std::time::Duration::from_secs(24 * 3600),
-            })
+        let learning_scope = crate::workflow_learning::scope(&scope, tcfg.as_deref());
+        use crate::workflow_learning::deferred_recall::{RecallContext, RecallStatus};
+        let learning = &self.plasm.workflow_learning;
+        let recall_context = RecallContext {
+            scope: learning_scope,
+            intent: intent.to_owned(),
+            intent_revision: crate::workflow_learning::deferred_recall::intent_revision(
+                &provenance,
+            ),
+            generation: generation.to_string(),
+            authorization: allowed.clone(),
+        };
+        if !supplemental_only {
+            if let Some(session) = logical_id.as_deref() {
+                learning.deferred_recalls.discard_stale_supplemental(
+                    session,
+                    &recall_context,
+                    &exposed,
+                );
+            }
+        }
+        let supplemental_unavailable = !supplemental_only
+            && logical_id.as_deref().is_some_and(|session| {
+                learning
+                    .deferred_recalls
+                    .take_supplemental_failure(session, &recall_context)
+            });
+        let mut supplemental_claim = if supplemental_only {
+            let session = logical_id.as_deref().ok_or_else(|| {
+                ToolFailure::rejected("supplemental discovery requires an existing session")
+            })?;
+            let claim = learning
+                .deferred_recalls
+                .claim_supplemental(session, &recall_context)
+                .ok_or_else(|| ToolFailure::rejected("supplemental discovery is not ready"))?;
+            let expected = claim.result().associations.len();
+            let checked = crate::workflow_learning::deferred_recall::validate_current(
+                learning,
+                &recall_context.scope,
+                (Vec::new(), claim.result().associations.clone()),
+            )
             .await
-            .map_err(|e| ToolFailure::rejected(format!("routing error: {e}")))?;
+            .ok_or_else(|| {
+                ToolFailure::rejected("supplemental discovery revalidation unavailable")
+            })?;
+            if checked.1.len() != expected {
+                claim.commit();
+                return Err(ToolFailure::rejected(
+                    "supplemental discovery association is no longer current",
+                ));
+            }
+            Some(claim)
+        } else {
+            None
+        };
+        let status = logical_id
+            .as_deref()
+            .map(|id| learning.deferred_recalls.status(id, &recall_context))
+            .unwrap_or(RecallStatus::Missing);
+        let mut recall_ticket = None;
+        let (examples, _associations, learning_unavailable, learning_pending) = if supplemental_only
+        {
+            (Vec::new(), Vec::new(), false, false)
+        } else {
+            match status {
+                RecallStatus::Completed((examples, associations)) => {
+                    match crate::workflow_learning::deferred_recall::validate_current(
+                        learning,
+                        &recall_context.scope,
+                        (examples, associations),
+                    )
+                    .await
+                    {
+                        Some((examples, associations)) => (examples, associations, false, false),
+                        None => (Vec::new(), Vec::new(), true, false),
+                    }
+                }
+                RecallStatus::Pending => (Vec::new(), Vec::new(), false, true),
+                RecallStatus::Unavailable => (Vec::new(), Vec::new(), true, false),
+                RecallStatus::Missing => {
+                    let prior = logical_id
+                        .as_deref()
+                        .map(|session| {
+                            learning
+                                .deferred_recalls
+                                .prior_associations_for_session(session, &recall_context)
+                        })
+                        .unwrap_or_default();
+                    recall_ticket = learning.deferred_recalls.start(
+                        Arc::clone(learning),
+                        recall_context.clone(),
+                        store.clone(),
+                        prior,
+                        exposed.clone(),
+                    );
+                    let expected = matches!(
+                        learning.mode,
+                        crate::workflow_learning::LearningMode::Serving
+                            | crate::workflow_learning::LearningMode::ShadowWithRecall
+                    );
+                    (
+                        Vec::new(),
+                        Vec::new(),
+                        expected && recall_ticket.is_none(),
+                        recall_ticket.is_some(),
+                    )
+                }
+            }
+        };
+        let receipt = if let Some(claim) = supplemental_claim.as_ref() {
+            let mut receipt: crate::discovery_service::RoutingReceipt =
+                serde_json::from_str(&claim.result().receipt_json)
+                    .map_err(|error| ToolFailure::rejected(error.to_string()))?;
+            if receipt.retrieval.generation != *generation || receipt.authorization != allowed {
+                return Err(ToolFailure::rejected(
+                    "supplemental discovery scope or catalogue changed",
+                ));
+            }
+            receipt.pin_id = logical_id.clone().expect("supplemental session checked");
+            receipt.intent_provenance = provenance.clone();
+            receipt.intent = intent.to_owned();
+            receipt
+        } else {
+            let service = DiscoveryService::from_env(store.clone())
+                .map_err(|e| ToolFailure::rejected(e.to_string()))?;
+            service
+                .route_turn(RouteTurn {
+                    new_generation: &generation,
+                    intent_provenance: &provenance,
+                    logical_session: logical_id.as_deref(),
+                    allowed: &allowed,
+                    exposed: &exposed,
+                    expires_at: std::time::SystemTime::now()
+                        + std::time::Duration::from_secs(24 * 3600),
+                })
+                .await
+                .map_err(|e| ToolFailure::rejected(format!("routing error: {e}")))?
+        };
+        if let Some(ticket) = recall_ticket {
+            learning.deferred_recalls.bind(ticket, &receipt.pin_id);
+        }
         let logical_uuid = uuid::Uuid::parse_str(&receipt.pin_id)
             .map_err(|e| ToolFailure::rejected(e.to_string()))?;
         let rec = self
@@ -212,11 +531,32 @@ impl PlasmMcpHandler {
         if receipt.closure.is_none() {
             let content = if let Some(recovery) = &receipt.recovery {
                 recovery.render_unmatched_markdown()
+            } else if receipt.search.has_unavailable_provider() {
+                "**plasm_context:** a later capability assessment was unavailable; retry discovery to continue.".into()
+            } else if receipt.search.has_pending_operation_judgments() {
+                "**plasm_context:** capability discovery has more candidates to assess. Extend this session with the same intent to continue.".into()
+            } else if receipt.search.has_incomplete_operation_judgments() {
+                "**plasm_context:** some candidate contributions are uncertain; refine the intent to continue discovery.".into()
+            } else if !receipt.search.deferred.is_empty() {
+                "**plasm_context:** some candidates could not be assessed within discovery limits; refine the intent to continue.".into()
             } else {
                 "**plasm_context:** no additional capability matches.".into()
             };
             let wire_ref = format_logical_session_wire_ref(LogicalSessionId(logical_uuid));
-            let content = format!("{content}\n\n**logical_session_ref:** `{wire_ref}`");
+            let pending = if learning_pending {
+                "\nOptional teaching is being prepared. To check it, call plasm_context with session_mode extend, this logical_session_ref, and the same intent."
+            } else {
+                ""
+            };
+            let unavailable = if supplemental_unavailable {
+                "\nSupplemental discovery is unavailable; ordinary discovery remains available."
+            } else {
+                ""
+            };
+            let content = format!(
+                "{}\n\n{content}\n\n**logical_session_ref:** `{wire_ref}`{pending}{unavailable}",
+                receipt.intent_analysis
+            );
             let mut meta = serde_json::Map::new();
             meta.insert("logical_session_ref".into(), json!(wire_ref));
             meta.insert(
@@ -269,6 +609,37 @@ impl PlasmMcpHandler {
         }
         let logical_session_ref = format_logical_session_wire_ref(rec.logical_session_id);
         let ls_key = logical_uuid.to_string();
+        if self.plasm.workflow_learning.enabled() {
+            let learning_scope = crate::workflow_learning::scope(&scope, tcfg.as_deref());
+            match self.plasm.workflow_learning.repository().await {
+                Ok(repository) => {
+                    if let Err(error) = repository
+                        .bind_session(&learning_scope, rec.logical_session_id)
+                        .await
+                    {
+                        tracing::warn!(target: "plasm_agent::workflow_learning", %error, "session learning scope unavailable");
+                    }
+                    if session_mode == PlasmContextSessionMode::New {
+                        if let Ok(actor) = crate::workflow_training_mcp::caller_actor(
+                            learning_scope.clone(),
+                            principal_incoming.as_ref(),
+                            runtime,
+                        ) {
+                            if let Err(error) = repository
+                                .bind_training_controller(&actor, rec.logical_session_id)
+                                .await
+                            {
+                                tracing::warn!(%error, "training controller unavailable; discovery continues");
+                            }
+                        }
+                    }
+                }
+                Err(error) => {
+                    tracing::warn!(target: "plasm_agent::workflow_learning", %error, "learning unavailable; discovery continues")
+                }
+            }
+            self.plasm.workflow_learning.start_worker();
+        }
         let accumulated_intent = rec.accumulated_intent.as_str();
         let distinct_entries: Vec<String> = {
             let mut seen = std::collections::HashSet::new();
@@ -311,6 +682,51 @@ impl PlasmMcpHandler {
             .await
             {
                 session_churn = Some(adv);
+            }
+        }
+        if supplemental_only {
+            let latest = store
+                .intent_provenance(&ls_key)
+                .await
+                .map_err(|error| ToolFailure::rejected(error.to_string()))?;
+            if crate::workflow_learning::deferred_recall::intent_revision(&latest)
+                != recall_context.intent_revision
+            {
+                return Err(ToolFailure::rejected(
+                    "supplemental discovery intent changed before exposure",
+                ));
+            }
+            let current_record = self
+                .plasm
+                .logical_sessions
+                .get(LogicalSessionId(logical_uuid))
+                .await
+                .ok_or_else(|| ToolFailure::rejected("supplemental discovery session expired"))?;
+            let pin = current_record.discovery_pin.ok_or_else(|| {
+                ToolFailure::rejected("supplemental discovery session pin is missing")
+            })?;
+            if pin.generation != *generation {
+                return Err(ToolFailure::rejected(
+                    "supplemental discovery catalogue changed",
+                ));
+            }
+            let mut current = pin.authorization;
+            if let Some(config) = self.tenant_mcp_cfg(runtime).await? {
+                let mut configured = crate::discovery_store::DiscoveryAuthorization::catalogs(
+                    config.allowed_entry_ids.iter().cloned().collect(),
+                );
+                configured.capabilities = config
+                    .capabilities_by_entry
+                    .iter()
+                    .filter(|(_, values)| !values.is_empty())
+                    .map(|(entry, values)| (entry.clone(), values.iter().cloned().collect()))
+                    .collect();
+                current = current.intersection(&configured);
+            }
+            if current != allowed {
+                return Err(ToolFailure::rejected(
+                    "supplemental discovery authorization changed",
+                ));
             }
         }
         let out: ApplyCapabilitySeedsOutcome = apply_capability_seeds_for_mcp(
@@ -407,6 +823,70 @@ impl PlasmMcpHandler {
             out.symbol_space_reset,
             "",
         );
+        if !examples.is_empty() {
+            text.push_str("\nOptional workflow examples (retrieve with plasm_example):\n");
+            for example in &examples {
+                text.push_str(&format!(
+                    "- {}: {}\n",
+                    example.id, example.candidate.intent.purpose
+                ));
+            }
+        }
+        if examples.is_empty() {
+            for item in learning
+                .deferred_recalls
+                .completed_for_session(
+                    &logical_uuid.to_string(),
+                    &recall_context.scope,
+                    &generation,
+                    &allowed,
+                )
+                .into_iter()
+                .filter(|item| !item.examples.is_empty())
+                .take(3)
+            {
+                if let Some((current, _)) =
+                    crate::workflow_learning::deferred_recall::validate_current(
+                        learning,
+                        &recall_context.scope,
+                        (item.examples, item.associations),
+                    )
+                    .await
+                {
+                    let fresh = learning.deferred_recalls.claim_delivery(
+                        item.ticket,
+                        &current.iter().map(|example| example.id).collect::<Vec<_>>(),
+                    );
+                    if !fresh.is_empty() {
+                        text.push_str(&format!(
+                            "\nOptional workflow examples for {} (retrieve with plasm_example):\n",
+                            item.intent
+                        ));
+                        for example in current
+                            .iter()
+                            .filter(|example| fresh.contains(&example.id))
+                            .take(3)
+                        {
+                            text.push_str(&format!(
+                                "- {}: {}\n",
+                                example.id, example.candidate.intent.purpose
+                            ));
+                        }
+                    }
+                }
+            }
+        }
+        if learning_unavailable {
+            text.push_str("\nOptional teaching examples are unavailable for this request; ordinary discovery continues.\n");
+        }
+        if supplemental_unavailable {
+            text.push_str(
+                "\nSupplemental discovery is unavailable; ordinary discovery remains available.\n",
+            );
+        }
+        if learning_pending {
+            text.push_str("\nOptional teaching is being prepared and will appear on a later session response when ready.\n");
+        }
         if let Some(session) = routed_host
             .get_execute_session(&out.prompt_hash, &out.session_id)
             .await
@@ -433,10 +913,6 @@ impl PlasmMcpHandler {
         if let Some(recovery) = &route.recovery {
             text.push_str("\n\n");
             text.push_str(&recovery.render_unmatched_markdown());
-        }
-        if let Some(support) = &route.environment_support {
-            text.push_str("\n\n");
-            text.push_str(support.guidance());
         }
         text = format!("{}\n\n{text}", route.intent_analysis);
         for wave in &out.waves {
@@ -517,11 +993,43 @@ impl PlasmMcpHandler {
                 session_churn: session_churn.as_ref(),
             },
         );
-        plasm.insert(
-            "routing".into(),
-            serde_json::to_value(route.as_ref())
-                .map_err(|e| ToolFailure::rejected(e.to_string()))?,
-        );
+        if let Some(training) = training {
+            let actor = crate::workflow_training_mcp::caller_actor(
+                crate::workflow_learning::scope(&scope, tcfg.as_deref()),
+                principal_incoming.as_ref(),
+                runtime,
+            );
+            let status = match actor {
+                Ok(actor) => {
+                    crate::workflow_training_wire::request_on_creation(
+                        &self.plasm,
+                        &actor,
+                        rec.logical_session_id,
+                        &training,
+                    )
+                    .await
+                }
+                Err(error) => {
+                    json!({"capture_availability":"unavailable", "error":error.to_string()})
+                }
+            };
+            text.push_str(&format!("\nTraining: {}\n", status));
+            plasm.insert("training".into(), status);
+        }
+        if !examples.is_empty() {
+            plasm.insert(
+                "workflow_examples".into(),
+                json!(examples
+                    .iter()
+                    .map(|example| {
+                        let program = example.candidate.program();
+                        json!({"example_ref":example.id,"purpose":example.candidate.intent.purpose,
+                    "outputs":program.map(|p| p.outputs.iter().map(|output| output.summary()).collect::<Vec<_>>()),
+                    "assurance":example.candidate.quality.assurance})
+                    })
+                    .collect::<Vec<_>>()),
+            );
+        }
         let text = crate::mcp_agent_present::AgentContent::context(
             &crate::mcp_agent_present::ContextTokenRefs {
                 logical_session_ref: logical_session_ref.as_str(),
@@ -541,6 +1049,29 @@ impl PlasmMcpHandler {
             .into_call_tool_result()
         };
         self.persist_transport_state(key).await;
+        if let Some(claim) = supplemental_claim.take() {
+            tracing::debug!(target: "plasm_agent::workflow_learning", wave_count = out.waves.len(), "supplemental discovery delivered to MCP session");
+            claim.commit();
+        }
         Ok(res)
+    }
+}
+
+#[cfg(test)]
+mod discovery_gate_tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn same_session_serializes_while_other_sessions_remain_independent() {
+        let gates = DiscoveryGates::default();
+        let id = uuid::Uuid::new_v4();
+        let first = gates.for_session(id).await;
+        let same = gates.for_session(id).await;
+        let other = gates.for_session(uuid::Uuid::new_v4()).await;
+        let held = first.lock().await;
+        assert!(same.try_lock().is_err());
+        assert!(other.try_lock().is_ok());
+        drop(held);
+        assert!(same.try_lock().is_ok());
     }
 }

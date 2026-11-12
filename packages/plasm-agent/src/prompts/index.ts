@@ -43,19 +43,19 @@ export type SystemLiturgyOptions = {
    * (`complete_task` / `submit_answer`) — never “Stop with no tool call.”
    */
   includeEvalTerminals?: boolean;
-  /**
-   * Same gate as `createHarnessTools({ includeTaskLedger })`.
-   * Eval/A-B factor only — product default is unset (corrected current loop).
-   */
-  includeTaskLedger?: boolean;
 };
 
 /**
  * Named completion-contract slot in `initialize_workflow.txt`.
  * Overlay replaces this exact paragraph — never the first paragraph by index.
  */
+const RECEIPT_COMPLETION =
+  "Successful execution receipts are evidence of their confirmed effects. " +
+  "Do not repeat a confirmed write or reread solely to reconfirm it; inspect state when a requested condition or an effect remains unresolved. ";
+
 export const WORKFLOW_COMPLETION_SLOT =
   "Plan from the current requirement, taught symbols and observed results. " +
+  RECEIPT_COMPLETION +
   "Stop with no tool call when observations establish every requested effect. " +
   "Intermediate results alone are not completion.";
 
@@ -67,6 +67,7 @@ export const WORKFLOW_COMPLETION_SLOT =
  */
 export const EVAL_TERMINAL_COMPLETION =
   "Plan from the current requirement, taught symbols and observed results. " +
+  RECEIPT_COMPLETION +
   "After observations establish every requested effect, end through complete_task " +
   "when the instruction asked for no reportable value, or submit_answer with that " +
   "value when it did. Writing a value into an app or sending it to another person is an effect, not an answer to the requester. A request to return a single number, amount, count, name, or other " +
@@ -106,34 +107,6 @@ export function overlayWorkflowCompletion(workflow: string, completion: string):
   return overlayNamedSlot(workflow, WORKFLOW_COMPLETION_SLOT, completion, "WORKFLOW_COMPLETION_SLOT");
 }
 
-/**
- * Named plan-memory sentence in `initialize_workflow.txt` (already in the
- * crates asset). Overlay only when the task-ledger experiment is on.
- */
-export const TASK_LEDGER_PLAN_SLOT =
-  "After call or terminal rejection, repair the unfinished requirement in-session; changing call shape alone does not complete it.";
-
-export const TASK_LEDGER_PLAN_OVERLAY =
-  "After call or terminal rejection, revise the host task ledger and repair the unfinished requirement in-session; changing call shape alone does not complete it. Do not reconstruct scope from conversation alone.";
-
-/**
- * Static ledger rite — composed as its own section, not spliced into a
- * paragraph index. The current record is *not* system law; each loop
- * iteration presents a separate model-authored state echo.
- */
-export const TASK_LEDGER_LITURGY = [
-  "## Task ledger",
-  "",
-  "`task_ledger` writes the host record for this instruction: requested outcomes and scope, conditions that authorize alternatives, observed facts, interpretations, completed effects (with evidence refs), unresolved questions, and remaining work.",
-  "",
-  "The host stores your write and echoes it. It does not add outcomes, remaining work, or authorized alternatives, and it does not decide that the instruction is satisfied.",
-  "",
-  "Write `observed_facts` only for tool-cited observations (`kind` is `fact`). Every fact requires `evidence_ref` citing a run_id, plasm:// URI, run_ref, or tool name. The host checks that the citation is a known shape; it does not treat the citation as proof. Write `interpretations` separately (`kind` is `interpretation`). `completed_effects.satisfaction` is always an interpretation.",
-  "",
-  "An alternative action is authorized only when the user’s stated condition is met. A failed preferred action is not that condition.",
-  "",
-  "Each decision sees a host echo of your last accepted write as model-authored state — not host law and not a completion contract. Revise the record when evidence changes. Completion still follows the contract above — the ledger is not a terminal.",
-].join("\n");
 
 /**
  * Framework system liturgy for every PlasmAgent turn.
@@ -146,23 +119,9 @@ export function buildDefaultSystemLiturgy(options: SystemLiturgyOptions = {}): s
   let workflow = options.includeEvalTerminals
     ? overlayWorkflowCompletion(workflowAsset, EVAL_TERMINAL_COMPLETION)
     : workflowAsset;
-  if (options.includeEvalTerminals) {
-    workflow = overlayNamedSlot(workflow, WORKFLOW_INITIALIZATION_SLOT,
-      EVAL_WORKFLOW_INITIALIZATION, "WORKFLOW_INITIALIZATION_SLOT");
-  }
-  if (options.includeTaskLedger) {
-    workflow = overlayNamedSlot(
-      workflow,
-      TASK_LEDGER_PLAN_SLOT,
-      TASK_LEDGER_PLAN_OVERLAY,
-      "TASK_LEDGER_PLAN_SLOT",
-    );
-  }
-  const sections = [workflow];
-  if (options.includeTaskLedger) {
-    sections.push("", TASK_LEDGER_LITURGY);
-  }
-  return sections.join("\n");
+  workflow = overlayNamedSlot(workflow, WORKFLOW_INITIALIZATION_SLOT,
+    EVAL_WORKFLOW_INITIALIZATION, "WORKFLOW_INITIALIZATION_SLOT");
+  return workflow;
 }
 
 export function buildPlasmToolDescription(): string {

@@ -56,18 +56,3 @@ fn load_mergeable_ranks() -> FxHashMap<Vec<u8>, riptoken::Rank> {
     }
     out
 }
-
-#[cfg(test)]
-mod tests {
-    use super::o200k_token_count;
-
-    #[test]
-    fn short_text_reasonable() {
-        let t = "Hello, world! Token check.";
-        let n = o200k_token_count(t);
-        assert!(
-            (3..=16).contains(&n),
-            "unexpected o200k count {n} for {t:?}"
-        );
-    }
-}

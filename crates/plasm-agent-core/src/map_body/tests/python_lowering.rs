@@ -2561,6 +2561,109 @@ fn multi_statement_helper_preserves_deferred_row_operations() {
 }
 
 #[test]
+fn python_mixed_branch_diagnostic_repair_preserves_action_guard() {
+    on_runtime(async {
+        for matches in [false, true] {
+            for reverse in [false, true] {
+                let (es, host, calls) = fixture(1);
+                let symbols = es.teaching_exposure.as_ref().unwrap().to_symbol_map();
+                let item = symbols.entity_sym_for("fixture", "Item");
+                let publish = symbols.method_sym_for("fixture", "Item", "publish");
+                let title = if matches { "Title 0" } else { "absent" };
+                let action = format!("{item}.{publish}(content='guarded')");
+                let condition =
+                    format!("row.title {} '{title}'", if reverse { "!=" } else { "==" });
+                let branch = if reverse {
+                    format!("[] if {condition} else {action}")
+                } else {
+                    format!("{action} if {condition} else []")
+                };
+                let source = format!("class P(Program):\n    def build(self):\n        return {item}.query().flat_map(lambda row: {branch})\n");
+                let error = compile_python_program(&es, &source)
+                    .await
+                    .expect_err("mixed branch rejected")
+                    .to_string();
+                assert!(error.contains("EffectAck"), "{error}");
+                assert!(error.contains("return None"), "{error}");
+                assert!(
+                    error.contains("Keep the action inside the guard"),
+                    "{error}"
+                );
+                assert!(calls.lock().unwrap().is_empty());
+                let repaired = source.replace("[]", "None");
+                let bundle = compile_python_program(&es, &repaired).await.unwrap();
+                let _run = execute(&es, &host, &bundle).await.unwrap();
+                let expected = if matches {
+                    vec!["/items", "/publish:guarded"]
+                } else {
+                    vec!["/items"]
+                };
+                assert_eq!(*calls.lock().unwrap(), expected);
+                // Independent execution state: the first repair may cache its read.
+                let (es, host, calls) = fixture(1);
+                let filtered = format!("class P(Program):\n    def build(self):\n        return {item}.query().where(lambda row: row.title == '{title}').flat_map(lambda row: {action})\n");
+                let bundle = compile_python_program(&es, &filtered).await.unwrap();
+                let _run = execute(&es, &host, &bundle).await.unwrap();
+                assert_eq!(*calls.lock().unwrap(), expected);
+            }
+        }
+    });
+}
+
+#[test]
+fn python_ack_receiver_diagnostic_preserves_sequenced_effects() {
+    on_runtime(async {
+        for direct in [false, true] {
+            for matches in [false, true] {
+                let (es, _host, calls) = fixture(1);
+                let symbols = es.teaching_exposure.as_ref().unwrap().to_symbol_map();
+                let item = symbols.entity_sym_for("fixture", "Item");
+                let publish = symbols.method_sym_for("fixture", "Item", "publish");
+                let title = if matches { "Title 0" } else { "absent" };
+                let first = if direct {
+                    format!("{item}.{publish}(content='first')")
+                } else {
+                    format!("{item}.query().where(lambda r: r.title == '{title}').flat_map(lambda r: {item}.{publish}(content='first'))")
+                };
+                let source = format!("class P(Program):\n    def build(self):\n        first = {first}\n        second = first.flat_map(lambda ack: {item}.{publish}(content='second'))\n        return second\n");
+                let error = compile_python_program(&es, &source)
+                    .await
+                    .expect_err("ack is not rows")
+                    .to_string();
+                assert!(error.contains("`first`"), "{error}");
+                assert!(error.contains("EffectAck"), "{error}");
+                assert!(error.contains("same callback"), "{error}");
+                assert!(
+                    !error.contains("compute schema must declare fields"),
+                    "{error}"
+                );
+                assert!(calls.lock().unwrap().is_empty());
+
+                let (es, host, calls) = fixture(1);
+                // Observe a distinct resource so this proof measures ordering,
+                // not reuse of the parent query's already observed rows.
+                let repaired = if direct {
+                    format!("class P(Program):\n    def build(self):\n        first = {item}.{publish}(content='first')\n        second = {item}.{publish}(content='second')\n        return {item}.get('i99')\n")
+                } else {
+                    format!("class P(Program):\n    def build(self):\n        def sequence(row):\n            first = {item}.{publish}(content='first')\n            second = {item}.{publish}(content='second')\n            return {item}.get('i99')\n        return {item}.query().where(lambda r: r.title == '{title}').flat_map(sequence)\n")
+                };
+                let bundle = compile_python_program(&es, &repaired).await.unwrap();
+                let run = execute(&es, &host, &bundle).await.unwrap();
+                let expected = if direct {
+                    vec!["/publish:first", "/publish:second", "/items/i99"]
+                } else if matches {
+                    vec!["/items", "/publish:first", "/publish:second", "/items/i99"]
+                } else {
+                    vec!["/items"]
+                };
+                assert_eq!(*calls.lock().unwrap(), expected);
+                assert_eq!(rows(&run).len(), usize::from(direct || matches));
+            }
+        }
+    });
+}
+
+#[test]
 fn python_unelected_effect_has_no_completed_invocation() {
     on_runtime(async {
         let (es, host, calls) = fixture(4);

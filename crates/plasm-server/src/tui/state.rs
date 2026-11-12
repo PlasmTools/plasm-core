@@ -79,6 +79,17 @@ impl RunScreen {
 
 #[derive(Clone, Debug)]
 pub(crate) enum InputMode {
+    TrainingSelect {
+        logical_ref: String,
+    },
+    TrainingOwner {
+        logical: plasm_agent_core::session_identity::LogicalSessionId,
+        action: TrainingAction,
+        secret: OwnerSetupSecret,
+    },
+    TrainingReview {
+        request_ref: String,
+    },
     Normal,
     ApiFilter,
     ApiSecretEdit {
@@ -149,6 +160,7 @@ pub(crate) struct ClientsState {
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum AdminTaskKind {
+    Training,
     Refreshing,
     ProvisioningKey,
     SavingApiAllowlist,
@@ -166,6 +178,7 @@ pub(crate) enum AdminTaskKind {
 impl AdminTaskKind {
     pub(crate) fn label(self) -> &'static str {
         match self {
+            Self::Training => "Training control…",
             Self::Refreshing => "Refreshing…",
             Self::ProvisioningKey => "Provisioning key…",
             Self::SavingApiAllowlist => "Saving API allowlist…",
@@ -250,6 +263,7 @@ pub(crate) struct ResourceState {
 }
 
 pub(crate) struct RunState {
+    pub(crate) training: Option<TrainingSnapshot>,
     pub(crate) screen: RunScreen,
     pub(crate) mode: InputMode,
     pub(crate) api: ApiState,
@@ -266,6 +280,7 @@ pub(crate) struct RunState {
 impl RunState {
     pub(crate) fn new() -> Self {
         Self {
+            training: None,
             screen: RunScreen::Status,
             mode: InputMode::Normal,
             api: ApiState::default(),

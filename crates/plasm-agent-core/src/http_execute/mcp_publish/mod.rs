@@ -585,6 +585,7 @@ mod tests {
             request_fingerprints: vec!["fp".into()],
         };
         let step = PublishedResultStep {
+            source_heading: None,
             name: None,
             node_id: None,
             entry_id: Some("default".into()),
@@ -830,6 +831,7 @@ mod tests {
             outcomes: Vec::new(),
         });
         let step = PublishedResultStep {
+            source_heading: None,
             name: Some("effects".into()),
             node_id: None,
             entry_id: Some("langmatrix".into()),
@@ -1003,6 +1005,7 @@ mod tests {
     #[test]
     fn publish_empty_query_has_no_operations_block() {
         let step = PublishedResultStep {
+            source_heading: None,
             name: Some("items".into()),
             node_id: None,
             entry_id: Some("langmatrix".into()),
@@ -1127,6 +1130,83 @@ mod tests {
             out.delivered_steps[0].result.coverage(),
             plasm_runtime::ResultCoverage::Complete
         );
+    }
+
+    #[test]
+    fn result_headings_offer_recorded_expressions_only_for_complete_catalog_artifacts() {
+        use plasm_runtime::{execution::RowMaterialization, ResultCoverage};
+        let run_id = RunArtifactId::from_wire(&format!("pr{}", "e".repeat(64))).unwrap();
+        let handle = RunArtifactHandle {
+            run_id,
+            resource_index: 1,
+            plasm_uri: crate::run_artifacts::plasm_short_resource_uri(1),
+            canonical_plasm_uri: crate::run_artifacts::plasm_run_resource_uri("ph", "sid", &run_id),
+            http_path: crate::run_artifacts::artifact_http_path("ph", "sid", &run_id),
+            payload_len: 0,
+            request_fingerprints: vec![],
+        };
+        for count in [0, 1, 49] {
+            for coverage in [
+                ResultCoverage::Complete,
+                ResultCoverage::Partial,
+                ResultCoverage::Unknown,
+            ] {
+                for materialization in [RowMaterialization::Catalog, RowMaterialization::Computed] {
+                    for artifact in [None, Some(handle.clone())] {
+                        let expected = artifact.is_some()
+                            && coverage == ResultCoverage::Complete
+                            && materialization == RowMaterialization::Catalog;
+                        let mut step = with_coverage(
+                            synthetic_published_result_step(count, artifact),
+                            coverage,
+                        );
+                        step.source_heading = Some("acquired: matrix::Resource".into());
+                        let result = Arc::make_mut(&mut step.result);
+                        result.collection = result
+                            .collection
+                            .clone()
+                            .with_row_materialization(materialization);
+                        let out = publish_plasm_result_steps(None, None, &[step]);
+                        assert!(out.markdown.contains("acquired: matrix::Resource"));
+                        assert_eq!(
+                            out.markdown.contains(&format!(
+                                "`self.recorded(\"{}\")` (historical)",
+                                run_id.to_wire()
+                            )),
+                            expected,
+                            "{}",
+                            out.markdown
+                        );
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn result_headings_distinguish_same_shaped_sources_and_survive_empty_pages() {
+        for rows in [0, 1, 25] {
+            let mut source = synthetic_published_result_step(rows, None);
+            source.source_heading = Some("projection from available: directory::Resource".into());
+            let mut saved = source.clone();
+            saved.source_heading = Some("projection from saved: workspace::Resource".into());
+            let out = publish_plasm_result_steps(None, None, &[source, saved]);
+            assert!(
+                out.markdown.contains(&format!(
+                    "### projection from available: directory::Resource ({rows} rows)"
+                )),
+                "{}",
+                out.markdown
+            );
+            assert!(
+                out.markdown.contains(&format!(
+                    "### projection from saved: workspace::Resource ({rows} rows)"
+                )),
+                "{}",
+                out.markdown
+            );
+            assert_eq!(out.delivered_steps.len(), 2);
+        }
     }
 
     /// Host page filled exactly (25 of 25) without a continuation driver → Unknown must still

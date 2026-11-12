@@ -45,6 +45,7 @@ impl Lower<'_> {
                     );
                 }
                 let mut predicates = Vec::new();
+                let mut operands = Vec::new();
                 let mut keys = BTreeSet::new();
                 for kw in &call.arguments.keywords {
                     let key = kw
@@ -73,6 +74,7 @@ impl Lower<'_> {
                             key.as_str(),
                         )
                         .map_err(PythonLoweringError::from)?;
+                    operands.push((field.clone(), &kw.value));
                     predicates.push(plasm_core::Predicate::eq(
                         field,
                         self.write_value(&kw.value)?,
@@ -86,6 +88,23 @@ impl Lower<'_> {
                     });
                 }
                 q.catalog_entry_id = plasm_core::CatalogEntryStamp::some(owner.entry_id.clone());
+                // Only an explicitly selected capability is stable across later
+                // default insertion and query rewrites. Unpinned query selection
+                // remains ordinary admission's responsibility, not example evidence.
+                let pinned = q
+                    .capability_name
+                    .as_ref()
+                    .and_then(|name| cgs.get_capability(name.as_str()));
+                for (field, expression) in operands {
+                    if let Some(capability) = pinned {
+                        self.record_invocation_operand(expression, &owner, capability, &field);
+                    } else {
+                        self.record_operand(
+                            expression,
+                            operand_evidence::OperandMeaning::Unclassified,
+                        );
+                    }
+                }
                 plasm_core::Expr::Query(q)
             }
             CatalogReadKind::Get => {
@@ -165,6 +184,14 @@ impl Lower<'_> {
                             .arg
                             .as_ref()
                             .ok_or_else(|| at(site, PythonSourceError::IdentityUnpacking))?;
+                        self.record_get_identity_operand(
+                            &kw.value,
+                            &owner,
+                            cap,
+                            entity,
+                            Some(key.as_str()),
+                            cgs,
+                        );
                         if slots
                             .insert(key.to_string(), self.identity_slot(&kw.value)?)
                             .is_some()
@@ -210,6 +237,7 @@ impl Lower<'_> {
                     }
                     let identity =
                         identity.ok_or_else(|| at(site, PythonSourceError::MissingGetIdentity))?;
+                    self.record_get_identity_operand(identity, &owner, cap, entity, None, cgs);
                     match self.identity_slot(identity)? {
                         plasm_core::IdentitySlot::Binding(input) => {
                             plasm_core::Ref::simple_binding(owner.entity.as_str(), input)

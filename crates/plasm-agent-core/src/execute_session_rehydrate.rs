@@ -412,6 +412,7 @@ mod tests {
     #[test]
     fn descriptor_expired_rejects_past_timestamp() {
         let desc = PersistedExecuteSessionDescriptor {
+            example_fetch_receipts: Default::default(),
             prompt_hash: "ph".into(),
             session_id: "sid".into(),
             prompt_text: String::new(),
@@ -510,6 +511,7 @@ mod tests {
         })
         .expect("valid catalog fixture");
         let desc = PersistedExecuteSessionDescriptor {
+            example_fetch_receipts: Default::default(),
             prompt_hash: "ph".into(),
             session_id: "sid".into(),
             prompt_text: String::new(),
@@ -560,6 +562,7 @@ mod tests {
     #[test]
     fn pinned_hashes_from_descriptor_legacy_single_entry() {
         let desc = PersistedExecuteSessionDescriptor {
+            example_fetch_receipts: Default::default(),
             prompt_hash: "ph".into(),
             session_id: "sid".into(),
             prompt_text: String::new(),
@@ -640,7 +643,7 @@ mod tests {
     }
 
     #[test]
-    fn explicit_replay_preserves_only_requested_entities() {
+    fn explicit_replay_preserves_requested_catalog_ownership() {
         use crate::http_execute::replay_teaching_exposure_waves;
 
         let matrix_dir = Path::new(crate::test_manifest_dir())
@@ -656,6 +659,7 @@ mod tests {
             Arc::new(plasm_core::CgsContext::entry("langmatrix_b", cgs.clone())),
         );
         let desc = PersistedExecuteSessionDescriptor {
+            example_fetch_receipts: Default::default(),
             prompt_hash: "ph".into(),
             session_id: "sid".into(),
             prompt_text: String::new(),
@@ -698,14 +702,20 @@ mod tests {
             &desc.entities,
             &desc.entity_catalog_entry_ids,
         );
-        assert_eq!(
-            exp.entity_catalog_entry_ids,
-            ["langmatrix_a", "langmatrix_b"]
-        );
+        let second = exp
+            .entities
+            .iter()
+            .zip(&exp.entity_catalog_entry_ids)
+            .position(|(entity, entry)| entity == "LangItem" && entry == "langmatrix_b")
+            .expect("second catalog's requested entity");
         let (map, _): (Arc<plasm_core::SymbolMap>, _) = exp.symbol_map_arc_cross(None, None);
-        assert!(map.resolve_session_entity_symbol("e2").is_some());
+        let symbol = format!("e{}", second + 1);
         assert_eq!(
-            map.entry_id_for_entity_symbol("e2").as_deref(),
+            map.resolve_session_entity_symbol(&symbol).as_deref(),
+            Some("LangItem")
+        );
+        assert_eq!(
+            map.entry_id_for_entity_symbol(&symbol).as_deref(),
             Some("langmatrix_b")
         );
     }

@@ -1,0 +1,39 @@
+{
+  "purpose": "Fresh development controls separating contribution judgments from documented applicability; neither teaching nor task execution",
+  "families": [
+    {
+      "id": "credential_rotation",
+      "entity": "Credential",
+      "intent": "Rotate credential K. Leave the values of every other credential unchanged and preserve the audit history.",
+      "meaning": "Credentials have identities, current values and audit history. An editable rotation set can contain credential identities.",
+      "operations": [
+        {"name":"direct","kind":"action","contract":"Rotate only the supplied credential identity. Other credential values and all audit history are unchanged.","contribution":"relevant","applicability":"compatible_given_target","basis":"Scope and effects match the requested mutation."},
+        {"name":"group","kind":"action","contract":"Rotate every credential currently in the editable rotation set. This operation cannot select a subset. Credentials outside the set and all audit history are unchanged.","contribution":"relevant","applicability":"preparation_unestablished","basis":"Current membership and preparation capability are not supplied."},
+        {"name":"global","kind":"action","contract":"Rotate every credential in the installation, including credentials other than the requested identity. Scope is fixed and cannot be filtered or changed by inputs or configuration. Audit history is unchanged.","contribution":"relevant","applicability":"incompatible","basis":"Produces the requested rotation but necessarily changes unrelated credentials."},
+        {"name":"destructive","kind":"action","contract":"Rotate only the supplied credential identity and permanently erase all existing audit history. Erasure is mandatory and cannot be disabled. Other credential values are unchanged.","contribution":"relevant","applicability":"incompatible","basis":"Produces the requested rotation but necessarily destroys protected history."},
+        {"name":"credential_needed","kind":"action","contract":"Rotate only the supplied credential identity. Requires a valid authorization token; no token is supplied in this request. Other credential values and audit history are unchanged.","contribution":"relevant","applicability":"input_unestablished","basis":"Contribution is documented but authentication availability is unknown."},
+        {"name":"inspect","kind":"get","contract":"Read credential identities, rotation timestamps and audit-history retention settings. Does not change credentials or history.","contribution":"relevant","applicability":"read_only_contribution","basis":"Provides selection and verification information; does not perform the mutation."},
+        {"name":"opposite","kind":"action","contract":"Restore a credential's previous value, undoing its latest rotation. Cannot generate a new credential value or rotate a credential. Returns only a completion receipt.","contribution":"unrelated","applicability":"no_requested_contribution","basis":"Reverses rather than contributes to the requested change."},
+        {"name":"weather","kind":"get","contract":"Read the current weather forecast for a city. Contains no credential information.","contribution":"unrelated","applicability":"no_requested_contribution","basis":"Unrelated information."},
+        {"name":"opaque","kind":"action","contract":"Perform an administrative operation on the supplied credential identity. The contract does not specify what state is read or changed.","contribution":"uncertain","applicability":"indeterminate","basis":"Contract lacks evidence of a contributing effect."}
+      ]
+    },
+    {
+      "id": "recording_conversion",
+      "entity": "Recording",
+      "intent": "Convert recording R to format Z. Leave the formats of every other recording unchanged and preserve all annotations.",
+      "meaning": "Recordings have identities, formats and annotations. An editable conversion set can contain recording identities.",
+      "operations": [
+        {"name":"direct","kind":"action","contract":"Convert only the supplied recording identity to the supplied output format. Other recording formats and all annotations are unchanged.","contribution":"relevant","applicability":"compatible_given_target","basis":"Scope and effects match the requested mutation."},
+        {"name":"group","kind":"action","contract":"Convert every recording currently in the editable conversion set to the supplied output format. This operation cannot select a subset. Recordings outside the set and all annotations are unchanged.","contribution":"relevant","applicability":"preparation_unestablished","basis":"Current membership and preparation capability are not supplied."},
+        {"name":"global","kind":"action","contract":"Convert every recording in the repository to the supplied output format, including recordings other than the requested identity. Scope is fixed and cannot be filtered or changed by inputs or configuration. Annotations are unchanged.","contribution":"relevant","applicability":"incompatible","basis":"Produces the requested conversion but necessarily changes unrelated recordings."},
+        {"name":"destructive","kind":"action","contract":"Convert only the supplied recording identity to the supplied output format and permanently erase all existing annotations. Erasure is mandatory and cannot be disabled. Other recording formats are unchanged.","contribution":"relevant","applicability":"incompatible","basis":"Produces the requested conversion but necessarily destroys protected annotations."},
+        {"name":"credential_needed","kind":"action","contract":"Convert only the supplied recording identity to the supplied output format. Requires a valid access token; no token is supplied in this request. Other recording formats and all annotations are unchanged.","contribution":"relevant","applicability":"input_unestablished","basis":"Contribution is documented but authentication availability is unknown."},
+        {"name":"inspect","kind":"get","contract":"Read recording identities, current formats and annotation counts. Does not change recordings or annotations.","contribution":"relevant","applicability":"read_only_contribution","basis":"Provides selection and verification information; does not perform the mutation."},
+        {"name":"opposite","kind":"action","contract":"Convert a recording from format Z back to format A. Cannot produce format Z. Returns only a completion receipt.","contribution":"unrelated","applicability":"no_requested_contribution","basis":"Reverses rather than contributes to the requested change."},
+        {"name":"weather","kind":"get","contract":"Read the current weather forecast for a city. Contains no recording information.","contribution":"unrelated","applicability":"no_requested_contribution","basis":"Unrelated information."},
+        {"name":"opaque","kind":"action","contract":"Perform an administrative operation on the supplied recording identity. The contract does not specify what state is read or changed.","contribution":"uncertain","applicability":"indeterminate","basis":"Contract lacks evidence of a contributing effect."}
+      ]
+    }
+  ]
+}

@@ -1,18 +1,28 @@
 //! Provider serialization seam. JSON exists only at encode/decode, never as
 //! selection state. Each decoder receives the binding context issued with its request.
 use serde::{Deserialize, Serialize};
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeMap;
 use thiserror::Error;
 
+/// A provider packet owns both its cache identity and its response binding.
+/// The checkpoint layer never interprets semantic choices or candidate IDs.
+pub(crate) trait DecisionPacket {
+    fn cache_key(&self) -> &str;
+    fn validate_response(
+        &self,
+        raw: &str,
+    ) -> Result<(), Box<dyn std::error::Error + Send + Sync + 'static>>;
+}
+
 #[derive(Debug, Error)]
-pub enum DecisionResponseError {
+pub enum ProviderResponseError {
     #[error("malformed decision response envelope")]
     MalformedEnvelope(#[source] serde_json::Error),
     #[error("decision response resolved to an unexpected model")]
     UnexpectedModel,
     #[error("decision response came from an unexpected provider")]
     UnexpectedProvider,
-    #[error("decision response has missing or extra answers")]
+    #[error("decision response has missing, extra or duplicate answers")]
     AnswerSetMismatch,
     #[error("decision answer has an unexpected question type")]
     UnexpectedQuestionType,
@@ -31,7 +41,7 @@ pub enum DecisionCodecError {
     #[error("decision request serialization failed")]
     Serialize(#[from] serde_json::Error),
     #[error(transparent)]
-    Response(#[from] DecisionResponseError),
+    Response(#[from] ProviderResponseError),
 }
 
 const MAX_ROUNDED_PROBABILITY_DRIFT: f64 = 0.011;
@@ -55,60 +65,78 @@ struct ChoiceAnswer {
     probabilities: BTreeMap<String, f64>,
 }
 
-/// Validated provider choice; probabilities are normalized after accepting only
-/// bounded provider rounding drift. Interpretation belongs to the caller.
+/// Validated provider choice. Auxiliary scores are validated, but only the choice
+/// participates in contribution classification; raw provider evidence is retained.
 pub(crate) struct ValidatedChoice {
     pub choice: String,
-    pub confidence: f64,
-    pub probabilities: BTreeMap<String, f64>,
 }
 
-/// Decode the shared Jev protocol against the issued question and choice sets.
+/// Match an issued model alias or its eight-digit dated revision.
+pub(crate) fn model_matches(issued: &str, resolved: &str) -> bool {
+    let is_date = |date: &str| date.len() == 8 && date.bytes().all(|byte| byte.is_ascii_digit());
+    resolved == issued
+        || (!issued
+            .rsplit_once('-')
+            .is_some_and(|(_, suffix)| is_date(suffix))
+            && resolved
+                .strip_prefix(issued)
+                .is_some_and(|suffix| suffix.strip_prefix('-').is_some_and(is_date)))
+}
+
+/// Decode Luna Decisions against the issued question and choice sets.
 /// Provider envelope metadata is allowed; answer fields and binding maps are strict.
-pub(crate) fn decode_jev_choices<'a>(
+pub(crate) fn decode_choices<'a>(
     model: &str,
     questions: impl IntoIterator<Item = &'a str>,
     choices: &[&str],
     raw: &str,
-) -> Result<BTreeMap<String, ValidatedChoice>, DecisionResponseError> {
+) -> Result<BTreeMap<String, ValidatedChoice>, ProviderResponseError> {
+    let question_choices: BTreeMap<_, _> = questions
+        .into_iter()
+        .map(|question| (question.to_owned(), choices.to_vec()))
+        .collect();
+    decode_choice_sets(model, &question_choices, raw)
+}
+
+/// Validate each question against its own issued choice set.
+pub(crate) fn decode_choice_sets(
+    model: &str,
+    questions: &BTreeMap<String, Vec<&str>>,
+    raw: &str,
+) -> Result<BTreeMap<String, ValidatedChoice>, ProviderResponseError> {
     let envelope: ChoiceEnvelope =
-        serde_json::from_str(raw).map_err(DecisionResponseError::MalformedEnvelope)?;
-    if !(envelope.model == model
-        || envelope
-            .model
-            .strip_prefix(model)
-            .is_some_and(|suffix| suffix.starts_with('-')))
-    {
-        return Err(DecisionResponseError::UnexpectedModel);
+        serde_json::from_str(raw).map_err(ProviderResponseError::MalformedEnvelope)?;
+    if !model_matches(model, &envelope.model) {
+        return Err(ProviderResponseError::UnexpectedModel);
     }
-    if envelope.provider != "TypeSafe" {
-        return Err(DecisionResponseError::UnexpectedProvider);
+    if envelope.provider != "OpenAI" {
+        return Err(ProviderResponseError::UnexpectedProvider);
     }
-    let questions: BTreeSet<_> = questions.into_iter().collect();
     if envelope.answers.len() != questions.len()
         || !envelope
             .answers
             .keys()
-            .all(|key| questions.contains(key.as_str()))
+            .all(|key| questions.contains_key(key))
     {
-        return Err(DecisionResponseError::AnswerSetMismatch);
+        return Err(ProviderResponseError::AnswerSetMismatch);
     }
     envelope
         .answers
         .into_iter()
         .map(|(question, answer)| {
+            let choices = &questions[&question];
             if answer.kind != "choice" {
-                return Err(DecisionResponseError::UnexpectedQuestionType);
+                return Err(ProviderResponseError::UnexpectedQuestionType);
             }
             if !choices.contains(&answer.choice.as_str()) {
-                return Err(DecisionResponseError::UnsupportedChoice);
+                return Err(ProviderResponseError::UnsupportedChoice);
             }
             if answer.probabilities.len() != choices.len()
                 || !choices
                     .iter()
                     .all(|key| answer.probabilities.contains_key(*key))
             {
-                return Err(DecisionResponseError::ProbabilityKeysMismatch);
+                return Err(ProviderResponseError::ProbabilityKeysMismatch);
             }
             let total: f64 = answer.probabilities.values().sum();
             if !answer
@@ -118,21 +146,15 @@ pub(crate) fn decode_jev_choices<'a>(
                 || total <= 0.0
                 || (total - 1.0).abs() > MAX_ROUNDED_PROBABILITY_DRIFT
             {
-                return Err(DecisionResponseError::InvalidProbabilities);
+                return Err(ProviderResponseError::InvalidProbabilities);
             }
             if !answer.confidence.is_finite() || !(0.0..=1.0).contains(&answer.confidence) {
-                return Err(DecisionResponseError::InvalidConfidence);
+                return Err(ProviderResponseError::InvalidConfidence);
             }
             Ok((
                 question,
                 ValidatedChoice {
                     choice: answer.choice,
-                    confidence: answer.confidence,
-                    probabilities: answer
-                        .probabilities
-                        .into_iter()
-                        .map(|(key, probability)| (key, probability / total))
-                        .collect(),
                 },
             ))
         })
@@ -186,8 +208,8 @@ mod tests {
 
     fn envelope() -> serde_json::Value {
         json!({
-            "model": "typesafe/jev-test-20261002",
-            "provider": "TypeSafe",
+            "model": "openai/gpt-6-luna-decisions-20261006",
+            "provider": "OpenAI",
             "answers": {"q": {
                 "type": "choice", "choice": "yes", "confidence": 0.8,
                 "probabilities": {"yes": 0.66, "no": 0.33}
@@ -197,27 +219,72 @@ mod tests {
 
     fn decode(
         raw: &str,
-    ) -> std::result::Result<BTreeMap<String, ValidatedChoice>, DecisionResponseError> {
-        decode_jev_choices("typesafe/jev-test", ["q"], &["yes", "no"], raw)
+    ) -> std::result::Result<BTreeMap<String, ValidatedChoice>, ProviderResponseError> {
+        decode_choices("openai/gpt-6-luna-decisions", ["q"], &["yes", "no"], raw)
     }
 
     #[test]
-    fn accepts_model_revision_and_normalizes_only_rounding_drift() {
+    fn accepts_model_revision_and_bounded_rounding_drift() {
         let mut input = envelope();
         input["usage"] = json!({"total_tokens": 20});
         let output = decode(&input.to_string()).unwrap();
         let answer = &output["q"];
         assert_eq!(answer.choice, "yes");
-        assert_eq!(answer.confidence, 0.8);
-        assert!((answer.probabilities.values().sum::<f64>() - 1.0).abs() < 1e-12);
-        assert!((answer.probabilities["yes"] - 2.0 / 3.0).abs() < 1e-12);
+    }
+
+    #[test]
+    fn mixed_question_choices_are_bound_to_each_question() {
+        let questions = BTreeMap::from([
+            ("effect".to_owned(), vec!["aligned", "unrequested"]),
+            ("relevance".to_owned(), vec!["relevant", "unrelated"]),
+        ]);
+        let answer = |choice: &str, first: &str, second: &str| {
+            json!({"type":"choice", "choice":choice, "confidence":1.0,
+                "probabilities":{(first):1.0, (second):0.0}})
+        };
+        let mut input = json!({"model":"openai/gpt-6-luna-decisions", "provider":"OpenAI",
+            "answers":{"effect":answer("aligned", "aligned", "unrequested"),
+                "relevance":answer("relevant", "relevant", "unrelated")}});
+        assert!(decode_choice_sets(
+            "openai/gpt-6-luna-decisions",
+            &questions,
+            &input.to_string()
+        )
+        .is_ok());
+        input["answers"]["effect"] = answer("relevant", "relevant", "unrelated");
+        assert!(matches!(
+            decode_choice_sets(
+                "openai/gpt-6-luna-decisions",
+                &questions,
+                &input.to_string()
+            ),
+            Err(ProviderResponseError::UnsupportedChoice)
+        ));
+    }
+
+    #[test]
+    fn pinned_revision_requires_exact_resolution() {
+        let alias = "openai/gpt-6-luna-decisions";
+        let pinned = "openai/gpt-6-luna-decisions-20261006";
+        assert!(model_matches(alias, pinned));
+        assert!(model_matches(pinned, pinned));
+        assert!(!model_matches(
+            pinned,
+            "openai/gpt-6-luna-decisions-20261007"
+        ));
+        assert!(!model_matches(
+            pinned,
+            "openai/gpt-6-luna-decisions-20261006-20261007"
+        ));
     }
 
     #[test]
     fn rejects_provider_binding_choice_and_probability_corruption() {
         for (pointer, value) in [
             ("/provider", json!("Other")),
-            ("/model", json!("typesafe/jev-test2")),
+            ("/model", json!("openai/gpt-6-luna-decisions2")),
+            ("/model", json!("openai/gpt-6-luna-decisions-other")),
+            ("/provider", json!("TypeSafe")),
             ("/answers", json!({})),
             ("/answers/q/type", json!("score")),
             ("/answers/q/choice", json!("maybe")),
@@ -246,7 +313,7 @@ mod tests {
     fn rejects_duplicate_answer_probability_and_struct_keys() {
         let answer = envelope()["answers"]["q"].to_string();
         let duplicate_answer = format!(
-            r#"{{"model":"typesafe/jev-test","provider":"TypeSafe","answers":{{"q":{answer},"q":{answer}}}}}"#
+            r#"{{"model":"openai/gpt-6-luna-decisions","provider":"OpenAI","answers":{{"q":{answer},"q":{answer}}}}}"#
         );
         assert!(decode(&duplicate_answer).is_err());
         let raw = envelope().to_string();
@@ -257,8 +324,8 @@ mod tests {
                 "\"confidence\":0.8,\"confidence\":0.8",
             ),
             raw.replace(
-                "\"provider\":\"TypeSafe\"",
-                "\"provider\":\"TypeSafe\",\"provider\":\"TypeSafe\"",
+                "\"provider\":\"OpenAI\"",
+                "\"provider\":\"OpenAI\",\"provider\":\"OpenAI\"",
             ),
         ] {
             assert_ne!(raw, duplicate);

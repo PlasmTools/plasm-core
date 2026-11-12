@@ -1,0 +1,12 @@
+# Label rationales fixed before calls
+
+- **observation:** depth_read returns the exact requested measurement without effects. Invoice numbers neither measure depth nor supply an input to this read.
+- **chain:** blank_read returns Blank; pattern_prepare requires Blank and returns Pattern; plate_emboss requires Pattern and returns Plate. Both intermediate operations are necessary typed contributors, not preconditions assumed currently satisfied. Invoice is a separate output with no connecting slot.
+- **suppliers:** both register reads return the same authored Certificate value domain accepted by sensor_validate. Both are relevant, regardless of which is used. Paint has a different annotated domain despite the same primitive type; it cannot satisfy the certificate slot.
+- **federation:** the deployment explicitly binds lab/calibrate's reference requirement to supply/sample_read through reference_feed. The relationship is not inferred from names. Invoice is unrelated. Closure must include the declared supplier even if classification does not separately request it.
+- **independent:** humidity_read and sound_read answer two separately requested observations. Neither supplies the other; both are required. Invoice has no relation to either observation.
+- **conditional:** survey_read supplies Rows to both durable export and transient preview. The request explicitly names both branches; each operation contributes conditionally. Discovery retains both; it does not authorize taking both branches or assume durable export has failed.
+- **opaque:** vibration_read directly returns the requested measurement. routine_apply has an unspecified effect, so contribution is uncertain; unknown readiness is not evidence of irrelevance. Its retention is scored separately from the observation path and is not called inspection or execution success. Invoice has a documented accounting purpose and output.
+- **revision:** phase one requests gearbox speed, phase two requests room temperature after the earlier request is complete. The currently requested read is relevant; the other read is unrelated to the new discovery need but remains exposed if previously retained. Invoice is unrelated in both phases. No declaration withdrawal is required.
+
+These are development labels, not independent blinded adjudication. Future disagreements must be preserved and investigated; no post-hoc relabelling within this version.

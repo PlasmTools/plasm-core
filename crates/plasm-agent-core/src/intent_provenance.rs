@@ -2,6 +2,21 @@
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
+pub(crate) const SELECTION_HISTORY_HEADER: &str = "Ordered requests: later explicit revisions supersede earlier requirements while unchanged conditions remain applicable\n";
+
+/// Whether an exact extracted history span also occurs in the current request.
+/// This is a scheduling hint, not a semantic decision or authorization.
+pub(crate) fn current_request_contains_span(current: &str, span: &str) -> bool {
+    let excerpt = span
+        .strip_prefix("Turn ")
+        .and_then(|s| {
+            let (number, text) = s.split_once(": ")?;
+            number.parse::<usize>().ok().map(|_| text)
+        })
+        .unwrap_or(span);
+    !excerpt.is_empty() && current.contains(excerpt)
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Error)]
 pub enum IntentProvenanceError {
     #[error("intent provenance must contain at least one turn")]
@@ -51,8 +66,37 @@ impl TryFrom<WireProvenance> for IntentProvenance {
 }
 
 impl IntentProvenance {
+    /// Original requested outcome, without interpreting later revisions.
+    pub fn original(&self) -> &str {
+        &self
+            .nodes
+            .first()
+            .expect("validated nonempty provenance")
+            .intent
+    }
+
     pub fn turns(&self) -> impl Iterator<Item = &str> {
         self.nodes.iter().map(|node| node.intent.as_str())
+    }
+
+    /// Ordered selection context. Later explicit revisions supersede earlier
+    /// requirements; unrelated earlier selection conditions remain applicable.
+    pub fn selection_request(&self) -> String {
+        let mut turns = Vec::new();
+        for turn in self.turns() {
+            if turns.last().copied() != Some(turn) {
+                turns.push(turn);
+            }
+        }
+        if turns.len() == 1 {
+            return turns[0].to_owned();
+        }
+        let mut request = String::from(SELECTION_HISTORY_HEADER);
+        for (index, turn) in turns.into_iter().enumerate() {
+            use std::fmt::Write;
+            let _ = writeln!(request, "Turn {}: {turn}", index + 1);
+        }
+        request
     }
 
     pub fn derived(&self, intent: String) -> Result<Self, IntentProvenanceError> {
@@ -106,6 +150,7 @@ mod tests {
             let altered = IntentProvenance::from_turns(["Different ancestry".into(), "Next need".into()]).unwrap();
             prop_assert!(!altered.is_continuation_of(&chain));
             prop_assert_eq!(decoded.current(), turns.last().unwrap());
+            prop_assert_eq!(decoded.original(), turns.first().unwrap());
         }
     }
 
@@ -118,5 +163,15 @@ mod tests {
         ] {
             assert!(serde_json::from_str::<IntentProvenance>(wire).is_err());
         }
+    }
+
+    #[test]
+    fn consecutive_replays_do_not_change_selection_revision() {
+        let initial = IntentProvenance::from_turns(["Inspect members".into()]).unwrap();
+        let replay = initial.derived("Inspect members".into()).unwrap();
+        assert_eq!(initial.selection_request(), replay.selection_request());
+        let revised = replay.derived("Inspect owners".into()).unwrap();
+        let restored = revised.derived("Inspect members".into()).unwrap();
+        assert_ne!(initial.selection_request(), restored.selection_request());
     }
 }

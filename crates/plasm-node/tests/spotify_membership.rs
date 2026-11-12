@@ -1,4 +1,6 @@
 //! Intentional provider-catalog integration witness; not a language conformance test.
+#![recursion_limit = "256"]
+
 use plasm_agent_core::http_execute::CapabilitySeed;
 use plasm_compile::CompiledRequest;
 use plasm_node::AgentEngine;
@@ -48,7 +50,11 @@ async fn spotify_library_view_observes_direct_membership_without_containment_req
     let path = std::env::var_os("PLASM_SPOTIFY_WITNESS_CATALOG")
         .map(std::path::PathBuf::from)
         .unwrap_or_else(|| {
-            std::path::Path::new(&std::env::var("CARGO_MANIFEST_DIR").expect("test runner must set CARGO_MANIFEST_DIR")).join("../../apis/appworld/spotify")
+            std::path::Path::new(
+                &std::env::var("CARGO_MANIFEST_DIR")
+                    .expect("test runner must set CARGO_MANIFEST_DIR"),
+            )
+            .join("../../apis/appworld/spotify")
         });
     let mut cgs = plasm_core::load_schema_dir(&path).unwrap();
     cgs.bind_registry_entry_id("spotify");
@@ -57,6 +63,7 @@ async fn spotify_library_view_observes_direct_membership_without_containment_req
         [("spotify".into(), cgs)].into(),
         [("spotify".into(), compiled)].into(),
         "spotify-membership-witness".into(),
+        std::sync::Arc::new(Default::default()),
     );
     let teaching = engine
         .expose_seeds(
@@ -66,6 +73,7 @@ async fn spotify_library_view_observes_direct_membership_without_containment_req
                 entity: "Library".into(),
             }],
         )
+        .await
         .unwrap();
     // The single seeded entity owns e1 in this fresh session.
     assert!(teaching.prompt.contains("e1.query(access_token:"));

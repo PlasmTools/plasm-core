@@ -164,6 +164,14 @@ impl Lower<'_> {
         let flatten = mode == ScopeMode::Rows;
         let contract = super::super::binding_contract(&self.state, &source)
             .ok_or(PythonLoweringInvariantError::MapSourceContractMissing)?;
+        if contract.result_shape == ResultShape::SideEffectAck {
+            return Err(at(
+                e,
+                PythonSourceError::AcknowledgementRowReceiver {
+                    binding: source.clone(),
+                },
+            ));
+        }
         let owner = super::super::schema_validate::resolve_qualified_entity_for_dag_source(
             &self.state,
             &[],
@@ -342,6 +350,10 @@ impl Lower<'_> {
             value_depth: 0,
             static_expansions: self.static_expansions,
             spans: BTreeMap::new(),
+            compute_origins: self.compute_origins.clone(),
+            recorded_outputs: BTreeMap::new(),
+            admitted_operands: Vec::new(),
+            cardinality_checks: Vec::new(),
             frame,
             static_sequences: self.static_sequences.clone(),
         };
@@ -421,12 +433,13 @@ impl Lower<'_> {
                 },
             )
         };
-        let nodes = scoped
+        let mut nodes = scoped
             .state
             .nodes
             .iter()
             .map(|n| super::super::plan_serialize::lower_plan_node(n))
             .collect::<Vec<_>>();
+        add_cardinality_dependencies(&mut nodes, &scoped.cardinality_checks);
         let mut plan = crate::plasm_plan::Plan::from_nodes(
             None,
             nodes,
@@ -475,6 +488,10 @@ impl Lower<'_> {
         });
         body.metadata.clear();
         body.metadata.insert(
+            "python_binding_names".into(),
+            serde_json::json!(super::review_binding_names(&scoped.state)),
+        );
+        body.metadata.insert(
             "python_source_spans".into(),
             serde_json::json!(scoped.spans),
         );
@@ -506,6 +523,7 @@ impl Lower<'_> {
                 singleton: contract.row_cardinality.permits_scalar_field_extract(),
             });
         }
+        self.admitted_operands.extend(scoped.admitted_operands);
         self.serial = scoped.serial;
         self.static_expansions = scoped.static_expansions;
         let result = CorrelatedBody {
@@ -694,6 +712,8 @@ impl Lower<'_> {
                 ..
             }
         );
+        // A bounded rowset remains a collection when captured as a value;
+        // its cardinality proof permits explicit field extraction separately.
         inputs.insert(
             node.clone(),
             PlanDataInput {
@@ -704,6 +724,8 @@ impl Lower<'_> {
                 } else if self.frame.ports.contains(&node)
                     || self.frame.row.as_deref() == Some(node.as_str())
                     || record
+                    || (self.recorded_outputs.contains_key(&node)
+                        && self.state.get(&node).is_some_and(|node| node.singleton))
                     || ((is_compute || scalar)
                         && super::super::binding_contract(&self.state, &node)
                             .is_some_and(|c| c.row_cardinality.permits_scalar_field_extract()))

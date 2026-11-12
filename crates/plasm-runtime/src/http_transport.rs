@@ -113,6 +113,16 @@ pub trait HttpTransport: Send + Sync {
         false
     }
 
+    /// Resolve credentials into engine-visible material for a request identity.
+    /// Opaque transports may leave the material unchanged and must attest Opaque.
+    async fn resolve_identity_auth(
+        &self,
+        _request: &CompiledRequest,
+        auth: Option<ResolvedAuth>,
+    ) -> Result<Option<ResolvedAuth>, RuntimeError> {
+        Ok(auth)
+    }
+
     /// Attest that dispatch uses only the supplied auth and compiled request credentials.
     /// Delegated transports must not claim visibility if they may replace or add credentials.
     fn auth_scope(
@@ -852,12 +862,7 @@ fn parse_retry_after_header(headers: &reqwest::header::HeaderMap) -> Option<Dura
         .get(reqwest::header::RETRY_AFTER)
         .or_else(|| headers.get("retry-after"))
         .and_then(|v| v.to_str().ok())?;
-    let trimmed = raw.trim();
-    if let Ok(secs) = trimmed.parse::<u64>() {
-        return Some(Duration::from_secs(secs.min(86_400)));
-    }
-    // HTTP-date — best-effort via rough parse is omitted; fall through to None for non-integer
-    None
+    crate::external_resilience::parse_retry_after(raw)
 }
 
 /// Classify a non-success status for automatic retry (safe methods only at the transport layer).
@@ -1012,6 +1017,7 @@ pub fn evaluate_parsed_response(parsed: HttpParsedResponse) -> HttpAttemptResult
         (!empty_body).then_some(detail.as_str()),
     );
     let failure = crate::HttpStatusFailure {
+        mutation_request_fingerprint: None,
         method: method.to_owned(),
         url,
         status,

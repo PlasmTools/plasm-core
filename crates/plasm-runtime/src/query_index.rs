@@ -45,6 +45,7 @@ pub enum QueryObservation {
 pub struct QueryIndex {
     entries: HashMap<QueryCacheKey, QueryObservation>,
 }
+
 impl QueryIndex {
     pub fn get(&self, key: &QueryCacheKey) -> Option<&RecordedCollection<Ref>> {
         match self.entries.get(key)? {

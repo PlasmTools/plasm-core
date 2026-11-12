@@ -1,0 +1,10 @@
+{
+  "fixtures/discovery/action-role-pairs-v1/run.py": "3d46bfd4cef9800794b17a1b89e627fbb473bbf930a72ebbc7f5360334f0af42",
+  "fixtures/discovery/action-role-pairs-v1/profiles.json": "792aabc82dca412149b4fcad0b18d041406ea94d9b1d4224c65ab8ed5f3bea47",
+  "fixtures/discovery/action-role-pairs-v1/cases.json": "d107adbcb430faff5c6721051f9f647b0b3f136a97c4a08c220aa9220c3d928d",
+  "fixtures/discovery/action-role-pairs-v1/report.py": "2f609cf342fddc94d2dbe74f1873e2ecbd2c018433c62f554edaf2f81d7ced4c",
+  "fixtures/discovery/action-role-pairs-v1/prepare.py": "7f6c4d909b3b2b60cba86c4b5b50d21dab11ba65ec9c8e115e9caa715d2556af",
+  "fixtures/discovery/action-role-pairs-v1/PROTOCOL.md": "d038f21c619ac5db5b4be18ca6c229ddd5c9d941d9443123f4b33308102fa246",
+  "fixtures/schemas/discovery_trajectory_v4/domain.yaml": "82e26d4501ead82b72d634597bd7c97b92590ab7672162321548457ed1b45aef",
+  "fixtures/schemas/discovery_trajectory_v4/mappings.yaml": "351b98b22d8aaaa3cfba09c941367d26323a34f0479a8ae8baccd7a9791f0db1"
+}

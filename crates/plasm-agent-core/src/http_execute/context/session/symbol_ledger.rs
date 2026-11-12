@@ -2,11 +2,9 @@
 
 use super::super::super::*;
 use crate::execute_session_materialize::{
-    verify_effective_catalog_pins_maps, CatalogPinVerifyOutcome, DurableExposureSnapshot,
+    verify_effective_catalog_pins_maps, CatalogPinVerifyOutcome,
 };
-use crate::mcp_transport_store::logical_symbol_ledger::{
-    DurableSymbolLedgerLoad, SymbolLedgerUpsertError,
-};
+use crate::mcp_transport_store::logical_symbol_ledger::DurableSymbolLedgerLoad;
 use uuid::Uuid;
 
 async fn reset_ledger(st: &PlasmHostState, uuid: Uuid) {
@@ -85,28 +83,4 @@ pub(crate) async fn resolve_restore_for_open(
             }
         }
     }
-}
-
-/// Write-through logical-session ledger using pre-encoded bytes from the durable exposure snapshot.
-pub(crate) async fn upsert_logical_ledger_from_snapshot(
-    st: &PlasmHostState,
-    logical_id: Uuid,
-    sess: &crate::execute_session::ExecuteSession,
-    exposure: &DurableExposureSnapshot,
-) -> Result<(), SymbolLedgerUpsertError> {
-    let Some(exp) = sess.teaching_exposure.as_ref() else {
-        return Ok(());
-    };
-    st.logical_symbol_ledgers
-        .upsert_preencoded(
-            logical_id,
-            exposure
-                .catalog_cgs_hashes_by_entry
-                .iter()
-                .map(|(k, v)| (k.clone(), v.as_str().to_string()))
-                .collect(),
-            exposure.symbol_ledger_bytes.clone(),
-            exp.clone(),
-        )
-        .await
 }

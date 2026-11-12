@@ -991,7 +991,7 @@ fn dry_run_text_renders_dependency_dag_snapshot() {
 
     products: query Query(Product all)
     summary: project name, sku ← products
-    cards: compute value ← summary
+    cards: {1} ← summary
     "
     );
     assert!(!text.contains("node_results"));
@@ -1527,6 +1527,37 @@ fn session_provisions_require_prior_same_catalog_login_and_sealed_dependencies()
         evaluate_plasm_comp_dry(&es, &bundle).is_err(),
         "login must not authenticate another catalog"
     );
+}
+
+#[tokio::test]
+async fn composed_review_references_match_synthetic_producer_labels() {
+    let es = language_matrix_session();
+    let symbols = es.teaching_exposure.as_ref().unwrap().to_symbol_map();
+    let item = symbols.entity_sym_for("langmatrix", "LangItem");
+    let create = symbols.method_sym_for("langmatrix", "LangItem", "create");
+    let source = format!("class Composition(Program):\n    def build(self):\n        read_1 = {item}.get(\"reserved\")\n        created = {item}.{create}(title={item}.get(\"source\").title)\n        return created\n");
+    let bundle = crate::plasm_compile::compile_python_program(&es, &source)
+        .await
+        .expect("compile matrix");
+    let dry = evaluate_plasm_comp_dry(&es, &bundle).expect("dry matrix");
+    let view = plan_dry_compact_view(&dry, Some(&es));
+    let text = crate::plan_dry_display::render_plan_dry_compact_text(&view, None);
+    assert!(!text.contains("__plasm_"), "{text}");
+    assert!(text.contains("read_2.title"), "{text}");
+    assert!(text.contains("read_2: get"), "{text}");
+
+    let source = format!("class Nested(Program):\n    def build(self):\n        return {item}.query().take(1).flat_map(lambda row: {item}.{create}(title={item}.get(row.id).title))\n");
+    let bundle = crate::plasm_compile::compile_python_program(&es, &source)
+        .await
+        .expect("compile nested matrix");
+    let dry = evaluate_plasm_comp_dry(&es, &bundle).expect("dry nested matrix");
+    let view = plan_dry_compact_view(&dry, Some(&es));
+    let text = crate::plan_dry_display::render_plan_dry_compact_text(&view, None);
+    assert!(!text.contains("__py"), "{text}");
+    assert!(text.contains("title=read_1.title"), "{text}");
+    assert!(text.contains("read_1: get"), "{text}");
+    assert!(!text.contains("title=$"), "{text}");
+    assert!(text.contains("Create LangItem"), "{text}");
 }
 
 proptest::proptest! {

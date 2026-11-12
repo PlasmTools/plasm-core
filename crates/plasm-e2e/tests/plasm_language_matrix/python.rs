@@ -97,6 +97,9 @@ pub(super) const CASES: &[Case] = &[
     Case { id: "static_literal_for_effects", python: "for key in ['i1', 'i2']:\n    E.get(key).PING()\nreturn E.get('i1').select('id')", existing: None, expect_live_error: None },
     Case { id: "static_literal_comprehension", python: "return {'ids': [E.get(key).id for key in ('i1', 'i2')]}", existing: None, expect_live_error: None },
     Case { id: "static_literal_local_comprehension", python: "keys = ['i1', 'i2']\nalias = keys\nreturn {'ids': [E.get(key).id for key in alias]}", existing: None, expect_live_error: None },
+    Case { id: "static_literal_local_read_collection", python: "keys = ['i1', 'i2']\nitems = [E.get(key) for key in keys]\nreturn items", existing: None, expect_live_error: None },
+    Case { id: "static_literal_rowset_comprehension", python: "keys = ['i1', 'i2']\nitems = [E.get(key) for key in keys]\nreturn [item.select('id') for item in items]", existing: None, expect_live_error: None },
+    Case { id: "static_literal_rowset_relation", python: "keys = ['i1', 'i1']\nitems = [E.get(key) for key in keys]\nreturn [item.REL_COMPLETE_LINES.select('id', 'note') for item in items]", existing: None, expect_live_error: None },
     Case { id: "callback_projection", python: "def key(row):\n    value = row.id\n    return value\nreturn E.get('i1').select(id=key)", existing: None, expect_live_error: None },
     Case { id: "callback_lexical_capture", python: "value = 'i1'\ndef key(row):\n    return {'id': value}\ndef outer(row):\n    value = 'wrong'\n    return E.get('i1').map(key, max_parents=1)\nreturn E.get('i1').flat_map(outer)", existing: None, expect_live_error: None },
     Case { id: "callback_branch_record", python: "def project(row):\n    if row.id == 'i1':\n        result = {'id': row.id}\n    else:\n        result = {'id': row.title}\n    return result\nreturn E.get('i1').map(project, max_parents=1)", existing: None, expect_live_error: None },
@@ -2487,7 +2490,10 @@ async fn python_value_closure_rejects_ambiguous_and_forged_inputs() {
             "compute input annotation mismatches the row shape",
         ),
         ("'wrong'", "input differs from its annotation"),
-        ("{'a': 1, 'b': 2}", "compute input annotation mismatches the row shape"),
+        (
+            "{'a': 1, 'b': 2}",
+            "compute input annotation mismatches the row shape",
+        ),
     ] {
         let source = format!("class Invalid(Program):\n    @compute\n    def calc(self, value: int) -> int:\n        return value + 1\n    def build(self):\n        return self.calc({argument})\n");
         let error = compile_fixture(&es, &source).await.unwrap_err();
@@ -2687,53 +2693,58 @@ async fn python_nominal_boolean_refinement_selects_only_matching_effects() {
     let base = format!("http://{}", listener.local_addr().unwrap());
     let server = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
     for (predicate, expected) in [
-        ("r.active is True", "yes"),
-        ("r.active is not False", "yes"),
-        ("r.active is False", "no"),
-        ("r.active is not True", "no"),
-        ("r.active", "yes"),
+        ("r.active is True", Some("yes")),
+        ("r.active is not False", Some("yes")),
+        ("r.active is False", Some("no")),
+        ("r.active is not True", Some("no")),
+        ("r.active", Some("yes")),
+        ("False", None),
     ] {
         for body in [
             format!("selected = E.query().where(lambda r: {predicate})\nreturn selected.flat_map(lambda r: r.PING())"),
             format!("return E.query().flat_map(lambda r: r.PING() if {predicate} else None)"),
+            format!("return E.query().flat_map(lambda r: [r.PING()] if {predicate} else None)"),
+            format!("return E.query().flat_map(lambda r: [r.PING()] if {predicate} else [])"),
+            format!("enabled = E.get('yes').active\nreturn E.query().flat_map(lambda r: [r.PING()] if enabled is True and {predicate} else [])"),
+            format!("class ConditionalEffects(Program):\n    @compute\n    def ready(self, items: list[Row]) -> int:\n        return 1 if len(items) == 2 else 0\n    def build(self):\n        items = E.query()\n        enabled = self.ready(items)\n        return items.flat_map(lambda r: [r.PING()] if enabled == 1 and {predicate} else [])"),
         ] {
-        writes.lock().unwrap().clear();
-        let case = Case {
-            id: "nominal_boolean_effects",
-            python: "",
-            existing: None,
-            expect_live_error: None,
-        };
-        let (es, host) = parity_context(&case, &base);
+            writes.lock().unwrap().clear();
+            let case = Case {
+                id: "nominal_boolean_effects",
+                python: "",
+                existing: None,
+                expect_live_error: None,
+            };
+            let (es, host) = parity_context(&case, &base);
 
-        let bundle = compile_fixture(&es, &body)
+            let bundle = compile_fixture(&es, &body)
+                .await
+                .unwrap_or_else(|e| panic!("{body}: {e}"));
+            let dry = evaluate_plasm_comp_dry(&es, &bundle).unwrap();
+            assert!(
+                writes.lock().unwrap().is_empty(),
+                "planning dispatched an effect"
+            );
+            Box::pin(run_plasm_comp(
+                &es,
+                &host,
+                &es.prompt_hash,
+                "nominal-boolean-effects",
+                &bundle,
+                true,
+                None,
+                None,
+                Some(dry),
+                None,
+            ))
             .await
-            .unwrap_or_else(|e| panic!("{predicate}: {e}"));
-        let dry = evaluate_plasm_comp_dry(&es, &bundle).unwrap();
-        assert!(
-            writes.lock().unwrap().is_empty(),
-            "planning dispatched an effect"
-        );
-        Box::pin(run_plasm_comp(
-            &es,
-            &host,
-            &es.prompt_hash,
-            "nominal-boolean-effects",
-            &bundle,
-            true,
-            None,
-            None,
-            Some(dry),
-            None,
-        ))
-        .await
-        .unwrap();
-        assert_eq!(
-            *writes.lock().unwrap(),
-            vec![expected.to_string()],
-            "{predicate}"
-        );
-    }
+            .unwrap();
+            assert_eq!(
+                *writes.lock().unwrap(),
+                expected.into_iter().map(str::to_owned).collect::<Vec<_>>(),
+                "{body}"
+            );
+        }
     }
     server.abort();
 }
@@ -2766,7 +2777,10 @@ async fn python_compute_dictionary_and_multiple_inputs_live() {
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let base = format!("http://{}", listener.local_addr().unwrap());
     let server = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
-    enum ReturnShape { Rows, Scalar }
+    enum ReturnShape {
+        Rows,
+        Scalar,
+    }
     let cases = [
         ("class P(Program):\n    def build(self):\n        return self.extract(E.query())\n    @compute\n    def extract(self, rows: list[Row]) -> list[dict]:\n        out = []\n        for row in rows:\n            out.append({'name': row.title})\n        return out\n", serde_json::json!([{"name":"one"},{"name":"two"}]), ReturnShape::Rows),
         ("class P(Program):\n    def build(self):\n        return self.count(E.query(), E.get('i1'))\n    @compute\n    def count(self, left: list[Row], right: Row) -> dict:\n        out = {}\n        out['left'] = len(left)\n        out['right'] = len([right])\n        return out\n", serde_json::json!({"left":2,"right":1}), ReturnShape::Scalar),
@@ -2778,6 +2792,43 @@ async fn python_compute_dictionary_and_multiple_inputs_live() {
         ("class P(Program):\n    def build(self):\n        return \"done\"\n        missing()\n", serde_json::json!("done"), ReturnShape::Scalar),
         ("class P(Program):\n    def build(self):\n        def title(row: Row, /):\n            return {\"name\": row.title}\n        return self.names(E.query().map(title, max_parents=2))\n    @compute\n    def names(self, rows: list[Row]) -> str:\n        return \",\".join(str(row.name) for row in rows)\n", serde_json::json!("one,two"), ReturnShape::Scalar),
         ("class P(Program):\n    def build(self):\n        return E.query().take(1).select(n=lambda row: sum(row for row in [1, 2])).n\n", serde_json::json!(3), ReturnShape::Scalar),
+        (r#"class GroupRecords(Program):
+    def build(self):
+        return self.render(E.query())
+    @compute
+    def render(self, rows: list[Row]) -> str:
+        groups = {}
+        order = []
+        for row in rows + rows:
+            key = str(row.id)
+            if key not in groups:
+                groups[key] = {"title": str(row.title), "items": []}
+                order.append(key)
+            groups[key]["items"].append(str(row.title))
+        result = []
+        for key in order:
+            items = "|".join(dict.fromkeys(groups[key]["items"]))
+            result.append(groups[key]["title"] + ":" + items)
+        return ";".join(result)
+"#, serde_json::json!("one:one;two:two"), ReturnShape::Scalar),
+        (r#"class EmptyGroups(Program):
+    def build(self):
+        return self.render(E.query())
+    @compute
+    def render(self, rows: list[Row]) -> str:
+        groups = {}
+        order = []
+        for row in rows[:0]:
+            key = str(row.id)
+            if key not in groups:
+                groups[key] = {"title": str(row.title), "items": []}
+                order.append(key)
+            groups[key]["items"].append(str(row.title))
+        result = []
+        for key in order:
+            result.append(groups[key]["title"] + ":" + "|".join(groups[key]["items"]))
+        return ";".join(result)
+"#, serde_json::json!(""), ReturnShape::Scalar),
     ];
     for (index, (source, expected, shape)) in cases.iter().enumerate() {
         let case = Case {
@@ -2824,4 +2875,33 @@ async fn python_compute_dictionary_and_multiple_inputs_live() {
         assert_eq!(actual, *expected, "case {index}");
     }
     server.abort();
+}
+
+#[tokio::test]
+async fn python_compute_dictionary_field_precision_rejects_invalidated_writes() {
+    let es = language_matrix::matrix_execute_session(language_matrix::load_language_matrix_cgs());
+    for mutation in [
+        "groups[key][str(row.title)] = 'replaced'",
+        "alias = groups[key]\n            alias['items'] = 'replaced'",
+        "groups[key].update({'items': 'replaced'})",
+    ] {
+        let source = format!(
+            r#"class InvalidGroups(Program):
+    def build(self):
+        return self.render(E.query())
+    @compute
+    def render(self, rows: list[Row]) -> str:
+        groups = {{}}
+        for row in rows:
+            key = str(row.id)
+            if key not in groups:
+                groups[key] = {{"title": str(row.title), "items": []}}
+            {mutation}
+            groups[key]["items"].append(str(row.title))
+        return "invalid"
+"#
+        );
+        let error = compile_fixture(&es, &source).await.unwrap_err();
+        assert!(error.to_string().contains("append"), "{mutation}: {error}");
+    }
 }

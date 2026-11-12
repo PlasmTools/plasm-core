@@ -35,7 +35,10 @@ pub(crate) fn oauth_surface_status(snap: &UiSnapshot) -> Option<String> {
 
 pub(crate) fn input_mode_label(mode: &InputMode) -> Option<&'static str> {
     match mode {
-        InputMode::Normal => None,
+        InputMode::TrainingSelect { .. }
+        | InputMode::TrainingOwner { .. }
+        | InputMode::TrainingReview { .. }
+        | InputMode::Normal => None,
         InputMode::ApiFilter => Some("API filter"),
         InputMode::ApiSecretEdit { .. } => Some("API key secret"),
         InputMode::CatalogConnect { .. } => Some("Catalog connect"),

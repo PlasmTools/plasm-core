@@ -1032,14 +1032,39 @@ impl CGS {
 
     /// Session pin hash including overlay digest when present.
     pub fn effective_catalog_cgs_hash_hex(&self) -> String {
+        self.effective_hash_from_base(&self.catalog_cgs_hash_hex())
+    }
+
+    /// Recompute the effective pin when a caller may have mutated a CGS in place.
+    pub(crate) fn current_effective_catalog_cgs_hash_hex(&self) -> String {
+        self.effective_hash_from_base(&self.current_catalog_cgs_hash_hex())
+    }
+
+    /// Include the non-serialized overlay scope index used during execution.
+    pub fn current_execution_catalog_hash_hex(&self) -> String {
+        let effective = self.current_effective_catalog_cgs_hash_hex();
+        if self.schema_overlay_scope_index.is_empty() {
+            return effective;
+        }
+        let mut hasher = Sha256::new();
+        hasher.update(effective.as_bytes());
+        hasher.update(b":overlay-scope:");
+        hasher.update(
+            serde_json::to_vec(&self.schema_overlay_scope_index)
+                .expect("overlay scope index serialization"),
+        );
+        hex::encode(hasher.finalize())
+    }
+
+    fn effective_hash_from_base(&self, base: &str) -> String {
         if let Some(ref overlay_hash) = self.schema_overlay_hash {
             let mut hasher = Sha256::new();
-            hasher.update(self.catalog_cgs_hash_hex().as_bytes());
+            hasher.update(base.as_bytes());
             hasher.update(b":overlay:");
             hasher.update(overlay_hash.as_bytes());
             hex::encode(hasher.finalize())
         } else {
-            self.catalog_cgs_hash_hex()
+            base.to_owned()
         }
     }
 
@@ -1408,6 +1433,10 @@ mod tests {
         let spec = base.schema_overlay.as_ref().expect("schema_overlay spec");
         let overlay = build_schema_overlay(spec, &base, &json).expect("build overlay");
         let merged = base.with_overlay(overlay).expect("merge augment_base");
+        assert_eq!(
+            merged.effective_catalog_cgs_hash_hex(),
+            merged.current_effective_catalog_cgs_hash_hex()
+        );
         assert_eq!(merged.entities.len(), 1);
         let task = merged.get_entity("Task").expect("Task");
         assert!(task.fields.contains_key(&EntityFieldName::from("id")));

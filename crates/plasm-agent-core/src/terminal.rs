@@ -14,8 +14,15 @@ use thiserror::Error;
 
 type Result<T> = std::result::Result<T, TerminalError>;
 
+#[path = "terminal_training.rs"]
+mod training;
+
 #[derive(Debug, Error)]
 pub enum TerminalError {
+    #[error("invalid training session reference")]
+    TrainingSession(#[source] crate::mcp_logical_ref::LogicalSessionWireRefError),
+    #[error("training request failed: HTTP {status}: {body}")]
+    TrainingRejected { status: StatusCode, body: String },
     #[error("profile file read failed")]
     ProfileRead(#[source] std::io::Error),
     #[error("profile JSON is malformed")]
@@ -549,6 +556,9 @@ async fn run_context_command(
         })
         .unwrap_or_else(|| "/v1/context".into());
     let payload = IntentDiscoveryRequest {
+        training: args.training_request.map(|idempotency_key| {
+            crate::http_discovery::CreationTrainingIntent::Request { idempotency_key }
+        }),
         principal: None,
         intent: intent.into(),
         allowed_entry_ids: None,
@@ -572,12 +582,16 @@ async fn run_context_command(
     }
     #[derive(Deserialize)]
     struct ContextReply {
+        training: Option<serde_json::Value>,
         routing: crate::discovery_service::RoutingReceipt,
         context: Option<crate::http_execute::ApplyCapabilitySeedsOutcome>,
         #[serde(default)]
         prerequisite_guidance: String,
     }
     let reply: ContextReply = serde_json::from_slice(&body)?;
+    if let Some(training) = &reply.training {
+        println!("Training: {training}");
+    }
     let Some(context) = reply.context else {
         if reply.routing.recovery.is_none() {
             return Err(TerminalError::MissingRecoveryReceipt);
@@ -628,10 +642,6 @@ async fn run_context_command(
     if let Some(recovery) = &reply.routing.recovery {
         teaching.push_str("\n\n");
         teaching.push_str(&recovery.render_unmatched_markdown());
-    }
-    if let Some(support) = &reply.routing.environment_support {
-        teaching.push_str("\n\n");
-        teaching.push_str(support.guidance());
     }
     let artifact = mirror.write_file(&op_dir, "teaching.md", teaching.as_bytes())?;
     mirror.update_latest_pointer(&mirror.rel_dir_for_display(&op_dir))?;
@@ -763,6 +773,7 @@ pub async fn run_terminal() -> Result<()> {
     let mut profile = load_profile(cli.profile.as_str())?;
 
     match cli.cmd {
+        Cmd::Training { cmd } => training::run(&profile, cmd).await,
         Cmd::Init {
             server,
             api_key,
@@ -791,6 +802,7 @@ pub async fn run_terminal() -> Result<()> {
                 .build()
                 .map_err(TerminalError::HttpClient)?;
             let payload = serde_json::to_vec(&IntentDiscoveryRequest {
+                training: None,
                 principal: None,
                 intent: utterance.clone(),
                 allowed_entry_ids: None,
@@ -1043,6 +1055,7 @@ mod routed_terminal_tests {
                                 "intent":payload["intent"],"pin_id":"pin",
                                 "retrieval":{"generation":"generation-one","candidates":[],"lexical_count":0,"vector_count":0,"lexical_truncated":false,"vector_truncated":false},
                                 "matching":{"matches":[]},
+                                "search":crate::discovery_matcher::online::SearchReceipt::default(),
                                 "closure":null
                             }
                         });
@@ -1066,7 +1079,7 @@ mod routed_terminal_tests {
                 let client = Client::new();
                 let profile = TerminalProfile::default();
                 let args = |new, intent: &str| crate::terminal_cli::ContextArgs {
-                    new,
+                    training_request: None,                    new,
                     verbose: false,
                     intent: Some(intent.into()),
                 };

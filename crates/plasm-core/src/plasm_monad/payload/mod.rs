@@ -18,7 +18,7 @@ pub use expr::{PlanExprIr, PlanExprTemplate};
 pub use relation::{PlanRelationTraversal, RelationCardinality, RelationSourceCardinality};
 pub use step_payload::{
     DerivePayload, FlatMapApplyPayload, FlatMapRelationPayload, InvokePayload, MapPayload,
-    PlasmStepPayload, PurePayload, UnfoldUntilPayload,
+    PlasmStepPayload, PurePayload, RecordedOutputOrigin, UnfoldUntilPayload,
 };
 pub use templates::{DeriveKind, DeriveTemplate, EffectTemplate};
 pub use value::{

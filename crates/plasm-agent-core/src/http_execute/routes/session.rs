@@ -10,6 +10,7 @@ pub(crate) async fn post_execute_session_context(
         prompt_hash,
         session_id,
     }: ExecutePath,
+    headers: axum::http::HeaderMap,
     Json(body): Json<super::super::response::HttpContextExtension>,
 ) -> Response {
     let Some(sess) = (match st
@@ -41,6 +42,7 @@ pub(crate) async fn post_execute_session_context(
             return crate::http_discovery::routed_http_context(
                 &st,
                 principal.as_ref(),
+                &headers,
                 &body,
                 Some(&sess),
                 Some((prompt_hash.as_str(), session_id.as_str())),

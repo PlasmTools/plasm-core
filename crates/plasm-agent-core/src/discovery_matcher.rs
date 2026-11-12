@@ -1,7 +1,21 @@
 //! One semantic relevance judgment over authorized candidates and typed evidence.
 use crate::decision_codec::DecisionCodec;
+pub(crate) mod catalogue_search;
+mod decisions;
+pub mod evidence;
+pub mod online;
+pub mod operations;
+mod request_packing;
+mod search_budget;
+mod search_graph;
+#[cfg(test)]
+mod search_rank;
+mod witnesses;
 use crate::discovery_store::RetrievalReceipt;
 use crate::intent_provenance::IntentProvenance;
+pub(crate) use decisions::ENDPOINT as RELEVANCE_ENDPOINT;
+use evidence::CatalogEvidence;
+use futures_util::{stream::FuturesUnordered, StreamExt};
 use plasm_core::{catalog_discovery::content_hash, prerequisites::CapabilityRef};
 use serde::{Deserialize, Serialize};
 #[cfg(test)]
@@ -9,12 +23,45 @@ use serde_json::json;
 use std::collections::{BTreeMap, BTreeSet};
 use thiserror::Error;
 
-type DecisionProviderError = Box<dyn std::error::Error + Send + Sync + 'static>;
+pub(crate) type DecisionProviderError = Box<dyn std::error::Error + Send + Sync + 'static>;
 
 #[derive(Debug, Error)]
 pub enum DiscoveryMatcherError {
-    #[error("Jev model is required")]
+    #[error(transparent)]
+    Operation(#[from] operations::OperationError),
+    #[error("discovery recall is invalid")]
+    Retrieval(#[from] crate::discovery_store::RetrievalValidationError),
+    #[error("discovery recall belongs to a different generation")]
+    RetrievalGenerationMismatch,
+    #[error("connected discovery questions must have identical model and intent context")]
+    InvalidConnectedContext,
+    #[error("discovery catalogue context is invalid")]
+    CatalogueContext(#[source] Box<plasm_core::catalog_discovery::CatalogDiscoveryError>),
+    #[error("pinned catalogue evidence is missing for {0}")]
+    MissingCatalogueEvidence(CapabilityRef),
+    #[error("catalogue {catalog} is missing referenced definition {name}")]
+    MissingEvidenceDefinition { catalog: String, name: String },
+    #[error("discovery binding projection failed")]
+    Witness(#[from] plasm_core::prerequisites::PrerequisiteError),
+    #[error("discovery witness references unauthorized capability {0}")]
+    UnauthorizedWitness(CapabilityRef),
+    #[error("discovery witness for {reference} has invalid {part}; no evidence was removed")]
+    InvalidWitness {
+        reference: CapabilityRef,
+        part: &'static str,
+    },
+    #[error("discovery scope for {reference} requires {capabilities}/{capability_limit} capabilities and {bytes}/{byte_limit} bytes; selection was not started; narrow the discovery need or catalogue bindings")]
+    ScopeLimit {
+        reference: CapabilityRef,
+        capabilities: usize,
+        capability_limit: usize,
+        bytes: usize,
+        byte_limit: usize,
+    },
+    #[error("relevance model is required")]
     MissingModel,
+    #[error("capability relevance requires openai/gpt-6-luna-decisions or a dated revision")]
+    UnsupportedModel,
     #[error("judgment candidate bound exceeded")]
     CandidateBoundExceeded,
     #[error("duplicate discovery candidate id")]
@@ -25,12 +72,16 @@ pub enum DiscoveryMatcherError {
     EmptyBatch,
     #[error("issued relevance page has no pending page")]
     NoPendingPage,
-    #[error("relevance page rejected because an item is indivisible ({bytes} bytes); reduce its catalog description or supply a model with sufficient context; no selection was committed")]
+    #[error(
+        "provider rejected a bounded discovery packet ({bytes} bytes); no selection was committed"
+    )]
     IndivisibleItem { bytes: usize },
-    #[error("Jev request serialization failed")]
+    #[error("relevance request serialization failed")]
     Encode(#[source] crate::decision_codec::DecisionCodecError),
+    #[error("issued discovery request could not be packed")]
+    Packing(#[source] serde_json::Error),
     #[error("decision response is invalid")]
-    Response(#[from] crate::decision_codec::DecisionResponseError),
+    Response(#[from] crate::decision_codec::ProviderResponseError),
     #[error("validated relevance answer is missing its issued question")]
     MissingAnswer,
     #[error("an accepted candidate has multiple relevance judgments")]
@@ -47,29 +98,39 @@ pub enum DiscoveryMatcherError {
     CandidateCoverageMismatch,
     #[error("provider decision failed")]
     Provider(#[source] DecisionProviderError),
+    #[error("discovery progress persistence failed")]
+    Checkpoint(#[source] DecisionProviderError),
 }
-pub const JEV_MODEL: &str = "typesafe/jev-1.13";
-// A wire-size packing target for economical requests, NOT a provider context guarantee.
-// Provider rejections drive further typed partitioning, including below this target.
-const TARGET_PAGE_BYTES: usize = 16_000;
-const ANSWERS: [&str; 3] = ["relevant", "unrelated", "uncertain"];
+
+impl From<plasm_core::catalog_discovery::CatalogDiscoveryError> for DiscoveryMatcherError {
+    fn from(error: plasm_core::catalog_discovery::CatalogDiscoveryError) -> Self {
+        Self::CatalogueContext(Box::new(error))
+    }
+}
+
+pub const RELEVANCE_MODEL: &str = "openai/gpt-6-luna-decisions";
+// Local requests include the complete target and direct compact witnesses.
+#[cfg(test)]
+const TARGET_PAGE_BYTES: usize = witnesses::MAX_BYTES;
+#[cfg(test)]
+const MAX_PAGE_QUESTIONS: usize = 1;
+/// Bounds work admitted by one discovery turn.
+const ROUTE_CONCURRENCY: usize = 4;
 const CRITERIA: [(&str, &str); 3] = [
     (
         "relevant",
-        "The documented operation or information can contribute to the current need.",
+        "The documented output, effect or information contributes to the requested outcome, potentially through other operations.",
     ),
     (
         "unrelated",
-        "The capability concerns different work or conflicts with the current need.",
+        "The documented output, effect or information serves a different outcome or the reverse transformation.",
     ),
     (
         "uncertain",
-        "The supplied evidence does not establish relevance or unrelatedness.",
+        "The documented output, effect or information is insufficiently specified to establish contribution.",
     ),
 ];
-const QUESTION_FORMAT: &str = "For each question, resolve its capability key in state.capabilities and collection_ref in state.collections. Apply state.rule and state.criteria. Read state.intent_provenance.turns in order: each index refers to a complete text in state.intent_provenance.texts. The last turn is the current discovery need. Earlier turns supply context for references and constraints; explicit revisions in later turns supersede earlier goals. Judge contribution to the current need, not to every historical goal.";
-
-const RUBRIC: &str = "Is this capability relevant to the current discovery need? Relevant means its documented operation or information can contribute to that need, including information used to choose the target collection. Judge relevance, not necessity, workflow completeness, or permission to execute. Respect documented collection meanings and explicit exclusions. Current intent governs; provenance supplies context and explicit revisions replace earlier goals. Choose relevant, unrelated, or uncertain from the supplied evidence.";
+const RUBRIC: &str = "Could the documented information, output or effect help achieve the requested outcome, directly or through available capabilities?";
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, PartialOrd, Ord)]
 #[serde(rename_all = "snake_case")]
 pub enum MatchChoice {
@@ -82,13 +143,44 @@ pub enum MatchChoice {
 pub struct CapabilityIntentMatch {
     pub capability_id: String,
     pub choice: MatchChoice,
-    pub probabilities: BTreeMap<String, f64>,
-    pub confidence: f64,
 }
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(deny_unknown_fields)]
 pub struct CapabilityMatchReceipt {
     pub matches: Vec<CapabilityIntentMatch>,
+    /// Host budget outcomes, not provider judgments or probabilities.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub budget_retained: Vec<ScopeBudgetRetention>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct ScopeBudgetRetention {
+    pub capability_id: String,
+    pub reference: CapabilityRef,
+    pub capabilities: usize,
+    pub capability_limit: usize,
+    pub bytes: usize,
+    pub byte_limit: usize,
+}
+
+/// All scopes are validated before dispatch. Only fitting requests can reach a
+/// provider; valid oversized candidates are retained with host-owned evidence.
+pub struct PreparedSelection {
+    batches: Vec<IssuedBatch>,
+    budget_retained: Vec<ScopeBudgetRetention>,
+}
+struct PreparedLocalSelection {
+    batches: Vec<request_packing::PreparedLocalBatch>,
+    budget_retained: Vec<ScopeBudgetRetention>,
+}
+impl PreparedSelection {
+    pub fn batches(&self) -> &[IssuedBatch] {
+        &self.batches
+    }
+    pub fn budget_retained(&self) -> &[ScopeBudgetRetention] {
+        &self.budget_retained
+    }
 }
 impl CapabilityMatchReceipt {
     /// Exposure preserves unresolved relevance. A judgment of uncertainty is not
@@ -115,7 +207,10 @@ pub struct IssuedBatch {
     cache_key: String,
     model: String,
     bindings: BTreeMap<String, String>,
+    #[cfg(test)]
     questions: Vec<Question>,
+    #[cfg(test)]
+    evidence: std::sync::Arc<Vec<Question>>,
 }
 impl IssuedBatch {
     pub fn body(&self) -> &str {
@@ -125,24 +220,81 @@ impl IssuedBatch {
         &self.cache_key
     }
 }
+
+impl crate::decision_codec::DecisionPacket for IssuedBatch {
+    fn cache_key(&self) -> &str {
+        &self.cache_key
+    }
+
+    fn validate_response(
+        &self,
+        raw: &str,
+    ) -> Result<(), Box<dyn std::error::Error + Send + Sync + 'static>> {
+        decode_batch(self, raw)
+            .map(|_| ())
+            .map_err(|error| Box::new(error) as _)
+    }
+}
 /// An issued question owns its exact semantic document and local result identity.
 /// Graph witnesses remain in the routing receipt, not the relevance wire contract.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize)]
 struct Question {
     id: String,
     reference: CapabilityRef,
     entity: String,
     operation: plasm_core::catalog_discovery::OperationEvidence,
-    collection: plasm_core::catalog_discovery::CollectionEvidence,
 }
 
-pub fn issue_batches(
+#[cfg(test)]
+pub(crate) fn issue_batches(
     model: &str,
     intent: &IntentProvenance,
     retrieval: &RetrievalReceipt,
+    catalog_evidence: &CatalogEvidence,
 ) -> Result<Vec<IssuedBatch>, DiscoveryMatcherError> {
+    let prepared = prepare_local_selection(model, intent, retrieval, catalog_evidence)?;
+    // A strict request-only projection must not silently lose local outcomes.
+    // Execution paths consume PreparedSelection instead.
+    if let Some(budget) = prepared.budget_retained.first() {
+        return Err(DiscoveryMatcherError::ScopeLimit {
+            reference: budget.reference.clone(),
+            capabilities: budget.capabilities,
+            capability_limit: budget.capability_limit,
+            bytes: budget.bytes,
+            byte_limit: budget.byte_limit,
+        });
+    }
+    Ok(prepared
+        .batches
+        .into_iter()
+        .map(request_packing::PreparedLocalBatch::into_issued)
+        .collect())
+}
+
+pub fn prepare_selection(
+    model: &str,
+    intent: &IntentProvenance,
+    retrieval: &RetrievalReceipt,
+    catalog_evidence: &CatalogEvidence,
+) -> Result<PreparedSelection, DiscoveryMatcherError> {
+    let prepared = prepare_local_selection(model, intent, retrieval, catalog_evidence)?;
+    Ok(PreparedSelection {
+        batches: request_packing::pack(prepared.batches)?,
+        budget_retained: prepared.budget_retained,
+    })
+}
+
+fn prepare_local_selection(
+    model: &str,
+    intent: &IntentProvenance,
+    retrieval: &RetrievalReceipt,
+    catalog_evidence: &CatalogEvidence,
+) -> Result<PreparedLocalSelection, DiscoveryMatcherError> {
     if model.trim().is_empty() {
         return Err(DiscoveryMatcherError::MissingModel);
+    }
+    if !crate::decision_codec::model_matches(RELEVANCE_MODEL, model) {
+        return Err(DiscoveryMatcherError::UnsupportedModel);
     }
     if retrieval.candidates.len() > crate::discovery_store::CANDIDATE_LIMIT {
         return Err(DiscoveryMatcherError::CandidateBoundExceeded);
@@ -167,229 +319,263 @@ pub fn issue_batches(
     {
         return Err(DiscoveryMatcherError::DuplicateCapabilityReference);
     }
-    let mut batches = Vec::new();
-    let mut pending = Vec::new();
-    for candidate in candidates {
-        pending.push(Question {
-            id: candidate.id.clone(),
-            reference: candidate.reference.clone(),
-            entity: candidate.document.entity.clone(),
-            operation: candidate.document.operation.clone(),
-            collection: candidate.document.collection.clone(),
-        });
-        if pending.len() > 1 && issue_batch(model, intent, &pending)?.body.len() > TARGET_PAGE_BYTES
-        {
-            let last = pending.pop().ok_or(DiscoveryMatcherError::EmptyBatch)?;
-            batches.push(issue_batch(model, intent, &pending)?);
-            pending = vec![last];
-        }
-    }
-    if !pending.is_empty() {
-        batches.push(issue_batch(model, intent, &pending)?);
-    }
-    Ok(batches)
-}
-
-struct JevCodec;
-#[derive(Serialize)]
-struct JevRequest<'a> {
-    model: &'a str,
-    state: JevState<'a>,
-    questions: BTreeMap<String, JevQuestion>,
-}
-#[derive(Serialize)]
-struct JevState<'a> {
-    rule: &'static str,
-    question_format: &'static str,
-    criteria: BTreeMap<&'static str, &'static str>,
-    intent_provenance: JevProvenance<'a>,
-    capabilities: BTreeMap<String, JevCard<'a>>,
-    collections: BTreeMap<String, &'a str>,
-}
-/// Wire-only interning: preserve every turn, including A -> B -> A revisions.
-/// The authoritative provenance chain and its session identity are unchanged.
-#[derive(Serialize)]
-struct JevProvenance<'a> {
-    texts: Vec<&'a str>,
-    turns: Vec<usize>,
-}
-impl<'a> From<&'a IntentProvenance> for JevProvenance<'a> {
-    fn from(provenance: &'a IntentProvenance) -> Self {
-        let mut texts = Vec::new();
-        let mut indices = BTreeMap::new();
-        let turns = provenance
-            .turns()
-            .map(|text| {
-                *indices.entry(text).or_insert_with(|| {
-                    let index = texts.len();
-                    texts.push(text);
-                    index
+    let evidence: std::sync::Arc<Vec<Question>> = std::sync::Arc::new(
+        candidates
+            .iter()
+            .map(|candidate| {
+                let typed = catalog_evidence
+                    .capabilities
+                    .get(&candidate.reference)
+                    .ok_or_else(|| {
+                        DiscoveryMatcherError::MissingCatalogueEvidence(candidate.reference.clone())
+                    })?;
+                Ok(Question {
+                    id: candidate.id.clone(),
+                    reference: candidate.reference.clone(),
+                    entity: candidate.document.entity.clone(),
+                    operation: typed.operation.clone(),
                 })
             })
-            .collect();
-        Self { texts, turns }
+            .collect::<Result<_, DiscoveryMatcherError>>()?,
+    );
+    // Validate every local packet before the caller can dispatch any provider work.
+    let ids: BTreeMap<_, _> = catalog_evidence
+        .capabilities
+        .keys()
+        .enumerate()
+        .map(|(i, reference)| (reference.clone(), format!("c{i}")))
+        .collect();
+    let definitions = witnesses::value(&catalog_evidence.definitions)?;
+    let mut prepared = PreparedLocalSelection {
+        batches: Vec::new(),
+        budget_retained: Vec::new(),
+    };
+    for question in evidence.iter() {
+        match issue_local_batch(
+            model,
+            intent,
+            question,
+            &evidence,
+            catalog_evidence,
+            &ids,
+            &definitions,
+        ) {
+            Ok(batch) => prepared.batches.push(batch),
+            Err(DiscoveryMatcherError::ScopeLimit {
+                reference,
+                capabilities,
+                capability_limit,
+                bytes,
+                byte_limit,
+            }) => {
+                prepared.budget_retained.push(ScopeBudgetRetention {
+                    capability_id: question.id.clone(),
+                    reference,
+                    capabilities,
+                    capability_limit,
+                    bytes,
+                    byte_limit,
+                });
+            }
+            Err(error) => return Err(error),
+        }
+    }
+    Ok(prepared)
+}
+
+struct RelevanceCodec;
+impl DecisionCodec for RelevanceCodec {
+    type Request<'a> = decisions::Request<'a>;
+
+    fn encode(
+        request: &Self::Request<'_>,
+    ) -> Result<String, crate::decision_codec::DecisionCodecError> {
+        // Preserve the fixed evidence map order at the wire boundary.
+        // The generic codec's Value roundtrip sorts maps and would erase it.
+        Ok(serde_json::to_string(request)?)
     }
 }
 #[derive(Serialize)]
-struct JevCard<'a> {
-    reference: &'a CapabilityRef,
-    entity: &'a str,
-    operation: &'a plasm_core::catalog_discovery::OperationEvidence,
-    collection_ref: String,
-}
-#[derive(Serialize)]
-struct JevQuestion {
-    #[serde(rename = "type")]
-    kind: ChoiceQuestion,
-    instructions: String,
-    criteria: BTreeMap<&'static str, &'static str>,
-}
-#[derive(Serialize)]
-#[serde(rename_all = "snake_case")]
-enum ChoiceQuestion {
-    Choice,
-}
-impl DecisionCodec for JevCodec {
-    type Request<'a> = JevRequest<'a>;
+struct SharedEvidence<'a> {
+    rule: &'static str,
+    capabilities: witnesses::OrderedCards,
+    discovery_need: &'a str,
+    outcome: &'a str,
+    types: witnesses::ProjectedDefinitions,
+    type_refs: serde_json::Value,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    bindings: Vec<serde_json::Value>,
 }
 
-fn issue_batch(
+fn issue_local_batch(
     model: &str,
     intent: &IntentProvenance,
-    questions: &[Question],
-) -> Result<IssuedBatch, DiscoveryMatcherError> {
-    if questions.is_empty() {
-        return Err(DiscoveryMatcherError::EmptyBatch);
-    }
-    let mut cards = BTreeMap::new();
-    let mut collections = BTreeMap::new();
-    let mut collection_aliases = BTreeMap::new();
-    let mut wire_questions = BTreeMap::new();
-    let mut bindings = BTreeMap::new();
-    for (i, q) in questions.iter().enumerate() {
-        let c = q;
-        let alias = format!("c{i}");
-        let collection = collection_aliases
-            .entry(c.collection.meaning.as_str())
-            .or_insert_with(|| {
-                let alias = format!("s{}", collections.len());
-                collections.insert(alias.clone(), c.collection.meaning.as_str());
-                alias
-            });
-        cards.insert(
-            alias.clone(),
-            JevCard {
-                reference: &c.reference,
-                entity: &c.entity,
-                operation: &c.operation,
-                collection_ref: collection.clone(),
-            },
-        );
-        let key = format!("q{i}");
-        bindings.insert(key.clone(), c.id.clone());
-        wire_questions.insert(
-            key,
-            JevQuestion {
-                kind: ChoiceQuestion::Choice,
-                instructions: format!(
-                    "Is capability {alias} relevant? Apply state.question_format."
-                ),
-                criteria: ANSWERS.into_iter().map(|label| (label, label)).collect(),
-            },
-        );
-    }
-    let body = JevCodec::encode(&JevRequest {
-        model,
-        state: JevState {
-            rule: RUBRIC,
-            question_format: QUESTION_FORMAT,
-            criteria: CRITERIA.into_iter().collect(),
-            intent_provenance: intent.into(),
-            capabilities: cards,
-            collections,
-        },
-        questions: wire_questions,
-    })
-    .map_err(DiscoveryMatcherError::Encode)?;
-    Ok(IssuedBatch {
-        cache_key: content_hash(format!("jev-relevance-v6\n{body}").as_bytes()),
-        body,
-        model: model.into(),
-        bindings,
-        questions: questions.to_vec(),
-    })
+    question: &Question,
+    _evidence: &std::sync::Arc<Vec<Question>>,
+    catalog: &CatalogEvidence,
+    ids: &BTreeMap<CapabilityRef, String>,
+    definitions: &serde_json::Value,
+) -> Result<request_packing::PreparedLocalBatch, DiscoveryMatcherError> {
+    let scope = witnesses::project(&question.reference, catalog, ids, definitions)?;
+    issue_projected_batch(model, intent, question, _evidence, ids, scope)
 }
 
-/// Split complete semantic questions. No descriptions are truncated or sliced.
-pub fn repartition(
-    batch: &IssuedBatch,
+fn issue_projected_batch(
+    model: &str,
     intent: &IntentProvenance,
-) -> Result<[IssuedBatch; 2], DiscoveryMatcherError> {
-    if batch.questions.len() <= 1 {
-        return Err(DiscoveryMatcherError::IndivisibleItem {
-            bytes: batch.body.len(),
+    question: &Question,
+    _evidence: &std::sync::Arc<Vec<Question>>,
+    ids: &BTreeMap<CapabilityRef, String>,
+    scope: witnesses::Scope,
+) -> Result<request_packing::PreparedLocalBatch, DiscoveryMatcherError> {
+    issue_scope(model, intent, question, _evidence, ids, scope, true)
+}
+
+fn local_question_instructions(id: &str) -> String {
+    format!("Using the shared intent and rule, classify the contribution of `capabilities.{id}`. Other entries in `capabilities` are available composition evidence, not an execution plan.")
+}
+
+fn issue_scope(
+    model: &str,
+    intent: &IntentProvenance,
+    question: &Question,
+    _evidence: &std::sync::Arc<Vec<Question>>,
+    ids: &BTreeMap<CapabilityRef, String>,
+    scope: witnesses::Scope,
+    admit_local: bool,
+) -> Result<request_packing::PreparedLocalBatch, DiscoveryMatcherError> {
+    let id = ids
+        .get(&question.reference)
+        .ok_or(DiscoveryMatcherError::MissingAnswer)?;
+    let key = format!("q{}", &id[1..]);
+    let selection_request = intent.selection_request();
+    let state = SharedEvidence {
+        rule: RUBRIC,
+        capabilities: scope.cards,
+        discovery_need: intent.current(),
+        outcome: &selection_request,
+        types: scope.types,
+        type_refs: scope.references,
+        bindings: scope.bindings,
+    };
+    let wire = decisions::Request {
+        model,
+        state: decisions::State::Graph(&state),
+        questions: BTreeMap::from([(
+            key.clone(),
+            decisions::Question {
+                kind: "choice",
+                instructions: local_question_instructions(id),
+                criteria: CRITERIA.into_iter().collect(),
+            },
+        )]),
+    };
+    let body = RelevanceCodec::encode(&wire).map_err(DiscoveryMatcherError::Encode)?;
+    if admit_local
+        && (scope.count > witnesses::MAX_CAPABILITIES || body.len() > witnesses::MAX_BYTES)
+    {
+        return Err(DiscoveryMatcherError::ScopeLimit {
+            reference: question.reference.clone(),
+            capabilities: scope.count,
+            capability_limit: witnesses::MAX_CAPABILITIES,
+            bytes: body.len(),
+            byte_limit: witnesses::MAX_BYTES,
         });
     }
-    let (left, right) = batch.questions.split_at(batch.questions.len() / 2);
-    Ok([
-        issue_batch(&batch.model, intent, left)?,
-        issue_batch(&batch.model, intent, right)?,
-    ])
+    let issued = IssuedBatch {
+        cache_key: content_hash(format!("decisions-compact-witnesses-v10\\n{body}").as_bytes()),
+        body,
+        model: model.into(),
+        bindings: BTreeMap::from([(key, question.id.clone())]),
+        #[cfg(test)]
+        questions: vec![question.clone()],
+        #[cfg(test)]
+        evidence: _evidence.clone(),
+    };
+    let decisions::Request { questions, .. } = wire;
+    Ok(request_packing::PreparedLocalBatch::new(
+        issued, model, state, questions,
+    ))
 }
 
-/// Owns selection progress: only successfully decoded leaves can complete a selection.
-/// A rejected page is replaced atomically by two complete, smaller units of work.
-/// With N candidates and P initial pages, binary splitting admits at most N
-/// successful leaves and 2*N-P page attempts. An indivisible rejection fails.
+/// Pending local questions and accepted judgments; no partial selection.
 pub struct SelectionPages {
     pending: std::collections::VecDeque<IssuedBatch>,
     accepted: Vec<IssuedBatch>,
     answers: Vec<SelectionAnswer>,
+    budget_retained: Vec<ScopeBudgetRetention>,
 }
 
-/// Execute the same exhaustive paging protocol for live and cached decisions.
-/// Only a context rejection can subdivide work; all other errors abort selection.
+/// Execute complete local questions for live and cached decisions.
+/// Any failed question aborts selection; evidence is never subdivided.
 pub async fn judge_candidates<F, Fut>(
     model: &str,
     intent: &IntentProvenance,
     retrieval: &RetrievalReceipt,
+    catalog_evidence: &CatalogEvidence,
     mut decide: F,
 ) -> Result<CapabilityMatchReceipt, DiscoveryMatcherError>
 where
     F: FnMut(IssuedBatch) -> Fut,
     Fut: std::future::Future<Output = Result<String, DecisionProviderError>>,
 {
-    let mut pages = SelectionPages::new(issue_batches(model, intent, retrieval)?);
-    while let Some(issued) = pages.current().cloned() {
-        match decide(issued).await {
-            Ok(raw) => pages.accept(&raw)?,
+    let prepared = prepare_selection(model, intent, retrieval, catalog_evidence)?;
+    let mut pending: std::collections::VecDeque<_> = prepared.batches.into();
+    let mut running = FuturesUnordered::new();
+    let mut accepted = Vec::new();
+    let mut answers = Vec::new();
+    loop {
+        while running.len() < ROUTE_CONCURRENCY {
+            let Some(issued) = pending.pop_front() else {
+                break;
+            };
+            let response = decide(issued.clone());
+            running.push(async move { (issued, response.await) });
+        }
+        let Some((issued, result)) = running.next().await else {
+            break;
+        };
+        match result {
+            Ok(raw) => {
+                answers.extend(decode_batch(&issued, &raw)?);
+                accepted.push(issued);
+            }
             Err(error)
                 if error
-                    .downcast_ref::<crate::decision_transport::DecisionTransportError>()
+                    .downcast_ref::<plasm_runtime::provider_transport::ProviderTransportError>()
                     .is_some_and(|error| {
                         matches!(
                             error,
-                            crate::decision_transport::DecisionTransportError::ContextLimit
+                            plasm_runtime::provider_transport::ProviderTransportError::ContextLimit
                         )
                     }) =>
             {
-                pages.split_current(intent)?;
+                return Err(DiscoveryMatcherError::IndivisibleItem {
+                    bytes: issued.body.len(),
+                });
             }
             Err(error) => return Err(DiscoveryMatcherError::Provider(error)),
         }
     }
-    pages.finish(retrieval)
+    finish_prepared_selection(answers, retrieval, &accepted, prepared.budget_retained)
 }
 impl SelectionPages {
+    #[cfg(test)]
     pub fn new(batches: Vec<IssuedBatch>) -> Self {
+        Self::from_prepared(PreparedSelection {
+            batches,
+            budget_retained: Vec::new(),
+        })
+    }
+    pub fn from_prepared(prepared: PreparedSelection) -> Self {
         Self {
-            pending: batches.into(),
+            pending: prepared.batches.into(),
             accepted: Vec::new(),
             answers: Vec::new(),
+            budget_retained: prepared.budget_retained,
         }
     }
-    /// Total leaf pages, including completed ones. Repartitioning must account
-    /// for both halves before a host admits more provider work.
+    /// Total local questions, including completed ones.
     pub fn page_count(&self) -> usize {
         self.accepted.len() + self.pending.len()
     }
@@ -407,20 +593,6 @@ impl SelectionPages {
             .push(self.pending.pop_front().expect("validated pending page"));
         Ok(())
     }
-    pub fn split_current(
-        &mut self,
-        intent: &IntentProvenance,
-    ) -> Result<(), DiscoveryMatcherError> {
-        let batch = self
-            .pending
-            .front()
-            .ok_or(DiscoveryMatcherError::NoPendingPage)?;
-        let [left, right] = repartition(batch, intent)?;
-        self.pending.pop_front();
-        self.pending.push_front(right);
-        self.pending.push_front(left);
-        Ok(())
-    }
     pub fn finish(
         self,
         retrieval: &RetrievalReceipt,
@@ -428,7 +600,12 @@ impl SelectionPages {
         if !self.pending.is_empty() {
             return Err(DiscoveryMatcherError::UnprocessedPages);
         }
-        finish_selection(self.answers, retrieval, &self.accepted)
+        finish_prepared_selection(
+            self.answers,
+            retrieval,
+            &self.accepted,
+            self.budget_retained,
+        )
     }
 }
 
@@ -446,36 +623,17 @@ pub fn decode_batch(
     issued: &IssuedBatch,
     raw: &str,
 ) -> Result<Vec<SelectionAnswer>, DiscoveryMatcherError> {
-    decode_jev(issued, raw)
-}
-fn decode_jev(
-    issued: &IssuedBatch,
-    raw: &str,
-) -> Result<Vec<SelectionAnswer>, DiscoveryMatcherError> {
-    let mut answers = crate::decision_codec::decode_jev_choices(
-        &issued.model,
-        issued.bindings.keys().map(String::as_str),
-        &ANSWERS,
-        raw,
-    )?;
+    let mut answers = decisions::decode(&issued.model, issued.bindings.keys(), raw)?;
     let mut matches = Vec::new();
     for (question, capability_id) in &issued.bindings {
         let answer = answers
             .remove(question)
             .ok_or(DiscoveryMatcherError::MissingAnswer)?;
-        let choice = match answer.choice.as_str() {
-            "relevant" => MatchChoice::Relevant,
-            "unrelated" => MatchChoice::Unrelated,
-            "uncertain" => MatchChoice::Uncertain,
-            _ => unreachable!(),
-        };
         matches.push(SelectionAnswer {
             question: question_id(issued, question),
             matched: CapabilityIntentMatch {
                 capability_id: capability_id.clone(),
-                choice,
-                probabilities: answer.probabilities,
-                confidence: answer.confidence,
+                choice: answer,
             },
         });
     }
@@ -484,10 +642,19 @@ fn decode_jev(
 
 /// Every candidate has exactly one complete question. Never fold conflicting
 /// judgments or combine questions from distinct intent revisions.
-pub fn finish_selection(
+#[cfg(test)]
+fn finish_selection(
     answers: Vec<SelectionAnswer>,
     retrieval: &RetrievalReceipt,
     issued: &[IssuedBatch],
+) -> Result<CapabilityMatchReceipt, DiscoveryMatcherError> {
+    finish_prepared_selection(answers, retrieval, issued, Vec::new())
+}
+fn finish_prepared_selection(
+    answers: Vec<SelectionAnswer>,
+    retrieval: &RetrievalReceipt,
+    issued: &[IssuedBatch],
+    budget_retained: Vec<ScopeBudgetRetention>,
 ) -> Result<CapabilityMatchReceipt, DiscoveryMatcherError> {
     let expected: BTreeSet<_> = issued
         .iter()
@@ -515,6 +682,27 @@ pub fn finish_selection(
     if actual != expected {
         return Err(DiscoveryMatcherError::AnswerSetMismatch);
     }
+    for budget in &budget_retained {
+        if !retrieval
+            .candidates
+            .iter()
+            .any(|c| c.id == budget.capability_id && c.reference == budget.reference)
+        {
+            return Err(DiscoveryMatcherError::CandidateCoverageMismatch);
+        }
+        if selected
+            .insert(
+                budget.capability_id.clone(),
+                CapabilityIntentMatch {
+                    capability_id: budget.capability_id.clone(),
+                    choice: MatchChoice::Uncertain,
+                },
+            )
+            .is_some()
+        {
+            return Err(DiscoveryMatcherError::MultipleJudgments);
+        }
+    }
     let selected_ids: BTreeSet<_> = selected.keys().collect();
     let candidate_ids: BTreeSet<_> = retrieval.candidates.iter().map(|c| &c.id).collect();
     if selected_ids != candidate_ids {
@@ -522,13 +710,70 @@ pub fn finish_selection(
     }
     Ok(CapabilityMatchReceipt {
         matches: selected.into_values().collect(),
+        budget_retained,
     })
 }
 
 #[cfg(test)]
 mod tests {
+    mod bounded_scopes;
+    mod budget_retention;
+    mod compact;
+    mod intent_scope;
+    mod packet_frozen;
+    mod prefix;
+    mod reference_index;
+    mod scheduling;
+    mod scoped_sharing;
     use super::*;
     use proptest::prelude::*;
+
+    #[test]
+    fn catalogue_failure_preserves_concrete_source() {
+        use plasm_core::catalog_discovery::CatalogDiscoveryError;
+        use std::error::Error;
+
+        let error = DiscoveryMatcherError::from(CatalogDiscoveryError::CatalogRevisionMismatch);
+        assert!(matches!(
+            error
+                .source()
+                .and_then(|source| source.downcast_ref::<Box<CatalogDiscoveryError>>())
+                .map(Box::as_ref),
+            Some(CatalogDiscoveryError::CatalogRevisionMismatch)
+        ));
+    }
+
+    fn issue_batches(
+        model: &str,
+        intent: &IntentProvenance,
+        retrieval: &RetrievalReceipt,
+    ) -> Result<Vec<IssuedBatch>, DiscoveryMatcherError> {
+        super::issue_batches(
+            model,
+            intent,
+            retrieval,
+            &CatalogEvidence::protocol_fixture(retrieval),
+        )
+    }
+    async fn judge_candidates<F, Fut>(
+        model: &str,
+        intent: &IntentProvenance,
+        retrieval: &RetrievalReceipt,
+        decide: F,
+    ) -> Result<CapabilityMatchReceipt, DiscoveryMatcherError>
+    where
+        F: FnMut(IssuedBatch) -> Fut,
+        Fut: std::future::Future<Output = Result<String, DecisionProviderError>>,
+    {
+        super::judge_candidates(
+            model,
+            intent,
+            retrieval,
+            &CatalogEvidence::protocol_fixture(retrieval),
+            decide,
+        )
+        .await
+    }
     fn fixture() -> (IntentProvenance, RetrievalReceipt) {
         let packet: serde_json::Value = serde_json::from_str(include_str!(
             "../../../fixtures/discovery/partial-routing.json"
@@ -539,13 +784,185 @@ mod tests {
             serde_json::from_value(packet["routing"]["retrieval"].clone()).unwrap(),
         )
     }
+    #[test]
+    fn luna_decisions_cutover_binds_model_and_provider() {
+        let (intent, retrieval) = fixture();
+        assert_eq!(RELEVANCE_MODEL, "openai/gpt-6-luna-decisions");
+        for model in [
+            RELEVANCE_MODEL.to_owned(),
+            format!("{RELEVANCE_MODEL}-20261006"),
+        ] {
+            let batch = issue_batches(&model, &intent, &retrieval)
+                .unwrap()
+                .remove(0);
+            let request: serde_json::Value = serde_json::from_str(batch.body()).unwrap();
+            assert_eq!(request["model"], model);
+            let mut raw: serde_json::Value =
+                serde_json::from_str(&response(&batch, &[MatchChoice::Uncertain])).unwrap();
+            raw["model"] = json!(model);
+            let answers = decode_batch(&batch, &raw.to_string()).unwrap();
+            let receipt =
+                finish_selection(answers, &retrieval, std::slice::from_ref(&batch)).unwrap();
+            assert_eq!(
+                receipt.selected(&retrieval).len(),
+                retrieval.candidates.len()
+            );
+            raw["provider"] = json!("TypeSafe");
+            assert!(decode_batch(&batch, &raw.to_string()).is_err());
+        }
+        for unsupported in [
+            "typesafe/jev-1.13",
+            "openai/gpt-6-luna",
+            "openai/gpt-6-luna-decisions-other",
+        ] {
+            assert!(matches!(
+                issue_batches(unsupported, &intent, &retrieval),
+                Err(DiscoveryMatcherError::UnsupportedModel)
+            ));
+        }
+    }
     fn response(batch: &IssuedBatch, choices: &[MatchChoice]) -> String {
-        let answers:BTreeMap<_,_>=batch.bindings.keys().zip(choices).map(|(key,choice)|{
-            let choice=match choice {MatchChoice::Relevant=>"relevant",MatchChoice::Unrelated=>"unrelated",MatchChoice::Uncertain=>"uncertain"};
-            (key,json!({"type":"choice","choice":choice,"confidence":1.0,"probabilities":ANSWERS.iter().map(|s|(*s,if *s==choice {1.0}else{0.0})).collect::<BTreeMap<_,_>>()}))
-        }).collect();
-        serde_json::to_string(&json!({"model":JEV_MODEL,"provider":"TypeSafe","answers":answers}))
-            .unwrap()
+        let answers: BTreeMap<_, _> = batch
+            .bindings
+            .keys()
+            .zip(choices)
+            .map(|(key, choice)| {
+                (
+                    key,
+                    json!({"type":"choice","choice":choice,"confidence":1.0,
+                "probabilities":{"relevant":if *choice == MatchChoice::Relevant {1.0}else{0.0},
+                "uncertain":if *choice == MatchChoice::Uncertain {1.0}else{0.0},
+                "unrelated":if *choice == MatchChoice::Unrelated {1.0}else{0.0}}}),
+                )
+            })
+            .collect();
+        json!({"model":RELEVANCE_MODEL,"provider":"OpenAI","answers":answers}).to_string()
+    }
+    // Resolve references for semantic assertions; dedicated wire tests verify compactness.
+    fn question_content(batch: &IssuedBatch) -> serde_json::Value {
+        let body: serde_json::Value = serde_json::from_str(batch.body()).unwrap();
+        let questions: BTreeMap<_, _> = batch
+            .bindings
+            .iter()
+            .map(|(key, id)| {
+                let index = batch.evidence.iter().position(|q| &q.id == id).unwrap();
+                (
+                    key,
+                    json!({"instructions":body["state"]["capabilities"][format!("c{index}")]}),
+                )
+            })
+            .collect();
+        let mut context = body["state"].clone();
+        context["criteria"] = json!(CRITERIA.into_iter().collect::<BTreeMap<_, _>>());
+        json!({"questions":questions,"context":context})
+    }
+
+    #[test]
+    fn artifact_composition_evidence_survives_pages_and_ordering() {
+        let contracts = [
+            "Export a text file containing sample identifiers and wavelengths. Returns a path, not contents. Creates a file and increments a counter; requires a credential.",
+            "Read text contents at a supplied file path. Requires a credential; does not modify files.",
+            "Erase a supplied file; returns no contents.",
+            "Read unrelated furniture records.",
+        ];
+        for size in [8, 64, 128] {
+            let (intent, mut retrieval) = fixture();
+            let original = retrieval.candidates[0].clone();
+            retrieval.candidates = (0..size)
+                .map(|i| {
+                    let mut c = original.clone();
+                    c.id = format!("artifact{i}");
+                    c.reference.capability = format!("operation{i}");
+                    c.document.operation.contract = contracts[i % contracts.len()].into();
+                    c
+                })
+                .collect();
+            let forward = issue_batches(RELEVANCE_MODEL, &intent, &retrieval).unwrap();
+            retrieval.candidates.reverse();
+            let reverse = issue_batches(RELEVANCE_MODEL, &intent, &retrieval).unwrap();
+            assert_eq!(
+                forward.iter().map(|b| b.body()).collect::<Vec<_>>(),
+                reverse.iter().map(|b| b.body()).collect::<Vec<_>>()
+            );
+            assert_eq!(forward.len(), size);
+            let mut counts = BTreeMap::new();
+            for page in forward {
+                let body: serde_json::Value = serde_json::from_str(page.body()).unwrap();
+                let evidence = body["state"]["capabilities"].as_object().unwrap();
+                assert_eq!(evidence.len(), 1);
+                let contract = evidence.values().next().unwrap()["capability"]["operation"]
+                    ["contract"]
+                    .as_str()
+                    .unwrap();
+                *counts.entry(contract.to_owned()).or_insert(0) += 1;
+            }
+            for contract in contracts {
+                assert_eq!(counts[contract], size / contracts.len());
+            }
+        }
+    }
+
+    #[test]
+    fn conditional_contribution_preserves_contracts_and_unknown_readiness() {
+        for size in [8, 64, 128] {
+            let (intent, mut retrieval) = fixture();
+            let original = retrieval.candidates[0].clone();
+            let contracts = [
+                "Enable the reader for a named store. Requires a supplied credential; also changes its access state.",
+                "Read records from a store whose reader is enabled.",
+                "Disable the reader for a named store.",
+                "Read unrelated maintenance records.",
+            ];
+            retrieval.candidates = (0..size)
+                .map(|i| {
+                    let mut candidate = original.clone();
+                    candidate.id = format!("candidate{i}");
+                    candidate.reference.capability = format!("operation{i}");
+                    candidate.document.operation.contract = contracts[i % contracts.len()].into();
+                    candidate
+                })
+                .collect();
+            let batches = issue_batches(RELEVANCE_MODEL, &intent, &retrieval).unwrap();
+            assert_eq!(batches.len(), size);
+            for batch in &batches {
+                let body: serde_json::Value = serde_json::from_str(batch.body()).unwrap();
+                assert_eq!(body["state"]["discovery_need"], intent.current());
+                assert_eq!(body["state"]["rule"], RUBRIC);
+                assert!(body["state"].get("intent_interpretation").is_none());
+                let evidence = body["state"]["capabilities"].as_object().unwrap();
+                assert_eq!(evidence.len(), 1);
+                for card in evidence.values() {
+                    let capability = &card["capability"];
+                    let name = capability["reference"]["capability"].as_str().unwrap();
+                    let i: usize = name.strip_prefix("operation").unwrap().parse().unwrap();
+                    assert_eq!(
+                        capability["operation"]["contract"],
+                        contracts[i % contracts.len()]
+                    );
+                }
+            }
+            // The host does not override a classifier verdict or infer readiness.
+            for choice in [
+                MatchChoice::Relevant,
+                MatchChoice::Uncertain,
+                MatchChoice::Unrelated,
+            ] {
+                let mut pages = SelectionPages::new(batches.clone());
+                while let Some(batch) = pages.current() {
+                    let raw = response(batch, &vec![choice.clone(); batch.bindings.len()]);
+                    pages.accept(&raw).unwrap();
+                }
+                let receipt = pages.finish(&retrieval).unwrap();
+                assert_eq!(
+                    receipt.selected(&retrieval).len(),
+                    if choice == MatchChoice::Unrelated {
+                        0
+                    } else {
+                        size
+                    }
+                );
+            }
+        }
     }
 
     #[test]
@@ -563,7 +980,7 @@ mod tests {
             .collect();
         retrieval.candidates[1].document.operation.kind =
             plasm_core::schema::CapabilityKind::Action;
-        let issued = issue_batches(JEV_MODEL, &intent, &retrieval).unwrap();
+        let issued = issue_batches(RELEVANCE_MODEL, &intent, &retrieval).unwrap();
         let mut answers = Vec::new();
         for batch in &issued {
             let choices: Vec<_> = batch
@@ -599,7 +1016,7 @@ mod tests {
             let (intent,mut retrieval)=fixture();let original=retrieval.candidates[0].clone();
             retrieval.candidates=mask.iter().enumerate().map(|(i,_)|{let mut c=original.clone();c.id=format!("candidate{i}");c.reference.capability=format!("read{i}");c}).collect();
             let wire:RetrievalReceipt=serde_json::from_str(&serde_json::to_string(&retrieval).unwrap()).unwrap();
-            let batches=issue_batches(JEV_MODEL,&intent,&wire).unwrap();
+            let batches=issue_batches(RELEVANCE_MODEL,&intent,&wire).unwrap();
             let mut answers=Vec::new();
             for batch in &batches {
                 let choices:Vec<_>=batch.bindings.values().map(|id| match mask[id.trim_start_matches("candidate").parse::<usize>().unwrap()] {0=>MatchChoice::Unrelated,1=>MatchChoice::Uncertain,_=>MatchChoice::Relevant}).collect();
@@ -610,14 +1027,17 @@ mod tests {
             let decoded:CapabilityMatchReceipt=serde_json::from_str(&serde_json::to_string(&receipt).unwrap()).unwrap();
             prop_assert_eq!(&receipt,&decoded);
             prop_assert_eq!(receipt.selected(&wire).len(),mask.iter().filter(|&&m|m!=0).count());
-            for batch in batches {prop_assert!(batch.body.len()<=TARGET_PAGE_BYTES);}
+            for batch in batches {
+                prop_assert!(batch.questions.len() <= MAX_PAGE_QUESTIONS);
+                prop_assert_eq!(batch.evidence.len(), wire.candidates.len());
+                prop_assert!(batch.body().len() <= TARGET_PAGE_BYTES);
+            }
         }
     }
     proptest! {
         #[test]
         fn provider_paging_preserves_all_questions_and_selection(
             mask in prop::collection::vec(0u8..3, 2..129),
-            provider_questions in 1usize..5,
         ) {
             let (intent, mut retrieval) = fixture();
             let original = retrieval.candidates[0].clone();
@@ -625,20 +1045,14 @@ mod tests {
                 let mut c = original.clone(); c.id = format!("candidate{i}");
                 c.reference.capability = format!("read{i}"); c
             }).collect();
-            // This simulated provider rejects pages below our packing target too.
-            let batches = issue_batches(JEV_MODEL, &intent, &retrieval).unwrap();
+            // Completion order does not alter the candidate judgment set.
+            let batches = issue_batches(RELEVANCE_MODEL, &intent, &retrieval).unwrap();
             let mut pages = SelectionPages::new(batches);
             let mut seen = BTreeSet::new();
             let mut requests = 0;
             while let Some(batch) = pages.current() {
                 requests += 1;
                 prop_assert!(requests <= 2 * mask.len());
-                if batch.questions.len() > provider_questions {
-                    let before = pages.page_count();
-                    pages.split_current(&intent).unwrap();
-                    prop_assert_eq!(pages.page_count(), before + 1);
-                    continue;
-                }
                 let choices: Vec<_> = batch.bindings.values().map(|id| {
                     assert!(seen.insert(id.clone()));
                     match mask[id.trim_start_matches("candidate").parse::<usize>().unwrap()] {
@@ -662,7 +1076,7 @@ mod tests {
     #[test]
     fn incomplete_or_malformed_pages_cannot_commit_selection() {
         let (intent, retrieval) = fixture();
-        let batches = issue_batches(JEV_MODEL, &intent, &retrieval).unwrap();
+        let batches = issue_batches(RELEVANCE_MODEL, &intent, &retrieval).unwrap();
         let mut pages = SelectionPages::new(batches.clone());
         assert!(matches!(
             pages.accept("{}"),
@@ -683,21 +1097,9 @@ mod tests {
             Err(DiscoveryMatcherError::MissingModel)
         ));
 
-        let batch = issue_batches(JEV_MODEL, &intent, &retrieval)
-            .unwrap()
-            .remove(0);
-        assert!(matches!(
-            repartition(&batch, &intent),
-            Err(DiscoveryMatcherError::IndivisibleItem { .. })
-        ));
-
         let mut pages = SelectionPages::new(Vec::new());
         assert!(matches!(
             pages.accept("{}"),
-            Err(DiscoveryMatcherError::NoPendingPage)
-        ));
-        assert!(matches!(
-            pages.split_current(&intent),
             Err(DiscoveryMatcherError::NoPendingPage)
         ));
     }
@@ -716,40 +1118,49 @@ mod tests {
             .collect();
         let mut calls = 0;
         let mut accepted = BTreeSet::new();
-        let receipt = judge_candidates(JEV_MODEL, &intent, &retrieval, |batch| {
+        let receipt = judge_candidates(RELEVANCE_MODEL, &intent, &retrieval, |batch| {
             calls += 1;
-            let result: Result<String, DecisionProviderError> = if batch.questions.len() > 1 {
+            let result: Result<String, DecisionProviderError> = if batch.questions.len() > 4 {
                 Err(Box::new(
-                    crate::decision_transport::DecisionTransportError::ContextLimit,
+                    plasm_runtime::provider_transport::ProviderTransportError::ContextLimit,
                 ))
             } else {
-                assert!(accepted.insert(batch.bindings.values().next().unwrap().clone()));
-                Ok(response(&batch, &[MatchChoice::Relevant]))
+                for candidate in batch.bindings.values() {
+                    assert!(accepted.insert(candidate.clone()));
+                }
+                Ok(response(
+                    &batch,
+                    &vec![MatchChoice::Relevant; batch.bindings.len()],
+                ))
             };
             std::future::ready(result)
         })
         .await
         .unwrap();
         assert_eq!(accepted.len(), 128);
-        assert!(calls <= 255);
+        assert!(calls <= 128);
         assert_eq!(receipt.selected(&retrieval).len(), 128);
+        // Exercise failure after admitting multiple pages even with larger packing.
+        let (_, mut retrieval) = scheduling::many_cards(8);
         let mut calls = 0;
-        assert!(judge_candidates(JEV_MODEL, &intent, &retrieval, |batch| {
-            calls += 1;
-            std::future::ready(if calls == 2 {
-                Err(std::io::Error::other("provider unavailable").into())
-            } else {
-                Ok(response(
-                    &batch,
-                    &vec![MatchChoice::Relevant; batch.questions.len()],
-                ))
+        assert!(
+            judge_candidates(RELEVANCE_MODEL, &intent, &retrieval, |batch| {
+                calls += 1;
+                std::future::ready(if calls == 2 {
+                    Err(std::io::Error::other("provider unavailable").into())
+                } else {
+                    Ok(response(
+                        &batch,
+                        &vec![MatchChoice::Relevant; batch.questions.len()],
+                    ))
+                })
             })
-        })
-        .await
-        .is_err());
-        assert_eq!(calls, 2);
-        retrieval.candidates.push(template);
-        assert!(issue_batches(JEV_MODEL, &intent, &retrieval).is_err());
+            .await
+            .is_err()
+        );
+        assert!(calls <= ROUTE_CONCURRENCY + 1);
+        retrieval.candidates.resize(129, template);
+        assert!(issue_batches(RELEVANCE_MODEL, &intent, &retrieval).is_err());
     }
 
     proptest! {
@@ -761,170 +1172,169 @@ mod tests {
             let (intent, mut retrieval) = fixture();
             retrieval.candidates[0].document.collection.meaning = meaning.clone();
             retrieval.candidates[0].document.operation.contract = contract.clone();
-            let before = issue_batches(JEV_MODEL, &intent, &retrieval).unwrap();
+            let before = issue_batches(RELEVANCE_MODEL, &intent, &retrieval).unwrap();
             let wire: RetrievalReceipt = serde_json::from_slice(&serde_json::to_vec(&retrieval).unwrap()).unwrap();
-            let after = issue_batches(JEV_MODEL, &intent, &wire).unwrap();
+            let after = issue_batches(RELEVANCE_MODEL, &intent, &wire).unwrap();
             prop_assert_eq!(&before[0].body, &after[0].body);
             prop_assert_eq!(&before[0].cache_key, &after[0].cache_key);
-            let packet: serde_json::Value = serde_json::from_str(&after[0].body).unwrap();
-            prop_assert_eq!(&packet["state"]["collections"]["s0"], &json!(meaning));
-            prop_assert_eq!(&packet["state"]["capabilities"]["c0"]["operation"]["contract"], &json!(contract));
-            prop_assert!(packet["state"]["capabilities"]["c0"].get("projection").is_none());
+            let packet = question_content(&after[0]);
+            prop_assert!(packet["questions"]["q0"]["instructions"].get("collection_meaning").is_none());
+            prop_assert_eq!(&packet["questions"]["q0"]["instructions"]["capability"]["operation"]["contract"], &json!(contract));
+            prop_assert!(packet["questions"]["q0"]["instructions"]["capability"].get("projection").is_none());
         }
     }
 
     proptest! {
         #[test]
-        fn interned_provenance_preserves_every_turn(
-            texts in prop::collection::vec("[a-zA-Z ]{1,80}", 1..8),
-            choices in prop::collection::vec(0usize..64, 1..32),
-        ) {
-            let turns: Vec<_> = choices.iter().map(|i| format!("Need {}", texts[i % texts.len()])).collect();
+        fn direct_judgment_preserves_ordered_requests(turns in prop::collection::vec("[a-zA-Z ]{1,80}", 1..32)) {
+            let turns: Vec<_> = turns.into_iter().map(|text| format!("Need {text}")).collect();
             let provenance = IntentProvenance::from_turns(turns.clone()).unwrap();
-            let wire = serde_json::to_value(JevProvenance::from(&provenance)).unwrap();
-            let restored: Vec<_> = wire["turns"].as_array().unwrap().iter()
-                .map(|index| wire["texts"][index.as_u64().unwrap() as usize].as_str().unwrap().to_owned()).collect();
-            prop_assert_eq!(restored, turns);
-            prop_assert_eq!(wire["texts"].as_array().unwrap().len(), provenance.turns().collect::<BTreeSet<_>>().len());
+            let (_, retrieval) = fixture();
+            let batches = issue_batches(RELEVANCE_MODEL, &provenance, &retrieval).unwrap();
+            let content = question_content(&batches[0]);
+            prop_assert!(content["context"].get("intent_turns").is_none());
+            prop_assert_eq!(provenance.turns().collect::<Vec<_>>(), turns.iter().map(String::as_str).collect::<Vec<_>>());
+            prop_assert_eq!(&content["context"]["discovery_need"], &json!(provenance.current()));
+            prop_assert_eq!(&content["context"]["outcome"], &json!(provenance.selection_request()));
         }
     }
 
     #[test]
-    fn repeated_and_revised_intents_keep_chronology() {
-        let provenance =
+    fn oversized_selection_history_fails_explicitly() {
+        let (_, retrieval) = fixture();
+        let current = "Inspect λ specimens; preserve originals. If validation fails, report missing inputs. Do not execute changes.";
+        let short = IntentProvenance::from_turns([current.into()]).unwrap();
+        let long = IntentProvenance::from_turns(
+            (0..40)
+                .map(|n| format!("Earlier search {n}: {}", "old request ".repeat(100)))
+                .chain([current.into()]),
+        )
+        .unwrap();
+        let build = |intent: &IntentProvenance| {
+            let batches = issue_batches(RELEVANCE_MODEL, intent, &retrieval).unwrap();
+            let prepared: Vec<_> = batches
+                .iter()
+                .map(|b| request_packing::PreparedLocal::new(b).unwrap())
+                .collect();
+            let predicted =
+                request_packing::connected_size(&prepared.iter().collect::<Vec<_>>()).unwrap();
+            let packet = request_packing::connected(batches).unwrap().unwrap();
+            assert_eq!(predicted, packet.body().len());
+            packet
+        };
+        let a = build(&short);
+        assert!(matches!(
+            issue_batches(RELEVANCE_MODEL, &long, &retrieval),
+            Err(DiscoveryMatcherError::ScopeLimit { .. })
+        ));
+        let body: serde_json::Value = serde_json::from_str(a.body()).unwrap();
+        assert_eq!(body["state"]["outcome"], current);
+        assert!(body["state"].get("intent_history").is_none());
+        assert!(body["state"].get("intent_turns").is_none());
+        assert_eq!(long.turns().count(), 41);
+        assert_ne!(
+            serde_json::to_value(short).unwrap(),
+            serde_json::to_value(long).unwrap()
+        );
+    }
+
+    #[test]
+    fn direct_questions_preserve_contract_limits_and_revised_intent() {
+        let (_, mut retrieval) = fixture();
+        let intent =
             IntentProvenance::from_turns(["First", "First", "Revised", "First"].map(str::to_owned))
                 .unwrap();
-        assert_eq!(
-            serde_json::to_value(JevProvenance::from(&provenance)).unwrap(),
-            json!({"texts": ["First", "Revised"], "turns": [0, 0, 1, 0]})
-        );
-    }
-
-    #[test]
-    fn collection_descriptions_are_interned_without_truncation() {
-        let (intent, mut retrieval) = fixture();
+        retrieval.candidates[0].document.operation.contract =
+            "Affects every configured member; cannot select a subset. Requires a credential. Erases the selected log.".into();
         let mut other = retrieval.candidates[0].clone();
         other.id = "second".into();
         other.reference.capability = "second".into();
         retrieval.candidates.push(other);
-        let batches = issue_batches(JEV_MODEL, &intent, &retrieval).unwrap();
-        let body: serde_json::Value = serde_json::from_str(&batches[0].body).unwrap();
-        assert_eq!(body["state"]["collections"].as_object().unwrap().len(), 1);
-        assert_eq!(
-            body["state"]["collections"]["s0"],
-            retrieval.candidates[0].document.collection.meaning
-        );
-        for card in body["state"]["capabilities"].as_object().unwrap().values() {
-            assert_eq!(card["collection_ref"], "s0");
+        for batch in issue_batches(RELEVANCE_MODEL, &intent, &retrieval).unwrap() {
+            let body: serde_json::Value = serde_json::from_str(batch.body()).unwrap();
+            assert_eq!(body["model"], RELEVANCE_MODEL);
+            assert!(body.get("reasoning").is_none());
+            assert!(body.get("max_tokens").is_none());
+            assert!(body.get("temperature").is_none());
+            assert!(body.get("messages").is_none());
+            let content = question_content(&batch);
+            assert!(content.get("state").is_none());
+            for (key, question) in content["questions"].as_object().unwrap() {
+                let target = retrieval
+                    .candidates
+                    .iter()
+                    .find(|c| c.id == batch.bindings[key])
+                    .unwrap();
+                let evidence = &question["instructions"];
+                assert_eq!(evidence["capability"]["reference"], json!(target.reference));
+                assert_eq!(
+                    evidence["capability"]["operation"],
+                    json!(target.document.operation)
+                );
+                assert!(evidence.get("collection_meaning").is_none());
+                assert_eq!(content["context"]["discovery_need"], "First");
+                assert_eq!(content["context"]["outcome"], intent.selection_request());
+                assert!(content["context"].get("intent_turns").is_none());
+                assert_eq!(content["context"]["rule"], RUBRIC);
+                assert!(content["context"].get("intent_interpretation").is_none());
+                for (label, meaning) in CRITERIA {
+                    assert_eq!(content["context"]["criteria"][label], meaning);
+                }
+            }
         }
     }
 
     #[test]
-    fn shared_rubric_preserves_each_question_target_and_evidence() {
-        let (intent, mut retrieval) = fixture();
-        let mut other = retrieval.candidates[0].clone();
-        other.id = "second".into();
-        other.reference.capability = "second".into();
-        retrieval.candidates.push(other);
-        let batches = issue_batches(JEV_MODEL, &intent, &retrieval).unwrap();
-        let batch = &batches[0];
-        let body: serde_json::Value = serde_json::from_str(&batch.body).unwrap();
-        assert_eq!(body["state"]["question_format"], QUESTION_FORMAT);
-        assert_eq!(body["state"]["rule"], RUBRIC);
-        for (label, meaning) in CRITERIA {
-            assert_eq!(body["state"]["criteria"][label], meaning);
-            assert_eq!(batch.body.matches(meaning).count(), 1);
-        }
-        for (key, question) in body["questions"].as_object().unwrap() {
-            let parts: Vec<_> = question["instructions"]
-                .as_str()
-                .unwrap()
-                .split_whitespace()
-                .collect();
-            assert_eq!(
-                question["instructions"],
-                format!(
-                    "Is capability {} relevant? Apply state.question_format.",
-                    parts[2]
-                )
-            );
-            assert!(body["state"].get("evidence").is_none());
-            let reference: CapabilityRef = serde_json::from_value(
-                body["state"]["capabilities"][parts[2]]["reference"].clone(),
-            )
-            .unwrap();
-            let target = retrieval
-                .candidates
-                .iter()
-                .find(|c| c.id == batch.bindings[key])
-                .unwrap();
-            assert_eq!(reference, target.reference);
-            assert_eq!(
-                question["criteria"],
-                json!(ANSWERS
-                    .into_iter()
-                    .map(|label| (label, label))
-                    .collect::<BTreeMap<_, _>>())
-            );
-        }
-    }
-
-    #[test]
-    fn duplicate_wire_answer_and_probability_keys_are_rejected() {
+    fn strict_choices_reject_missing_foreign_duplicate_and_extra_fields() {
         let (intent, retrieval) = fixture();
-        let batch = issue_batches(JEV_MODEL, &intent, &retrieval)
-            .unwrap()
-            .remove(0);
-        let raw = response(&batch, &[MatchChoice::Relevant]);
-        let value: serde_json::Value = serde_json::from_str(&raw).unwrap();
-        let answer = &value["answers"]["q0"];
+        let batches = issue_batches(RELEVANCE_MODEL, &intent, &retrieval).unwrap();
+        let valid: serde_json::Value =
+            serde_json::from_str(&response(&batches[0], &[MatchChoice::Relevant])).unwrap();
+        let mut invalids = vec![];
+        let mut missing = valid.clone();
+        missing["answers"] = json!({});
+        invalids.push(missing);
+        let mut foreign = valid.clone();
+        foreign["answers"]["foreign"] = valid["answers"]["q0"].clone();
+        invalids.push(foreign);
+        let mut extra = valid.clone();
+        extra["answers"]["q0"]["unexpected"] = json!(true);
+        invalids.push(extra);
+        for invalid in invalids {
+            assert!(decode_batch(&batches[0], &invalid.to_string()).is_err());
+        }
+        let answer = valid["answers"]["q0"].to_string();
         let duplicate = format!(
-            r#"{{"model":"{JEV_MODEL}","provider":"TypeSafe","answers":{{"q0":{answer},"q0":{answer}}}}}"#
+            r#"{{"model":"{RELEVANCE_MODEL}","provider":"OpenAI","answers":{{"q0":{answer},"q0":{answer}}}}}"#
         );
-        assert!(decode_batch(&batch, &duplicate).is_err());
-        let duplicate = raw.replace(
-            r#""probabilities":{"#,
-            r#""probabilities":{"relevant":0.0,"#,
-        );
-        assert!(decode_batch(&batch, &duplicate).is_err());
-    }
-
-    #[test]
-    fn duplicate_missing_and_foreign_questions_are_rejected() {
-        let (intent, retrieval) = fixture();
-        let batches = issue_batches(JEV_MODEL, &intent, &retrieval).unwrap();
+        assert!(decode_batch(&batches[0], &duplicate).is_err());
+        assert!(decode_batch(&batches[0], "not json").is_err());
+        assert!(finish_selection(vec![], &retrieval, &batches).is_err());
         let mut answers = decode_batch(
             &batches[0],
             &response(&batches[0], &[MatchChoice::Relevant]),
         )
         .unwrap();
-        assert!(finish_selection(vec![], &retrieval, &batches).is_err());
         answers.push(answers[0].clone());
         assert!(finish_selection(answers, &retrieval, &batches).is_err());
-        let mut raw: serde_json::Value =
-            serde_json::from_str(&response(&batches[0], &[MatchChoice::Relevant])).unwrap();
-        raw["answers"]["q0"]["probabilities"]["relevant"] = json!(-1);
-        assert!(decode_batch(&batches[0], &raw.to_string()).is_err());
-        raw["answers"]["q0"]["probabilities"]["relevant"] = json!(1);
-        raw["answers"]["foreign"] = raw["answers"]["q0"].clone();
-        raw["answers"].as_object_mut().unwrap().remove("q0");
-        assert!(decode_batch(&batches[0], &raw.to_string()).is_err());
     }
+
     #[test]
-    fn response_contract_rejects_invalid_vectors_models_and_confidence() {
+    fn native_envelope_and_choices_fail_closed() {
         let (intent, retrieval) = fixture();
-        let batch = issue_batches(JEV_MODEL, &intent, &retrieval)
+        let batch = issue_batches(RELEVANCE_MODEL, &intent, &retrieval)
             .unwrap()
             .remove(0);
         let raw: serde_json::Value =
             serde_json::from_str(&response(&batch, &[MatchChoice::Relevant])).unwrap();
         for (pointer, value) in [
             ("/model", json!("different/model")),
-            ("/provider", json!("other")),
-            ("/answers/q0/confidence", json!(2)),
-            ("/answers/q0/type", json!("text")),
-            ("/answers/q0/choice", json!("required_source")),
-            ("/answers/q0/probabilities/relevant", json!(0.8)),
+            ("/provider", json!("different/provider")),
+            ("/answers/q0/type", json!("score")),
+            ("/answers/q0/choice", json!("unsupported")),
+            ("/answers/q0/confidence", json!(2.0)),
+            ("/answers/q0/probabilities/relevant", json!(-1.0)),
+            ("/answers", json!({})),
         ] {
             let mut invalid = raw.clone();
             *invalid.pointer_mut(pointer).unwrap() = value;
@@ -933,22 +1343,117 @@ mod tests {
                 "{pointer}"
             );
         }
-        let mut rounded = raw;
-        rounded["usage"] = json!({"input_tokens":1});
-        rounded["answers"]["q0"]["probabilities"] =
-            json!({"relevant":0.67,"unrelated":0.17,"uncertain":0.17});
-        let decoded = decode_batch(&batch, &rounded.to_string()).unwrap();
-        assert!((decoded[0].matched.probabilities.values().sum::<f64>() - 1.0).abs() < 1e-12);
+        let mut dated = raw;
+        dated["model"] = json!(format!("{RELEVANCE_MODEL}-20261021"));
+        let answer = decode_batch(&batch, &dated.to_string()).unwrap();
+        let receipt = serde_json::to_value(&answer[0].matched).unwrap();
+        assert!(receipt.get("confidence").is_none());
+        assert!(receipt.get("probabilities").is_none());
+    }
+
+    #[tokio::test]
+    async fn decisions_http_boundary_preserves_local_questions_and_uncertain_exposure() {
+        use std::sync::{Arc, Mutex};
+        let (intent, mut retrieval) = fixture();
+        let intent = intent
+            .derived("Cancel the original outcome; inspect existing definitions only.".into())
+            .unwrap()
+            .derived("Find readable definitions; do not register anything.".into())
+            .unwrap();
+        let mut other = retrieval.candidates[0].clone();
+        other.id = "second".into();
+        other.reference.capability = "second".into();
+        retrieval.candidates.push(other);
+        let expected_body = request_packing::pack_fixture(
+            issue_batches(RELEVANCE_MODEL, &intent, &retrieval).unwrap(),
+        )
+        .unwrap()[0]
+            .body
+            .clone();
+        let seen = Arc::new(Mutex::new(Vec::new()));
+        let captured = seen.clone();
+        let router = axum::Router::new().route(
+            "/api/alpha/decisions",
+            axum::routing::post(move |headers: axum::http::HeaderMap, body: String| {
+                let seen = captured.clone();
+                async move {
+                    assert_eq!(headers["authorization"], "Bearer test-only");
+                    assert_eq!(headers["content-type"], "application/json");
+                    let request: serde_json::Value = serde_json::from_str(&body).unwrap();
+                    let content = &request;
+                    seen.lock().unwrap().push(body);
+                    if content["questions"].as_object().unwrap().len() > 4 {
+                        (axum::http::StatusCode::BAD_REQUEST,
+                            json!({"error":{"code":400,"message":"context rejected","metadata":{"error_type":"context_length_exceeded"}}}).to_string())
+                    } else {
+                        let answers: BTreeMap<_, _> = content["questions"].as_object().unwrap().keys()
+                            .map(|key| (key, json!({"type":"choice","choice":"uncertain","confidence":1.0,
+                                "probabilities":{"relevant":0.0,"uncertain":1.0,"unrelated":0.0}}))).collect();
+                        let raw = json!({"model":RELEVANCE_MODEL,"provider":"OpenAI","answers":answers}).to_string();
+                        (axum::http::StatusCode::OK, raw)
+                    }
+                }
+            }),
+        );
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let endpoint = format!(
+            "http://{}/api/alpha/decisions",
+            listener.local_addr().unwrap()
+        );
+        assert!(RELEVANCE_ENDPOINT.ends_with("/api/alpha/decisions"));
+        let server = tokio::spawn(async move {
+            axum::serve(listener, router).await.unwrap();
+        });
+        let client = reqwest::Client::new();
+        let receipt = judge_candidates(RELEVANCE_MODEL, &intent, &retrieval, |issued| {
+            let client = &client;
+            let endpoint = &endpoint;
+            async move {
+                plasm_runtime::provider_transport::request_provider(
+                    &plasm_runtime::provider_transport::ReqwestProviderTransport::new(
+                        client.clone(),
+                        endpoint,
+                        "test-only",
+                    ),
+                    issued.body(),
+                    plasm_runtime::provider_transport::ProviderRetryPolicy::default(),
+                    |_| Ok(()),
+                )
+                .await
+                .map_err(|error| Box::new(error) as DecisionProviderError)
+            }
+        })
+        .await
+        .unwrap();
+        server.abort();
+        assert_eq!(seen.lock().unwrap().len(), 1);
+        assert_eq!(seen.lock().unwrap()[0], expected_body);
+        for body in seen.lock().unwrap().iter() {
+            let request: serde_json::Value = serde_json::from_str(body).unwrap();
+            assert_eq!(request["state"]["outcome"], intent.selection_request());
+            assert_eq!(request["state"]["discovery_need"], intent.current());
+            assert!(request["state"].get("intent_turns").is_none());
+            assert!(request["state"].get("current_intent").is_none());
+        }
+        assert_eq!(receipt.matches[0].choice, MatchChoice::Uncertain);
+        assert_eq!(
+            receipt.selected(&retrieval),
+            retrieval
+                .candidates
+                .iter()
+                .map(|c| c.reference.clone())
+                .collect::<Vec<_>>()
+        );
     }
 
     #[test]
     fn distinct_intent_answers_cannot_substitute_or_merge() {
         let (intent, retrieval) = fixture();
-        let first = issue_batches(JEV_MODEL, &intent, &retrieval)
+        let first = issue_batches(RELEVANCE_MODEL, &intent, &retrieval)
             .unwrap()
             .remove(0);
         let second = issue_batches(
-            JEV_MODEL,
+            RELEVANCE_MODEL,
             &intent.derived("Inspect the owner as well".into()).unwrap(),
             &retrieval,
         )
@@ -968,11 +1473,11 @@ mod tests {
     #[test]
     fn revised_intent_changes_judgment_key_without_reactivating_earlier_matches() {
         let (intent, retrieval) = fixture();
-        let first = issue_batches(JEV_MODEL, &intent, &retrieval).unwrap();
+        let first = issue_batches(RELEVANCE_MODEL, &intent, &retrieval).unwrap();
         let revised = intent
             .derived("Change of plan: do not publish; inspect only".into())
             .unwrap();
-        let next = issue_batches(JEV_MODEL, &revised, &retrieval).unwrap();
+        let next = issue_batches(RELEVANCE_MODEL, &revised, &retrieval).unwrap();
         assert_ne!(first[0].cache_key, next[0].cache_key);
         let answers =
             decode_batch(&next[0], &response(&next[0], &[MatchChoice::Unrelated])).unwrap();
@@ -989,13 +1494,9 @@ mod tests {
         let (intent, mut retrieval) = fixture();
         retrieval.candidates[0].document.operation.contract =
             "distinct capability meaning ".repeat(30_000);
-        let batches = issue_batches(JEV_MODEL, &intent, &retrieval).unwrap();
-        assert!(batches[0]
-            .body
-            .contains(&retrieval.candidates[0].document.operation.contract));
-        assert!(repartition(&batches[0], &intent)
-            .unwrap_err()
-            .to_string()
-            .contains("indivisible"));
+        assert!(matches!(
+            issue_batches(RELEVANCE_MODEL, &intent, &retrieval),
+            Err(DiscoveryMatcherError::ScopeLimit { .. })
+        ));
     }
 }

@@ -1,0 +1,101 @@
+{
+  "version": 1,
+  "entry_id": "matrix",
+  "http_backend": "http://127.0.0.1:9",
+  "auth": {
+    "scheme": "none"
+  },
+  "values": {
+    "gear": {
+      "type": "string",
+      "description": "Current gearbox rotational speed."
+    },
+    "ambient": {
+      "type": "string",
+      "description": "Current room air temperature."
+    },
+    "invoice": {
+      "type": "string",
+      "description": "Accounting invoice number identifying a billed service."
+    }
+  },
+  "entities": {
+    "Gear": {
+      "id_field": "value",
+      "description": "Current gearbox rotational speed.",
+      "fields": {
+        "value": {
+          "value_ref": "gear",
+          "required": true
+        }
+      }
+    },
+    "Ambient": {
+      "id_field": "value",
+      "description": "Current room air temperature.",
+      "fields": {
+        "value": {
+          "value_ref": "ambient",
+          "required": true
+        }
+      }
+    },
+    "Invoice": {
+      "id_field": "value",
+      "description": "Accounting invoice number identifying a billed service.",
+      "fields": {
+        "value": {
+          "value_ref": "invoice",
+          "required": true
+        }
+      }
+    }
+  },
+  "capabilities": {
+    "gear_read": {
+      "entity": "Gear",
+      "kind": "get",
+      "description": "Read gearbox rotational speed.",
+      "receiver": {
+        "kind": "none"
+      },
+      "provides": [
+        "value"
+      ],
+      "output": {
+        "type": "entity",
+        "entity_type": "Gear"
+      }
+    },
+    "ambient_read": {
+      "entity": "Ambient",
+      "kind": "get",
+      "description": "Read room air temperature.",
+      "receiver": {
+        "kind": "none"
+      },
+      "provides": [
+        "value"
+      ],
+      "output": {
+        "type": "entity",
+        "entity_type": "Ambient"
+      }
+    },
+    "invoice_read": {
+      "entity": "Invoice",
+      "kind": "get",
+      "description": "Read accounting invoice numbers for billed services.",
+      "receiver": {
+        "kind": "none"
+      },
+      "provides": [
+        "value"
+      ],
+      "output": {
+        "type": "entity",
+        "entity_type": "Invoice"
+      }
+    }
+  }
+}

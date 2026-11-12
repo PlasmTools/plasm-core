@@ -1,0 +1,131 @@
+{
+  "version": 1,
+  "horizon": 24,
+  "gate": 4,
+  "growth": [
+    0,
+    100
+  ],
+  "cases": [
+    {
+      "id": "vessel/left",
+      "requests": [
+        "Seal the vessel; do not inspect the vessel. Preserve its identifier and retain its location."
+      ],
+      "labels": {
+        "routine": "relevant"
+      },
+      "outcomes": [
+        [
+          "routine"
+        ]
+      ],
+      "relation": false
+    },
+    {
+      "id": "vessel/right",
+      "requests": [
+        "Inspect the vessel; do not seal the vessel. Preserve its identifier and retain its location."
+      ],
+      "labels": {
+        "record": "relevant"
+      },
+      "outcomes": [
+        [
+          "record"
+        ]
+      ],
+      "relation": false
+    },
+    {
+      "id": "document/left",
+      "requests": [
+        "Encrypt the document; do not archive the document. Preserve its identifier and retain its location."
+      ],
+      "labels": {
+        "routine": "relevant"
+      },
+      "outcomes": [
+        [
+          "routine"
+        ]
+      ],
+      "relation": false
+    },
+    {
+      "id": "document/right",
+      "requests": [
+        "Archive the document; do not encrypt the document. Preserve its identifier and retain its location."
+      ],
+      "labels": {
+        "record": "relevant"
+      },
+      "outcomes": [
+        [
+          "record"
+        ]
+      ],
+      "relation": false
+    },
+    {
+      "id": "component/left",
+      "requests": [
+        "Demagnetize the component; do not weigh the component. Preserve its identifier and retain its location."
+      ],
+      "labels": {
+        "routine": "relevant"
+      },
+      "outcomes": [
+        [
+          "routine"
+        ]
+      ],
+      "relation": false
+    },
+    {
+      "id": "component/right",
+      "requests": [
+        "Weigh the component; do not demagnetize the component. Preserve its identifier and retain its location."
+      ],
+      "labels": {
+        "record": "relevant"
+      },
+      "outcomes": [
+        [
+          "record"
+        ]
+      ],
+      "relation": false
+    },
+    {
+      "id": "specimen/left",
+      "requests": [
+        "Desiccate the specimen; do not photograph the specimen. Preserve its identifier and retain its location."
+      ],
+      "labels": {
+        "routine": "relevant"
+      },
+      "outcomes": [
+        [
+          "routine"
+        ]
+      ],
+      "relation": false
+    },
+    {
+      "id": "specimen/right",
+      "requests": [
+        "Photograph the specimen; do not desiccate the specimen. Preserve its identifier and retain its location."
+      ],
+      "labels": {
+        "record": "relevant"
+      },
+      "outcomes": [
+        [
+          "record"
+        ]
+      ],
+      "relation": false
+    }
+  ]
+}

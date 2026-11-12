@@ -11,6 +11,8 @@ pub(crate) struct McpTransportIdentity {
     pub subject: String,
     pub method: IncomingAuthMethod,
     pub mcp_config_id: Option<Uuid>,
+    /// Verified individual API credential; never inferred from configuration ownership.
+    pub api_key_id: Option<Uuid>,
     /// OAuth dynamic-registration client id (`client_*`); absent for API-key transport.
     pub oauth_client_id: Option<String>,
     pub anonymous: bool,
@@ -23,17 +25,24 @@ impl McpTransportIdentity {
             subject: String::new(),
             method: IncomingAuthMethod::ApiKey,
             mcp_config_id: None,
+            api_key_id: None,
             oauth_client_id: None,
             anonymous: true,
         }
     }
 
-    pub fn api_key(incoming_tenant_id: String, subject: String, mcp_config_id: Uuid) -> Self {
+    pub fn api_key(
+        incoming_tenant_id: String,
+        subject: String,
+        mcp_config_id: Uuid,
+        key_id: Uuid,
+    ) -> Self {
         Self {
             incoming_tenant_id,
             subject,
             method: IncomingAuthMethod::ApiKey,
             mcp_config_id: Some(mcp_config_id),
+            api_key_id: Some(key_id),
             oauth_client_id: None,
             anonymous: false,
         }
@@ -50,6 +59,7 @@ impl McpTransportIdentity {
             subject,
             method: IncomingAuthMethod::Jwt,
             mcp_config_id: Some(mcp_config_id),
+            api_key_id: None,
             oauth_client_id: Some(oauth_client_id),
             anonymous: false,
         }
@@ -96,10 +106,12 @@ mod tests {
             "gh-10488548".into(),
             "github:10488548".into(),
             Uuid::nil(),
+            Uuid::from_u128(1),
         );
         let parsed = identity;
         assert_eq!(parsed.incoming_tenant_id, "gh-10488548");
         assert!(parsed.oauth_client_id.is_none());
+        assert_eq!(parsed.api_key_id, Some(Uuid::from_u128(1)));
         assert_eq!(parsed.method, IncomingAuthMethod::ApiKey);
     }
 

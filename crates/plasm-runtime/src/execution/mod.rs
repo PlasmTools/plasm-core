@@ -17,10 +17,9 @@ use indexmap::IndexMap;
 #[cfg(test)]
 use plasm_compile::parse_capability_template;
 use plasm_compile::{
-    compile_operation, compile_query, decode_entities_with_cgs, path_var_names_from_request,
-    template_pagination, template_var_names, BackendFilter, CapabilityTemplate, CmlEnv, CmlRequest,
-    CompiledOperation, CompiledRequest, ConcatArraySource, HttpBodyFormat, PaginationConfig,
-    PathExpr, PathSegment, ResponsePreprocess,
+    compile_operation, decode_entities_with_cgs, path_var_names_from_request, template_pagination,
+    template_var_names, CapabilityTemplate, CmlEnv, CmlRequest, CompiledOperation, CompiledRequest,
+    ConcatArraySource, HttpBodyFormat, PaginationConfig, PathExpr, PathSegment, ResponsePreprocess,
 };
 use plasm_core::partition_prefer_resolutions;
 use plasm_core::resolve_relation_row_resolution;
@@ -29,8 +28,7 @@ use plasm_core::{
         choose_strategy, extract_cross_entity_predicates, strip_cross_entity_comparisons,
         CrossEntityStrategy,
     },
-    reject_domain_placeholder_in_executable as reject_domain_placeholder_core,
-    resolve_query_capability as resolve_query_capability_core, type_check_expr,
+    reject_domain_placeholder_in_executable as reject_domain_placeholder_core, type_check_expr,
     type_check_expr_federated, CapabilityKind, CapabilityParamName, CapabilitySchema, ChainStep,
     EntityDef, EntityFieldName, EntityKey, EntityName, Expr, FieldType, GetExpr, InvokeExpr,
     InvokeInputPayload, Predicate, PromptPipelineConfig, QueryExpr, Ref, RelationMaterialization,
@@ -48,6 +46,8 @@ mod chain;
 mod collection;
 mod compile_preflight;
 mod coverage;
+mod mutation_prepare;
+mod query_prepare;
 #[cfg(test)]
 pub(crate) use collection::test_collection;
 pub use collection::{ExecutionCollection, PayloadResidency, RowMaterialization};
@@ -60,7 +60,7 @@ pub use resolved_effect::{
 };
 mod engine_get;
 mod resolved_get;
-use resolved_get::{GetPurpose, ResolvedGet};
+use resolved_get::{GetBindings, GetPurpose, ResolvedGet};
 mod engine_query;
 mod entity_decoder;
 mod expr_executor;
@@ -143,9 +143,9 @@ pub use session::{
 };
 
 pub(crate) use session::{
-    append_request_fingerprint, compile_operation_dispatch, compile_query_dispatch,
-    graph_spill_page_and_trim_hot, reject_domain_placeholder_in_executable,
-    resolve_query_capability, try_current_execute_session_material, with_dispatch_entity,
+    append_request_fingerprint, compile_operation_dispatch, graph_spill_page_and_trim_hot,
+    reject_domain_placeholder_in_executable, try_current_execute_session_material,
+    with_dispatch_entity,
 };
 
 pub use engine::{ExecuteOptions, ExecutionEngine, OverlaySourceOptions};
@@ -157,10 +157,7 @@ pub(crate) use identity::{
     cml_env_to_identity_strings, current_timestamp, decode_identity_ambient_for_ref,
     merge_entity_id_from_into_input_env, ref_to_identity_ambient, value_to_ambient_string,
 };
-pub(crate) use predicates::{
-    capability_param_names, client_side_predicate_matches, collect_predicate_vars,
-    entity_field_predicate, extract_predicate_vars, extract_ref_id, filter_entities_by_predicate,
-};
+pub(crate) use predicates::{capability_param_names, extract_ref_id, filter_entities_by_predicate};
 pub(crate) use response_prep::{
     apply_response_preprocess, cml_id_string, extract_single_entity_payload_from_response,
     get_mut_value_at_path, http_collection_source, items_path_segment,

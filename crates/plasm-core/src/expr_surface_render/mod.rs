@@ -21,6 +21,17 @@ pub fn render_expr_surface(expr: &Expr, cgs: &CGS) -> String {
     render_expr_wire(expr, cgs, None, cgs)
 }
 
+/// Render symbolic producer references with the compact plan's display names.
+/// Row cursor bindings retain their local scope names; no values are resolved.
+pub fn render_expr_surface_named(
+    expr: &Expr,
+    cgs: &CGS,
+    fed: Option<&FederationDispatch>,
+    names: &std::collections::HashMap<String, String>,
+) -> String {
+    render::render_expr_wire_named(expr, cgs, fed, cgs, names)
+}
+
 /// Federated sessions: resolve per-entity [`CGS`] for capability/search rendering.
 pub fn render_expr_surface_federated(
     expr: &Expr,
@@ -125,6 +136,41 @@ mod tests {
         let opaque = format!("{pet}(42)", pet = pet);
         let wire = wire_surface_from_teaching_line(&opaque, &cgs, Arc::new(map)).expect("wire");
         assert_eq!(wire, "Pet(42)");
+    }
+
+    #[test]
+    fn matrix_composed_arguments_remain_symbolic_and_distinct() {
+        let dir = std::path::Path::new(crate::test_manifest_dir())
+            .join("../../fixtures/schemas/plasm_language_matrix");
+        let cgs = load_schema_dir(&dir).expect("language matrix");
+        for (producer, field) in [
+            ("source", "title"),
+            ("verified", "title"),
+            ("source", "summary"),
+        ] {
+            let mut expr = parse("LangItem.create(title=seed)", &cgs).unwrap().expr;
+            let crate::Expr::Create(create) = &mut expr else {
+                panic!("create fixture")
+            };
+            create.input = crate::Value::Object(indexmap::IndexMap::from([(
+                "title".into(),
+                crate::Value::PlasmInputRef(crate::PlasmInputRef::node_output(
+                    producer,
+                    vec![field.into()],
+                )),
+            )]))
+            .into();
+            let before = serde_json::to_value(&expr).unwrap();
+            assert_eq!(
+                render_expr_surface(&expr, &cgs),
+                format!("LangItem.create(title={producer}.{field})")
+            );
+            assert_eq!(
+                serde_json::to_value(&expr).unwrap(),
+                before,
+                "rendering cannot bind or execute the producer"
+            );
+        }
     }
 
     #[test]

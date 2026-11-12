@@ -12,6 +12,9 @@ const tools = createPlasmTools({
 });
 const source = 'class P(Program):\n    """Explain the workflow."""\n    def build(self):\n        # Valid Python commentary\n        return "</parameter>"';
 const session = "l_AAAAAAAAQACAAAAAAAAAAQ";
+const runSchema = asSchema(tools.plasm_run!.inputSchema);
+assert.equal((await runSchema.validate!({ logical_session_ref: session, run_ref: "? " })).success, true,
+  "malformed references reach typed runtime recovery instead of an SDK schema dump");
 for (const name of ["plasm", "plasm_run"] as const) {
   const definition = tools[name]!;
   const schema = asSchema(definition.inputSchema);

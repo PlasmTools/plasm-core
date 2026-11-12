@@ -46,10 +46,15 @@ async fn get_enabled_catalogs(
     let Some(mcp_auth) = st.mcp_transport_auth() else {
         return Json(EnabledCatalogsResponse { entry_ids: None });
     };
-    let Some(config_id) = mcp_auth.verify_api_key(token).await else {
+    let Some(credential) = mcp_auth.verify_api_key(token).await else {
         return Json(EnabledCatalogsResponse { entry_ids: None });
     };
-    let Some(cfg) = repo.get_runtime_config(&config_id).await.ok().flatten() else {
+    let Some(cfg) = repo
+        .get_runtime_config(&credential.config_id)
+        .await
+        .ok()
+        .flatten()
+    else {
         return Json(EnabledCatalogsResponse { entry_ids: None });
     };
     let mut entry_ids: Vec<String> = mcp_policy::filter_registry_entries(reg.list_entries(), &cfg)

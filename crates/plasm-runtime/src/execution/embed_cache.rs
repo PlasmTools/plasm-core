@@ -3,6 +3,7 @@
 use plasm_compile::{flatten_decoded_embed_descendants, DecodedEntity};
 
 use crate::materialization::SessionMaterialization;
+use crate::paginated_collect::RetainedObservation;
 use crate::{CachedEntity, EntityCompleteness, RuntimeError};
 
 pub(crate) fn cache_decoded_entity_tree(
@@ -11,39 +12,64 @@ pub(crate) fn cache_decoded_entity_tree(
     timestamp: u64,
     completeness: EntityCompleteness,
 ) -> Result<CachedEntity, RuntimeError> {
+    let observation = prepare_decoded_entity_tree(decoded, timestamp, completeness);
+    publish_observation(mat, &observation)?;
+    Ok(observation.entity)
+}
+
+pub(crate) fn prepare_decoded_entity_tree(
+    decoded: DecodedEntity,
+    timestamp: u64,
+    completeness: EntityCompleteness,
+) -> RetainedObservation {
     let mut flattened = flatten_decoded_embed_descendants(decoded);
     let decoded = flattened
         .pop()
         .expect("flattened embed tree always contains its root");
-    for embedded in flattened {
-        let child = CachedEntity::from_decoded(
-            embedded.reference,
-            embedded.fields,
-            embedded.relations,
-            timestamp,
-            // A parent response does not prove the child's GET projection is
-            // complete; embeds may contain only an identity or list summary.
-            EntityCompleteness::Summary,
-        );
-        if mat.allows_recorded_read_reuse() {
-            mat.insert(child)?;
-        } else {
-            mat.publish_fresh_row(child)?;
-        }
-    }
-    let cached = CachedEntity::from_decoded(
+    let descendants = flattened
+        .into_iter()
+        .map(|embedded| {
+            CachedEntity::from_decoded(
+                embedded.reference,
+                embedded.fields,
+                embedded.relations,
+                timestamp,
+                // A parent response does not prove the child's GET projection is
+                // complete; embeds may contain only an identity or list summary.
+                EntityCompleteness::Summary,
+            )
+        })
+        .collect();
+    let entity = CachedEntity::from_decoded(
         decoded.reference,
         decoded.fields,
         decoded.relations,
         timestamp,
         completeness,
     );
-    if mat.allows_recorded_read_reuse() {
-        mat.insert(cached.clone())?;
-    } else {
-        mat.publish_fresh_row(cached.clone())?;
+    RetainedObservation {
+        entity,
+        descendants,
     }
-    Ok(cached)
+}
+
+pub(crate) fn publish_observation(
+    mat: &mut SessionMaterialization,
+    observation: &RetainedObservation,
+) -> Result<(), RuntimeError> {
+    for child in &observation.descendants {
+        if mat.allows_recorded_read_reuse() {
+            mat.insert(child.clone())?;
+        } else {
+            mat.publish_fresh_row(child.clone())?;
+        }
+    }
+    if mat.allows_recorded_read_reuse() {
+        mat.insert(observation.entity.clone())?;
+    } else {
+        mat.publish_fresh_row(observation.entity.clone())?;
+    }
+    Ok(())
 }
 
 #[cfg(test)]

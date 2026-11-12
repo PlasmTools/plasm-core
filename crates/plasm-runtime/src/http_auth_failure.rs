@@ -256,6 +256,7 @@ pub fn request_error_from_host_http(
     let authorization = OutboundAuthorizationFact::from_header(authorization_header);
     RuntimeError::RequestError {
         source: crate::RequestFailure::HttpStatus(Box::new(crate::HttpStatusFailure {
+            mutation_request_fingerprint: None,
             method: method.to_owned(),
             url: url.to_owned(),
             status,

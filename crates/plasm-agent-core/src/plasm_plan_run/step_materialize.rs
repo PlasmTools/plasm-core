@@ -97,7 +97,7 @@ pub(crate) fn apply_step_materialize_outcomes(
     approval_receipts: &mut Vec<PlasmPlanApprovalReceipt>,
     outcomes: impl IntoIterator<Item = PlanStepMaterializeOutcome>,
     execution_scope: Option<&crate::operation::ExecutionScope>,
-) {
+) -> Result<(), ExecutionFailure> {
     for outcome in outcomes {
         if let Some(instances) = outcome.scope_instances {
             scope_instances.push(instances);
@@ -117,6 +117,7 @@ pub(crate) fn apply_step_materialize_outcomes(
         materialized.insert(outcome.node_id, outcome.mat);
         evidence_steps.push(outcome.evidence);
     }
+    Ok(())
 }
 
 pub(crate) async fn materialize_executable_plan_step(
@@ -228,12 +229,38 @@ pub(crate) async fn materialize_executable_plan_step(
         Ok(mat) => mat,
         Err(error) => {
             let mut failure = error.at(qualified_step.clone(), ctx.occurrence_path.clone());
-            failure = failure.with_dispatches(occurrence.mutation_journal().snapshot());
+            let mut dispatches = occurrence.mutation_journal().snapshot();
+            if let [dispatch] = dispatches.as_slice() {
+                if let Some(capability) = ctx
+                    .es
+                    .contexts_by_entry
+                    .get(&dispatch.operation.entry_id)
+                    .and_then(|context| {
+                        context
+                            .cgs
+                            .capabilities
+                            .get(dispatch.operation.capability.as_str())
+                    })
+                {
+                    failure.classify_no_effect_rejection(
+                        &capability.no_effect_rejections,
+                        &mut dispatches,
+                    );
+                }
+            }
+            failure = failure.with_dispatches(dispatches);
             failure = failure.with_catalog(&ctx.es.catalog_cgs_hash);
             occurrence.fail(failure.to_string());
             return Err(failure);
         }
     };
+    if let (Some(artifact), Some(facts)) = (&mat.artifact, ctx.flow.node_facts.get(&qualified_step))
+    {
+        ctx.es
+            .core
+            .record_output_flow(artifact, facts.row_join())
+            .await;
+    }
     occurrence.record_result(
         mat.result.count(),
         mat.artifact.as_ref().map(|a| a.plasm_uri.clone()),
@@ -637,7 +664,7 @@ pub(super) async fn live_materialize_io(
             "capture must be installed by its enclosing scope",
         )),
         IoStep::Surface(surface) => {
-            let surface = (**surface).clone();
+            let surface = &**surface;
             let scoped_es = entry_scoped_execute_session(ctx.es, surface.qualified_entity.as_ref())
                 .map_err(|diagnostic| {
                     step_failure("surface_catalog_context_invalid", diagnostic.to_string())

@@ -1,5 +1,4 @@
 import { DrainingLifecycle } from "./lifecycle.js";
-import { AgentExecutionFailure, failureObservationSchema } from "./execution-failure.js";
 import { readFile } from "node:fs/promises";
 import path from "node:path";
 
@@ -24,11 +23,6 @@ import { createPlasmTools } from "../tools/plasm-tools.js";
 import { buildDefaultSystemLiturgy } from "../prompts/index.js";
 import { runEveToolLoop, type AgentStepEvent } from "../telemetry/eve-tool-loop.js";
 import type { EveChannelKind } from "../telemetry/eve-agent-runs.js";
-import {
-  renderTaskLedgerState,
-  TaskLedgerStore,
-  type TaskLedgerRecord,
-} from "../tools/task-ledger.js";
 
 export type { AgentStepEvent };
 
@@ -54,11 +48,6 @@ export interface PlasmAgentConfig extends AgentRuntimeConfig {
    * `buildDefaultSystemLiturgy`. Product hosts must leave this unset.
    */
   includeEvalTerminals?: boolean;
-  /**
-   * Register `task_ledger` and compose the ledger rite. Eval/A-B factor
-   * (`PLASM_EVAL_TASK_LEDGER=1` on the TS eval host). Product default unset.
-   */
-  includeTaskLedger?: boolean;
 }
 
 export interface AgentGenerateOptions {
@@ -67,6 +56,11 @@ export interface AgentGenerateOptions {
   resetConversation?: boolean;
   onStepStart?: () => void | Promise<void>;
   onStepFinish?: (step: AgentStepEvent) => void | Promise<void>;
+  /** Observe host-owned workflow initialization without exposing it as a model tool call. */
+  onInitialContext?: (event: { intent: string; result: string }) => void | Promise<void>;
+  /** Measure initial discovery without putting its timing in model context. */
+  onInitialContextTiming?: (event: { durationMs: number; outcome: "success" | "error" }) => void;
+  onProviderRequest?: (event: import("../telemetry/provider-completion.js").ProviderRequestEvent & { step: number }) => void;
   /**
    * Optional tool adapter. Observers must preserve result and error semantics.
    */
@@ -105,7 +99,6 @@ export interface AgentTurnResult {
   messages: ModelMessage[];
   stopReason: Awaited<ReturnType<typeof runEveToolLoop>>["stopReason"];
   executionFailure?: Awaited<ReturnType<typeof runEveToolLoop>>["executionFailure"];
-  toolCallRecovery: Awaited<ReturnType<typeof runEveToolLoop>>["toolCallRecovery"];
   /** Per-model-step finish reasons from the tool loop. */
   stepFinishReasons: Awaited<ReturnType<typeof runEveToolLoop>>["stepFinishReasons"];
   /** Per-generation output ceiling applied to the model (if configured). */
@@ -126,6 +119,17 @@ export class PlasmAgent {
     return this.lifecycle.close(() => this.runtime.close());
   }
 
+  /** Stop admitting execution and settle accepted work without starting review. */
+  async finishExecution(): Promise<void> {
+    await this.lifecycle.drain();
+    await this.runtime.finishExecution();
+  }
+
+  async beginWorkflowReview(): Promise<import("./workflow-learning.js").WorkflowReviewSession> {
+    await this.finishExecution();
+    return this.runtime.beginWorkflowReview();
+  }
+
   private initialContext?: Promise<string>;
   readonly runtime: AgentRuntime;
   private readonly model: string | LanguageModel;
@@ -140,8 +144,6 @@ export class PlasmAgent {
   private readonly subagentRegistry?: SubagentRegistry;
   private readonly getAuthoringContext?: () => AuthoringContext;
   private readonly includeEvalTerminals: boolean;
-  private readonly includeTaskLedger: boolean;
-  private readonly taskLedgerStore = new TaskLedgerStore();
   private readonly agentName: string;
   private conversation: ModelMessage[] = [];
 
@@ -171,12 +173,6 @@ export class PlasmAgent {
     this.subagentRegistry = config.subagentRegistry;
     this.getAuthoringContext = config.getAuthoringContext;
     this.includeEvalTerminals = config.includeEvalTerminals === true;
-    this.includeTaskLedger = config.includeTaskLedger === true;
-  }
-
-  /** Last accepted model write, or `null` when the experiment flag is off. */
-  get taskLedger(): TaskLedgerRecord | null {
-    return this.includeTaskLedger ? this.taskLedgerStore.record : null;
   }
 
   async bootstrap(): Promise<void> {
@@ -187,7 +183,6 @@ export class PlasmAgent {
     // Framework core: language law + resource rites (same bytes as MCP tool cards).
     const core = buildDefaultSystemLiturgy({
       includeEvalTerminals: this.includeEvalTerminals,
-      includeTaskLedger: this.includeTaskLedger,
     });
     let project = "";
     try {
@@ -233,13 +228,10 @@ export class PlasmAgent {
       await this.hookRunner.emit("agent:start", this.getAuthoringContext(), { prompt });
     }
 
-    if (options.resetConversation) {
-      this.taskLedgerStore.clear();
-    }
-
     const system = await this.loadInstructions();
     const plasmTools = createPlasmTools(this.runtime);
     const harnessTools = createHarnessTools({
+      sealEffectWorkflows: () => this.runtime.sealEffectWorkflows(),
       responseObligation: options.responseObligation,
       skills: this.skillsMode === "index" ? this.loadedSkills : undefined,
       subagents: this.subagentRegistry,
@@ -247,8 +239,6 @@ export class PlasmAgent {
       discoveryCompleted: this.includeEvalTerminals
         ? () => this.runtime.hasOpenWorkflow()
         : undefined,
-      includeTaskLedger: this.includeTaskLedger,
-      taskLedgerStore: this.includeTaskLedger ? this.taskLedgerStore : undefined,
     });
     let tools = {
       ...plasmTools,
@@ -278,25 +268,24 @@ export class PlasmAgent {
     // Host-owned bootstrap: preserve the task verbatim instead of asking the
     // execution model to invent an initial discovery call or decompose intent.
     if (!this.runtime.hasOpenWorkflow()) {
-      const initialize = tools.plasm_context?.execute;
-      if (!initialize) throw new Error("Initial context requires the plasm_context executor");
-      this.initialContext ??= Promise.resolve(initialize({
+      const contextStarted = performance.now();
+      this.initialContext ??= this.runtime.plasmContext({
         intent: prompt,
-        session_mode: "new",
-      }, { toolCallId: "host-initial-context", messages, context: {} })).then((result) => {
-        if (typeof result !== "string") {
-          if (result && typeof result === "object" && "status" in result && result.status === "execution_failed" && "failure" in result) {
-            const observation = failureObservationSchema.parse(result);
-            throw new AgentExecutionFailure(observation.failure, observation.summary);
-          }
-          throw new Error("Initial context must return discovery text or a structured execution failure");
-        }
-        return result;
+        sessionMode: "new",
       }).catch((error: unknown) => {
         this.initialContext = undefined;
-        throw error;
+        const observation = failureObservation(error);
+        throw new AgentExecutionFailure(observation.failure, observation.summary);
       });
-      const context = await this.initialContext;
+      let context: string;
+      try {
+        context = await this.initialContext;
+      } catch (error) {
+        try { options.onInitialContextTiming?.({ durationMs: performance.now() - contextStarted, outcome: "error" }); } catch { /* Observability must not affect execution. */ }
+        throw error;
+      }
+      try { options.onInitialContextTiming?.({ durationMs: performance.now() - contextStarted, outcome: "success" }); } catch { /* Observability must not affect execution. */ }
+      await options.onInitialContext?.({ intent: prompt, result: context });
       messages = [...messages, {
         role: "user",
         content: `Host initialized plasm_context from the original task description. This is the actual discovery result. Continue this workflow using its logical_session_ref; use session_mode="extend" for further discovery.\n\n${context}`,
@@ -305,7 +294,6 @@ export class PlasmAgent {
 
     if (!externalMessages) this.conversation = messages;
     messages = await maybeCompactMessages(messages, this.compaction, this.model);
-
     const toolInvocations: string[] = [];
     const onStepFinish = async (step: AgentStepEvent) => {
       for (const call of step.toolCalls ?? []) {
@@ -317,21 +305,13 @@ export class PlasmAgent {
       await this.hookRunner.emit("agent:step", this.getAuthoringContext(), { toolsUsed });
     };
 
+    const maxSteps = options.maxSteps ?? this.maxSteps;
     const result = await runEveToolLoop({
       model,
       system,
       tools: () => tools,
-      prepareMessages: this.includeTaskLedger
-        ? (history) => [
-            ...history,
-            {
-              role: "user" as const,
-              content: renderTaskLedgerState(this.taskLedgerStore.record),
-            },
-          ]
-        : undefined,
       messages,
-      maxSteps: options.maxSteps ?? this.maxSteps,
+      maxSteps,
       generationTimeoutMs: options.generationTimeoutMs,
       maxConsecutiveProviderFailures: options.maxConsecutiveProviderFailures,
       agentName: this.agentName,
@@ -341,6 +321,8 @@ export class PlasmAgent {
       turnSequence: options.turnSequence,
       telemetry,
       onStepStart: options.onStepStart,
+      pollSessionUpdate: () => this.runtime.takeCompletedDiscovery(),
+      onProviderRequest: options.onProviderRequest,
       onStepFinish: async (step) => {
         await onStepFinish(step);
       },
@@ -362,7 +344,6 @@ export class PlasmAgent {
       messages: result.messages,
       stopReason: result.stopReason,
       executionFailure: result.executionFailure,
-      toolCallRecovery: result.toolCallRecovery,
       stepFinishReasons: result.stepFinishReasons,
       maxOutputTokens: result.maxOutputTokens,
       lengthTruncationCount: result.lengthTruncationCount,
@@ -371,3 +352,4 @@ export class PlasmAgent {
     };
   }
 }
+import { AgentExecutionFailure, failureObservation } from "./execution-failure.js";

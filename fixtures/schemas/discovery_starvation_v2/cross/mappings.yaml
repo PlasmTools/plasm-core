@@ -1,0 +1,18 @@
+source_a:
+  method: GET
+  path: [{type: literal, value: source_a}]
+source_b:
+  method: GET
+  path: [{type: literal, value: source_b}]
+prepare:
+  method: GET
+  path: [{type: literal, value: prepare}]
+prepared_read:
+  method: GET
+  path: [{type: literal, value: prepared_read}]
+process:
+  method: GET
+  path: [{type: literal, value: process}]
+inspect:
+  method: GET
+  path: [{type: literal, value: inspect}]

@@ -4,10 +4,16 @@ use plasm_core::catalog_discovery::{
     embedding_cache_key, validate_embedding, CapabilityDocument, EmbeddedCapability,
     EmbeddingProfile,
 };
+use plasm_runtime::provider_transport::{
+    request_provider, ProviderAttempt, ProviderReceiptSink, ProviderRecordError,
+    ProviderRetryPolicy, ProviderTransport, ProviderTransportError, ReqwestProviderTransport,
+};
 use serde::{Deserialize, Serialize};
 use std::path::Path;
-use std::time::Duration;
+use std::sync::Arc;
 use thiserror::Error;
+#[cfg(test)]
+mod transport_tests;
 
 type Result<T> = std::result::Result<T, EmbeddingAcquisitionError>;
 
@@ -23,12 +29,12 @@ pub enum EmbeddingAcquisitionError {
     EmptyInput,
     #[error(transparent)]
     HttpClient(#[from] reqwest::Error),
-    #[error("OpenRouter embedding request failed with HTTP {status}")]
-    HttpStatus { status: reqwest::StatusCode },
+    #[error(transparent)]
+    Transport(#[from] ProviderTransportError),
+    #[error("embedding request serialization failed")]
+    RequestJson(#[source] serde_json::Error),
     #[error("embedding response JSON is invalid")]
-    InvalidResponseJson(#[source] reqwest::Error),
-    #[error("embedding attempts exhausted")]
-    AttemptsExhausted,
+    InvalidResponseJson(#[source] serde_json::Error),
     #[error("embedding response model does not match the requested profile")]
     ResponseModelMismatch,
     #[error("embedding response count does not match the request")]
@@ -68,11 +74,10 @@ pub enum EmbeddingAcquisitionError {
 }
 
 const BATCH_SIZE: usize = 32;
-const MAX_ATTEMPTS: u32 = 4;
 
 pub struct EmbeddingClient {
-    client: reqwest::Client,
-    api_key: String,
+    transport: Arc<dyn ProviderTransport>,
+    policy: ProviderRetryPolicy,
     profile: EmbeddingProfile,
 }
 
@@ -103,57 +108,49 @@ impl EmbeddingClient {
         if api_key.trim().is_empty() {
             return Err(EmbeddingAcquisitionError::EmptyApiKey);
         }
-        Ok(Self {
-            client: reqwest::Client::builder()
-                .timeout(Duration::from_secs(60))
-                .build()?,
-            api_key,
-            profile: EmbeddingProfile::default(),
-        })
+        Ok(Self::new(
+            Arc::new(ReqwestProviderTransport::new(
+                reqwest::Client::builder().build()?,
+                "https://openrouter.ai/api/v1/embeddings",
+                api_key,
+            )),
+            ProviderRetryPolicy::default(),
+        ))
     }
 
-    pub async fn embed(&self, texts: &[String]) -> Result<Vec<Vec<f32>>> {
+    /// The same repeatable transport boundary used by decision requests.
+    pub fn new(transport: Arc<dyn ProviderTransport>, policy: ProviderRetryPolicy) -> Self {
+        Self {
+            transport,
+            policy,
+            profile: EmbeddingProfile::default(),
+        }
+    }
+
+    pub async fn embed(
+        &self,
+        texts: &[String],
+        record: impl FnMut(&ProviderAttempt) -> std::result::Result<(), ProviderRecordError> + Send,
+    ) -> Result<Vec<Vec<f32>>> {
         if texts.is_empty() || texts.len() > BATCH_SIZE {
             return Err(EmbeddingAcquisitionError::InvalidBatchSize);
         }
         if texts.iter().any(|text| text.trim().is_empty()) {
             return Err(EmbeddingAcquisitionError::EmptyInput);
         }
-        for attempt in 0..MAX_ATTEMPTS {
-            let response = self
-                .client
-                .post("https://openrouter.ai/api/v1/embeddings")
-                .bearer_auth(&self.api_key)
-                .json(&serde_json::json!({
-                    "model": self.profile.model,
-                    "dimensions": self.profile.dimensions,
-                    "encoding_format": self.profile.encoding_format,
-                    "input": texts,
-                }))
-                .send()
-                .await;
-            match response {
-                Ok(response) if response.status().is_success() => {
-                    let body: EmbeddingResponse = response
-                        .json()
-                        .await
-                        .map_err(EmbeddingAcquisitionError::InvalidResponseJson)?;
-                    return validate_response(body, texts.len(), &self.profile);
-                }
-                Ok(response) => {
-                    let status = response.status();
-                    if !(status.as_u16() == 429 || status.is_server_error())
-                        || attempt + 1 == MAX_ATTEMPTS
-                    {
-                        return Err(EmbeddingAcquisitionError::HttpStatus { status });
-                    }
-                }
-                Err(error) if attempt + 1 == MAX_ATTEMPTS => return Err(error.into()),
-                Err(_) => {}
-            }
-            tokio::time::sleep(Duration::from_millis(250 * (1 << attempt))).await;
-        }
-        Err(EmbeddingAcquisitionError::AttemptsExhausted)
+        // Encode once. Every admitted attempt sends the identical request bytes.
+        let body = serde_json::to_string(&serde_json::json!({
+            "model": self.profile.model,
+            "dimensions": self.profile.dimensions,
+            "encoding_format": self.profile.encoding_format,
+            "input": texts,
+        }))
+        .map_err(EmbeddingAcquisitionError::RequestJson)?;
+        let raw = request_provider(self.transport.as_ref(), &body, self.policy, record).await?;
+        // Successful HTTP is the end of transport retries. Semantic corruption is fatal.
+        let response =
+            serde_json::from_str(&raw).map_err(EmbeddingAcquisitionError::InvalidResponseJson)?;
+        validate_response(response, texts.len(), &self.profile)
     }
 }
 
@@ -242,7 +239,13 @@ pub async fn embed_documents(
     cache_dir: &Path,
 ) -> Result<EmbeddedDocuments> {
     embed_documents_with(documents, cache_dir, |texts| async move {
-        EmbeddingClient::from_env()?.embed(&texts).await
+        let directory = std::env::var_os("PLASM_EMBEDDING_RECORD_DIR")
+            .filter(|s| !s.is_empty())
+            .map(Into::into);
+        let mut receipts = ProviderReceiptSink::new("catalogue_embedding", directory);
+        EmbeddingClient::from_env()?
+            .embed(&texts, |event| receipts.record(event))
+            .await
     })
     .await
 }
@@ -623,7 +626,9 @@ mod tests {
         let failed = embed_documents_with(docs.clone(), cache.path(), |texts| {
             calls += 1;
             std::future::ready(if calls == 2 {
-                Err(EmbeddingAcquisitionError::AttemptsExhausted)
+                Err(EmbeddingAcquisitionError::Transport(
+                    ProviderTransportError::DeadlineExpired,
+                ))
             } else {
                 Ok(texts.iter().map(|_| vec![0.5; 1536]).collect())
             })

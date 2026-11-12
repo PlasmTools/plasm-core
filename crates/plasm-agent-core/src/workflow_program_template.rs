@@ -2,6 +2,7 @@
 
 use std::collections::BTreeMap;
 
+use crate::workflow_learning::teaching::{SemanticReference, TeachingError};
 use plasm_core::text::{parse_brace_template, BraceParseError, BraceSegment};
 use plasm_core::Value;
 use thiserror::Error;
@@ -11,6 +12,7 @@ pub enum TemplateSegment {
     Literal(String),
     Param { name: String },
     Sym { entry_id: String, entity: String },
+    Reference(SemanticReference),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -26,6 +28,8 @@ pub enum TemplateParseError {
     EmptyHole(usize),
     #[error("invalid sym reference `{0}` (expected entry_id.Entity)")]
     InvalidSym(String),
+    #[error("workflow template contains raw session symbols; use semantic sym holes")]
+    RawSessionSymbol,
 }
 
 #[derive(Debug, Error)]
@@ -34,6 +38,8 @@ pub enum InstantiateError {
     MissingParam(String),
     #[error("unresolved sym `{entry_id}.{entity}`")]
     UnresolvedSym { entry_id: String, entity: String },
+    #[error(transparent)]
+    Semantic(#[from] TeachingError),
     #[error("parameter cannot be represented as a Python literal: non-finite float")]
     NonFiniteFloat,
     #[error("an expression is not a materialized parameter")]
@@ -62,21 +68,72 @@ pub fn parse_program_template(source: &str) -> Result<WorkflowProgramTemplate, T
         .segments
         .into_iter()
         .map(|seg| match seg {
-            BraceSegment::Literal(lit) => TemplateSegment::Literal(lit.into_string()),
-            BraceSegment::Param { name } => TemplateSegment::Param { name },
-            BraceSegment::Sym { entry_id, entity } => TemplateSegment::Sym { entry_id, entity },
+            BraceSegment::Literal(lit) => Ok(TemplateSegment::Literal(lit.into_string())),
+            BraceSegment::Param { name } => Ok(TemplateSegment::Param { name }),
+            BraceSegment::Sym { entry_id, entity } => {
+                if let Some((owner, member)) = entity.split_once("::") {
+                    let reference = if let Some(capability) = member.strip_prefix("method:") {
+                        SemanticReference::Method {
+                            entry_id,
+                            entity: owner.into(),
+                            capability: capability.into(),
+                        }
+                    } else if let Some(relation) = member.strip_prefix("relation:") {
+                        SemanticReference::Relation {
+                            entry_id,
+                            entity: owner.into(),
+                            relation: relation.into(),
+                        }
+                    } else {
+                        return Err(TemplateParseError::InvalidSym(entity));
+                    };
+                    Ok(TemplateSegment::Reference(reference))
+                } else {
+                    Ok(TemplateSegment::Sym { entry_id, entity })
+                }
+            }
         })
-        .collect();
+        .collect::<Result<Vec<_>, _>>()?;
+    let preview = segments
+        .iter()
+        .map(|segment| match segment {
+            TemplateSegment::Literal(text) => text.clone(),
+            _ => "workflow_placeholder".into(),
+        })
+        .collect::<String>();
+    if let Ok(parsed) = ruff_python_parser::parse_module(&preview) {
+        use ruff_python_ast::visitor::Visitor;
+        struct Raw(bool);
+        impl<'a> Visitor<'a> for Raw {
+            fn visit_expr(&mut self, expr: &'a ruff_python_ast::Expr) {
+                let token = match expr {
+                    ruff_python_ast::Expr::Name(name) => Some(name.id.as_str()),
+                    ruff_python_ast::Expr::Attribute(attr) => Some(attr.attr.as_str()),
+                    _ => None,
+                };
+                self.0 |= token.is_some_and(|token| {
+                    token.len() > 1
+                        && matches!(token.as_bytes()[0], b'e' | b'm' | b'r')
+                        && token.as_bytes()[1..].iter().all(u8::is_ascii_digit)
+                });
+                ruff_python_ast::visitor::walk_expr(self, expr);
+            }
+        }
+        let mut raw = Raw(false);
+        for statement in parsed.suite() {
+            raw.visit_stmt(statement);
+        }
+        if raw.0 {
+            return Err(TemplateParseError::RawSessionSymbol);
+        }
+    }
     Ok(WorkflowProgramTemplate { segments })
 }
-
-/// Exposure map: `(entry_id, entity)` → teaching symbol like `e1`.
-pub type SymExposureMap<'a> = BTreeMap<(String, String), &'a str>;
 
 pub fn instantiate_template(
     template: &WorkflowProgramTemplate,
     params: &BTreeMap<String, Value>,
-    exposure: &SymExposureMap<'_>,
+    resolve: impl Fn(&SemanticReference) -> Result<String, TeachingError>,
 ) -> Result<String, InstantiateError> {
     let mut out = String::new();
     for seg in &template.segments {
@@ -89,14 +146,12 @@ pub fn instantiate_template(
                 out.push_str(&render_python_literal(v)?);
             }
             TemplateSegment::Sym { entry_id, entity } => {
-                let sym = exposure
-                    .get(&(entry_id.clone(), entity.clone()))
-                    .ok_or_else(|| InstantiateError::UnresolvedSym {
-                        entry_id: entry_id.clone(),
-                        entity: entity.clone(),
-                    })?;
-                out.push_str(sym);
+                out.push_str(&resolve(&SemanticReference::Entity {
+                    entry_id: entry_id.clone(),
+                    entity: entity.clone(),
+                })?);
             }
+            TemplateSegment::Reference(reference) => out.push_str(&resolve(reference)?),
         }
     }
     Ok(out)
@@ -165,9 +220,11 @@ mod tests {
         let t = parse_program_template("x = {{param:q}}\ny = {{sym:a.E}}").expect("parse");
         let mut params = BTreeMap::new();
         params.insert("q".into(), Value::String("hello".into()));
-        let mut exposure = BTreeMap::new();
-        exposure.insert(("a".into(), "E".into()), "e1");
-        let out = instantiate_template(&t, &params, &exposure).expect("inst");
+        let out = instantiate_template(&t, &params, |reference| {
+            assert_eq!(reference.entity_owner(), Some(("a", "E")));
+            Ok("e1".into())
+        })
+        .expect("inst");
         assert!(out.contains("\"hello\""));
         assert!(out.contains("e1"));
     }
@@ -177,7 +234,7 @@ mod tests {
         let t = parse_program_template("body = {{param:text}}").expect("parse");
         let mut params = BTreeMap::new();
         params.insert("text".into(), Value::String("line1\nline2".into()));
-        let out = instantiate_template(&t, &params, &BTreeMap::new()).expect("inst");
+        let out = instantiate_template(&t, &params, |_| panic!("no references")).expect("inst");
         assert_eq!(out, "body = \"line1\\nline2\"");
         assert!(!out.contains("<<"));
     }
@@ -215,6 +272,19 @@ mod tests {
             _ => panic!("expected literal"),
         };
         assert!(lit.contains('é'));
+    }
+
+    #[test]
+    fn raw_method_tokens_rejected_and_semantic_methods_parse() {
+        assert_eq!(
+            parse_program_template("{{sym:a.E}}.m12()"),
+            Err(TemplateParseError::RawSessionSymbol)
+        );
+        let template = parse_program_template("{{sym:a.E}}.{{sym:a.E::method:create}}()").unwrap();
+        assert!(
+            matches!(&template.segments[2], TemplateSegment::Reference(SemanticReference::Method { capability, .. }) if capability == "create")
+        );
+        parse_program_template("text = 'm12 e1' # r1\n").expect("strings are not references");
     }
 
     #[test]

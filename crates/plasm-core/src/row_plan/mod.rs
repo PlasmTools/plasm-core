@@ -1,4 +1,4 @@
-//! Fused row-compute IR and engine ports.
+//! Fused row-compute IR and collected values.
 //!
 //! [`ComputeOp`](crate::ComputeOp) remains the hashed PlasmComp constructor. This module is the
 //! execute-time IR over declared Plasm value contracts.
@@ -16,18 +16,15 @@ mod schema;
 mod with_parse;
 
 pub use collect::{CollectCardinality, CollectReason, PageCursor, PageSize, RenderCollectSpec};
-pub use engine::{
-    CollectRows, CollectedFrame, CompileRowPlan, IngestBatch, IngestRows, RowComputeEngine,
-    ScanSource,
-};
+pub use engine::CollectedFrame;
 pub use error::{
-    CollectError, FrameSchemaError, FusionError, PredicateCompileError, RowComputeError,
-    RowCorrespondenceError, RowFilterError, RowTypeError, ScanError,
+    FrameSchemaError, FusionError, PredicateCompileError, RowComputeError, RowCorrespondenceError,
+    RowFilterError, RowTypeError,
 };
 pub use expr::{ArithOp, ProjectSpec, WithColumn, WithExpr, WithExprError, WithLiteral};
 pub use filter::{CatalogFilter, RowFilter};
 pub use fold::{fold_compute_ops, plan_node_from_compute};
-pub use ids::{EnginePlanId, FixtureScanId, FrameId, GraphSnapshotId, RowNodeId, SurfaceMeaningId};
+pub use ids::{RowNodeId, SurfaceMeaningId};
 pub use plan::{MoneyAggLaw, Pipeline, PlanNode, ReductionFunction, RowPlan, TypedAggregate};
 pub use schema::{FrameShape, IdentityPreservation, PlasmFrameSchema, RemapReason};
 pub use with_parse::parse_with_body;
@@ -158,7 +155,6 @@ mod tests {
         };
         let plan = fold_compute_ops(
             &[op],
-            FrameId::new(1),
             crate::plasm_monad::StepId::new("out").unwrap(),
             CollectCardinality::List,
         )

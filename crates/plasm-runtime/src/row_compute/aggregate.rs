@@ -93,9 +93,7 @@ pub(super) fn aggregate(
     for row in &state.rows {
         for name in &names {
             if row.get(name).is_none() {
-                return Err(plasm_core::RowComputeError::MissingField {
-                    field: name.clone(),
-                });
+                return Err(row.missing_field(name));
             }
         }
     }
@@ -152,11 +150,9 @@ fn reduce<'a>(
         } else {
             rows.last()
         } {
-            Some(&row) => state.rows[row].cell(field).ok_or_else(|| {
-                plasm_core::RowComputeError::MissingField {
-                    field: field.to_owned(),
-                }
-            }),
+            Some(&row) => state.rows[row]
+                .cell(field)
+                .ok_or_else(|| state.rows[row].missing_field(field)),
             None => Ok(Cell::computed(Value::Null)),
         };
     }
@@ -173,11 +169,9 @@ fn reduce<'a>(
     if let Some(ordering) = &ordering {
         let mut chosen: Option<usize> = None;
         for &row in rows {
-            let value = state.rows[row].get(field).ok_or_else(|| {
-                plasm_core::RowComputeError::MissingField {
-                    field: field.to_owned(),
-                }
-            })?;
+            let value = state.rows[row]
+                .get(field)
+                .ok_or_else(|| state.rows[row].missing_field(field))?;
             if value.is_null() {
                 continue;
             }
@@ -186,11 +180,9 @@ fn reduce<'a>(
                 None => true,
                 Some(prior) => {
                     let order = ordering.compare(
-                        state.rows[prior].get(field).ok_or_else(|| {
-                            plasm_core::RowComputeError::MissingField {
-                                field: field.to_owned(),
-                            }
-                        })?,
+                        state.rows[prior]
+                            .get(field)
+                            .ok_or_else(|| state.rows[prior].missing_field(field))?,
                         value,
                     )?;
                     if op == ReductionFunction::Min {
@@ -223,9 +215,7 @@ fn reduce<'a>(
     for &row in rows {
         let value = state.rows[row]
             .get(field)
-            .ok_or_else(|| plasm_core::RowComputeError::MissingField {
-                field: field.to_owned(),
-            })?
+            .ok_or_else(|| state.rows[row].missing_field(field))?
             .clone();
         if value.is_null() {
             continue;
@@ -296,7 +286,7 @@ mod tests {
         }];
         assert!(matches!(
             evaluate_fixture(&ops, &[row!({}), row!({"key":null})]).unwrap_err(),
-            plasm_core::RowComputeError::MissingField { field } if field == "key"
+            plasm_core::RowComputeError::Input { index: 0, source } if matches!(&*source, plasm_core::RowComputeError::MissingField { field } if field == "key")
         ));
         assert_eq!(
             run(

@@ -24,7 +24,8 @@ pub use uuid::Uuid;
 
 pub(crate) use crate::appliance_admin_bridge::{
     config_surface_from_host, AdminBridge, AdminCompletion, AdminCorr, AdminJob,
-    McpConfigSurfaceState, OAuthSurfaceState, PolicyStoreUnavailableReason, RefreshedUiData,
+    McpConfigSurfaceState, OAuthSurfaceState, OwnerSetupSecret, PolicyStoreUnavailableReason,
+    RefreshedUiData, TrainingAction, TrainingJob, TrainingSnapshot,
 };
 pub(crate) use crate::appliance_log;
 pub(crate) use crate::appliance_mcp_admin::appliance_mcp_scope;

@@ -17,9 +17,11 @@ pub(crate) mod literal_operands;
 #[cfg(test)]
 mod literal_tests;
 mod membership;
+pub(crate) mod operand_evidence;
 pub(crate) mod projection;
 pub(crate) mod quantifiers;
 mod reads;
+mod recorded;
 pub(crate) mod reductions;
 mod refinements;
 pub(crate) mod relation_operations;
@@ -63,6 +65,10 @@ fn lower_python_program(
         frame: LexicalFrame::default(),
         static_sequences: BTreeMap::new(),
         spans: BTreeMap::new(),
+        compute_origins: BTreeMap::new(),
+        recorded_outputs: BTreeMap::new(),
+        admitted_operands: Vec::new(),
+        cardinality_checks: Vec::new(),
     };
     // Upstream lexical scope includes declarations after return. Reserved host
     // bindings cannot be shadowed even by an unreachable local assignment.
@@ -159,12 +165,16 @@ fn lower_python_program(
     if roots.is_empty() {
         return Err(PythonProgramError::EmptyReturn.into());
     }
-    let nodes = lower
+    let mut nodes = lower
         .state
         .nodes
         .iter()
         .map(|n| super::plan_serialize::lower_plan_node(n))
         .collect::<Vec<_>>();
+    // A Python unpack is an eager assertion, even when its target is unused.
+    // Preserve program order by making every subsequently authored node wait
+    // for the check before any of its work can be dispatched.
+    add_cardinality_dependencies(&mut nodes, &lower.cardinality_checks);
     let ret = if roots.len() > 1 {
         crate::plasm_plan::PlanReturn::Parallel {
             nodes: roots.clone(),
@@ -179,6 +189,11 @@ fn lower_python_program(
     super::plan_serialize::stamp_plan_uses_result_qualified_entities(&mut plan)?;
     let validated = crate::plasm_plan::validate_plan_artifact(&plan)?;
     let mut artifact = crate::plasm_comp_wire::plasm_comp_from_validated(&validated);
+    for (id, origin) in lower.recorded_outputs {
+        if let Some(PlasmStepPayload::Pure(node)) = artifact.comp.steps.get_mut(&id) {
+            node.recorded_output = Some(origin);
+        }
+    }
     crate::plan_session_provisions::seal(es, validated.nodes(), &mut artifact.comp.bind)?;
     artifact
         .comp
@@ -188,11 +203,34 @@ fn lower_python_program(
         .comp
         .metadata
         .insert("python_source_spans".into(), serde_json::json!(lower.spans));
+    artifact.comp.metadata.insert(
+        "python_binding_names".into(),
+        serde_json::json!(review_binding_names(&lower.state)),
+    );
     // Declarations have no effects. Only emitted invocations require a sealed
     // input/output contract; text_compute_source checks each actual callsite.
-    let bundle = PlasmCompBundle::new(artifact)?;
+    let bundle = PlasmCompBundle::new(artifact)?
+        .with_source(source)
+        .with_python_operands(lower.admitted_operands);
 
     Ok(bundle)
+}
+
+// Tuple destructuring can bind an authored name to a synthetic node. Keep
+// these lexical aliases as display metadata, never executable expressions.
+fn review_binding_names(state: &CompileState<'_>) -> BTreeMap<String, String> {
+    let mut names = BTreeMap::new();
+    let labels: BTreeMap<_, _> = state.labels.iter().collect();
+    for (label, index) in labels {
+        if !label.starts_with("__") {
+            if let Some(node) = state.nodes.get(*index) {
+                if node.id.starts_with("__") {
+                    names.entry(node.id.clone()).or_insert(label.clone());
+                }
+            }
+        }
+    }
+    names
 }
 
 pub(crate) fn compile_python_program_checked(
@@ -218,7 +256,7 @@ pub(crate) fn compile_python_program_checked(
     let bundle = lower_python_program(es, source, ast.suite())
         .map_err(|error| ProgramStageError::PythonLowering { error })?;
     crate::plasm_plan_run::evaluate_plasm_comp_dry(es, &bundle)?;
-    Ok(bundle)
+    Ok(bundle.capture_compilation_symbols(es))
 }
 
 #[derive(Default)]
@@ -268,10 +306,32 @@ struct Lower<'a> {
     return_check: Option<(Box<PyExpr>, plasm_core::value_contract::ValueContract)>,
     serial: usize,
     frame: LexicalFrame,
-    static_sequences: BTreeMap<String, Vec<PyExpr>>,
+    static_sequences: BTreeMap<String, Vec<static_iteration::StaticItem>>,
     value_depth: usize,
     static_expansions: usize,
     spans: BTreeMap<String, serde_json::Value>,
+    compute_origins: BTreeMap<String, crate::program_rejection::ReceiverIdentityOrigin>,
+    recorded_outputs: BTreeMap<String, RecordedOutputOrigin>,
+    admitted_operands: Vec<operand_evidence::AdmittedOperand>,
+    cardinality_checks: Vec<CardinalityCheck>,
+}
+
+struct CardinalityCheck {
+    node: String,
+    insertion_index: usize,
+}
+
+fn add_cardinality_dependencies(
+    nodes: &mut [crate::plasm_plan::PlanNode],
+    checks: &[CardinalityCheck],
+) {
+    for check in checks {
+        for node in nodes.iter_mut().skip(check.insertion_index + 1) {
+            if !node.depends_on.contains(&check.node) {
+                node.depends_on.push(check.node.clone());
+            }
+        }
+    }
 }
 impl Lower<'_> {
     fn expression_placement(&self, expression: &PyExpr) -> ExpressionPlacement {
@@ -399,6 +459,9 @@ impl Lower<'_> {
             }
         }
         if name(&attr.value) == Some("self") {
+            if attr.attr.as_str() == "recorded" {
+                return self.recorded(e, call, &id);
+            }
             if self.helpers.contains_key(attr.attr.as_str()) {
                 return self.helper_call(e, call, attr.attr.as_str(), &id);
             }
@@ -414,12 +477,26 @@ impl Lower<'_> {
             let contract = super::binding_contract(&self.state, &source).ok_or(
                 crate::program_rejection::PythonLoweringInvariantError::ReceiverContractMissing,
             )?;
-            if !contract.supports_method_invoke()
-                || !contract.row_cardinality.permits_scalar_field_extract()
-            {
+            let binding = name(&attr.value)
+                .unwrap_or("receiver expression")
+                .to_owned();
+            if !contract.supports_method_invoke() {
                 return Err(at(
                     e,
-                    PythonSourceError::WriteReceiverNeedsIdentitySingleton,
+                    PythonSourceError::WriteReceiverMissingIdentity {
+                        binding,
+                        origin: self
+                            .compute_origins
+                            .get(&source)
+                            .cloned()
+                            .unwrap_or(crate::program_rejection::ReceiverIdentityOrigin::Unproven),
+                    },
+                ));
+            }
+            if !contract.row_cardinality.permits_scalar_field_extract() {
+                return Err(at(
+                    e,
+                    PythonSourceError::WriteReceiverNeedsSingleton { binding },
                 ));
             }
             let concrete = contract.concrete_entity().map_err(|error| at(e, error))?;

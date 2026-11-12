@@ -1,0 +1,20 @@
+{
+  "op_a": {
+    "method": "GET",
+    "path": [
+      {
+        "type": "literal",
+        "value": "op_a"
+      }
+    ]
+  },
+  "op_b": {
+    "method": "POST",
+    "path": [
+      {
+        "type": "literal",
+        "value": "op_b"
+      }
+    ]
+  }
+}

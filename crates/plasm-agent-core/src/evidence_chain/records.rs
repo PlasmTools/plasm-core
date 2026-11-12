@@ -13,7 +13,7 @@ pub struct RunSealRecord {
 }
 
 /// One materialized plan step for batched `step_executed` recording.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize)]
 pub struct StepExecutedRecord {
     pub step_id: String,
     pub step_index: u32,

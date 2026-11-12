@@ -81,6 +81,7 @@ pub(crate) fn plan_execute_cancel_signal() -> Option<CancelSignal> {
 /// Persisted plan commit payload before flow re-verify on rehydrate.
 #[derive(Debug, Clone)]
 pub struct RehydratedPlanCommit {
+    pub authorization: crate::plan_authorization::AuthorizationSnapshot,
     pub commit_ref: PlanCommitRef,
     pub commit_id: PlanCommitId,
     pub domain_revision: u32,
@@ -352,6 +353,9 @@ pub enum OperationPollSnapshot {
 
 #[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize)]
 pub struct PlanCommitDryCache {
+    /// Immutable compiler-time symbol authority, carried outside semantic plan identity.
+    #[serde(default)]
+    pub compilation_symbols: crate::program_symbol_context::CompilationSymbolContext,
     #[serde(default)]
     pub version: serde_json::Value,
     #[serde(default)]
@@ -391,6 +395,7 @@ impl PlanCommitDryCache {
         )
         .to_hex();
         Self {
+            compilation_symbols: dry.compilation_symbols.clone(),
             version: dry.version.clone(),
             name: dry.name.clone(),
             topological_order: dry.topological_order.clone(),
@@ -412,6 +417,7 @@ impl PlanCommitDryCache {
 
 #[derive(Debug, Clone)]
 pub struct PlanCommitRecord {
+    pub authorization: crate::plan_authorization::PlanAuthorization,
     pub commit_ref: PlanCommitRef,
     pub commit_id: PlanCommitId,
     /// Pinned [`ExecuteSession::domain_revision`] at dry-run registration (CEP-13 stale `pcN` guard).
@@ -448,6 +454,7 @@ impl PlanCommitRecord {
         let flow = dry.admit_for_commit()?;
         let policy_revision = flow.policy_revision.unwrap_or_default();
         Ok(Self {
+            authorization: Default::default(),
             commit_ref,
             commit_id,
             domain_revision,
@@ -467,6 +474,7 @@ impl PlanCommitRecord {
         input: RehydratedPlanCommit,
     ) -> Result<Self, PlanCommitRehydrateError> {
         let RehydratedPlanCommit {
+            authorization,
             commit_ref,
             commit_id,
             domain_revision,
@@ -508,6 +516,7 @@ impl PlanCommitRecord {
             });
         }
         Ok(Self {
+            authorization: crate::plan_authorization::PlanAuthorization::restore(authorization),
             commit_ref,
             commit_id,
             domain_revision,
@@ -530,6 +539,7 @@ impl PlanCommitRecord {
         verdict: PlanDryVerdict,
     ) -> Self {
         Self {
+            authorization: Default::default(),
             commit_ref,
             commit_id,
             domain_revision: 0,
@@ -881,26 +891,37 @@ async fn run_plasm_comp_on_pool(
     telemetry: Arc<plasm_runtime::LiveRunTelemetry>,
     dry: Option<DryPlasmPlanEvaluation>,
 ) -> Result<PlasmPlanRunResult, plasm_runtime::ExecutionFailure> {
-    pool.run(move || async move {
-        plasm_runtime::with_live_run_telemetry(telemetry, async move {
-            crate::plasm_plan_run::run_plasm_comp_python(
-                es.as_ref(),
-                st.as_ref(),
-                prompt_hash.as_str(),
-                session_id.as_str(),
-                &bundle,
-                true,
-                plan_hooks,
-                Some(&scope),
-                dry,
-                mcp_result_policy,
-            )
-            .await
-        })
+    pool.run_local(move || async move {
+        crate::workflow_learning::execution::observe_execution(
+            &st,
+            &es,
+            &session_id,
+            &bundle,
+            plasm_runtime::with_live_run_telemetry(telemetry, async {
+                crate::plasm_plan_run::run_plasm_comp_python(
+                    es.as_ref(),
+                    st.as_ref(),
+                    prompt_hash.as_str(),
+                    session_id.as_str(),
+                    &bundle,
+                    true,
+                    plan_hooks,
+                    Some(&scope),
+                    dry,
+                    mcp_result_policy,
+                )
+                .await
+            }),
+        )
         .await
     })
     .await
-    .map_err(crate::live_plan_run_worker::LivePlanRunError::into_execution_failure)
+    .map_err(|error| {
+        crate::live_plan_run_worker::LivePlanRunError::<plasm_runtime::ExecutionFailure>::from(
+            error,
+        )
+        .into_execution_failure()
+    })?
 }
 
 /// Start a background live plan run; poll with `wait(handle)` / cancel with `cancel(handle)`.
@@ -943,27 +964,35 @@ pub fn spawn_async_plan_run(
     let scope_for_run = scope.clone();
     let es_run = Arc::clone(&es);
     let st_run = Arc::clone(&st);
+    let authorization = accept.plan_commit_ref.clone();
     tokio::spawn(async move {
         // Write-conflict retry lives at the branch level (`run_with_write_conflict_retry`), which
         // re-forks only the contended line before any commit is visible. Re-running the whole
         // plan here would re-issue already-committed mutating lines, so the plan executes once.
         let pool = st_run.live_plan_pool();
-        let result = run_plasm_comp_on_pool(
-            pool.as_ref(),
-            es_run,
-            st_run,
-            prompt_hash,
-            session_id,
-            bundle,
-            scope_for_run,
-            plan_hooks,
-            mcp_result_policy,
-            telemetry,
-            dry,
+        let result = crate::plan_authorization::execute_authorized(
+            &es,
+            &st,
+            authorization.as_ref(),
+            run_plasm_comp_on_pool(
+                pool.as_ref(),
+                es_run,
+                st_run,
+                prompt_hash,
+                session_id,
+                bundle,
+                scope_for_run,
+                plan_hooks,
+                mcp_result_policy,
+                telemetry,
+                dry,
+            ),
         )
         .await;
         ticker_cancel.cancel();
-        let _ = ticker.await;
+        if let Err(error) = ticker.await {
+            tracing::warn!(%error, "operation progress ticker did not finish cleanly");
+        }
         es.clear_live_run_telemetry();
         match result {
             Ok(out) => {

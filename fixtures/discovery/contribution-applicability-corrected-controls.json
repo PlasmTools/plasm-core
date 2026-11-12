@@ -1,0 +1,39 @@
+{
+  "purpose": "Fresh diagnostic controls for the corrected, internally consistent contribution rubric; no production teaching",
+  "families": [
+    {
+      "id": "valve_closure",
+      "entity": "Valve",
+      "intent": "Close valve V. Leave all other valves in their current positions and preserve measurement history.",
+      "meaning": "Valves have identities, positions and measurement history. An editable closure set holds valve identities.",
+      "operations": [
+        {"name":"direct","kind":"action","contract":"Close only the supplied valve identity. Other valve positions and measurement history are unchanged.","contribution":"relevant","applicability":"compatible_given_target","basis":"Direct requested effect with matching limits."},
+        {"name":"group","kind":"action","contract":"Close every valve currently in the editable closure set. This operation cannot select a subset. Valves outside the set and measurement history are unchanged.","contribution":"relevant","applicability":"preparation_unestablished","basis":"Closure-set membership and configuration capability are not supplied."},
+        {"name":"global","kind":"action","contract":"Close every valve in the facility, including other open valves. Scope is fixed and cannot be filtered or configured. Measurement history is unchanged.","contribution":"relevant","applicability":"incompatible","basis":"Closes the target but necessarily changes other valve positions."},
+        {"name":"destructive","kind":"action","contract":"Close only the supplied valve identity and permanently erase all measurement history. Erasure cannot be disabled. Other valve positions are unchanged.","contribution":"relevant","applicability":"incompatible","basis":"Closes the target but necessarily destroys protected history."},
+        {"name":"credential_needed","kind":"action","contract":"Close only the supplied valve identity. Requires an authorization token that is not supplied in this request. Other valve positions and measurement history are unchanged.","contribution":"relevant","applicability":"input_unestablished","basis":"Documented useful effect; authorization availability unknown."},
+        {"name":"inspect","kind":"get","contract":"Read valve identities, current positions and measurement-history retention settings. Makes no changes.","contribution":"relevant","applicability":"read_only_contribution","basis":"Selection and verification information."},
+        {"name":"opposite","kind":"action","contract":"Open the supplied valve identity. Cannot close a valve. Returns only a completion receipt.","contribution":"unrelated","applicability":"no_requested_contribution","basis":"Opposite effect, no useful information."},
+        {"name":"weather","kind":"get","contract":"Read the weather forecast for a city. Contains no valve information.","contribution":"unrelated","applicability":"no_requested_contribution","basis":"Unrelated information."},
+        {"name":"opaque","kind":"action","contract":"Perform a service operation on a valve identity. The contract does not specify the observed or changed state.","contribution":"uncertain","applicability":"indeterminate","basis":"Insufficient evidence of contribution."}
+      ]
+    },
+    {
+      "id": "passage_translation",
+      "entity": "Passage",
+      "intent": "Translate passage P into language L. Leave every other passage's language unchanged and preserve all editorial comments.",
+      "meaning": "Passages have identities, languages and editorial comments. An editable translation set holds passage identities.",
+      "operations": [
+        {"name":"direct","kind":"action","contract":"Translate only the supplied passage identity into the supplied language. Other passages and all editorial comments are unchanged.","contribution":"relevant","applicability":"compatible_given_target","basis":"Direct requested effect with matching limits."},
+        {"name":"group","kind":"action","contract":"Translate every passage currently in the editable translation set into the supplied language. This operation cannot select a subset. Passages outside the set and all editorial comments are unchanged.","contribution":"relevant","applicability":"preparation_unestablished","basis":"Translation-set membership and configuration capability are not supplied."},
+        {"name":"global","kind":"action","contract":"Translate every passage in the collection into the supplied language, including other passages in different languages. Scope is fixed and cannot be filtered or configured. Editorial comments are unchanged.","contribution":"relevant","applicability":"incompatible","basis":"Translates the target but necessarily changes other passages."},
+        {"name":"destructive","kind":"action","contract":"Translate only the supplied passage identity into the supplied language and permanently erase all editorial comments. Erasure cannot be disabled. Other passages are unchanged.","contribution":"relevant","applicability":"incompatible","basis":"Translates the target but necessarily destroys protected comments."},
+        {"name":"credential_needed","kind":"action","contract":"Translate only the supplied passage identity into the supplied language. Requires an access token that is not supplied in this request. Other passages and all editorial comments are unchanged.","contribution":"relevant","applicability":"input_unestablished","basis":"Documented useful effect; authorization availability unknown."},
+        {"name":"inspect","kind":"get","contract":"Read passage identities, current languages and editorial-comment counts. Makes no changes.","contribution":"relevant","applicability":"read_only_contribution","basis":"Selection and verification information."},
+        {"name":"opposite","kind":"action","contract":"Translate a passage from language L into language M. Cannot produce language L. Returns only a completion receipt.","contribution":"unrelated","applicability":"no_requested_contribution","basis":"Opposite effect, no useful information."},
+        {"name":"weather","kind":"get","contract":"Read the weather forecast for a city. Contains no passage information.","contribution":"unrelated","applicability":"no_requested_contribution","basis":"Unrelated information."},
+        {"name":"opaque","kind":"action","contract":"Perform an editorial operation on a passage identity. The contract does not specify the observed or changed state.","contribution":"uncertain","applicability":"indeterminate","basis":"Insufficient evidence of contribution."}
+      ]
+    }
+  ]
+}

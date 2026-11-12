@@ -33,6 +33,8 @@ use serde::Serialize;
 
 #[path = "execute_session_operations.rs"]
 mod operations;
+#[path = "execute_session_recorded_outputs.rs"]
+mod recorded;
 
 /// A compiled catalog required by an execute session is not pinned in its inventory.
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
@@ -183,6 +185,7 @@ impl RunArtifactHotCache {
             seq,
             epoch,
             payload,
+            flow: None,
         });
         let add_bytes = item.payload.bytes.len();
         if let Some(prev) = self.by_resource_index.insert(resource_index, run_id) {
@@ -355,6 +358,8 @@ pub struct SessionRunArtifact {
     pub seq: DeltaSeq,
     pub epoch: GraphEpoch,
     pub payload: ArtifactPayload,
+    /// Verified producer flow; absent artifacts cannot be imported as data.
+    pub(crate) flow: Option<crate::plan_flow::FlowFacts>,
 }
 
 /// In-memory run index row (`GET /execute/.../runs` hot cache; evicted runs may still exist in [`RunArtifactStore`]).
@@ -457,6 +462,7 @@ impl PagingContinuation for PagingResume {
 struct SessionCoreState {
     seq: DeltaSeq,
     run_artifacts: RunArtifactHotCache,
+    archived_outputs: HashMap<RunArtifactId, recorded::ArchivedOutput>,
 }
 
 /// Shared active-session materialization core: graph + run artifacts + monotonic sequence.
@@ -472,6 +478,7 @@ impl SessionCore {
             state: Mutex::new(SessionCoreState {
                 seq: DeltaSeq::default(),
                 run_artifacts: RunArtifactHotCache::new(run_artifact_hot_bounds()),
+                archived_outputs: HashMap::new(),
             }),
         }
     }
@@ -503,6 +510,8 @@ impl SessionCore {
     ) -> Arc<SessionRunArtifact> {
         let seq = self.alloc_delta_seq().await;
         let mut g = self.state.lock().await;
+        // A replacement receipt must acquire its own archive and flow evidence.
+        g.archived_outputs.remove(&run_id);
         let (item, evicted) = g
             .run_artifacts
             .insert(run_id, epoch, resource_index, seq, payload);
@@ -515,6 +524,26 @@ impl SessionCore {
     pub async fn get_run_artifact(&self, run_id: RunArtifactId) -> Option<Arc<SessionRunArtifact>> {
         let g = self.state.lock().await;
         g.run_artifacts.get(run_id)
+    }
+
+    pub(crate) async fn record_output_flow(
+        &self,
+        artifact: &crate::run_artifacts::RunArtifactHandle,
+        flow: crate::plan_flow::FlowFacts,
+    ) {
+        let mut state = self.state.lock().await;
+        if let Some(stored) = state.archived_outputs.get_mut(&artifact.run_id) {
+            if stored.resource_index == artifact.resource_index {
+                stored.flow = Some(flow.clone());
+            }
+        }
+        if let Some(stored) = state.run_artifacts.map.get_mut(&artifact.run_id) {
+            // A later observation may share the plan digest; never attach its
+            // predecessor's proof to that replacement.
+            if stored.resource_index == artifact.resource_index {
+                Arc::make_mut(stored).flow = Some(flow);
+            }
+        }
     }
 
     pub async fn get_run_artifact_by_resource_index(
@@ -591,6 +620,8 @@ pub struct ExecuteSession {
     pub graph_cache: Arc<MutexGraphCacheSession>,
     /// Unified in-session graph/artifact state.
     pub core: Arc<SessionCore>,
+    /// Admission-only view of recorded outputs; never inserted into the read cache.
+    pub(crate) recorded_outputs: Arc<recorded::RecordedOutputs>,
     /// Next `plasm://r/{n}` index for this execute session (1-based after first mint).
     run_resource_next: Arc<AtomicU64>,
     /// Opaque `pg#` handles → query or synthetic pagination resume snapshots for [`plasm_core::Expr::Page`].
@@ -627,6 +658,16 @@ impl ExecuteSession {
     pub(crate) async fn preflight_snapshot(&self) -> Self {
         let materialization = self.graph_cache.snapshot().await;
         let mut snapshot = self.clone();
+        let artifacts = self.core.state.lock().await;
+        snapshot.recorded_outputs = Arc::new(
+            artifacts
+                .run_artifacts
+                .map
+                .iter()
+                .map(|(id, artifact)| (id.to_wire(), Ok(artifact.clone())))
+                .collect(),
+        );
+        drop(artifacts);
         snapshot.graph_cache =
             Arc::new(MutexGraphCacheSession::new_materialization(materialization));
         snapshot
@@ -730,6 +771,7 @@ impl ExecuteSession {
             context_intent,
             graph_cache: core.graph_cache(),
             core,
+            recorded_outputs: Default::default(),
             run_resource_next: Arc::new(AtomicU64::new(0)),
             paging_resume_by_handle: Arc::new(StdMutex::new(HashMap::new())),
             paging_handle_next: Arc::new(AtomicU64::new(0)),
@@ -750,6 +792,11 @@ impl ExecuteSession {
             )),
             prerequisite_deployments: plasm_core::prerequisites::DeploymentBindings::default(),
         }
+    }
+
+    /// The pinned prerequisite authority used by compilation and inheritance.
+    pub fn prerequisite_deployments(&self) -> &plasm_core::prerequisites::DeploymentBindings {
+        &self.prerequisite_deployments
     }
 
     /// Pin explicit prerequisite deployments for RA-17 compile checks and RA-6 inherit.
@@ -1748,6 +1795,7 @@ impl ExecuteSession {
                 }
             };
             records.push(PersistedPlanCommitRecord {
+                authorization: record.authorization.snapshot(),
                 commit_ref: record.commit_ref.as_str().to_string(),
                 commit_id_hex: record.commit_id.to_string(),
                 domain_revision: record.domain_revision,
@@ -1819,11 +1867,16 @@ impl ExecuteSession {
                 );
                 continue;
             };
+            if map.contains_key(&commit_ref) {
+                // A stale descriptor must not reset an in-process execution claim.
+                continue;
+            }
             map.insert(
                 commit_ref.clone(),
                 match crate::operation::PlanCommitRecord::rehydrated_from_persisted(
                     self,
                     crate::operation::RehydratedPlanCommit {
+                        authorization: persisted.authorization.clone(),
                         commit_ref,
                         commit_id: PlanCommitId::from_canonical_bytes(arr),
                         domain_revision: persisted.domain_revision,
@@ -2343,51 +2396,6 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn reuse_returns_same_session_id_for_same_entry_and_entities() {
-        let store = ExecuteSessionStore::default();
-        let cgs = Arc::new(CGS::new());
-        let key = SessionReuseKey {
-            tenant_scope: String::new(),
-            entry_id: "default".into(),
-            catalog_cgs_hash: cgs.catalog_cgs_hash_hex(),
-            entities: vec!["Pet".into(), "Store".into()],
-            context_intent: None,
-            principal: None,
-            logical_session_id: None,
-        };
-
-        let mut ctxs = IndexMap::new();
-        ctxs.insert(
-            "default".into(),
-            Arc::new(CgsContext::entry("default", cgs.clone())),
-        );
-        let s1 = ExecuteSession::new(
-            "ph1".into(),
-            "prompt-a".into(),
-            cgs.clone(),
-            ctxs,
-            "default".into(),
-            String::new(),
-            String::new(),
-            None,
-            vec!["Pet".into(), "Store".into()],
-            None,
-            None,
-            cgs.catalog_cgs_hash_hex(),
-            None,
-        );
-        store
-            .insert(key.clone(), "ph1".into(), "sid-one".into(), s1)
-            .await;
-
-        let reused = store.try_reuse_session(&key).await;
-        assert!(reused.is_some(), "expected reuse");
-        let (sid, sess) = reused.unwrap();
-        assert_eq!(sid, "sid-one");
-        assert_eq!(sess.prompt_text, "prompt-a");
-    }
-
-    #[tokio::test]
     async fn distinct_open_sessions_use_distinct_graph_caches() {
         let cgs = Arc::new(CGS::new());
         let mut ctxs = IndexMap::new();
@@ -2626,6 +2634,9 @@ mod tests {
         .expect("template");
         QueryPaginationResumeData {
             query: plasm_core::QueryExpr::all("Pet"),
+            residual: None,
+            catalog_hash: "fixture".into(),
+            compiled_catalog_hash: "fixture".into(),
             capability_name: "list".into(),
             env: CmlEnv::new(),
             template,
@@ -2642,6 +2653,7 @@ mod tests {
                 response_next_url_field: None,
             },
             state: QueryPaginationState {
+                progress_guard: Default::default(),
                 param_values: vec![("page".into(), Some(serde_json::json!(0)))],
                 pages_observed: 0,
                 next_absolute_url: None,

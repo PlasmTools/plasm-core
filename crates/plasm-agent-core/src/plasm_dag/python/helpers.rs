@@ -291,7 +291,7 @@ impl Lower<'_> {
                 "@compute\n{}",
                 monty::statement_source(&Stmt::FunctionDef(def))
             );
-            return self.text_compute_source(site, call, code, id);
+            return self.text_compute_source(site, call, code, Some(name), id);
         }
         let identity = format!("method:{name}");
         if self.active_callbacks.contains(&identity) {

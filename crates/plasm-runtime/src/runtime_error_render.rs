@@ -9,7 +9,9 @@ use crate::RuntimeError;
 /// Convert a runtime failure into a structured [`StepError`].
 pub fn step_error_from_runtime(err: &RuntimeError, cgs: &CGS) -> StepError {
     match err {
-        RuntimeError::Mcp(_) => StepError::new(StepErrorCategory::Runtime, err.to_string(), None),
+        RuntimeError::Mcp(_) => {
+            StepError::new(StepErrorCategory::Runtime, err.to_string(), None)
+        }
         RuntimeError::RequestIdentityAuthOpaque => {
             StepError::new(StepErrorCategory::Config, err.to_string(), None)
         }
@@ -49,7 +51,7 @@ pub fn step_error_from_runtime(err: &RuntimeError, cgs: &CGS) -> StepError {
         | RuntimeError::PaginationPageLimit { .. }
         | RuntimeError::LiveAbsolutePaginationRequired
         | RuntimeError::Ordering(_)
-        | RuntimeError::TopKFieldUnobserved
+        | RuntimeError::TopKFieldUnobserved { .. }
         | RuntimeError::TopKSequenceOverflow
         | RuntimeError::TopKFieldEmpty
         | RuntimeError::FieldUnknown { .. }
@@ -64,6 +66,7 @@ pub fn step_error_from_runtime(err: &RuntimeError, cgs: &CGS) -> StepError {
         | RuntimeError::IdentityWire(_)
         | RuntimeError::EntityRefScope(_)
         | RuntimeError::QueryResolution(_)
+        | RuntimeError::RelationDependency(_)
         | RuntimeError::SchemaContract(_)
         | RuntimeError::OperandResolution(_)
         | RuntimeError::ViewTemplate { .. }
@@ -206,7 +209,9 @@ pub fn step_error_from_runtime(err: &RuntimeError, cgs: &CGS) -> StepError {
         RuntimeError::ReplayStoreError(_) => {
             StepError::new(StepErrorCategory::Config, err.to_string(), None)
         }
-        RuntimeError::PaginationProgress { .. } => {
+        RuntimeError::PaginationProgress { .. }
+        | RuntimeError::PaginationCatalogMismatch { .. }
+        | RuntimeError::PaginationCompiledCatalogMismatch { .. } => {
             StepError::new(StepErrorCategory::Runtime, err.to_string(), None)
         }
         RuntimeError::SerializationError(_) => {

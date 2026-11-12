@@ -1,0 +1,126 @@
+{
+  "version": 1,
+  "entry_id": "matrix",
+  "http_backend": "http://127.0.0.1:9",
+  "auth": {
+    "scheme": "none"
+  },
+  "values": {
+    "certificate": {
+      "type": "string",
+      "description": "A calibration certificate accepted for validating a sensor."
+    },
+    "validation": {
+      "type": "string",
+      "description": "Sensor validation result."
+    },
+    "paint": {
+      "type": "string",
+      "description": "Paint shade label; not a calibration certificate."
+    }
+  },
+  "entities": {
+    "Certificate": {
+      "id_field": "value",
+      "description": "A calibration certificate accepted for validating a sensor.",
+      "fields": {
+        "value": {
+          "value_ref": "certificate",
+          "required": true
+        }
+      },
+      "primary_read": "certificate_primary"
+    },
+    "Validation": {
+      "id_field": "value",
+      "description": "Sensor validation result.",
+      "fields": {
+        "value": {
+          "value_ref": "validation",
+          "required": true
+        }
+      }
+    },
+    "Paint": {
+      "id_field": "value",
+      "description": "Paint shade label; not a calibration certificate.",
+      "fields": {
+        "value": {
+          "value_ref": "paint",
+          "required": true
+        }
+      }
+    }
+  },
+  "capabilities": {
+    "certificate_primary": {
+      "entity": "Certificate",
+      "kind": "get",
+      "description": "Read a sensor calibration certificate from the primary register.",
+      "receiver": {
+        "kind": "none"
+      },
+      "provides": [
+        "value"
+      ],
+      "output": {
+        "type": "entity",
+        "entity_type": "Certificate"
+      }
+    },
+    "certificate_secondary": {
+      "entity": "Certificate",
+      "kind": "get",
+      "description": "Read an equally valid sensor calibration certificate from the secondary register.",
+      "receiver": {
+        "kind": "none"
+      },
+      "provides": [
+        "value"
+      ],
+      "output": {
+        "type": "entity",
+        "entity_type": "Certificate"
+      }
+    },
+    "sensor_validate": {
+      "entity": "Validation",
+      "kind": "action",
+      "description": "Validate the sensor using a calibration certificate.",
+      "arguments": {
+        "input_type": {
+          "type": "object",
+          "fields": [
+            {
+              "name": "input0",
+              "value_ref": "certificate",
+              "required": true
+            }
+          ]
+        }
+      },
+      "provides": [
+        "value"
+      ],
+      "output": {
+        "type": "entity",
+        "entity_type": "Validation"
+      }
+    },
+    "paint_read": {
+      "entity": "Paint",
+      "kind": "get",
+      "description": "Read paint shade labels.",
+      "receiver": {
+        "kind": "none"
+      },
+      "provides": [
+        "value"
+      ],
+      "output": {
+        "type": "entity",
+        "entity_type": "Paint"
+      }
+    }
+  }
+}

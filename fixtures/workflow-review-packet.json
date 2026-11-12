@@ -1,0 +1,16 @@
+{
+  "execution_id": "weacba25512100f80b56fc3ccd14c65be55d94800cda77585c5f41a887e398f9be",
+  "program": {
+    "capabilities": [],
+    "plan": {
+      "reason": "plan_not_available",
+      "state": "unavailable"
+    },
+    "source": "class Example(Program):\n    def build(self):\n        return e1.query().take(1)\n",
+    "state": "available",
+    "symbols": [
+      "e1: entity `LangItem` in catalogue `langmatrix`"
+    ]
+  },
+  "version": 4
+}

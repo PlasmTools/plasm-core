@@ -438,6 +438,8 @@ pub struct Ref {
     pub key: EntityKey,
 }
 
+impl Ref {}
+
 impl QueryExpr {
     /// Create a new query for all resources of the given type.
     pub fn all(entity: impl Into<EntityName>) -> Self {

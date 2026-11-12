@@ -177,9 +177,13 @@ async fn get_tool_model(
     }
 }
 
-#[derive(Debug, Deserialize, Serialize)]
+pub use crate::workflow_training_wire::CreationTrainingIntent;
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct IntentDiscoveryRequest {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub training: Option<CreationTrainingIntent>,
     #[serde(default)]
     pub principal: Option<String>,
     pub intent: String,
@@ -268,6 +272,10 @@ enum HttpIntentRoutingError {
 enum RoutedHttpContextError {
     #[error("intent extension requires a routed context; open one with POST /v1/context")]
     IntentExtensionRequiresRoutedContext,
+    #[error("training creation intent requires a new context; use the training commands resource for later opt-in")]
+    TrainingRequiresNewContext,
+    #[error(transparent)]
+    LogicalRegistration(#[from] crate::session_identity::LogicalSessionRegistrationError),
     #[error("routing attempted to change the pinned session generation")]
     PinnedGenerationChanged,
     #[error("selected capability `{capability}` is absent from pinned catalog `{catalog}`")]
@@ -299,6 +307,13 @@ async fn post_discover(
     >,
     Json(body): Json<IntentDiscoveryRequest>,
 ) -> Response {
+    if body.training.is_some() {
+        return (
+            StatusCode::BAD_REQUEST,
+            "training intent belongs to POST /v1/context",
+        )
+            .into_response();
+    }
     let scope = crate::incoming_auth::tenant_scope(principal.as_ref());
     match route_http_intent(&st, &body, &scope, None).await {
         Ok(receipt) => Json(receipt).into_response(),
@@ -328,6 +343,10 @@ async fn post_terminal_discover(
         body
     } else if receipt.closure.is_some() {
         "Discovery: matched affirmative effect slots.\n\n".to_owned()
+    } else if receipt.search.has_incomplete_operation_judgments() {
+        "Discovery: candidate contributions remain unjudged or uncertain.\n\n".to_owned()
+    } else if !receipt.search.deferred.is_empty() {
+        "Discovery: some candidates were deferred by discovery limits.\n\n".to_owned()
     } else {
         "Discovery: no additional capability matches.\n\n".to_owned()
     };
@@ -385,19 +404,53 @@ async fn post_context(
     Extension(crate::incoming_auth::IncomingPrincipal(principal)): Extension<
         crate::incoming_auth::IncomingPrincipal,
     >,
+    headers: axum::http::HeaderMap,
     Json(body): Json<IntentDiscoveryRequest>,
 ) -> Response {
-    routed_http_context(&st, principal.as_ref(), &body, None, None).await
+    routed_http_context(&st, principal.as_ref(), &headers, &body, None, None).await
 }
 
 pub(crate) async fn routed_http_context(
     st: &PlasmHostState,
     principal: Option<&crate::incoming_auth::TenantPrincipal>,
+    headers: &axum::http::HeaderMap,
     body: &IntentDiscoveryRequest,
     session: Option<&crate::execute_session::ExecuteSession>,
     binding: Option<(&str, &str)>,
 ) -> Response {
-    match apply_routed_http_context(st, principal, body, session, binding).await {
+    let host = st.clone();
+    let principal = principal.cloned();
+    let headers = headers.clone();
+    let body = body.clone();
+    let session = session.cloned();
+    let binding = binding.map(|(prompt, session)| (prompt.to_owned(), session.to_owned()));
+    let result = st
+        .live_plan_pool()
+        .run_local(move || async move {
+            apply_routed_http_context(
+                &host,
+                principal.as_ref(),
+                &headers,
+                &body,
+                session.as_ref(),
+                binding
+                    .as_ref()
+                    .map(|(prompt, session)| (prompt.as_str(), session.as_str())),
+            )
+            .await
+        })
+        .await;
+    let result = match result {
+        Ok(result) => result,
+        Err(_) => {
+            return (
+                StatusCode::SERVICE_UNAVAILABLE,
+                "context worker unavailable",
+            )
+                .into_response()
+        }
+    };
+    match result {
         Ok(result) => Json(result).into_response(),
         Err(error) => (
             StatusCode::SERVICE_UNAVAILABLE,
@@ -412,10 +465,14 @@ pub(crate) async fn routed_http_context(
 async fn apply_routed_http_context(
     st: &PlasmHostState,
     principal: Option<&crate::incoming_auth::TenantPrincipal>,
+    headers: &axum::http::HeaderMap,
     body: &IntentDiscoveryRequest,
     session: Option<&crate::execute_session::ExecuteSession>,
     binding: Option<(&str, &str)>,
 ) -> Result<serde_json::Value, RoutedHttpContextError> {
+    if session.is_some() && body.training.is_some() {
+        return Err(RoutedHttpContextError::TrainingRequiresNewContext);
+    }
     if session.is_some_and(|session| session.discovery_pin.is_none()) {
         return Err(RoutedHttpContextError::IntentExtensionRequiresRoutedContext);
     }
@@ -495,7 +552,56 @@ async fn apply_routed_http_context(
         &catalogs,
         exposure.to_symbol_map().as_ref(),
     )?;
-    Ok(serde_json::json!({"routing": receipt, "context": out, "prerequisite_guidance": guidance}))
+    let logical =
+        crate::session_identity::LogicalSessionId(uuid::Uuid::parse_str(&receipt.pin_id)?);
+    st.logical_sessions
+        .register_routed_session(
+            logical,
+            &scope,
+            &receipt.intent_provenance,
+            Some(crate::discovery_store::DiscoverySessionPin {
+                pin_id: receipt.pin_id.clone(),
+                generation: receipt.retrieval.generation.clone(),
+                authorization: receipt.authorization.clone(),
+            }),
+        )
+        .await?;
+    st.logical_execute_bindings
+        .insert(
+            logical.as_uuid(),
+            out.prompt_hash.clone(),
+            out.session_id.clone(),
+        )
+        .await;
+    let mut result = serde_json::json!({"routing": receipt, "context": out, "prerequisite_guidance": guidance,
+        "logical_session_ref":crate::mcp_logical_ref::format_logical_session_wire_ref(logical)});
+    if st.workflow_learning.enabled() {
+        if let Ok(actor) = crate::http_training::resolve_actor(st, principal, headers).await {
+            if let Ok(repository) = st.workflow_learning.repository().await {
+                if let Err(error) = repository.bind_session(actor.scope(), logical).await {
+                    tracing::warn!(%error, "training scope unavailable; context remains usable");
+                }
+                if session.is_none() {
+                    if let Err(error) = repository.bind_training_controller(&actor, logical).await {
+                        tracing::warn!(%error, "training controller unavailable; context remains usable");
+                    }
+                }
+            }
+        }
+    }
+    if let Some(training) = &body.training {
+        result["training"] = match crate::http_training::resolve_actor(st, principal, headers).await
+        {
+            Ok(actor) => {
+                crate::workflow_training_wire::request_on_creation(st, &actor, logical, training)
+                    .await
+            }
+            Err(_) => {
+                serde_json::json!({"capture_availability":"unavailable", "error":{"code":"denied","message":"training requires authenticated project authority"}})
+            }
+        };
+    }
+    Ok(result)
 }
 
 async fn get_connect_requirements(

@@ -13,6 +13,7 @@ impl Lower<'_> {
         expression: &PyExpr,
         inputs: &mut BTreeMap<String, PlanDataInput>,
     ) -> Result<Option<PlasmDataValue>, PythonLoweringError> {
+        self.record_sensitive_comparisons(expression);
         if super::literal_operands::LiteralOperand::classify(expression).is_some()
             || matches!(expression, PyExpr::Name(_))
             || self.expression_placement(expression) == ExpressionPlacement::Host

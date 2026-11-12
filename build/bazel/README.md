@@ -74,6 +74,17 @@ Rust targets, including test harnesses. From SaaS, use
 `bash plasm-oss/build/bazel/quality.sh --jobs=4`; this also checks the external core
 targets. These checks use Bazel's pinned toolchain and retain `-D warnings`.
 
+For a Rust `unit_tests` target, pass its libtest name filter with `--test_arg`,
+not `--test_filter` (the latter does not filter these binaries). For example:
+
+```bash
+bash build/bazel/linux.sh test //crates/plasm-core:unit_tests --config=release \
+  --test_arg=prerequisites::tests --test_output=all
+```
+
+Check the test summary for the expected executed and filtered counts; a successful
+command with zero matching tests is not a validation proof.
+
 `bash build/bazel/bazel.sh test //:nextest --test_arg=--profile=ci` builds the registered test executables
 with Bazel, then runs them with nextest 0.9.132. Native runner archives are pinned
 by SHA-256 for macOS and Linux x86_64/aarch64. Cargo and rustc come from Bazel's

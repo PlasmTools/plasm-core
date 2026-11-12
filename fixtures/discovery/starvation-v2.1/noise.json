@@ -1,0 +1,7 @@
+{
+  "neutral": "Archive historical rainfall records.",
+  "near_topic": "Archive historical telemetry records. Before producing the requested spectrum, inspect telemetry status; spectrum production requires inspection. This operation only archives past records.",
+  "repeat": 4,
+  "identity_prefix": "distractor_",
+  "label": "unrelated"
+}

@@ -28,12 +28,158 @@ async fn map_body_plan_displays_its_typed_write_per_source_row() {
         .await
         .expect("compile");
     let dry = super::super::super::evaluate_plasm_comp_dry(&es, &bundle).expect("dry plan");
-    let text = super::super::super::render_plasm_plan_dry_text(&dry, None);
-    assert!(
-        text.contains("for each row in rows: action matrix.Counter → action matrix.Counter"),
+    let text = super::super::super::render_plasm_plan_dry_text_for_session(&dry, None, Some(&es));
+    assert!(text.contains("for each row in rows:"), "{text}");
+    assert_eq!(
+        text.matches("action Counter.advance(id=capture_1.id) — Advances the counter by one.")
+            .count(),
+        2,
         "{text}"
     );
     assert!(!text.contains("effects: value"), "{text}");
+    assert!(text.contains("capture_1: capture matrix.Wire"), "{text}");
+}
+
+#[tokio::test]
+async fn nested_review_distinguishes_capabilities_arguments_and_effects() {
+    let es = session();
+    let symbols = es.teaching_exposure.as_ref().unwrap().to_symbol_map();
+    let wire = symbols.entity_sym_for("matrix", "Wire");
+    let counter = symbols.entity_sym_for("matrix", "Counter");
+    let advance = symbols.method_sym_for("matrix", "Counter", "advance");
+    let apply = symbols.method_sym_for("matrix", "Counter", "apply_item");
+    for (body, expected) in [
+        (
+            format!("{counter}.{advance}(id=\"alpha\")"),
+            vec!["advance", "id=alpha", "Advances the counter by one."],
+        ),
+        (
+            format!("{counter}.get(\"alpha\").{apply}(item=\"beta\")"),
+            vec![
+                "apply-item",
+                "Counter(alpha)",
+                "item=beta",
+                "Applies one source item to this counter.",
+            ],
+        ),
+        (
+            format!("[{counter}.{advance}(id=\"alpha\"), {counter}.{advance}(id=\"beta\")]"),
+            vec!["id=alpha", "id=beta", " → "],
+        ),
+    ] {
+        let program = format!("class Review(Program):\n    def build(self):\n        rows = {wire}.query()\n        effects = rows.flat_map(lambda row: {body})\n        return effects\n");
+        let bundle = crate::plasm_compile::compile_python_program(&es, &program)
+            .await
+            .expect("compile");
+        let dry = super::super::super::evaluate_plasm_comp_dry(&es, &bundle).expect("dry plan");
+        let text =
+            super::super::super::render_plasm_plan_dry_text_for_session(&dry, None, Some(&es));
+        for fragment in expected {
+            assert!(text.contains(fragment), "missing {fragment}: {text}");
+        }
+        assert!(!text.contains("action matrix.Counter"), "{text}");
+        assert!(!text.contains("\"op\":"), "review must be text: {text}");
+    }
+}
+
+#[tokio::test]
+async fn review_preserves_effects_and_verification_dependencies() {
+    let es = session();
+    let symbols = es.teaching_exposure.as_ref().unwrap().to_symbol_map();
+    let wire = symbols.entity_sym_for("matrix", "Wire");
+    let counter = symbols.entity_sym_for("matrix", "Counter");
+    let advance = symbols.method_sym_for("matrix", "Counter", "advance");
+    let apply = symbols.method_sym_for("matrix", "Counter", "apply_item");
+    for (call, description) in [
+        (
+            format!("{counter}.{advance}(id=\"target\")"),
+            "Advances the counter by one.",
+        ),
+        (
+            format!("original.{apply}(item=\"checked\")"),
+            "Applies one source item to this counter.",
+        ),
+    ] {
+        for gated in [false, true] {
+            let invocation = if gated {
+                format!("gate.flat_map(lambda _: {call})")
+            } else {
+                call.clone()
+            };
+            let program = format!("class Review(Program):\n    @compute\n    def verify(self, row: Value[{wire}]) -> list[bool]:\n        if row.value != 0:\n            raise ValueError(\"unexpected state\")\n        return [True]\n    def build(self):\n        original = {counter}.get(\"target\")\n        observed = {wire}.get(\"evidence\")\n        gate = self.verify(observed)\n        changed = {invocation}\n        return changed\n");
+            let bundle = crate::plasm_compile::compile_python_program(&es, &program)
+                .await
+                .unwrap();
+            let dry = super::super::super::evaluate_plasm_comp_dry(&es, &bundle).unwrap();
+            let text =
+                super::super::super::render_plasm_plan_dry_text_for_session(&dry, None, Some(&es));
+            assert_eq!(text.matches(description).count(), 1, "{text}");
+            assert!(text.contains("gate: compute value ← observed"), "{text}");
+            let changed = text.lines().find(|l| l.starts_with("changed:")).unwrap();
+            assert_eq!(
+                changed.contains("gate"),
+                gated,
+                "an unrelated check must not become a dependency: {text}"
+            );
+            assert!(!text.contains("\"op\":"), "{text}");
+        }
+    }
+}
+
+#[tokio::test]
+async fn nested_review_retains_inner_verification_scope() {
+    let es = session();
+    let symbols = es.teaching_exposure.as_ref().unwrap().to_symbol_map();
+    let wire = symbols.entity_sym_for("matrix", "Wire");
+    let counter = symbols.entity_sym_for("matrix", "Counter");
+    let advance = symbols.method_sym_for("matrix", "Counter", "advance");
+    let program = format!("class Nested(Program):\n    @compute\n    def verify(self, row: Value[{wire}]) -> list[bool]:\n        if row.value != 0:\n            raise ValueError(\"unexpected state\")\n        return [True]\n    def build(self):\n        rows = {wire}.query()\n        changed = rows.flat_map(lambda row: self.verify(row).flat_map(lambda _: {counter}.{advance}(id=\"target\")))\n        return changed\n");
+    let bundle = crate::plasm_compile::compile_python_program(&es, &program)
+        .await
+        .unwrap();
+    let dry = super::super::super::evaluate_plasm_comp_dry(&es, &bundle).unwrap();
+    let text = super::super::super::render_plasm_plan_dry_text_for_session(&dry, None, Some(&es));
+    assert!(text.contains("compute value"), "{text}");
+    assert_eq!(text.matches("for each row in").count(), 2, "{text}");
+    assert_eq!(
+        text.matches("Advances the counter by one.").count(),
+        1,
+        "{text}"
+    );
+    assert!(!text.contains("__py"), "{text}");
+}
+
+#[tokio::test]
+async fn nested_review_names_scalar_verification_dependencies() {
+    let es = session();
+    let symbols = es.teaching_exposure.as_ref().unwrap().to_symbol_map();
+    let wire = symbols.entity_sym_for("matrix", "Wire");
+    let counter = symbols.entity_sym_for("matrix", "Counter");
+    let advance = symbols.method_sym_for("matrix", "Counter", "advance");
+    for dependent in [false, true] {
+        let argument = if dependent {
+            "self.verify(row)"
+        } else {
+            "row.id"
+        };
+        let program = format!("class Nested(Program):\n    @compute\n    def verify(self, row: Value[{wire}]) -> str:\n        if row.value != 0:\n            raise ValueError(\"unexpected state\")\n        return row.id\n    def build(self):\n        rows = {wire}.query()\n        changed = rows.flat_map(lambda row: {counter}.{advance}(id={argument}))\n        return changed\n");
+        let bundle = crate::plasm_compile::compile_python_program(&es, &program)
+            .await
+            .unwrap();
+        let dry = super::super::super::evaluate_plasm_comp_dry(&es, &bundle).unwrap();
+        let text =
+            super::super::super::render_plasm_plan_dry_text_for_session(&dry, None, Some(&es));
+        let effect = text
+            .split("action Counter.advance")
+            .nth(1)
+            .unwrap()
+            .split(']')
+            .next()
+            .unwrap();
+        assert_eq!(effect.contains("compute_"), dependent, "{text}");
+        assert_eq!(text.contains("compute value"), dependent, "{text}");
+        assert!(!text.contains("__py"), "{text}");
+    }
 }
 struct FanoutTransport {
     rows: usize,
@@ -601,6 +747,126 @@ fn python_captured_receiver_fanout_preserves_identity_and_occurrences() {
         }
         check_receiver(4, Some("r1"), None, host, true);
         check_receiver(4, None, Some(2), host, true);
+    }
+}
+
+#[tokio::test]
+async fn receiver_identity_diagnostic_names_authored_binding_and_origin() {
+    let es = session();
+    let symbols = es.teaching_exposure.as_ref().unwrap().to_symbol_map();
+    let counter = symbols.entity_sym_for("matrix", "Counter");
+    let apply = symbols.method_sym_for("matrix", "Counter", "apply_item");
+    for (annotation, body, expected) in [
+        (
+            format!(" -> Value[{counter}]"),
+            "return row",
+            "explicit return annotation",
+        ),
+        (
+            String::new(),
+            "return {\"id\": row.id, \"value\": row.value}",
+            "did not prove selection",
+        ),
+    ] {
+        for alias in [false, true] {
+            let alias_line = if alias {
+                "        alias = checked\n"
+            } else {
+                ""
+            };
+            let receiver = if alias { "alias" } else { "checked" };
+            let program = format!("class Verify(Program):\n    @compute\n    def verify(self, row: Value[{counter}]){annotation}:\n        {body}\n    def build(self):\n        original = {counter}.get(\"target\")\n        checked = self.verify(original)\n{alias_line}        changed = {receiver}.{apply}(item=\"verified\")\n        return changed\n");
+            let error = crate::plasm_compile::compile_python_program(&es, &program)
+                .await
+                .unwrap_err();
+            let text = error.to_string();
+            for fragment in [
+                format!("`{receiver}`"),
+                "`verify` called on line 7".into(),
+                expected.into(),
+                "gate.flat_map".into(),
+                "Do not bypass verification".into(),
+            ] {
+                assert!(text.contains(&fragment), "missing {fragment}: {text}");
+            }
+            assert!(!text.contains("__py"), "{text}");
+        }
+    }
+    // Inference still admits an unchanged occurrence: diagnostic changes do not
+    // remove existing authority or confer it on an equal-valued copy.
+    let program = format!("class Identity(Program):\n    @compute\n    def verify(self, row: Value[{counter}]):\n        return row\n    def build(self):\n        original = {counter}.get(\"target\")\n        checked = self.verify(original)\n        return checked.{apply}(item=\"verified\")\n");
+    crate::plasm_compile::compile_python_program(&es, &program)
+        .await
+        .expect("inferred original occurrence");
+
+    let wire = symbols.entity_sym_for("matrix", "Wire");
+    let advance = symbols.method_sym_for("matrix", "Wire", "advance_wire");
+    for (assignment, invocation, expected) in [
+        (
+            format!("rows = {wire}.query()"),
+            format!("rows.{advance}(id=\"one\")"),
+            "entity identity is retained, but the receiver is not a proven singleton",
+        ),
+        (
+            "values = {\"id\": \"target\", \"value\": 0}".into(),
+            format!("values.{apply}(item=\"verified\")"),
+            "this expression has no proven entity identity",
+        ),
+    ] {
+        let program = format!("class Other(Program):\n    def build(self):\n        {assignment}\n        return {invocation}\n");
+        let text = crate::plasm_compile::compile_python_program(&es, &program)
+            .await
+            .unwrap_err()
+            .to_string();
+        assert!(text.contains(expected), "{text}");
+        assert!(
+            !text.contains("`verify`"),
+            "do not invent compute provenance: {text}"
+        );
+    }
+}
+
+#[test]
+fn receiver_identity_repair_preserves_verification_dependency() {
+    for host_driver in [false, true] {
+        for outcome in [
+            "return [True]",
+            "return []",
+            "raise ValueError(\"verification failed\")",
+        ] {
+            std::thread::Builder::new().stack_size(16 * 1024 * 1024).spawn(move || {
+                tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap().block_on(async {
+                    let es = session();
+                    let state = Arc::new(Mutex::new(State::default()));
+                    let engine = ExecutionEngine::new_with_transport(ExecutionConfig { base_url: Some("http://127.0.0.1:9".into()), ..Default::default() }, Arc::new(FanoutTransport { rows: 1, read_delay: None, bad_response: false, state: state.clone(), reject: None, cancel: None }), None);
+                    let host = crate::http::build_plasm_host_state(crate::http::PlasmHostBootstrap {
+                        engine, mode: ExecutionMode::Live,
+                        registry: Arc::new(CgsRegistry::from_pairs(vec![("matrix".into(), "Matrix".into(), vec![], es.cgs.clone())])),
+                        catalog_bootstrap: crate::server_state::CatalogBootstrap::Fixed,
+                        incoming_auth: None, run_artifacts: Arc::new(crate::run_artifacts::RunArtifactStore::memory()), session_graph_persistence: None, oss_local_filesystem_defaults: false,
+                    }).unwrap();
+                    let symbols = es.teaching_exposure.as_ref().unwrap().to_symbol_map();
+                    let counter = symbols.entity_sym_for("matrix", "Counter");
+                    let wire = symbols.entity_sym_for("matrix", "Wire");
+                    let apply = symbols.method_sym_for("matrix", "Counter", "apply_item");
+                    let program = format!("class VerificationGate(Program):\n    @compute\n    def verify(self, observed: Value[{wire}]) -> list[bool]:\n        if observed.value != 0:\n            raise ValueError(\"unexpected state\")\n        {outcome}\n    def build(self):\n        original = {counter}.get(\"target\")\n        observed = {wire}.get(\"evidence\")\n        gate = self.verify(observed)\n        changed = gate.flat_map(lambda _: original.{apply}(item=\"verified\"))\n        return changed\n");
+                    let bundle = crate::plasm_compile::compile_python_program(&es, &program).await.expect("repair compiles");
+                    let dry = super::super::super::evaluate_plasm_comp_dry(&es, &bundle).unwrap();
+                    assert!(state.lock().unwrap().calls.is_empty(), "review never dispatches");
+                    let result = Box::pin(super::super::super::orchestrator::run_plasm_comp_with_dispatch(&es, &host, &es.prompt_hash, "verification", &bundle, true, None, None, Some(dry), None, host_driver)).await;
+                    assert_eq!(result.is_ok(), !outcome.starts_with("raise"), "{result:?}");
+                    let state = state.lock().unwrap();
+                    let writes = state.calls.iter().filter(|c| matches!(c, Call::Write(_))).count();
+                    assert_eq!(writes, usize::from(outcome == "return [True]"), "{:?}", state.calls);
+                    if writes == 1 {
+                        let read = state.calls.iter().position(|c| matches!(c, Call::Read(id, _) if id == "evidence")).unwrap();
+                        let write = state.calls.iter().position(|c| matches!(c, Call::Write(_))).unwrap();
+                        assert!(read < write, "verification evidence precedes the write");
+                        assert_eq!(state.values.get("target"), Some(&1));
+                    }
+                });
+            }).unwrap().join().unwrap();
+        }
     }
 }
 

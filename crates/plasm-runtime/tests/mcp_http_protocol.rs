@@ -52,8 +52,10 @@ async fn assert_catalog_coverage(exhaustive: bool, paginated: bool, cursor: bool
     })
     .await
     .unwrap();
-    let fixture = std::path::Path::new(&std::env::var("CARGO_MANIFEST_DIR").expect("test runner must set CARGO_MANIFEST_DIR"))
-        .join("../../fixtures/schemas/mcp_transport_matrix");
+    let fixture = std::path::Path::new(
+        &std::env::var("CARGO_MANIFEST_DIR").expect("test runner must set CARGO_MANIFEST_DIR"),
+    )
+    .join("../../fixtures/schemas/mcp_transport_matrix");
     let temporary = tempfile::tempdir().unwrap();
     std::fs::copy(
         fixture.join("domain.yaml"),

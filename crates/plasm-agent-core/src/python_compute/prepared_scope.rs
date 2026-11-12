@@ -50,7 +50,8 @@ impl<'session> PreparedComputeScope<'session> {
     /// Prepare on first reach, preserving rejection timing for skipped branches.
     /// Exact operation equality includes source, contracts, catalog pin, language
     /// version, input mode and selection evidence; no digest can alias proofs.
-    /// The lock spans synchronous checking so concurrent branches prepare once.
+    /// The lock spans synchronous checking so
+    /// concurrent branches prepare once.
     pub(crate) fn check(&self, op: &ComputeOp) -> Result<Arc<PreparedCompute>, ExecutionFailure> {
         let mut entries = self.entries.lock().map_err(|_| {
             ExecutionFailure::new(

@@ -14,6 +14,216 @@ enum ReturnRejection {
     DictionaryKeyNotString,
 }
 
+#[tokio::test]
+async fn entity_row_singleton_unpack_compiles() {
+    let (es, _host, token) =
+        super::recursive_values::fixture_context("http://unused.invalid".into());
+    let source = format!("class P(Program):\n    def build(self):\n        first = {token}.get('000123')\n        rows = first.union(first)\n        item, = rows\n        return item.id\n");
+    compile_python_program(&es, &source)
+        .await
+        .unwrap_or_else(|error| panic!("{source}\n{error}"));
+}
+
+#[tokio::test]
+async fn entity_singleton_unpack_checks_cardinality_before_later_effects() {
+    use plasm_core::symbol_tuning::SymbolRender;
+    use std::sync::{Arc, Mutex};
+    let writes = Arc::new(Mutex::new(0usize));
+    let observed = writes.clone();
+    let app = axum::Router::new().route(
+        "/samples/{id}",
+        axum::routing::get(
+            |axum::extract::Path(id): axum::extract::Path<String>| async move {
+                let mut record = super::python::value_contract_matrix::record();
+                record["id"] = json!(id);
+                axum::Json(record)
+            },
+        )
+        .patch(move |axum::Json(body): axum::Json<Value>| {
+            *observed.lock().unwrap() += 1;
+            async move { axum::Json(json!({"id":"000123", "count":body["count"]})) }
+        }),
+    );
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let base = format!("http://{}", listener.local_addr().unwrap());
+    let server = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+    for (selection, receiver, succeeds) in [
+        ("root.where(lambda row: row.id == 'missing')", "root", false),
+        ("root", "root", true),
+        ("root.union(ENTITY.get('000124'))", "root", false),
+        ("root", "item", true),
+        (
+            "root.union(ENTITY.get('000124')).where(lambda row: row.id == '000123')",
+            "item",
+            true,
+        ),
+    ] {
+        let (es, host, token) = super::recursive_values::fixture_context(base.clone());
+        let update = es
+            .teaching_exposure
+            .as_ref()
+            .unwrap()
+            .to_symbol_map()
+            .method_sym_for("types", "Sample", "sample_update");
+        let selection = selection.replace("ENTITY", &token);
+        // The unpacked binding is deliberately unused: the check must still
+        // precede the independent mutation.
+        let source = format!("class P(Program):\n    def build(self):\n        root = {token}.get('000123')\n        rows = {selection}\n        item, = rows\n        return {receiver}.{update}(count=1)\n");
+        let before = *writes.lock().unwrap();
+        let bundle = compile_python_program(&es, &source)
+            .await
+            .unwrap_or_else(|error| panic!("{source}\n{error}"));
+        let result = plasm_agent::plasm_plan_run::run_plasm_comp_python(
+            &es,
+            &host,
+            &es.prompt_hash,
+            "singleton-unpack",
+            &bundle,
+            true,
+            None,
+            None,
+            None,
+            None,
+        )
+        .await;
+        assert_eq!(result.is_ok(), succeeds, "{source}");
+        assert_eq!(
+            *writes.lock().unwrap() - before,
+            usize::from(succeeds),
+            "{source}"
+        );
+    }
+    let (es, host, token) = super::recursive_values::fixture_context(base.clone());
+    let source = format!("class P(Program):\n    def build(self):\n        root = {token}.get('000123')\n        rows = root.where(lambda row: row.id == 'missing')\n        item, = rows\n        return root\n");
+    let bundle = compile_python_program(&es, &source)
+        .await
+        .unwrap_or_else(|error| panic!("{source}\n{error}"));
+    let result = plasm_agent::plasm_plan_run::run_plasm_comp_python(
+        &es,
+        &host,
+        &es.prompt_hash,
+        "unused-singleton-unpack",
+        &bundle,
+        true,
+        None,
+        None,
+        None,
+        None,
+    )
+    .await;
+    assert!(result.is_err(), "unused singleton check was skipped");
+    let (es, host, token) = super::recursive_values::fixture_context(base.clone());
+    let update = es
+        .teaching_exposure
+        .as_ref()
+        .unwrap()
+        .to_symbol_map()
+        .method_sym_for("types", "Sample", "sample_update");
+    let source = format!("class P(Program):\n    def build(self):\n        def apply(row):\n            rows = row.where(lambda r: r.id == 'missing')\n            item, = rows\n            return row.{update}(count=1)\n        return {token}.get('000123').flat_map(apply, max_parents=1)\n");
+    let before = *writes.lock().unwrap();
+    let bundle = compile_python_program(&es, &source)
+        .await
+        .unwrap_or_else(|error| panic!("{source}\n{error}"));
+    let result = plasm_agent::plasm_plan_run::run_plasm_comp_python(
+        &es,
+        &host,
+        &es.prompt_hash,
+        "nested-singleton-unpack",
+        &bundle,
+        true,
+        None,
+        None,
+        None,
+        None,
+    )
+    .await;
+    assert!(result.is_err(), "{source}");
+    assert_eq!(*writes.lock().unwrap(), before, "{source}");
+    server.abort();
+}
+
+#[tokio::test]
+async fn narrowed_entity_row_return_matrix() {
+    for annotation in ["Row", "Row[ENTITY]", "Value[ENTITY]"] {
+        let (es, _host, token) =
+            super::recursive_values::fixture_context("http://unused.invalid".into());
+        let source = format!(
+            "class Narrow(Program):\n    @compute\n    def unique(self, rows: list[Row]) -> {annotation}:\n        if len(rows) != 1:\n            raise ValueError('expected one row')\n        return rows[0]\n    def build(self):\n        root = {token}.get('000123')\n        rows = root.union(root).where(lambda r: r.optional_count is not None)\n        return self.unique(rows)\n"
+        ).replace("ENTITY", &token);
+        compile_python_program(&es, &source)
+            .await
+            .unwrap_or_else(|error| panic!("{source}\n{error}"));
+    }
+    for (setup, body) in [
+        ("root.select('id')", "return rows[0]"),
+        ("root", "return None"),
+        (
+            "root",
+            "rows[0].optional_count = None\n        return rows[0]",
+        ),
+    ] {
+        let (es, _host, token) =
+            super::recursive_values::fixture_context("http://unused.invalid".into());
+        let source = format!("class Reject(Program):\n    @compute\n    def produce(self, rows: list[Row]) -> Value[{token}]:\n        {body}\n    def build(self):\n        root = {token}.get('000123')\n        selected = {setup}\n        return self.produce(selected.union(selected))\n");
+        let error = compile_python_program(&es, &source)
+            .await
+            .expect_err("invalid return or field assignment must be rejected");
+        assert!(
+            matches!(error, CompilationError::Program(_)),
+            "{source}: {error}"
+        );
+    }
+    // Preserve every field so this negative control isolates the wrong value type.
+    let (es, _host, token) =
+        super::recursive_values::fixture_context("http://unused.invalid".into());
+    let fields = [
+        "id",
+        "text",
+        "uuid",
+        "date",
+        "flag",
+        "count",
+        "ratio",
+        "address",
+        "state",
+        "states",
+        "timestamp",
+        "local_timestamp",
+        "epoch",
+        "price",
+        "reference",
+        "document",
+        "attachment",
+        "numbers",
+        "matrix",
+        "records",
+        "optional_count",
+    ];
+    for wrong_type in [false, true] {
+        let record = fields
+            .iter()
+            .map(|field| {
+                let value = if wrong_type && *field == "count" {
+                    "'wrong'".to_owned()
+                } else {
+                    format!("rows[0].{field}")
+                };
+                format!("'{field}': {value}")
+            })
+            .collect::<Vec<_>>()
+            .join(", ");
+        let source = format!("class WrongField(Program):\n    @compute\n    def produce(self, rows: list[Row]) -> Value[{token}]:\n        return {{{record}}}\n    def build(self):\n        root = {token}.get('000123')\n        return self.produce(root.union(root))\n");
+        let result = compile_python_program(&es, &source).await;
+        if wrong_type {
+            let error = result
+                .expect_err("wrong field type must be rejected independently of missing fields");
+            assert!(matches!(error, CompilationError::Program(_)), "{error}");
+        } else {
+            result.expect("complete record reconstruction must be accepted");
+        }
+    }
+}
+
 impl ReturnRejection {
     fn matches(self, error: &CompilationError) -> bool {
         let CompilationError::Program(stage) = error else {

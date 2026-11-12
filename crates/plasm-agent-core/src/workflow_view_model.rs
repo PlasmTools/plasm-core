@@ -7,12 +7,11 @@ use serde::{Deserialize, Serialize};
 
 use crate::workflow_manifest::{WorkflowManifest, WorkflowParameter, WorkflowSeed};
 use crate::workflow_program_template::{
-    instantiate_template, InstantiateError, SymExposureMap, WorkflowProgramTemplate,
+    instantiate_template, InstantiateError, WorkflowProgramTemplate,
 };
 use crate::workflow_readiness::assess_workflow_readiness;
 use crate::workflow_registry::WorkflowRegistry;
 use plasm_core::discovery::CgsRegistry;
-use plasm_core::ExposedEntitySymbolRow;
 use plasm_core::Value;
 
 pub const WORKFLOW_VIEW_MODEL_SCHEMA_VERSION: u32 = 1;
@@ -136,23 +135,14 @@ fn wire_type_for_bind(bind: &crate::workflow_manifest::WorkflowSemanticBind) -> 
     }
 }
 
-/// Build sym exposure from live execute session entity symbols (preferred for MCP App).
-pub fn sym_exposure_from_entity_symbols(
-    rows: &[ExposedEntitySymbolRow],
-) -> BTreeMap<(String, String), String> {
-    rows.iter()
-        .map(|r| ((r.entry_id.clone(), r.entity.clone()), r.symbol.clone()))
-        .collect()
-}
-
 pub fn instantiate_workflow_program(
     _manifest: &WorkflowManifest,
     template: &WorkflowProgramTemplate,
     params_json: &BTreeMap<String, serde_json::Value>,
-    exposure: &SymExposureMap<'_>,
+    symbols: &dyn plasm_core::SymbolSession,
 ) -> Result<String, InstantiateError> {
     let params = json_params_to_values(params_json);
-    instantiate_template(template, &params, exposure)
+    instantiate_template(template, &params, |reference| reference.resolve(symbols))
 }
 
 fn json_params_to_values(raw: &BTreeMap<String, serde_json::Value>) -> BTreeMap<String, Value> {
@@ -190,25 +180,6 @@ pub fn lookup_view_model_with_readiness(
     workflows
         .get(id)
         .map(|m| build_workflow_view_model_with_readiness(&m, Some((catalog, tenant_cfg))))
-}
-
-/// Map entity exposure order to `e1`, `e2`, … for sym holes (display-only in emitted program).
-pub fn default_sym_exposure(manifest: &WorkflowManifest) -> BTreeMap<(String, String), String> {
-    manifest
-        .seeds
-        .iter()
-        .enumerate()
-        .map(|(i, s)| {
-            (
-                (s.entry_id.clone(), s.entity.clone()),
-                format!("e{}", i + 1),
-            )
-        })
-        .collect()
-}
-
-pub fn sym_exposure_refs<'a>(owned: &'a BTreeMap<(String, String), String>) -> SymExposureMap<'a> {
-    owned.iter().map(|(k, v)| (k.clone(), v.as_str())).collect()
 }
 
 #[cfg(test)]
@@ -259,9 +230,16 @@ mod tests {
         let tpl = m.parsed_template().expect("parse");
         let mut params = BTreeMap::new();
         params.insert("limit".into(), serde_json::json!(5));
-        let exposure_map = default_sym_exposure(&m);
-        let refs = sym_exposure_refs(&exposure_map);
-        let prog = instantiate_workflow_program(&m, &tpl, &params, &refs).expect("inst");
+        let values = json_params_to_values(&params);
+        let prog = instantiate_template(&tpl, &values, |reference| {
+            Ok(if reference.catalog() == "catalog_a" {
+                "e1"
+            } else {
+                "e2"
+            }
+            .into())
+        })
+        .expect("inst");
         assert!(prog.contains("e1"));
         assert!(prog.contains("5"));
     }

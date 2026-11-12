@@ -1,0 +1,7 @@
+{
+  "fixtures/discovery/fixed-v1/cases.json": "5a8ff84c8f19c0a15e57f79b053791da799df59cde970b4457998e4e2d309556",
+  "fixtures/discovery/fixed-v1/generate.py": "730d45075f2e87ef127a33ca65d78aacaef90bd292773d37f135cc2f7a63763d",
+  "fixtures/discovery/fixed-v1/PROTOCOL.md": "fc0ef8790949a0316f4fbf2e03141a62d4a92adbfafc4884cc5db38820a9373a",
+  "fixtures/schemas/discovery_fixed_v1/domain.yaml": "d293af3b538dc4d66a2abbb35350ce680316974997d5d84c7277020d86734fe4",
+  "fixtures/schemas/discovery_fixed_v1/mappings.yaml": "0c2c9e9d171191af92b66a01484160a6042302aeb099e8cfcb96978af90babf3"
+}

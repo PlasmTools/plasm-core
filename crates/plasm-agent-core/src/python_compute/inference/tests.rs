@@ -1,5 +1,74 @@
 use super::*;
 
+#[test]
+fn diagnostic_domains_with_equal_carriers_remain_distinguishable() {
+    let mut declarations = declarations::Declarations::default();
+    let mut names = Vec::new();
+    for domain in ["item_id", "group_id"] {
+        let mut contract = Type::scalar(FieldType::Integer);
+        contract.domain = Some(plasm_core::value_contract::DomainRef {
+            entry_id: "matrix".into(),
+            catalog_hash: "private-pin".into(),
+            value_ref: ValueDomainKey::new(domain).unwrap(),
+        });
+        names.push(declarations.render(&contract, 0).unwrap());
+    }
+    let diagnostics = InferenceDiagnostics::from(Vec::new()).with_declarations(&declarations);
+    let rendered = super::super::diagnostics::semantic_text(
+        &format!("Expected {}, found {}", names[0], names[1]),
+        &diagnostics.type_labels,
+    );
+    assert!(
+        rendered.contains("item_id") && rendered.contains("group_id"),
+        "{rendered}"
+    );
+    assert!(!rendered.contains("private-pin"));
+    assert!(!rendered.contains("PlasmAnalysisType"));
+}
+
+#[test]
+fn annotation_rejections_explain_records_in_text_and_structured_details() {
+    let actual = Type::record(
+        BTreeMap::from([("id".into(), Type::scalar(FieldType::Integer))]),
+        Default::default(),
+    );
+    let expected = Type::record(
+        BTreeMap::from([("id".into(), Type::scalar(FieldType::String))]),
+        Default::default(),
+    );
+    let aliases = BTreeMap::from([("Expected".into(), expected)]);
+    let errors = [
+        annotation_with_imports("Expected", &aliases, "", Some(&actual)).unwrap_err(),
+        check_annotated_body(
+            "\n    return value\n",
+            &[("value", &actual)],
+            "Expected",
+            &aliases,
+            "",
+            &plasm_core::CGS::default(),
+            &BTreeMap::new(),
+        )
+        .unwrap_err(),
+    ];
+    for error in errors {
+        let text = error.to_string();
+        assert!(text.contains("id:"), "{text}");
+        assert!(text.contains("help:"), "{text}");
+        let detail = serde_json::to_string(&error.rejection_detail().unwrap()).unwrap();
+        for rendered in [&text, &detail] {
+            for internal in [
+                "PlasmRecord",
+                "PlasmOutput",
+                "PlasmAnalysisType",
+                "PlasmArgument",
+                "__plasm_expected",
+            ] {
+                assert!(!rendered.contains(internal), "{rendered}");
+            }
+        }
+    }
+}
+
 // Python builtin int includes bool after upstream subtype normalization.
 fn python_integer_contract() -> Type {
     Type::join(
@@ -1323,8 +1392,7 @@ fn checker_rejection_retains_original_record() {
     };
     assert_eq!(diagnostics.entries[0].diagnostic, record);
     assert!(std::error::Error::source(&failure).is_some());
-    assert_eq!(
-        diagnostics.to_string(),
-        "invalid-argument-type: argument rejected"
-    );
+    let rendered = diagnostics.to_string();
+    assert!(rendered.starts_with("invalid-argument-type: argument rejected"));
+    assert!(rendered.contains("help: Match the expected input shape"));
 }

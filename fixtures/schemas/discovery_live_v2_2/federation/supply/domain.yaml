@@ -1,0 +1,67 @@
+{
+  "version": 1,
+  "entry_id": "supply",
+  "http_backend": "http://127.0.0.1:9",
+  "auth": {
+    "scheme": "none"
+  },
+  "values": {
+    "sample": {
+      "type": "string",
+      "description": "Reference sample used to calibrate a spectrometer."
+    },
+    "calibration": {
+      "type": "string",
+      "description": "Completed spectrometer calibration."
+    }
+  },
+  "entities": {
+    "Sample": {
+      "id_field": "value",
+      "description": "Reference sample used to calibrate a spectrometer.",
+      "fields": {
+        "value": {
+          "value_ref": "sample",
+          "required": true
+        }
+      }
+    }
+  },
+  "capabilities": {
+    "sample_read": {
+      "entity": "Sample",
+      "kind": "get",
+      "description": "Read a reference sample for spectrometer calibration.",
+      "receiver": {
+        "kind": "none"
+      },
+      "provides": [
+        "value"
+      ],
+      "output": {
+        "type": "entity",
+        "entity_type": "Sample"
+      }
+    }
+  },
+  "prerequisites": {
+    "contracts": {
+      "reference_feed": {
+        "version": 1,
+        "inputs": {},
+        "outputs": {
+          "sample": "sample"
+        }
+      }
+    },
+    "providers": {
+      "reference": {
+        "contract": "reference_feed",
+        "capability": "sample_read",
+        "outputs": {
+          "sample": "value"
+        }
+      }
+    }
+  }
+}

@@ -460,8 +460,18 @@ impl<'a, P: FlowPolicyEvaluator + ?Sized> FlowPass<'a, P> {
                     .insert(id.clone(), NodeDisposition::Allow);
                 self.sink_proofs.insert(id, SinkProof::StaticClean);
             }
-            ValidatedPlanNode::Data(_) => {
-                self.facts.insert(id.clone(), NodeFlowFacts::default());
+            ValidatedPlanNode::Data(n) => {
+                let mut facts = NodeFlowFacts::default();
+                if let Some(origin) = &n.recorded_output {
+                    facts.residual.labels = origin.labels.clone();
+                    facts.residual.labels.extend(
+                        self.catalog
+                            .output_labels_for_entity(&origin.entry_id, &origin.entity),
+                    );
+                    facts.residual.provenance = origin.provenance.clone();
+                    facts.residual.provenance.insert(origin.run_id.clone());
+                }
+                self.facts.insert(id.clone(), facts);
                 self.node_dispositions
                     .insert(id.clone(), NodeDisposition::Allow);
                 self.sink_proofs.insert(id, SinkProof::StaticClean);
@@ -779,7 +789,8 @@ impl<'a, P: FlowPolicyEvaluator + ?Sized> FlowPass<'a, P> {
                     );
                 }
             }
-            ComputeOp::NarrowEntity { .. }
+            ComputeOp::RequireOne
+            | ComputeOp::NarrowEntity { .. }
             | ComputeOp::Filter { .. }
             | ComputeOp::Sort { .. }
             | ComputeOp::Limit { .. }

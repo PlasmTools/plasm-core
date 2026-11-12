@@ -1,7 +1,21 @@
 load("//build/bazel:integration_tests.bzl", "rust_integration_tests")
 load(":build_targets.bzl", "build_targets")
+load("@crates//:defs.bzl", "aliases", "all_crate_deps")
+load("@rules_rust//rust:defs.bzl", "rust_binary")
 
 build_targets()
+
+# Native serialization proof consumed by the TypeScript routing tests.
+rust_binary(
+    name = "routing_contract",
+    srcs = ["examples/routing_contract.rs"],
+    crate_root = "examples/routing_contract.rs",
+    compile_data = ["//:test_fixtures"],
+    edition = "2021",
+    aliases = aliases(),
+    proc_macro_deps = all_crate_deps(proc_macro = True),
+    deps = [":plasm_agent_core"] + all_crate_deps(normal = True),
+)
 
 filegroup(
     name = "embedded_ui_assets",

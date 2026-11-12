@@ -281,9 +281,18 @@ impl PlasmMcpHandler {
         match run_result {
             Ok(out) => {
                 let metrics_label = out.metrics_label();
-                let markdown = out
+                let mut markdown = out
                     .run_markdown
                     .unwrap_or_else(|| "# Plasm program plan\n\nNo execution output.".to_string());
+                if let (
+                    crate::plasm_plan_run::PlanAgentOutcome::Ready,
+                    Some(super::mcp_plasm_invoke::ExecutableRunTarget::Commit(reference)),
+                ) = (out.agent_outcome, invocation.run_target())
+                {
+                    markdown = format!(
+                        "**Completed review:** `{reference}` (already executed; do not run it again)\n\n{markdown}"
+                    );
+                }
                 let response_chars = markdown.chars().count() as u64;
                 if response_chars > 0 {
                     let mut g = state.lock().await;
@@ -321,7 +330,7 @@ impl PlasmMcpHandler {
                     "none",
                     started.elapsed(),
                 );
-                let res = if let Some(m) = out.run_plasm_meta {
+                let mut res = if let Some(m) = out.run_plasm_meta {
                     if matches!(
                         delivery_profile,
                         crate::mcp_delivery::McpDeliveryProfile::ToolFallback
@@ -342,6 +351,129 @@ impl PlasmMcpHandler {
                 } else {
                     CallToolResult::success(vec![rmcp::model::ContentBlock::text(markdown)])
                 };
+                let learning = &self.plasm.workflow_learning;
+                if matches!(
+                    learning.mode,
+                    crate::workflow_learning::LearningMode::Serving
+                        | crate::workflow_learning::LearningMode::ShadowWithRecall
+                ) {
+                    if let (Ok(tcfg), Some(record), Some(execute)) = (
+                        self.tenant_mcp_cfg(runtime).await,
+                        self.plasm
+                            .logical_sessions
+                            .get(LogicalSessionId(logical_uuid))
+                            .await,
+                        self.plasm
+                            .get_execute_session(&b.prompt_hash, &b.session_id)
+                            .await,
+                    ) {
+                        if let (Some(pin), Some(execute_pin)) =
+                            (record.discovery_pin, execute.discovery_pin.as_ref())
+                        {
+                            if pin.pin_id == execute_pin.pin_id
+                                && pin.generation == execute_pin.generation
+                            {
+                                let mut allowed =
+                                    pin.authorization.intersection(&execute_pin.authorization);
+                                if let Some(cfg) = &tcfg {
+                                    let mut current =
+                                        crate::discovery_store::DiscoveryAuthorization::catalogs(
+                                            cfg.allowed_entry_ids.iter().cloned().collect(),
+                                        );
+                                    current.capabilities = cfg
+                                        .capabilities_by_entry
+                                        .iter()
+                                        .filter(|(_, capabilities)| !capabilities.is_empty())
+                                        .map(|(entry, capabilities)| {
+                                            (entry.clone(), capabilities.iter().cloned().collect())
+                                        })
+                                        .collect();
+                                    allowed = allowed.intersection(&current);
+                                }
+                                let library_scope =
+                                    crate::workflow_learning::scope(&scope, tcfg.as_deref());
+                                for item in learning
+                                    .deferred_recalls
+                                    .completed_for_session(
+                                        &ls_key,
+                                        &library_scope,
+                                        &pin.generation,
+                                        &allowed,
+                                    )
+                                    .into_iter()
+                                    .filter(|item| !item.examples.is_empty())
+                                    .take(3)
+                                {
+                                    if let Some((examples, _)) =
+                                        crate::workflow_learning::deferred_recall::validate_current(
+                                            learning,
+                                            &library_scope,
+                                            (item.examples, item.associations),
+                                        )
+                                        .await
+                                    {
+                                        let fresh = learning.deferred_recalls.claim_delivery(
+                                            item.ticket,
+                                            &examples
+                                                .iter()
+                                                .map(|example| example.id)
+                                                .collect::<Vec<_>>(),
+                                        );
+                                        if !fresh.is_empty() {
+                                            let cards = examples
+                                                .iter()
+                                                .filter(|example| fresh.contains(&example.id))
+                                                .take(3)
+                                                .map(|example| {
+                                                    format!(
+                                                        "- {}: {}",
+                                                        example.id,
+                                                        example.candidate.intent.purpose
+                                                    )
+                                                })
+                                                .collect::<Vec<_>>()
+                                                .join("\n");
+                                            res.content.push(rmcp::model::ContentBlock::text(format!("Optional workflow examples for {} (retrieve with plasm_example):\n{}", item.intent, cards)));
+                                        }
+                                    }
+                                }
+                                let context =
+                                    crate::workflow_learning::deferred_recall::RecallContext {
+                                        scope: library_scope,
+                                        intent: record.intent_provenance.current().to_owned(),
+                                    intent_revision: crate::workflow_learning::deferred_recall::intent_revision(&record.intent_provenance),
+                                        generation: pin.generation.clone(),
+                                        authorization: allowed,
+                                    };
+                                if learning
+                                    .deferred_recalls
+                                    .take_supplemental_failure(&ls_key, &context)
+                                {
+                                    res.content.push(rmcp::model::ContentBlock::text("Supplemental discovery is unavailable; ordinary discovery remains available."));
+                                }
+                                if learning
+                                    .deferred_recalls
+                                    .supplemental_ready(&ls_key, &context)
+                                {
+                                    let request = serde_json::json!({
+                                        "intent": context.intent,
+                                        "session_mode": "extend",
+                                        "logical_session_ref": session_ref,
+                                    });
+                                    match self
+                                        .handle_mcp_supplemental_context(key, runtime, &request)
+                                        .await
+                                    {
+                                        Ok(update) => res.content.extend(update.content),
+                                        Err(error) => {
+                                            tracing::debug!(target: "plasm_agent::workflow_learning", %error, "supplemental discovery delivery deferred")
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
                 self.schedule_persist_transport_state(key);
                 Ok(res)
             }

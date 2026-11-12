@@ -16,6 +16,7 @@ mod backend;
 mod backend_fs;
 mod backend_memory;
 mod backend_object_store;
+mod completed_output;
 mod evidence_sidecar;
 mod gc;
 mod keys;
@@ -26,6 +27,7 @@ mod uri;
 #[cfg(test)]
 mod tests;
 
+pub use completed_output::{CompletedOutput, CompletedOutputError};
 pub use persist::{
     mint_run_artifact_id_for_session, persist_execute_run, PersistExecuteRunError,
     PersistExecuteRunInput,

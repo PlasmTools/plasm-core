@@ -138,7 +138,10 @@ impl McpBindings {
                     server: call.server.clone(),
                 })?;
         let mut session = session.lock().await;
-        let receipt = fingerprint.and_then(crate::execution::DispatchReceipt::begin);
+        let receipt = match fingerprint {
+            Some(fingerprint) => crate::execution::DispatchReceipt::begin(fingerprint),
+            None => None,
+        };
         let result = crate::execution::with_dispatch_receipt(receipt, async {
             let result = session
                 .call_tool(

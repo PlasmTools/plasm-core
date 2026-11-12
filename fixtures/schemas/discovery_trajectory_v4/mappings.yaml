@@ -1,0 +1,9 @@
+sample_read: { method: GET, path: [{type: literal, value: sample}] }
+prepare: { method: POST, path: [{type: literal, value: prepare}] }
+fire: { method: POST, path: [{type: literal, value: fire}] }
+cabinet_read: { method: GET, path: [{type: literal, value: cabinet}] }
+specimen_read: { method: GET, path: [{type: literal, value: specimen}] }
+stamp: { method: POST, path: [{type: literal, value: stamp}] }
+publish: { method: POST, path: [{type: literal, value: bulletin}] }
+routine: { method: POST, path: [{type: literal, value: routine}] }
+record: { method: POST, path: [{type: literal, value: record}] }

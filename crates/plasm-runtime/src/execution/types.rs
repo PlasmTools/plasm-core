@@ -201,6 +201,8 @@ pub type RowsProgressFn = std::sync::Arc<dyn Fn(usize) + Send + Sync>;
 /// Snapshot of [`PaginationLoopState`] for opaque LLM paging continuations (host-only; not for wire serde).
 #[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct QueryPaginationState {
+    #[serde(skip)]
+    pub progress_guard: super::pagination_driver::PaginationProgressGuard,
     pub mcp_collection: crate::mcp_execution::McpCollectionProgress,
     pub param_values: Vec<(String, Option<serde_json::Value>)>,
     /// Number of successfully decoded pages, including pages before a resume.
@@ -217,6 +219,12 @@ pub struct QueryPaginationState {
 #[derive(Debug, Clone, PartialEq)]
 pub struct QueryPaginationResumeData {
     pub query: plasm_core::QueryExpr,
+    /// Residual resolved at acquisition, never re-partitioned at resume.
+    pub residual: Option<plasm_core::Predicate>,
+    /// Pinned execution catalog, including overlay and its scope index.
+    pub catalog_hash: String,
+    /// Pinned compiled request catalog (which may be the overlay's base catalog).
+    pub compiled_catalog_hash: String,
     pub capability_name: String,
     pub env: plasm_compile::CmlEnv,
     pub template: plasm_compile::CapabilityTemplate,

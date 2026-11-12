@@ -1,0 +1,38 @@
+{
+  "blank_read": {
+    "method": "GET",
+    "path": [
+      {
+        "type": "literal",
+        "value": "blank_read"
+      }
+    ]
+  },
+  "pattern_prepare": {
+    "method": "POST",
+    "path": [
+      {
+        "type": "literal",
+        "value": "pattern_prepare"
+      }
+    ]
+  },
+  "plate_emboss": {
+    "method": "POST",
+    "path": [
+      {
+        "type": "literal",
+        "value": "plate_emboss"
+      }
+    ]
+  },
+  "invoice_read": {
+    "method": "GET",
+    "path": [
+      {
+        "type": "literal",
+        "value": "invoice_read"
+      }
+    ]
+  }
+}

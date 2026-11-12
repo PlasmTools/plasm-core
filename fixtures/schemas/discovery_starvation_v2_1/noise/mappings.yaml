@@ -1,0 +1,3 @@
+archive:
+  method: GET
+  path: [{type: literal, value: archive}]

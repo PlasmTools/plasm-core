@@ -19,12 +19,17 @@ export const prerequisiteClosureSchema = z.object({
 const match = z.object({
   capability_id: z.string().min(1),
   choice: z.enum(["relevant", "unrelated", "uncertain"]),
-  probabilities: z.record(z.string(), z.number()), confidence: z.number().min(0).max(1),
 }).strict();
 
-const probabilityChoices = {
-  capability: ["relevant", "unrelated", "uncertain"],
-} as const;
+const scopeBudgetRetention = z.object({
+  capability_id: z.string().min(1),
+  reference: capability,
+  capabilities: z.number().int().nonnegative().safe(),
+  capability_limit: z.number().int().positive().safe(),
+  bytes: z.number().int().nonnegative().safe(),
+  byte_limit: z.number().int().positive().safe(),
+}).strict().refine(value => value.capabilities > value.capability_limit || value.bytes > value.byte_limit,
+  {message: "budget retention requires an exceeded scope limit"});
 
 function capabilityKey(value: z.infer<typeof capability>): string {
   return `${value.catalog}\0${value.capability}`;
@@ -36,33 +41,7 @@ function sameSet(left: Iterable<string>, right: Iterable<string>): boolean {
   return a.size === b.size && [...a].every((value) => b.has(value));
 }
 
-function validateProbabilities(
-  probabilities: Record<string, number>,
-  choices: readonly string[],
-  ctx: z.RefinementCtx,
-  path: Array<string | number>,
-): void {
-  if (!sameSet(Object.keys(probabilities), choices)) {
-    ctx.addIssue({ code: "custom", path, message: "probability keys do not match choices" });
-    return;
-  }
-  const values = choices.map((choice) => probabilities[choice] ?? Number.NaN);
-  if (values.some((value) => !Number.isFinite(value) || value < 0 || value > 1)) {
-    ctx.addIssue({ code: "custom", path, message: "probabilities must be finite values in [0, 1]" });
-  }
-  const total = values.reduce((sum, value) => sum + value, 0);
-  if (Math.abs(total - 1) > 0.01) {
-    ctx.addIssue({ code: "custom", path, message: "probabilities must sum to one" });
-  }
-}
-
-export const environmentSupportSchema = z.object({
-  choice: z.enum(["established", "not_established", "undetermined"]),
-  request_hash: z.string(),
-}).strict();
-
 const routingSchema = z.object({
-  environment_support: environmentSupportSchema.optional().nullable(),
   intent_provenance: intentProvenanceSchema,
   intent_analysis: z.string().optional(),
   intent: workflowIntentSchema,
@@ -77,10 +56,25 @@ const routingSchema = z.object({
   }).passthrough(),
   matching: z.object({
     matches: z.array(match),
+    budget_retained: z.array(scopeBudgetRetention).max(0).optional(),
+  }).strict(),
+  search: z.object({
+    policy: z.literal("additive-connected-frontier-current-hybrid-evidence-3-judgments-3-attempts-16000-byte-packet-v43"),
+    exposed: z.array(capability),
+    considered: z.array(capability),
+    unexplored: z.array(capability),
+    deferred: z.array(z.object({
+      reference: capability,
+      reason: z.enum(["requests", "input_bytes", "acquisition_cycle", "reported_input_tokens", "operation_pending", "operation_uncertain", "provider_unavailable"]),
+    }).strict()),
+    requests: z.number().int().min(0).max(3),
+    input_bytes: z.number().int().min(0).max(48000),
+    reported_input_tokens: z.number().int().nonnegative().safe(),
+    missing_usage: z.number().int().min(0).max(3),
   }).strict(),
   closure: prerequisiteClosureSchema.nullable(),
   recovery: z.object({
-    candidates: z.array(z.object({ reference: capability, choice: z.enum(["relevant", "unrelated", "uncertain"]), relevance_probability: z.number().min(0).max(1) }).strict()),
+    candidates: z.array(z.object({ reference: capability, choice: z.enum(["relevant", "unrelated", "uncertain"]) }).strict()),
     available_catalogs: z.array(z.object({
       entry_id: z.string().min(1),
       description: z.string().min(1),
@@ -90,6 +84,16 @@ const routingSchema = z.object({
 }).strict().superRefine((routing, ctx) => {
   const candidates = new Map(routing.retrieval.candidates.map(c => [c.id, c]));
   const matches = routing.matching.matches;
+  const budgetRetained = routing.matching.budget_retained ?? [];
+  if (new Set(budgetRetained.map(value => value.capability_id)).size !== budgetRetained.length
+    || budgetRetained.some(value => {
+      const candidate = candidates.get(value.capability_id);
+      return !candidate || capabilityKey(candidate.reference) !== capabilityKey(value.reference)
+        || !matches.some(match => match.capability_id === value.capability_id && match.choice === "uncertain");
+    })) {
+    ctx.addIssue({code: "custom", path: ["matching", "budget_retained"],
+      message: "budget outcomes must uniquely identify retained uncertain candidates"});
+  }
   const selected = matches.filter(m => m.choice !== "unrelated").flatMap(m => {
     const c = candidates.get(m.capability_id); return c ? [capabilityKey(c.reference)] : [];
   });
@@ -99,23 +103,48 @@ const routingSchema = z.object({
     || !sameSet(matches.map(m => m.capability_id), candidates.keys())) {
     ctx.addIssue({code:"custom",path:["matching"],message:"relevance decisions must cover each candidate exactly once"});
   }
-  matches.forEach((m,i) => validateProbabilities(m.probabilities, probabilityChoices.capability, ctx, ["matching","matches",i,"probabilities"]));
   if (!sameSet(selected, routing.closure?.business.map(capabilityKey) ?? [])
     || (routing.closure?.input_sources.length ?? 0) !== 0) {
     ctx.addIssue({code:"custom",path:["closure"],message:"closure must retain exactly the current relevant and uncertain capabilities"});
   }
-  if (Boolean(routing.recovery) !== (selected.length === 0)) {
+  if (Boolean(routing.recovery) !== (selected.length === 0 && routing.search.exposed.length === 0
+    && routing.search.deferred.length === 0)) {
     ctx.addIssue({code:"custom",path:["recovery"],message:"empty-selection diagnostic contradicts relevance decisions"});
   }
   if (routing.recovery) {
-    const expected = matches.flatMap(m => { const c = candidates.get(m.capability_id); return c ? [JSON.stringify([capabilityKey(c.reference),m.choice,m.probabilities.relevant])] : []; });
-    const actual = routing.recovery.candidates.map(c => JSON.stringify([capabilityKey(c.reference),c.choice,c.relevance_probability]));
+    const expected = matches.flatMap(m => { const c = candidates.get(m.capability_id); return c ? [JSON.stringify([capabilityKey(c.reference),m.choice])] : []; });
+    const actual = routing.recovery.candidates.map(c => JSON.stringify([capabilityKey(c.reference),c.choice]));
     if (!sameSet(expected,actual)) ctx.addIssue({code:"custom",path:["recovery"],message:"diagnostics contradict relevance decisions"});
   }
   const permitted = (ref: z.infer<typeof capability>): boolean => routing.authorization.catalogs.includes(ref.catalog)
     && (routing.authorization.capabilities[ref.catalog]?.includes(ref.capability) ?? true);
   const closure = routing.closure;
+  const considered = new Set(routing.search.considered.map(capabilityKey));
+  const exposed = new Set(routing.search.exposed.map(capabilityKey));
+  const unexplored = new Set(routing.search.unexplored.map(capabilityKey));
+  if (considered.size !== routing.search.considered.length
+    || exposed.size !== routing.search.exposed.length
+    || routing.retrieval.candidates.some(candidate => exposed.has(capabilityKey(candidate.reference)))
+    || routing.search.unexplored.some(ref => exposed.has(capabilityKey(ref)))
+    || unexplored.size !== routing.search.unexplored.length
+    || routing.retrieval.candidates.some(candidate => unexplored.has(capabilityKey(candidate.reference)))
+    || (closure?.prerequisites.some(ref => unexplored.has(capabilityKey(ref))) ?? false)
+    || new Set(routing.search.deferred.map(item => capabilityKey(item.reference))).size !== routing.search.deferred.length
+    || routing.search.deferred.some(item => !unexplored.has(capabilityKey(item.reference))
+      && !(closure?.prerequisites.some(ref => capabilityKey(ref) === capabilityKey(item.reference)) ?? false)
+      && !((item.reason === "operation_pending" || item.reason === "operation_uncertain" || item.reason === "provider_unavailable")
+        && routing.retrieval.candidates.some(candidate => capabilityKey(candidate.reference) === capabilityKey(item.reference))))
+    || routing.retrieval.candidates.some(candidate => !considered.has(capabilityKey(candidate.reference)))
+    || routing.search.missing_usage > routing.search.requests
+    || (routing.search.requests === 0 ? routing.search.input_bytes !== 0
+      : routing.search.input_bytes === 0 || routing.search.input_bytes > routing.search.requests * 16000
+        )
+    || (closure?.prerequisites.some(ref => !considered.has(capabilityKey(ref))) ?? false)) {
+    ctx.addIssue({code: "custom", path: ["search"], message: "bounded search accounting contradicts judged capabilities or required acquisitions"});
+  }
   if (routing.retrieval.candidates.some((candidate) => !permitted(candidate.reference))
+    || [...routing.search.exposed, ...routing.search.considered, ...routing.search.unexplored,
+      ...routing.search.deferred.map(item => item.reference)].some(ref => !permitted(ref))
     || (closure && [...closure.business, ...closure.input_sources, ...closure.prerequisites].some((ref) => !permitted(ref)))) {
     ctx.addIssue({ code: "custom", path: ["authorization"], message: "routing exposed an unauthorized capability" });
   }
@@ -124,7 +153,13 @@ const routingSchema = z.object({
 /** The Rust router owns validation; this decoder also rejects mismatched native packages. */
 export const routingPacketSchema = z.object({
   routing: routingSchema,
-  teaching: z.object({ prompt: z.string(), delta_refs: z.array(z.string()) }).nullable(),
+  teaching: z.object({ prompt: z.string(), declarations_changed: z.boolean(), delta_refs: z.array(z.string()) }).nullable(),
+  workflow_examples: z.array(z.object({
+    example_ref: z.string().uuid(), purpose: z.string(),
+    outputs: z.array(z.string()),
+    assurance: z.enum(["agent_attested", "postcondition_verified"]),
+  }).strict()).max(3).optional(),
+  workflow_recall: z.enum(["completed", "pending", "unavailable", "timed_out"]).optional(),
 });
 export type RoutingPacket = z.infer<typeof routingPacketSchema>;
 export type PrerequisiteClosure = z.infer<typeof prerequisiteClosureSchema>;
@@ -154,17 +189,5 @@ export function routingExplanationLines(matching: RoutingPacket["routing"]["matc
 export function routingRecoveryMarkdown(routing: RoutingPacket["routing"]): string | null {
   const recovery=routing.recovery;
   if (!recovery) return null;
-  return [recovery.guidance,...[...recovery.candidates].sort((a,b)=>b.relevance_probability-a.relevance_probability).slice(0,3).map(c=>`- \`${c.reference.catalog}/${c.reference.capability}\`: ${c.choice} (relevance ${c.relevance_probability.toFixed(2)})`),...recovery.available_catalogs.map(c=>`- \`${c.entry_id}\`: ${c.description}`)].join("\n\n");
-}
-
-/** Advisory capability evidence; it never grants execution or recovery authority. */
-export function routingSupportMarkdown(routing: RoutingPacket["routing"]): string | null {
-  const support = routing.environment_support;
-  if (!support) return null;
-  const guidance: Record<z.infer<typeof environmentSupportSchema>["choice"], string> = {
-    established: "The supplied operation contracts establish capability-level support for the current intent. This is not a guarantee of matching data, successful execution or permission.",
-    not_established: "The supplied operation contracts do not establish a plan for the current intent. Relevant capabilities remain available. Inspect their inputs and outputs, then extend the same logical_session_ref for unresolved needs. This does not mean the task is impossible or that a capability is absent from the catalog.",
-    undetermined: "Support for the current intent remains undetermined from the supplied contracts. Relevant capabilities remain available. Inspect the evidence and extend the same logical_session_ref for unresolved needs; do not treat this as proof of impossibility.",
-  };
-  return guidance[support.choice];
+  return [recovery.guidance,...[...recovery.candidates].sort((a,b)=>capabilityKey(a.reference).localeCompare(capabilityKey(b.reference))).slice(0,3).map(c=>`- \`${c.reference.catalog}/${c.reference.capability}\`: ${c.choice}`),...recovery.available_catalogs.map(c=>`- \`${c.entry_id}\`: ${c.description}`)].join("\n\n");
 }

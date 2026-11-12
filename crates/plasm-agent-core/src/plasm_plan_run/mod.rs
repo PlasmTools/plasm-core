@@ -64,6 +64,7 @@ mod plan_schedule;
 mod prefer_embed_hydrate;
 mod relation_hydrate;
 mod render_columns;
+mod result_heading;
 mod row_values;
 mod step_materialize;
 
@@ -105,9 +106,7 @@ pub use parse::SessionCatalogNotLoaded;
 pub(crate) use parse::{
     entry_scoped_execute_session, propagate_row_identities, row_identities_from_entities,
 };
-pub(crate) use row_values::{
-    cached_entity_row_values, predicate_matches, value_at_dotted, value_at_segments,
-};
+pub(crate) use row_values::{cached_entity_row_values, value_at_dotted, value_at_segments};
 
 #[cfg(test)]
 use crate::plasm_plan::{parse_plan_value, validate_plan_artifact};
@@ -200,6 +199,7 @@ impl PlasmPlanRunResult {
 /// Dry-run a program plan: validate, type-check, and render simulation JSON per node.
 #[derive(Debug)]
 pub struct DryPlasmPlanEvaluation {
+    pub compilation_symbols: crate::program_symbol_context::CompilationSymbolContext,
     pub version: serde_json::Value,
     pub name: Option<String>,
     artifact: plasm_core::PlasmCompArtifact,
@@ -314,6 +314,7 @@ impl DryPlasmPlanEvaluation {
         let mut graph_summary = cache.graph_summary.clone();
         enrich_graph_summary_flow(&mut graph_summary, &flow_analysis);
         Ok(Self {
+            compilation_symbols: cache.compilation_symbols.clone(),
             version: if cache.version.is_null() {
                 serde_json::json!(artifact.comp.version)
             } else {
@@ -344,12 +345,12 @@ pub struct PlasmPlanDryRunTextMeta<'a> {
     pub plan_hash: &'a str,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize)]
 enum PlasmPlanApprovalDecision {
     Approved,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize)]
 struct PlasmPlanApprovalReceipt {
     decision: PlasmPlanApprovalDecision,
     policy: &'static str,

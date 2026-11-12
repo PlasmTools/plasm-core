@@ -11,7 +11,7 @@
 //! child has no distinct foreign-provider seat. Unproven catalog identity omits
 //! the binding — it does not silently send the parent token.
 
-use crate::schema::{CapabilitySchema, InputFieldSchema, InputFieldWire, InputType};
+use crate::schema::{CapabilitySchema, InputFieldSchema, InputFieldWire, InputSchema, InputType};
 use crate::{CapabilityKind, FieldType, NamedValueSchema, CGS};
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet};
@@ -663,6 +663,60 @@ fn required_inputs(cap: &CapabilitySchema) -> Result<Vec<InputPath>, Prerequisit
     Ok(out)
 }
 
+/// Discovery evidence can name required registry-backed seats reached through
+/// required object fields. Other shapes remain in the capability contract, but
+/// do not establish a source binding: a union needs a branch and an array needs
+/// element/cardinality semantics. This is not prerequisite-provider admission.
+/// Synthetic derived-Get identity seats are not registry-backed arguments:
+/// `input_value_ref` also excludes them from source matching.
+fn projectable_source_inputs(cap: &CapabilitySchema) -> Vec<InputPath> {
+    fn collect(fields: &[InputFieldSchema], lane: InputLane, out: &mut Vec<InputPath>) {
+        let mut pending: Vec<_> = fields
+            .iter()
+            .rev()
+            .map(|field| (field, Vec::new()))
+            .collect();
+        while let Some((field, mut path)) = pending.pop() {
+            if !field.required || field.default.is_some() {
+                continue;
+            }
+            path.push(field.name.clone());
+            match &field.wire {
+                InputFieldWire::Registry(_) => out.push(InputPath {
+                    lane: lane.clone(),
+                    path,
+                }),
+                InputFieldWire::Inline(input) => {
+                    if let InputType::Object { fields, .. } = input.as_ref() {
+                        pending.extend(fields.iter().rev().map(|field| (field, path.clone())));
+                    }
+                }
+            }
+        }
+    }
+    let mut out = Vec::new();
+    for (lane, fields) in [
+        (InputLane::Scope, &cap.inputs.scope.0),
+        (InputLane::Selection, &cap.inputs.selection.0),
+        (InputLane::Controls, &cap.inputs.controls.0),
+    ] {
+        collect(fields, lane, &mut out);
+    }
+    for (lane, schema) in [
+        (InputLane::Arguments, &cap.inputs.arguments),
+        (InputLane::Payload, &cap.inputs.payload),
+    ] {
+        if let Some(InputSchema {
+            input_type: InputType::Object { fields, .. },
+            ..
+        }) = schema
+        {
+            collect(fields, lane, &mut out);
+        }
+    }
+    out
+}
+
 fn capability<'a>(cgs: &'a CGS, id: &str) -> Result<&'a CapabilitySchema, PrerequisiteError> {
     cgs.capabilities
         .get(id)
@@ -1079,7 +1133,7 @@ where
         let prerequisite_seats = consumer_cgs
             .prerequisites
             .acquired_inputs(&consumer.capability);
-        for input in required_inputs(consumer_cap)?
+        for input in projectable_source_inputs(consumer_cap)
             .into_iter()
             .filter(|input| !prerequisite_seats.contains(input))
         {
@@ -1269,12 +1323,13 @@ where
                             && value.field_type.entity_ref_target() == Some(cap.domain.as_str())
                             && output_field == entity.id_field.as_str();
                         if references_identity
-                            || semantic_value_type_eq(
-                                value,
-                                other_value,
-                                source.catalog == *catalog
-                                    && field.kind.registry_key() == other.kind.registry_key(),
-                            )
+                            || (output_field == entity.id_field.as_str()
+                                && semantic_value_type_eq(
+                                    value,
+                                    other_value,
+                                    source.catalog == *catalog
+                                        && field.kind.registry_key() == other.kind.registry_key(),
+                                ))
                         {
                             evidence.entry(provider.clone()).or_default().insert(
                                 InputSourceMembership {
@@ -1430,11 +1485,11 @@ pub(crate) fn semantic_value_type_eq(
     {
         return false;
     }
-    // An interned unlabeled wire shape is not a nominal semantic domain, even
-    // within one catalog. Cross-catalog edges require a core profile (email,
-    // e164, temporal, enum, etc.), money, or an exact entity reference.
+    // Validation profiles constrain representation, not the role of a value.
+    // Two email/telephone/date fields do not by themselves declare a dataflow
+    // or membership relationship. Shared authored identities can establish
+    // membership against an entity key; profile equality alone cannot.
     (same_value_ref && left.has_authored_meaning() && right.has_authored_meaning())
-        || left.domain.profile.is_some()
         || matches!(
             left.domain.kernel,
             crate::value_domain::KernelKind::Money
@@ -1936,7 +1991,7 @@ mod tests {
     }
 
     #[test]
-    fn membership_projection_preserves_typed_identity_witnesses_across_wire() {
+    fn shared_contact_formats_do_not_establish_cross_catalog_membership() {
         for identity in [
             crate::value_domain::ProfileId::Email,
             crate::value_domain::ProfileId::E164,
@@ -1983,36 +2038,28 @@ mod tests {
                 &|_| true,
             )
             .unwrap();
-            let candidate = candidates
-                .iter()
-                .find(|c| c.provider.catalog == "directory" && c.provider.capability == "read")
-                .unwrap();
-            // Retrieval route does not decide whether a provider gets evidence.
+            assert!(candidates.iter().all(|c| c.provider.catalog != "directory"));
+            // Exposing both reads must not turn matching formats into a join.
             let with_provider = project_input_source_candidates(
                 &catalogs,
-                &[business.clone(), candidate.provider.clone()],
+                &[
+                    business.clone(),
+                    CapabilityRef {
+                        catalog: "source".into(),
+                        capability: "read".into(),
+                    },
+                    CapabilityRef {
+                        catalog: "directory".into(),
+                        capability: "read".into(),
+                    },
+                ],
                 &|_| true,
             )
             .unwrap();
-            let same = with_provider
+            assert!(with_provider
                 .iter()
-                .find(|c| c.provider == candidate.provider)
-                .unwrap();
-            assert_eq!(same.projection, candidate.projection);
-            assert!(candidate.bindings.iter().all(|b| same.bindings.contains(b)));
-            assert!(candidate
-                .membership
-                .iter()
-                .all(|m| same.membership.contains(m)));
-            assert!(candidate
-                .membership
-                .iter()
-                .any(|w| w.source.catalog == "source"
-                    && w.source_identity
-                        == RowIdentity::Field {
-                            field: "identity".into()
-                        }
-                    && w.provider_identity == RowIdentity::Field { field: "id".into() }));
+                .flat_map(|c| &c.membership)
+                .all(|m| m.source.catalog != "source"));
             assert_eq!(
                 serde_json::from_slice::<Vec<InputSourceCandidate>>(
                     &serde_json::to_vec(&candidates).unwrap()
@@ -2087,10 +2134,10 @@ mod tests {
             }
             let decoded: CGS = serde_json::from_slice(&serde_json::to_vec(&cgs).unwrap()).unwrap();
             proptest::prop_assert_eq!(before, project(&decoded));
-            // A semantic profile remains evidence without an English label.
+            // Format validation does not establish a resource relationship.
             let value = cgs.values.get_mut("text").unwrap();
             value.domain.profile = Some(crate::value_domain::ProfileId::Email);
-            proptest::prop_assert!(semantic_value_type_eq(value, value, false));
+            proptest::prop_assert!(!semantic_value_type_eq(value, value, false));
         }
 
         #[test]
@@ -2137,15 +2184,11 @@ mod tests {
     }
 
     #[test]
-    fn input_source_projection_uses_types_not_intent_vocabulary() {
+    fn input_source_projection_collects_shared_authored_values_not_wire_profiles() {
         let mut consumer = fixture();
         let mut source = fixture();
         consumer.bind_registry_entry_id("consumer");
         source.bind_registry_entry_id("source");
-        for cgs in [&mut consumer, &mut source] {
-            let value = cgs.values.get_mut("text").unwrap();
-            value.domain.profile = Some(crate::value_domain::ProfileId::Email);
-        }
         consumer.values.insert(
             "emails".into(),
             NamedValueSchema::from_domain(
@@ -2183,12 +2226,15 @@ mod tests {
         let candidates =
             project_input_source_candidates(&catalogs, std::slice::from_ref(&business), &|_| true)
                 .unwrap();
+        assert!(candidates
+            .iter()
+            .all(|candidate| candidate.provider.catalog != "source"));
         let source_read = candidates
             .iter()
             .find(|candidate| {
-                candidate.provider.catalog == "source" && candidate.provider.capability == "read"
+                candidate.provider.catalog == "consumer" && candidate.provider.capability == "read"
             })
-            .expect("profile-compatible read producer");
+            .expect("shared authored value read producer");
         assert!(source_read.bindings.iter().any(|binding| {
             binding.consumer == business
                 && binding.input
@@ -2220,6 +2266,182 @@ mod tests {
         assert!(!candidates
             .iter()
             .any(|candidate| candidate.provider.catalog == "source"));
+    }
+
+    #[test]
+    fn source_projection_preserves_derived_identity_exclusion() {
+        let mut cgs = fixture();
+        let cap = cgs.capabilities.get_mut("read").unwrap();
+        cap.derived = Some(crate::DerivedGetPlan {
+            get_capability: "read".into(),
+            source_query: "acquire".into(),
+            match_field: "value".into(),
+            identity_field: "id".into(),
+            projection: Default::default(),
+        });
+        let identity = InputPath {
+            lane: InputLane::Selection,
+            path: vec!["id".into()],
+        };
+        assert!(required_inputs(cap).unwrap().contains(&identity));
+        assert_eq!(input_value_ref(cap, &identity).unwrap(), None);
+        assert_eq!(
+            projectable_source_inputs(cap),
+            vec![InputPath {
+                lane: InputLane::Selection,
+                path: vec!["credential".into()],
+            }]
+        );
+    }
+
+    #[test]
+    fn source_projection_non_object_lanes_do_not_reject_other_typed_seats() {
+        let original = fixture();
+        let InputType::Object { fields, .. } = &original.capabilities["operate"]
+            .inputs
+            .payload
+            .as_ref()
+            .unwrap()
+            .input_type
+        else {
+            panic!("fixture payload object");
+        };
+        let field = fields[0].clone();
+        let shapes = [
+            InputType::Union {
+                variants: vec![crate::schema::InputVariantSchema {
+                    name: "branch".into(),
+                    description: None,
+                    constructor_symbol: None,
+                    fields: vec![field.clone()],
+                    wire: crate::schema::WireVariantDiscriminator {
+                        field: "kind".into(),
+                        value: "branch".into(),
+                    },
+                }],
+            },
+            InputType::Array {
+                element_type: Box::new(InputType::Object {
+                    fields: vec![field.clone()],
+                    additional_fields: false,
+                }),
+                min_length: Some(1),
+                max_length: Some(2),
+            },
+            InputType::Value {
+                field_type: FieldType::String,
+                allowed_values: None,
+            },
+        ];
+        for shape in shapes {
+            let mut cgs = original.clone();
+            let cap = cgs.capabilities.get_mut("operate").unwrap();
+            cap.inputs.controls.0 = vec![field.clone()];
+            cap.inputs.payload.as_mut().unwrap().input_type = shape.clone();
+            assert_eq!(
+                required_inputs(cap),
+                Err(PrerequisiteError::UnsupportedProviderInput),
+                "strict prerequisite-provider admission must not change"
+            );
+            let before = cap.inputs.clone();
+            let business = CapabilityRef {
+                catalog: "matrix".into(),
+                capability: "operate".into(),
+            };
+            let sources = project_input_source_candidates(
+                &BTreeMap::from([("matrix".into(), &cgs)]),
+                std::slice::from_ref(&business),
+                &|_| true,
+            )
+            .unwrap();
+            let arguments: Vec<_> = sources
+                .iter()
+                .flat_map(|source| &source.bindings)
+                .filter_map(|binding| match &binding.input {
+                    InputSourceTarget::Argument { input } => Some(input.clone()),
+                    InputSourceTarget::Receiver { .. } => None,
+                })
+                .collect();
+            assert!(
+                !arguments.is_empty(),
+                "faithful control seat remains discoverable"
+            );
+            assert!(arguments
+                .iter()
+                .all(|input| input.lane == InputLane::Controls && input.path == ["id"]));
+            assert_eq!(
+                cgs.capabilities["operate"].inputs, before,
+                "opaque contract remains unchanged"
+            );
+        }
+    }
+
+    #[test]
+    fn source_projection_keeps_required_nested_object_seats_without_expanding_opaque_shapes() {
+        let mut cgs = fixture();
+        let cap = cgs.capabilities.get_mut("operate").unwrap();
+        let InputType::Object { fields, .. } = &mut cap.inputs.payload.as_mut().unwrap().input_type
+        else {
+            panic!("fixture payload object");
+        };
+        let mut nested = fields[0].clone();
+        nested.name = "nested".into();
+        nested.wire = InputFieldWire::Inline(Box::new(InputType::Object {
+            fields: vec![fields[0].clone()],
+            additional_fields: false,
+        }));
+        let mut unknown = fields[0].clone();
+        unknown.name = "unknown".into();
+        unknown.wire = InputFieldWire::Inline(Box::new(InputType::Array {
+            element_type: Box::new(InputType::Object {
+                fields: vec![fields[0].clone()],
+                additional_fields: false,
+            }),
+            min_length: None,
+            max_length: None,
+        }));
+        let mut optional = nested.clone();
+        optional.name = "optional".into();
+        optional.required = false;
+        fields.extend([nested, unknown, optional]);
+        assert_eq!(
+            required_inputs(cap),
+            Err(PrerequisiteError::UnsupportedProviderInput)
+        );
+        assert_eq!(
+            projectable_source_inputs(cap),
+            vec![
+                InputPath {
+                    lane: InputLane::Payload,
+                    path: vec!["id".into()]
+                },
+                InputPath {
+                    lane: InputLane::Payload,
+                    path: vec!["nested".into(), "id".into()]
+                },
+            ]
+        );
+        let sources = project_input_source_candidates(
+            &BTreeMap::from([("matrix".into(), &cgs)]),
+            &[CapabilityRef {
+                catalog: "matrix".into(),
+                capability: "operate".into(),
+            }],
+            &|_| true,
+        )
+        .unwrap();
+        assert!(sources
+            .iter()
+            .flat_map(|source| &source.bindings)
+            .any(|binding| {
+                binding.input
+                    == InputSourceTarget::Argument {
+                        input: InputPath {
+                            lane: InputLane::Payload,
+                            path: vec!["nested".into(), "id".into()],
+                        },
+                    }
+            }));
     }
 
     #[test]
@@ -2365,7 +2587,14 @@ mod tests {
             symbols.as_ref(),
         )
         .unwrap();
-        assert!(guidance.contains("scoped_access"));
+        assert!(
+            guidance.contains("matrix::ProviderResult"),
+            "provider catalogue and entity must be visible: {guidance}"
+        );
+        assert!(!guidance.contains("scoped_access"));
+        assert!(!guidance.contains("Declared prerequisites"));
+        assert!(!guidance.contains("Acquisition "));
+        assert!(!guidance.contains("Payload."));
         assert!(
             guidance.contains(".m"),
             "action acquisitions use taught e#.m# not e# / m#:\n{guidance}"
@@ -2432,10 +2661,7 @@ mod tests {
             "{}",
             wave.declarations
         );
-        assert!(
-            guidance.contains(".get(...) Selection.credential"),
-            "{guidance}"
-        );
+        assert!(guidance.contains(".get(...) credential"), "{guidance}");
         assert!(!guidance.contains("not a call argument"), "{guidance}");
     }
 
@@ -2581,6 +2807,95 @@ mod tests {
         )
         .unwrap();
         assert_eq!(closure.input_sources, vec![read]);
+    }
+
+    #[test]
+    fn receiver_bindings_do_not_invent_acquisitions_matrix() {
+        for read_kind in [
+            crate::CapabilityKind::Get,
+            crate::CapabilityKind::Query,
+            crate::CapabilityKind::Search,
+        ] {
+            for (kind, receiver, receiver_entity) in [
+                (crate::CapabilityKind::Update, None, Some("BusinessRecord")),
+                (crate::CapabilityKind::Create, None, None),
+                (
+                    crate::CapabilityKind::Update,
+                    Some(crate::CapabilityReceiver::None),
+                    None,
+                ),
+                (
+                    crate::CapabilityKind::Action,
+                    Some(crate::CapabilityReceiver::Entity {
+                        entity: "ProviderResult".into(),
+                    }),
+                    Some("ProviderResult"),
+                ),
+            ] {
+                let mut cgs = fixture();
+                cgs.capabilities.get_mut("acquire").unwrap().kind = read_kind;
+                let mut row_read = cgs.capabilities["read"].clone();
+                row_read.name = "receiver_read".into();
+                row_read.kind = read_kind;
+                cgs.capabilities.insert("receiver_read".into(), row_read);
+                let consumer = cgs.capabilities.get_mut("read").unwrap();
+                consumer.kind = kind;
+                consumer.inputs.receiver = receiver;
+                let catalogs = BTreeMap::from([("matrix".into(), &cgs)]);
+                let business = CapabilityRef {
+                    catalog: "matrix".into(),
+                    capability: "read".into(),
+                };
+                let closure = prerequisite_closure(
+                    &catalogs,
+                    &DeploymentBindings {
+                        bindings: vec![DeploymentBinding {
+                            consumer: business.clone(),
+                            requirement: "scoped_access".into(),
+                            provider_catalog: "matrix".into(),
+                            provider: "value_source".into(),
+                        }],
+                    },
+                    &[business],
+                    &BTreeSet::from(["matrix".into()]),
+                )
+                .unwrap();
+                let exposure = crate::TeachingExposureSession::new(
+                    &cgs,
+                    "matrix",
+                    &["BusinessRecord", "ProviderResult"],
+                );
+                let symbols = exposure.to_symbol_map();
+                let guidance = crate::prompt_render::render_prerequisite_bindings(
+                    &closure,
+                    &catalogs,
+                    symbols.as_ref(),
+                )
+                .unwrap();
+                let entity = symbols.entity_sym_for("matrix", "BusinessRecord");
+                let method = symbols.method_sym_for("matrix", "BusinessRecord", "read");
+                let target = if let Some(receiver_entity) = receiver_entity {
+                    let receiver_symbol = symbols.entity_sym_for("matrix", receiver_entity);
+                    format!("row.{method}(...) (row: {receiver_symbol}) credential")
+                } else {
+                    format!("{entity}.{method}(...) credential")
+                };
+                assert!(guidance.contains(&target), "{guidance}");
+                assert!(!guidance.contains(&format!("{entity}.get(")), "{guidance}");
+                let provider = symbols.entity_sym_for("matrix", "ProviderResult");
+                let acquisition = match read_kind {
+                    crate::CapabilityKind::Get => "get",
+                    crate::CapabilityKind::Query => "query",
+                    crate::CapabilityKind::Search => "search",
+                    _ => unreachable!(),
+                };
+                assert!(
+                    guidance.contains(&format!("a1 = {provider}.{acquisition}(")),
+                    "{guidance}"
+                );
+                assert!(guidance.contains("a1.value ->"), "{guidance}");
+            }
+        }
     }
 
     #[test]
@@ -2787,7 +3102,7 @@ mod tests {
     }
 
     #[test]
-    fn collection_provider_teaches_row_selection_before_field_binding() {
+    fn collection_cardinality_is_taught_only_by_signature() {
         let mut cgs = fixture();
         cgs.capabilities
             .get_mut("acquire")
@@ -2832,7 +3147,61 @@ mod tests {
             exposure.to_symbol_map().as_ref(),
         )
         .unwrap();
-        assert!(guidance.contains("select or fan out a row"), "{guidance}");
+        assert!(!guidance.contains("select or fan out a row"), "{guidance}");
+        let wave = crate::prompt_render::python::prepare_python_teaching_wave(
+            &exposure,
+            &crate::prompt_render::python::PythonTeachingState::default(),
+        )
+        .unwrap();
+        assert!(wave.declarations.contains("Rows["), "{}", wave.declarations);
+        assert!(guidance.contains(" -> "), "{guidance}");
+    }
+
+    #[test]
+    fn signatures_only_sources_need_no_binding_section() {
+        let mut cgs = fixture();
+        cgs.prerequisites.requirements.clear();
+        let catalogs = BTreeMap::from([("matrix".into(), &cgs)]);
+        let source = CapabilityRef {
+            catalog: "matrix".into(),
+            capability: "read".into(),
+        };
+        let closure = prerequisite_closure_with_selected_sources(
+            &catalogs,
+            &DeploymentBindings { bindings: vec![] },
+            &[CapabilityRef {
+                catalog: "matrix".into(),
+                capability: "operate".into(),
+            }],
+            std::slice::from_ref(&source),
+            &BTreeSet::from(["matrix".into()]),
+            |_| true,
+        )
+        .unwrap();
+        assert_eq!(closure.input_sources, vec![source]);
+        assert!(closure.edges.is_empty());
+        let exposure = crate::TeachingExposureSession::new(
+            &cgs,
+            "matrix",
+            &["BusinessRecord", "ProviderResult"],
+        );
+        let wave = crate::prompt_render::python::prepare_python_teaching_wave(
+            &exposure,
+            &crate::prompt_render::python::PythonTeachingState::default(),
+        )
+        .unwrap();
+        assert!(
+            wave.declarations.contains(".query("),
+            "{}",
+            wave.declarations
+        );
+        assert!(crate::prompt_render::render_prerequisite_bindings(
+            &closure,
+            &catalogs,
+            exposure.to_symbol_map().as_ref(),
+        )
+        .unwrap()
+        .is_empty());
     }
 
     #[test]
@@ -2944,6 +3313,16 @@ mod tests {
                     + 1
             )
         };
+        for (acquisition, owner) in [(consumer_acq, "consumer"), (source_acq, "source")] {
+            let line = guidance
+                .lines()
+                .find(|line| line.starts_with(&format!("{} = ", label(&acquisition.id))))
+                .expect("provider acquisition teaching");
+            assert!(
+                line.ends_with(&format!("# {owner}::AuthSession")),
+                "{guidance}"
+            );
+        }
         let local = guidance
             .lines()
             .find(|line| line.starts_with(&format!("{}.", label(&consumer_acq.id))))
@@ -2952,13 +3331,10 @@ mod tests {
             .lines()
             .find(|line| line.starts_with(&format!("{}.", label(&source_acq.id))))
             .unwrap();
-        assert!(local.contains("Payload.access_token"), "{guidance}");
-        assert!(!local.contains("Payload.source_access_token"), "{guidance}");
-        assert!(
-            foreign.contains("Payload.source_access_token"),
-            "{guidance}"
-        );
-        assert!(!foreign.contains("Payload.access_token"), "{guidance}");
+        assert!(local.contains(" access_token"), "{guidance}");
+        assert!(!local.contains(" source_access_token"), "{guidance}");
+        assert!(foreign.contains(" source_access_token"), "{guidance}");
+        assert!(!foreign.contains(" access_token"), "{guidance}");
         assert!(!guidance.contains(&consumer_acq.id));
         assert!(!guidance.contains(&source_acq.id));
     }

@@ -48,9 +48,12 @@ pub fn preflight_view_query(
     ambient: &ViewAmbientContext,
     mat: &SessionMaterialization,
 ) -> Result<(), RuntimeError> {
+    plasm_core::type_check_query(query, cgs)?;
+    let resolved = plasm_compile::predicate_compiler::resolve_query(query, cgs)
+        .map_err(|source| RuntimeError::CompilationError { source })?;
     preflight_view_scoped_with_proof(
         view_name,
-        derive_view_query_scope(view_name, query, cgs)?,
+        derive_view_query_scope(view_name, query, cgs, &resolved.bindings)?,
         cgs,
         compiled,
         ambient,

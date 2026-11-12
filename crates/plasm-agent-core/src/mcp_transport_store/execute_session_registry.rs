@@ -21,6 +21,10 @@ pub enum ExecuteSessionPersistOutcome {
 
 #[derive(Debug, Clone, thiserror::Error)]
 pub enum ExecuteSessionPersistError {
+    LearningReviewUnavailable,
+    ExposureConflict,
+    Encoding(#[source] Arc<serde_json::Error>),
+    DurableWrite(#[source] Arc<redis::RedisError>),
     MissingReuseKey,
     /// Hot session `domain_revision` is behind durable; caller must rehydrate before writing.
     HotBehindDurable {
@@ -41,6 +45,10 @@ pub enum ExecuteSessionPersistError {
 impl std::fmt::Display for ExecuteSessionPersistError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
+            Self::LearningReviewUnavailable => write!(f, "workflow review cannot seal while evidence is incomplete or another review is active"),
+            Self::ExposureConflict => write!(f, "execute exposure changed concurrently; refresh the session and retry"),
+            Self::Encoding(error) => write!(f, "execute descriptor encoding failed: {error}"),
+            Self::DurableWrite(error) => write!(f, "execute descriptor publication failed: {error}"),
             Self::MissingReuseKey => write!(
                 f,
                 "plan_commit_ref persistence failed: execute session reuse key unavailable — reopen `plasm_context` and dry-run again"
@@ -116,6 +124,35 @@ fn expires_at_from_now() -> u64 {
         .unwrap_or(0)
 }
 
+fn validate_exposure_successor(
+    previous_revision: u32,
+    previous_ledger: &[u8],
+    incoming: &PersistedExecuteSessionDescriptor,
+) -> Result<(), ExecuteSessionPersistError> {
+    validate_exposure_version(
+        previous_revision,
+        previous_ledger,
+        incoming.domain_revision,
+        &incoming.symbol_ledger_bytes,
+    )
+}
+
+fn validate_exposure_version(
+    previous_revision: u32,
+    previous_ledger: &[u8],
+    incoming_revision: u32,
+    incoming_ledger: &[u8],
+) -> Result<(), ExecuteSessionPersistError> {
+    if incoming_revision < previous_revision
+        || (incoming_revision > previous_revision.saturating_add(1)
+            && incoming_ledger != previous_ledger)
+        || (incoming_revision == previous_revision && incoming_ledger != previous_ledger)
+    {
+        return Err(ExecuteSessionPersistError::ExposureConflict);
+    }
+    Ok(())
+}
+
 #[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
 pub struct PersistedSessionReuseKey {
     pub tenant_scope: String,
@@ -157,6 +194,7 @@ impl From<PersistedSessionReuseKey> for SessionReuseKey {
 
 #[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
 pub struct PersistedPlanCommitRecord {
+    pub authorization: crate::plan_authorization::AuthorizationSnapshot,
     pub commit_ref: String,
     pub commit_id_hex: String,
     #[serde(default)]
@@ -176,6 +214,9 @@ pub struct PersistedPlanCommitRecord {
 
 #[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
 pub struct PersistedExecuteSessionDescriptor {
+    #[serde(default)]
+    pub example_fetch_receipts:
+        std::collections::BTreeMap<uuid::Uuid, crate::workflow_learning::serving::ServedExample>,
     #[serde(default)]
     pub discovery_pin: Option<crate::discovery_store::DiscoverySessionPin>,
     pub prompt_hash: String,
@@ -276,6 +317,7 @@ impl PersistedExecuteSessionDescriptor {
             })
             .unwrap_or_else(|| vec![session.entry_id.clone(); entities.len()]);
         Self {
+            example_fetch_receipts: Default::default(),
             prompt_hash: session.prompt_hash.clone(),
             session_id: session_id.to_string(),
             prompt_text: session.prompt_text.clone(),
@@ -312,9 +354,255 @@ impl PersistedExecuteSessionDescriptor {
 pub struct ExecuteSessionRegistry {
     redis: Arc<RwLock<Option<Arc<RedisBackend>>>>,
     test_json: Arc<RwLock<Option<TestJsonStore>>>,
+    memory_descriptors:
+        Arc<RwLock<std::collections::HashMap<String, PersistedExecuteSessionDescriptor>>>,
+    learning_watermarks: Arc<RwLock<std::collections::HashMap<String, LearningExecutionWatermark>>>,
 }
 
+#[derive(Default)]
+struct LearningExecutionWatermark {
+    issued: u64,
+    completed: u64,
+    completed_out_of_order: std::collections::BTreeSet<u64>,
+    attempts: std::collections::HashMap<String, u64>,
+    review: Option<LearningReviewLease>,
+    seals: std::collections::HashMap<String, String>,
+}
+
+struct LearningReviewLease {
+    token: String,
+    issued: u64,
+    until: std::time::Instant,
+}
+
+pub(crate) struct LearningReviewFence {
+    token: String,
+    issued: u64,
+}
+
+const LEARNING_REVIEW_LEASE_MS: u64 = 30_000;
+
 impl ExecuteSessionRegistry {
+    /// Must succeed before effects begin. There is deliberately no expiry: a
+    /// missing completion remains unknown until the execute session is deleted.
+    pub(crate) fn begin_learning_execution<'a>(
+        &'a self,
+        prompt_hash: &'a str,
+        session_id: &'a str,
+        attempt: &'a str,
+    ) -> futures_util::future::BoxFuture<'a, Result<u64, ExecuteSessionPersistError>> {
+        Box::pin(async move {
+            let key = session_key(prompt_hash, session_id);
+            let test_backend = self.test_json().await;
+            if let Some(redis) = self.redis().await.filter(|_| test_backend.is_none()) {
+                return redis
+                    .begin_learning_execution(&key, attempt)
+                    .await
+                    .map_err(|error| ExecuteSessionPersistError::DurableWrite(Arc::new(error)));
+            }
+            if self.load_json(&key).await.is_none() {
+                return Err(ExecuteSessionPersistError::SessionUnavailable);
+            }
+            let mut watermarks = self.learning_watermarks.write().await;
+            let watermark = watermarks.entry(key).or_default();
+            if watermark
+                .review
+                .as_ref()
+                .is_some_and(|review| review.until > std::time::Instant::now())
+            {
+                return Err(ExecuteSessionPersistError::LearningReviewUnavailable);
+            }
+            if let Some(token) = watermark.attempts.get(attempt) {
+                return Ok(*token);
+            }
+            let token = watermark
+                .issued
+                .checked_add(1)
+                .filter(|token| *token <= 9_007_199_254_740_991)
+                .ok_or(ExecuteSessionPersistError::ExposureConflict)?;
+            watermark.issued = token;
+            watermark.attempts.insert(attempt.to_owned(), token);
+            Ok(token)
+        })
+    }
+
+    /// Retain this attempt's completion even when earlier attempts are pending.
+    /// Return whether all issued attempts have completed; duplicate completion
+    /// cannot acknowledge any later attempt.
+    pub(crate) fn complete_learning_execution<'a>(
+        &'a self,
+        prompt_hash: &'a str,
+        session_id: &'a str,
+        token: u64,
+    ) -> futures_util::future::BoxFuture<'a, Result<bool, ExecuteSessionPersistError>> {
+        Box::pin(async move {
+            let key = session_key(prompt_hash, session_id);
+            let test_backend = self.test_json().await;
+            if let Some(redis) = self.redis().await.filter(|_| test_backend.is_none()) {
+                return redis
+                    .complete_learning_execution(&key, token)
+                    .await
+                    .map_err(|error| ExecuteSessionPersistError::DurableWrite(Arc::new(error)));
+            }
+            let mut watermarks = self.learning_watermarks.write().await;
+            let Some(watermark) = watermarks.get_mut(&key) else {
+                return Ok(false);
+            };
+            if token == 0 || token > watermark.issued {
+                return Ok(false);
+            }
+            if token > watermark.completed {
+                watermark.completed_out_of_order.insert(token);
+                while watermark.completed < watermark.issued
+                    && watermark
+                        .completed_out_of_order
+                        .remove(&(watermark.completed + 1))
+                {
+                    watermark.completed += 1;
+                }
+            }
+            Ok(watermark.completed == watermark.issued)
+        })
+    }
+
+    #[cfg(test)]
+    pub(crate) fn learning_evidence_complete<'a>(
+        &'a self,
+        prompt_hash: &'a str,
+        session_id: &'a str,
+    ) -> futures_util::future::BoxFuture<'a, Result<bool, ExecuteSessionPersistError>> {
+        Box::pin(async move {
+            let key = session_key(prompt_hash, session_id);
+            let test_backend = self.test_json().await;
+            if let Some(redis) = self.redis().await.filter(|_| test_backend.is_none()) {
+                return redis
+                    .learning_evidence_complete(&key)
+                    .await
+                    .map_err(|error| ExecuteSessionPersistError::DurableWrite(Arc::new(error)));
+            }
+            Ok(self
+                .learning_watermarks
+                .read()
+                .await
+                .get(&key)
+                .is_some_and(|watermark| {
+                    watermark.issued > 0 && watermark.issued == watermark.completed
+                }))
+        })
+    }
+
+    pub(crate) fn begin_learning_review<'a>(
+        &'a self,
+        prompt_hash: &'a str,
+        session_id: &'a str,
+    ) -> futures_util::future::BoxFuture<'a, Result<LearningReviewFence, ExecuteSessionPersistError>>
+    {
+        Box::pin(async move {
+            let key = session_key(prompt_hash, session_id);
+            let token = uuid::Uuid::new_v4().to_string();
+            let test_backend = self.test_json().await;
+            if let Some(redis) = self.redis().await.filter(|_| test_backend.is_none()) {
+                let issued = redis
+                    .begin_learning_review(&key, &token, LEARNING_REVIEW_LEASE_MS)
+                    .await
+                    .map_err(|error| ExecuteSessionPersistError::DurableWrite(Arc::new(error)))?
+                    .ok_or(ExecuteSessionPersistError::LearningReviewUnavailable)?;
+                return Ok(LearningReviewFence { token, issued });
+            }
+            if self.load_json(&key).await.is_none() {
+                return Err(ExecuteSessionPersistError::SessionUnavailable);
+            }
+            let mut watermarks = self.learning_watermarks.write().await;
+            let watermark = watermarks
+                .get_mut(&key)
+                .ok_or(ExecuteSessionPersistError::LearningReviewUnavailable)?;
+            let now = std::time::Instant::now();
+            if watermark.issued == 0
+                || watermark.issued != watermark.completed
+                || watermark
+                    .review
+                    .as_ref()
+                    .is_some_and(|review| review.until > now)
+            {
+                return Err(ExecuteSessionPersistError::LearningReviewUnavailable);
+            }
+            let issued = watermark.issued;
+            watermark.review = Some(LearningReviewLease {
+                token: token.clone(),
+                issued,
+                until: now + std::time::Duration::from_millis(LEARNING_REVIEW_LEASE_MS),
+            });
+            Ok(LearningReviewFence { token, issued })
+        })
+    }
+
+    pub(crate) fn seal_learning_review<'a>(
+        &'a self,
+        prompt_hash: &'a str,
+        session_id: &'a str,
+        fence: &'a LearningReviewFence,
+        review_id: &'a str,
+        digest: &'a str,
+    ) -> futures_util::future::BoxFuture<'a, Result<bool, ExecuteSessionPersistError>> {
+        Box::pin(async move {
+            let key = session_key(prompt_hash, session_id);
+            let test_backend = self.test_json().await;
+            if let Some(redis) = self.redis().await.filter(|_| test_backend.is_none()) {
+                return redis
+                    .seal_learning_review(&key, &fence.token, fence.issued, review_id, digest)
+                    .await
+                    .map_err(|error| ExecuteSessionPersistError::DurableWrite(Arc::new(error)));
+            }
+            let mut watermarks = self.learning_watermarks.write().await;
+            let Some(watermark) = watermarks.get_mut(&key) else {
+                return Ok(false);
+            };
+            if watermark.issued != fence.issued
+                || watermark.completed != fence.issued
+                || !watermark.review.as_ref().is_some_and(|review| {
+                    review.token == fence.token
+                        && review.issued == fence.issued
+                        && review.until > std::time::Instant::now()
+                })
+            {
+                return Ok(false);
+            }
+            watermark
+                .seals
+                .insert(review_id.to_owned(), format!("{digest}:{}", fence.issued));
+            watermark.review = None;
+            Ok(true)
+        })
+    }
+
+    pub(crate) fn abort_learning_review<'a>(
+        &'a self,
+        prompt_hash: &'a str,
+        session_id: &'a str,
+        fence: &'a LearningReviewFence,
+    ) -> futures_util::future::BoxFuture<'a, Result<(), ExecuteSessionPersistError>> {
+        Box::pin(async move {
+            let key = session_key(prompt_hash, session_id);
+            let test_backend = self.test_json().await;
+            if let Some(redis) = self.redis().await.filter(|_| test_backend.is_none()) {
+                return redis
+                    .abort_learning_review(&key, &fence.token)
+                    .await
+                    .map_err(|error| ExecuteSessionPersistError::DurableWrite(Arc::new(error)));
+            }
+            if let Some(watermark) = self.learning_watermarks.write().await.get_mut(&key) {
+                if watermark
+                    .review
+                    .as_ref()
+                    .is_some_and(|review| review.token == fence.token)
+                {
+                    watermark.review = None;
+                }
+            }
+            Ok(())
+        })
+    }
+
     pub(crate) async fn commit_credential_record(
         &self,
         memory: &crate::session_credentials::CredentialMemory,
@@ -414,6 +702,8 @@ impl ExecuteSessionRegistry {
             Self {
                 redis: Default::default(),
                 test_json: Arc::new(RwLock::new(Some(map.clone()))),
+                memory_descriptors: Default::default(),
+                learning_watermarks: Default::default(),
             },
             map,
         )
@@ -599,25 +889,87 @@ impl ExecuteSessionRegistry {
             .await
     }
 
-    async fn write_descriptor(
-        &self,
-        key: &str,
-        desc: &PersistedExecuteSessionDescriptor,
-    ) -> Result<ExecuteSessionPersistOutcome, ExecuteSessionPersistError> {
-        if desc.symbol_ledger_bytes.is_empty() {
-            return Err(ExecuteSessionPersistError::MissingSymbolLedger);
-        }
-        if let Some(map) = self.test_json().await {
-            if let Ok(payload) = serde_json::to_string(desc) {
-                map.write().await.insert(key.to_string(), payload);
+    fn write_descriptor<'a>(
+        &'a self,
+        key: &'a str,
+        desc: &'a PersistedExecuteSessionDescriptor,
+    ) -> futures_util::future::BoxFuture<
+        'a,
+        Result<ExecuteSessionPersistOutcome, ExecuteSessionPersistError>,
+    > {
+        Box::pin(async move {
+            if desc.symbol_ledger_bytes.is_empty() {
+                return Err(ExecuteSessionPersistError::MissingSymbolLedger);
             }
-            return Ok(ExecuteSessionPersistOutcome::Durable);
-        }
-        let Some(redis) = self.redis().await else {
-            return Ok(ExecuteSessionPersistOutcome::InMemoryOnly);
-        };
-        redis.set_json(key, desc).await;
-        Ok(ExecuteSessionPersistOutcome::Durable)
+            let payload = serde_json::to_string(desc)
+                .map_err(|error| ExecuteSessionPersistError::Encoding(Arc::new(error)))?;
+            if let Some(map) = self.test_json().await {
+                let mut map = map.write().await;
+                if let Some(previous) = map.get(key) {
+                    let previous: PersistedExecuteSessionDescriptor =
+                        serde_json::from_str(previous).map_err(|error| {
+                            ExecuteSessionPersistError::Encoding(Arc::new(error))
+                        })?;
+                    validate_exposure_successor(
+                        previous.domain_revision,
+                        &previous.symbol_ledger_bytes,
+                        desc,
+                    )?;
+                    let mut merged = desc.clone();
+                    for (id, receipt) in previous.example_fetch_receipts {
+                        merged.example_fetch_receipts.entry(id).or_insert(receipt);
+                    }
+                    let payload = serde_json::to_string(&merged)
+                        .map_err(|error| ExecuteSessionPersistError::Encoding(Arc::new(error)))?;
+                    map.insert(key.to_string(), payload);
+                    return Ok(ExecuteSessionPersistOutcome::Durable);
+                }
+                map.insert(key.to_string(), payload);
+                return Ok(ExecuteSessionPersistOutcome::Durable);
+            }
+            let Some(redis) = self.redis().await else {
+                let mut descriptors = self.memory_descriptors.write().await;
+                let now = SystemTime::now()
+                    .duration_since(UNIX_EPOCH)
+                    .map(|time| time.as_secs())
+                    .unwrap_or(0);
+                descriptors.retain(|_, descriptor| descriptor.expires_at_unix > now);
+                let mut merged = desc.clone();
+                if let Some(previous) = descriptors.get(key) {
+                    validate_exposure_successor(
+                        previous.domain_revision,
+                        &previous.symbol_ledger_bytes,
+                        desc,
+                    )?;
+                    for (id, receipt) in &previous.example_fetch_receipts {
+                        merged
+                            .example_fetch_receipts
+                            .entry(*id)
+                            .or_insert_with(|| receipt.clone());
+                    }
+                }
+                descriptors.insert(key.to_owned(), merged);
+                return Ok(ExecuteSessionPersistOutcome::InMemoryOnly);
+            };
+            let ledger_key = desc
+                .reuse_key
+                .logical_session_id
+                .as_deref()
+                .map(|id| format!("mcp:execute:symbol_ledger:{id}"));
+            if !redis
+                .commit_session_exposure(
+                    key,
+                    ledger_key.as_deref(),
+                    &payload,
+                    &desc.symbol_ledger_bytes,
+                )
+                .await
+                .map_err(|error| ExecuteSessionPersistError::DurableWrite(Arc::new(error)))?
+            {
+                return Err(ExecuteSessionPersistError::ExposureConflict);
+            }
+            Ok(ExecuteSessionPersistOutcome::Durable)
+        })
     }
 
     async fn load_json(&self, key: &str) -> Option<PersistedExecuteSessionDescriptor> {
@@ -625,8 +977,87 @@ impl ExecuteSessionRegistry {
             let raw = map.read().await.get(key).cloned()?;
             return serde_json::from_str(&raw).ok();
         }
-        let redis = self.redis().await?;
-        redis.get_json(key).await
+        if let Some(redis) = self.redis().await {
+            return redis.get_json(key).await;
+        }
+        self.memory_descriptors.read().await.get(key).cloned()
+    }
+
+    pub(crate) async fn example_receipt(
+        &self,
+        prompt_hash: &str,
+        session_id: &str,
+        id: uuid::Uuid,
+    ) -> Result<Option<crate::workflow_learning::serving::ServedExample>, ExecuteSessionPersistError>
+    {
+        let key = session_key(prompt_hash, session_id);
+        if let Some(redis) = self.redis().await {
+            let Some(raw) = redis
+                .get_string_strict(&format!("{key}:example_receipts"))
+                .await
+                .map_err(|error| ExecuteSessionPersistError::DurableWrite(Arc::new(error)))?
+            else {
+                return Ok(None);
+            };
+            let receipts: std::collections::BTreeMap<uuid::Uuid, String> =
+                serde_json::from_str(&raw)
+                    .map_err(|error| ExecuteSessionPersistError::Encoding(Arc::new(error)))?;
+            return receipts
+                .get(&id)
+                .map(|receipt| {
+                    serde_json::from_str(receipt)
+                        .map_err(|error| ExecuteSessionPersistError::Encoding(Arc::new(error)))
+                })
+                .transpose();
+        }
+        if let Some(descriptor) = self.load_json(&key).await {
+            return Ok(descriptor.example_fetch_receipts.get(&id).cloned());
+        }
+        Ok(None)
+    }
+
+    /// Strict metadata-only read for optional example fetch. Never hydrate a
+    /// catalogue or interpret an unavailable Redis backend as a missing row.
+    pub(crate) async fn load_for_example(
+        &self,
+        prompt_hash: &str,
+        session_id: &str,
+    ) -> Result<Option<PersistedExecuteSessionDescriptor>, ExecuteSessionPersistError> {
+        let key = session_key(prompt_hash, session_id);
+        let raw = if let Some(map) = self.test_json().await {
+            map.read().await.get(&key).cloned()
+        } else if let Some(redis) = self.redis().await {
+            redis
+                .get_string_strict(&key)
+                .await
+                .map_err(|error| ExecuteSessionPersistError::DurableWrite(Arc::new(error)))?
+        } else {
+            return Ok(self.memory_descriptors.read().await.get(&key).cloned());
+        };
+        raw.map(|raw| {
+            serde_json::from_str(&raw)
+                .map_err(|error| ExecuteSessionPersistError::Encoding(Arc::new(error)))
+        })
+        .transpose()
+    }
+
+    pub(crate) async fn persist_example_fetch(
+        &self,
+        session: &ExecuteSession,
+        session_id: &str,
+        reuse_key: &SessionReuseKey,
+        exposure: &crate::execute_session_materialize::DurableExposureSnapshot,
+        receipt: crate::workflow_learning::serving::ServedExample,
+    ) -> Result<(), ExecuteSessionPersistError> {
+        let mut descriptor = PersistedExecuteSessionDescriptor::from_session_and_durable_snapshot(
+            session, session_id, reuse_key, exposure,
+        );
+        descriptor
+            .example_fetch_receipts
+            .insert(receipt.example_id, receipt);
+        self.write_descriptor(&session_key(&session.prompt_hash, session_id), &descriptor)
+            .await?;
+        Ok(())
     }
 
     pub async fn load(
@@ -639,6 +1070,12 @@ impl ExecuteSessionRegistry {
         if self.redis().await.is_some() {
             if let Some(redis) = self.redis().await {
                 redis.touch(&key).await;
+                redis.touch(&format!("{key}:example_receipts")).await;
+                if let Some(logical_id) = &desc.reuse_key.logical_session_id {
+                    redis
+                        .touch(&format!("mcp:execute:symbol_ledger:{logical_id}"))
+                        .await;
+                }
             }
         }
         Some(desc)
@@ -659,9 +1096,6 @@ impl ExecuteSessionRegistry {
             compare_exposure, plan_compatible_with_session, DomainRevision, ExposureSync,
         };
 
-        if !self.durable_backend_configured().await {
-            return MergeLiveOutcome::Merged;
-        }
         let Some(desc) = self.load(prompt_hash, session_id).await else {
             return MergeLiveOutcome::Merged;
         };
@@ -690,18 +1124,27 @@ impl ExecuteSessionRegistry {
 
     pub(crate) async fn delete(&self, prompt_hash: &str, session_id: &str) {
         let key = session_key(prompt_hash, session_id);
+        self.memory_descriptors.write().await.remove(&key);
         if let Some(map) = self.test_json().await {
             map.write().await.remove(&key);
         }
+        self.learning_watermarks.write().await.remove(&key);
         if let Some(redis) = self.redis().await {
-            redis.delete(&key).await;
+            if let Err(error) = redis.delete_session_publication(&key).await {
+                tracing::warn!(%error, "execute descriptor and evidence watermark deletion failed atomically");
+            }
         }
     }
 
     /// Drop all cross-pod execute session descriptors (e.g. after catalog-dir reload).
     pub async fn purge_redis(&self) -> u64 {
+        self.memory_descriptors.write().await.clear();
+        if let Some(map) = self.test_json().await {
+            map.write().await.clear();
+        }
+        self.learning_watermarks.write().await.clear();
         if let Some(redis) = self.redis().await {
-            redis.delete_keys_matching_prefix(SESSION_KEY_PREFIX).await
+            redis.purge_session_publications(SESSION_KEY_PREFIX).await
         } else {
             0
         }
@@ -720,15 +1163,364 @@ impl ExecuteSessionRegistry {
         };
         merge_operation_patch(&mut desc.operations, &mut desc.operation_handle_next, patch);
         desc.expires_at_unix = expires_at_from_now();
-        if let Some(map) = self.test_json().await {
-            if let Ok(payload) = serde_json::to_string(&desc) {
-                map.write().await.insert(key, payload);
-            }
-            return;
+        if let Err(error) = self.write_descriptor(&key, &desc).await {
+            tracing::warn!(%error, "operation metadata publication conflicted with session exposure");
         }
-        let Some(redis) = self.redis().await else {
+    }
+}
+
+#[cfg(test)]
+mod exposure_publication_tests {
+    use super::validate_exposure_version;
+
+    #[test]
+    fn competing_allocations_at_same_revision_are_rejected() {
+        assert!(validate_exposure_version(4, b"first allocation", 4, b"other allocation").is_err());
+        assert!(validate_exposure_version(4, b"first allocation", 4, b"first allocation").is_ok());
+    }
+
+    #[test]
+    fn exposure_publication_requires_direct_successor() {
+        assert!(validate_exposure_version(4, b"old", 3, b"stale").is_err());
+        assert!(validate_exposure_version(4, b"old", 6, b"skipped").is_err());
+        assert!(validate_exposure_version(4, b"old", 6, b"old").is_ok());
+        assert!(validate_exposure_version(4, b"old", 5, b"new").is_ok());
+    }
+
+    #[tokio::test]
+    async fn redis_publication_is_atomic_and_rejects_competing_allocations() {
+        let Ok(url) = std::env::var("PLASM_TEST_REDIS_URL") else {
             return;
         };
-        redis.set_json(&key, &desc).await;
+        let redis = super::RedisBackend::connect(&url, std::time::Duration::from_secs(60))
+            .await
+            .expect("redis");
+        let suffix = uuid::Uuid::new_v4();
+        let session = format!("test:workflow:session:{suffix}");
+        let ledger = format!("test:workflow:ledger:{suffix}");
+        assert!(redis
+            .commit_session_exposure(
+                &session,
+                Some(&ledger),
+                r#"{"domain_revision":1,"symbol_ledger_bytes":[1]}"#,
+                &[1]
+            )
+            .await
+            .expect("first"));
+        assert!(!redis
+            .commit_session_exposure(
+                &session,
+                Some(&ledger),
+                r#"{"domain_revision":1,"symbol_ledger_bytes":[2]}"#,
+                &[2]
+            )
+            .await
+            .expect("conflict"));
+        assert_eq!(redis.get_bytes(&ledger).await, Some(vec![1]));
+        assert!(redis
+            .commit_session_exposure(
+                &session,
+                Some(&ledger),
+                r#"{"domain_revision":2,"symbol_ledger_bytes":[2]}"#,
+                &[2]
+            )
+            .await
+            .expect("successor"));
+        assert_eq!(redis.get_bytes(&ledger).await, Some(vec![2]));
+        redis.delete(&session).await;
+        redis.delete(&format!("{session}:example_receipts")).await;
+        redis.delete(&ledger).await;
+    }
+
+    #[tokio::test]
+    async fn memory_learning_watermark_tracks_both_completion_orders_and_missing_attempts() {
+        for order in [[1, 2], [2, 1]] {
+            let (registry, descriptors) = super::ExecuteSessionRegistry::with_test_json_store();
+            let descriptor = serde_json::json!({
+                "prompt_hash":"workflow", "session_id":"session", "prompt_text":"",
+                "python_teaching":plasm_core::prompt_render::python::PythonTeachingState::default(),
+                "entry_id":"matrix", "context_entry_ids":[], "entities":[],
+                "tenant_scope":"tenant", "principal_subject":"principal",
+                "catalog_cgs_hash":"fixture", "domain_revision":1,
+                "reuse_key":{"tenant_scope":"tenant", "entry_id":"matrix",
+                    "catalog_cgs_hash":"fixture", "entities":[]}
+            });
+            descriptors.write().await.insert(
+                super::session_key("workflow", "session"),
+                descriptor.to_string(),
+            );
+            assert_eq!(
+                registry
+                    .begin_learning_execution("workflow", "session", "first")
+                    .await
+                    .unwrap(),
+                1
+            );
+            assert_eq!(
+                registry
+                    .begin_learning_execution("workflow", "session", "second")
+                    .await
+                    .unwrap(),
+                2
+            );
+            assert!(!registry
+                .complete_learning_execution("workflow", "session", 0)
+                .await
+                .unwrap());
+            assert!(!registry
+                .complete_learning_execution("workflow", "session", 3)
+                .await
+                .unwrap());
+            assert!(!registry
+                .complete_learning_execution("workflow", "session", order[0])
+                .await
+                .unwrap());
+            assert!(!registry
+                .learning_evidence_complete("workflow", "session")
+                .await
+                .unwrap());
+            assert!(registry
+                .complete_learning_execution("workflow", "session", order[1])
+                .await
+                .unwrap());
+            assert!(registry
+                .learning_evidence_complete("workflow", "session")
+                .await
+                .unwrap());
+            let fence = registry
+                .begin_learning_review("workflow", "session")
+                .await
+                .unwrap();
+            assert!(registry
+                .begin_learning_execution("workflow", "session", "blocked")
+                .await
+                .is_err());
+            assert!(registry
+                .seal_learning_review("workflow", "session", &fence, "review", "digest")
+                .await
+                .unwrap());
+            assert_eq!(
+                registry
+                    .begin_learning_execution("workflow", "session", "third")
+                    .await
+                    .unwrap(),
+                3
+            );
+            assert!(!registry
+                .complete_learning_execution("workflow", "session", 1)
+                .await
+                .unwrap());
+            assert!(!registry
+                .learning_evidence_complete("workflow", "session")
+                .await
+                .unwrap());
+            assert!(registry
+                .complete_learning_execution("workflow", "session", 3)
+                .await
+                .unwrap());
+        }
+    }
+
+    #[tokio::test]
+    async fn redis_learning_watermark_tracks_both_completion_orders_and_review_gate() {
+        let Ok(url) = std::env::var("PLASM_TEST_REDIS_URL") else {
+            return;
+        };
+        let backend = super::RedisBackend::connect(&url, std::time::Duration::from_secs(60))
+            .await
+            .unwrap();
+        for reverse in [false, true] {
+            let key = format!("learning-overlap-{}", uuid::Uuid::new_v4());
+            backend
+                .commit_session_exposure(
+                    &key,
+                    None,
+                    r#"{"domain_revision":1,"symbol_ledger_bytes":[1]}"#,
+                    &[1],
+                )
+                .await
+                .unwrap();
+            let first = backend
+                .begin_learning_execution(&key, "first")
+                .await
+                .unwrap();
+            let second = backend
+                .begin_learning_execution(&key, "second")
+                .await
+                .unwrap();
+            assert_eq!(
+                backend
+                    .begin_learning_execution(&key, "first")
+                    .await
+                    .unwrap(),
+                first
+            );
+            let order = if reverse {
+                [second, first]
+            } else {
+                [first, second]
+            };
+            assert!(!backend.complete_learning_execution(&key, 0).await.unwrap());
+            assert!(!backend
+                .complete_learning_execution(&key, second + 1)
+                .await
+                .unwrap());
+            assert!(!backend
+                .complete_learning_execution(&key, order[0])
+                .await
+                .unwrap());
+            assert!(backend
+                .begin_learning_review(&key, "incomplete", 30_000)
+                .await
+                .unwrap()
+                .is_none());
+            assert!(backend
+                .complete_learning_execution(&key, order[1])
+                .await
+                .unwrap());
+            assert_eq!(
+                backend
+                    .begin_learning_review(&key, "review", 30_000)
+                    .await
+                    .unwrap(),
+                Some(second)
+            );
+            assert!(backend
+                .begin_learning_execution(&key, "blocked")
+                .await
+                .is_err());
+            assert!(backend
+                .seal_learning_review(&key, "review", second, "review-id", "digest")
+                .await
+                .unwrap());
+            let third = backend
+                .begin_learning_execution(&key, "third")
+                .await
+                .unwrap();
+            assert!(!backend
+                .complete_learning_execution(&key, first)
+                .await
+                .unwrap());
+            assert!(backend
+                .begin_learning_review(&key, "still-incomplete", 30_000)
+                .await
+                .unwrap()
+                .is_none());
+            assert!(backend
+                .complete_learning_execution(&key, third)
+                .await
+                .unwrap());
+            backend.delete_session_publication(&key).await.unwrap();
+        }
+    }
+
+    #[tokio::test]
+    async fn redis_learning_watermark_blocks_other_replica_after_missing_completion() {
+        let Ok(url) = std::env::var("PLASM_TEST_REDIS_URL") else {
+            return;
+        };
+        let backend = std::sync::Arc::new(
+            super::RedisBackend::connect(&url, std::time::Duration::from_secs(60))
+                .await
+                .expect("redis"),
+        );
+        let first = super::ExecuteSessionRegistry::new_in_memory();
+        first.attach_redis(backend.clone()).await;
+        let second = super::ExecuteSessionRegistry::new_in_memory();
+        second
+            .attach_redis(std::sync::Arc::new(
+                super::RedisBackend::connect(&url, std::time::Duration::from_secs(60))
+                    .await
+                    .expect("other replica"),
+            ))
+            .await;
+        let ph = format!("watermark-{}", uuid::Uuid::new_v4());
+        let sid = uuid::Uuid::new_v4().to_string();
+        let key = super::session_key(&ph, &sid);
+        backend
+            .commit_session_exposure(
+                &key,
+                None,
+                r#"{"domain_revision":1,"symbol_ledger_bytes":[1]}"#,
+                &[1],
+            )
+            .await
+            .expect("session");
+        assert!(!second
+            .learning_evidence_complete(&ph, &sid)
+            .await
+            .expect("missing"));
+        let token = first
+            .begin_learning_execution(&ph, &sid, "verified")
+            .await
+            .expect("begin");
+        assert_eq!(
+            first
+                .begin_learning_execution(&ph, &sid, "verified")
+                .await
+                .expect("retry"),
+            token
+        );
+        assert!(first
+            .complete_learning_execution(&ph, &sid, token)
+            .await
+            .expect("complete"));
+        assert!(second
+            .learning_evidence_complete(&ph, &sid)
+            .await
+            .expect("verified"));
+        let fence = first.begin_learning_review(&ph, &sid).await.expect("gate");
+        assert!(second
+            .begin_learning_execution(&ph, &sid, "blocked")
+            .await
+            .is_err());
+        first
+            .abort_learning_review(&ph, &sid, &fence)
+            .await
+            .expect("abort");
+        let newer = second
+            .begin_learning_review(&ph, &sid)
+            .await
+            .expect("new fence");
+        assert!(!first
+            .seal_learning_review(&ph, &sid, &fence, "old", "digest")
+            .await
+            .expect("stale fence"));
+        assert!(second
+            .seal_learning_review(&ph, &sid, &newer, "sealed", "digest")
+            .await
+            .expect("seal"));
+        assert!(backend
+            .begin_learning_review(&key, "expires", 1)
+            .await
+            .expect("short lease")
+            .is_some());
+        tokio::time::sleep(std::time::Duration::from_millis(5)).await;
+        assert!(!backend
+            .seal_learning_review(&key, "expires", token, "expired", "digest")
+            .await
+            .expect("expired fence"));
+        first
+            .begin_learning_execution(&ph, &sid, "journal-unavailable")
+            .await
+            .expect("begin before effects");
+        // The failed PostgreSQL journal never completes its durable watermark.
+        assert!(!second
+            .learning_evidence_complete(&ph, &sid)
+            .await
+            .expect("other replica blocked"));
+        let later = second
+            .begin_learning_execution(&ph, &sid, "later-success")
+            .await
+            .expect("later begin");
+        assert!(!second
+            .complete_learning_execution(&ph, &sid, later)
+            .await
+            .expect("gap remains"));
+        assert!(!first
+            .learning_evidence_complete(&ph, &sid)
+            .await
+            .expect("still incomplete"));
+        first.delete(&ph, &sid).await;
     }
 }

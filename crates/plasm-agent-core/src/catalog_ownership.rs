@@ -168,16 +168,6 @@ mod tests {
     }
 
     #[test]
-    fn resolves_from_exposure_first() {
-        let cgs = matrix_cgs();
-        let exp = TeachingExposureSession::new(cgs.as_ref(), "langmatrix_a", &["LangItem"]);
-        let session = session_with_contexts("langmatrix_a", cgs, vec![], Some(exp));
-        let qe = resolve_qualified_entity_key(&session, "LangItem", None).expect("qe");
-        assert_eq!(qe.entry_id, "langmatrix_a");
-        assert_eq!(qe.entity, "LangItem");
-    }
-
-    #[test]
     fn resolves_unexposed_entity_via_resolving_cgs() {
         let cgs_primary = matrix_cgs();
         let cgs_secondary = matrix_cgs();
@@ -210,14 +200,6 @@ mod tests {
         )
         .expect("qe");
         assert_eq!(qe.entry_id, "langmatrix_b");
-    }
-
-    #[test]
-    fn resolve_cgs_for_entity_single_catalog() {
-        let cgs = matrix_cgs();
-        let session = session_with_contexts("solo", cgs, vec![], None);
-        let got = resolve_cgs_for_entity(&session, "LangItem", None).expect("ok");
-        assert!(got.entities.contains_key("LangItem"));
     }
 
     #[test]

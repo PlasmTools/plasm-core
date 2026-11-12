@@ -3,7 +3,7 @@
 use std::collections::BTreeMap;
 
 use rmcp::model::{Tool, ToolAnnotations};
-use serde_json::Map;
+use serde_json::{json, Map};
 
 use crate::mcp_delivery::McpDeliveryProfile;
 use crate::mcp_run_markdown::ArtifactAccessMode;
@@ -35,6 +35,8 @@ pub(crate) fn plasm_tools(artifact_access: ArtifactAccessMode, ui_apps_enabled: 
     let structured_ui_lane = delivery.emits_structured_ui();
     let attach_ui_meta = delivery.attaches_ui_meta();
     let mut context_props = BTreeMap::new();
+    context_props.insert("training".into(), json!({"type":"object","additionalProperties":false,"required":["intent","idempotency_key"],"properties":{"intent":{"const":"request"},"idempotency_key":{"type":"string","format":"uuid"}}}).as_object().expect("training creation schema").clone());
+
     context_props.insert(
         "session_mode".into(),
         json_schema_non_empty_string_type(
@@ -44,7 +46,7 @@ pub(crate) fn plasm_tools(artifact_access: ArtifactAccessMode, ui_apps_enabled: 
     context_props.insert(
         "intent".into(),
         json_schema_non_empty_string_type(
-            "This turn's current intent. Appended to the workflow provenance chain; current intent drives retrieval, ancestry supplies context for judgment. Independent of session identity.",
+            "Self-contained current discovery request, including relevant conditions and amendments. Drives retrieval and contribution judgment. Prior requests remain audit/search state, not judgment context. Independent of session identity.",
         ),
     );
     context_props.insert(
@@ -71,7 +73,7 @@ pub(crate) fn plasm_tools(artifact_access: ArtifactAccessMode, ui_apps_enabled: 
     plasm_run_props.insert(
             "run_ref".into(),
             json_schema_string_type(
-                "Token for `plasm_run`: `pcN` from `plasm`, or the page handle from a \"more pages\" line. (`page(...)` is HTTP-execute program syntax, not an MCP value.)",
+                "Token for `plasm_run`: single-use `pcN` from `plasm`, or the page handle from a \"more pages\" line. A started plan cannot be executed again with the same token, including after failure. Inspect its outcome; a deliberate repeat requires a fresh plan review. (`page(...)` is HTTP-execute program syntax, not an MCP value.)",
             ),
         );
 
@@ -91,10 +93,22 @@ pub(crate) fn plasm_tools(artifact_access: ArtifactAccessMode, ui_apps_enabled: 
             model
         });
         model.icons = None;
-        model.meta = None;
+        model.meta =
+            if attach_ui_meta && crate::workflow_learning::WorkflowLearning::default().enabled() {
+                Some(
+                    serde_json::json!({"ui":{"resourceUri":crate::mcp_app::TRAINING.uri}})
+                        .as_object()
+                        .expect("training UI metadata")
+                        .clone()
+                        .into(),
+                )
+            } else {
+                None
+            };
         model.output_schema = None;
         model
     }];
+    tools.extend(crate::workflow_learning_mcp::tools());
 
     tools.push({
         let mut model = Tool::default();

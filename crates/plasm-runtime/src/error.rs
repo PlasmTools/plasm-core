@@ -215,6 +215,12 @@ impl std::fmt::Display for ReplayStoreOperation {
 
 #[derive(Error, Debug)]
 pub enum RuntimeError {
+    #[error("pagination continuation belongs to catalog revision {expected}, not {actual}")]
+    PaginationCatalogMismatch { expected: String, actual: String },
+    #[error(
+        "pagination continuation belongs to compiled catalog revision {expected}, not {actual}"
+    )]
+    PaginationCompiledCatalogMismatch { expected: String, actual: String },
     #[error(transparent)]
     Mcp(#[from] Box<crate::mcp_execution::McpExecutionError>),
     #[error("request-owned identity requires observable resolved authentication")]
@@ -303,8 +309,8 @@ pub enum RuntimeError {
     },
     #[error("ordering contract failed: {0}")]
     Ordering(#[from] plasm_core::value_order::OrderingError),
-    #[error("top-k sort field is unobserved (not null)")]
-    TopKFieldUnobserved,
+    #[error("top-k sort field `{field}` is unobserved, not null. Inspect the producer result; select rows exposing this field or obtain the missing observation before sorting.")]
+    TopKFieldUnobserved { field: String },
     #[error("top-k sequence overflow")]
     TopKSequenceOverflow,
     #[error("empty top-k field")]
@@ -342,6 +348,8 @@ pub enum RuntimeError {
     EntityRefScope(#[from] plasm_core::ScopeEntityRefNormalizeError),
     #[error("query resolution failed: {0}")]
     QueryResolution(#[from] plasm_core::QueryCapabilityResolveError),
+    #[error("relation dependency contract is invalid: {0}")]
+    RelationDependency(#[from] plasm_core::relation_materialize::dependencies::DependencyError),
     #[error("schema contract failed: {0}")]
     SchemaContract(#[from] Box<plasm_core::SchemaError>),
     #[error("operand resolution failed: {0}")]

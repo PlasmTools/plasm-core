@@ -1,9 +1,11 @@
 #![recursion_limit = "512"]
 
+mod effect_obligations;
 mod engine;
 mod tracing_setup;
 mod transport;
 mod types;
+mod workflow_verification;
 
 pub use engine::{
     AgentEngine, CapabilityIntrospection, CatalogInfo, CatalogIntrospection, DryRunResult,
@@ -25,13 +27,14 @@ use plasm_agent_core::discovery_store::{
     DiscoveryAuthorization, DiscoverySessionPin, DiscoveryStore, PreparedCatalog,
 };
 use plasm_agent_core::http_execute::CapabilitySeed;
+use plasm_agent_core::workflow_learning::native::{NativeLearningConfig, NativeLearningMode};
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 use thiserror::Error;
 use tokio::sync::{Mutex as AsyncMutex, OnceCell};
 
-use crate::transport::{JsCallbackHttpTransport, JsHostTransport};
+use crate::transport::{JsCallbackHttpTransport, JsHostAuthResolver, JsHostTransport};
 
 #[napi(object)]
 pub struct JsCatalogInfo {
@@ -48,6 +51,7 @@ pub struct JsSeed {
 #[napi(object)]
 pub struct JsTeachingResult {
     pub prompt: String,
+    pub declarations_changed: bool,
     pub delta_refs: Vec<String>,
 }
 
@@ -120,18 +124,48 @@ fn lock<T>(m: &Mutex<T>) -> std::sync::MutexGuard<'_, T> {
 
 /// In-process Plasm engine for NAPI.
 ///
-/// Each engine has a FIFO asynchronous admission queue. A live HTTP callback may
-/// await JavaScript while retaining its session engine; queued callers yield the
-/// executor instead of blocking it. Independent logical sessions remain concurrent.
+/// Session engines serialize admission and plan preparation. Reviewed live
+/// runs own their execution state and do not retain the session engine lock
+/// while awaiting transport callbacks.
 #[napi]
 pub struct PlasmEngine {
     closing: std::sync::atomic::AtomicBool,
-    drained: tokio::sync::RwLock<bool>,
+    workflow_config: OnceCell<NativeLearningConfig>,
+    workflow_owner: OnceCell<Arc<plasm_agent_core::workflow_learning::WorkflowLearning>>,
+    training_actor: OnceCell<plasm_agent_core::workflow_learning::training::TrustedTrainingActor>,
+    drained: Arc<tokio::sync::RwLock<bool>>,
+    learning_pool: Arc<plasm_agent_core::live_plan_run_worker::LivePlanRunPool>,
     python_pool: Arc<plasm_agent_core::python_pool::PythonPool>,
     inner: Arc<AsyncMutex<InnerEngine>>,
     sessions: Mutex<HashMap<String, Arc<AsyncMutex<InnerEngine>>>>,
+    session_admission: Mutex<HashMap<String, Arc<SessionAdmission>>>,
+    effect_obligations: effect_obligations::EffectObligations,
     discovery_store: Arc<OnceCell<DiscoveryStore>>,
     activated: tokio::sync::RwLock<Option<(String, std::collections::BTreeSet<String>)>>,
+}
+
+struct SessionAdmission {
+    sealed: std::sync::atomic::AtomicBool,
+    in_flight: Arc<tokio::sync::RwLock<()>>,
+    discovery: Arc<tokio::sync::Mutex<()>>,
+    clock: Option<String>,
+}
+
+impl SessionAdmission {
+    fn new(clock: Option<String>) -> Self {
+        Self {
+            sealed: std::sync::atomic::AtomicBool::new(false),
+            in_flight: Arc::new(tokio::sync::RwLock::new(())),
+            discovery: Arc::new(tokio::sync::Mutex::new(())),
+            clock,
+        }
+    }
+}
+
+struct WorkflowAdmin {
+    guard: tokio::sync::OwnedRwLockReadGuard<bool>,
+    scope: plasm_agent_core::workflow_learning::model::LibraryScope,
+    owner: Arc<plasm_agent_core::workflow_learning::WorkflowLearning>,
 }
 
 impl Default for PlasmEngine {
@@ -144,15 +178,93 @@ impl PlasmEngine {
     pub fn new() -> Self {
         Self::with_runtime(None)
     }
-    async fn admit(&self) -> Result<tokio::sync::RwLockReadGuard<'_, bool>> {
+    async fn admit(&self) -> Result<tokio::sync::OwnedRwLockReadGuard<bool>> {
         if self.closing.load(std::sync::atomic::Ordering::Acquire) {
             return Err(map_err(NodeEngineError::Closed));
         }
-        let guard = self.drained.read().await;
+        let guard = Arc::clone(&self.drained).read_owned().await;
         if self.closing.load(std::sync::atomic::Ordering::Acquire) {
             return Err(map_err(NodeEngineError::Closed));
         }
         Ok(guard)
+    }
+
+    async fn admit_training(&self) -> Result<tokio::sync::OwnedRwLockReadGuard<bool>> {
+        let guard = Arc::clone(&self.drained).read_owned().await;
+        if self.closing.load(std::sync::atomic::Ordering::Acquire) {
+            return Err(map_err(NodeEngineError::Closed));
+        }
+        Ok(guard)
+    }
+
+    fn workflow_error(&self, error: impl std::error::Error) -> Error {
+        let mut error = map_err(error);
+        if let Some(config) = self
+            .workflow_config
+            .get()
+            .and_then(NativeLearningConfig::library)
+        {
+            error.reason = error
+                .reason
+                .replace(&config.database_url, "[workflow database]");
+        }
+        error
+    }
+
+    async fn administrative_generation(
+        &self,
+    ) -> Result<workflow_verification::AdministrativeGeneration> {
+        let (generation, allowed) = self
+            .activated
+            .read()
+            .await
+            .clone()
+            .ok_or_else(|| map_err(NodeEngineError::NoActivatedGeneration))?;
+        let store = self
+            .discovery_store
+            .get()
+            .ok_or_else(|| map_err(NodeEngineError::DiscoveryStoreUnavailable))?;
+        let (catalogs, compiled, deployments) = store
+            .load_generation(&generation)
+            .await
+            .map_err(NodeEngineError::from)
+            .map_err(map_err)?;
+        let pin = DiscoverySessionPin {
+            generation,
+            authorization: DiscoveryAuthorization::catalogs(allowed),
+            pin_id: plasm_agent_core::session_identity::LogicalSessionId::new_v4().to_string(),
+        };
+        Ok(workflow_verification::AdministrativeGeneration {
+            catalogs,
+            compiled,
+            pin,
+            deployments,
+        })
+    }
+
+    async fn workflow_admin(&self) -> Result<WorkflowAdmin> {
+        let guard = Arc::clone(&self.drained).read_owned().await;
+        if self.closing.load(std::sync::atomic::Ordering::Acquire) {
+            return Err(map_err(NodeEngineError::Closed));
+        }
+        let config = self
+            .workflow_config
+            .get()
+            .ok_or_else(|| Error::from_reason("workflow learning is not configured"))?;
+        if config.mode() != NativeLearningMode::Collect {
+            return Err(Error::from_reason(
+                "corpus administration requires collect mode",
+            ));
+        }
+        Ok(WorkflowAdmin {
+            guard,
+            scope: config.scope().map_err(map_err)?,
+            owner: Arc::clone(
+                self.workflow_owner
+                    .get()
+                    .ok_or_else(|| Error::from_reason("workflow learning is not configured"))?,
+            ),
+        })
     }
 
     fn session_engine(&self, id: &str) -> NodeResult<Arc<AsyncMutex<InnerEngine>>> {
@@ -160,6 +272,37 @@ impl PlasmEngine {
             .get(id)
             .cloned()
             .ok_or_else(|| NodeEngineError::UnknownSession { id: id.to_owned() })
+    }
+
+    async fn admit_session(
+        &self,
+        id: Option<&str>,
+    ) -> Result<Option<tokio::sync::OwnedRwLockReadGuard<()>>> {
+        let Some(id) = id else { return Ok(None) };
+        let gate = lock(&self.session_admission)
+            .get(id)
+            .cloned()
+            .ok_or_else(|| map_err(NodeEngineError::UnknownSession { id: id.to_owned() }))?;
+        if gate.sealed.load(std::sync::atomic::Ordering::Acquire) {
+            return Err(map_err(NodeEngineError::Closed));
+        }
+        let guard = Arc::clone(&gate.in_flight).read_owned().await;
+        if gate.sealed.load(std::sync::atomic::Ordering::Acquire) {
+            return Err(map_err(NodeEngineError::Closed));
+        }
+        Ok(Some(guard))
+    }
+
+    async fn admit_discovery(
+        &self,
+        id: Option<&str>,
+    ) -> Result<Option<tokio::sync::OwnedMutexGuard<()>>> {
+        let Some(id) = id else { return Ok(None) };
+        let gate = lock(&self.session_admission)
+            .get(id)
+            .cloned()
+            .ok_or_else(|| map_err(NodeEngineError::UnknownSession { id: id.to_owned() }))?;
+        Ok(Some(Arc::clone(&gate.discovery).lock_owned().await))
     }
 
     async fn execution_engine(
@@ -170,8 +313,7 @@ impl PlasmEngine {
             Some(id) => self.session_engine(id).map_err(map_err)?,
             None => Arc::clone(&self.inner),
         };
-        let mut engine = shared.lock_owned().await;
-        engine.set_python_pool(self.python_pool.clone());
+        let engine = shared.lock_owned().await;
         if logical_session_id.is_some() {
             self.refresh_discovery_session(&engine)
                 .await
@@ -235,18 +377,582 @@ impl PlasmEngine {
     #[napi(constructor)]
     pub fn with_runtime(monty_binary: Option<String>) -> Self {
         tracing_setup::init();
+        let python_pool = Arc::new(match monty_binary {
+            Some(path) => plasm_agent_core::python_pool::PythonPool::with_binary(path.into()),
+            None => Default::default(),
+        });
         Self {
             closing: std::sync::atomic::AtomicBool::new(false),
-            drained: tokio::sync::RwLock::new(false),
-            python_pool: Arc::new(match monty_binary {
-                Some(path) => plasm_agent_core::python_pool::PythonPool::with_binary(path.into()),
-                None => Default::default(),
-            }),
-            inner: Arc::new(AsyncMutex::new(InnerEngine::new())),
+            workflow_config: OnceCell::new(),
+            workflow_owner: OnceCell::new(),
+            training_actor: OnceCell::new(),
+            drained: Arc::new(tokio::sync::RwLock::new(false)),
+            learning_pool: Arc::new(plasm_agent_core::live_plan_run_worker::LivePlanRunPool::new()),
+            inner: Arc::new(AsyncMutex::new(InnerEngine::new(python_pool.clone()))),
+            python_pool,
             sessions: Mutex::new(HashMap::new()),
+            session_admission: Mutex::new(HashMap::new()),
+            effect_obligations: Default::default(),
             discovery_store: Arc::new(OnceCell::new()),
             activated: Default::default(),
         }
+    }
+
+    #[napi]
+    pub async fn configure_workflow_learning(&self, config_json: String) -> Result<()> {
+        let _exclusive = self.drained.write().await;
+        if self.closing.load(std::sync::atomic::Ordering::Acquire)
+            || self.workflow_config.get().is_some()
+            || !lock(&self.sessions).is_empty()
+        {
+            return Err(Error::from_reason(
+                "workflow configuration must precede session creation and cannot be changed",
+            ));
+        }
+        let config: NativeLearningConfig = serde_json::from_str(&config_json).map_err(map_err)?;
+        config.validate().map_err(map_err)?;
+        self.inner
+            .lock()
+            .await
+            .configure_workflow_learning(config.clone())
+            .map_err(map_err)?;
+        self.workflow_owner
+            .set(config.learning())
+            .map_err(|_| Error::from_reason("workflow configuration already set"))?;
+        self.workflow_config
+            .set(config)
+            .map_err(|_| Error::from_reason("workflow configuration already set"))?;
+        Ok(())
+    }
+
+    /// Trusted embedding-host delegation. This is never registered as an agent tool.
+    /// Installing a grant does not opt any logical session into training.
+    #[napi]
+    pub async fn configure_training(&self, grant_json: String) -> Result<()> {
+        use plasm_agent_core::workflow_learning::training::{
+            TrainingGrantSpec, TrustedTrainingActor,
+        };
+        let _exclusive = self.drained.write().await;
+        if self.closing.load(std::sync::atomic::Ordering::Acquire)
+            || self.training_actor.get().is_some()
+        {
+            return Err(Error::from_reason(
+                "training delegation is unavailable or already configured",
+            ));
+        }
+        let config = self.workflow_config.get().ok_or_else(|| {
+            Error::from_reason("configure the workflow library before training delegation")
+        })?;
+        if config.mode() == NativeLearningMode::Baseline {
+            return Err(Error::from_reason(
+                "training requires an enabled workflow library",
+            ));
+        }
+        #[derive(serde::Deserialize)]
+        #[serde(deny_unknown_fields)]
+        struct TrainingHost {
+            subject: String,
+            credential: String,
+            grant: Option<TrainingGrantSpec>,
+            idempotency_key: Option<String>,
+        }
+        let input: TrainingHost = serde_json::from_str(&grant_json).map_err(map_err)?;
+        let scope = config.scope().map_err(map_err)?;
+        let issuer = TrustedTrainingActor::trusted_host(
+            scope.clone(),
+            "embedded-host".into(),
+            "native-host".into(),
+        )
+        .map_err(map_err)?;
+        let actor = TrustedTrainingActor::authenticated(scope, input.subject, input.credential)
+            .map_err(map_err)?;
+        if let Some(grant) = input.grant {
+            if grant.grantee != actor.subject() || grant.credential != actor.credential() {
+                return Err(Error::from_reason(
+                    "training delegation must belong to the configured host actor",
+                ));
+            }
+            let key = input
+                .idempotency_key
+                .ok_or_else(|| Error::from_reason("training grant requires an idempotency key"))?
+                .parse()
+                .map_err(map_err)?;
+            let owner = self
+                .workflow_owner
+                .get()
+                .cloned()
+                .ok_or_else(|| Error::from_reason("workflow library unavailable"))?;
+            self.learning_pool
+                .run_local(move || async move {
+                    let repository = owner.repository().await.map_err(
+                        plasm_agent_core::workflow_learning::native::NativeLearningError::from,
+                    )?;
+                    repository
+                        .install_training_grant(&issuer, key, grant)
+                        .await
+                        .map_err(
+                            plasm_agent_core::workflow_learning::native::NativeLearningError::from,
+                        )
+                })
+                .await
+                .map_err(map_err)?
+                .map_err(|error| self.workflow_error(error))?;
+        }
+        self.training_actor
+            .set(actor)
+            .map_err(|_| Error::from_reason("training delegation already configured"))?;
+        Ok(())
+    }
+
+    #[napi]
+    pub async fn training_status(&self, logical_session_id: Option<String>) -> Result<String> {
+        let _admission = self.admit_training().await?;
+        let engine = self.execution_engine(logical_session_id.as_deref()).await?;
+        self.learning_pool
+            .run_local(move || async move {
+                let _admission = _admission;
+                engine.training_status().await
+            })
+            .await
+            .map_err(map_err)?
+            .map_err(|error| self.workflow_error(error))
+    }
+
+    /// Host-only evaluation classification; immutable and independent of model input.
+    #[napi]
+    pub async fn seal_training_evaluation(&self, logical_session_id: Option<String>) -> Result<()> {
+        let _admission = self.admit_training().await?;
+        let engine = self.execution_engine(logical_session_id.as_deref()).await?;
+        self.learning_pool
+            .run_local(move || async move {
+                let _admission = _admission;
+                engine.seal_training_evaluation().await
+            })
+            .await
+            .map_err(map_err)?
+            .map_err(|error| self.workflow_error(error))
+    }
+
+    #[napi]
+    pub async fn training_command(
+        &self,
+        command_json: String,
+        logical_session_id: Option<String>,
+    ) -> Result<String> {
+        let actor = self
+            .training_actor
+            .get()
+            .cloned()
+            .ok_or_else(|| Error::from_reason("training delegation is not configured"))?;
+        let command = serde_json::from_str(&command_json).map_err(map_err)?;
+        let _admission = self.admit_training().await?;
+        let engine = self.execution_engine(logical_session_id.as_deref()).await?;
+        self.learning_pool
+            .run_local(move || async move {
+                let _admission = _admission;
+                engine.training_command(&actor, &command).await
+            })
+            .await
+            .map_err(map_err)?
+            .map_err(|error| self.workflow_error(error))
+    }
+
+    #[napi]
+    pub async fn training_candidates(
+        &self,
+        command_json: String,
+        logical_session_id: Option<String>,
+    ) -> Result<String> {
+        let actor = self
+            .training_actor
+            .get()
+            .cloned()
+            .ok_or_else(|| Error::from_reason("training delegation is not configured"))?;
+        let _admission = self.admit_training().await?;
+        let engine = self.execution_engine(logical_session_id.as_deref()).await?;
+        self.learning_pool
+            .run_local(move || async move {
+                let _admission = _admission;
+                engine.training_candidates(&actor, &command_json).await
+            })
+            .await
+            .map_err(map_err)?
+            .map_err(|error| self.workflow_error(error))
+    }
+
+    /// Stop solving admission for one logical session and wait for its native callbacks.
+    #[napi]
+    pub async fn drain_session(&self, logical_session_id: String) -> Result<()> {
+        let _admission = self.admit_training().await?;
+        let gate = lock(&self.session_admission)
+            .get(&logical_session_id)
+            .cloned()
+            .ok_or_else(|| {
+                map_err(NodeEngineError::UnknownSession {
+                    id: logical_session_id.clone(),
+                })
+            })?;
+        gate.sealed
+            .store(true, std::sync::atomic::Ordering::Release);
+        let _exclusive = gate.in_flight.write().await;
+        Ok(())
+    }
+
+    /// Release a drained session without affecting other sessions on this host.
+    #[napi]
+    pub async fn release_session(&self, logical_session_id: String) -> Result<()> {
+        self.drain_session(logical_session_id.clone()).await?;
+        let mut sessions = lock(&self.sessions);
+        sessions.remove(&logical_session_id);
+        lock(&self.session_admission).remove(&logical_session_id);
+        self.effect_obligations.release(&logical_session_id);
+        Ok(())
+    }
+
+    #[napi]
+    pub async fn completed_workflow_executions(
+        &self,
+        logical_session_id: Option<String>,
+    ) -> Result<String> {
+        if self.training_actor.get().is_none() {
+            return Err(Error::from_reason("training identity is not configured"));
+        }
+        let _admission = self.admit_training().await?;
+        let engine = self.execution_engine(logical_session_id.as_deref()).await?;
+        self.learning_pool
+            .run_local(move || async move {
+                let _admission = _admission;
+                engine.completed_workflow_executions().await
+            })
+            .await
+            .map_err(map_err)?
+            .map_err(|error| self.workflow_error(error))
+    }
+
+    #[napi]
+    pub async fn read_teaching_program(
+        &self,
+        execution_id: String,
+        logical_session_id: Option<String>,
+    ) -> Result<String> {
+        if self.training_actor.get().is_none() {
+            return Err(Error::from_reason("training identity is not configured"));
+        }
+        let _admission = self.admit_training().await?;
+        let engine = self.execution_engine(logical_session_id.as_deref()).await?;
+        self.learning_pool
+            .run_local(move || async move {
+                let _admission = _admission;
+                engine.read_teaching_program(&execution_id).await
+            })
+            .await
+            .map_err(map_err)?
+            .map_err(|error| self.workflow_error(error))
+    }
+
+    #[napi]
+    pub async fn review_workflow(
+        &self,
+        request_json: String,
+        logical_session_id: Option<String>,
+    ) -> Result<String> {
+        let actor = self
+            .training_actor
+            .get()
+            .cloned()
+            .ok_or_else(|| Error::from_reason("training delegation is not configured"))?;
+        let _admission = self.admit_training().await?;
+        let mut engine = self.execution_engine(logical_session_id.as_deref()).await?;
+        self.learning_pool
+            .run_local(move || async move {
+                let _admission = _admission;
+                engine.review_workflow(&request_json, actor).await
+            })
+            .await
+            .map_err(map_err)?
+            .map_err(|error| self.workflow_error(error))
+    }
+
+    #[napi]
+    pub async fn fetch_workflow_example(
+        &self,
+        revision_ref: String,
+        logical_session_id: Option<String>,
+    ) -> Result<String> {
+        let _admission = self.admit().await?;
+        let _session_admission = self.admit_session(logical_session_id.as_deref()).await?;
+        let mut engine = self.execution_engine(logical_session_id.as_deref()).await?;
+        self.learning_pool
+            .run_local(move || async move {
+                let _admission = _admission;
+                let _session_admission = _session_admission;
+                engine.fetch_workflow_example(&revision_ref).await
+            })
+            .await
+            .map_err(map_err)?
+            .map_err(|error| self.workflow_error(error))
+    }
+
+    /// Host-only corpus administration; never exposed by the agent review port.
+    #[napi]
+    pub async fn run_workflow_promotion(&self, timeout_seconds: u32) -> Result<String> {
+        let admin = self.workflow_admin().await?;
+        let status = self
+            .learning_pool
+            .run_local(move || async move {
+                let _guard = admin.guard;
+                plasm_agent_core::workflow_learning::native_admin::drain_promotion(
+                    &admin.owner,
+                    &admin.scope,
+                    std::time::Duration::from_secs(u64::from(timeout_seconds)),
+                )
+                .await
+            })
+            .await
+            .map_err(map_err)?
+            .map_err(|error| self.workflow_error(error))?;
+        serde_json::to_string(&status).map_err(map_err)
+    }
+
+    #[napi]
+    pub async fn export_workflow_proposals(&self) -> Result<String> {
+        let admin = self.workflow_admin().await?;
+        let artifacts = self
+            .learning_pool
+            .run_local(move || async move {
+                let _guard = admin.guard;
+                let repository = admin.owner.repository().await?;
+                Ok::<_, plasm_agent_core::workflow_learning::LearningError>(
+                    repository.export_review_artifacts(&admin.scope).await?,
+                )
+            })
+            .await
+            .map_err(map_err)?
+            .map_err(|error| self.workflow_error(error))?;
+        serde_json::to_string(&artifacts).map_err(map_err)
+    }
+
+    #[napi]
+    pub async fn publish_frozen_workflow_review(&self, request_json: String) -> Result<String> {
+        let request: plasm_agent_core::workflow_learning::repository::FrozenPublicationRequest =
+            serde_json::from_str(&request_json).map_err(map_err)?;
+        let admin = self.workflow_admin().await?;
+        let actor = self.training_actor.get().cloned().ok_or_else(|| {
+            Error::from_reason("publication requires configured trusted authority")
+        })?;
+        let receipt = self
+            .learning_pool
+            .run_local(move || async move {
+                let _guard = admin.guard;
+                let repository = admin.owner.repository().await?;
+                Ok::<_, plasm_agent_core::workflow_learning::LearningError>(
+                    repository
+                        .publish_frozen(
+                            &admin.scope,
+                            request.review_ref,
+                            &request.artifact_hashes,
+                            &request.catalogue_guidance_digest,
+                            &actor,
+                        )
+                        .await?,
+                )
+            })
+            .await
+            .map_err(map_err)?
+            .map_err(|error| self.workflow_error(error))?;
+        serde_json::to_string(&receipt).map_err(map_err)
+    }
+
+    /// Export a scoped teaching archive directly to a new filesystem directory.
+    #[napi]
+    pub async fn export_workflow_archive(
+        &self,
+        kind: String,
+        destination: String,
+    ) -> Result<String> {
+        use plasm_agent_core::workflow_learning::archive::ArchiveKind;
+        let kind = match kind.as_str() {
+            "private_collection" => ArchiveKind::PrivateCollection,
+            "serving_library" => ArchiveKind::ServingLibrary,
+            _ => return Err(Error::from_reason("invalid archive kind")),
+        };
+        let admin = self.workflow_admin().await?;
+        let manifest = self
+            .learning_pool
+            .run_local(move || async move {
+                let _guard = admin.guard;
+                let repository = admin.owner.readonly_repository().await?;
+                let manifest = repository
+                    .export_filesystem_archive(
+                        &admin.scope,
+                        std::path::Path::new(&destination),
+                        kind,
+                    )
+                    .await?;
+                Ok::<_, plasm_agent_core::workflow_learning::native::NativeLearningError>(manifest)
+            })
+            .await
+            .map_err(map_err)?
+            .map_err(|error| self.workflow_error(error))?;
+        serde_json::to_string(&manifest).map_err(map_err)
+    }
+
+    /// Record an exact-review external decision under configured host authority.
+    /// This is an administrative interface, never an agent-callable tool.
+    #[napi]
+    pub async fn authorize_imported_workflow_review(&self, request_json: String) -> Result<()> {
+        use plasm_agent_core::workflow_learning::filesystem_archive::ImportedReviewAttestationRequest;
+        let request = parse_archive_metadata::<ImportedReviewAttestationRequest>(&request_json)?;
+        let admin = self.workflow_admin().await?;
+        let actor = self.training_actor.get().cloned().ok_or_else(|| {
+            Error::from_reason("review attestation requires configured trusted authority")
+        })?;
+        if actor.scope() != &admin.scope {
+            return Err(Error::from_reason("review attestation scope mismatch"));
+        }
+        self.learning_pool
+            .run_local(move || async move {
+                let _guard = admin.guard;
+                let repository = admin.owner.repository().await?;
+                repository
+                    .authorize_imported_review(
+                        &actor,
+                        &request.archive_digest,
+                        &request.evidence,
+                        request.decision_id,
+                        request.expires_at,
+                    )
+                    .await?;
+                Ok::<_, plasm_agent_core::workflow_learning::native::NativeLearningError>(())
+            })
+            .await
+            .map_err(map_err)?
+            .map_err(|error| self.workflow_error(error))
+    }
+
+    /// Validate and adopt an archive using the host's authorized destination.
+    #[napi]
+    pub async fn import_workflow_archive(
+        &self,
+        source: String,
+        policy_json: String,
+    ) -> Result<String> {
+        use plasm_agent_core::workflow_learning::filesystem_archive::ImportPolicy;
+        let policy = parse_archive_metadata::<ImportPolicy>(&policy_json)?;
+        let admin = self.workflow_admin().await?;
+        let generation = self.administrative_generation().await?;
+        let mut validation_engine = generation
+            .engine(
+                self.workflow_config
+                    .get()
+                    .cloned()
+                    .ok_or_else(|| Error::from_reason("workflow learning is not configured"))?,
+                self.python_pool.clone(),
+            )
+            .map_err(map_err)?;
+        let report = self
+            .learning_pool
+            .run_local(move || async move {
+                let _guard = admin.guard;
+                let context = validation_engine.archive_validation_context()?;
+                let repository = admin.owner.repository().await.map_err(
+                    plasm_agent_core::workflow_learning::native::NativeLearningError::from,
+                )?;
+                let report = repository
+                    .import_filesystem_archive(
+                        &admin.scope,
+                        std::path::Path::new(&source),
+                        &policy,
+                        &context.host,
+                        &context.session,
+                        &context.authorization,
+                    )
+                    .await
+                    .map_err(
+                        plasm_agent_core::workflow_learning::native::NativeLearningError::from,
+                    )?;
+                Ok::<_, engine::AgentEngineError>(report)
+            })
+            .await
+            .map_err(map_err)?
+            .map_err(|error| self.workflow_error(error))?;
+        serde_json::to_string(&report).map_err(map_err)
+    }
+
+    /// Verify an archive's integrity and its adoption in the current scope.
+    #[napi]
+    pub async fn validate_workflow_archive(&self, source: String) -> Result<String> {
+        let admin = self.workflow_admin().await?;
+        let manifest = self
+            .learning_pool
+            .run_local(move || async move {
+                let _guard = admin.guard;
+                let repository = admin.owner.repository().await?;
+                let manifest = repository
+                    .validate_imported_filesystem_archive(
+                        &admin.scope,
+                        std::path::Path::new(&source),
+                    )
+                    .await?;
+                Ok::<_, plasm_agent_core::workflow_learning::native::NativeLearningError>(manifest)
+            })
+            .await
+            .map_err(map_err)?
+            .map_err(|error| self.workflow_error(error))?;
+        serde_json::to_string(&manifest).map_err(map_err)
+    }
+
+    /// Host-only bounded serving verification; never runs the checked programs.
+    #[napi]
+    pub async fn verify_workflow_library(&self, limit: u32) -> Result<String> {
+        use workflow_verification::{LibraryVerification, MAX_VERIFIED_EXAMPLES};
+        if limit == 0 || limit > MAX_VERIFIED_EXAMPLES {
+            return Err(Error::from_reason("verification limit must be 1..32"));
+        }
+        let admin = self.workflow_admin().await?;
+        let generation = self.administrative_generation().await?;
+        let library = self
+            .workflow_config
+            .get()
+            .and_then(NativeLearningConfig::library)
+            .cloned()
+            .ok_or_else(|| Error::from_reason("workflow library is not configured"))?;
+        let pool = self.python_pool.clone();
+        let report = self
+            .learning_pool
+            .run_local(move || async move {
+                let _guard = admin.guard;
+                let repository = admin.owner.repository().await.map_err(
+                    plasm_agent_core::workflow_learning::native::NativeLearningError::from,
+                )?;
+                let mut eligible = repository
+                    .list_eligible(&admin.scope, limit + 1)
+                    .await
+                    .map_err(
+                        plasm_agent_core::workflow_learning::native::NativeLearningError::from,
+                    )?;
+                let truncated = eligible.len() > limit as usize;
+                eligible.truncate(limit as usize);
+                let mut examples = Vec::with_capacity(eligible.len());
+                for revision in eligible {
+                    let mut engine = generation.engine(
+                        NativeLearningConfig::Examples(library.clone()),
+                        pool.clone(),
+                    )?;
+                    examples.push(engine.verify_workflow_example(&revision).await?);
+                }
+                Ok::<_, engine::AgentEngineError>(LibraryVerification {
+                    scope: admin.scope,
+                    generation: generation.pin.generation,
+                    limit,
+                    truncated,
+                    examples,
+                })
+            })
+            .await
+            .map_err(map_err)?
+            .map_err(|error| self.workflow_error(error))?;
+        serde_json::to_string(&report).map_err(map_err)
     }
 
     /// Close admission, drain native callbacks and terminate pooled workers.
@@ -325,8 +1031,34 @@ impl PlasmEngine {
         &self,
         intent_provenance_json: String,
         logical_session_id: Option<String>,
+        session_clock: Option<String>,
     ) -> Result<String> {
         let _admission = self.admit().await?;
+        let _session_admission = self.admit_session(logical_session_id.as_deref()).await?;
+        let learning_serves = self.workflow_config.get().is_some_and(|config| {
+            matches!(
+                config.mode(),
+                NativeLearningMode::Examples | NativeLearningMode::Admission
+            ) || (matches!(config.mode(), NativeLearningMode::Collect) && config.serves_examples())
+        });
+        let _discovery_admission = if learning_serves {
+            self.admit_discovery(logical_session_id.as_deref()).await?
+        } else {
+            None
+        };
+        if let Some(id) = logical_session_id.as_deref() {
+            let gate = lock(&self.session_admission)
+                .get(id)
+                .cloned()
+                .ok_or_else(|| map_err(NodeEngineError::UnknownSession { id: id.to_owned() }))?;
+            if gate.clock != session_clock {
+                return Err(Error::from_reason("session clock cannot be changed"));
+            }
+        }
+        let session_pool = match session_clock.as_deref() {
+            Some(clock) => Arc::new(self.python_pool.for_session_clock(clock).map_err(map_err)?),
+            None => self.python_pool.clone(),
+        };
         let provenance: plasm_agent_core::intent_provenance::IntentProvenance =
             serde_json::from_str(&intent_provenance_json)
                 .map_err(NodeEngineError::from)
@@ -340,6 +1072,94 @@ impl PlasmEngine {
             .routing_inputs(logical_session_id.as_deref())
             .await
             .map_err(map_err)?;
+        let mut recall_ticket = None;
+        let guidance = if let (Some(config), Some(owner)) =
+            (self.workflow_config.get(), self.workflow_owner.get())
+        {
+            let exposure = match config.mode() {
+                NativeLearningMode::Admission => Some(plasm_agent_core::workflow_learning::native_recall::ExampleExposure::AdmissionOnly),
+                NativeLearningMode::Examples => Some(plasm_agent_core::workflow_learning::native_recall::ExampleExposure::OptionalExamples),
+                NativeLearningMode::Collect if config.serves_examples() => Some(plasm_agent_core::workflow_learning::native_recall::ExampleExposure::OptionalExamples),
+                _ => None,
+            };
+            match exposure {
+                Some(exposure) => {
+                    use plasm_agent_core::workflow_learning::deferred_recall::{
+                        RecallContext, RecallStatus,
+                    };
+                    use plasm_agent_core::workflow_learning::native_recall::{
+                        ExampleGuidance, RecallDisposition,
+                    };
+                    let context = RecallContext {
+                        scope: config.scope().map_err(map_err)?,
+                        intent: provenance.current().to_owned(),
+                        intent_revision:
+                            plasm_agent_core::workflow_learning::deferred_recall::intent_revision(
+                                &provenance,
+                            ),
+                        generation: generation.clone(),
+                        authorization: allowed.clone(),
+                    };
+                    if let Some(session) = logical_session_id.as_deref() {
+                        owner
+                            .deferred_recalls
+                            .discard_stale_supplemental(session, &context, &exposed);
+                    }
+                    let status = logical_session_id
+                        .as_deref()
+                        .map(|id| owner.deferred_recalls.status(id, &context))
+                        .unwrap_or(RecallStatus::Missing);
+                    Some(match status {
+                        RecallStatus::Completed((examples, associations)) => {
+                            let validation_owner = Arc::clone(owner);
+                            let validation_scope = context.scope.clone();
+                            let checked = tokio::time::timeout(std::time::Duration::from_millis(250), self.learning_pool.run_local(move || async move {
+                                plasm_agent_core::workflow_learning::deferred_recall::validate_current(&validation_owner, &validation_scope, (examples, associations)).await
+                            })).await;
+                            match checked {
+                                Ok(Ok(Some((examples, associations)))) => {
+                                    ExampleGuidance::from_authorized(
+                                        examples,
+                                        associations,
+                                        exposure,
+                                    )
+                                }
+                                _ => ExampleGuidance::empty(RecallDisposition::Unavailable),
+                            }
+                        }
+                        RecallStatus::Pending => ExampleGuidance::empty(RecallDisposition::Pending),
+                        RecallStatus::Unavailable => {
+                            ExampleGuidance::empty(RecallDisposition::Unavailable)
+                        }
+                        RecallStatus::Missing => {
+                            let prior = logical_session_id
+                                .as_deref()
+                                .map(|session| {
+                                    owner
+                                        .deferred_recalls
+                                        .prior_associations_for_session(session, &context)
+                                })
+                                .unwrap_or_default();
+                            recall_ticket = owner.deferred_recalls.start(
+                                Arc::clone(owner),
+                                context,
+                                store.clone(),
+                                prior,
+                                exposed.clone(),
+                            );
+                            ExampleGuidance::empty(if recall_ticket.is_some() {
+                                RecallDisposition::Pending
+                            } else {
+                                RecallDisposition::Unavailable
+                            })
+                        }
+                    })
+                }
+                None => None,
+            }
+        } else {
+            None
+        };
         let service = DiscoveryService::from_env(store.clone())
             .map_err(NodeEngineError::from)
             .map_err(map_err)?;
@@ -356,8 +1176,11 @@ impl PlasmEngine {
             .await
             .map_err(NodeEngineError::from)
             .map_err(map_err)?;
+        if let (Some(ticket), Some(owner)) = (recall_ticket, self.workflow_owner.get()) {
+            owner.deferred_recalls.bind(ticket, &receipt.pin_id);
+        }
         let teaching = {
-            let (catalogs, compiled_catalogs, _) = store
+            let (catalogs, compiled_catalogs, prerequisite_deployments) = store
                 .load_generation(&receipt.retrieval.generation)
                 .await
                 .map_err(NodeEngineError::from)
@@ -369,14 +1192,25 @@ impl PlasmEngine {
             };
             let shared = {
                 let mut sessions = lock(&self.sessions);
+                lock(&self.session_admission)
+                    .entry(receipt.pin_id.clone())
+                    .or_insert_with(|| Arc::new(SessionAdmission::new(session_clock.clone())));
                 sessions
                     .entry(receipt.pin_id.clone())
                     .or_insert_with(|| {
-                        Arc::new(AsyncMutex::new(InnerEngine::from_pinned_generation(
+                        let mut engine = InnerEngine::from_pinned_generation(
                             catalogs,
                             compiled_catalogs,
                             pin.clone(),
-                        )))
+                            prerequisite_deployments,
+                            session_pool,
+                        );
+                        engine
+                            .configure_workflow_learning(
+                                self.workflow_config.get().cloned().unwrap_or_default(),
+                            )
+                            .expect("validated configuration on a fresh engine");
+                        Arc::new(AsyncMutex::new(engine))
                     })
                     .clone()
             };
@@ -384,18 +1218,203 @@ impl PlasmEngine {
             if engine.discovery_pin() != Some(&pin) {
                 return Err(map_err(NodeEngineError::RoutingPinMismatch));
             }
-            receipt
-                .closure
-                .as_ref()
-                .map(|closure| {
+            match receipt.closure.as_ref() {
+                Some(closure) => Some(
                     engine
                         .expose_routing(&receipt.intent, closure)
-                        .map_err(map_err)
-                })
-                .transpose()?
+                        .await
+                        .map_err(map_err)?,
+                ),
+                None => {
+                    engine.retain_unexposed_intent(&receipt.intent_provenance);
+                    None
+                }
+            }
         };
-        serde_json::to_string(&serde_json::json!({"routing":receipt,"teaching":teaching}))
-            .map_err(|e| Error::from_reason(e.to_string()))
+        let mut packet = serde_json::json!({"routing":receipt,"teaching":teaching});
+        if let Some(guidance) = guidance {
+            packet["workflow_examples"] =
+                serde_json::to_value(guidance.examples).map_err(map_err)?;
+            packet["workflow_recall"] =
+                serde_json::to_value(guidance.disposition).map_err(map_err)?;
+        }
+        serde_json::to_string(&packet).map_err(map_err)
+    }
+
+    /// Deliver completed, still-authorized examples on a later session turn.
+    #[napi]
+    pub async fn take_completed_teaching(
+        &self,
+        logical_session_id: String,
+        include_examples: Option<bool>,
+    ) -> Result<String> {
+        let _admission = self.admit().await?;
+        let _session_admission = self.admit_session(Some(&logical_session_id)).await?;
+        let _discovery_admission = self.admit_discovery(Some(&logical_session_id)).await?;
+        let (Some(config), Some(owner)) = (self.workflow_config.get(), self.workflow_owner.get())
+        else {
+            return Ok(String::new());
+        };
+        if !matches!(
+            config.mode(),
+            NativeLearningMode::Examples | NativeLearningMode::Admission
+        ) && !(matches!(config.mode(), NativeLearningMode::Collect) && config.serves_examples())
+        {
+            return Ok(String::new());
+        }
+        let include_examples = include_examples.unwrap_or(true)
+            && !matches!(config.mode(), NativeLearningMode::Admission);
+        if !owner
+            .deferred_recalls
+            .has_delivery(&logical_session_id, include_examples)
+        {
+            return Ok(String::new());
+        }
+        let scope = config.scope().map_err(map_err)?;
+        let (generation, allowed, _) = self
+            .routing_inputs(Some(&logical_session_id))
+            .await
+            .map_err(map_err)?;
+        let mut cards = Vec::new();
+        if let Some(store) = self.discovery_store.get() {
+            let provenance = store.intent_provenance(&logical_session_id).await;
+            if let Err(error) = &provenance {
+                tracing::warn!(target: "plasm_agent::workflow_learning", %error, "could not load the session intent for supplemental delivery");
+            }
+            if let Ok(provenance) = provenance {
+                let context = plasm_agent_core::workflow_learning::deferred_recall::RecallContext {
+                    scope: scope.clone(),
+                    intent: provenance.current().to_owned(),
+                    intent_revision:
+                        plasm_agent_core::workflow_learning::deferred_recall::intent_revision(
+                            &provenance,
+                        ),
+                    generation: generation.clone(),
+                    authorization: allowed.clone(),
+                };
+                if owner
+                    .deferred_recalls
+                    .take_supplemental_failure(&logical_session_id, &context)
+                {
+                    cards.push("Supplemental discovery is unavailable; ordinary discovery remains available.".into());
+                }
+                if let Some(claim) = owner
+                    .deferred_recalls
+                    .claim_supplemental(&logical_session_id, &context)
+                {
+                    let expected = claim.result().associations.len();
+                    let associations = claim.result().associations.clone();
+                    let validation_owner = Arc::clone(owner);
+                    let validation_scope = scope.clone();
+                    let checked = self
+                        .learning_pool
+                        .run_local(move || async move {
+                            plasm_agent_core::workflow_learning::deferred_recall::validate_current(
+                                &validation_owner,
+                                &validation_scope,
+                                (Vec::new(), associations),
+                            )
+                            .await
+                        })
+                        .await;
+                    if let Ok(Some((_, current))) = checked {
+                        if current.len() == expected {
+                            let shared =
+                                self.session_engine(&logical_session_id).map_err(map_err)?;
+                            let mut engine = shared.lock().await;
+                            let pin_current = engine.discovery_pin().is_some_and(|pin| {
+                                pin.generation == generation && pin.authorization == allowed
+                            });
+                            let intent_current = store
+                                .intent_provenance(&logical_session_id)
+                                .await
+                                .is_ok_and(|current| {
+                                    plasm_agent_core::workflow_learning::deferred_recall::intent_revision(&current) == context.intent_revision
+                                });
+                            if pin_current && intent_current {
+                                let wave = engine
+                                    .expose_routing(&context.intent, &claim.result().closure)
+                                    .await
+                                    .map_err(map_err)?;
+                                tracing::debug!(target: "plasm_agent::workflow_learning", declarations_changed = wave.declarations_changed, prompt_chars = wave.prompt.len(), "supplemental discovery delivered to embedded session");
+                                if wave.declarations_changed {
+                                    cards.push(format!(
+                                        "Additional discovery for the current request:\n{}",
+                                        wave.prompt
+                                    ));
+                                }
+                                claim.commit();
+                            }
+                        } else {
+                            claim.commit();
+                        }
+                    }
+                }
+            }
+        }
+        let completed = if include_examples {
+            owner.deferred_recalls.completed_for_session(
+                &logical_session_id,
+                &scope,
+                &generation,
+                &allowed,
+            )
+        } else {
+            Vec::new()
+        };
+        for item in completed
+            .into_iter()
+            .filter(|item| !item.examples.is_empty())
+            .take(3)
+        {
+            let validation_owner = Arc::clone(owner);
+            let validation_scope = scope.clone();
+            let checked = tokio::time::timeout(
+                std::time::Duration::from_millis(250),
+                self.learning_pool.run_local(move || async move {
+                    plasm_agent_core::workflow_learning::deferred_recall::validate_current(
+                        &validation_owner,
+                        &validation_scope,
+                        (item.examples, item.associations),
+                    )
+                    .await
+                }),
+            )
+            .await;
+            if let Ok(Ok(Some((examples, associations)))) = checked {
+                let exposure = if matches!(config.mode(), NativeLearningMode::Admission) {
+                    plasm_agent_core::workflow_learning::native_recall::ExampleExposure::AdmissionOnly
+                } else {
+                    plasm_agent_core::workflow_learning::native_recall::ExampleExposure::OptionalExamples
+                };
+                let guidance = plasm_agent_core::workflow_learning::native_recall::ExampleGuidance::from_authorized(examples, associations, exposure);
+                let fresh = owner.deferred_recalls.claim_delivery(
+                    item.ticket,
+                    &guidance
+                        .examples
+                        .iter()
+                        .map(|example| example.example_ref)
+                        .collect::<Vec<_>>(),
+                );
+                if !fresh.is_empty() {
+                    cards.push(format!(
+                        "Optional workflow examples for {} (fetch with plasm_example):\n{}",
+                        item.intent,
+                        guidance
+                            .examples
+                            .iter()
+                            .filter(|example| fresh.contains(&example.example_ref))
+                            .map(|example| format!(
+                                "- {}: {}",
+                                example.example_ref, example.purpose
+                            ))
+                            .collect::<Vec<_>>()
+                            .join("\n")
+                    ));
+                }
+            }
+        }
+        Ok(cards.join("\n\n"))
     }
 
     #[napi]
@@ -415,9 +1434,11 @@ impl PlasmEngine {
             .collect();
         let result = engine
             .expose_seeds(intent, &capability_seeds)
+            .await
             .map_err(map_err)?;
         Ok(JsTeachingResult {
             prompt: result.prompt,
+            declarations_changed: result.declarations_changed,
             delta_refs: result.delta_refs,
         })
     }
@@ -437,6 +1458,7 @@ impl PlasmEngine {
         logical_session_id: Option<String>,
     ) -> Result<JsDryRunResult> {
         let _admission = self.admit().await?;
+        let _session_admission = self.admit_session(logical_session_id.as_deref()).await?;
         let mut engine = self.execution_engine(logical_session_id.as_deref()).await?;
         let result = engine.dry_run(&program).await.map_err(map_err)?;
         Ok(JsDryRunResult {
@@ -457,6 +1479,7 @@ impl PlasmEngine {
         logical_session_id: Option<String>,
     ) -> Result<JsRunPlanResult> {
         let _admission = self.admit().await?;
+        let _session_admission = self.admit_session(logical_session_id.as_deref()).await?;
         let mut engine = self.execution_engine(logical_session_id.as_deref()).await?;
         let result = engine.run_plan(&plan_commit_ref).map_err(map_err)?;
         Ok(JsRunPlanResult {
@@ -470,21 +1493,57 @@ impl PlasmEngine {
     }
 
     #[napi(
-        ts_args_type = "planCommitRef: string, transport: (request: JsTransportRequest) => JsTransportResponse | Promise<JsTransportResponse>, logicalSessionId?: string"
+        ts_args_type = "planCommitRef: string, transport: (request: JsTransportRequest) => Promise<JsTransportResponse>, logicalSessionId?: string, resolveAuth?: (request: JsAuthScopeRequest) => Promise<string | null>"
     )]
     pub async fn run_plan_live(
         &self,
         plan_commit_ref: String,
         transport: JsHostTransport,
         logical_session_id: Option<String>,
+        resolve_auth: Option<JsHostAuthResolver>,
     ) -> Result<JsRunPlanResult> {
         let _admission = self.admit().await?;
+        let _session_admission = self.admit_session(logical_session_id.as_deref()).await?;
         let mut engine = self.execution_engine(logical_session_id.as_deref()).await?;
-        let callback = JsCallbackHttpTransport::new(transport.0, engine.primary_entry_id());
-        let result = engine
-            .run_plan_live(&plan_commit_ref, callback)
+        let callback =
+            JsCallbackHttpTransport::new(transport.0, engine.primary_entry_id(), resolve_auth);
+        let workflow = logical_session_id.unwrap_or_default();
+        let mut reservation = self
+            .effect_obligations
+            .admit(&workflow)
+            .map_err(Error::from_reason)?;
+        let mut worker = self
+            .learning_pool
+            .start_local(move || async move {
+                let _admission = _admission;
+                let _session_admission = _session_admission;
+                let prepared = match engine.prepare_live_run(&plan_commit_ref, callback).await {
+                    Ok(value) => value,
+                    Err(error) => {
+                        reservation.preparation_failed();
+                        return Err(error);
+                    }
+                };
+                drop(engine);
+                let result = match prepared {
+                    engine::PreparedLiveRunResult::Rejected(result) => Ok(result),
+                    engine::PreparedLiveRunResult::Ready(prepared) => {
+                        reservation.begin_execution();
+                        prepared.execute().await
+                    }
+                };
+                if let Ok(value) = &result {
+                    reservation.finish(value);
+                }
+                result
+            })
             .await
             .map_err(map_err)?;
+        let result = worker
+            .wait()
+            .await
+            .map_err(map_err)?
+            .map_err(|error| self.workflow_error(error))?;
         Ok(JsRunPlanResult {
             ok: result.ok,
             message: result.message,
@@ -494,6 +1553,25 @@ impl PlasmEngine {
             failure_json: result.failure_json,
         })
     }
+
+    /// Atomically accept a terminal across the caller's native workflows.
+    #[napi]
+    pub async fn seal_effect_workflows(&self, workflows_json: String) -> Result<()> {
+        let _admission = self.admit().await?;
+        let ids: Vec<String> = parse_archive_metadata(&workflows_json)?;
+        self.effect_obligations
+            .seal(&ids)
+            .map_err(Error::from_reason)
+    }
+}
+
+fn parse_archive_metadata<T: serde::de::DeserializeOwned>(json: &str) -> Result<T> {
+    if json.len() > 1024 * 1024 {
+        return Err(Error::from_reason(
+            "archive metadata exceeds bounded admission limits",
+        ));
+    }
+    serde_json::from_str(json).map_err(map_err)
 }
 
 #[cfg(test)]
@@ -531,6 +1609,8 @@ mod mutex_law_tests {
                 Default::default(),
                 Default::default(),
                 pin,
+                Default::default(),
+                engine.python_pool.clone(),
             ))),
         );
         *engine.activated.write().await =
@@ -571,6 +1651,7 @@ mod mutex_law_tests {
             [("fixture".into(), plasm_core::CGS::new())].into(),
             Default::default(),
             "closing-session".into(),
+            engine.python_pool.clone(),
         );
         let mut admitted = Box::pin(engine.introspect_catalog("fixture".into()));
         poll_fn(|cx| {
@@ -591,6 +1672,69 @@ mod mutex_law_tests {
         assert!(*engine.drained.read().await);
         assert!(engine.introspect_catalog("fixture".into()).await.is_err());
         engine.close().await;
+    }
+
+    #[tokio::test]
+    async fn draining_one_session_waits_for_its_work_without_stopping_another() {
+        use std::future::{poll_fn, Future};
+        use std::task::Poll;
+
+        let engine = PlasmEngine::new();
+        for id in ["a", "b"] {
+            lock(&engine.session_admission)
+                .insert(id.into(), Arc::new(SessionAdmission::new(None)));
+        }
+        let admitted = engine.admit_session(Some("a")).await.unwrap();
+        let mut drain = Box::pin(engine.drain_session("a".into()));
+        poll_fn(|cx| {
+            assert!(drain.as_mut().poll(cx).is_pending());
+            Poll::Ready(())
+        })
+        .await;
+        assert!(engine.admit_session(Some("b")).await.is_ok());
+        drop(admitted);
+        drain.await.unwrap();
+        assert!(engine.admit_session(Some("a")).await.is_err());
+        assert!(engine.admit_session(Some("b")).await.is_ok());
+    }
+
+    #[tokio::test]
+    async fn cancelled_session_drain_still_prevents_new_work() {
+        use std::future::{poll_fn, Future};
+        use std::task::Poll;
+
+        let engine = PlasmEngine::new();
+        lock(&engine.session_admission).insert("a".into(), Arc::new(SessionAdmission::new(None)));
+        let admitted = engine.admit_session(Some("a")).await.unwrap();
+        let mut drain = Box::pin(engine.drain_session("a".into()));
+        poll_fn(|cx| {
+            assert!(drain.as_mut().poll(cx).is_pending());
+            Poll::Ready(())
+        })
+        .await;
+        drop(drain);
+        assert!(engine.admit_session(Some("a")).await.is_err());
+        drop(admitted);
+        engine.drain_session("a".into()).await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn releasing_one_session_preserves_other_sessions() {
+        let engine = PlasmEngine::new();
+        for id in ["a", "b"] {
+            lock(&engine.sessions).insert(
+                id.into(),
+                Arc::new(AsyncMutex::new(InnerEngine::new(
+                    engine.python_pool.clone(),
+                ))),
+            );
+            lock(&engine.session_admission)
+                .insert(id.into(), Arc::new(SessionAdmission::new(None)));
+        }
+        engine.release_session("a".into()).await.unwrap();
+        assert!(engine.session_engine("a").is_err());
+        assert!(engine.session_engine("b").is_ok());
+        assert!(engine.admit_session(Some("b")).await.is_ok());
     }
 
     #[tokio::test]
@@ -628,10 +1772,13 @@ mod mutex_law_tests {
         use std::task::Poll;
         let engine = PlasmEngine::new();
         let mut held = engine.inner.lock().await;
+        let cgs = plasm_core::CGS::new();
+        let compiled = plasm_compile::compile_cgs_capability_templates(&cgs).unwrap();
         *held = InnerEngine::from_generation(
-            [("fixture".into(), plasm_core::CGS::new())].into(),
-            Default::default(),
+            [("fixture".into(), cgs)].into(),
+            [("fixture".into(), Arc::new(compiled))].into(),
             "queued-session".into(),
+            engine.python_pool.clone(),
         );
         let mut first = Box::pin(engine.dry_run("invalid".into(), None));
         let mut cancelled = Box::pin(engine.introspect_catalog("fixture".into()));
@@ -646,9 +1793,10 @@ mod mutex_law_tests {
         // Cancelling a queued caller must not obstruct those behind it.
         drop(cancelled);
         drop(held);
+        let first_result = first.await.expect("invalid program returns a diagnostic");
         assert!(
-            first.await.is_err(),
-            "invalid program should fail after admission"
+            first_result.failure_json.is_some(),
+            "invalid program must fail"
         );
         let result = tokio::time::timeout(std::time::Duration::from_secs(2), second)
             .await
@@ -667,7 +1815,12 @@ mod mutex_law_tests {
     async fn logical_sessions_have_independent_queues_and_survive_holder_cancellation() {
         let engine = Arc::new(PlasmEngine::new());
         for id in ["a", "b"] {
-            lock(&engine.sessions).insert(id.into(), Arc::new(AsyncMutex::new(InnerEngine::new())));
+            lock(&engine.sessions).insert(
+                id.into(),
+                Arc::new(AsyncMutex::new(InnerEngine::new(
+                    engine.python_pool.clone(),
+                ))),
+            );
         }
         let a = engine.session_engine("a").unwrap();
         let (tx, rx) = tokio::sync::oneshot::channel();

@@ -138,6 +138,14 @@ impl TypedComparisonValue {
         }
     }
 
+    /// Borrow the dynamic operand when it could not be lifted to a literal.
+    pub fn dynamic_value(&self) -> Option<&Value> {
+        match &self.inner {
+            ComparisonInner::Typed(_) => None,
+            ComparisonInner::Dynamic(value) => Some(value),
+        }
+    }
+
     #[must_use]
     pub fn to_value(&self) -> Value {
         match &self.inner {

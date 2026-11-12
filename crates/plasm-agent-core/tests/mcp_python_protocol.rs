@@ -213,8 +213,11 @@ async fn intent_discovery_python_inline_read_and_extension_over_mcp() {
     let cgs = discovery::pack(
         dir.path(),
         plasm_core::loader::load_schema_dir(
-            &std::path::Path::new(&std::env::var("CARGO_MANIFEST_DIR").expect("test runner must set CARGO_MANIFEST_DIR"))
-                .join("../../fixtures/schemas/mcp_transport_matrix"),
+            &std::path::Path::new(
+                &std::env::var("CARGO_MANIFEST_DIR")
+                    .expect("test runner must set CARGO_MANIFEST_DIR"),
+            )
+            .join("../../fixtures/schemas/mcp_transport_matrix"),
         )
         .unwrap(),
     );
@@ -250,11 +253,10 @@ async fn intent_discovery_python_inline_read_and_extension_over_mcp() {
         Arc::new(plasm_agent_core::live_plan_run_worker::LivePlanRunPool::new());
     let generation = host.catalog.activate_discovery().await.unwrap();
     let store = host.catalog.discovery_store().await.unwrap();
-    discovery::seed_model_boundary(store, &generation, &cgs, &["Observe items"]).await;
+    discovery::seed_model_boundary(store, &generation, &["Observe items"]).await;
     discovery::seed_model_boundary(
         store,
         &generation,
-        &cgs,
         &["Observe items", "Inspect available item operations"],
     )
     .await;
@@ -346,8 +348,11 @@ async fn python_inline_read_uses_mcp_and_rejection_dispatches_nothing() {
     assert_eq!(listed.tools[0].name, "list_items");
     let cgs = Arc::new(
         plasm_core::loader::load_schema_dir(
-            &std::path::Path::new(&std::env::var("CARGO_MANIFEST_DIR").expect("test runner must set CARGO_MANIFEST_DIR"))
-                .join("../../fixtures/schemas/mcp_transport_matrix"),
+            &std::path::Path::new(
+                &std::env::var("CARGO_MANIFEST_DIR")
+                    .expect("test runner must set CARGO_MANIFEST_DIR"),
+            )
+            .join("../../fixtures/schemas/mcp_transport_matrix"),
         )
         .unwrap(),
     );

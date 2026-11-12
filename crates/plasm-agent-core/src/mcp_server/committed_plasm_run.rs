@@ -169,13 +169,16 @@ pub async fn resolve_mcp_live_run_ingress(
                 .await
                 .map_err(ExecutionFailure::from)?;
             Ok(ResolvedMcpLiveRunIngress {
-                bundle: PlasmCompBundle::new(committed.artifact.clone()).map_err(|detail| {
-                    ExecutionFailure::new(
-                        FailureCause::Runtime,
-                        "committed_plan_invalid",
-                        detail.to_string(),
-                    )
-                })?,
+                bundle: PlasmCompBundle::new(committed.artifact.clone())
+                    .map_err(|detail| {
+                        ExecutionFailure::new(
+                            FailureCause::Runtime,
+                            "committed_plan_invalid",
+                            detail.to_string(),
+                        )
+                    })?
+                    .with_source(committed.program.clone())
+                    .with_compilation_symbols(committed.dry_cache.compilation_symbols.clone()),
                 program_for_trace: committed.program.clone(),
                 kind: McpLiveRunKind::ReviewedCommit {
                     committed: Box::new(committed),

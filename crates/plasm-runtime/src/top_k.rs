@@ -1,5 +1,7 @@
 //! Streaming top-k with the same declared ordering and stable ties as row sort.
+#[cfg(test)]
 use crate::cache::CachedEntity;
+use crate::paginated_collect::RetainedObservation;
 use crate::row_predicate::{entity_field_path_value, BoundRowPredicate};
 use plasm_core::{value_contract::ValueContract, value_order::Orderable, Value};
 use std::{cmp::Ordering, collections::BinaryHeap, sync::Arc};
@@ -13,7 +15,7 @@ pub struct TopKSpec {
 }
 struct Entry {
     key: Value,
-    entity: CachedEntity,
+    observation: RetainedObservation,
     sequence: usize,
     contract: Arc<ValueContract>,
     descending: bool,
@@ -51,33 +53,52 @@ impl Ord for Entry {
 }
 pub struct TopKHeap {
     spec: TopKSpec,
+    predicates: Vec<crate::row_predicate::PreparedRowPredicate>,
     contract: Arc<ValueContract>,
     representative: Option<Value>,
     heap: BinaryHeap<Entry>,
     sequence: usize,
 }
 impl TopKHeap {
-    pub fn new(spec: TopKSpec, contract: ValueContract) -> Result<Self, crate::RuntimeError> {
+    pub fn new(
+        spec: TopKSpec,
+        contract: ValueContract,
+        predicates: Vec<crate::row_predicate::PreparedRowPredicate>,
+    ) -> Result<Self, crate::RuntimeError> {
         contract.ordering()?;
+        if spec.row_filter.len() != predicates.len() {
+            return Err(
+                crate::row_predicate::RowPredicateError::PreparationMismatch {
+                    requested: spec.row_filter.len(),
+                    prepared: predicates.len(),
+                }
+                .into(),
+            );
+        }
         Ok(Self {
             spec,
+            predicates,
             contract: Arc::new(contract),
             representative: None,
             heap: BinaryHeap::new(),
             sequence: 0,
         })
     }
-    pub fn insert(&mut self, entity: CachedEntity) -> Result<(), crate::RuntimeError> {
-        if !self.spec.row_filter.is_empty()
-            && !crate::row_predicate::entity_matches_predicates(&entity, &self.spec.row_filter)?
-        {
-            return Ok(());
+    pub fn insert(&mut self, observation: RetainedObservation) -> Result<(), crate::RuntimeError> {
+        let entity = &observation.entity;
+        for predicate in &self.predicates {
+            if !predicate.matches_entity(entity)? {
+                return Ok(());
+            }
         }
         if let Some(field) = self.spec.sort_key.first() {
-            crate::row_predicate::require_entity_field_available(&entity, field)?;
+            crate::row_predicate::require_entity_field_available(entity, field)?;
         }
-        let key = entity_field_path_value(&entity, &self.spec.sort_key)
-            .ok_or(crate::RuntimeError::TopKFieldUnobserved)?;
+        let key = entity_field_path_value(entity, &self.spec.sort_key).ok_or_else(|| {
+            crate::RuntimeError::TopKFieldUnobserved {
+                field: self.spec.sort_key.join("."),
+            }
+        })?;
         let ordering = self.contract.ordering()?;
         ordering.validate(&key)?;
         if !key.is_null() {
@@ -93,7 +114,7 @@ impl TopKHeap {
             .ok_or(crate::RuntimeError::TopKSequenceOverflow)?;
         let entry = Entry {
             key,
-            entity,
+            observation,
             sequence,
             contract: self.contract.clone(),
             descending: self.spec.descending,
@@ -106,11 +127,11 @@ impl TopKHeap {
         }
         Ok(())
     }
-    pub fn into_sorted_entities(self) -> Vec<CachedEntity> {
+    pub fn into_sorted_observations(self) -> Vec<RetainedObservation> {
         self.heap
             .into_sorted_vec()
             .into_iter()
-            .map(|entry| entry.entity)
+            .map(|entry| entry.observation)
             .collect()
     }
 }
@@ -120,6 +141,12 @@ mod tests {
     use crate::EntityCompleteness;
     use indexmap::IndexMap;
     use plasm_core::{Ref, TypedFieldValue, Value};
+    fn observed(entity: CachedEntity) -> RetainedObservation {
+        RetainedObservation {
+            entity,
+            descendants: vec![],
+        }
+    }
 
     fn entity(name: &str, score: i64) -> CachedEntity {
         let mut fields = IndexMap::new();
@@ -152,6 +179,7 @@ mod tests {
                 row_filter: vec![],
             },
             ValueContract::scalar(plasm_core::FieldType::Money),
+            vec![],
         )
         .unwrap();
         let make = |name, amount: &str, currency: &str| {
@@ -165,11 +193,18 @@ mod tests {
             );
             row
         };
-        heap.insert(make("a", "9007199254740992", "USD")).unwrap();
-        heap.insert(make("b", "9007199254740993", "USD")).unwrap();
-        assert!(heap.insert(make("bad", "9007199254740994", "EUR")).is_err());
+        heap.insert(observed(make("a", "9007199254740992", "USD")))
+            .unwrap();
+        heap.insert(observed(make("b", "9007199254740993", "USD")))
+            .unwrap();
+        assert!(heap
+            .insert(observed(make("bad", "9007199254740994", "EUR")))
+            .is_err());
         assert_eq!(
-            heap.into_sorted_entities()[0].reference.primary_slot_str(),
+            heap.into_sorted_observations()[0]
+                .entity
+                .reference
+                .primary_slot_str(),
             "b"
         );
         let mut heap = TopKHeap::new(
@@ -180,12 +215,13 @@ mod tests {
                 row_filter: vec![],
             },
             ValueContract::scalar(plasm_core::FieldType::Integer),
+            vec![],
         )
         .unwrap();
         let mut row = entity("invalid", 0);
         row.fields
             .insert("score".into(), TypedFieldValue::Object(IndexMap::new()));
-        assert!(heap.insert(row).is_err());
+        assert!(heap.insert(observed(row)).is_err());
     }
 
     #[test]
@@ -198,15 +234,16 @@ mod tests {
                 row_filter: Vec::new(),
             },
             ValueContract::scalar(plasm_core::FieldType::Integer),
+            vec![],
         )
         .unwrap();
         for (name, score) in [("a", 1), ("b", 3), ("c", 2)] {
-            heap.insert(entity(name, score)).unwrap();
+            heap.insert(observed(entity(name, score))).unwrap();
         }
         let names: Vec<_> = heap
-            .into_sorted_entities()
+            .into_sorted_observations()
             .into_iter()
-            .map(|e| e.reference.primary_slot_str().to_string())
+            .map(|e| e.entity.reference.primary_slot_str().to_string())
             .collect();
         assert_eq!(names, vec!["b".to_string(), "c".to_string()]);
     }
@@ -217,6 +254,12 @@ mod laws {
     use super::*;
     use plasm_core::{temporal_value::TemporalKind, Ref, TypedFieldValue};
     use proptest::prelude::*;
+    fn observed(entity: CachedEntity) -> RetainedObservation {
+        RetainedObservation {
+            entity,
+            descendants: vec![],
+        }
+    }
     fn row(id: usize, key: Value) -> CachedEntity {
         CachedEntity {
             reference: Ref::new("Item", id.to_string()),
@@ -232,15 +275,15 @@ mod laws {
         #[test]
         fn heap_matches_stable_full_sort_with_nulls_and_ties(values in proptest::collection::vec(proptest::option::of(-10i64..10),0..80), count in 0usize..90, descending in any::<bool>()) {
             let spec=TopKSpec { count,sort_key:vec!["key".into()],descending,row_filter:vec![] };
-            let mut heap=TopKHeap::new(spec,ValueContract::scalar(plasm_core::FieldType::Integer)).unwrap();
-            for (i,v) in values.iter().enumerate() { heap.insert(row(i,v.map(Value::Integer).unwrap_or(Value::Null))).unwrap(); }
+            let mut heap=TopKHeap::new(spec,ValueContract::scalar(plasm_core::FieldType::Integer), vec![]).unwrap();
+            for (i,v) in values.iter().enumerate() { heap.insert(observed(row(i,v.map(Value::Integer).unwrap_or(Value::Null)))).unwrap(); }
             let mut expected:Vec<_>=values.iter().enumerate().collect();
             expected.sort_by(|(i,a),(j,b)| match (a,b) {
                 (Some(a),Some(b)) => (if descending { b.cmp(a) } else { a.cmp(b) }).then(i.cmp(j)),
                 _ => a.is_none().cmp(&b.is_none()).then(i.cmp(j)),
             });
             let expected:Vec<_>=expected.into_iter().take(count).map(|(i,_)|i.to_string()).collect();
-            let actual:Vec<_>=heap.into_sorted_entities().iter().map(|r|r.reference.primary_slot_str().to_string()).collect();
+            let actual:Vec<_>=heap.into_sorted_observations().iter().map(|r|r.entity.reference.primary_slot_str().to_string()).collect();
             prop_assert_eq!(actual,expected);
         }
     }
@@ -254,10 +297,12 @@ mod laws {
         };
         assert!(TopKHeap::new(
             spec.clone(),
-            ValueContract::scalar(plasm_core::FieldType::Json)
+            ValueContract::scalar(plasm_core::FieldType::Json),
+            vec![]
         )
         .is_err());
-        let mut heap = TopKHeap::new(spec.clone(), TemporalKind::Datetime.contract()).unwrap();
+        let mut heap =
+            TopKHeap::new(spec.clone(), TemporalKind::Datetime.contract(), vec![]).unwrap();
         for (i, v) in [
             "2024-01-01T00:00:00Z",
             "2024-01-01T01:00:00+02:00",
@@ -266,21 +311,22 @@ mod laws {
         .iter()
         .enumerate()
         {
-            heap.insert(row(i, Value::String((*v).into()))).unwrap();
+            heap.insert(observed(row(i, Value::String((*v).into()))))
+                .unwrap();
         }
-        let out = heap.into_sorted_entities();
+        let out = heap.into_sorted_observations();
         assert_eq!(
             out.iter()
-                .map(|r| r.reference.primary_slot_str())
+                .map(|r| r.entity.reference.primary_slot_str())
                 .collect::<Vec<_>>(),
             ["1", "2"]
         );
-        let mut heap = TopKHeap::new(spec, TemporalKind::Datetime.contract()).unwrap();
+        let mut heap = TopKHeap::new(spec, TemporalKind::Datetime.contract(), vec![]).unwrap();
         assert!(heap
-            .insert(row(0, Value::String("invalid".into())))
+            .insert(observed(row(0, Value::String("invalid".into()))))
             .is_err());
         let mut missing = row(1, Value::Null);
         missing.fields.clear();
-        assert!(heap.insert(missing).is_err());
+        assert!(heap.insert(observed(missing)).is_err());
     }
 }

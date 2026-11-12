@@ -1,0 +1,38 @@
+{
+  "survey_read": {
+    "method": "GET",
+    "path": [
+      {
+        "type": "literal",
+        "value": "survey_read"
+      }
+    ]
+  },
+  "survey_export": {
+    "method": "POST",
+    "path": [
+      {
+        "type": "literal",
+        "value": "survey_export"
+      }
+    ]
+  },
+  "survey_preview": {
+    "method": "POST",
+    "path": [
+      {
+        "type": "literal",
+        "value": "survey_preview"
+      }
+    ]
+  },
+  "invoice_read": {
+    "method": "GET",
+    "path": [
+      {
+        "type": "literal",
+        "value": "invoice_read"
+      }
+    ]
+  }
+}

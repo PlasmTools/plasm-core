@@ -14,12 +14,49 @@ pub enum PythonArgumentError {
     AnnotationMismatch(#[source] Box<crate::python_compute::inference::InferenceError>),
     #[error(transparent)]
     Inference(#[from] crate::python_compute::inference::InferenceError),
-    #[error("compute input field {field} is unobserved")]
-    InputFieldUnobserved { field: String },
+    #[error("compute input row {input_index} (zero-based), field `{field}` is unobserved, not null. Inspect this input's producer result; select a variant exposing the field or obtain the missing observation. Do not substitute null for missing data.")]
+    InputFieldUnobserved { field: String, input_index: usize },
     #[error("value compute invocation requires one row")]
     ValueInvocationRequiresOneRow,
     #[error("compute input value violates its declared contract")]
     ValueContract(#[source] plasm_core::value_contract::ValueContractError),
+}
+
+#[cfg(test)]
+mod observation_tests {
+    use super::*;
+
+    #[test]
+    fn absent_field_reports_input_occurrence_without_inventing_variant() {
+        let mut value_type = Type::scalar(plasm_core::FieldType::String);
+        value_type.nullable = true;
+        let argument = Argument {
+            field: Some("payload".into()),
+            per_row: true,
+            value_type,
+            mapping: None,
+        };
+        let rows = vec![
+            BTreeMap::from([("payload".into(), Value::Null)]),
+            BTreeMap::new(),
+        ];
+        let error = argument
+            .validate(&rows, &CGS::default(), "matrix", &BTreeMap::new())
+            .unwrap_err();
+        assert!(
+            matches!(&error, PythonArgumentError::InputFieldUnobserved { field, input_index: 1 } if field == "payload")
+        );
+        assert!(error.to_string().contains("not null"));
+        assert!(!error.to_string().contains("matrix"));
+        assert!(argument
+            .validate(
+                &rows[..1].to_vec(),
+                &CGS::default(),
+                "matrix",
+                &BTreeMap::new()
+            )
+            .is_ok());
+    }
 }
 
 pub(super) struct Argument {
@@ -219,11 +256,13 @@ impl Argument {
         };
         let values = rows
             .iter()
-            .map(|row| {
+            .enumerate()
+            .map(|(input_index, row)| {
                 row.get(field)
                     .cloned()
                     .ok_or_else(|| PythonArgumentError::InputFieldUnobserved {
                         field: field.clone(),
+                        input_index,
                     })
             })
             .collect::<Result<Vec<_>, _>>()?;

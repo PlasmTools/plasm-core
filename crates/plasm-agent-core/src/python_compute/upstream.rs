@@ -169,7 +169,7 @@ fn render(
                     PythonComputeError::BoundaryFingerprintEncoding(std::sync::Arc::new(error))
                 })?,)
             );
-            if out.contains(&format!("class {name}:")) {
+            if out.contains(&format!("class {name}(Protocol):")) {
                 return Ok(if t.nullable {
                     format!("{name} | None")
                 } else {
@@ -181,12 +181,18 @@ fn render(
             for (field, value) in fields {
                 validate_member(field)?;
                 let ty = render(value, cgs, catalogs, out, depth + 1)?;
-                members.push_str(&format!("    {field}: {ty}\n"));
+                members.push_str(&format!(
+                    "    @property\n    def {field}(self) -> {ty}: ...\n"
+                ));
                 indexed.push((field.clone(), ty));
             }
             members.push_str(&record_index_members(&indexed)?);
+            // Materialized rows are read-only structural values. A filtered row
+            // remains a valid value of the wider entity contract; nominal class
+            // identity must not reject its narrowed fields.
+            out.push_str("from typing import Protocol\n");
             out.push_str(&format!(
-                "class {name}:\n{}",
+                "class {name}(Protocol):\n{}",
                 if members.is_empty() {
                     "    pass\n"
                 } else {

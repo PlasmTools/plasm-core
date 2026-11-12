@@ -89,6 +89,8 @@ enum DeliveredMember {
 #[derive(Clone, Debug, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct PythonTeachingState {
     language: String,
+    #[serde(default)]
+    required_domains: BTreeMap<String, BTreeSet<String>>,
     #[serde(with = "domain_symbol_wire")]
     domain_symbols: BTreeMap<(String, String), String>,
     declarations: BTreeMap<String, String>,
@@ -154,6 +156,31 @@ pub fn capability_method_name(
     }
 }
 
+impl PythonTeachingState {
+    /// Exact catalogue authority for delivered nominal types and entity declarations.
+    pub fn catalog_fingerprints(&self) -> &BTreeMap<String, String> {
+        &self.catalog_hashes
+    }
+}
+
+/// Stage nominal type declarations without admitting entities or capabilities.
+/// Catalogues must already be authorized and registered on the supplied exposure.
+pub fn prepare_python_domain_wave(
+    exposure: &TeachingExposureSession,
+    previous: &PythonTeachingState,
+    domains: &[(String, ValueDomainKey)],
+) -> Result<PythonTeachingWave, PythonTeachingError> {
+    let mut requested = previous.clone();
+    for (entry, key) in domains {
+        requested
+            .required_domains
+            .entry(entry.clone())
+            .or_default()
+            .insert(key.as_str().into());
+    }
+    prepare_python_teaching_wave(exposure, &requested)
+}
+
 /// Prepare an incremental card from the session's authoritative symbol allocation.
 /// This renderer does not select the host's source frontend or grant execution.
 pub fn prepare_python_teaching_wave(
@@ -208,6 +235,30 @@ pub fn prepare_python_teaching_wave(
     let mut entity_deltas = BTreeMap::new();
     let mut hashes = BTreeMap::new();
     let mut entity_bindings = BTreeMap::new();
+    for (entry, keys) in &previous.required_domains {
+        let cgs = exposure.catalog_cgs_for_entry(entry).ok_or_else(|| {
+            PythonTeachingError::MissingCatalog {
+                entry: entry.clone(),
+            }
+        })?;
+        let hash = cgs.catalog_cgs_hash_hex();
+        if previous
+            .catalog_hashes
+            .get(entry)
+            .is_some_and(|old| old != &hash)
+        {
+            return Err(PythonTeachingError::CatalogChanged {
+                entry: entry.clone(),
+            });
+        }
+        hashes.insert(entry.clone(), hash);
+        for key in keys {
+            let key = ValueDomainKey::new(key)
+                .map_err(|_| PythonTeachingError::MissingValue { key: key.clone() })?;
+            renderer.domain(cgs, entry, "", "", &key)?;
+        }
+    }
+
     for row in symbols.exposed_entity_symbol_rows() {
         let binding = (row.entry_id.clone(), row.entity.clone());
         if previous
@@ -299,6 +350,7 @@ pub fn prepare_python_teaching_wave(
         capabilities: renderer.coverage,
         value_contracts: renderer.value_contracts,
         next_state: PythonTeachingState {
+            required_domains: previous.required_domains.clone(),
             language: LANGUAGE.into(),
             domain_symbols: renderer.domain_symbols,
             declarations: renderer.definitions,

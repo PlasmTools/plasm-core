@@ -1,6 +1,16 @@
 use super::*;
 use monty_pool::{PoolError, ResumeValue};
 
+#[test]
+fn session_clocks_share_worker_pool_without_sharing_time() {
+    let pool = PythonPool::default();
+    let first = pool.for_session_clock("2021-03-01T00:00:00Z").unwrap();
+    let second = pool.for_session_clock("2022-03-01T00:00:00Z").unwrap();
+    assert!(Arc::ptr_eq(&first.pool, &second.pool));
+    assert_ne!(first.clock, second.clock);
+    assert!(pool.for_session_clock("invalid").is_err());
+}
+
 fn tuple_contract(
     fields: Vec<plasm_core::value_contract::ValueContract>,
 ) -> plasm_core::value_contract::ValueContract {

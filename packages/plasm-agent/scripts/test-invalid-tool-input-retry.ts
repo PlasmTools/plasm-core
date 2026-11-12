@@ -1,8 +1,8 @@
 #!/usr/bin/env node
 /**
  * Truncated / invalid tool JSON must not terminate the Eve loop mid-budget.
- * Host surfaces InvalidToolInputError, appends a repair diagnostic, continues
- * within maxSteps. Does not invent truncated fields or call complete_task.
+ * The normal tool error stays in append-only history, with the full tool set
+ * available. No incomplete call is executed or silently replayed.
  */
 import assert from "node:assert/strict";
 import { tool } from "ai";
@@ -12,12 +12,6 @@ import {
 } from "../src/telemetry/eve-tool-loop.js";
 import { evalTerminalGrade } from "../src/tools/format.js";
 import { createEvalTerminalTools } from "../src/tools/harness-tools.js";
-import {
-  TASK_LEDGER_TOOL_NAME,
-  TaskLedgerStore,
-  createTaskLedgerTool,
-  emptyTaskLedger,
-} from "../src/tools/task-ledger.js";
 import { toolInput } from "../src/tools/tool-input.js";
 import { z } from "zod";
 
@@ -34,31 +28,36 @@ function finish(reason: "tool-calls" | "length" | "stop" | "other") {
   };
 }
 
-const validLedger = {
+const validRecord = {
   action: "write" as const,
-  record: {
-    ...emptyTaskLedger(),
-    requested_outcomes: ["settle matching debts"],
-    remaining_work: ["complete_task"],
-  },
+  record: { value: "updated" },
 };
+let stored = "";
+const fixtureTool = tool({
+  inputSchema: toolInput(z.object({ action: z.enum(["read", "write"]), record: z.object({ value: z.string() }).optional() })),
+  execute: async (input) => { if (input.action === "write") stored = input.record?.value ?? ""; return stored; },
+});
 
 let callCount = 0;
+let firstRequest: { prompt: unknown[]; tools: unknown } | undefined;
 const truncatedThenRepairModel = new MockLanguageModelV3({
   doStream: async (options) => {
     const index = callCount++;
+    if (index === 0) firstRequest = { prompt: structuredClone(options.prompt), tools: structuredClone(options.tools) };
     if (index === 1) {
+      assert.deepEqual(options.prompt.slice(0, firstRequest!.prompt.length), firstRequest!.prompt,
+        "the full earlier prompt remains a stable prefix");
+      assert.deepEqual(options.tools, firstRequest!.tools, "malformed calls do not hide other tools");
       const previousCall = options.prompt
         .filter(message => message.role === "assistant")
         .flatMap(message => message.content)
-        .find(part => part.type === "tool-call" && part.toolCallId === "ledger-trunc");
-      assert.equal(previousCall, undefined, "rejected call stays in audit, not assistant replay");
-      assert(!JSON.stringify(options.prompt).includes("rejectedInput"), "rejected payload is audit-only");
-      assert(JSON.stringify(options.prompt).includes("Regenerate arguments"));
+        .find(part => part.type === "tool-call" && part.toolCallId === "record-trunc");
+      assert.ok(previousCall, "rejected call remains in ordinary assistant history");
+      assert(!JSON.stringify(options.prompt).includes("Host: repair the rejected call"));
       const validSibling = options.prompt
         .filter(message => message.role === "assistant")
         .flatMap(message => message.content)
-        .find(part => part.type === "tool-call" && part.toolCallId === "ledger-read");
+        .find(part => part.type === "tool-call" && part.toolCallId === "record-read");
       assert.deepEqual(
         validSibling?.type === "tool-call" ? validSibling.input : undefined,
         { action: "read" },
@@ -69,26 +68,26 @@ const truncatedThenRepairModel = new MockLanguageModelV3({
       stream: new ReadableStream({
         start(controller) {
           if (index === 0) {
-            // Witness shape: truncated task_ledger JSON + mapped finishReason other.
+            // Truncated JSON and a valid sibling with mapped finishReason other.
             controller.enqueue({
               type: "tool-call",
-              toolCallId: "ledger-trunc",
-              toolName: TASK_LEDGER_TOOL_NAME,
+              toolCallId: "record-trunc",
+              toolName: "fixture_record",
               input: '{"action": "write", "record":',
             });
             controller.enqueue({
               type: "tool-call",
-              toolCallId: "ledger-read",
-              toolName: TASK_LEDGER_TOOL_NAME,
+              toolCallId: "record-read",
+              toolName: "fixture_record",
               input: '{"action":"read"}',
             });
             controller.enqueue(finish("other"));
           } else if (index === 1) {
             controller.enqueue({
               type: "tool-call",
-              toolCallId: "ledger-ok",
-              toolName: TASK_LEDGER_TOOL_NAME,
-              input: JSON.stringify(validLedger),
+              toolCallId: "record-ok",
+              toolName: "fixture_record",
+              input: JSON.stringify(validRecord),
             });
             controller.enqueue(finish("tool-calls"));
           } else {
@@ -107,17 +106,16 @@ const truncatedThenRepairModel = new MockLanguageModelV3({
   },
 });
 
-const store = new TaskLedgerStore();
 const tools = {
-  ...createTaskLedgerTool(store),
-  ...createEvalTerminalTools(),
+  fixture_record: fixtureTool,
+  ...createEvalTerminalTools({ sealEffectWorkflows: async () => {} }),
 };
 
 const repaired = await runEveToolLoop({
   model: truncatedThenRepairModel,
   system: "system",
   tools,
-  messages: [{ role: "user", content: "record ledger then finish" }],
+  messages: [{ role: "user", content: "update record then finish" }],
   maxSteps: 8,
   agentName: "test-invalid-tool-input-retry",
   telemetry: { isEnabled: false },
@@ -130,8 +128,6 @@ assert.deepEqual(
   ["other", "tool-calls", "tool-calls"],
   "per-step finishReason must be preserved (other vs tool-calls)",
 );
-assert.equal(repaired.toolCallRecovery[0]?.state, "required");
-assert.equal(repaired.toolCallRecovery[1]?.state, "recovered");
 assert.ok(
   repaired.messages.some((m) => {
     if (m.role !== "tool" || !Array.isArray(m.content)) return false;
@@ -147,7 +143,7 @@ assert.ok(
   }),
   "validation error must be returned to the model",
 );
-assert.deepEqual(store.record.requested_outcomes, ["settle matching debts"]);
+assert.equal(stored, "updated");
 assert.equal(
   evalTerminalGrade({ messages: repaired.messages, stopReason: repaired.stopReason }).kind,
   "null",
@@ -191,7 +187,7 @@ const midBudget = await runEveToolLoop({
       inputSchema: toolInput(z.object({ note: z.string().min(1) })),
       execute: async ({ note }) => note,
     }),
-    ...createEvalTerminalTools(),
+    ...createEvalTerminalTools({ sealEffectWorkflows: async () => {} }),
   },
   messages: [{ role: "user", content: "try a tool" }],
   maxSteps: 6,
@@ -202,14 +198,14 @@ const midBudget = await runEveToolLoop({
 assert.ok(midBudgetCalls >= 2, "truncated step must not end the loop alone");
 assert.equal(
   midBudget.stopReason,
-  "repair_exhausted",
-  "prose cannot satisfy bounded call repair",
+  "unterminated",
+  "ordinary prose does not satisfy the eval terminal",
 );
 assert.equal(
   evalTerminalGrade({ messages: midBudget.messages, stopReason: midBudget.stopReason }).kind,
   "unterminated",
 );
-assert.deepEqual(midBudget.stepFinishReasons, ["length", "stop", "stop"]);
+assert.deepEqual(midBudget.stepFinishReasons, ["length", "stop"]);
 
 
 let providerCalls = 0;
@@ -226,7 +222,7 @@ const providerFailureThenTerminal = new MockLanguageModelV3({
         controller.enqueue({type:"text-start",id:"provider-text"});
         controller.enqueue({type:"text-delta",id:"provider-text",delta:"working"});
         controller.enqueue({type:"text-end",id:"provider-text"});
-        controller.enqueue({type:"tool-call",toolCallId:"provider-cut",toolName:"task_ledger",input:'{"action":"write","record":'});
+        controller.enqueue({type:"tool-call",toolCallId:"provider-cut",toolName:"fixture_record",input:'{"action":"write","record":'});
         controller.enqueue({type:"error",error:new Error("Upstream provider unavailable (502)")});
         controller.enqueue(finish("other"));
       } else {
@@ -238,7 +234,7 @@ const providerFailureThenTerminal = new MockLanguageModelV3({
   }
 });
 const providerResult = await runEveToolLoop({model:providerFailureThenTerminal,system:"system",
-  tools:{...createTaskLedgerTool(new TaskLedgerStore()),...createEvalTerminalTools()},
+  tools:{fixture_record: fixtureTool,...createEvalTerminalTools({ sealEffectWorkflows: async () => {} })},
   messages:[{role:"user",content:"perform task"}],maxSteps:3,agentName:"test-provider-error",telemetry:{isEnabled:false}});
 assert.equal(providerResult.stopReason,"completed");
 assert.deepEqual(providerResult.stepFinishReasons,["error","tool-calls"]);

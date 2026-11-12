@@ -39,7 +39,13 @@ export function createDefaultHostTransport(options?: HostTransportOptions): Host
   const bearerOverride = options?.bearer;
   const useConnect = options?.useConnect ?? true;
 
-  return async (request: HostTransportRequest) => {
+  const resolveAuth = async ({ entryId }: { entryId?: string }): Promise<string | null> => {
+    let bearer = bearerOverride ?? bearerFromEnv(entryId, options?.allowGlobalBearer ?? true);
+    if (!bearer && useConnect) bearer = await resolveConnectBearer(entryId);
+    return bearer ? (bearer.startsWith("Bearer ") ? bearer : `Bearer ${bearer}`) : null;
+  };
+
+  const transport: HostTransportFn = async (request: HostTransportRequest) => {
     const host = (() => {
       try {
         return new URL(request.url).host;
@@ -56,12 +62,9 @@ export function createDefaultHostTransport(options?: HostTransportOptions): Host
       async (span) => {
         const headers = new Headers(request.headers ?? {});
         if (!headers.has("authorization")) {
-          let bearer = bearerOverride ?? bearerFromEnv(request.entryId, options?.allowGlobalBearer ?? true);
-          if (!bearer && useConnect) {
-            bearer = await resolveConnectBearer(request.entryId);
-          }
+          const bearer = await resolveAuth({ entryId: request.entryId });
           if (bearer) {
-            headers.set("authorization", bearer.startsWith("Bearer ") ? bearer : `Bearer ${bearer}`);
+            headers.set("authorization", bearer);
           }
         }
         if (request.requireHostAuth && !headers.get("authorization")?.trim()) {
@@ -107,4 +110,6 @@ export function createDefaultHostTransport(options?: HostTransportOptions): Host
       },
     );
   };
+  transport.resolveAuth = resolveAuth;
+  return transport;
 }

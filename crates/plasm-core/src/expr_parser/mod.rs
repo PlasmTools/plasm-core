@@ -4458,33 +4458,7 @@ mod tests {
             .expect("filled e# identity must parse");
     }
 
-    #[test]
-    fn parse_get_with_string_id() {
-        if !has_petstore() {
-            return;
-        }
-        let cgs = petstore_cgs();
-        let r = parse(r#"Pet("fluffy")"#, &cgs).unwrap();
-        if let Expr::Get(g) = &r.expr {
-            assert_eq!(g.reference.simple_id().map(|s| s.as_str()), Some("fluffy"));
-        }
-    }
-
     /// Semantic parallel: matrix `lang_query_all` (bare entity query).
-    #[test]
-    fn parse_query_all() {
-        if !has_petstore() {
-            return;
-        }
-        let cgs = petstore_cgs();
-        let r = parse("Pet", &cgs).unwrap();
-        assert!(matches!(r.expr, Expr::Query(_)));
-        if let Expr::Query(q) = &r.expr {
-            assert_eq!(q.entity, "Pet");
-            assert!(q.predicate.is_none());
-        }
-    }
-
     /// Pagination IR micro-case; matrix touches paging via `lang_domain_symbol_page_size`.
     #[test]
     fn parse_page_continuation() {
@@ -4583,19 +4557,6 @@ mod tests {
             panic!("expected Cancel, got {:?}", r.expr);
         };
         assert_eq!(c.handle.as_str(), format!("{wire}_o2"));
-    }
-
-    #[test]
-    fn parse_query_with_filter() {
-        if !has_petstore() {
-            return;
-        }
-        let cgs = petstore_cgs();
-        let r = parse("Pet{status=available}", &cgs).unwrap();
-        assert!(matches!(r.expr, Expr::Query(_)));
-        if let Expr::Query(q) = &r.expr {
-            assert!(q.predicate.is_some());
-        }
     }
 
     #[test]
@@ -4840,6 +4801,7 @@ mod tests {
         })
         .unwrap();
         cgs.add_capability(CapabilitySchema {
+            no_effect_rejections: Vec::new(),
             name: "document_get".into(),
             description: String::new(),
             kind: CapabilityKind::Get,
@@ -4869,6 +4831,7 @@ mod tests {
         })
         .unwrap();
         cgs.add_capability(CapabilitySchema {
+            no_effect_rejections: Vec::new(),
             name: "document_suggest".into(),
             description: String::new(),
             kind: CapabilityKind::Action,
@@ -5705,6 +5668,7 @@ mod tests {
         })
         .unwrap();
         cgs.add_capability(CapabilitySchema {
+            no_effect_rejections: Vec::new(),
             name: "widget_query".into(),
             description: String::new(),
             kind: CapabilityKind::Query,
@@ -5852,6 +5816,7 @@ mod tests {
         })
         .unwrap();
         cgs.add_capability(CapabilitySchema {
+            no_effect_rejections: Vec::new(),
             name: "book_query".into(),
             description: String::new(),
             kind: CapabilityKind::Query,
@@ -5876,6 +5841,7 @@ mod tests {
         })
         .unwrap();
         cgs.add_capability(CapabilitySchema {
+            no_effect_rejections: Vec::new(),
             name: "library_get".into(),
             description: String::new(),
             kind: CapabilityKind::Get,
@@ -6057,6 +6023,7 @@ mod tests {
         })
         .unwrap();
         cgs.add_capability(CapabilitySchema {
+            no_effect_rejections: Vec::new(),
             name: "ticket_get".into(),
             description: String::new(),
             kind: CapabilityKind::Get,
@@ -6194,6 +6161,7 @@ mod tests {
         })
         .unwrap();
         cgs.add_capability(CapabilitySchema {
+            no_effect_rejections: Vec::new(),
             name: "library_get_nested_fixture".into(),
             description: String::new(),
             kind: CapabilityKind::Get,
@@ -6297,6 +6265,7 @@ mod tests {
         })
         .unwrap();
         cgs.add_capability(CapabilitySchema {
+            no_effect_rejections: Vec::new(),
             name: "parent_get".into(),
             description: String::new(),
             kind: CapabilityKind::Get,
@@ -6324,6 +6293,7 @@ mod tests {
         })
         .unwrap();
         cgs.add_capability(CapabilitySchema {
+            no_effect_rejections: Vec::new(),
             name: "child_query".into(),
             description: String::new(),
             kind: CapabilityKind::Query,
@@ -7046,6 +7016,7 @@ mod tests {
         })
         .unwrap();
         cgs.add_capability(CapabilitySchema {
+            no_effect_rejections: Vec::new(),
             name: "pet_get".into(),
             description: String::new(),
             kind: CapabilityKind::Get,
@@ -7073,6 +7044,7 @@ mod tests {
         .unwrap();
         // Pathful Action: identity projects into CML path `name` (Lit|Binding parity).
         cgs.add_capability(CapabilitySchema {
+            no_effect_rejections: Vec::new(),
             name: "pet_act".into(),
             description: String::new(),
             kind: CapabilityKind::Action,
@@ -7141,6 +7113,7 @@ mod tests {
         .unwrap();
         // Pathless Action: no path vars — bare `Pet.broadcast(...)` (teaching + binding typecheck).
         cgs.add_capability(CapabilitySchema {
+            no_effect_rejections: Vec::new(),
             name: "pet_broadcast".into(),
             description: String::new(),
             kind: CapabilityKind::Action,

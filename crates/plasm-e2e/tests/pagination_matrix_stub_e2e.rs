@@ -20,6 +20,7 @@ use std::sync::{Arc, Mutex};
 #[derive(Clone, Default)]
 struct StubState {
     summaries: bool,
+    overlap_second_page: bool,
     details: Arc<Mutex<Vec<String>>>,
     requests: Arc<Mutex<Vec<RecordedRequest>>>,
 }
@@ -58,6 +59,8 @@ fn items(n: usize) -> Vec<serde_json::Value> {
 struct IndexedParams {
     page_index: Option<u64>,
     page_limit: Option<u64>,
+    from_block: Option<u64>,
+    to_block: Option<u64>,
 }
 
 async fn indexed(
@@ -65,6 +68,15 @@ async fn indexed(
     Query(q): Query<IndexedParams>,
 ) -> Json<serde_json::Value> {
     let mut map = HashMap::new();
+    if let (Some(from), Some(to)) = (q.from_block, q.to_block) {
+        map.insert("from_block".into(), from.to_string());
+        map.insert("to_block".into(), to.to_string());
+        st.requests
+            .lock()
+            .unwrap()
+            .push(RecordedRequest { query: map });
+        return Json(serde_json::json!({"results":[{"id":format!("block-{from}"),"n":from}]}));
+    }
     if let Some(v) = q.page_index {
         map.insert("page_index".into(), v.to_string());
     }
@@ -80,7 +92,10 @@ async fn indexed(
     let index = q.page_index.unwrap_or(0) as usize;
     // Historical corruption: start = page_index * page_limit (not remaining budget).
     let start = index.saturating_mul(limit);
-    let page = all.into_iter().skip(start).take(limit).collect::<Vec<_>>();
+    let mut page = all.into_iter().skip(start).take(limit).collect::<Vec<_>>();
+    if st.overlap_second_page && index == 1 && !page.is_empty() {
+        page[0]["id"] = serde_json::json!("id-19");
+    }
     Json(
         serde_json::json!({ "results": if st.summaries { page.into_iter().map(|r| serde_json::json!({"id":r["id"]})).collect::<Vec<_>>() } else { page } }),
     )
@@ -190,6 +205,651 @@ fn ids(result: &plasm_runtime::ExecutionResult) -> Vec<String> {
         .iter()
         .map(|e| e.reference.primary_slot_str())
         .collect()
+}
+
+#[tokio::test]
+async fn block_ranges_advance_through_real_http_and_report_terminal() {
+    let (url, stub) = spawn_stub().await;
+    let mut cgs = load_matrix_cgs();
+    cgs.capabilities
+        .get_mut("item_query")
+        .unwrap()
+        .mapping
+        .as_mut()
+        .unwrap()
+        .template
+        .0["pagination"] = serde_json::json!({
+        "strategy":"block_range", "location":"block_range",
+        "params":{"range":{"fixed":20,"role":"page_size"}}
+    });
+    let engine = make_engine(&url);
+    let mut cache = SessionMaterialization::new();
+    let mut query = QueryExpr::all("Item");
+    query.capability_name = Some("item_query".into());
+    query.pagination = Some(QueryPagination {
+        from_block: Some(0),
+        to_block: Some(44),
+        ..Default::default()
+    });
+    let tel = Arc::new(LiveRunTelemetry::new());
+    let result = plasm_runtime::with_live_run_telemetry(tel.clone(), async {
+        engine
+            .execute(
+                &Expr::Query(query),
+                &cgs,
+                &mut cache,
+                Some(ExecutionMode::Live),
+                StreamConsumeOpts {
+                    fetch_all: true,
+                    ..Default::default()
+                },
+                ExecuteOptions::for_catalog(&cgs).unwrap(),
+            )
+            .await
+    })
+    .await
+    .unwrap();
+    assert_eq!(ids(&result), vec!["block-0", "block-20", "block-40"]);
+    let reqs = stub.requests.lock().unwrap().clone();
+    let ranges: Vec<_> = reqs
+        .iter()
+        .map(|r| (r.query["from_block"].clone(), r.query["to_block"].clone()))
+        .collect();
+    assert_eq!(
+        ranges,
+        [
+            ("0".into(), "19".into()),
+            ("20".into(), "39".into()),
+            ("40".into(), "44".into())
+        ]
+    );
+    let audits = tel.drain_page_audits();
+    assert_eq!(audits.len(), 3);
+    assert!(matches!(
+        audits.last().unwrap().terminal,
+        Some(plasm_runtime::PaginationTerminalReason::BlockRangeComplete)
+    ));
+}
+
+#[tokio::test]
+async fn block_range_resume_keeps_the_next_range() {
+    let (url, stub) = spawn_stub().await;
+    let mut cgs = load_matrix_cgs();
+    cgs.capabilities
+        .get_mut("item_query")
+        .unwrap()
+        .mapping
+        .as_mut()
+        .unwrap()
+        .template
+        .0["pagination"] = serde_json::json!({
+        "strategy":"block_range", "location":"block_range",
+        "params":{"range":{"fixed":20,"role":"page_size"}}
+    });
+    let engine = make_engine(&url);
+    let mut cache = SessionMaterialization::new();
+    let mut query = QueryExpr::all("Item");
+    query.capability_name = Some("item_query".into());
+    query.pagination = Some(QueryPagination {
+        from_block: Some(0),
+        to_block: Some(44),
+        ..Default::default()
+    });
+    let opts = ExecuteOptions::for_catalog(&cgs).unwrap();
+    let first = engine
+        .execute(
+            &Expr::Query(query),
+            &cgs,
+            &mut cache,
+            Some(ExecutionMode::Live),
+            StreamConsumeOpts {
+                one_page: true,
+                max_items: Some(1),
+                ..Default::default()
+            },
+            opts.clone(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(ids(&first), vec!["block-0"]);
+    let rest = engine
+        .execute_pagination_resume(
+            *first.pagination_resume.expect("block continuation"),
+            &cgs,
+            &mut cache,
+            Some(ExecutionMode::Live),
+            StreamConsumeOpts {
+                fetch_all: true,
+                ..Default::default()
+            },
+            opts,
+        )
+        .await
+        .unwrap();
+    assert_eq!(ids(&rest), vec!["block-20", "block-40"]);
+    let ranges: Vec<_> = stub
+        .requests
+        .lock()
+        .unwrap()
+        .iter()
+        .map(|request| {
+            (
+                request.query["from_block"].clone(),
+                request.query["to_block"].clone(),
+            )
+        })
+        .collect();
+    assert_eq!(
+        ranges,
+        [
+            ("0".into(), "19".into()),
+            ("20".into(), "39".into()),
+            ("40".into(), "44".into())
+        ]
+    );
+}
+
+#[tokio::test]
+async fn resume_continues_real_http_at_the_next_page() {
+    let (url, stub) = spawn_stub().await;
+    let cgs = load_matrix_cgs();
+    let engine = make_engine(&url);
+    let mut cache = SessionMaterialization::new();
+    let mut query = QueryExpr::all("Item");
+    query.capability_name = Some("item_query".into());
+    let opts = ExecuteOptions::for_catalog(&cgs).unwrap();
+    let first = engine
+        .execute(
+            &Expr::Query(query),
+            &cgs,
+            &mut cache,
+            Some(ExecutionMode::Live),
+            StreamConsumeOpts {
+                one_page: true,
+                max_items: Some(20),
+                ..Default::default()
+            },
+            opts.clone(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(ids(&first).len(), 20);
+    let resume = first.pagination_resume.expect("continuation");
+    let rest = engine
+        .execute_pagination_resume(
+            *resume,
+            &cgs,
+            &mut cache,
+            Some(ExecutionMode::Live),
+            StreamConsumeOpts {
+                fetch_all: true,
+                ..Default::default()
+            },
+            opts,
+        )
+        .await
+        .unwrap();
+    assert_eq!(
+        ids(&rest),
+        (20..45).map(|n| format!("id-{n}")).collect::<Vec<_>>()
+    );
+    let indices: Vec<_> = stub
+        .requests
+        .lock()
+        .unwrap()
+        .iter()
+        .filter_map(|r| r.query.get("page_index").cloned())
+        .collect();
+    assert_eq!(indices, ["0", "1", "2"]);
+}
+
+#[tokio::test]
+async fn resume_keeps_the_original_residual_across_pages() {
+    let (url, stub) = spawn_stub().await;
+    let cgs = load_matrix_cgs();
+    let engine = make_engine(&url);
+    let mut cache = SessionMaterialization::new();
+    let mut query = QueryExpr::all("Item");
+    query.capability_name = Some("item_query".into());
+    query.predicate = Some(plasm_core::Predicate::Comparison {
+        field: "n".into(),
+        op: plasm_core::CompOp::Eq,
+        value: plasm_core::typed_literal::TypedComparisonValue::from_value(
+            plasm_core::Value::Integer(25),
+        ),
+    });
+    // Exercise the direct-runtime residual seam; ordinary admission forbids row fields in source braces.
+    let mut opts = ExecuteOptions::for_catalog(&cgs).unwrap();
+    opts.preflight = Some(plasm_core::PreflightToken::VERIFIED);
+    let first = engine
+        .execute(
+            &Expr::Query(query.clone()),
+            &cgs,
+            &mut cache,
+            Some(ExecutionMode::Live),
+            StreamConsumeOpts {
+                one_page: true,
+                max_items: Some(20),
+                ..Default::default()
+            },
+            opts.clone(),
+        )
+        .await
+        .unwrap();
+    assert!(ids(&first).is_empty());
+    let resume = first
+        .pagination_resume
+        .expect("continuation after a locally filtered page");
+    assert_eq!(resume.residual, query.predicate);
+    let rest = engine
+        .execute_pagination_resume(
+            *resume,
+            &cgs,
+            &mut cache,
+            Some(ExecutionMode::Live),
+            StreamConsumeOpts {
+                fetch_all: true,
+                ..Default::default()
+            },
+            opts,
+        )
+        .await
+        .unwrap();
+    assert_eq!(ids(&rest), vec!["id-25"]);
+    let pages: Vec<_> = stub
+        .requests
+        .lock()
+        .unwrap()
+        .iter()
+        .filter_map(|request| request.query.get("page_index").cloned())
+        .collect();
+    assert_eq!(pages, ["0", "1", "2"]);
+}
+
+#[tokio::test]
+async fn cancelled_resume_does_not_dispatch() {
+    let (url, stub) = spawn_stub().await;
+    let cgs = load_matrix_cgs();
+    let engine = make_engine(&url);
+    let mut cache = SessionMaterialization::new();
+    let mut query = QueryExpr::all("Item");
+    query.capability_name = Some("item_query".into());
+    let first = engine
+        .execute(
+            &Expr::Query(query),
+            &cgs,
+            &mut cache,
+            Some(ExecutionMode::Live),
+            StreamConsumeOpts {
+                one_page: true,
+                ..Default::default()
+            },
+            ExecuteOptions::for_catalog(&cgs).unwrap(),
+        )
+        .await
+        .unwrap();
+    let cancel = plasm_runtime::CancelSignal::new();
+    cancel.cancel();
+    let mut opts = ExecuteOptions::for_catalog(&cgs).unwrap();
+    opts.cancel = Some(cancel);
+    let result = engine
+        .execute_pagination_resume(
+            *first.pagination_resume.expect("continuation"),
+            &cgs,
+            &mut cache,
+            Some(ExecutionMode::Live),
+            StreamConsumeOpts {
+                fetch_all: true,
+                ..Default::default()
+            },
+            opts,
+        )
+        .await;
+    assert!(matches!(
+        result,
+        Err(plasm_runtime::RuntimeError::Cancelled)
+    ));
+    assert_eq!(stub.requests.lock().unwrap().len(), 1);
+}
+
+#[tokio::test]
+async fn resume_rejects_a_changed_overlay_scope_index() {
+    let (url, stub) = spawn_stub().await;
+    let cgs = load_matrix_cgs();
+    let engine = make_engine(&url);
+    let mut cache = SessionMaterialization::new();
+    let mut query = QueryExpr::all("Item");
+    query.capability_name = Some("item_query".into());
+    let opts = ExecuteOptions::for_catalog(&cgs).unwrap();
+    let first = engine
+        .execute(
+            &Expr::Query(query),
+            &cgs,
+            &mut cache,
+            Some(ExecutionMode::Live),
+            StreamConsumeOpts {
+                one_page: true,
+                ..Default::default()
+            },
+            opts.clone(),
+        )
+        .await
+        .unwrap();
+    let mut changed = cgs.clone();
+    changed
+        .schema_overlay_scope_index
+        .insert("scope".into(), "Item".into());
+    assert_eq!(
+        cgs.effective_catalog_cgs_hash_hex(),
+        changed.effective_catalog_cgs_hash_hex()
+    );
+    let result = engine
+        .execute_pagination_resume(
+            *first.pagination_resume.expect("continuation"),
+            &changed,
+            &mut cache,
+            Some(ExecutionMode::Live),
+            StreamConsumeOpts {
+                fetch_all: true,
+                ..Default::default()
+            },
+            opts,
+        )
+        .await;
+    assert!(matches!(
+        result,
+        Err(plasm_runtime::RuntimeError::PaginationCatalogMismatch { .. })
+    ));
+    assert_eq!(stub.requests.lock().unwrap().len(), 1);
+}
+
+#[tokio::test]
+async fn resume_rejects_a_different_overlay_before_transport() {
+    let (url, stub) = spawn_stub().await;
+    let cgs = load_matrix_cgs();
+    let engine = make_engine(&url);
+    let mut cache = SessionMaterialization::new();
+    let mut query = QueryExpr::all("Item");
+    query.capability_name = Some("item_query".into());
+    let opts = ExecuteOptions::for_catalog(&cgs).unwrap();
+    let first = engine
+        .execute(
+            &Expr::Query(query),
+            &cgs,
+            &mut cache,
+            Some(ExecutionMode::Live),
+            StreamConsumeOpts {
+                one_page: true,
+                ..Default::default()
+            },
+            opts.clone(),
+        )
+        .await
+        .unwrap();
+    let mut overlay = cgs.clone();
+    overlay.schema_overlay_hash = Some("different-overlay".into());
+    let result = engine
+        .execute_pagination_resume(
+            *first.pagination_resume.expect("continuation"),
+            &overlay,
+            &mut cache,
+            Some(ExecutionMode::Live),
+            StreamConsumeOpts {
+                fetch_all: true,
+                ..Default::default()
+            },
+            opts,
+        )
+        .await;
+    assert!(matches!(
+        result,
+        Err(plasm_runtime::RuntimeError::PaginationCatalogMismatch { .. })
+    ));
+    assert_eq!(stub.requests.lock().unwrap().len(), 1);
+}
+
+#[tokio::test]
+async fn resume_rejects_a_different_compiled_catalog_before_transport() {
+    let (url, stub) = spawn_stub().await;
+    let cgs = load_matrix_cgs();
+    let engine = make_engine(&url);
+    let mut cache = SessionMaterialization::new();
+    let mut query = QueryExpr::all("Item");
+    query.capability_name = Some("item_query".into());
+    let first = engine
+        .execute(
+            &Expr::Query(query),
+            &cgs,
+            &mut cache,
+            Some(ExecutionMode::Live),
+            StreamConsumeOpts {
+                one_page: true,
+                ..Default::default()
+            },
+            ExecuteOptions::for_catalog(&cgs).unwrap(),
+        )
+        .await
+        .unwrap();
+    let mut other = cgs.clone();
+    other.http_backend = "http://different-catalog.invalid".into();
+    let result = engine
+        .execute_pagination_resume(
+            *first.pagination_resume.expect("continuation"),
+            &cgs,
+            &mut cache,
+            Some(ExecutionMode::Live),
+            StreamConsumeOpts {
+                fetch_all: true,
+                ..Default::default()
+            },
+            ExecuteOptions::for_catalog(&other).unwrap(),
+        )
+        .await;
+    assert!(matches!(
+        result,
+        Err(plasm_runtime::RuntimeError::PaginationCompiledCatalogMismatch { .. })
+    ));
+    assert_eq!(stub.requests.lock().unwrap().len(), 1);
+}
+
+#[tokio::test]
+async fn resume_rejects_in_place_catalog_mutation_even_after_hash_is_cached() {
+    let (url, stub) = spawn_stub().await;
+    let mut cgs = load_matrix_cgs();
+    let engine = make_engine(&url);
+    let mut cache = SessionMaterialization::new();
+    let mut query = QueryExpr::all("Item");
+    query.capability_name = Some("item_query".into());
+    let opts = ExecuteOptions::for_catalog(&cgs).unwrap();
+    let first = engine
+        .execute(
+            &Expr::Query(query),
+            &cgs,
+            &mut cache,
+            Some(ExecutionMode::Live),
+            StreamConsumeOpts {
+                one_page: true,
+                ..Default::default()
+            },
+            opts.clone(),
+        )
+        .await
+        .unwrap();
+    let cached = cgs.catalog_cgs_hash_hex();
+    cgs.http_backend = "http://different-catalog.invalid".into();
+    assert_eq!(
+        cgs.catalog_cgs_hash_hex(),
+        cached,
+        "the ordinary CGS digest is cached"
+    );
+    let result = engine
+        .execute_pagination_resume(
+            *first.pagination_resume.expect("continuation"),
+            &cgs,
+            &mut cache,
+            Some(ExecutionMode::Live),
+            StreamConsumeOpts {
+                fetch_all: true,
+                ..Default::default()
+            },
+            opts,
+        )
+        .await;
+    assert!(matches!(
+        result,
+        Err(plasm_runtime::RuntimeError::PaginationCatalogMismatch { .. })
+    ));
+    assert_eq!(stub.requests.lock().unwrap().len(), 1);
+}
+
+#[tokio::test]
+async fn resume_rejects_a_different_catalog_before_transport() {
+    let (url, stub) = spawn_stub().await;
+    let cgs = load_matrix_cgs();
+    let engine = make_engine(&url);
+    let mut cache = SessionMaterialization::new();
+    let mut query = QueryExpr::all("Item");
+    query.capability_name = Some("item_query".into());
+    query.predicate = Some(plasm_core::Predicate::Comparison {
+        field: "n".into(),
+        op: plasm_core::CompOp::Eq,
+        value: plasm_core::typed_literal::TypedComparisonValue::from_value(
+            plasm_core::Value::Integer(25),
+        ),
+    });
+    assert!(
+        plasm_compile::predicate_compiler::resolve_query(&query, &cgs)
+            .unwrap()
+            .residual
+            .is_some()
+    );
+    // Direct-runtime witness: bypass admission to exercise a residual query the host does not teach.
+    let mut opts = ExecuteOptions::for_catalog(&cgs).unwrap();
+    opts.preflight = Some(plasm_core::PreflightToken::VERIFIED);
+    let first = engine
+        .execute(
+            &Expr::Query(query.clone()),
+            &cgs,
+            &mut cache,
+            Some(ExecutionMode::Live),
+            StreamConsumeOpts {
+                one_page: true,
+                max_items: Some(20),
+                ..Default::default()
+            },
+            opts,
+        )
+        .await
+        .unwrap();
+    let mut changed = cgs.clone();
+    changed
+        .capabilities
+        .get_mut("item_query")
+        .unwrap()
+        .inputs
+        .scope
+        .0
+        .push(
+            serde_json::from_value(
+                serde_json::json!({"name":"n", "value_ref":"nv_item_n", "required":false}),
+            )
+            .unwrap(),
+        );
+    changed
+        .capabilities
+        .get_mut("item_query")
+        .unwrap()
+        .mapping
+        .as_mut()
+        .unwrap()
+        .template
+        .0["query"] = serde_json::json!({"type":"object", "fields":[["n", {"type":"if", "condition":{"type":"exists", "var":"n"}, "then_expr":{"type":"var", "name":"n"}, "else_expr":{"type":"const", "value":null}}]]});
+    let changed = changed.fresh_catalog_digest();
+    assert!(
+        plasm_compile::predicate_compiler::resolve_query(&query, &changed)
+            .unwrap()
+            .residual
+            .is_none()
+    );
+    let mut changed_opts = ExecuteOptions::for_catalog(&changed).unwrap();
+    changed_opts.preflight = Some(plasm_core::PreflightToken::VERIFIED);
+    let result = engine
+        .execute_pagination_resume(
+            *first.pagination_resume.expect("continuation"),
+            &changed,
+            &mut cache,
+            Some(ExecutionMode::Live),
+            StreamConsumeOpts {
+                fetch_all: true,
+                ..Default::default()
+            },
+            changed_opts,
+        )
+        .await;
+    assert!(
+        matches!(
+            result,
+            Err(plasm_runtime::RuntimeError::PaginationCatalogMismatch { .. })
+        ),
+        "a continuation must reject a different catalog: {result:?}"
+    );
+    assert_eq!(
+        stub.requests.lock().unwrap().len(),
+        1,
+        "resume must not dispatch"
+    );
+}
+
+#[tokio::test]
+async fn resume_rejects_overlap_with_a_prior_http_page() {
+    let (url, _) = spawn_stub_with(StubState {
+        overlap_second_page: true,
+        ..Default::default()
+    })
+    .await;
+    let cgs = load_matrix_cgs();
+    let engine = make_engine(&url);
+    let mut cache = SessionMaterialization::new();
+    let mut query = QueryExpr::all("Item");
+    query.capability_name = Some("item_query".into());
+    let opts = ExecuteOptions::for_catalog(&cgs).unwrap();
+    let first = engine
+        .execute(
+            &Expr::Query(query),
+            &cgs,
+            &mut cache,
+            Some(ExecutionMode::Live),
+            StreamConsumeOpts {
+                one_page: true,
+                max_items: Some(20),
+                ..Default::default()
+            },
+            opts.clone(),
+        )
+        .await
+        .unwrap();
+    let result = engine
+        .execute_pagination_resume(
+            *first.pagination_resume.unwrap(),
+            &cgs,
+            &mut cache,
+            Some(ExecutionMode::Live),
+            StreamConsumeOpts {
+                fetch_all: true,
+                ..Default::default()
+            },
+            opts,
+        )
+        .await;
+    assert!(
+        matches!(
+            result,
+            Err(plasm_runtime::RuntimeError::PaginationProgress {
+                reason: plasm_runtime::PaginationTerminalReason::DuplicateIdentityOverlap
+            })
+        ),
+        "cross-page overlap must survive resume: {result:?}"
+    );
 }
 
 #[tokio::test]

@@ -3,7 +3,7 @@
 use indexmap::IndexMap;
 use plasm_agent_core::discovery_store::DiscoverySessionPin;
 use plasm_agent_core::execute_session::ExecuteSession;
-use plasm_agent_core::http::{build_plasm_host_state, PlasmHostBootstrap};
+use plasm_agent_core::http::{build_plasm_host_state_with_learning, PlasmHostBootstrap};
 use plasm_agent_core::http_execute::CapabilitySeed;
 use plasm_agent_core::operation::{
     compute_plan_commit_id_from_dry, PlanCommitRecord, PLAN_COMMIT_TTL,
@@ -17,6 +17,9 @@ use plasm_agent_core::plasm_plan_run::{
 use plasm_agent_core::program_diagnostic::{ProgramDiagnostic, ProgramStageError};
 use plasm_agent_core::run_artifacts::RunArtifactStore;
 use plasm_agent_core::server_state::CatalogBootstrap;
+use plasm_agent_core::workflow_learning::native::{
+    NativeLearningConfig, NativeLearningError, NativeLearningMode,
+};
 use plasm_agent_core::PlasmCompBundle;
 use plasm_core::discovery::{CgsRegistry, RegistryEntryPair};
 use plasm_core::run_reference::ExecutableRunTarget;
@@ -32,12 +35,161 @@ use std::time::Instant;
 use thiserror::Error;
 
 /// Stable execute-session wire ids for in-process agent runs (run artifact store keys).
-const AGENT_PROMPT_HASH: &str = "plasm_node";
+const AGENT_PROMPT_HASH: &str = "e45f6d1eb01b0ae077a369e44b9f1571169db0f3c8edfe9e377a9fab30c92696";
 
 type Result<T> = std::result::Result<T, AgentEngineError>;
 
+pub(crate) struct ArchiveValidationContext {
+    pub host: plasm_agent_core::server_state::PlasmHostState,
+    pub session: ExecuteSession,
+    pub authorization: plasm_agent_core::discovery_store::DiscoveryAuthorization,
+}
+
+/// A reviewed live run owns everything needed after the engine mutex is
+/// released. Its execution can therefore remain suspended without blocking
+/// later operations in the same logical session.
+pub(crate) struct PreparedLiveRun {
+    reference: String,
+    session: ExecuteSession,
+    host: plasm_agent_core::server_state::PlasmHostState,
+    bundle: PlasmCompBundle,
+    dry: plasm_agent_core::plasm_plan_run::DryPlasmPlanEvaluation,
+    authorization: Option<PlanCommitRef>,
+    workflow_config: NativeLearningConfig,
+    execute_session_id: String,
+}
+
+pub(crate) enum PreparedLiveRunResult {
+    Ready(Box<PreparedLiveRun>),
+    Rejected(RunPlanResult),
+}
+
+impl PreparedLiveRun {
+    pub(crate) async fn execute(self: Box<Self>) -> Result<RunPlanResult> {
+        let Self {
+            reference,
+            session,
+            host,
+            bundle,
+            dry,
+            authorization,
+            workflow_config,
+            execute_session_id,
+        } = *self;
+        let execution = plasm_agent_core::plan_authorization::execute_authorized(
+            &session,
+            &host,
+            authorization.as_ref(),
+            Box::pin(run_plasm_comp(
+                &session,
+                &host,
+                AGENT_PROMPT_HASH,
+                &execute_session_id,
+                &bundle,
+                true,
+                None,
+                None,
+                Some(dry),
+                Some(plasm_agent_core::McpResultTransportPolicy {
+                    artifact_access: plasm_agent_core::ArtifactAccessMode::DagCompute,
+                    ..Default::default()
+                }),
+            )),
+        );
+        let live_result = if workflow_config.mode() != NativeLearningMode::Baseline {
+            plasm_agent_core::workflow_learning::native::observe_execution(
+                &host,
+                &session,
+                &execute_session_id,
+                &bundle,
+                execution,
+            )
+            .await
+        } else {
+            execution.await
+        };
+        let live = match live_result {
+            Ok(live) => live,
+            Err(failure) => {
+                return Ok(RunPlanResult {
+                    ok: false,
+                    message: plasm_agent_core::agent_presentation::render_failure(&failure)
+                        .into_string(),
+                    rows_json: None,
+                    meta_json: None,
+                    artifacts_json: None,
+                    failure_json: Some(serde_json::to_string(&failure)?),
+                })
+            }
+        };
+        let publication: Result<RunPlanResult> = async {
+            let message = live
+                .run_markdown
+                .clone()
+                .unwrap_or_else(|| format!("Live run completed for `{reference}`."));
+            let mut artifacts = Vec::new();
+            for artifact in &live.code_plan_run_artifacts {
+                let id =
+                    plasm_agent_core::run_artifacts::RunArtifactId::from_wire(&artifact.run_id)
+                        .ok_or(AgentEngineError::InvalidRunArtifactId)?;
+                let payload = host
+                    .run_artifacts
+                    .get_payload_result(AGENT_PROMPT_HASH, &execute_session_id, id)
+                    .await
+                    .map_err(AgentEngineError::RunArtifact)?
+                    .ok_or(AgentEngineError::RunArtifactMissing)?;
+                artifacts.push(serde_json::json!({
+                    "run_id": artifact.run_id,
+                    "producer_binding": artifact.node_id,
+                    "reusable": session.recorded_output_reusable(id).await,
+                    "snapshot": serde_json::from_slice::<serde_json::Value>(&payload.bytes)?,
+                }));
+            }
+            Ok(RunPlanResult {
+                ok: true,
+                message,
+                rows_json: live_run_rows_json(&live)?,
+                meta_json: live_run_meta_json(&live),
+                failure_json: None,
+                artifacts_json: Some(serde_json::to_string(&artifacts)?),
+            })
+        }
+        .await;
+        match publication {
+            Ok(result) => Ok(result),
+            Err(error) => {
+                let mut failure = plasm_runtime::ExecutionFailure::new(
+                    plasm_runtime::FailureCause::Runtime,
+                    "run_publication_failed",
+                    error.to_string(),
+                );
+                for step in &live.return_steps {
+                    failure = failure.with_effects(&step.result.operations);
+                }
+                Ok(RunPlanResult {
+                    ok: false,
+                    message: plasm_agent_core::agent_presentation::render_failure(&failure)
+                        .into_string(),
+                    rows_json: None,
+                    meta_json: None,
+                    artifacts_json: None,
+                    failure_json: Some(serde_json::to_string(&failure)?),
+                })
+            }
+        }
+    }
+}
+
 #[derive(Debug, Error)]
 pub enum AgentEngineError {
+    #[error("native execution engine construction failed")]
+    Runtime(#[source] Box<plasm_runtime::RuntimeError>),
+    #[error("native workflow learning: {0}")]
+    Workflow(#[source] Box<NativeLearningError>),
+    #[error("workflow configuration must precede execution")]
+    WorkflowAlreadyStarted,
+    #[error("no authoritative workflow execution evidence exists")]
+    WorkflowEvidenceMissing,
     #[error(transparent)]
     CatalogTemplate(#[from] plasm_compile::CatalogTemplateError),
     #[error("catalog `{entry_id}` is not loaded")]
@@ -74,6 +226,8 @@ pub enum AgentEngineError {
     NoCatalogsLoaded,
     #[error("teaching exposure is unavailable")]
     TeachingExposureMissing,
+    #[error("archive validation requires an activated catalogue generation")]
+    ArchiveGenerationRequired,
     #[error("primary catalog `{entry_id}` is missing")]
     PrimaryCatalogMissing { entry_id: String },
     #[error("NAPI host state construction failed")]
@@ -98,6 +252,18 @@ pub enum AgentEngineError {
         "plan commit flow policy rejected the plan ({verdict}) with {violations} violation(s)"
     )]
     FlowDenial { verdict: String, violations: usize },
+}
+
+impl From<plasm_runtime::RuntimeError> for AgentEngineError {
+    fn from(error: plasm_runtime::RuntimeError) -> Self {
+        Self::Runtime(Box::new(error))
+    }
+}
+
+impl From<NativeLearningError> for AgentEngineError {
+    fn from(error: NativeLearningError) -> Self {
+        Self::Workflow(Box::new(error))
+    }
 }
 
 impl From<plasm_core::catalog_il::CatalogIlError> for AgentEngineError {
@@ -166,6 +332,7 @@ pub struct CatalogInfo {
 #[derive(Debug, Clone, serde::Serialize)]
 pub struct TeachingExposureResult {
     pub prompt: String,
+    pub declarations_changed: bool,
     pub delta_refs: Vec<String>,
 }
 
@@ -247,8 +414,13 @@ fn live_run_meta_json(
 pub struct AgentEngine {
     python_pool: Arc<plasm_agent_core::python_pool::PythonPool>,
     session_id: String,
+    execute_session_id: plasm_agent_core::execute_path_ids::ExecuteSessionId,
     discovery_pin: Option<DiscoverySessionPin>,
+    prerequisite_deployments: plasm_core::prerequisites::DeploymentBindings,
     intent: String,
+    intent_turns: Vec<String>,
+    workflow_config: NativeLearningConfig,
+    host: Option<plasm_agent_core::server_state::PlasmHostState>,
     manifest_paths: Vec<std::path::PathBuf>,
     capabilities: Vec<(String, String)>,
     catalogs: IndexMap<String, Arc<CGS>>,
@@ -258,25 +430,30 @@ pub struct AgentEngine {
     python_teaching: plasm_core::prompt_render::python::PythonTeachingState,
     pipeline: PromptPipelineConfig,
     sym_cross: SymbolMapCrossRequestCache,
-    /// Cached execute session with registered plan commits (invalidated on exposure change).
+    /// Execute session retaining graph state and reviewed plans across exposure waves.
     execute_session: Option<ExecuteSession>,
 }
 
 impl Default for AgentEngine {
     fn default() -> Self {
-        Self::new()
+        Self::new(Arc::new(Default::default()))
     }
 }
 
 impl AgentEngine {
-    pub fn new() -> Self {
+    pub fn new(python_pool: Arc<plasm_agent_core::python_pool::PythonPool>) -> Self {
         Self {
-            python_pool: Arc::new(Default::default()),
+            python_pool,
             session_id: plasm_agent_core::session_identity::LogicalSessionId::new_v4()
                 .as_uuid()
                 .to_string(),
+            execute_session_id: plasm_agent_core::execute_path_ids::ExecuteSessionId::new_random(),
             discovery_pin: None,
+            prerequisite_deployments: Default::default(),
             intent: String::new(),
+            intent_turns: Vec::new(),
+            workflow_config: NativeLearningConfig::Baseline,
+            host: None,
             manifest_paths: Vec::new(),
             capabilities: Vec::new(),
             catalogs: IndexMap::new(),
@@ -292,10 +469,511 @@ impl AgentEngine {
 
     pub fn set_intent(&mut self, intent: impl Into<String>) {
         self.intent = intent.into();
+        self.intent_turns = vec![self.intent.clone()];
     }
 
-    pub(crate) fn set_python_pool(&mut self, pool: Arc<plasm_agent_core::python_pool::PythonPool>) {
-        self.python_pool = pool;
+    pub fn configure_workflow_learning(&mut self, config: NativeLearningConfig) -> Result<()> {
+        if self.host.is_some() || self.execute_session.is_some() {
+            return Err(AgentEngineError::WorkflowAlreadyStarted);
+        }
+        config.validate()?;
+        self.workflow_config = config;
+        Ok(())
+    }
+
+    pub async fn completed_workflow_executions(&self) -> Result<String> {
+        if self.workflow_config.mode() == NativeLearningMode::Baseline {
+            return Err(NativeLearningError::Mode.into());
+        }
+        match &self.host {
+            Some(host) => Ok(serde_json::to_string(
+                &self
+                    .workflow_config
+                    .completed_executions(host, &self.session_id, &self.intent)
+                    .await?,
+            )?),
+            None => Ok(serde_json::json!({"intent":self.intent,"executions":[]}).to_string()),
+        }
+    }
+
+    /// Session lifecycle commands use the same durable authority as HTTP/MCP.
+    pub async fn training_command(
+        &self,
+        actor: &plasm_agent_core::workflow_learning::training::TrustedTrainingActor,
+        command: &plasm_agent_core::workflow_learning::training::TrainingCommandEnvelope,
+    ) -> Result<String> {
+        let host = self
+            .host
+            .as_ref()
+            .ok_or(AgentEngineError::WorkflowEvidenceMissing)?;
+        let session = self
+            .execute_session
+            .as_ref()
+            .ok_or(AgentEngineError::WorkflowEvidenceMissing)?;
+        self.workflow_config
+            .register(
+                host,
+                session,
+                &self.session_id,
+                self.execute_session_id.as_str(),
+                &self.intent_turns,
+            )
+            .await?;
+        let scope = self.workflow_config.scope()?;
+        if actor.scope() != &scope {
+            return Err(NativeLearningError::Training(
+                plasm_agent_core::workflow_learning::training::TrainingError::Denied,
+            )
+            .into());
+        }
+        let logical = plasm_agent_core::session_identity::LogicalSessionId::parse(&self.session_id)
+            .map_err(NativeLearningError::from)?;
+        let repository = host
+            .workflow_learning
+            .repository()
+            .await
+            .map_err(NativeLearningError::from)?;
+        repository
+            .bind_session(&scope, logical)
+            .await
+            .map_err(NativeLearningError::from)?;
+        // The trusted embedding host owns this engine and fixes its sole actor before session creation.
+        repository
+            .bind_training_controller(actor, logical)
+            .await
+            .map_err(NativeLearningError::from)?;
+        let status = repository
+            .training_command(actor, logical, command)
+            .await
+            .map_err(NativeLearningError::from)?;
+        Ok(serde_json::to_string(&status)?)
+    }
+
+    pub async fn training_status(&self) -> Result<String> {
+        let host = self
+            .host
+            .as_ref()
+            .ok_or(AgentEngineError::WorkflowEvidenceMissing)?;
+        let session = self
+            .execute_session
+            .as_ref()
+            .ok_or(AgentEngineError::WorkflowEvidenceMissing)?;
+        self.workflow_config
+            .register(
+                host,
+                session,
+                &self.session_id,
+                self.execute_session_id.as_str(),
+                &self.intent_turns,
+            )
+            .await?;
+        let logical = plasm_agent_core::session_identity::LogicalSessionId::parse(&self.session_id)
+            .map_err(NativeLearningError::from)?;
+        let repository = host
+            .workflow_learning
+            .repository()
+            .await
+            .map_err(NativeLearningError::from)?;
+        let scope = self.workflow_config.scope()?;
+        repository
+            .bind_session(&scope, logical)
+            .await
+            .map_err(NativeLearningError::from)?;
+        let status = repository
+            .training_status(&scope, logical)
+            .await
+            .map_err(NativeLearningError::from)?;
+        Ok(serde_json::to_string(&status)?)
+    }
+
+    /// A trusted evaluation host seals the session before any program executes.
+    pub async fn seal_training_evaluation(&self) -> Result<()> {
+        use plasm_agent_core::workflow_learning::training::{
+            TrainingSessionPurpose, TrustedTrainingActor,
+        };
+        let host = self
+            .host
+            .as_ref()
+            .ok_or(AgentEngineError::WorkflowEvidenceMissing)?;
+        let session = self
+            .execute_session
+            .as_ref()
+            .ok_or(AgentEngineError::WorkflowEvidenceMissing)?;
+        self.workflow_config
+            .register(
+                host,
+                session,
+                &self.session_id,
+                self.execute_session_id.as_str(),
+                &self.intent_turns,
+            )
+            .await?;
+        let logical = plasm_agent_core::session_identity::LogicalSessionId::parse(&self.session_id)
+            .map_err(NativeLearningError::from)?;
+        let scope = self.workflow_config.scope()?;
+        let actor = TrustedTrainingActor::trusted_host(
+            scope.clone(),
+            "evaluation-host".into(),
+            "evaluation-host".into(),
+        )
+        .map_err(NativeLearningError::from)?;
+        let repository = host
+            .workflow_learning
+            .repository()
+            .await
+            .map_err(NativeLearningError::from)?;
+        repository
+            .bind_session(&scope, logical)
+            .await
+            .map_err(NativeLearningError::from)?;
+        repository
+            .bind_training_session(&actor, logical, TrainingSessionPurpose::Evaluation)
+            .await
+            .map_err(NativeLearningError::from)?;
+        Ok(())
+    }
+
+    pub async fn training_candidates(
+        &self,
+        actor: &plasm_agent_core::workflow_learning::training::TrustedTrainingActor,
+        input: &str,
+    ) -> Result<String> {
+        use plasm_agent_core::workflow_learning::{
+            repository::TrainingCandidateRef, training::TrainingCandidateSelection,
+        };
+        #[derive(serde::Deserialize)]
+        #[serde(tag = "action", rename_all = "snake_case", deny_unknown_fields)]
+        enum Command {
+            List {
+                limit: u32,
+                after: Option<TrainingCandidateRef>,
+            },
+            Read {
+                reference: TrainingCandidateRef,
+            },
+            RequestDecision {
+                expected_revision: u64,
+                idempotency_key: String,
+                selection: Vec<TrainingCandidateSelection>,
+            },
+            RequestStatus {
+                request_ref: String,
+            },
+            RequestRelease {
+                expected_revision: u64,
+                idempotency_key: String,
+                review_refs: Vec<String>,
+            },
+            RequestExecutionRelease {
+                expected_revision: u64,
+                idempotency_key: String,
+                execution_ids: Vec<plasm_agent_core::workflow_learning::model::ExecutionId>,
+            },
+        }
+        let command: Command = serde_json::from_str(input)?;
+        let host = self
+            .host
+            .as_ref()
+            .ok_or(AgentEngineError::WorkflowEvidenceMissing)?;
+        let logical = plasm_agent_core::session_identity::LogicalSessionId::parse(&self.session_id)
+            .map_err(NativeLearningError::from)?;
+        let repository = host
+            .workflow_learning
+            .repository()
+            .await
+            .map_err(NativeLearningError::from)?;
+        repository
+            .check_training_controller(actor, logical)
+            .await
+            .map_err(NativeLearningError::from)?;
+        let value = match command {
+            Command::List { limit, after } => serde_json::to_value(
+                repository
+                    .list_training_candidates(actor.scope(), logical, after.as_ref(), limit)
+                    .await
+                    .map_err(NativeLearningError::from)?,
+            )?,
+            Command::Read { reference } => {
+                let owner = repository
+                    .training_candidate_session(actor.scope(), &reference)
+                    .await
+                    .map_err(NativeLearningError::from)?;
+                if owner != logical {
+                    return Err(NativeLearningError::Training(
+                        plasm_agent_core::workflow_learning::training::TrainingError::Unavailable,
+                    )
+                    .into());
+                }
+                serde_json::to_value(
+                    repository
+                        .read_training_candidate(actor.scope(), &reference)
+                        .await
+                        .map_err(NativeLearningError::from)?
+                        .agent_view(),
+                )?
+            }
+            Command::RequestDecision {
+                expected_revision,
+                idempotency_key,
+                selection,
+            } => serde_json::to_value(
+                repository
+                    .request_candidate_decision(
+                        actor,
+                        logical,
+                        expected_revision,
+                        idempotency_key.parse().map_err(NativeLearningError::from)?,
+                        selection,
+                    )
+                    .await
+                    .map_err(NativeLearningError::from)?,
+            )?,
+            Command::RequestStatus { request_ref } => {
+                let request = repository
+                    .read_training_request(
+                        actor,
+                        request_ref.parse().map_err(NativeLearningError::from)?,
+                    )
+                    .await
+                    .map_err(NativeLearningError::from)?;
+                if request.logical_session != logical {
+                    return Err(NativeLearningError::Training(
+                        plasm_agent_core::workflow_learning::training::TrainingError::Unavailable,
+                    )
+                    .into());
+                }
+                serde_json::to_value(request)?
+            }
+            Command::RequestRelease {
+                expected_revision,
+                idempotency_key,
+                review_refs,
+            } => {
+                let ids = review_refs
+                    .iter()
+                    .map(|id| id.parse())
+                    .collect::<std::result::Result<Vec<_>, _>>()
+                    .map_err(NativeLearningError::from)?;
+                serde_json::to_value(
+                    repository
+                        .request_training_release(
+                            actor,
+                            logical,
+                            expected_revision,
+                            idempotency_key.parse().map_err(NativeLearningError::from)?,
+                            ids,
+                        )
+                        .await
+                        .map_err(NativeLearningError::from)?,
+                )?
+            }
+            Command::RequestExecutionRelease {
+                expected_revision,
+                idempotency_key,
+                execution_ids,
+            } => serde_json::to_value(
+                repository
+                    .request_training_execution_release(
+                        actor,
+                        logical,
+                        expected_revision,
+                        idempotency_key.parse().map_err(NativeLearningError::from)?,
+                        execution_ids,
+                    )
+                    .await
+                    .map_err(NativeLearningError::from)?,
+            )?,
+        };
+        Ok(serde_json::to_string(&value)?)
+    }
+
+    pub async fn read_teaching_program(&self, execution_id: &str) -> Result<String> {
+        let host = self
+            .host
+            .as_ref()
+            .ok_or(AgentEngineError::WorkflowEvidenceMissing)?;
+        Ok(serde_json::to_string(
+            &self
+                .workflow_config
+                .read_teaching_program(host, &self.session_id, execution_id)
+                .await?,
+        )?)
+    }
+
+    pub async fn review_workflow(
+        &mut self,
+        request: &str,
+        actor: plasm_agent_core::workflow_learning::training::TrustedTrainingActor,
+    ) -> Result<String> {
+        #[derive(serde::Deserialize)]
+        #[serde(deny_unknown_fields)]
+        struct Review {
+            subtasks: Vec<plasm_agent_core::workflow_learning::model::AchievedSubtask>,
+            expected_revision: u64,
+            idempotency_key: String,
+        }
+        let request: Review = serde_json::from_str(request)?;
+        let host = self
+            .host
+            .as_ref()
+            .ok_or(AgentEngineError::WorkflowEvidenceMissing)?;
+        let session = self
+            .execute_session
+            .as_ref()
+            .ok_or(AgentEngineError::WorkflowEvidenceMissing)?;
+        // Update the resident snapshot after native graph execution and exposure extension.
+        self.workflow_config
+            .register(
+                host,
+                session,
+                &self.session_id,
+                self.execute_session_id.as_str(),
+                &self.intent_turns,
+            )
+            .await?;
+        Ok(serde_json::to_string(
+            &self
+                .workflow_config
+                .review(
+                    host,
+                    session,
+                    &self.session_id,
+                    self.execute_session_id.as_str(),
+                    plasm_agent_core::workflow_learning::native::NativeReview {
+                        subtasks: request.subtasks,
+                        actor,
+                        expected_revision: request.expected_revision,
+                        idempotency_key: request
+                            .idempotency_key
+                            .parse()
+                            .map_err(NativeLearningError::from)?,
+                    },
+                )
+                .await?,
+        )?)
+    }
+
+    pub(crate) async fn verify_workflow_example(
+        &mut self,
+        revision: &plasm_agent_core::workflow_learning::model::StoredExample,
+    ) -> Result<crate::workflow_verification::ExampleVerification> {
+        use crate::workflow_verification::{CompatibilityOutcome, ExampleVerification};
+        self.set_intent("Verify stored teaching compatibility");
+        let context = self.archive_validation_context()?;
+        self.workflow_config
+            .register(
+                &context.host,
+                &context.session,
+                &self.session_id,
+                self.execute_session_id.as_str(),
+                &self.intent_turns,
+            )
+            .await?;
+        let outcome = match self
+            .workflow_config
+            .fetch(
+                &context.host,
+                &context.session,
+                self.execute_session_id.as_str(),
+                &revision.id.to_string(),
+                &context.authorization,
+            )
+            .await
+        {
+            Ok(served) => CompatibilityOutcome::Checked {
+                source_sha256: plasm_core::catalog_discovery::content_hash(
+                    served.source.as_bytes(),
+                ),
+                domain_revision: served.domain_revision,
+            },
+            Err(NativeLearningError::Serving(error)) => {
+                CompatibilityOutcome::from_serving_error(error)
+            }
+            Err(error) => return Err(error.into()),
+        };
+        Ok(ExampleVerification {
+            example_ref: revision.id.to_string(),
+            outcome,
+        })
+    }
+
+    pub async fn fetch_workflow_example(&mut self, revision: &str) -> Result<String> {
+        let host = match &self.host {
+            Some(host) => host.clone(),
+            None => self.build_host_state(None)?,
+        };
+        let session = self.ensure_execute_session()?;
+        self.workflow_config
+            .register(
+                &host,
+                &session,
+                &self.session_id,
+                self.execute_session_id.as_str(),
+                &self.intent_turns,
+            )
+            .await?;
+        let allowed = self
+            .discovery_pin
+            .as_ref()
+            .map(|pin| pin.authorization.clone())
+            .unwrap_or_else(|| {
+                plasm_agent_core::discovery_store::DiscoveryAuthorization::catalogs(
+                    self.catalogs.keys().cloned().collect(),
+                )
+            });
+        let previous_capabilities = self
+            .capabilities
+            .iter()
+            .cloned()
+            .collect::<std::collections::BTreeSet<_>>();
+        let mut served = self
+            .workflow_config
+            .fetch(
+                &host,
+                &session,
+                self.execute_session_id.as_str(),
+                revision,
+                &allowed,
+            )
+            .await?;
+        let updated = host
+            .get_execute_session(AGENT_PROMPT_HASH, self.execute_session_id.as_str())
+            .await
+            .ok_or(AgentEngineError::WorkflowEvidenceMissing)?;
+        self.exposure = updated.teaching_exposure.clone();
+        if let Some(exposure) = &self.exposure {
+            self.capabilities = exposure
+                .entity_catalog_entry_ids
+                .iter()
+                .cloned()
+                .zip(exposure.entities.iter().cloned())
+                .collect();
+        }
+        self.execute_session = Some((*updated).clone());
+        served.teaching_delta = self.render_teaching_delta(&[])?;
+        #[derive(serde::Serialize)]
+        struct NativeServedExample<'a> {
+            example_id: String,
+            source: &'a str,
+            teaching_delta: &'a str,
+            domain_revision: u32,
+            outputs: Vec<String>,
+            delta_refs: Vec<String>,
+        }
+        let delta_refs = self
+            .capabilities
+            .iter()
+            .filter(|reference| !previous_capabilities.contains(*reference))
+            .map(|(entry, entity)| format!("{entry}:{entity}"))
+            .collect();
+        Ok(serde_json::to_string(&NativeServedExample {
+            example_id: served.example_id.to_string(),
+            source: &served.source,
+            teaching_delta: &served.teaching_delta,
+            domain_revision: served.domain_revision,
+            outputs: served.teaching_outputs(),
+            delta_refs,
+        })?)
     }
 
     pub fn introspect_catalog(&self, entry_id: &str) -> Result<CatalogIntrospection> {
@@ -467,8 +1145,9 @@ impl AgentEngine {
         catalogs: std::collections::BTreeMap<String, CGS>,
         compiled_catalogs: std::collections::BTreeMap<String, Arc<plasm_compile::CompiledCatalog>>,
         session_id: String,
+        python_pool: Arc<plasm_agent_core::python_pool::PythonPool>,
     ) -> Self {
-        let mut engine = Self::new();
+        let mut engine = Self::new(python_pool);
         engine.session_id = session_id;
         for (id, cgs) in catalogs {
             engine
@@ -484,14 +1163,31 @@ impl AgentEngine {
         catalogs: std::collections::BTreeMap<String, CGS>,
         compiled_catalogs: std::collections::BTreeMap<String, Arc<plasm_compile::CompiledCatalog>>,
         pin: DiscoverySessionPin,
+        prerequisite_deployments: plasm_core::prerequisites::DeploymentBindings,
+        python_pool: Arc<plasm_agent_core::python_pool::PythonPool>,
     ) -> Self {
-        let mut engine = Self::from_generation(catalogs, compiled_catalogs, pin.pin_id.clone());
+        let mut engine =
+            Self::from_generation(catalogs, compiled_catalogs, pin.pin_id.clone(), python_pool);
         engine.discovery_pin = Some(pin);
+        engine.prerequisite_deployments = prerequisite_deployments;
         engine
     }
 
     pub fn discovery_pin(&self) -> Option<&DiscoverySessionPin> {
         self.discovery_pin.as_ref()
+    }
+
+    /// Retain the authoritative discovery history even when a bounded wave
+    /// exposes no capability; optional teaching can still open the session.
+    pub(crate) fn retain_unexposed_intent(
+        &mut self,
+        provenance: &plasm_agent_core::intent_provenance::IntentProvenance,
+    ) {
+        self.intent_turns = provenance.turns().map(str::to_owned).collect();
+        self.intent = self.intent_turns.join("\n");
+        if let Some(session) = &mut self.execute_session {
+            session.context_intent = Some(self.intent.clone());
+        }
     }
 
     pub fn exposed_capabilities(&self) -> Vec<plasm_core::prerequisites::CapabilityRef> {
@@ -510,15 +1206,21 @@ impl AgentEngine {
             .unwrap_or_default()
     }
 
-    pub fn expose_routing(
+    pub async fn expose_routing(
         &mut self,
         intent: &str,
         closure: &plasm_core::prerequisites::PrerequisiteClosure,
     ) -> Result<TeachingExposureResult> {
-        if !self.intent.is_empty() {
-            self.intent.push('\n');
+        let mut intent_text = self.intent.clone();
+        let mut intent_turns = self.intent_turns.clone();
+        let mut capabilities = self.capabilities.clone();
+        let mut staged_exposure = self.exposure.clone();
+        let mut staged_session = self.execute_session.clone();
+        if !intent_text.is_empty() {
+            intent_text.push('\n');
         }
-        self.intent.push_str(intent);
+        intent_text.push_str(intent);
+        intent_turns.push(intent.to_owned());
         let mut grouped = std::collections::BTreeMap::<String, Vec<String>>::new();
         for reference in closure
             .business
@@ -532,7 +1234,7 @@ impl AgentEngine {
                 .push(reference.capability.clone());
         }
         let mut touched = Vec::new();
-        for (entry, capabilities) in grouped {
+        for (entry, selected) in grouped {
             let cgs = self
                 .catalogs
                 .get(&entry)
@@ -541,9 +1243,7 @@ impl AgentEngine {
                 })?
                 .clone();
             let delta = plasm_core::capability_exposure::selected_capability_surface(
-                &cgs,
-                &entry,
-                &capabilities,
+                &cgs, &entry, &selected,
             )?;
             let entities: Vec<_> = delta
                 .required
@@ -552,34 +1252,41 @@ impl AgentEngine {
                 .map(|e| e.entity.to_string())
                 .collect();
             for entity in &entities {
-                if !self.has_capability(&entry, entity) {
-                    self.capabilities.push((entry.clone(), entity.clone()));
+                if !capabilities
+                    .iter()
+                    .any(|(api, name)| api == &entry && name == entity)
+                {
+                    capabilities.push((entry.clone(), entity.clone()));
                 }
             }
             touched.extend(delta.required.entities.iter().cloned());
             let refs = entities.iter().map(String::as_str).collect::<Vec<_>>();
-            if let Some(exposure) = &mut self.exposure {
+            if let Some(exposure) = &mut staged_exposure {
                 let layers = self.catalogs.values().map(Arc::as_ref).collect::<Vec<_>>();
                 exposure.expose_surface(&layers, cgs, &entry, &refs, delta);
             } else {
-                self.exposure = Some(TeachingExposureSession::new_with_intent_delta(
+                staged_exposure = Some(TeachingExposureSession::new_with_intent_delta(
                     &cgs, &entry, &refs, delta,
                 ));
             }
         }
-        let exposure = self
-            .exposure
+        let exposure = staged_exposure
             .as_ref()
             .cloned()
             .ok_or(AgentEngineError::RoutingExposureMissing)?;
-        if let Some(session) = &mut self.execute_session {
+        if let Some(session) = &mut staged_session {
             // Keep graph state and reviewed plans while appending symbols.
             session.entities = exposure.entities.clone();
             session.teaching_exposure = Some(exposure.clone());
-            session.context_intent = Some(self.intent.clone());
+            session.context_intent = Some(intent_text.clone());
             session.domain_revision += 1;
         }
-        let mut prompt = self.render_teaching_delta(&touched)?;
+        let wave = plasm_core::prompt_render::python::prepare_python_teaching_wave(
+            &exposure,
+            &self.python_teaching,
+        )?;
+        let mut prompt = wave.declarations;
+        let declarations_changed = !prompt.is_empty();
         let catalogs = self
             .catalogs
             .iter()
@@ -595,8 +1302,34 @@ impl AgentEngine {
             prompt.push_str("\n\n");
             prompt.push_str(&guidance);
         }
+        if self.workflow_config.mode() != NativeLearningMode::Baseline && staged_session.is_none() {
+            staged_session =
+                Some(self.build_execute_session_for(&capabilities, &exposure, &intent_text)?);
+        }
+        if let Some(session) = &mut staged_session {
+            session.python_teaching = wave.next_state.clone();
+            if self.workflow_config.mode() != NativeLearningMode::Baseline {
+                let host = self.build_host_state(None)?;
+                Box::pin(self.workflow_config.publish_exposure(
+                    &host,
+                    session,
+                    &self.session_id,
+                    self.execute_session_id.as_str(),
+                    &intent_turns,
+                ))
+                .await?;
+            }
+        }
+        // Publish local state only after the authoritative descriptor accepts the wave.
+        self.intent = intent_text;
+        self.intent_turns = intent_turns;
+        self.capabilities = capabilities;
+        self.exposure = staged_exposure;
+        self.execute_session = staged_session;
+        self.python_teaching = wave.next_state;
         Ok(TeachingExposureResult {
             prompt,
+            declarations_changed,
             delta_refs: touched
                 .iter()
                 .map(|e| format!("{}:{}", e.entry_id, e.entity))
@@ -606,7 +1339,7 @@ impl AgentEngine {
 
     /// Explicit local execution may expose a caller-named entity without discovery.
     /// Every capability is selected by exact ownership; intent never controls admission.
-    pub fn expose_seeds(
+    pub async fn expose_seeds(
         &mut self,
         intent: impl Into<String>,
         seeds: &[CapabilitySeed],
@@ -644,6 +1377,7 @@ impl AgentEngine {
                 edges: vec![],
             },
         )
+        .await
     }
 
     fn reject_from_stage(
@@ -697,7 +1431,7 @@ impl AgentEngine {
         {
             Ok(b) => b,
             Err(plasm_agent_core::compilation_error::CompilationError::Program(stage)) => {
-                return Ok(self.reject_from_stage(&es, trimmed, *stage))
+                return Ok(self.reject_from_stage(&es, trimmed, *stage));
             }
             Err(
                 error @ (plasm_agent_core::compilation_error::CompilationError::Host(_)
@@ -787,139 +1521,104 @@ impl AgentEngine {
         plan_commit_ref: &str,
         transport: Arc<dyn HttpTransport>,
     ) -> Result<RunPlanResult> {
-        let trimmed = plan_commit_ref.trim();
-        if trimmed.is_empty() {
-            return Ok(RunPlanResult::reference_rejection(
-                "invalid_run_reference",
-                "Copy a reviewed commit reference or paging handle verbatim.",
-            ));
-        }
-        let es = self.ensure_execute_session()?;
-        let (bundle, dry) = match ExecutableRunTarget::parse(trimmed) {
-            Ok(ExecutableRunTarget::Commit(commit_ref)) => {
-                let committed = match resolve_committed_plan(&es, &commit_ref) {
-                    Ok(committed) => committed,
-                    Err(error) => return Ok(RunPlanResult::failure(error.into())),
-                };
-                let bundle = PlasmCompBundle::new(committed.artifact.clone())
-                    .map_err(AgentEngineError::CommittedPlanArtifact)?;
-                let dry = match dry_for_committed_plasm_run(&es, &bundle, &committed) {
-                    Ok(dry) => dry,
-                    Err(error) => return Ok(RunPlanResult::failure(error.into())),
-                };
-                (bundle, dry)
-            }
-            Ok(ExecutableRunTarget::Page(handle)) => {
-                let bundle = match plasm_agent_core::mcp_server::compile_page_continuation(
-                    &es, &handle, 0,
-                ) {
-                    Ok(bundle) => bundle,
-                    Err(failure) => return Ok(RunPlanResult::failure(failure)),
-                };
-                let dry = match evaluate_plasm_comp_dry(&es, &bundle) {
-                    Ok(dry) => dry,
-                    Err(error) => return Ok(RunPlanResult::failure(error.into())),
-                };
-                (bundle, dry)
-            }
-            Err(_) => {
-                return Ok(RunPlanResult::reference_rejection(
-                "invalid_run_reference",
-                format!("Run reference `{trimmed}` is not executable. Copy a reviewed commit reference from plasm or a continuation handle from plasm_run verbatim; run artifact IDs identify observations, not executable plans."),
-            ));
-            }
-        };
-
-        let host = self.build_host_state(transport)?;
-        let live_result = Box::pin(run_plasm_comp(
-            &es,
-            &host,
-            AGENT_PROMPT_HASH,
-            &self.session_id,
-            &bundle,
-            true,
-            None,
-            None,
-            Some(dry),
-            Some(plasm_agent_core::McpResultTransportPolicy {
-                artifact_access: plasm_agent_core::ArtifactAccessMode::DagCompute,
-                ..Default::default()
-            }),
-        ))
-        .await;
-        let live = match live_result {
-            Ok(live) => live,
-            Err(failure) => {
-                return Ok(RunPlanResult {
-                    ok: false,
-                    message: plasm_agent_core::agent_presentation::render_failure(&failure)
-                        .into_string(),
-                    rows_json: None,
-                    meta_json: None,
-                    artifacts_json: None,
-                    failure_json: Some(serde_json::to_string(&failure)?),
-                })
-            }
-        };
-
-        let publication: Result<RunPlanResult> = async {
-            let message = live
-                .run_markdown
-                .clone()
-                .unwrap_or_else(|| format!("Live run completed for `{trimmed}`."));
-            let mut artifacts = Vec::new();
-            for artifact in &live.code_plan_run_artifacts {
-                let id =
-                    plasm_agent_core::run_artifacts::RunArtifactId::from_wire(&artifact.run_id)
-                        .ok_or(AgentEngineError::InvalidRunArtifactId)?;
-                let payload = host
-                    .run_artifacts
-                    .get_payload_result(AGENT_PROMPT_HASH, &self.session_id, id)
-                    .await
-                    .map_err(AgentEngineError::RunArtifact)?
-                    .ok_or(AgentEngineError::RunArtifactMissing)?;
-                artifacts.push(serde_json::json!({
-                    "run_id": artifact.run_id,
-                    "snapshot": serde_json::from_slice::<serde_json::Value>(&payload.bytes)?,
-                }));
-            }
-            Ok(RunPlanResult {
-                ok: true,
-                message,
-                rows_json: live_run_rows_json(&live)?,
-                meta_json: live_run_meta_json(&live),
-                failure_json: None,
-                artifacts_json: Some(serde_json::to_string(&artifacts)?),
-            })
-        }
-        .await;
-        match publication {
-            Ok(result) => Ok(result),
-            Err(error) => {
-                let mut failure = plasm_runtime::ExecutionFailure::new(
-                    plasm_runtime::FailureCause::Runtime,
-                    "run_publication_failed",
-                    error.to_string(),
-                );
-                for step in &live.return_steps {
-                    failure = failure.with_effects(&step.result.operations);
-                }
-                Ok(RunPlanResult {
-                    ok: false,
-                    message: plasm_agent_core::agent_presentation::render_failure(&failure)
-                        .into_string(),
-                    rows_json: None,
-                    meta_json: None,
-                    artifacts_json: None,
-                    failure_json: Some(serde_json::to_string(&failure)?),
-                })
-            }
+        match self.prepare_live_run(plan_commit_ref, transport).await? {
+            PreparedLiveRunResult::Ready(run) => Box::pin(run.execute()).await,
+            PreparedLiveRunResult::Rejected(result) => Ok(result),
         }
     }
 
-    fn build_host_state(
-        &self,
+    pub(crate) async fn prepare_live_run(
+        &mut self,
+        plan_commit_ref: &str,
         transport: Arc<dyn HttpTransport>,
+    ) -> Result<PreparedLiveRunResult> {
+        let trimmed = plan_commit_ref.trim();
+        if trimmed.is_empty() {
+            return Ok(PreparedLiveRunResult::Rejected(
+                RunPlanResult::reference_rejection(
+                    "invalid_run_reference",
+                    "Copy a reviewed commit reference or paging handle verbatim.",
+                ),
+            ));
+        }
+        let session = self.ensure_execute_session()?;
+        let (bundle, dry, authorization) = match ExecutableRunTarget::parse(trimmed) {
+            Ok(ExecutableRunTarget::Commit(commit_ref)) => {
+                let committed = match resolve_committed_plan(&session, &commit_ref) {
+                    Ok(committed) => committed,
+                    Err(error) => {
+                        return Ok(PreparedLiveRunResult::Rejected(RunPlanResult::failure(
+                            error.into(),
+                        )))
+                    }
+                };
+                let bundle = PlasmCompBundle::new(committed.artifact.clone())
+                    .map_err(AgentEngineError::CommittedPlanArtifact)?
+                    .with_source(committed.program.clone())
+                    .with_compilation_symbols(committed.dry_cache.compilation_symbols.clone());
+                let dry = match dry_for_committed_plasm_run(&session, &bundle, &committed) {
+                    Ok(dry) => dry,
+                    Err(error) => {
+                        return Ok(PreparedLiveRunResult::Rejected(RunPlanResult::failure(
+                            error.into(),
+                        )))
+                    }
+                };
+                (bundle, dry, Some(commit_ref))
+            }
+            Ok(ExecutableRunTarget::Page(handle)) => {
+                let bundle = match plasm_agent_core::mcp_server::compile_page_continuation(
+                    &session, &handle, 0,
+                ) {
+                    Ok(bundle) => bundle,
+                    Err(failure) => {
+                        return Ok(PreparedLiveRunResult::Rejected(RunPlanResult::failure(
+                            failure,
+                        )))
+                    }
+                };
+                let dry = match evaluate_plasm_comp_dry(&session, &bundle) {
+                    Ok(dry) => dry,
+                    Err(error) => {
+                        return Ok(PreparedLiveRunResult::Rejected(RunPlanResult::failure(
+                            error.into(),
+                        )))
+                    }
+                };
+                (bundle, dry, None)
+            }
+            Err(_) => {
+                return Ok(PreparedLiveRunResult::Rejected(RunPlanResult::reference_rejection(
+                    "invalid_run_reference",
+                    format!("Run reference `{trimmed}` is not executable. Copy a reviewed commit reference from plasm or a continuation handle from plasm_run verbatim; run artifact IDs identify observations, not executable plans."),
+                )));
+            }
+        };
+        let host = self.build_host_state(Some(transport))?;
+        self.workflow_config
+            .register(
+                &host,
+                &session,
+                &self.session_id,
+                self.execute_session_id.as_str(),
+                &self.intent_turns,
+            )
+            .await?;
+        Ok(PreparedLiveRunResult::Ready(Box::new(PreparedLiveRun {
+            reference: trimmed.to_owned(),
+            session,
+            host,
+            bundle,
+            dry,
+            authorization,
+            workflow_config: self.workflow_config.clone(),
+            execute_session_id: self.execute_session_id.as_str().to_owned(),
+        })))
+    }
+
+    fn build_host_state(
+        &mut self,
+        transport: Option<Arc<dyn HttpTransport>>,
     ) -> Result<plasm_agent_core::server_state::PlasmHostState> {
         let pairs: Vec<RegistryEntryPair> = self
             .catalogs
@@ -940,18 +1639,36 @@ impl AgentEngine {
             ..ExecutionConfig::default()
         };
         config.apply_http_env_overrides();
-        let engine = ExecutionEngine::new_with_transport(config, transport, None);
-        let mut state = build_plasm_host_state(PlasmHostBootstrap {
-            engine,
-            mode: ExecutionMode::Live,
-            registry: Arc::new(registry),
-            catalog_bootstrap: CatalogBootstrap::Fixed,
-            incoming_auth: None,
-            run_artifacts: Arc::new(RunArtifactStore::memory()),
-            session_graph_persistence: None,
-            oss_local_filesystem_defaults: false,
-        })?;
+        if let Some(existing) = &self.host {
+            let mut state = existing.clone();
+            if let Some(transport) = transport {
+                state.oss.engine =
+                    Arc::new(ExecutionEngine::new_with_transport(config, transport, None));
+            }
+            return Ok(state);
+        }
+        let engine = ExecutionEngine::new(config.clone())?;
+        let mut state = build_plasm_host_state_with_learning(
+            PlasmHostBootstrap {
+                engine,
+                mode: ExecutionMode::Live,
+                registry: Arc::new(registry),
+                catalog_bootstrap: CatalogBootstrap::Fixed,
+                incoming_auth: None,
+                run_artifacts: Arc::new(RunArtifactStore::memory()),
+                session_graph_persistence: None,
+                oss_local_filesystem_defaults: false,
+            },
+            self.workflow_config.learning(),
+        )?;
         state.oss.python_pool = self.python_pool.clone();
+        // Retain shared session/evidence state, never the per-call JS callback:
+        // a referenced NAPI threadsafe function keeps the Node event loop alive.
+        self.host = Some(state.clone());
+        if let Some(transport) = transport {
+            state.oss.engine =
+                Arc::new(ExecutionEngine::new_with_transport(config, transport, None));
+        }
         Ok(state)
     }
 
@@ -966,12 +1683,6 @@ impl AgentEngine {
                 })
                 .collect::<Vec<_>>(),
         )
-    }
-
-    fn has_capability(&self, api: &str, entity: &str) -> bool {
-        self.capabilities
-            .iter()
-            .any(|(a, e)| a == api && e == entity)
     }
 
     fn invalidate_execute_session(&mut self) {
@@ -998,14 +1709,41 @@ impl AgentEngine {
     }
 
     fn build_execute_session(&self) -> Result<ExecuteSession> {
-        use plasm_core::CgsContext;
-
-        let mut contexts_by_entry: IndexMap<String, Arc<CgsContext>> = IndexMap::new();
-        for (api, cgs) in &self.catalogs {
-            contexts_by_entry.insert(api.clone(), Arc::new(CgsContext::entry(api, cgs.clone())));
+        if let Some(exposure) = &self.exposure {
+            return self.build_execute_session_for(&self.capabilities, exposure, &self.intent);
         }
-        let seeds: Vec<CapabilitySeed> = self
-            .capabilities
+        if !self.capabilities.is_empty() {
+            return Err(AgentEngineError::TeachingExposureMissing);
+        }
+        // A logical session can exist before discovery has exposed any symbols.
+        // Seed an empty ledger from an authorized pinned catalogue so a checked
+        // example may provide the first catalogue wave without granting access.
+        let (primary_api, cgs) = self
+            .catalogs
+            .iter()
+            .filter(|(entry, _)| {
+                self.discovery_pin
+                    .as_ref()
+                    .is_none_or(|pin| pin.authorization.catalogs.contains(*entry))
+            })
+            .min_by(|(left, _), (right, _)| left.cmp(right))
+            .ok_or(AgentEngineError::NoCatalogsLoaded)?;
+        let exposure = TeachingExposureSession::new_with_intent_delta(
+            cgs,
+            primary_api,
+            &[],
+            Default::default(),
+        );
+        self.build_execute_session_for_primary(primary_api.clone(), &exposure, &self.intent)
+    }
+
+    fn build_execute_session_for(
+        &self,
+        capabilities: &[(String, String)],
+        exposure: &TeachingExposureSession,
+        intent: &str,
+    ) -> Result<ExecuteSession> {
+        let seeds: Vec<CapabilitySeed> = capabilities
             .iter()
             .map(|(api, entity)| CapabilitySeed {
                 entry_id: api.clone(),
@@ -1014,6 +1752,21 @@ impl AgentEngine {
             .collect();
         let primary_api =
             primary_entry_id_from_seeds(&seeds).ok_or(AgentEngineError::NoCatalogsLoaded)?;
+        self.build_execute_session_for_primary(primary_api, exposure, intent)
+    }
+
+    fn build_execute_session_for_primary(
+        &self,
+        primary_api: String,
+        exposure: &TeachingExposureSession,
+        intent: &str,
+    ) -> Result<ExecuteSession> {
+        use plasm_core::CgsContext;
+
+        let mut contexts_by_entry: IndexMap<String, Arc<CgsContext>> = IndexMap::new();
+        for (api, cgs) in &self.catalogs {
+            contexts_by_entry.insert(api.clone(), Arc::new(CgsContext::entry(api, cgs.clone())));
+        }
         if !self.catalogs.contains_key(&primary_api) {
             return Err(AgentEngineError::PrimaryCatalogMissing {
                 entry_id: primary_api,
@@ -1026,10 +1779,7 @@ impl AgentEngine {
                 entry_id: primary_api.clone(),
             })?
             .clone();
-        let exposure = self
-            .exposure
-            .clone()
-            .ok_or(AgentEngineError::TeachingExposureMissing)?;
+        let exposure = exposure.clone();
         let entities = exposure.entities.clone();
         let catalog_cgs_hash = cgs.catalog_cgs_hash_hex();
         let mut session = ExecuteSession::new_with_bindings(
@@ -1038,23 +1788,58 @@ impl AgentEngine {
             cgs,
             contexts_by_entry,
             primary_api,
-            String::new(),
+            self.workflow_config
+                .library()
+                .map(|c| c.scope.tenant.clone())
+                .unwrap_or_default(),
             String::new(),
             None,
             entities,
             Some(exposure),
             None,
             catalog_cgs_hash,
-            if self.intent.is_empty() {
+            if intent.is_empty() {
                 None
             } else {
-                Some(self.intent.clone())
+                Some(intent.to_owned())
             },
             IndexMap::new(),
             self.compiled_catalogs.clone(),
         );
         session.discovery_pin = self.discovery_pin.clone();
+        session.python_teaching = self.python_teaching.clone();
+        session.set_prerequisite_deployments(self.prerequisite_deployments.clone());
         Ok(session)
+    }
+
+    /// An import checks source against current contracts without opening a user
+    /// session, publishing teaching, or acquiring an execution ticket.
+    pub(crate) fn archive_validation_context(&mut self) -> Result<ArchiveValidationContext> {
+        let authorization = self
+            .discovery_pin
+            .as_ref()
+            .ok_or(AgentEngineError::ArchiveGenerationRequired)?
+            .authorization
+            .clone();
+        let primary = authorization
+            .catalogs
+            .iter()
+            .next()
+            .ok_or(AgentEngineError::NoCatalogsLoaded)?;
+        let cgs =
+            self.catalogs
+                .get(primary)
+                .ok_or_else(|| AgentEngineError::PinnedCatalogMissing {
+                    entry_id: primary.clone(),
+                })?;
+        let exposure = TeachingExposureSession::new(cgs, primary, &[]);
+        let session = self.build_execute_session_for_primary(primary.clone(), &exposure, "")?;
+        let host = self.build_host_state(None)?;
+        Ok(ArchiveValidationContext {
+            host,
+            session,
+            authorization,
+        })
     }
 
     fn ensure_execute_session(&mut self) -> Result<ExecuteSession> {
@@ -1087,8 +1872,114 @@ mod tests {
     use std::path::PathBuf;
     use std::sync::Arc;
 
-    #[test]
-    fn run_reference_admission_is_effect_free_and_correctable() {
+    async fn opt_in_training(
+        engine: &AgentEngine,
+    ) -> plasm_agent_core::workflow_learning::training::TrustedTrainingActor {
+        opt_in_training_with_policy(engine, false).await
+    }
+
+    pub(super) async fn opt_in_training_with_policy(
+        engine: &AgentEngine,
+        automatic: bool,
+    ) -> plasm_agent_core::workflow_learning::training::TrustedTrainingActor {
+        use plasm_agent_core::workflow_learning::training::{
+            TrainingCommand, TrainingCommandEnvelope, TrainingGrantSpec, TrustedTrainingActor,
+        };
+        let scope = engine.workflow_config.scope().unwrap();
+        let logical =
+            plasm_agent_core::session_identity::LogicalSessionId::parse(&engine.session_id)
+                .unwrap();
+        let repository = engine
+            .host
+            .as_ref()
+            .unwrap()
+            .workflow_learning
+            .repository()
+            .await
+            .unwrap();
+        repository.bind_session(&scope, logical).await.unwrap();
+        let owner = TrustedTrainingActor::trusted_host(
+            scope.clone(),
+            "fixture-host".into(),
+            "fixture-control".into(),
+        )
+        .unwrap();
+        let actor = TrustedTrainingActor::authenticated(
+            scope,
+            "fixture-agent".into(),
+            "fixture-credential".into(),
+        )
+        .unwrap();
+        repository
+            .bind_training_controller(&actor, logical)
+            .await
+            .unwrap();
+        let grant:TrainingGrantSpec=serde_json::from_value(serde_json::json!({
+            "grantee":"fixture-agent","credential":"fixture-credential",
+            "actions":if automatic {vec!["capture","review","publish_automatically"]}else{vec!["capture","review"]},"expires_at":"2099-01-01T00:00:00Z",
+            "publication_policy":{"policy":if automatic {"delegated_automatic"}else{"human_reviewed"}},
+            "target":{"scope":"session","logical_session":logical}
+        })).unwrap();
+        repository
+            .install_training_grant(
+                &owner,
+                plasm_agent_core::session_identity::LogicalSessionId::new_v4().0,
+                grant,
+            )
+            .await
+            .unwrap();
+        engine
+            .training_command(
+                &actor,
+                &TrainingCommandEnvelope {
+                    idempotency_key: plasm_agent_core::session_identity::LogicalSessionId::new_v4()
+                        .0,
+                    expected_revision: 0,
+                    command: TrainingCommand::Request,
+                },
+            )
+            .await
+            .unwrap();
+        actor
+    }
+
+    pub(super) fn review_request(subtasks: serde_json::Value) -> serde_json::Value {
+        serde_json::json!({"subtasks":subtasks,"expected_revision":1,
+            "idempotency_key":plasm_agent_core::session_identity::LogicalSessionId::new_v4().to_string()})
+    }
+
+    #[tokio::test]
+    async fn archive_validation_context_does_not_open_or_expose_a_user_session() {
+        let (mut engine, _) = tiny_engine();
+        assert!(matches!(
+            engine.archive_validation_context(),
+            Err(AgentEngineError::ArchiveGenerationRequired)
+        ));
+        engine.discovery_pin = Some(DiscoverySessionPin {
+            generation: "archive-fixture".into(),
+            pin_id: plasm_agent_core::session_identity::LogicalSessionId::new_v4().to_string(),
+            authorization: plasm_agent_core::discovery_store::DiscoveryAuthorization::catalogs(
+                ["matrix".into()].into(),
+            ),
+        });
+        let validation = engine.archive_validation_context().unwrap();
+        assert!(validation.session.entities.is_empty());
+        assert!(validation
+            .session
+            .teaching_exposure
+            .as_ref()
+            .unwrap()
+            .entities
+            .is_empty());
+        assert_eq!(validation.authorization.catalogs.len(), 1);
+        assert!(engine.execute_session.is_none());
+        assert!(engine.exposure.is_none());
+        assert!(engine.capabilities.is_empty());
+        assert!(engine.intent_turns.is_empty());
+    }
+
+    #[tokio::test]
+    async fn run_reference_admission_is_effect_free_and_correctable() {
         let (mut engine, info) = tiny_engine();
         engine
             .expose_seeds(
@@ -1098,6 +1989,7 @@ mod tests {
                     entity: "Product".into(),
                 }],
             )
+            .await
             .unwrap();
         for reference in [
             "",
@@ -1129,6 +2021,7 @@ mod tests {
                     entity: "Product".into(),
                 }],
             )
+            .await
             .unwrap();
         let dry = engine
             .dry_run("class Read(Program):\n    def build(self):\n        return e1.query()\n")
@@ -1173,6 +2066,7 @@ mod tests {
                     entity: "Product".into(),
                 }],
             )
+            .await
             .unwrap();
         let dry = engine
             .dry_run("class Read(Program):\n    def build(self):\n        return e1.query()\n")
@@ -1318,6 +2212,7 @@ mod tests {
             EntityCompleteness::Complete,
         );
         let step = PublishedResultStep {
+            source_heading: None,
             name: None,
             node_id: None,
             entry_id: None,
@@ -1366,7 +2261,34 @@ mod tests {
         }
     }
 
-    fn tiny_engine() -> (AgentEngine, CatalogInfo) {
+    #[tokio::test]
+    async fn empty_completed_executions_use_the_shared_contract() {
+        let mut engine = AgentEngine::new(Arc::new(Default::default()));
+        engine
+            .configure_workflow_learning(NativeLearningConfig::Collect(
+                plasm_agent_core::workflow_learning::native::NativeLibraryConfig {
+                    scope: plasm_agent_core::workflow_learning::model::LibraryScope {
+                        tenant: "test".into(),
+                        project: "test".into(),
+                    },
+                    database_url: "postgresql://unused".into(),
+                    serve_examples: false,
+                },
+            ))
+            .unwrap();
+        let value: serde_json::Value =
+            serde_json::from_str(&engine.completed_workflow_executions().await.unwrap()).unwrap();
+        assert_eq!(value["executions"], serde_json::json!([]));
+        assert!(value.get("runs").is_none());
+    }
+
+    pub(super) fn tiny_engine() -> (AgentEngine, CatalogInfo) {
+        tiny_engine_with_pool(Arc::new(Default::default()))
+    }
+
+    fn tiny_engine_with_pool(
+        pool: Arc<plasm_agent_core::python_pool::PythonPool>,
+    ) -> (AgentEngine, CatalogInfo) {
         let mut cgs = plasm_core::load_schema_dir(&execute_tiny_dir()).unwrap();
         cgs.bind_registry_entry_id("matrix");
         let info = CatalogInfo {
@@ -1379,9 +2301,103 @@ mod tests {
                 [("matrix".into(), cgs)].into(),
                 [("matrix".into(), compiled)].into(),
                 "matrix-session".into(),
+                pool,
             ),
             info,
         )
+    }
+
+    #[test]
+    fn empty_logical_session_has_a_symbol_free_authorized_execution_ledger() {
+        let (mut engine, _) = tiny_engine();
+        let provenance = plasm_agent_core::intent_provenance::IntentProvenance::from_turns([
+            "Find an example".to_owned(),
+        ])
+        .unwrap();
+        engine.retain_unexposed_intent(&provenance);
+        let session = engine.ensure_execute_session().unwrap();
+        assert!(session.entities.is_empty());
+        assert!(session
+            .teaching_exposure
+            .as_ref()
+            .unwrap()
+            .entities
+            .is_empty());
+        assert_eq!(session.context_intent.as_deref(), Some("Find an example"));
+        assert!(
+            engine.exposure.is_none(),
+            "creating a session must not expose a catalogue"
+        );
+
+        let (mut denied, _) = tiny_engine();
+        denied.discovery_pin = Some(DiscoverySessionPin {
+            generation: "fixture".into(),
+            pin_id: denied.session_id.clone(),
+            authorization: plasm_agent_core::discovery_store::DiscoveryAuthorization::catalogs(
+                ["another-catalog".into()].into(),
+            ),
+        });
+        assert!(matches!(
+            denied.ensure_execute_session(),
+            Err(AgentEngineError::NoCatalogsLoaded)
+        ));
+        assert!(denied.execute_session.is_none());
+
+        let (mut inconsistent, _) = tiny_engine();
+        inconsistent
+            .capabilities
+            .push(("matrix".into(), "Product".into()));
+        assert!(matches!(
+            inconsistent.ensure_execute_session(),
+            Err(AgentEngineError::TeachingExposureMissing)
+        ));
+    }
+
+    #[tokio::test]
+    async fn obligation_verifier_native_artifact_contract() {
+        let (mut engine, info) = tiny_engine();
+        engine
+            .expose_seeds(
+                "verify observed resources",
+                &[CapabilitySeed {
+                    entry_id: info.entry_id,
+                    entity: "Product".into(),
+                }],
+            )
+            .await
+            .unwrap();
+        let dry = engine.dry_run("class Verify(Program):\n    @compute\n    def check(self, rows: list[Row]) -> bool:\n        return len(rows) == 1\n    def build(self):\n        observed = e1.query()\n        verified = self.check(observed)\n        return verified\n").await.unwrap();
+        assert!(dry.failure_json.is_none(), "{}", dry.summary);
+        let result = engine
+            .run_plan_live(&dry.plan_commit_ref, Arc::new(MockProductListTransport))
+            .await
+            .unwrap();
+        assert!(result.ok, "{}", result.message);
+        let repeated = engine
+            .run_plan_live(&dry.plan_commit_ref, Arc::new(MockProductListTransport))
+            .await
+            .unwrap();
+        assert!(
+            !repeated.ok,
+            "consumed authorization must not execute again"
+        );
+        let fresh = engine.dry_run("class Verify(Program):\n    @compute\n    def check(self, rows: list[Row]) -> bool:\n        return len(rows) == 1\n    def build(self):\n        observed = e1.query()\n        verified = self.check(observed)\n        return verified\n").await.unwrap();
+        assert_ne!(dry.plan_commit_ref, fresh.plan_commit_ref);
+        assert_eq!(dry.comp_json, fresh.comp_json);
+        let observed_again = engine
+            .run_plan_live(&fresh.plan_commit_ref, Arc::new(MockProductListTransport))
+            .await
+            .unwrap();
+        assert!(observed_again.ok, "{}", observed_again.message);
+        let fixture = serde_json::json!({
+            "comp": dry.comp_json,
+            "artifacts": serde_json::from_str::<serde_json::Value>(result.artifacts_json.as_ref().unwrap()).unwrap(),
+            "meta": serde_json::from_str::<serde_json::Value>(result.meta_json.as_ref().unwrap()).unwrap(),
+        });
+        if let Some(path) = std::env::var_os("PLASM_OBLIGATION_FIXTURE_OUT") {
+            std::fs::write(path, serde_json::to_vec_pretty(&fixture).unwrap()).unwrap();
+        }
+        engine.python_pool.close().await;
     }
 
     fn return_projection_engine() -> (AgentEngine, CatalogInfo) {
@@ -1400,13 +2416,14 @@ mod tests {
                 [("return_projection".into(), cgs)].into(),
                 [("return_projection".into(), compiled)].into(),
                 "return-projection-session".into(),
+                Arc::new(Default::default()),
             ),
             info,
         )
     }
 
-    #[test]
-    fn introspection_bindings_match_full_python_exposure() {
+    #[tokio::test]
+    async fn introspection_bindings_match_full_python_exposure() {
         let (mut engine, _) = tiny_engine();
         let catalog = engine.introspect_catalog("matrix").unwrap();
         let seeds = catalog
@@ -1423,7 +2440,7 @@ mod tests {
                 entity: entity.name.clone(),
             })
             .collect::<Vec<_>>();
-        let teaching = engine.expose_seeds("", &seeds).unwrap();
+        let teaching = engine.expose_seeds("", &seeds).await.unwrap();
         assert!(!teaching.prompt.contains("Program.build:"));
         assert!(!teaching
             .prompt
@@ -1477,6 +2494,7 @@ mod tests {
                     entity: "Product".into(),
                 }],
             )
+            .await
             .expect("expose");
         assert!(teaching.prompt.contains("e1") || !teaching.prompt.is_empty());
         let dry = engine
@@ -1492,22 +2510,104 @@ mod tests {
         );
     }
 
-    #[tokio::test]
-    async fn execution_failure_missing_worker_is_not_a_node_program_correction() {
-        let (mut engine, info) = tiny_engine();
+    async fn retained_context_engine(
+        pool: Arc<plasm_agent_core::python_pool::PythonPool>,
+    ) -> AgentEngine {
+        let (loaded, info) = tiny_engine_with_pool(pool.clone());
+        let mut engine = AgentEngine::from_pinned_generation(
+            loaded
+                .catalogs
+                .into_iter()
+                .map(|(entry, cgs)| (entry, cgs.as_ref().clone()))
+                .collect(),
+            loaded.compiled_catalogs.into_iter().collect(),
+            DiscoverySessionPin {
+                authorization: plasm_agent_core::discovery_store::DiscoveryAuthorization::catalogs(
+                    ["matrix".into()].into(),
+                ),
+                generation: "runtime-fixture-generation".into(),
+                pin_id: plasm_agent_core::session_identity::LogicalSessionId::new_v4().to_string(),
+            },
+            Default::default(),
+            pool,
+        );
+        engine
+            .configure_workflow_learning(NativeLearningConfig::Admission(
+                plasm_agent_core::workflow_learning::native::NativeLibraryConfig {
+                    scope: plasm_agent_core::workflow_learning::model::LibraryScope {
+                        tenant: "runtime-owner-fixture".into(),
+                        project: "offline".into(),
+                    },
+                    database_url: "postgresql://127.0.0.1:1/unavailable".into(),
+                    serve_examples: false,
+                },
+            ))
+            .unwrap();
         engine
             .expose_seeds(
-                "test intent",
+                "inspect records",
                 &[CapabilitySeed {
                     entry_id: info.entry_id,
                     entity: "Product".into(),
                 }],
             )
+            .await
             .unwrap();
-        engine.set_python_pool(Arc::new(
-            plasm_agent_core::python_pool::PythonPool::with_binary(std::path::PathBuf::from(
-                "/nonexistent-plasm-conformance-worker",
-            )),
+        assert!(
+            engine.host.is_some(),
+            "context publication must precede compute"
+        );
+        engine
+    }
+
+    #[tokio::test]
+    async fn configured_runtime_is_shared_before_context_and_cached_host_compute() {
+        let binary = std::env::var_os("PLASM_MONTY_BINARY")
+            .map(std::path::PathBuf::from)
+            .unwrap_or_else(|| {
+                std::env::current_exe()
+                    .unwrap()
+                    .parent()
+                    .unwrap()
+                    .parent()
+                    .unwrap()
+                    .join("monty")
+            });
+        let owner = crate::PlasmEngine::with_runtime(Some(binary.to_string_lossy().into_owned()));
+        assert!(Arc::ptr_eq(
+            &owner.inner.lock().await.python_pool,
+            &owner.python_pool
+        ));
+        let mut engine = retained_context_engine(owner.python_pool.clone()).await;
+        let cached = engine.host.as_ref().unwrap().oss.python_pool.clone();
+        assert!(Arc::ptr_eq(&cached, &owner.python_pool));
+        let dry = engine.dry_run("class Count(Program):\n    @compute\n    def count(self, rows: list[Row]) -> int:\n        return len(rows)\n    def build(self):\n        return self.count(e1.query())\n").await.unwrap();
+        assert!(dry.failure_json.is_none(), "{}", dry.summary);
+        let result = engine
+            .run_plan_live(&dry.plan_commit_ref, Arc::new(MockProductListTransport))
+            .await
+            .unwrap();
+        assert!(result.ok, "{}", result.message);
+        assert!(Arc::ptr_eq(
+            &engine.host.as_ref().unwrap().oss.python_pool,
+            &cached
+        ));
+        assert!(Arc::ptr_eq(
+            &engine.build_host_state(None).unwrap().oss.python_pool,
+            &cached
+        ));
+        owner.close().await;
+    }
+
+    #[tokio::test]
+    async fn execution_failure_missing_worker_is_not_a_node_program_correction() {
+        let pool = Arc::new(plasm_agent_core::python_pool::PythonPool::with_binary(
+            std::path::PathBuf::from("/nonexistent-plasm-conformance-worker"),
+        ));
+        let mut engine = retained_context_engine(pool.clone()).await;
+        assert!(Arc::ptr_eq(
+            &engine.host.as_ref().unwrap().oss.python_pool,
+            &pool
         ));
         let dry = engine.dry_run("class Read(Program):\n    @compute\n    def count(self, rows: list[Row]) -> int:\n        return len(rows)\n    def build(self):\n        return self.count(e1.query())\n").await.unwrap();
         assert!(dry.failure_json.is_none());
@@ -1556,6 +2656,7 @@ mod tests {
                     entity: "Product".into(),
                 }],
             )
+            .await
             .expect("expose");
         let program = "class Read(Program):\n    def build(self):\n        return e1.query().select(\"not_a_taught_field\")\n";
         let first = engine
@@ -1593,6 +2694,7 @@ mod tests {
                     entity: "Product".into(),
                 }],
             )
+            .await
             .expect("expose");
         let program = "note = e1(3084, access_token=missing)";
         let first = engine
@@ -1617,8 +2719,8 @@ mod tests {
 
     /// Official `synthesizeTeaching` is `exposeSeeds` → `AgentEngine::expose_seeds`.
     /// RA-12: Get/Query `[…]` is the full authored set, not a `provides` subset.
-    #[test]
-    fn expose_seeds_teaches_ra12_return_projection_not_provides_subset() {
+    #[tokio::test]
+    async fn expose_seeds_teaches_ra12_return_projection_not_provides_subset() {
         let (mut engine, info) = return_projection_engine();
         let teaching = engine
             .expose_seeds(
@@ -1634,6 +2736,7 @@ mod tests {
                     },
                 ],
             )
+            .await
             .expect("exposeSeeds");
         for field in [
             "notice_id",
@@ -1699,7 +2802,7 @@ mod tests {
         assert_eq!(live_run_rows_json(&live).unwrap(), None);
     }
 
-    struct MockProductListTransport;
+    pub(super) struct MockProductListTransport;
 
     #[async_trait::async_trait]
     impl plasm_runtime::http_transport::HttpTransport for MockProductListTransport {
@@ -1741,6 +2844,202 @@ mod tests {
         }
     }
 
+    #[test]
+    fn export_native_workflow_fixture() {
+        let Some(directory) = std::env::var_os("PLASM_NATIVE_LEARNING_FIXTURE_OUT") else {
+            return;
+        };
+        let (engine, _) = tiny_engine();
+        write_native_workflow_fixture(&PathBuf::from(directory), &engine);
+    }
+
+    pub(super) fn write_native_workflow_fixture(directory: &Path, engine: &AgentEngine) {
+        std::fs::create_dir_all(directory).unwrap();
+        let cgs = engine.catalogs["matrix"].as_ref();
+        let compiled = engine.compiled_catalogs["matrix"].as_ref();
+        let write =
+            |name: &str, bytes: Vec<u8>| std::fs::write(directory.join(name), bytes).unwrap();
+        write("matrix.cgs.json", serde_json::to_vec(cgs).unwrap());
+        let recipes = serde_json::to_vec(compiled).unwrap();
+        let recipes_hash = plasm_core::catalog_discovery::content_hash(&recipes);
+        write("matrix.recipes.json", recipes);
+        let profile = plasm_core::catalog_discovery::EmbeddingProfile::default();
+        let discovery = plasm_core::catalog_discovery::CatalogDiscoveryArtifact {
+            entry_id: "matrix".into(),
+            cgs_hash: cgs.catalog_cgs_hash_hex(),
+            renderer_version: plasm_core::catalog_discovery::DISCOVERY_RENDERER_VERSION,
+            capabilities: plasm_core::catalog_discovery::capability_documents(cgs)
+                .unwrap()
+                .into_iter()
+                .enumerate()
+                .map(|(index, document)| {
+                    let mut embedding = vec![0.0; profile.dimensions];
+                    embedding[index % profile.dimensions] = 1.0;
+                    plasm_core::catalog_discovery::EmbeddedCapability {
+                        document,
+                        embedding,
+                    }
+                })
+                .collect(),
+            profile: profile.clone(),
+            prerequisites: cgs.prerequisites.clone(),
+        };
+        discovery.validate(cgs).unwrap();
+        let discovery = serde_json::to_vec(&discovery).unwrap();
+        let manifest = plasm_core::catalog_il::CatalogManifest {
+            format_version: 3,
+            entry_id: "matrix".into(),
+            version: cgs.version,
+            cgs_hash: cgs.catalog_cgs_hash_hex(),
+            label: "Native workflow fixture".into(),
+            tags: vec![],
+            cgs_json: "matrix.cgs.json".into(),
+            recipes_json: "matrix.recipes.json".into(),
+            recipes_hash,
+            discovery_json: "matrix.discovery.json".into(),
+            discovery_hash: plasm_core::catalog_discovery::content_hash(&discovery),
+            embedding_profile: plasm_core::catalog_discovery::EmbeddingProfile::default(),
+        };
+        write("matrix.discovery.json", discovery);
+        write(
+            "matrix.manifest.json",
+            serde_json::to_vec_pretty(&manifest).unwrap(),
+        );
+    }
+
+    #[tokio::test]
+    async fn native_collect_seals_executed_source_and_scoped_receipts() {
+        let Ok(url) = std::env::var("PLASM_TEST_POSTGRES_URL") else {
+            return;
+        };
+        let (mut engine, info) = tiny_engine();
+        engine.session_id =
+            plasm_agent_core::session_identity::LogicalSessionId::new_v4().to_string();
+        let config = NativeLearningConfig::Collect(
+            plasm_agent_core::workflow_learning::native::NativeLibraryConfig {
+                scope: plasm_agent_core::workflow_learning::model::LibraryScope {
+                    tenant: format!("native-{}", engine.session_id),
+                    project: "offline".into(),
+                },
+                database_url: url,
+                serve_examples: false,
+            },
+        );
+        engine.configure_workflow_learning(config.clone()).unwrap();
+        engine
+            .expose_seeds(
+                "Inspect fixture products",
+                &[CapabilitySeed {
+                    entry_id: info.entry_id,
+                    entity: "Product".into(),
+                }],
+            )
+            .await
+            .unwrap();
+        let source = "class Inspect(Program):\n    def build(self):\n        return e1.query()\n";
+        let ordinary = engine.dry_run(source).await.unwrap();
+        assert!(
+            engine
+                .run_plan_live(
+                    &ordinary.plan_commit_ref,
+                    Arc::new(MockProductListTransport)
+                )
+                .await
+                .unwrap()
+                .ok
+        );
+        let ordinary_runs: serde_json::Value =
+            serde_json::from_str(&engine.completed_workflow_executions().await.unwrap()).unwrap();
+        assert!(
+            ordinary_runs["executions"].as_array().unwrap().is_empty(),
+            "host collection capability must not imply session consent"
+        );
+        let actor = opt_in_training(&engine).await;
+        let dry = engine.dry_run(source).await.unwrap();
+        assert!(dry.fused_clean_read);
+        let transport = Arc::new(MockProductListTransport);
+        let released_transport = Arc::downgrade(&transport);
+        let result = engine
+            .run_plan_live(&dry.plan_commit_ref, transport)
+            .await
+            .unwrap();
+        assert!(result.ok, "{}", result.message);
+        assert!(
+            released_transport.upgrade().is_none(),
+            "persistent evidence host must release per-call transport"
+        );
+        // Serial native context waves between runs must each publish their successor.
+        for capability in ["category_get", "product_search", "product_list"] {
+            engine
+                .expose_routing(
+                    "extend fixture teaching",
+                    &plasm_core::prerequisites::PrerequisiteClosure {
+                        business: vec![plasm_core::prerequisites::CapabilityRef {
+                            catalog: "matrix".into(),
+                            capability: capability.into(),
+                        }],
+                        input_sources: vec![],
+                        prerequisites: vec![],
+                        acquisitions: vec![],
+                        edges: vec![],
+                    },
+                )
+                .await
+                .unwrap();
+        }
+        let next = engine.dry_run(source).await.unwrap();
+        let result = engine
+            .run_plan_live(&next.plan_commit_ref, Arc::new(MockProductListTransport))
+            .await
+            .unwrap();
+        assert!(result.ok, "{}", result.message);
+        let index: serde_json::Value =
+            serde_json::from_str(&engine.completed_workflow_executions().await.unwrap()).unwrap();
+        let runs = index["executions"].as_array().unwrap();
+        assert!(!runs.is_empty());
+        let execution_id = runs[0]["execution_id"].as_str().unwrap();
+        let receipt: serde_json::Value =
+            serde_json::from_str(&engine.read_teaching_program(execution_id).await.unwrap())
+                .unwrap();
+        assert_eq!(receipt["program"]["source"], source.trim());
+        assert_eq!(receipt["program"]["plan"]["state"], "available");
+        assert!(!receipt["program"]["plan"]["text"]
+            .as_str()
+            .unwrap()
+            .is_empty());
+        let review = review_request(
+            serde_json::json!([{"intent":"Inspect fixture products","observed_outcome":"Observed fixture product p1","execution_ids":[execution_id]}]),
+        );
+        let sealed: serde_json::Value = serde_json::from_str(
+            &engine
+                .review_workflow(&review.to_string(), actor.clone())
+                .await
+                .unwrap(),
+        )
+        .unwrap();
+        assert!(sealed["review_ref"].is_string());
+        let invalid = review_request(
+            serde_json::json!([{"intent":"Unobserved","observed_outcome":"No evidence","execution_ids":["missing"]}]),
+        );
+        assert!(engine
+            .review_workflow(&invalid.to_string(), actor)
+            .await
+            .is_err());
+        let repository = config.learning().repository().await.unwrap();
+        let session_id = engine.session_id.clone();
+        engine.python_pool.close().await;
+        drop(engine);
+        // Durable receipts remain after the producing native engine is gone.
+        assert!(!repository
+            .execution_receipts(
+                &config.scope().unwrap(),
+                plasm_agent_core::session_identity::LogicalSessionId::parse(&session_id).unwrap()
+            )
+            .await
+            .unwrap()
+            .is_empty());
+    }
+
     #[tokio::test]
     async fn live_run_execute_tiny_returns_rows_json() {
         let (mut engine, info) = tiny_engine();
@@ -1752,9 +3051,10 @@ mod tests {
                     entity: "Product".into(),
                 }],
             )
+            .await
             .expect("expose");
         let dry = engine
-            .dry_run("class Read(Program):\n    def build(self):\n        return e1.query()\n")
+            .dry_run("class Read(Program):\n    def build(self):\n        observed = e1.query()\n        return observed\n")
             .await
             .expect("dry run");
         let transport = Arc::new(MockProductListTransport);
@@ -1782,7 +3082,47 @@ mod tests {
             let run_id = artifact["run_id"].as_str().expect("native run id");
             assert!(plasm_agent_core::run_artifacts::RunArtifactId::from_wire(run_id).is_some());
             assert!(artifact["snapshot"].is_object());
+            assert!(artifact["producer_binding"].is_string());
+            assert_eq!(artifact["reusable"], true);
         }
+        assert!(artifacts
+            .iter()
+            .any(|artifact| artifact["producer_binding"] == "observed"));
+    }
+
+    #[tokio::test]
+    async fn prepared_live_run_does_not_borrow_the_session_engine() {
+        fn assert_send<T: Send>() {}
+        assert_send::<PreparedLiveRun>();
+        let (mut engine, info) = tiny_engine();
+        engine
+            .expose_seeds(
+                "list products",
+                &[CapabilitySeed {
+                    entry_id: info.entry_id,
+                    entity: "Product".into(),
+                }],
+            )
+            .await
+            .unwrap();
+        let program = "class Read(Program):\n    def build(self):\n        observed = e1.query()\n        return observed\n";
+        let reviewed = engine.dry_run(program).await.unwrap();
+        let prepared = match engine
+            .prepare_live_run(
+                &reviewed.plan_commit_ref,
+                Arc::new(MockProductListTransport),
+            )
+            .await
+            .unwrap()
+        {
+            PreparedLiveRunResult::Ready(prepared) => prepared,
+            PreparedLiveRunResult::Rejected(_) => panic!("reviewed run was rejected"),
+        };
+        let other = engine.dry_run(program).await.unwrap();
+        assert!(!other.plan_commit_ref.is_empty());
+        let live = Box::pin(prepared.execute()).await.unwrap();
+        assert!(live.ok, "{}", live.message);
+        assert!(live.rows_json.is_some());
     }
 
     struct RecordingItemTransport(std::sync::Mutex<Vec<String>>);
@@ -1839,10 +3179,10 @@ mod tests {
                     let mut engine = AgentEngine::from_generation(
                         [("matrix".into(), cgs)].into(), [("matrix".into(), compiled)].into(),
                         "stack-session".into(),
-                    );
+                    Arc::new(Default::default()),);
                     engine.expose_seeds("update items", &[CapabilitySeed {
                         entry_id: "matrix".into(), entity: "LangItem".into(),
-                    }]).unwrap();
+                    }]).await.unwrap();
                     let cgs = &engine.catalogs["matrix"];
                     let symbol = plasm_core::prompt_render::python::capability_method_name(cgs, &engine.exposure.as_ref().unwrap().to_symbol_map(), "matrix", &cgs.capabilities["langitem_update"]);
                     let dry = engine.dry_run(&format!("class Update(Program):\n    def build(self):\n        return e1.query().flat_map(lambda row: row.{symbol}(title=\"checked\", score=2, owner=\"alice\"))\n")).await.unwrap();
@@ -1852,6 +3192,182 @@ mod tests {
                     assert_eq!(*transport.0.lock().unwrap(), ["/language/v1/items/p1", "/language/v1/items/p2"]);
                 });
         }).unwrap().join().unwrap();
+    }
+
+    #[tokio::test]
+    async fn pinned_native_generation_preserves_prerequisite_deployments_in_each_wave() {
+        use plasm_core::prerequisites::{CapabilityRef, DeploymentBinding, DeploymentBindings};
+        let directory = PathBuf::from(std::env::var("CARGO_MANIFEST_DIR").unwrap())
+            .join("../../fixtures/schemas/prerequisite_dual_session");
+        let mut catalogs = std::collections::BTreeMap::<String, CGS>::new();
+        let mut compiled = std::collections::BTreeMap::new();
+        for entry in ["consumer", "source"] {
+            let mut cgs = plasm_core::load_schema_dir(&directory.join(entry)).unwrap();
+            cgs.bind_registry_entry_id(entry);
+            compiled.insert(
+                entry.into(),
+                Arc::new(plasm_compile::compile_cgs_capability_templates(&cgs).unwrap()),
+            );
+            catalogs.insert(entry.into(), cgs);
+        }
+        let business = CapabilityRef {
+            catalog: "consumer".into(),
+            capability: "file_query".into(),
+        };
+        let deployments = DeploymentBindings {
+            bindings: vec![DeploymentBinding {
+                consumer: business.clone(),
+                requirement: "source_session".into(),
+                provider_catalog: "source".into(),
+                provider: "session".into(),
+            }],
+        };
+        let allowed = ["consumer".into(), "source".into()].into();
+        let closure = plasm_core::prerequisites::prerequisite_closure(
+            &catalogs
+                .iter()
+                .map(|(key, cgs)| (key.clone(), cgs))
+                .collect(),
+            &deployments,
+            &[business],
+            &allowed,
+        )
+        .unwrap();
+        let pin = DiscoverySessionPin {
+            authorization: plasm_agent_core::discovery_store::DiscoveryAuthorization::catalogs(
+                allowed,
+            ),
+            generation: "fixture-generation".into(),
+            pin_id: plasm_agent_core::session_identity::LogicalSessionId::new_v4().to_string(),
+        };
+        let mut engine = AgentEngine::from_pinned_generation(
+            catalogs,
+            compiled,
+            pin,
+            deployments.clone(),
+            Arc::new(Default::default()),
+        );
+        for _ in 0..2 {
+            engine
+                .expose_routing("inspect fixture files", &closure)
+                .await
+                .unwrap();
+            assert!(engine.host.is_none());
+            let session = engine.ensure_execute_session().unwrap();
+            assert_eq!(session.prerequisite_deployments(), &deployments);
+        }
+    }
+
+    #[tokio::test]
+    async fn native_context_waves_publish_before_disclosure_without_opening_corpus() {
+        use plasm_core::prerequisites::{CapabilityRef, PrerequisiteClosure};
+        let (mut engine, _) = tiny_engine();
+        engine.session_id =
+            plasm_agent_core::session_identity::LogicalSessionId::new_v4().to_string();
+        engine
+            .configure_workflow_learning(NativeLearningConfig::Collect(
+                plasm_agent_core::workflow_learning::native::NativeLibraryConfig {
+                    scope: plasm_agent_core::workflow_learning::model::LibraryScope {
+                        tenant: "native-wave-fixture".into(),
+                        project: "offline".into(),
+                    },
+                    // Exposure must not attempt a connection to the optional learning store.
+                    database_url: "postgresql://127.0.0.1:1/unavailable".into(),
+                    serve_examples: false,
+                },
+            ))
+            .unwrap();
+        let route = |name: &str| PrerequisiteClosure {
+            business: vec![CapabilityRef {
+                catalog: "matrix".into(),
+                capability: name.into(),
+            }],
+            input_sources: vec![],
+            prerequisites: vec![],
+            acquisitions: vec![],
+            edges: vec![],
+        };
+        engine
+            .expose_routing("list", &route("product_list"))
+            .await
+            .unwrap();
+        let stale_session = engine.execute_session.clone();
+        let stale_exposure = engine.exposure.clone();
+        let stale_teaching = engine.python_teaching.clone();
+        let stale_capabilities = engine.capabilities.clone();
+        for name in ["category_get", "product_search", "product_list"] {
+            engine.expose_routing(name, &route(name)).await.unwrap();
+            let host = engine.host.as_ref().unwrap();
+            let published = host
+                .get_execute_session(AGENT_PROMPT_HASH, engine.execute_session_id.as_str())
+                .await
+                .unwrap();
+            assert_eq!(
+                published.domain_revision,
+                engine.execute_session.as_ref().unwrap().domain_revision
+            );
+            assert_eq!(
+                published.entities,
+                engine.execute_session.as_ref().unwrap().entities
+            );
+        }
+        let authoritative_revision = engine.execute_session.as_ref().unwrap().domain_revision;
+        // A genuine stale writer cannot replace the later descriptor or install its local wave.
+        engine.execute_session = stale_session;
+        engine.exposure = stale_exposure;
+        engine.python_teaching = stale_teaching;
+        engine.capabilities = stale_capabilities;
+        let before_revision = engine.execute_session.as_ref().unwrap().domain_revision;
+        let before_intent = engine.intent.clone();
+        let before_capabilities = engine.capabilities.clone();
+        let logical =
+            plasm_agent_core::session_identity::LogicalSessionId::parse(&engine.session_id)
+                .unwrap();
+        let before_provenance = engine
+            .host
+            .as_ref()
+            .unwrap()
+            .logical_sessions
+            .get(logical)
+            .await
+            .unwrap()
+            .accumulated_intent;
+        let error = engine
+            .expose_routing("stale", &route("product_search"))
+            .await
+            .unwrap_err();
+        assert!(matches!(error, AgentEngineError::Workflow(error)
+            if matches!(*error, NativeLearningError::Persistence(
+                plasm_agent_core::mcp_transport_store::execute_session_registry::ExecuteSessionPersistError::HotBehindDurable {
+                    hot_revision, durable_revision,
+                }
+            ) if hot_revision == before_revision + 1 && durable_revision == authoritative_revision)));
+        assert_eq!(
+            engine
+                .host
+                .as_ref()
+                .unwrap()
+                .logical_sessions
+                .get(logical)
+                .await
+                .unwrap()
+                .accumulated_intent,
+            before_provenance
+        );
+        assert_eq!(
+            engine.execute_session.as_ref().unwrap().domain_revision,
+            before_revision
+        );
+        assert_eq!(engine.intent, before_intent);
+        assert_eq!(engine.capabilities, before_capabilities);
+        let published = engine
+            .host
+            .as_ref()
+            .unwrap()
+            .get_execute_session(AGENT_PROMPT_HASH, engine.execute_session_id.as_str())
+            .await
+            .unwrap();
+        assert_eq!(published.domain_revision, authoritative_revision);
     }
 
     #[tokio::test]
@@ -1871,7 +3387,13 @@ mod tests {
             .map(|(id, cgs)| (id.clone(), cgs.as_ref().clone()))
             .collect();
         let compiled_catalogs = engine.compiled_catalogs.clone().into_iter().collect();
-        engine = AgentEngine::from_pinned_generation(catalogs, compiled_catalogs, pin.clone());
+        engine = AgentEngine::from_pinned_generation(
+            catalogs,
+            compiled_catalogs,
+            pin.clone(),
+            Default::default(),
+            Arc::new(Default::default()),
+        );
         let route = |name: &str| PrerequisiteClosure {
             business: vec![CapabilityRef {
                 catalog: "matrix".into(),
@@ -1884,12 +3406,22 @@ mod tests {
         };
         engine
             .expose_routing("list products", &route("product_list"))
+            .await
             .unwrap();
         assert_eq!(
             engine.exposed_capabilities(),
             route("product_list").business
         );
         let initial_entities = engine.exposure.as_ref().unwrap().entities.clone();
+        let repeated = engine
+            .expose_routing("list again", &route("product_list"))
+            .await
+            .unwrap();
+        assert!(!repeated.declarations_changed);
+        assert!(
+            !repeated.delta_refs.is_empty(),
+            "touched entities are not new declarations"
+        );
         let dry = engine
             .dry_run("class Read(Program):\n    def build(self):\n        return e1.query()\n")
             .await
@@ -1905,7 +3437,9 @@ mod tests {
         );
         let extension = engine
             .expose_routing("fetch category", &route("category_get"))
+            .await
             .unwrap();
+        assert!(extension.declarations_changed);
         assert!(!extension
             .prompt
             .contains(plasm_core::prompt_render::python::LANGUAGE));
@@ -1931,8 +3465,10 @@ mod tests {
         };
         let unchanged = engine
             .expose_routing("continue using existing capabilities", &empty)
+            .await
             .unwrap();
         assert!(unchanged.delta_refs.is_empty());
+        assert!(!unchanged.declarations_changed);
         assert_eq!(engine.exposed_capabilities(), refs);
         assert_eq!(engine.exposure.as_ref().unwrap().entities, before_empty);
         assert_eq!(refs.len(), 2);
@@ -1952,11 +3488,24 @@ mod tests {
             .unwrap()
             .message
             .contains("validated"));
+        let same_entity = engine
+            .expose_routing("search products", &route("product_search"))
+            .await
+            .unwrap();
+        assert!(
+            same_entity.declarations_changed,
+            "new method on existing entity is an addition"
+        );
+        let repeated = engine
+            .expose_routing("search again", &route("product_search"))
+            .await
+            .unwrap();
+        assert!(!repeated.declarations_changed);
     }
 
     #[test]
     fn runtime_loader_rejects_raw_authoring_schema() {
-        assert!(AgentEngine::new()
+        assert!(AgentEngine::default()
             .load_catalog(&execute_tiny_dir())
             .is_err());
     }
@@ -1975,6 +3524,7 @@ mod tests {
                 entity: "Product".into(),
             }],
         )
+        .await
         .expect("expose");
         let shared = Arc::new(Mutex::new(boot));
 
@@ -2007,20 +3557,32 @@ mod tests {
     }
     #[tokio::test]
     async fn native_paging_preserves_origin_and_rows_after_federation_expands() {
-        assert_native_paging("e1.query()", false).await;
+        assert_native_paging("e1.query()", false, None).await;
     }
 
     #[tokio::test]
     async fn native_complete_computed_rowset_uses_the_same_paging_protocol() {
-        assert_native_paging("e1.query().select('id', 'n')", true).await;
+        assert_native_paging("e1.query().select('id', 'n')", true, None).await;
     }
 
     #[tokio::test]
     async fn native_synthetic_projection_pages_preserve_typed_rows() {
-        assert_native_paging("e1.query().select('id', n='n')", true).await;
+        assert_native_paging("e1.query().select('id', n='n')", true, None).await;
     }
 
-    async fn assert_native_paging(expression: &str, complete_source: bool) {
+    #[tokio::test]
+    async fn native_collect_pages_never_open_program_evidence_or_block_review() {
+        let Ok(url) = std::env::var("PLASM_TEST_POSTGRES_URL") else {
+            return;
+        };
+        assert_native_paging("e1.query().select('id', 'n')", true, Some(url)).await;
+    }
+
+    async fn assert_native_paging(
+        expression: &str,
+        complete_source: bool,
+        learning_database: Option<String>,
+    ) {
         use async_trait::async_trait;
         use plasm_compile::CompiledRequest;
         struct Pages(Arc<std::sync::atomic::AtomicUsize>);
@@ -2080,8 +3642,24 @@ mod tests {
                 ("other".into(), other_compiled),
             ]
             .into(),
-            "paging-session".into(),
+            plasm_agent_core::session_identity::LogicalSessionId::new_v4().to_string(),
+            Arc::new(Default::default()),
         );
+        let collecting = learning_database.is_some();
+        if let Some(database_url) = learning_database {
+            engine
+                .configure_workflow_learning(NativeLearningConfig::Collect(
+                    plasm_agent_core::workflow_learning::native::NativeLibraryConfig {
+                        scope: plasm_agent_core::workflow_learning::model::LibraryScope {
+                            tenant: format!("paging-{}", engine.session_id),
+                            project: "offline".into(),
+                        },
+                        database_url,
+                        serve_examples: false,
+                    },
+                ))
+                .unwrap();
+        }
         engine
             .expose_seeds(
                 "list rows",
@@ -2090,8 +3668,14 @@ mod tests {
                     entity: "ItemOffset".into(),
                 }],
             )
+            .await
             .unwrap();
         let dispatches = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let training_actor = if collecting {
+            Some(opt_in_training(&engine).await)
+        } else {
+            None
+        };
         let dry = engine
             .dry_run(&format!(
                 "class Read(Program):\n    def build(self):\n        return {expression}\n"
@@ -2114,6 +3698,7 @@ mod tests {
                     entity: "ItemOffset".into(),
                 }],
             )
+            .await
             .unwrap();
         let initial_dispatches = dispatches.load(std::sync::atomic::Ordering::SeqCst);
         let mut current = first;
@@ -2164,9 +3749,35 @@ mod tests {
             88,
             "no dropped or repeated rows across native paging"
         );
+        if collecting {
+            let index: serde_json::Value =
+                serde_json::from_str(&engine.completed_workflow_executions().await.unwrap())
+                    .unwrap();
+            let runs = index["executions"].as_array().unwrap();
+            assert_eq!(runs.len(), 1, "pages must never create program receipts");
+            let review = review_request(serde_json::json!([{
+                "intent":"List fixture rows", "observed_outcome":"Observed all 88 rows",
+                "execution_ids":[runs[0]["execution_id"]]
+            }]));
+            let sealed: serde_json::Value = serde_json::from_str(
+                &engine
+                    .review_workflow(&review.to_string(), training_actor.unwrap())
+                    .await
+                    .unwrap(),
+            )
+            .unwrap();
+            assert!(
+                sealed["review_ref"].is_string(),
+                "page delivery left unresolved evidence"
+            );
+        }
     }
 }
 
 #[cfg(test)]
 #[path = "hydration_boundary_tests.rs"]
 mod hydration_boundary_tests;
+
+#[cfg(test)]
+#[path = "workflow_verification_tests.rs"]
+mod workflow_verification_tests;

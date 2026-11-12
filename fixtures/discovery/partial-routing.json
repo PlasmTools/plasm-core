@@ -40,7 +40,7 @@
               "meaning": "Read selected records."
             }
           },
-          "admissions": []
+          "admissions": ["lexical"]
         }
       ],
       "lexical_count": 1,
@@ -52,15 +52,20 @@
       "matches": [
         {
           "capability_id": "matrix/record_read",
-          "choice": "relevant",
-          "probabilities": {
-            "relevant": 1,
-            "unrelated": 0,
-            "uncertain": 0
-          },
-          "confidence": 1
+          "choice": "relevant"
         }
       ]
+    },
+    "search": {
+      "policy": "additive-connected-frontier-current-hybrid-evidence-3-judgments-3-attempts-16000-byte-packet-v43",
+      "exposed": [],
+      "considered": [{"catalog":"matrix","capability":"record_read"}],
+      "unexplored": [],
+      "deferred": [],
+      "requests": 1,
+      "input_bytes": 1000,
+      "reported_input_tokens": 200,
+      "missing_usage": 0
     },
     "closure": {
       "business": [
@@ -74,14 +79,11 @@
       "acquisitions": [],
       "edges": []
     },
-    "recovery": null,
-    "environment_support": {
-      "choice": "undetermined",
-      "request_hash": "abstract-request"
-    }
+    "recovery": null
   },
   "teaching": {
     "prompt": "e1 Record",
+    "declarations_changed": true,
     "delta_refs": [
       "matrix:Record"
     ]

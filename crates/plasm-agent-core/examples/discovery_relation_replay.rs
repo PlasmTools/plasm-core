@@ -41,6 +41,7 @@ fn main() -> Result<()> {
     if mode == "prepare" {
         let config: Config = read(baseline.join("config.json"))?;
         let mut catalogs = BTreeMap::new();
+        let mut schemas = BTreeMap::new();
         for case in config.cases {
             let mut docs = BTreeMap::new();
             for source in &case.sources {
@@ -54,6 +55,7 @@ fn main() -> Result<()> {
                     .map_err(anyhow::Error::msg)?;
                     let rendered = plasm_core::catalog_discovery::capability_documents(&cgs)
                         .map_err(anyhow::Error::msg)?;
+                    schemas.insert(manifest.entry_id.clone(), cgs);
                     catalogs.insert(source.clone(), (manifest.entry_id, rendered));
                 }
                 let (entry, rendered) = &catalogs[source];
@@ -84,12 +86,25 @@ fn main() -> Result<()> {
             std::fs::create_dir_all(&cell)?;
             save(cell.join("input.json"), &receipt)?;
             save(cell.join("changed.json"), &changed)?;
-            let batches = discovery_matcher::issue_batches(
+            save(cell.join("catalogs.json"), &schemas)?;
+            let evidence = discovery_matcher::evidence::CatalogEvidence::from_catalogs(
+                &receipt.retrieval,
+                &schemas,
+                &Default::default(),
+                &|_| true,
+            )?;
+            let prepared = discovery_matcher::prepare_selection(
                 MODEL,
                 &receipt.intent_provenance,
                 &receipt.retrieval,
+                &evidence,
             )?;
+            let batches = prepared.batches();
             anyhow::ensure!(batches.len() <= 2, "page limit for {}", case.id);
+            save(
+                cell.join("budget-retained.json"),
+                &prepared.budget_retained(),
+            )?;
             save(
                 cell.join("requests.json"),
                 &batches.iter().map(|b| b.body()).collect::<Vec<_>>(),
@@ -99,11 +114,26 @@ fn main() -> Result<()> {
         let cell = out.join("cells").join(args.get(4).context("case id")?);
         let receipt: RoutingReceipt = read(cell.join("input.json"))?;
         let requests: Vec<String> = read(cell.join("requests.json"))?;
-        let batches = discovery_matcher::issue_batches(
+        let schemas = read(cell.join("catalogs.json"))?;
+        let evidence = discovery_matcher::evidence::CatalogEvidence::from_catalogs(
+            &receipt.retrieval,
+            &schemas,
+            &Default::default(),
+            &|_| true,
+        )?;
+        let prepared = discovery_matcher::prepare_selection(
             MODEL,
             &receipt.intent_provenance,
             &receipt.retrieval,
+            &evidence,
         )?;
+        let batches = prepared.batches();
+        let saved_budget: Vec<discovery_matcher::ScopeBudgetRetention> =
+            read(cell.join("budget-retained.json"))?;
+        anyhow::ensure!(
+            saved_budget == prepared.budget_retained(),
+            "budget outcomes changed"
+        );
         anyhow::ensure!(
             requests
                 == batches
@@ -112,14 +142,14 @@ fn main() -> Result<()> {
                     .collect::<Vec<_>>(),
             "packet changed"
         );
-        let mut answers = Vec::new();
-        for (index, batch) in batches.iter().enumerate() {
-            answers.extend(discovery_matcher::decode_batch(
-                batch,
-                &std::fs::read_to_string(cell.join(format!("response-{index}.json")))?,
-            )?);
+        let count = batches.len();
+        let mut pages = discovery_matcher::SelectionPages::from_prepared(prepared);
+        for index in 0..count {
+            pages.accept(&std::fs::read_to_string(
+                cell.join(format!("response-{index}.json")),
+            )?)?;
         }
-        let matching = discovery_matcher::finish_selection(answers, &receipt.retrieval, &batches)?;
+        let matching = pages.finish(&receipt.retrieval)?;
         save(cell.join("matching.json"), &matching)?;
         save(
             cell.join("selected.json"),

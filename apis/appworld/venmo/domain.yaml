@@ -1,4 +1,4 @@
-version: 32
+version: 33
 entry_id: venmo
 data_classes:
   untrusted:
@@ -72,7 +72,7 @@ values:
     description: Number of account friends.
   nv_access_token:
     type: string
-    description: Session credential returned by this service's login; authorizes operations as that account holder.
+    description: Venmo login session token; use for Venmo operations.
   nv_token_type:
     type: enum
     description: OAuth token type from login.
@@ -528,7 +528,7 @@ entities:
         - name
   PaymentCard:
     id_field: payment_card_id
-    description: A linked payment card used to fund payments and balance moves. Card balances are not exposed; expiry dates are visible.
+    description: A linked payment card used to fund payments and balance moves. The expiry month is inclusive through its last day; compare (expiry_year, expiry_month) with the current environment year and month. Card balances are not exposed; an unexpired card is not proof of sufficient funds.
     discovery:
       names:
       - payment card
@@ -1083,9 +1083,12 @@ capabilities:
     provides:
     - venmo_balance
   balance_add:
-    description: Add money to the Venmo balance from a linked payment card.
+    description: Add a specified amount from a linked payment card to the Venmo balance. For a payment exceeding the current balance, adding only the shortfall can make the balance sufficient; the card must have enough for the amount added.
     kind: action
     entity: Balance
+    no_effect_rejections:
+      - status: 422
+        detail: {kind: decimal_amount, prefix: "Your payment card does not have $", suffix: " to add to your Venmo balance."}
     payload:
       input_type:
         type: object
@@ -1301,6 +1304,11 @@ capabilities:
     description: Send your money to another Venmo user (you pay them).
     kind: create
     entity: Transaction
+    no_effect_rejections:
+      - status: 422
+        detail: {kind: decimal_amount, prefix: "Your Venmo balance does not have $", suffix: " to make this transaction."}
+      - status: 422
+        detail: {kind: decimal_amount, prefix: "Your payment card does not have $", suffix: " to make this transaction."}
     payload:
       input_type:
         type: object
@@ -1320,7 +1328,7 @@ capabilities:
           description: "Note or description stored on the transaction itself. If omitted, empty."
         - name: payment_card_id
           value_ref: nv_payment_card_id
-          description: Linked Venmo card ID, not its card number; omit to spend the Venmo balance. Card balances are not exposed. An insufficient-funds rejection transfers nothing; another unexpired linked card may be tried.
+          description: Linked Venmo card ID, not its card number; omit to spend the Venmo balance. A payment uses one source for its full amount. To combine balance and a card, first add the shortfall to the balance from a linked card, then pay from the balance. Other owner cards may be listed in the supervisor profile and linked to Venmo. Card balances are not exposed; an insufficient-funds rejection transfers nothing.
         - name: private
           value_ref: nv_private
           description: "Whether the transaction is private. If omitted, false."
@@ -1419,6 +1427,11 @@ capabilities:
     description: Approve and pay a received payment request (you pay them).
     kind: action
     entity: PaymentRequest
+    no_effect_rejections:
+      - status: 422
+        detail: {kind: exact, value: "Insufficient money in the Venmo balance."}
+      - status: 422
+        detail: {kind: exact, value: "Insufficient money in the payment card."}
     discovery:
       operation_terms:
       - approve
@@ -1436,7 +1449,7 @@ capabilities:
           required: true
         - name: payment_card_id
           value_ref: nv_payment_card_id
-          description: Linked Venmo card ID, not its card number; omit to spend the Venmo balance. Card balances are not exposed. An insufficient-funds rejection transfers nothing; another unexpired linked card may be tried.
+          description: Linked Venmo card ID, not its card number; omit to spend the Venmo balance. Approval uses one source for the full request. To combine balance and a card, first add the shortfall to the balance from a linked card, then approve from the balance. Other owner cards may be listed in the supervisor profile and linked to Venmo. Card balances are not exposed; an insufficient-funds rejection transfers nothing.
     output:
       type: side_effect
       description: Approves the payment request and transfers the requested money.
@@ -1606,7 +1619,7 @@ capabilities:
     - expiry_month
     - cvv_number
   payment_card_create:
-    description: Add a payment card to the authenticated user's Venmo account.
+    description: Link a payment card to the authenticated user's Venmo account. Card details may be available in the owner's supervisor profile; linked card IDs are service-specific.
     kind: create
     entity: PaymentCard
     payload:
@@ -1758,11 +1771,16 @@ prerequisites:
         account: prerequisite_account_name
       outputs:
         password: nv_password
-    appworld.session:
+    appworld.venmo.session:
       version: 1
       inputs: {}
       outputs:
         token: nv_access_token
+    appworld.file_system.session:
+      version: 1
+      inputs: {}
+      outputs:
+        token: nv_file_access_token
     appworld.payment_card:
       version: 1
       inputs: {}
@@ -1775,14 +1793,14 @@ prerequisites:
         cvv_number: nv_cvv
   providers:
     session:
-      contract: appworld.session
+      contract: appworld.venmo.session
       capability: login
       outputs:
         token: access_token
   requirements:
     transaction_comment_get:
     - id: session
-      contract: appworld.session
+      contract: appworld.venmo.session
       bindings:
       - input:
           lane: arguments
@@ -1791,7 +1809,7 @@ prerequisites:
         output: token
     payment_card_get:
     - id: session
-      contract: appworld.session
+      contract: appworld.venmo.session
       bindings:
       - input:
           lane: arguments
@@ -1800,7 +1818,7 @@ prerequisites:
         output: token
     transaction_comment_query:
     - id: session
-      contract: appworld.session
+      contract: appworld.venmo.session
       bindings:
       - input:
           lane: scope
@@ -1809,7 +1827,7 @@ prerequisites:
         output: token
     transaction_comment_like:
     - id: session
-      contract: appworld.session
+      contract: appworld.venmo.session
       bindings:
       - input:
           lane: payload
@@ -1818,7 +1836,7 @@ prerequisites:
         output: token
     transaction_comment_unlike:
     - id: session
-      contract: appworld.session
+      contract: appworld.venmo.session
       bindings:
       - input:
           lane: payload
@@ -1827,7 +1845,7 @@ prerequisites:
         output: token
     notification_count:
     - id: session
-      contract: appworld.session
+      contract: appworld.venmo.session
       bindings:
       - input:
           lane: arguments
@@ -1836,7 +1854,7 @@ prerequisites:
         output: token
     account_get:
     - id: session
-      contract: appworld.session
+      contract: appworld.venmo.session
       bindings:
       - input:
           lane: scope
@@ -1845,7 +1863,7 @@ prerequisites:
         output: token
     account_update:
     - id: session
-      contract: appworld.session
+      contract: appworld.venmo.session
       bindings:
       - input:
           lane: payload
@@ -1854,7 +1872,7 @@ prerequisites:
         output: token
     account_delete:
     - id: session
-      contract: appworld.session
+      contract: appworld.venmo.session
       bindings:
       - input:
           lane: payload
@@ -1884,7 +1902,7 @@ prerequisites:
         output: password
     logout:
     - id: session
-      contract: appworld.session
+      contract: appworld.venmo.session
       bindings:
       - input:
           lane: payload
@@ -1893,7 +1911,7 @@ prerequisites:
         output: token
     user_search:
     - id: session
-      contract: appworld.session
+      contract: appworld.venmo.session
       bindings:
       - input:
           lane: selection
@@ -1902,7 +1920,7 @@ prerequisites:
         output: token
     user_get:
     - id: session
-      contract: appworld.session
+      contract: appworld.venmo.session
       bindings:
       - input:
           lane: arguments
@@ -1911,7 +1929,7 @@ prerequisites:
         output: token
     friend_query:
     - id: session
-      contract: appworld.session
+      contract: appworld.venmo.session
       bindings:
       - input:
           lane: selection
@@ -1920,7 +1938,7 @@ prerequisites:
         output: token
     friend_get:
     - id: session
-      contract: appworld.session
+      contract: appworld.venmo.session
       bindings:
       - input:
           lane: arguments
@@ -1929,7 +1947,7 @@ prerequisites:
         output: token
     friend_add:
     - id: session
-      contract: appworld.session
+      contract: appworld.venmo.session
       bindings:
       - input:
           lane: payload
@@ -1938,7 +1956,7 @@ prerequisites:
         output: token
     friend_remove:
     - id: session
-      contract: appworld.session
+      contract: appworld.venmo.session
       bindings:
       - input:
           lane: payload
@@ -1947,7 +1965,7 @@ prerequisites:
         output: token
     balance_get:
     - id: session
-      contract: appworld.session
+      contract: appworld.venmo.session
       bindings:
       - input:
           lane: arguments
@@ -1956,7 +1974,7 @@ prerequisites:
         output: token
     balance_add:
     - id: session
-      contract: appworld.session
+      contract: appworld.venmo.session
       bindings:
       - input:
           lane: payload
@@ -1965,7 +1983,7 @@ prerequisites:
         output: token
     balance_withdraw:
     - id: session
-      contract: appworld.session
+      contract: appworld.venmo.session
       bindings:
       - input:
           lane: payload
@@ -1974,7 +1992,7 @@ prerequisites:
         output: token
     bank_transfer_query:
     - id: session
-      contract: appworld.session
+      contract: appworld.venmo.session
       bindings:
       - input:
           lane: selection
@@ -1983,7 +2001,7 @@ prerequisites:
         output: token
     bank_transfer_receipt_download:
     - id: session
-      contract: appworld.session
+      contract: appworld.venmo.session
       bindings:
       - input:
           lane: payload
@@ -1991,7 +2009,7 @@ prerequisites:
           - access_token
         output: token
     - id: file_session
-      contract: appworld.session
+      contract: appworld.file_system.session
       bindings:
       - input:
           lane: payload
@@ -2000,7 +2018,7 @@ prerequisites:
         output: token
     transaction_query:
     - id: session
-      contract: appworld.session
+      contract: appworld.venmo.session
       bindings:
       - input:
           lane: selection
@@ -2009,7 +2027,7 @@ prerequisites:
         output: token
     transaction_get:
     - id: session
-      contract: appworld.session
+      contract: appworld.venmo.session
       bindings:
       - input:
           lane: arguments
@@ -2018,7 +2036,7 @@ prerequisites:
         output: token
     transaction_receipt_download:
     - id: session
-      contract: appworld.session
+      contract: appworld.venmo.session
       bindings:
       - input:
           lane: payload
@@ -2026,7 +2044,7 @@ prerequisites:
           - access_token
         output: token
     - id: file_session
-      contract: appworld.session
+      contract: appworld.file_system.session
       bindings:
       - input:
           lane: payload
@@ -2035,7 +2053,7 @@ prerequisites:
         output: token
     transaction_create:
     - id: session
-      contract: appworld.session
+      contract: appworld.venmo.session
       bindings:
       - input:
           lane: payload
@@ -2044,7 +2062,7 @@ prerequisites:
         output: token
     payment_request_query:
     - id: session
-      contract: appworld.session
+      contract: appworld.venmo.session
       bindings:
       - input:
           lane: selection
@@ -2053,7 +2071,7 @@ prerequisites:
         output: token
     payment_request_create:
     - id: session
-      contract: appworld.session
+      contract: appworld.venmo.session
       bindings:
       - input:
           lane: payload
@@ -2062,7 +2080,7 @@ prerequisites:
         output: token
     payment_request_approve:
     - id: session
-      contract: appworld.session
+      contract: appworld.venmo.session
       bindings:
       - input:
           lane: payload
@@ -2071,7 +2089,7 @@ prerequisites:
         output: token
     payment_request_deny:
     - id: session
-      contract: appworld.session
+      contract: appworld.venmo.session
       bindings:
       - input:
           lane: payload
@@ -2080,7 +2098,7 @@ prerequisites:
         output: token
     payment_request_update:
     - id: session
-      contract: appworld.session
+      contract: appworld.venmo.session
       bindings:
       - input:
           lane: payload
@@ -2089,7 +2107,7 @@ prerequisites:
         output: token
     payment_request_remind:
     - id: session
-      contract: appworld.session
+      contract: appworld.venmo.session
       bindings:
       - input:
           lane: payload
@@ -2098,7 +2116,7 @@ prerequisites:
         output: token
     payment_request_delete:
     - id: session
-      contract: appworld.session
+      contract: appworld.venmo.session
       bindings:
       - input:
           lane: payload
@@ -2107,7 +2125,7 @@ prerequisites:
         output: token
     transaction_update:
     - id: session
-      contract: appworld.session
+      contract: appworld.venmo.session
       bindings:
       - input:
           lane: payload
@@ -2116,7 +2134,7 @@ prerequisites:
         output: token
     transaction_like:
     - id: session
-      contract: appworld.session
+      contract: appworld.venmo.session
       bindings:
       - input:
           lane: payload
@@ -2125,7 +2143,7 @@ prerequisites:
         output: token
     transaction_unlike:
     - id: session
-      contract: appworld.session
+      contract: appworld.venmo.session
       bindings:
       - input:
           lane: payload
@@ -2134,7 +2152,7 @@ prerequisites:
         output: token
     transaction_comment_create:
     - id: session
-      contract: appworld.session
+      contract: appworld.venmo.session
       bindings:
       - input:
           lane: payload
@@ -2143,7 +2161,7 @@ prerequisites:
         output: token
     transaction_comment_update:
     - id: session
-      contract: appworld.session
+      contract: appworld.venmo.session
       bindings:
       - input:
           lane: payload
@@ -2152,7 +2170,7 @@ prerequisites:
         output: token
     transaction_comment_delete:
     - id: session
-      contract: appworld.session
+      contract: appworld.venmo.session
       bindings:
       - input:
           lane: payload
@@ -2161,7 +2179,7 @@ prerequisites:
         output: token
     payment_card_query:
     - id: session
-      contract: appworld.session
+      contract: appworld.venmo.session
       bindings:
       - input:
           lane: selection
@@ -2170,7 +2188,7 @@ prerequisites:
         output: token
     payment_card_create:
     - id: session
-      contract: appworld.session
+      contract: appworld.venmo.session
       bindings:
       - input:
           lane: payload
@@ -2212,7 +2230,7 @@ prerequisites:
         output: cvv_number
     payment_card_update:
     - id: session
-      contract: appworld.session
+      contract: appworld.venmo.session
       bindings:
       - input:
           lane: payload
@@ -2221,7 +2239,7 @@ prerequisites:
         output: token
     payment_card_delete:
     - id: session
-      contract: appworld.session
+      contract: appworld.venmo.session
       bindings:
       - input:
           lane: payload
@@ -2230,7 +2248,7 @@ prerequisites:
         output: token
     notification_query:
     - id: session
-      contract: appworld.session
+      contract: appworld.venmo.session
       bindings:
       - input:
           lane: selection
@@ -2239,7 +2257,7 @@ prerequisites:
         output: token
     notification_delete:
     - id: session
-      contract: appworld.session
+      contract: appworld.venmo.session
       bindings:
       - input:
           lane: payload
@@ -2248,7 +2266,7 @@ prerequisites:
         output: token
     notification_mark:
     - id: session
-      contract: appworld.session
+      contract: appworld.venmo.session
       bindings:
       - input:
           lane: payload
@@ -2257,7 +2275,7 @@ prerequisites:
         output: token
     notification_delete_all:
     - id: session
-      contract: appworld.session
+      contract: appworld.venmo.session
       bindings:
       - input:
           lane: payload
@@ -2266,7 +2284,7 @@ prerequisites:
         output: token
     notification_mark_all:
     - id: session
-      contract: appworld.session
+      contract: appworld.venmo.session
       bindings:
       - input:
           lane: payload

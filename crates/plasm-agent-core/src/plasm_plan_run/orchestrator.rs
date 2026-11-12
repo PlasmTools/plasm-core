@@ -7,7 +7,7 @@ use crate::plasm_plan_run::step_materialize::{
     apply_step_materialize_outcomes, materialize_executable_plan_step, PlanStepMaterializeCtx,
 };
 use futures::future::join_all;
-use plasm_core::plasm_monad::{PlasmStepPayload, StepId};
+use plasm_core::plasm_monad::StepId;
 use plasm_core::PlasmReturn;
 use std::collections::{BTreeMap, HashMap};
 use std::sync::Arc;
@@ -332,18 +332,21 @@ pub(crate) async fn run_executable_plan_phased(
     mcp_result_policy: Option<crate::mcp_run_markdown::McpResultTransportPolicy>,
     python_host_calls: bool,
 ) -> Result<PlasmPlanRunResult, ExecutionFailure> {
-    let executable = dry.executable.clone();
+    // The reviewed-plan owner retains compilation provenance for later repair.
+    // Live execution never reads this duplicate, which can include a large
+    // captured symbol ledger and teaching state; do not hold it across a pause.
+    drop(std::mem::take(&mut dry.compilation_symbols));
     if let Some(evidence) = active_chain(es, execution_scope) {
         evidence.record_comp_committed(&dry.artifact().comp)?;
     }
     let node_results = dry.take_node_results_for_live();
+    let executable = &dry.executable;
     let flow = dry.flow.clone();
     let plan_shared = Arc::new(
         crate::plan_execute_shared::PlanLineExecuteShared::prepare(es, st, session_id).await,
     );
     let mut materialized: BTreeMap<PlanNodeId, MaterializedNode> = BTreeMap::new();
     let approval_policy = PlasmPlanApprovalPolicy::automatic();
-    let mut approval_receipts: Vec<PlasmPlanApprovalReceipt> = Vec::new();
     let mut trace = None;
     let mut sink = None;
     let meta_index_for_publish = mcp_tool_hooks
@@ -354,30 +357,29 @@ pub(crate) async fn run_executable_plan_phased(
         sink = Some(hooks.sink);
     }
     let step_total = executable.steps_topo.len() as u32;
-    let prepared_nodes: HashMap<StepId, ValidatedPlanNode> = dry
+    // Each top-level step contributes at most one receipt and one scope summary.
+    // Reserve their complete backing storage before a mutation can pause.
+    let mut approval_receipts: Vec<PlasmPlanApprovalReceipt> =
+        Vec::with_capacity(step_total as usize);
+    let prepared_nodes: HashMap<StepId, usize> = dry
         .validated_plan()
         .nodes
         .iter()
-        .cloned()
-        .map(|node| {
+        .enumerate()
+        .map(|(index, node)| {
             (
                 StepId::new(node.id().as_str().to_string()).expect("validated step id"),
-                node,
+                index,
             )
         })
         .collect();
     let mut evidence_steps = Vec::with_capacity(step_total as usize);
-    let mut scope_instances = Vec::new();
+    let mut scope_instances = Vec::with_capacity(step_total as usize);
     let step_topo_index: HashMap<StepId, usize> = executable
         .steps_topo
         .iter()
         .enumerate()
         .map(|(i, (id, _))| (id.clone(), i))
-        .collect();
-    let payload_by_step: HashMap<StepId, PlasmStepPayload> = executable
-        .steps_topo
-        .iter()
-        .map(|(id, payload)| (id.clone(), payload.clone()))
         .collect();
     let layers = super::plan_schedule::bind_topo_execution_layers(&executable.bind)?;
     // PEC witness: the executable schedule is a total function of the semantic DAG (`steps` + `bind`)
@@ -390,6 +392,7 @@ pub(crate) async fn run_executable_plan_phased(
         .collect();
     let schedule_digest =
         super::ScheduleDigest::from_validated_plan(dry.validated_plan(), &schedule_order);
+    drop(schedule_order);
     tracing::debug!(
         target: "plasm.pec",
         schedule_digest = %schedule_digest.to_hex(),
@@ -417,12 +420,17 @@ pub(crate) async fn run_executable_plan_phased(
         execution_scope,
     };
     let execution: Result<PlasmPlanRunResult, ExecutionFailure> = async {
+        let executable = &dry.executable;
         let schema_nodes = &dry.validated_plan().nodes;
         for layer in layers {
             if let Some(scope) = execution_scope {
                 scope.check()?;
             }
-            let parallel = super::plan_schedule::layer_parallel_safe(&layer, &payload_by_step);
+            let parallel = super::plan_schedule::layer_parallel_safe(&layer, |id| {
+                step_topo_index
+                    .get(id)
+                    .map(|index| &executable.steps_topo[*index].1)
+            });
             if parallel {
                 let rows_progress_parallel = rows_progress.clone();
                 if let Some(scope) = execution_scope {
@@ -443,7 +451,6 @@ pub(crate) async fn run_executable_plan_phased(
                 let st = st.clone();
                 let session_id = session_id.to_string();
                 let plan_shared = Arc::clone(&plan_shared);
-                let prepared_nodes = Arc::new(prepared_nodes.clone());
                 let approval_policy = approval_policy.clone();
                 let trace_ctx = trace.clone();
                 let sink = sink.clone();
@@ -451,7 +458,7 @@ pub(crate) async fn run_executable_plan_phased(
                 let mut joins = Vec::with_capacity(layer.len());
                 for step_id in &layer {
                     let step_idx = step_topo_index[step_id];
-                    let node = prepared_nodes[step_id].clone();
+                    let node = schema_nodes[prepared_nodes[step_id]].clone();
                     let step_id = step_id.clone();
                     let es = es.clone();
                     let st = st.clone();
@@ -527,7 +534,7 @@ pub(crate) async fn run_executable_plan_phased(
                     &mut approval_receipts,
                     outcomes,
                     execution_scope,
-                );
+                )?;
             } else {
                 for step_id in &layer {
                     let step_idx = step_topo_index[step_id];
@@ -540,6 +547,7 @@ pub(crate) async fn run_executable_plan_phased(
                     }
                     let node = prepared_nodes
                         .get(step_id)
+                        .and_then(|index| schema_nodes.get(*index))
                         .ok_or_else(|| {
                             ExecutionFailure::new(
                                 plasm_runtime::FailureCause::Program,
@@ -564,7 +572,7 @@ pub(crate) async fn run_executable_plan_phased(
                         &mut approval_receipts,
                         [outcome],
                         execution_scope,
-                    );
+                    )?;
                 }
             }
         }
@@ -611,6 +619,10 @@ pub(crate) async fn run_executable_plan_phased(
                 }
             }
             steps.push(PublishedResultStep {
+                source_heading: super::result_heading::result_heading(
+                    node_ref.as_str(),
+                    schema_nodes,
+                ),
                 name: return_names.get(i).cloned().flatten(),
                 node_id: Some(node_ref.as_str().to_string()),
                 entry_id: Some(mat.qualified_entity.entry_id.clone()),
@@ -647,6 +659,7 @@ pub(crate) async fn run_executable_plan_phased(
             receipt.pagination_resume = None;
             receipt.paging_handle = None;
             steps.push(PublishedResultStep {
+                source_heading: None,
                 name: None,
                 node_id: Some(node_ref.as_str().to_string()),
                 entry_id: Some(mat.qualified_entity.entry_id.clone()),

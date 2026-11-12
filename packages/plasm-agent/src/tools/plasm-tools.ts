@@ -1,4 +1,4 @@
-import { failureObservation, plasmModelOutput } from "../runtime/execution-failure.js";
+import { AgentExecutionFailure, failureObservation, plasmModelOutput } from "../runtime/execution-failure.js";
 import { tool, type ToolSet } from "ai";
 import { z } from "zod";
 
@@ -10,22 +10,19 @@ import {
 } from "./descriptions.js";
 import { loadPromptAsset } from "../prompts/index.js";
 import { toolInput } from "./tool-input.js";
-import { logicalSessionRefSchema, runReferenceSchema, workflowIntentSchema } from "../runtime/session-contract.js";
+import { logicalSessionRefSchema, workflowIntentSchema } from "../runtime/session-contract.js";
 import { failureResultsFor } from "./failure-results.js";
 
 const contextIntent = workflowIntentSchema.describe(
-  "The current intent for this discovery turn. The runtime appends it to the workflow provenance chain and retains ancestor context; explicit revisions may replace earlier goals.",
+  "Self-contained current discovery request, including relevant conditions and amendments. Prior requests remain audit/search state, not judgment context.",
 );
-const plasmContextInputSchema = z.discriminatedUnion("session_mode", [
-  z.object({ intent: contextIntent, session_mode: z.literal("new") }).strict(),
-  z.object({
+const plasmContextInputSchema = z.object({
     intent: contextIntent,
     session_mode: z.literal("extend"),
     logical_session_ref: logicalSessionRefSchema.describe(
       "Copy the existing workflow reference verbatim; do not reconstruct or abbreviate it.",
     ),
-  }).strict(),
-]);
+  }).strict();
 
 const plasmInputSchema = z.object({
   logical_session_ref: logicalSessionRefSchema
@@ -39,21 +36,47 @@ const plasmInputSchema = z.object({
 const plasmRunInputSchema = z.object({
   logical_session_ref: logicalSessionRefSchema
     .describe("Copy the logical_session_ref returned by plasm_context verbatim; do not reconstruct or abbreviate it."),
-  run_ref: runReferenceSchema
-    .describe("pcN from plasm dry-run, or page handle from a prior plasm_run more-pages line"),
+  run_ref: z.string()
+    .describe("Copy the exact run_ref returned by plasm, or a page handle from a prior result; never guess a reference."),
 }).strict();
 
 export function createPlasmTools(
-  runtime: Pick<AgentRuntime, "plasmContext" | "plasm" | "plasmRun" | "recordExecutionFailure">,
+  runtime: Pick<AgentRuntime, "plasmContext" | "plasm" | "plasmRun" | "recordExecutionFailure"> & Partial<Pick<AgentRuntime, "workflowExampleServingEnabled" | "plasmExample">>,
 ): ToolSet {
   const tools: ToolSet = {};
+  if (runtime.workflowExampleServingEnabled?.()) {
+    const fetchExample = runtime.plasmExample?.bind(runtime);
+    if (!fetchExample) throw new Error("Example serving requires native fetch support");
+    tools.plasm_example = tool({
+      description: "Optionally fetch a teaching example offered by discovery. Adapt it to your task: distinguish relevant operations from unrelated effects and do not copy unrequested effects. Fetching checks the source and adds its required declarations to this session; examples do not authorize execution.",
+      inputSchema: toolInput(z.object({ logical_session_ref: logicalSessionRefSchema, example_ref: z.string().uuid() }).strict()),
+      execute: ({ logical_session_ref, example_ref }) => fetchExample({ logicalSessionRef: logical_session_ref, revisionRef: example_ref }),
+    });
+  }
   const failures = failureResultsFor(runtime);
   async function invoke(name: string, run: () => Promise<string>) {
     try { return await run(); } catch (error) {
       const observation = failureObservation(error);
       await runtime.recordExecutionFailure(name, observation.failure);
+      const diagnosticIncluded = observation.summary.includes(observation.failure.diagnostic);
+      // A complete no-effect failure has no ledger to expand; its compact
+      // summary already contains the diagnostic and recovery instruction.
+      if (!observation.failure.effects_unresolved
+        && !observation.failure.input_occurrence && observation.failure.effects.length === 0 && observation.failure.dispatches.length === 0) {
+        const action = {
+          repair_program: "Correct the program before retrying.",
+          obtain_authorization: "Obtain authorization before retrying.",
+          reconcile_effects: "Check the prior execution before further writes.",
+          replan_after_rejection: "Consider another authorized plan.",
+          stop: "Stop and resolve the reported blocker.",
+        }[observation.failure.recovery];
+        const diagnostic = diagnosticIncluded ? "" : `\n${observation.failure.diagnostic}`;
+        return {...observation, summary: `${observation.summary}${diagnostic}\n${action}`};
+      }
       const ref = failures.record(observation.failure);
-      return {...observation, summary: `${observation.summary}\nFull recorded outcomes: call plasm_failure with failure_ref="${ref}" (offset defaults to 0). This only reads recorded evidence.`};
+      // Deliver evidence already held by the host in the failing call itself.
+      // The existing bounded page supplies a continuation only when needed.
+      return {...observation, summary: `${observation.summary}\n${failures.read(ref, 0, diagnosticIncluded)}`};
     }
   }
 
@@ -61,11 +84,18 @@ export function createPlasmTools(
     toModelOutput: plasmModelOutput,
     description: PLASM_CONTEXT_TOOL_DESCRIPTION,
     inputSchema: toolInput(plasmContextInputSchema),
-    execute: async (args) => invoke("plasm_context", () => runtime.plasmContext({
-      intent: args.intent,
-      sessionMode: args.session_mode,
-      logicalSessionRef: args.session_mode === "extend" ? args.logical_session_ref : undefined,
-    })),
+    execute: async (args) => invoke("plasm_context", () => {
+      if (args.session_mode !== "extend") throw new AgentExecutionFailure({
+        cause: "program", recovery: "repair_program", code: "invalid_context_input",
+        diagnostic: "The host already opened this workflow; extend its logical_session_ref.",
+        node: null, occurrence_path: [], catalog_digest: null, effects: [], dispatches: [], effects_unresolved: false,
+      }, "Extend the host-opened workflow using its logical_session_ref.");
+      return runtime.plasmContext({
+        intent: args.intent,
+        sessionMode: args.session_mode,
+        logicalSessionRef: args.logical_session_ref,
+      });
+    }),
   });
 
   tools.plasm = tool({

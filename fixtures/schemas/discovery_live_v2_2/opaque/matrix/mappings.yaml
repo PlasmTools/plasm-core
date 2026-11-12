@@ -1,0 +1,29 @@
+{
+  "vibration_read": {
+    "method": "GET",
+    "path": [
+      {
+        "type": "literal",
+        "value": "vibration_read"
+      }
+    ]
+  },
+  "routine_apply": {
+    "method": "POST",
+    "path": [
+      {
+        "type": "literal",
+        "value": "routine_apply"
+      }
+    ]
+  },
+  "invoice_read": {
+    "method": "GET",
+    "path": [
+      {
+        "type": "literal",
+        "value": "invoice_read"
+      }
+    ]
+  }
+}

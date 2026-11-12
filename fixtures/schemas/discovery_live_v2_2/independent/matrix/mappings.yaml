@@ -1,0 +1,29 @@
+{
+  "humidity_read": {
+    "method": "GET",
+    "path": [
+      {
+        "type": "literal",
+        "value": "humidity_read"
+      }
+    ]
+  },
+  "sound_read": {
+    "method": "GET",
+    "path": [
+      {
+        "type": "literal",
+        "value": "sound_read"
+      }
+    ]
+  },
+  "invoice_read": {
+    "method": "GET",
+    "path": [
+      {
+        "type": "literal",
+        "value": "invoice_read"
+      }
+    ]
+  }
+}

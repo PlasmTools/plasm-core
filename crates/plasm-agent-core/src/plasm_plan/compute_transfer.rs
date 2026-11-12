@@ -22,7 +22,8 @@ fn cardinality_rule(op: &ComputeOp) -> CardinalityRule {
         ComputeOp::Python { output_type, .. } if output_type.is_collection_result() => {
             CardinalityRule::Plural
         }
-        ComputeOp::MergeBranches { .. }
+        ComputeOp::RequireOne
+        | ComputeOp::MergeBranches { .. }
         | ComputeOp::Aggregate { .. }
         | ComputeOp::Python { per_row: false, .. } => CardinalityRule::Singleton,
         ComputeOp::Render { .. }
@@ -81,9 +82,9 @@ pub(crate) fn compute_result_shape(op: &ComputeOp, explicit_singleton: bool) -> 
         ComputeOp::Python { output_type, .. } if output_type.is_collection_result() => {
             ResultShape::List
         }
-        ComputeOp::Python { per_row: false, .. } | ComputeOp::MergeBranches { .. } => {
-            ResultShape::Single
-        }
+        ComputeOp::RequireOne
+        | ComputeOp::Python { per_row: false, .. }
+        | ComputeOp::MergeBranches { .. } => ResultShape::Single,
         ComputeOp::Render { .. } if explicit_singleton => ResultShape::Single,
         ComputeOp::Render { .. }
         | ComputeOp::Python { per_row: true, .. }

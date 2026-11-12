@@ -327,6 +327,7 @@ mod tests {
                     })
                 } else {
                     ValidatedPlanNode::Data(super::super::ValidatedDataNode {
+                        recorded_output: node.recorded_output.clone(),
                         id,
                         effect_class: node.effect_class,
                         result_shape: node.result_shape,

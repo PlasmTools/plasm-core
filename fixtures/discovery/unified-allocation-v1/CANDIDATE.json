@@ -1,0 +1,18 @@
+{
+  "arm": "A1",
+  "policy": "additive-connected-frontier-current-bm25f-1-judgment-3-attempts-16000-byte-packet-unified-a1",
+  "production_source_sha256": {
+    "crates/plasm-agent-core/src/discovery_matcher/online/connected.rs": "578a14ea51ed02385911f44b70d3f242493de420aafb2b987487464415a8bbed",
+    "crates/plasm-agent-core/src/discovery_matcher/online.rs": "b24b3d456d4552695afa83efa03e2e7cc2bd0a399c8488ac0e4e1a293b1f6f82",
+    "packages/plasm-agent/src/engine/routing.ts": "8d1384cd126d36dea63384d5a6b866334b1b43d9f8d9896466240d1690436a63",
+    "packages/plasm-agent/scripts/test-session-extension.ts": "a4bdb102695e48ccf5766811ea1df00093d7a9447ba92f721879149cbba5a846"
+  },
+  "implementation_notes": [
+    "Ascending origin traversal stops at the first origin with a fitting proposal, exactly preserving origin-first tuple ordering.",
+    "Existing selected routes win union ties; repeated questions are not replaced with alternate ancestry.",
+    "SuppliesInput edges are handled by complete alternatives; other existing nominations retain class 2 eligibility.",
+    "All suites queued against the same source; Bazel serializes their builds/tests. Timing remains diagnostic."
+  ],
+  "typescript_check": "node scripts/run-plasm-cli.mjs scripts/test-session-extension.ts: passed",
+  "provider_calls": 0
+}

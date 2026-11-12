@@ -23,6 +23,7 @@ macro_rules! string_id {
                 &self.0
             }
 
+
             pub fn into_inner(self) -> String {
                 self.0
             }
@@ -106,6 +107,7 @@ string_id! {
     /// Stable instance id for an entity (string form).
     EntityId
 }
+
 string_id! {
     /// Capability operation name (e.g. `list_pets`, `update_account`).
     CapabilityName

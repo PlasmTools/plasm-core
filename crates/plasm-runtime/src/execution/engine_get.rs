@@ -386,6 +386,18 @@ impl ExecutionEngine {
             GetPurpose::Hydration
         };
         let request = ResolvedGet::resolve(get, cgs, hydrate_capability, cache, ambient, purpose)?;
+        self.fetch_resolved_get_decoded(&request, cgs, mode, cache)
+            .await
+    }
+
+    pub(crate) async fn fetch_resolved_get_decoded(
+        &self,
+        request: &ResolvedGet<'_>,
+        cgs: &CGS,
+        mode: ExecutionMode,
+        cache: &mut SessionMaterialization,
+    ) -> Result<(CachedEntity, ExecutionSource), RuntimeError> {
+        let get = request.get;
         let capability = request.capability;
         let ambient = &request.ambient;
 
@@ -418,7 +430,7 @@ impl ExecutionEngine {
         }
 
         self.fetch_http_transport_get_decoded(
-            &request,
+            request,
             cgs,
             mode,
             &capability_template,

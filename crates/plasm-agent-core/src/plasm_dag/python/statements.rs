@@ -90,10 +90,42 @@ impl Lower<'_> {
         // complete structural target has passed its positional contract checks.
         let source = self.expr(value, None)?;
         let schema = super::text::inferred_schema(self.es, &self.state, &source, 0)?;
-        if schema.entity.is_some()
-            || schema.fields.len() != 1
-            || schema.fields[0].name.as_str() != "value"
-        {
+        if schema.entity.is_some() {
+            let targets = match target {
+                PyExpr::Tuple(tuple) => &tuple.elts,
+                PyExpr::List(list) => &list.elts,
+                _ => unreachable!(),
+            };
+            let [item] = targets.as_slice() else {
+                return Err(at(target, PythonSourceError::UnpackRequiresFixedTuple));
+            };
+            let label = name(item)
+                .ok_or_else(|| at(target, PythonSourceError::UnpackRequiresFixedTuple))?;
+            let id = self.fresh();
+            let checked = self.insert(DagNode {
+                id,
+                expr: String::new(),
+                singleton: true,
+                page_size: None,
+                source: super::super::types::DagNodeSource::Compute {
+                    source,
+                    op: ComputeOp::RequireOne,
+                    schema,
+                    collection_alias: None,
+                },
+            })?;
+            let index = *self.state.labels.get(&checked).ok_or(
+                crate::program_rejection::PythonLoweringInvariantError::StatementNodeMissing,
+            )?;
+            self.cardinality_checks.push(CardinalityCheck {
+                node: checked.clone(),
+                insertion_index: index,
+            });
+            let parsed = ruff_python_parser::parse_expression(&checked)
+                .map_err(PythonLoweringError::parse_error)?;
+            return self.bind_local(stmt, label, &parsed.syntax().body);
+        }
+        if schema.fields.len() != 1 || schema.fields[0].name.as_str() != "value" {
             return Err(at(target, PythonSourceError::UnpackRequiresFixedTuple));
         }
         let contract = self.invocation_value_type(&source)?;
@@ -121,7 +153,7 @@ impl Lower<'_> {
                 unreachable!()
             };
             let id = self.fresh();
-            let checked = self.text_compute_source(target, call, code, &id)?;
+            let checked = self.text_compute_source(target, call, code, None, &id)?;
             let mut acquired = Vec::with_capacity(leaves.len());
             for (index, label) in leaves.into_iter().enumerate() {
                 let parsed = ruff_python_parser::parse_expression(&format!("{checked}[{index}]"))

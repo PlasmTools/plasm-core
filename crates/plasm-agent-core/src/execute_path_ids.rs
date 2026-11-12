@@ -12,11 +12,13 @@ const SHA256_HEX_LEN: usize = 64;
 const SESSION_SIMPLE_HEX_LEN: usize = 32;
 
 /// Lowercase SHA-256 digest of the rendered prompt, as 64 hex characters.
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, serde::Serialize)]
+#[serde(transparent)]
 pub struct PromptHashHex(String);
 
 /// `Uuid::simple()` form: 32 lowercase hex digits, no hyphens.
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, serde::Serialize)]
+#[serde(transparent)]
 pub struct ExecuteSessionId(String);
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Error)]

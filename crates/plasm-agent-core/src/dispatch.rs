@@ -934,6 +934,7 @@ mod tests {
         })
         .unwrap();
         cgs.add_capability(CapabilitySchema {
+            no_effect_rejections: Vec::new(),
             name: "balance_get".into(),
             description: String::new(),
             kind: CapabilityKind::Get,
@@ -1039,6 +1040,7 @@ mod tests {
         })
         .unwrap();
         cgs.add_capability(CapabilitySchema {
+            no_effect_rejections: Vec::new(),
             name: "transfer_query".into(),
             description: String::new(),
             kind: CapabilityKind::Query,
@@ -1167,6 +1169,7 @@ mod tests {
         })
         .unwrap();
         cgs.add_capability(CapabilitySchema {
+            no_effect_rejections: Vec::new(),
             name: "issue_get".into(),
             description: String::new(),
             kind: CapabilityKind::Get,

@@ -3,6 +3,7 @@
 use crate::auth::ResolvedAuth;
 use crate::error::RuntimeError;
 use crate::execution::ExecutionConfig;
+use crate::external_resilience::{ReplaySafety, RetryPolicy};
 use crate::http_trace::HttpTraceOutcome;
 use crate::http_transport::{
     compiled_method_label, host_key_from_url, http_retryable_is_rate_limited, is_safe_http_method,
@@ -26,6 +27,21 @@ pub struct HttpResiliencePolicy {
     pub initial_backoff: Duration,
     pub max_backoff: Duration,
     pub total_retry_budget: Duration,
+}
+
+impl RetryPolicy for HttpResiliencePolicy {
+    fn max_attempts(&self) -> usize {
+        self.max_attempts as usize
+    }
+    fn retry_budget(&self) -> Duration {
+        self.total_retry_budget
+    }
+    fn initial_backoff(&self) -> Duration {
+        self.initial_backoff
+    }
+    fn max_backoff(&self) -> Duration {
+        self.max_backoff
+    }
 }
 
 impl From<&ExecutionConfig> for HttpResiliencePolicy {
@@ -116,13 +132,10 @@ impl ResilientHttpTransport {
     }
 
     fn compute_delay(&self, attempt: u32, retry_after: Option<Duration>, url: &str) -> Duration {
-        let exp = self
-            .policy
-            .initial_backoff
-            .saturating_mul(2u32.saturating_pow(attempt.saturating_sub(1)));
-        let base = exp.min(self.policy.max_backoff);
-        let base = retry_after.map(|r| r.max(base)).unwrap_or(base);
-        jitter_duration(base, url, attempt)
+        let entropy = url.bytes().fold(u64::from(attempt), |h, b| {
+            h.wrapping_mul(31).wrapping_add(u64::from(b))
+        });
+        self.policy.delay(attempt as usize, retry_after, entropy)
     }
 
     async fn process_attempt(
@@ -154,7 +167,12 @@ impl ResilientHttpTransport {
                     ));
                 }
                 let delay = self.compute_delay(attempt, retry_after, url);
-                if started.elapsed().saturating_add(delay) >= self.policy.total_retry_budget {
+                if !self.policy.allows_retry(
+                    ReplaySafety::Repeatable,
+                    attempt as usize,
+                    started.elapsed(),
+                    delay,
+                ) {
                     failure.retry_budget_exhausted = true;
                     return Err(finalize_retryable_failure(
                         status,
@@ -189,7 +207,12 @@ impl ResilientHttpTransport {
                     && transport_error_is_retryable(&e)
                 {
                     let delay = self.compute_delay(attempt, None, url);
-                    if started.elapsed().saturating_add(delay) >= self.policy.total_retry_budget {
+                    if !self.policy.allows_retry(
+                        ReplaySafety::Repeatable,
+                        attempt as usize,
+                        started.elapsed(),
+                        delay,
+                    ) {
                         e.set_attempts(attempt);
                         return Err(e);
                     }
@@ -280,26 +303,18 @@ fn transport_error_is_retryable(err: &RuntimeError) -> bool {
     }
 }
 
-/// Full jitter: `delay in [base/2, base]` seeded by url + attempt.
-fn jitter_duration(base: Duration, url: &str, attempt: u32) -> Duration {
-    let base_ms = base.as_millis().min(u128::from(u64::MAX)) as u64;
-    if base_ms == 0 {
-        return Duration::ZERO;
-    }
-    let mut h = 0u64;
-    for b in url.bytes() {
-        h = h.wrapping_mul(31).wrapping_add(u64::from(b));
-    }
-    h = h.wrapping_add(u64::from(attempt).wrapping_mul(0x9E37_79B9_7F4A_7C15));
-    let spread = base_ms / 2;
-    let extra = if spread == 0 { 0 } else { h % spread };
-    Duration::from_millis(base_ms / 2 + extra)
-}
-
 #[async_trait]
 impl HttpTransport for ResilientHttpTransport {
     fn injects_host_auth(&self) -> bool {
         self.inner.injects_host_auth()
+    }
+
+    async fn resolve_identity_auth(
+        &self,
+        request: &CompiledRequest,
+        auth: Option<ResolvedAuth>,
+    ) -> Result<Option<ResolvedAuth>, RuntimeError> {
+        self.inner.resolve_identity_auth(request, auth).await
     }
 
     fn auth_scope(
@@ -616,10 +631,9 @@ mod tests {
     }
 
     #[test]
-    fn jitter_within_band() {
-        let d = jitter_duration(Duration::from_millis(1000), "https://api.example.com/x", 2);
-        assert!(d >= Duration::from_millis(500));
-        assert!(d <= Duration::from_millis(1000));
+    fn server_retry_after_is_not_shortened_by_jitter() {
+        let d = fast_retry_policy(1).delay(1, Some(Duration::from_secs(20)), 17);
+        assert!(d >= Duration::from_secs(20));
     }
 
     #[tokio::test]

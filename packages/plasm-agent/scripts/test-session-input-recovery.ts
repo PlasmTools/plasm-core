@@ -24,7 +24,7 @@ await checkSessionExtension(async () => {}, async (runtime, ref, engine) => {
     { intent: "Read records" },
     { intent: "   ", session_mode: "new" },
   ]) assert.equal((await contextSchema.validate(input)).success, false, JSON.stringify(input));
-  assert.equal((await contextSchema.validate({ intent: "Read records", session_mode: "new" })).success, true);
+  assert.equal((await contextSchema.validate({ intent: "Read records", session_mode: "new" })).success, false);
   for (const name of ["plasm_context", "plasm", "plasm_run"] as const) {
     const schema = asSchema(tools[name]!.inputSchema);
     assert.ok(schema.validate);
@@ -35,6 +35,12 @@ await checkSessionExtension(async () => {}, async (runtime, ref, engine) => {
     assert.ok(JSON.stringify(await schema.jsonSchema).includes('"pattern"'), "model sees the canonical reference shape");
   }
   const options = { toolCallId: "fixture", messages: [], context: {} };
+  const beforeSessions = (await runtime.sessionManager.store.listSessions()).length;
+  for (let attempt = 0; attempt < 31; attempt++) {
+    await tools.plasm_context!.execute!({ intent: "Read abstract records", session_mode: "new" }, options);
+  }
+  assert.equal((await runtime.sessionManager.store.listSessions()).length, beforeSessions,
+    "model-authored new calls cannot fork the host-opened workflow");
   for (const invalid of ["for", ref.slice(0, -1), newEphemeralLogicalSession().logicalSessionRef]) {
     for (const name of ["plasm_context", "plasm", "plasm_run"] as const) {
       const args = name === "plasm_context"

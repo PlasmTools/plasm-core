@@ -49,18 +49,6 @@ pub use json_path::{path_expr_from_json_segments, JsonPathError};
 pub use plasm_cml::CmlError;
 pub use predicate_compiler::*;
 
-use plasm_core::{QueryExpr, CGS};
-
-/// Canonical compile hook trait objects (shared by `plasm-runtime`).
-///
-/// [`CmlEnv`] remains a map of [`plasm_core::value::Value`]. Invoke/create IR may hold structured
-/// [`plasm_core::InvokeInputPayload`] internally; execution lowers that to [`Value`] before building the
-/// env, so plugins see the same wire shapes as the built-in [`compile_operation`] path.
-pub type CompileOperationHook =
-    dyn Fn(&CapabilityTemplate, &CmlEnv) -> Result<CompiledOperation, CmlError> + Send + Sync;
-pub type CompileQueryHook =
-    dyn Fn(&QueryExpr, &CGS) -> Result<Option<BackendFilter>, CompileError> + Send + Sync;
-
 pub mod validate_templates;
 pub use validate_templates::{
     compile_cgs_capability_templates, load_compiled_catalog_artifact,

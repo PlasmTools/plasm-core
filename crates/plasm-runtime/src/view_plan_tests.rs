@@ -52,7 +52,8 @@ fn derive_view_query_scope_missing_predicate_errors() {
         },
     );
     let query = QueryExpr::all("LangDigest");
-    let err = derive_view_query_scope("needs_pred", &query, &cgs).expect_err("scope");
+    let err = derive_view_query_scope("needs_pred", &query, &cgs, &indexmap::IndexMap::new())
+        .expect_err("scope");
     assert!(
         err.to_string().contains("requires a query predicate"),
         "{err}"

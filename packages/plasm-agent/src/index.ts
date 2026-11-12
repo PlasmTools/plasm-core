@@ -75,21 +75,6 @@ export {
 } from "./tools/harness-tools.js";
 export type { EvalTerminalGate } from "./tools/harness-tools.js";
 export {
-  TASK_LEDGER_MAX_BYTES,
-  TASK_LEDGER_STATE_HEADER,
-  TASK_LEDGER_TOOL_DESCRIPTION,
-  TASK_LEDGER_TOOL_NAME,
-  TaskLedgerStore,
-  createTaskLedgerTool,
-  emptyTaskLedger,
-  isKnownEvidenceRef,
-  parseTaskLedgerRecord,
-  renderTaskLedgerState,
-  taskLedgerRecordBytes,
-  taskLedgerRecordSchema,
-} from "./tools/task-ledger.js";
-export type { ParseTaskLedgerResult, TaskLedgerRecord } from "./tools/task-ledger.js";
-export {
   extractGradedScalarFromObservation,
   evalTerminalGrade,
   gradedScalarAfterLiveWrites,
@@ -212,7 +197,7 @@ export {
 } from "./instrumentation.js";
 export type { AgentInstrumentationOptions } from "./instrumentation.js";
 
-export { AgentRuntime } from "./runtime/agent-runtime.js";
+export { AgentRuntime, AgentRuntimeHost } from "./runtime/agent-runtime.js";
 export type {
   AgentArchiveStore,
   AgentRuntimeConfig,
@@ -237,9 +222,6 @@ export { createPlasmTools } from "./tools/plasm-tools.js";
 export type { PlasmTools } from "./tools/plasm-tools.js";
 
 export {
-  TASK_LEDGER_LITURGY,
-  TASK_LEDGER_PLAN_OVERLAY,
-  TASK_LEDGER_PLAN_SLOT,
   WORKFLOW_COMPLETION_SLOT,
   buildDefaultSystemLiturgy,
   loadPromptAsset,
@@ -363,3 +345,5 @@ export type {
   ProgramBuilderOptions,
   ProgramBuilderProvenance,
 } from "./stubs/program-builder.js";
+export type { WorkflowLearningConfig, WorkflowReviewSession, WorkflowReviewInput, WorkflowReviewReceipt, CompletedExecutionIndex } from "./runtime/workflow-learning.js";
+export type { TrainingHostConfig, TrainingStatus, TrainingCandidateReference, TrainingCandidateAction } from "./runtime/workflow-learning.js";

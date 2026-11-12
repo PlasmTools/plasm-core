@@ -791,6 +791,7 @@ mod tests {
         .unwrap();
 
         cgs.add_capability(CapabilitySchema {
+            no_effect_rejections: Vec::new(),
             name: "task_get".into(),
             description: String::new(),
             kind: CapabilityKind::Get,
@@ -820,6 +821,7 @@ mod tests {
         .unwrap();
 
         cgs.add_capability(CapabilitySchema {
+            no_effect_rejections: Vec::new(),
             name: "list_task_query".into(),
             description: String::new(),
             kind: CapabilityKind::Query,

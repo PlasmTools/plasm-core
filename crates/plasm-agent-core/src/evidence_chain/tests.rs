@@ -272,6 +272,7 @@ fn minimal_comp() -> plasm_core::PlasmComp {
     steps.insert(
         "a".into(),
         PlasmStepPayload::Pure(PurePayload {
+            recorded_output: None,
             data: plasm_core::PlasmDataValue::Literal {
                 value: plasm_core::operand_binding::ResolvedValue::from_wire(serde_json::json!(
                     "a"
@@ -285,6 +286,7 @@ fn minimal_comp() -> plasm_core::PlasmComp {
     steps.insert(
         "x".into(),
         PlasmStepPayload::Pure(PurePayload {
+            recorded_output: None,
             data: plasm_core::PlasmDataValue::Literal {
                 value: plasm_core::operand_binding::ResolvedValue::from_wire(serde_json::json!(
                     "hi"

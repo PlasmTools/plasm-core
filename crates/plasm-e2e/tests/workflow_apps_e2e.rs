@@ -347,7 +347,7 @@ async fn workflow_apps_e2e_async() {
         .post(format!(
             "{base}/v1/workflows/workflow_matrix_parallel/instantiate"
         ))
-        .json(&json!({ "parameters": { "limit": 3 } }))
+        .json(&json!({ "logical_session_ref": ls, "parameters": { "limit": 3 } }))
         .send()
         .await
         .expect("instantiate");
@@ -467,14 +467,16 @@ async fn workflow_apps_e2e_async() {
     // The mutating program above independently checks both archive transports.
     assert_agent_mcp_tool_compact(&dry_wf, "run_explorer");
     assert!(
-        dry_wf.pointer("/structuredContent/ui/steps")
+        dry_wf
+            .pointer("/structuredContent/ui/steps")
             .and_then(Value::as_array)
             .is_some_and(|steps| !steps.is_empty()),
         "read-only workflow must deliver run steps: {dry_wf}"
     );
     let workflow_artifact_prefix = format!("plasm://session/{ls_wf}/run/");
     assert!(
-        dry_wf.pointer("/_meta/plasm/steps/0/artifact_uri")
+        dry_wf
+            .pointer("/_meta/plasm/steps/0/artifact_uri")
             .and_then(Value::as_str)
             .is_some_and(|uri| uri.starts_with(&workflow_artifact_prefix)),
         "workflow result artifact must belong to its logical session: {dry_wf}"

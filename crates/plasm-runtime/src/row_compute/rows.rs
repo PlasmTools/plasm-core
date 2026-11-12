@@ -50,6 +50,24 @@ impl<'a> Cell<'a> {
 }
 #[derive(Clone, Default)]
 pub(super) struct Row<'a>(pub IndexMap<String, Cell<'a>>, pub Option<usize>);
+
+#[cfg(test)]
+mod diagnostic_tests {
+    use super::*;
+
+    #[test]
+    fn derived_rows_do_not_invent_input_provenance() {
+        let derived = Row::default();
+        assert!(
+            matches!(derived.require("payload.title").unwrap_err(), plasm_core::RowComputeError::MissingField { field } if field == "payload.title")
+        );
+        assert!(!derived
+            .require("payload.title")
+            .unwrap_err()
+            .to_string()
+            .contains("input row"));
+    }
+}
 impl<'a> Row<'a> {
     pub fn cell(&self, name: &str) -> Option<Cell<'a>> {
         if let Some(cell) = self.0.get(name) {
@@ -70,10 +88,13 @@ impl<'a> Row<'a> {
         Some(value)
     }
     pub fn require(&self, name: &str) -> Result<&Value, plasm_core::RowComputeError> {
-        self.get(name)
-            .ok_or_else(|| plasm_core::RowComputeError::MissingField {
-                field: name.to_owned(),
-            })
+        self.get(name).ok_or_else(|| self.missing_field(name))
+    }
+    pub fn missing_field(&self, name: &str) -> plasm_core::RowComputeError {
+        plasm_core::RowComputeError::MissingField {
+            field: name.to_owned(),
+        }
+        .at_input(self.1)
     }
     pub fn materialize(&self) -> ValueRow {
         self.0
@@ -239,7 +260,7 @@ mod borrowing_tests {
     use super::super::{eval::apply_stored_plan, fixture_contract, row};
     use super::*;
     use plasm_core::{
-        fold_compute_ops, CollectCardinality, ComputeOp, FieldPath, FrameId, OutputName, StepId,
+        fold_compute_ops, CollectCardinality, ComputeOp, FieldPath, OutputName, StepId,
     };
 
     #[test]
@@ -265,7 +286,6 @@ mod borrowing_tests {
         ];
         let plan = fold_compute_ops(
             &ops,
-            FrameId::new(1),
             StepId::new("borrow").unwrap(),
             CollectCardinality::List,
         )
@@ -301,7 +321,6 @@ mod borrowing_tests {
         };
         let plan = fold_compute_ops(
             &[op],
-            FrameId::new(1),
             StepId::new("select").unwrap(),
             CollectCardinality::List,
         )

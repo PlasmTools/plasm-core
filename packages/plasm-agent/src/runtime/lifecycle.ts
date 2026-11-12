@@ -3,6 +3,7 @@ export class DrainingLifecycle {
   private closing = false;
   private readonly active = new Set<Promise<unknown>>();
   private closed?: Promise<void>;
+  private drained?: Promise<void>;
 
   run<T>(operation: () => Promise<T>): Promise<T> {
     if (this.closing) return Promise.reject(new Error("Plasm instance is closing or closed"));
@@ -18,9 +19,14 @@ export class DrainingLifecycle {
     return task;
   }
 
-  close(cleanup: () => Promise<void>): Promise<void> {
+  drain(): Promise<void> {
     this.closing = true;
-    this.closed ??= Promise.allSettled([...this.active]).then(cleanup);
+    this.drained ??= Promise.allSettled([...this.active]).then(() => undefined);
+    return this.drained;
+  }
+
+  close(cleanup: () => Promise<void>): Promise<void> {
+    this.closed ??= this.drain().then(cleanup);
     return this.closed;
   }
 }

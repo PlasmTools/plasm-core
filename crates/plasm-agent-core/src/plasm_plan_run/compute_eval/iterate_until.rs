@@ -74,14 +74,47 @@ impl From<IterateUntilError> for ExecutionFailure {
 
 fn row_satisfies_until(
     row: &plasm_core::Value,
-    preds: &[plasm_runtime::row_predicate::BoundRowPredicate],
+    preds: &[plasm_runtime::row_predicate::PreparedRowPredicate],
 ) -> Result<bool, IterateUntilError> {
     for pred in preds {
-        if !crate::plasm_plan_run::predicate_matches(row, pred)? {
+        if !pred.matches_row(row)? {
             return Ok(false);
         }
     }
     Ok(true)
+}
+
+#[cfg(test)]
+mod predicate_contract_tests {
+    use super::*;
+    use plasm_core::{value_contract::ValueContract, FieldPath, FieldType, PlanPredicateOp, Value};
+    use plasm_runtime::row_predicate::{BoundRowPredicate, PreparedRowPredicate};
+
+    #[test]
+    fn until_uses_declared_text_order_and_distinguishes_missing_from_null() {
+        let bound = BoundRowPredicate {
+            field_path: FieldPath::from_dotted("title").unwrap(),
+            op: PlanPredicateOp::Gt,
+            value: plasm_core::operand_binding::ResolvedValue::new(Value::String("20".into()))
+                .unwrap(),
+        };
+        let prepared =
+            PreparedRowPredicate::from_contract(&bound, ValueContract::scalar(FieldType::String))
+                .unwrap();
+        let row = |value| plasm_core::json_value_to_plasm_value(&value);
+        assert!(
+            row_satisfies_until(&row(serde_json::json!({"title":"3"})), &[prepared.clone()])
+                .unwrap()
+        );
+        assert!(
+            !row_satisfies_until(&row(serde_json::json!({"title":null})), &[prepared.clone()])
+                .unwrap()
+        );
+        assert!(matches!(
+            row_satisfies_until(&row(serde_json::json!({})), &[prepared]),
+            Err(IterateUntilError::Predicate(_))
+        ));
+    }
 }
 
 pub(crate) async fn materialize_iterate_until_node(
@@ -97,12 +130,7 @@ pub(crate) async fn materialize_iterate_until_node(
         return Err(IterateUntilError::EmptySeed.into());
     }
     let cross = cross_uses_excluding_item(&it.uses_result, &it.item_binding);
-    let mut input_rows =
-        materialized_result_use_inputs(materialized, &cross, None).map_err(|_| {
-            IterateUntilError::Operand(super::eval::RuntimeOperandError::MaterializedInput(
-                super::eval::MaterializedInputError,
-            ))
-        })?;
+    let mut input_rows = materialized_result_use_inputs(materialized, &cross, None)?;
     let wire_coercion_by_alias =
         wire_coercion_by_alias_from_inputs(es, &mut input_rows).map_err(|error| {
             ExecutionFailure::new(
@@ -137,7 +165,7 @@ pub(crate) async fn materialize_iterate_until_node(
             error.to_string(),
         )
     })?;
-    let until_predicates = resolved_until
+    let bound_predicates = resolved_until
         .iter()
         .map(crate::plan_read_bounds::bind_row_predicate)
         .collect::<Result<Vec<_>, _>>()
@@ -148,6 +176,29 @@ pub(crate) async fn materialize_iterate_until_node(
                 diagnostic.to_string(),
             )
         })?;
+    let until_predicates = if it.until_scope.is_none() {
+        let seed_scope =
+            entry_scoped_execute_session(es, Some(&seed_qe)).map_err(|diagnostic| {
+                ExecutionFailure::new(
+                    plasm_runtime::FailureCause::Program,
+                    "iterate_until_catalog_scope_unavailable",
+                    diagnostic.to_string(),
+                )
+            })?;
+        bound_predicates
+            .iter()
+            .map(|predicate| {
+                plasm_runtime::row_predicate::PreparedRowPredicate::prepare(
+                    &seed_scope.cgs,
+                    &seed_qe.entity,
+                    predicate,
+                )
+            })
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(IterateUntilError::from)?
+    } else {
+        Vec::new()
+    };
     let mut current = seed_mat.clone();
     let mut operations = plasm_runtime::OperationLedger::empty();
     let mut iteration_occurrence = ctx.occurrence_path.clone();
@@ -449,7 +500,7 @@ async fn evaluate_stop(
     it: &ValidatedIterateUntilNode,
     current: &MaterializedNode,
     materialized: &BTreeMap<PlanNodeId, MaterializedNode>,
-    predicates: &[plasm_runtime::row_predicate::BoundRowPredicate],
+    predicates: &[plasm_runtime::row_predicate::PreparedRowPredicate],
     occurrence: usize,
 ) -> Result<
     (

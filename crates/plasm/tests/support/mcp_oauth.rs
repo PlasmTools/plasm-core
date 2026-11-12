@@ -152,7 +152,10 @@ pub(crate) async fn oauth_test_postgres_url() -> Option<(Option<ContainerDrop>, 
 }
 
 fn dnd5e_registry() -> Arc<CgsRegistry> {
-    let dir = Path::new(&std::env::var("CARGO_MANIFEST_DIR").expect("test runner must set CARGO_MANIFEST_DIR")).join("../../apis/dnd5e");
+    let dir = Path::new(
+        &std::env::var("CARGO_MANIFEST_DIR").expect("test runner must set CARGO_MANIFEST_DIR"),
+    )
+    .join("../../apis/dnd5e");
     let cgs = Arc::new(load_schema(&dir).expect("dnd5e schema"));
     Arc::new(CgsRegistry::from_pairs(vec![(
         "dnd5e".into(),

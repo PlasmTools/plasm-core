@@ -193,7 +193,7 @@ pub struct PlanDataInput {
     pub cardinality: InputCardinality,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct ValidatedPlanDataInput {
     pub(crate) node: PlanNodeId,
     pub(crate) alias: InputAlias,
@@ -211,7 +211,7 @@ pub struct PlanExprIr {
 }
 
 /// Admitted executable expression. Review and execution share this structure; source text is erased.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize)]
 pub struct ValidatedPlanExprIr {
     pub(crate) expr: Expr,
     pub(crate) projection: Option<Vec<String>>,
@@ -380,7 +380,7 @@ impl Plan<ValidatedPlanState> {
 }
 
 /// Proof-bearing Plan artifact consumed by dry-run and execution.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize)]
 pub struct ValidatedPlanArtifact {
     artifact: Plan<ValidatedPlanState>,
     topo: Vec<PlanNodeId>,
@@ -406,7 +406,7 @@ impl ValidatedPlanArtifact {
 
 pub type ValidatedPlan = ValidatedPlanArtifact;
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize)]
 pub enum ValidatedPlanNode {
     Surface(ValidatedSurfaceNode),
     Data(ValidatedDataNode),
@@ -420,7 +420,7 @@ pub enum ValidatedPlanNode {
     Capture(ValidatedCaptureNode),
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize)]
 pub struct ValidatedMapBodyNode {
     pub(crate) id: PlanNodeId,
     pub(crate) body: Box<plasm_core::plasm_monad::CorrelatedBody>,
@@ -429,7 +429,7 @@ pub struct ValidatedMapBodyNode {
     pub(crate) uses_result: Vec<PlanResultUse>,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize)]
 pub struct ValidatedCaptureNode {
     pub(crate) id: PlanNodeId,
     pub(crate) entity: QualifiedEntityKey,
@@ -437,7 +437,7 @@ pub struct ValidatedCaptureNode {
     pub(crate) singleton: bool,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize)]
 pub struct ValidatedSurfaceNode {
     pub(crate) id: PlanNodeId,
     pub(crate) kind: PlanNodeKind,
@@ -455,8 +455,9 @@ pub struct ValidatedSurfaceNode {
     pub(crate) pushed_read_budget: Option<crate::plan_read_bounds::PushedReadBudget>,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize)]
 pub struct ValidatedDataNode {
+    pub(crate) recorded_output: Option<plasm_core::plasm_monad::RecordedOutputOrigin>,
     pub(crate) id: PlanNodeId,
     pub(crate) effect_class: EffectClass,
     pub(crate) result_shape: ResultShape,
@@ -465,7 +466,7 @@ pub struct ValidatedDataNode {
     pub(crate) uses_result: Vec<PlanResultUse>,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize)]
 pub struct ValidatedDeriveNode {
     pub(crate) kind: DeriveKind,
     pub(crate) id: PlanNodeId,
@@ -479,7 +480,7 @@ pub struct ValidatedDeriveNode {
     pub(crate) uses_result: Vec<PlanResultUse>,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize)]
 pub struct ValidatedComputeNode {
     pub(crate) source_node: PlanNodeId,
     pub(crate) id: PlanNodeId,
@@ -490,7 +491,7 @@ pub struct ValidatedComputeNode {
     pub(crate) uses_result: Vec<PlanResultUse>,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize)]
 pub struct ValidatedForEachNode {
     pub(crate) id: PlanNodeId,
     pub(crate) effect_class: EffectClass,
@@ -506,7 +507,7 @@ pub struct ValidatedForEachNode {
 }
 
 /// PLP-8 state iterator: observe seed, step+reobserve until predicate or bound exhaustion.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize)]
 pub struct ValidatedIterateUntilNode {
     pub(crate) id: PlanNodeId,
     pub(crate) effect_class: EffectClass,
@@ -527,7 +528,7 @@ pub struct ValidatedIterateUntilNode {
     pub(crate) approval: Option<String>,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize)]
 pub struct ValidatedRelationTraversalNode {
     pub(crate) id: PlanNodeId,
     pub(crate) effect_class: EffectClass,
@@ -538,7 +539,7 @@ pub struct ValidatedRelationTraversalNode {
     pub(crate) pushed_read_budget: Option<crate::plan_read_bounds::PushedReadBudget>,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize)]
 pub struct ValidatedPlanRelationTraversal {
     pub(crate) source: PlanNodeId,
     pub(crate) relation: RelationName,
@@ -806,6 +807,8 @@ impl fmt::Display for PlanNodeKind {
 /// One typed node in the Plan DAG.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct PlanNode {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub recorded_output: Option<plasm_core::plasm_monad::RecordedOutputOrigin>,
     pub id: String,
     pub kind: PlanNodeKind,
     #[serde(default, skip_serializing_if = "Option::is_none")]

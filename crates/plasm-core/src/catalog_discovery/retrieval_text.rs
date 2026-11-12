@@ -55,6 +55,64 @@ pub(super) struct RenderedMeaning {
     pub text: String,
 }
 
+/// Authored meanings of this capability's declared observations only. Shared
+/// with fielded retrieval so output evidence does not migrate into input prose.
+pub fn capability_observation_meaning(
+    cgs: &crate::CGS,
+    cap: &CapabilitySchema,
+) -> Result<String, super::CatalogDiscoveryError> {
+    let entity = cgs.entities.get(&cap.domain).ok_or_else(|| {
+        super::CatalogDiscoveryError::CapabilityEntityMissing {
+            capability: cap.name.to_string(),
+            entity: cap.domain.to_string(),
+        }
+    })?;
+    Ok(observation_meaning(cgs, cap, entity)?)
+}
+
+fn observation_meaning(
+    cgs: &crate::CGS,
+    cap: &CapabilitySchema,
+    entity: &EntityDef,
+) -> Result<String, RetrievalTextError> {
+    let mut observed = Narrative::default();
+    for name in &cap.provides {
+        if let Some(field) = entity.fields.get(name.as_str()) {
+            let value = field.named_value(cgs)?;
+            if !field.description.is_empty() || !value.description.is_empty() {
+                observed.push(value_meaning(
+                    cgs,
+                    value,
+                    Some(&field.description),
+                    &mut BTreeSet::new(),
+                )?);
+            }
+        }
+    }
+    Ok(observed.finish())
+}
+
+/// Exact declared materializer uses, without restating input/output definitions.
+/// Shared by retrieval prose and the canonical decision projection.
+pub fn capability_relation_uses(
+    cgs: &crate::CGS,
+    cap: &CapabilitySchema,
+) -> Result<BTreeSet<String>, super::CatalogDiscoveryError> {
+    let entity = cgs.entities.get(&cap.domain).ok_or_else(|| {
+        super::CatalogDiscoveryError::CapabilityEntityMissing {
+            capability: cap.name.to_string(),
+            entity: cap.domain.to_string(),
+        }
+    })?;
+    Ok(SemanticView {
+        cgs,
+        capability: cap,
+        entity,
+        inputs: cap.inputs.clone(),
+    }
+    .relation_uses())
+}
+
 pub(super) fn render(
     cgs: &crate::CGS,
     cap: &CapabilitySchema,
@@ -195,26 +253,11 @@ impl SemanticView<'_> {
             }
             None => {}
         }
-        let mut observed = Narrative::default();
-        for name in &cap.provides {
-            // A relevance projection describes only declared observations with
-            // authored meaning. The full typed output contract remains in CGS.
-            if let Some(field) = self.entity.fields.get(name.as_str()) {
-                let value = field.named_value(self.cgs)?;
-                if !field.description.is_empty() || !value.description.is_empty() {
-                    observed.push(value_meaning(
-                        self.cgs,
-                        value,
-                        Some(&field.description),
-                        &mut BTreeSet::new(),
-                    )?);
-                }
-            }
-        }
-        if !observed.0.is_empty() {
+        let observed = observation_meaning(self.cgs, cap, self.entity)?;
+        if !observed.is_empty() {
             prose.push(format!(
                 "The result exposes the following information. {}",
-                observed.finish()
+                observed
             ));
         }
         Ok(prose.finish())
@@ -489,6 +532,40 @@ mod tests {
                 .join("../../fixtures/schemas/discovery_value_roles"),
         )
         .unwrap()
+    }
+
+    #[test]
+    fn narrative_projection_flattens_input_identity_but_retains_requiredness() {
+        let cgs = fixture();
+        let original = cgs.capabilities["record_get"].clone();
+        let mut renamed = original.clone();
+        let InputType::Object { fields, .. } =
+            &mut renamed.inputs.arguments.as_mut().unwrap().input_type
+        else {
+            panic!("abstract fixture must have object arguments");
+        };
+        fields[0].name = "different_binding".into();
+        let before = render(&cgs, &original, &cgs.entities["Record"]).unwrap();
+        let after = render(&cgs, &renamed, &cgs.entities["Record"]).unwrap();
+        // Diagnostic proof of current information loss, not a desired invariant:
+        // catalogue field identities differ, but discovery cannot distinguish them.
+        assert_ne!(
+            serde_json::to_value(&original.inputs).unwrap(),
+            serde_json::to_value(&renamed.inputs).unwrap()
+        );
+        assert_eq!(before.operation, after.operation);
+        let InputType::Object { fields, .. } =
+            &mut renamed.inputs.arguments.as_mut().unwrap().input_type
+        else {
+            unreachable!()
+        };
+        fields[0].required = true;
+        assert_ne!(
+            before.operation,
+            render(&cgs, &renamed, &cgs.entities["Record"])
+                .unwrap()
+                .operation
+        );
     }
 
     proptest::proptest! {

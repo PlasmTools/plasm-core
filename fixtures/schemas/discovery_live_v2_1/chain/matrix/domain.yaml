@@ -1,0 +1,148 @@
+{
+  "version": 1,
+  "entry_id": "matrix",
+  "http_backend": "http://127.0.0.1:9",
+  "auth": {
+    "scheme": "none"
+  },
+  "values": {
+    "blank": {
+      "type": "string",
+      "description": "Blank plate material for preparing an embossing pattern."
+    },
+    "pattern": {
+      "type": "string",
+      "description": "Embossing pattern consumed by the embossing operation."
+    },
+    "plate": {
+      "type": "string",
+      "description": "Finished embossed plate."
+    },
+    "invoice": {
+      "type": "string",
+      "description": "Accounting invoice number identifying a billed service."
+    }
+  },
+  "entities": {
+    "Blank": {
+      "id_field": "value",
+      "description": "Blank plate material for preparing an embossing pattern.",
+      "fields": {
+        "value": {
+          "value_ref": "blank",
+          "required": true
+        }
+      }
+    },
+    "Pattern": {
+      "id_field": "value",
+      "description": "Embossing pattern consumed by the embossing operation.",
+      "fields": {
+        "value": {
+          "value_ref": "pattern",
+          "required": true
+        }
+      }
+    },
+    "Plate": {
+      "id_field": "value",
+      "description": "Finished embossed plate.",
+      "fields": {
+        "value": {
+          "value_ref": "plate",
+          "required": true
+        }
+      }
+    },
+    "Invoice": {
+      "id_field": "value",
+      "description": "Accounting invoice number identifying a billed service.",
+      "fields": {
+        "value": {
+          "value_ref": "invoice",
+          "required": true
+        }
+      }
+    }
+  },
+  "capabilities": {
+    "blank_read": {
+      "entity": "Blank",
+      "kind": "get",
+      "description": "Read blank plate material for embossing.",
+      "receiver": {
+        "kind": "none"
+      },
+      "provides": [
+        "value"
+      ],
+      "output": {
+        "type": "entity",
+        "entity_type": "Blank"
+      }
+    },
+    "pattern_prepare": {
+      "entity": "Pattern",
+      "kind": "action",
+      "description": "Prepare an embossing pattern from blank plate material; preserve the original material.",
+      "arguments": {
+        "input_type": {
+          "type": "object",
+          "fields": [
+            {
+              "name": "input0",
+              "value_ref": "blank",
+              "required": true
+            }
+          ]
+        }
+      },
+      "provides": [
+        "value"
+      ],
+      "output": {
+        "type": "entity",
+        "entity_type": "Pattern"
+      }
+    },
+    "plate_emboss": {
+      "entity": "Plate",
+      "kind": "action",
+      "description": "Emboss a finished plate using an embossing pattern.",
+      "arguments": {
+        "input_type": {
+          "type": "object",
+          "fields": [
+            {
+              "name": "input0",
+              "value_ref": "pattern",
+              "required": true
+            }
+          ]
+        }
+      },
+      "provides": [
+        "value"
+      ],
+      "output": {
+        "type": "entity",
+        "entity_type": "Plate"
+      }
+    },
+    "invoice_read": {
+      "entity": "Invoice",
+      "kind": "get",
+      "description": "Read accounting invoice numbers for billed services.",
+      "receiver": {
+        "kind": "none"
+      },
+      "provides": [
+        "value"
+      ],
+      "output": {
+        "type": "entity",
+        "entity_type": "Invoice"
+      }
+    }
+  }
+}

@@ -28,13 +28,18 @@ use plasm_runtime::{ExecutionConfig, ExecutionEngine, ExecutionMode};
 use uuid::Uuid;
 
 fn matrix_fixture_dir() -> PathBuf {
-    PathBuf::from(std::env::var("CARGO_MANIFEST_DIR").expect("test runner must set CARGO_MANIFEST_DIR")).join("../../fixtures/schemas/plasm_language_matrix")
+    PathBuf::from(
+        std::env::var("CARGO_MANIFEST_DIR").expect("test runner must set CARGO_MANIFEST_DIR"),
+    )
+    .join("../../fixtures/schemas/plasm_language_matrix")
 }
 
 fn matrix_federated_host() -> Arc<plasm_agent_core::server_state::PlasmHostState> {
     let cgs_a = Arc::new(load_schema_dir(&matrix_fixture_dir()).expect("plasm_language_matrix"));
-    let views_dir = PathBuf::from(std::env::var("CARGO_MANIFEST_DIR").expect("test runner must set CARGO_MANIFEST_DIR"))
-        .join("../../fixtures/schemas/plasm_language_matrix_views");
+    let views_dir = PathBuf::from(
+        std::env::var("CARGO_MANIFEST_DIR").expect("test runner must set CARGO_MANIFEST_DIR"),
+    )
+    .join("../../fixtures/schemas/plasm_language_matrix_views");
     let cgs_b = Arc::new(load_schema_dir(&views_dir).expect("plasm_language_matrix_views"));
     let reg = CgsRegistry::from_pairs(vec![
         (
@@ -169,8 +174,17 @@ async fn concurrent_plasm_context_merge_seeds() {
         .as_ref()
         .expect("exposure")
         .symbol_map_arc();
-    assert_eq!(map.entity_sym_for("langmatrix_a", "LangItem"), "e1");
-    assert_eq!(map.entity_sym_for("langmatrix_b", "LangItem"), "e2");
+    let first = map.entity_sym_for("langmatrix_a", "LangItem");
+    let second = map.entity_sym_for("langmatrix_b", "LangItem");
+    assert_ne!(first, second);
+    assert_eq!(
+        map.entry_id_for_entity_symbol(&first).as_deref(),
+        Some("langmatrix_a")
+    );
+    assert_eq!(
+        map.entry_id_for_entity_symbol(&second).as_deref(),
+        Some("langmatrix_b")
+    );
 }
 
 #[tokio::test]
@@ -200,7 +214,7 @@ async fn concurrent_mcp_plasm_dry_two_commits() {
         st: Arc<plasm_agent_core::server_state::PlasmHostState>,
         es: Arc<ExecuteSession>,
         out: plasm_agent_core::http_execute::ApplyCapabilitySeedsOutcome,
-        sym: &'static str,
+        sym: &str,
     ) -> (
         plasm_core::PlanCommitRef,
         plasm_agent_core::plasm_plan_run::DryPlasmPlanEvaluation,
@@ -231,9 +245,16 @@ async fn concurrent_mcp_plasm_dry_two_commits() {
         (pc, dry)
     }
 
+    let map = es
+        .teaching_exposure
+        .as_ref()
+        .expect("exposure")
+        .symbol_map_arc();
+    let first = map.entity_sym_for("langmatrix_a", "LangItem");
+    let second = map.entity_sym_for("langmatrix_b", "LangItem");
     let ((pc1, dry1), (pc2, dry2)) = tokio::join!(
-        register_dry(Arc::clone(&st), Arc::clone(&es), out.clone(), "e1"),
-        register_dry(Arc::clone(&st), Arc::clone(&es), out, "e2"),
+        register_dry(Arc::clone(&st), Arc::clone(&es), out.clone(), &first),
+        register_dry(Arc::clone(&st), Arc::clone(&es), out, &second),
     );
     assert_ne!(pc1.as_str(), pc2.as_str());
     verify_plan_commit_id(&es, &pc1, compute_plan_commit_id_from_dry(&dry1)).expect("pc1 verifies");
@@ -274,7 +295,7 @@ async fn concurrent_disjoint_plasm_run() {
         st: Arc<plasm_agent_core::server_state::PlasmHostState>,
         es: Arc<ExecuteSession>,
         out: plasm_agent_core::http_execute::ApplyCapabilitySeedsOutcome,
-        entity: &'static str,
+        entity: &str,
     ) -> Result<
         plasm_agent_core::plasm_plan_run::PlasmPlanRunResult,
         plasm_agent_core::run_delivery::LiveRunError,
@@ -316,9 +337,16 @@ async fn concurrent_disjoint_plasm_run() {
     let st2 = Arc::clone(&st);
     let es2 = Arc::clone(&es);
     let out2 = out.clone();
+    let map = es
+        .teaching_exposure
+        .as_ref()
+        .expect("exposure")
+        .symbol_map_arc();
+    let first = map.entity_sym_for("langmatrix_a", "LangItem");
+    let second = map.entity_sym_for("langmatrix_b", "LangItem");
     let (r1, r2) = tokio::join!(
-        run_one(Arc::clone(&st), Arc::clone(&es), out.clone(), "e1"),
-        run_one(st2, es2, out2, "e2"),
+        run_one(Arc::clone(&st), Arc::clone(&es), out.clone(), &first),
+        run_one(st2, es2, out2, &second),
     );
 
     for r in [&r1, &r2] {

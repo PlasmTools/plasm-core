@@ -1192,6 +1192,7 @@ fn expand_wave_emits_parent_relation_edge_for_langitem_summary() {
     let mut exp =
         TeachingExposureSession::new_with_intent_delta(&cgs, "langmatrix", &["LangItem"], delta1);
     let slots_before = exp.surface.slots.clone();
+    let entities_before = exp.to_symbol_map().exposed_entity_symbol_rows().len();
     let cgs_arc = std::sync::Arc::new(cgs.clone());
     let delta2 = crate::capability_exposure::explicit_entity_capability_surface(
         &cgs,
@@ -1200,11 +1201,11 @@ fn expand_wave_emits_parent_relation_edge_for_langitem_summary() {
     )
     .expect("explicit fixture capability exposure");
     exp.expose_surface(&[&cgs], cgs_arc, "langmatrix", &["LangSummary"], delta2);
-    let added = exp.qualified_entities_since(1);
+    let added = exp.qualified_entities_since(entities_before);
     let new_relation_slots = exp.relation_edge_delta_slots(&slots_before, &added);
     exp.admit_relation_edge_slots_for_render(&[&cgs], &new_relation_slots);
     assert!(
-        new_relation_slots.iter().any(|slot| {
+        slots_before.iter().any(|slot| {
             matches!(
                 slot,
                 ExposureSlotKey::Relation {
@@ -1213,7 +1214,7 @@ fn expand_wave_emits_parent_relation_edge_for_langitem_summary() {
                 } if source.entity.as_str() == "LangItem" && relation.as_str() == "summary"
             )
         }),
-        "expand should add LangItem.summary relation slot"
+        "selected parent Get should expose the embedded summary relation"
     );
     let delta = pipeline.render_teaching_exposure_delta_with_edges(
         &cgs,
@@ -1222,13 +1223,10 @@ fn expand_wave_emits_parent_relation_edge_for_langitem_summary() {
         &new_relation_slots,
         None,
     );
+    assert!(!new_relation_slots.iter().any(|slot| matches!(slot, ExposureSlotKey::Relation { source, relation } if source.entity.as_str() == "LangItem" && relation.as_str() == "summary")));
     assert!(
-        delta.contains("relation e1 → e2"),
-        "delta should teach parent hop: {delta}"
-    );
-    assert!(
-        delta.contains(".r"),
-        "delta should include opaque relation symbol: {delta}"
+        !delta.contains("summary · Summary object embedded"),
+        "already taught relation must not be repeated: {delta}"
     );
 }
 
@@ -2138,7 +2136,7 @@ fn python_reference_includes_composition_contract() {
         "immutable DAG",
         "Return rowsets; tuples=results",
         "None",
-        "completed/unknown receipts",
+        "Unknown outcomes are not evidence that nothing happened",
     ] {
         assert!(
             reference.contains(required),
@@ -2205,7 +2203,7 @@ fn plasm_tool_prefix_preserves_python_admission_and_review() {
             "missing early protocol instruction: {required}"
         );
     }
-    assert!(full.contains("completed writes"));
+    assert!(super::PLASM_RUN_TOOL_DESCRIPTION.contains("completed writes"));
     assert!(full.contains("same logical session"));
 }
 
@@ -2311,8 +2309,7 @@ fn plasm_tool_teaches_semantic_operation_receivers() {
         "float(value) is not a null check",
         "filtering rows into a separate list does not narrow their declared fields",
         "Raise on missing required data",
-        "completed/unknown receipts",
-        "New programs: in-session, no resume/rollback",
+        "Unknown outcomes are not evidence that nothing happened",
     ] {
         assert!(card.contains(law), "missing receiver law: {law}");
     }
@@ -2950,7 +2947,7 @@ fn return_projection_teaching_includes_every_authored_field() {
 fn static_grammar_includes_symbols_only_rule() {
     let tool = super::PLASM_TOOL_DESCRIPTION;
     let reference = include_str!("assets/python-plasm-dag.txt");
-    assert!(tool.contains("wire names"));
+    assert!(reference.contains("wire names"));
     assert!(reference.contains("session-local/append-only"));
     assert!(reference.contains("Declarations: eN/mN/rN/vN"));
     assert!(reference.contains("Literal-ID for/one-clause comprehensions"));
@@ -3531,6 +3528,7 @@ fn prompt_stats_fixture_cgs() -> CGS {
     let tmpl = serde_json::json!({"method": "GET", "path": [{"type": "literal", "value": "x"}]});
     for (name, domain) in [("book_query", "Book"), ("shelf_query", "Shelf")] {
         cgs.add_capability(CapabilitySchema {
+            no_effect_rejections: Vec::new(),
             name: name.into(),
             description: String::new(),
             kind: CapabilityKind::Query,
@@ -3659,6 +3657,7 @@ fn p_slot_redefinition_fixture_cgs(id_desc_a: &str, id_desc_b: &str) -> CGS {
         .unwrap();
         let cap_name: String = format!("{}_get", name.to_lowercase());
         cgs.add_capability(CapabilitySchema {
+            no_effect_rejections: Vec::new(),
             name: cap_name.into(),
             description: String::new(),
             kind: CapabilityKind::Get,

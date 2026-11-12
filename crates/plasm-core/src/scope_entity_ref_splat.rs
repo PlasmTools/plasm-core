@@ -228,6 +228,7 @@ mod tests {
             true,
         );
         CapabilitySchema {
+            no_effect_rejections: Vec::new(),
             name: CapabilityName::from("repo_forks_query"),
             description: String::new(),
             kind: CapabilityKind::Query,

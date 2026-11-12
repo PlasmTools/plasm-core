@@ -1,0 +1,72 @@
+{
+  "version": 1,
+  "entry_id": "matrix",
+  "http_backend": "http://127.0.0.1:9",
+  "auth": {
+    "scheme": "none"
+  },
+  "values": {
+    "level": {
+      "type": "string",
+      "description": "Measured liquid depth in the reservoir, in millimetres."
+    },
+    "invoice": {
+      "type": "string",
+      "description": "Accounting invoice number identifying a billed service."
+    }
+  },
+  "entities": {
+    "Level": {
+      "id_field": "value",
+      "description": "Measured liquid depth in the reservoir, in millimetres.",
+      "fields": {
+        "value": {
+          "value_ref": "level",
+          "required": true
+        }
+      }
+    },
+    "Invoice": {
+      "id_field": "value",
+      "description": "Accounting invoice number identifying a billed service.",
+      "fields": {
+        "value": {
+          "value_ref": "invoice",
+          "required": true
+        }
+      }
+    }
+  },
+  "capabilities": {
+    "depth_read": {
+      "entity": "Level",
+      "kind": "get",
+      "description": "Read the current measured reservoir liquid depth without changing the reservoir.",
+      "receiver": {
+        "kind": "none"
+      },
+      "provides": [
+        "value"
+      ],
+      "output": {
+        "type": "entity",
+        "entity_type": "Level"
+      }
+    },
+    "invoice_read": {
+      "entity": "Invoice",
+      "kind": "get",
+      "description": "Read accounting invoice numbers for billed services.",
+      "receiver": {
+        "kind": "none"
+      },
+      "provides": [
+        "value"
+      ],
+      "output": {
+        "type": "entity",
+        "entity_type": "Invoice"
+      }
+    }
+  }
+}

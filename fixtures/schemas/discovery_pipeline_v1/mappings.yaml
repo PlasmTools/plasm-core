@@ -1,0 +1,21 @@
+sample_read: { method: GET, path: [{type: literal, value: sample}] }
+prepare:
+  method: POST
+  path: [{type: literal, value: prepare}]
+  body: {type: object, fields: [[sample, {type: var, name: sample}]]}
+fire:
+  method: POST
+  path: [{type: literal, value: fire}]
+  body: {type: object, fields: [[batch, {type: var, name: batch}]]}
+cabinet_read: { method: GET, path: [{type: literal, value: cabinet}] }
+specimen_read: { method: GET, path: [{type: literal, value: specimen}] }
+stamp:
+  method: POST
+  path: [{type: literal, value: stamp}]
+  body: {type: object, fields: [[specimen, {type: var, name: specimen}]]}
+publish:
+  method: POST
+  path: [{type: literal, value: bulletin}]
+  body: {type: object, fields: [[text, {type: var, name: text}]]}
+routine: { method: POST, path: [{type: literal, value: routine}] }
+record: { method: POST, path: [{type: literal, value: record}] }

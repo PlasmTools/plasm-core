@@ -125,6 +125,14 @@ pub(super) fn assert_supplemental(id: &str, run: &PlasmPlanRunResult) {
         .collect();
     let titles = ["Alpha", "Beta", "Gamma", "Delta", "Epsilon"];
     let expected = match id {
+        "static_literal_local_read_collection" => json!([
+            {"value": [{"code":"AAA", "id":"i1", "owner":"alice", "recorded_at":"2026-01-01T00:00:00+00:00", "score":10, "status":"draft", "team_key":"eng", "title":"Alpha"}]},
+            {"value": [{"code":"BBB", "id":"i2", "owner":"bob", "score":20, "title":"Beta"}]}
+        ]),
+        "static_literal_rowset_comprehension" => {
+            json!([{"value":[{"id":"i1"}]},{"value":[{"id":"i2"}]}])
+        }
+        "static_literal_rowset_relation" => json!([{"value":[{"id":"l1","note":"line-a"},{"id":"l2","note":"line-b"}]},{"value":[{"id":"l1","note":"line-a"},{"id":"l2","note":"line-b"}]}]),
         "complete_search_then_group_by_team_key" => json!([{"team_key":"eng", "count":1}]),
         "static_literal_comprehension" | "static_literal_local_comprehension" => {
             json!([{"ids": ["i1", "i2"]}])

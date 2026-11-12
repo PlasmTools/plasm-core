@@ -1,5 +1,5 @@
 {
-  "checksum": "fd8e15cf08b7035f9bf99ce2d8ca63c426af0b8a7cab65975c0468a66b069c17",
+  "checksum": "f17d243b8f99d9ee05589f12815700cf016d7afafb964318a3424e0639cb06ab",
   "conditions": {
     "aarch64-apple-darwin": [
       "aarch64-apple-darwin"
@@ -32574,7 +32574,7 @@
       ],
       "version": "0.2.3"
     },
-    "plasm 0.5.5": {
+    "plasm 0.6.1": {
       "common_attrs": {
         "crate_features": [
           "default",
@@ -32748,9 +32748,9 @@
           }
         }
       ],
-      "version": "0.5.5"
+      "version": "0.6.1"
     },
-    "plasm-agent-core 0.5.5": {
+    "plasm-agent-core 0.6.1": {
       "build_script_attrs": {},
       "common_attrs": {
         "crate_features": [
@@ -33013,9 +33013,9 @@
           }
         }
       ],
-      "version": "0.5.5"
+      "version": "0.6.1"
     },
-    "plasm-catalog 0.5.5": {
+    "plasm-catalog 0.6.1": {
       "common_attrs": {
         "crate_features": [
           "default",
@@ -33083,9 +33083,9 @@
           }
         }
       ],
-      "version": "0.5.5"
+      "version": "0.6.1"
     },
-    "plasm-cli 0.5.5": {
+    "plasm-cli 0.6.1": {
       "common_attrs": {
         "deps": [
           {
@@ -33143,9 +33143,9 @@
       "name": "plasm-cli",
       "repository": null,
       "targets": [],
-      "version": "0.5.5"
+      "version": "0.6.1"
     },
-    "plasm-cml 0.5.5": {
+    "plasm-cml 0.6.1": {
       "common_attrs": {
         "crate_features": [
           "default",
@@ -33225,9 +33225,9 @@
           }
         }
       ],
-      "version": "0.5.5"
+      "version": "0.6.1"
     },
-    "plasm-compile 0.5.5": {
+    "plasm-compile 0.6.1": {
       "common_attrs": {
         "crate_features": [
           "default",
@@ -33291,9 +33291,9 @@
           }
         }
       ],
-      "version": "0.5.5"
+      "version": "0.6.1"
     },
-    "plasm-core 0.5.5": {
+    "plasm-core 0.6.1": {
       "common_attrs": {
         "crate_features": [
           "default",
@@ -33417,9 +33417,9 @@
           }
         }
       ],
-      "version": "0.5.5"
+      "version": "0.6.1"
     },
-    "plasm-discovery-eval 0.5.5": {
+    "plasm-discovery-eval 0.6.1": {
       "common_attrs": {
         "deps": [
           {
@@ -33457,9 +33457,9 @@
           }
         }
       ],
-      "version": "0.5.5"
+      "version": "0.6.1"
     },
-    "plasm-e2e 0.5.5": {
+    "plasm-e2e 0.6.1": {
       "common_attrs": {
         "crate_features": [
           "default"
@@ -33550,9 +33550,9 @@
           }
         }
       ],
-      "version": "0.5.5"
+      "version": "0.6.1"
     },
-    "plasm-eval 0.5.5": {
+    "plasm-eval 0.6.1": {
       "common_attrs": {
         "crate_features": [
           "default"
@@ -33621,9 +33621,9 @@
           }
         }
       ],
-      "version": "0.5.5"
+      "version": "0.6.1"
     },
-    "plasm-eval-common 0.5.5": {
+    "plasm-eval-common 0.6.1": {
       "common_attrs": {
         "deps": [
           {
@@ -33653,9 +33653,9 @@
           }
         }
       ],
-      "version": "0.5.5"
+      "version": "0.6.1"
     },
-    "plasm-evidence 0.5.5": {
+    "plasm-evidence 0.6.1": {
       "common_attrs": {
         "crate_features": [
           "default",
@@ -33713,9 +33713,9 @@
           }
         }
       ],
-      "version": "0.5.5"
+      "version": "0.6.1"
     },
-    "plasm-mock 0.5.5": {
+    "plasm-mock 0.6.1": {
       "common_attrs": {
         "deps": [
           {
@@ -33777,9 +33777,9 @@
           }
         }
       ],
-      "version": "0.5.5"
+      "version": "0.6.1"
     },
-    "plasm-node 0.5.5": {
+    "plasm-node 0.6.1": {
       "build_script_attrs": {
         "deps": [
           {
@@ -33866,9 +33866,9 @@
           }
         }
       ],
-      "version": "0.5.5"
+      "version": "0.6.1"
     },
-    "plasm-otel 0.5.5": {
+    "plasm-otel 0.6.1": {
       "common_attrs": {
         "crate_features": [
           "default",
@@ -33944,9 +33944,9 @@
           }
         }
       ],
-      "version": "0.5.5"
+      "version": "0.6.1"
     },
-    "plasm-repl 0.5.5": {
+    "plasm-repl 0.6.1": {
       "common_attrs": {
         "crate_features": [
           "default"
@@ -33995,9 +33995,9 @@
           }
         }
       ],
-      "version": "0.5.5"
+      "version": "0.6.1"
     },
-    "plasm-runtime 0.5.5": {
+    "plasm-runtime 0.6.1": {
       "common_attrs": {
         "deps": [
           {
@@ -34151,9 +34151,9 @@
           }
         }
       ],
-      "version": "0.5.5"
+      "version": "0.6.1"
     },
-    "plasm-sdk-transport 0.5.5": {
+    "plasm-sdk-transport 0.6.1": {
       "common_attrs": {
         "deps": [
           {
@@ -34195,9 +34195,9 @@
           }
         }
       ],
-      "version": "0.5.5"
+      "version": "0.6.1"
     },
-    "plasm-server 0.5.5": {
+    "plasm-server 0.6.1": {
       "common_attrs": {
         "crate_features": [
           "default",
@@ -34281,9 +34281,9 @@
       "name": "plasm-server",
       "repository": null,
       "targets": [],
-      "version": "0.5.5"
+      "version": "0.6.1"
     },
-    "plasm-trace 0.5.5": {
+    "plasm-trace 0.6.1": {
       "common_attrs": {
         "deps": [
           {
@@ -34321,9 +34321,9 @@
           }
         }
       ],
-      "version": "0.5.5"
+      "version": "0.6.1"
     },
-    "plasm-trace-sink 0.5.5": {
+    "plasm-trace-sink 0.6.1": {
       "common_attrs": {
         "deps": [
           {
@@ -34440,9 +34440,9 @@
           }
         }
       ],
-      "version": "0.5.5"
+      "version": "0.6.1"
     },
-    "plasm-trace-wire 0.5.5": {
+    "plasm-trace-wire 0.6.1": {
       "common_attrs": {
         "deps": [
           {
@@ -34480,9 +34480,9 @@
           }
         }
       ],
-      "version": "0.5.5"
+      "version": "0.6.1"
     },
-    "plasm-workflow-codegen 0.5.5": {
+    "plasm-workflow-codegen 0.6.1": {
       "common_attrs": {
         "deps": [
           {
@@ -34514,7 +34514,7 @@
           }
         }
       ],
-      "version": "0.5.5"
+      "version": "0.6.1"
     },
     "plotters 0.3.7": {
       "common_attrs": {
@@ -56977,28 +56977,28 @@
   ],
   "workspace_members": {
     "beavuck-hermit 1.4.27": "vendor/hermit",
-    "plasm 0.5.5": "crates/plasm",
-    "plasm-agent-core 0.5.5": "crates/plasm-agent-core",
-    "plasm-catalog 0.5.5": "crates/plasm-catalog",
-    "plasm-cli 0.5.5": "crates/plasm-cli",
-    "plasm-cml 0.5.5": "crates/plasm-cml",
-    "plasm-compile 0.5.5": "crates/plasm-compile",
-    "plasm-core 0.5.5": "crates/plasm-core",
-    "plasm-discovery-eval 0.5.5": "crates/plasm-discovery-eval",
-    "plasm-e2e 0.5.5": "crates/plasm-e2e",
-    "plasm-eval 0.5.5": "crates/plasm-eval",
-    "plasm-eval-common 0.5.5": "crates/plasm-eval-common",
-    "plasm-evidence 0.5.5": "crates/plasm-evidence",
-    "plasm-mock 0.5.5": "crates/plasm-mock",
-    "plasm-node 0.5.5": "crates/plasm-node",
-    "plasm-otel 0.5.5": "crates/plasm-otel",
-    "plasm-repl 0.5.5": "crates/plasm-repl",
-    "plasm-runtime 0.5.5": "crates/plasm-runtime",
-    "plasm-sdk-transport 0.5.5": "crates/plasm-sdk-transport",
-    "plasm-server 0.5.5": "crates/plasm-server",
-    "plasm-trace 0.5.5": "crates/plasm-trace",
-    "plasm-trace-sink 0.5.5": "crates/plasm-trace-sink",
-    "plasm-trace-wire 0.5.5": "crates/plasm-trace-wire",
-    "plasm-workflow-codegen 0.5.5": "crates/plasm-workflow-codegen"
+    "plasm 0.6.1": "crates/plasm",
+    "plasm-agent-core 0.6.1": "crates/plasm-agent-core",
+    "plasm-catalog 0.6.1": "crates/plasm-catalog",
+    "plasm-cli 0.6.1": "crates/plasm-cli",
+    "plasm-cml 0.6.1": "crates/plasm-cml",
+    "plasm-compile 0.6.1": "crates/plasm-compile",
+    "plasm-core 0.6.1": "crates/plasm-core",
+    "plasm-discovery-eval 0.6.1": "crates/plasm-discovery-eval",
+    "plasm-e2e 0.6.1": "crates/plasm-e2e",
+    "plasm-eval 0.6.1": "crates/plasm-eval",
+    "plasm-eval-common 0.6.1": "crates/plasm-eval-common",
+    "plasm-evidence 0.6.1": "crates/plasm-evidence",
+    "plasm-mock 0.6.1": "crates/plasm-mock",
+    "plasm-node 0.6.1": "crates/plasm-node",
+    "plasm-otel 0.6.1": "crates/plasm-otel",
+    "plasm-repl 0.6.1": "crates/plasm-repl",
+    "plasm-runtime 0.6.1": "crates/plasm-runtime",
+    "plasm-sdk-transport 0.6.1": "crates/plasm-sdk-transport",
+    "plasm-server 0.6.1": "crates/plasm-server",
+    "plasm-trace 0.6.1": "crates/plasm-trace",
+    "plasm-trace-sink 0.6.1": "crates/plasm-trace-sink",
+    "plasm-trace-wire 0.6.1": "crates/plasm-trace-wire",
+    "plasm-workflow-codegen 0.6.1": "crates/plasm-workflow-codegen"
   }
 }

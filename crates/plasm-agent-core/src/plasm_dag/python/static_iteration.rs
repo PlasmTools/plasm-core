@@ -1,4 +1,4 @@
-//! Bounded, literal-only elaboration of Python iteration in the outer DAG.
+//! Bounded elaboration over literal values and statically constructed read rowsets.
 //! No user Python is executed while constructing the plan.
 use super::*;
 use crate::plasm_plan::PlanDataInput;
@@ -6,11 +6,17 @@ use std::collections::BTreeMap;
 
 const MAX_STATIC_EXPANSIONS: usize = 256;
 
-struct LiteralIds {
-    items: Vec<PyExpr>,
+struct StaticItems {
+    items: Vec<StaticItem>,
 }
 
-impl LiteralIds {
+#[derive(Clone)]
+pub(super) enum StaticItem {
+    Literal(PyExpr),
+    Rowset(String),
+}
+
+impl StaticItems {
     fn literal(iter: &PyExpr) -> Option<Self> {
         let items: Vec<PyExpr> = match iter {
             PyExpr::List(list) => list.elts.to_vec(),
@@ -25,7 +31,9 @@ impl LiteralIds {
                 return None;
             }
         }
-        Some(Self { items })
+        Some(Self {
+            items: items.into_iter().map(StaticItem::Literal).collect(),
+        })
     }
 }
 
@@ -84,7 +92,7 @@ impl Lower<'_> {
         {
             return Ok(false);
         }
-        let items = self.literal_ids(&iteration.iter)?;
+        let items = self.static_items(&iteration.iter)?;
         let mut inputs = BTreeMap::new();
         let values = self.static_values(&label, items, element, &mut inputs)?;
         let binding = self.fresh();
@@ -101,13 +109,13 @@ impl Lower<'_> {
     fn static_values(
         &mut self,
         label: &str,
-        items: LiteralIds,
+        items: StaticItems,
         expression: &PyExpr,
         inputs: &mut BTreeMap<String, PlanDataInput>,
     ) -> Result<Vec<PlasmDataValue>, PythonLoweringError> {
         let mut values = Vec::with_capacity(items.items.len());
         for item in items.items {
-            self.bind_static_item(label, &item)?;
+            self.bind_static_item(label, &item, expression)?;
             // A sibling's captures are not this element's dependencies. Merge
             // ports only after its expression has been lowered in isolation.
             let mut element_inputs = BTreeMap::new();
@@ -117,21 +125,50 @@ impl Lower<'_> {
         Ok(values)
     }
 
-    fn literal_ids(&self, iter: &PyExpr) -> Result<LiteralIds, PythonLoweringError> {
+    fn static_items(&self, iter: &PyExpr) -> Result<StaticItems, PythonLoweringError> {
         let known = match iter {
             PyExpr::Name(name) => self
                 .static_sequences
                 .get(self.scoped_binding(name.id.as_str()))
                 .cloned()
-                .map(|items| LiteralIds { items }),
-            _ => LiteralIds::literal(iter),
+                .map(|items| StaticItems { items }),
+            _ => StaticItems::literal(iter),
         };
         known.ok_or_else(|| at(iter, PythonSourceError::StaticIterationRequiresLiteralIds))
     }
 
     pub(super) fn remember_static_sequence(&mut self, binding: &str, expression: &PyExpr) {
-        if let Ok(ids) = self.literal_ids(expression) {
+        if let Ok(ids) = self.static_items(expression) {
             self.static_sequences.insert(binding.to_owned(), ids.items);
+            return;
+        }
+        let Some(node) = self.state.get(binding) else {
+            return;
+        };
+        let super::super::types::DagNodeSource::Derive {
+            value: PlasmDataValue::Array { items },
+            ..
+        } = &node.source
+        else {
+            return;
+        };
+        let rowsets = items
+            .iter()
+            .map(|item| {
+                let PlasmDataValue::NodeSymbol { node, path, .. } = item else {
+                    return None;
+                };
+                if !path.is_empty()
+                    || self.binding_relation_owner(node).is_none()
+                    || self.state.get(node)?.source.is_write_or_side_effect()
+                {
+                    return None;
+                }
+                Some(StaticItem::Rowset(node.clone()))
+            })
+            .collect::<Option<Vec<_>>>();
+        if let Some(rowsets) = rowsets {
+            self.static_sequences.insert(binding.to_owned(), rowsets);
         }
     }
 
@@ -159,19 +196,30 @@ impl Lower<'_> {
         Ok(label.to_owned())
     }
 
-    fn bind_static_item(&mut self, label: &str, item: &PyExpr) -> Result<(), PythonLoweringError> {
+    fn bind_static_item(
+        &mut self,
+        label: &str,
+        item: &StaticItem,
+        site: &PyExpr,
+    ) -> Result<(), PythonLoweringError> {
         self.static_expansions += 1;
         if self.static_expansions > MAX_STATIC_EXPANSIONS {
             return Err(at(
-                item,
+                site,
                 PythonSourceError::StaticExpansionLimit {
                     max: MAX_STATIC_EXPANSIONS,
                     actual: self.static_expansions,
                 },
             ));
         }
-        let binding = self.fresh();
-        self.expr(item, Some(&binding))?;
+        let binding = match item {
+            StaticItem::Literal(item) => {
+                let binding = self.fresh();
+                self.expr(item, Some(&binding))?;
+                binding
+            }
+            StaticItem::Rowset(binding) => binding.clone(),
+        };
         self.frame.names.insert(label.to_owned(), binding);
         self.callbacks.remove(label);
         Ok(())
@@ -191,9 +239,9 @@ impl Lower<'_> {
             ));
         }
         let label = self.static_target(&statement.target)?;
-        let items = self.literal_ids(&statement.iter)?;
+        let items = self.static_items(&statement.iter)?;
         for item in items.items {
-            self.bind_static_item(&label, &item)?;
+            self.bind_static_item(&label, &item, &statement.iter)?;
             for body in &statement.body {
                 if self.statement(body)?.is_some() {
                     return Err(at(body, PythonSourceError::StaticIterationReturn));
@@ -227,7 +275,7 @@ impl Lower<'_> {
             ));
         }
         let label = self.static_target(&generator.target)?;
-        let items = self.literal_ids(&generator.iter)?;
+        let items = self.static_items(&generator.iter)?;
         let previous = self.frame.names.get(&label).cloned();
         let previous_callback = self.callbacks.get(&label).cloned();
         let values = self.static_values(&label, items, &comprehension.elt, inputs)?;

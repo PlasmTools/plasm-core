@@ -30,7 +30,7 @@ pub(crate) fn mcp_initialize_result() -> InitializeResult {
     result.server_info = Implementation::new("plasm", crate::release_version::RELEASE_VERSION);
     result.server_info.title = Some("Plasm agent".into());
     result.server_info.description = Some(
-        "**`session_mode: \"new\"`** once per workflow with current **`intent`**, then **`\"extend\"`** + **`logical_session_ref`** with the current need. **`plasm`** (plan) and **`plasm_run`** (execute) reuse the same ref. **`intent`** extends a lossless provenance chain per turn; current intent drives retrieval, ancestry informs judgment. Intent does not select the session.".into(),
+        "**`session_mode: \"new\"`** once per workflow with current **`intent`**, then **`\"extend\"`** + **`logical_session_ref`** with the current need. **`plasm`** (plan) and **`plasm_run`** (execute) reuse the same ref. **`intent`** is a self-contained discovery request including relevant conditions and amendments; it drives retrieval and contribution judgment. Prior requests remain lossless audit/search state, not judgment context. Intent does not select the session.".into(),
     );
     result.instructions = Some(plasm_core::prompt_render::MCP_INITIALIZE_WORKFLOW.into());
     result

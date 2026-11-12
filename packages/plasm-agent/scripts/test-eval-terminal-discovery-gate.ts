@@ -23,6 +23,7 @@ const INITIAL_DISCOVERY_TOOL_NAME = "plasm_context";
 let discovered = false;
 const tools = createEvalTerminalTools({
   discoveryCompleted: () => discovered,
+  sealEffectWorkflows: async () => {},
 });
 
 const complete = tools[COMPLETE_TASK_TOOL_NAME]?.execute;
@@ -52,7 +53,7 @@ assert.match(String(await submit({ answer: "42" }, executionOptions)), /submissi
 const ungated = createEvalTerminalTools();
 const ungatedComplete = ungated[COMPLETE_TASK_TOOL_NAME]?.execute;
 assert.ok(ungatedComplete);
-assert.match(String(await ungatedComplete({}, executionOptions)), /claim recorded/);
+await assert.rejects(async () => ungatedComplete({}, executionOptions), /effect-obligation enforcement is unavailable/);
 
 const actionTerminals = createEvalTerminalTools({responseObligation: {resolve: async () => "no_answer"}});
 const conflictingSubmit = actionTerminals[SUBMIT_ANSWER_TOOL_NAME]?.execute;

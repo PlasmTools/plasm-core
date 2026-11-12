@@ -354,17 +354,18 @@ impl PlasmMcpApiKeyAuthProvider {
                 description: "MCP transport API key verification unavailable",
             });
         };
-        let Some(config_id) = mcp_auth.verify_api_key(raw).await else {
+        let Some(credential) = mcp_auth.verify_api_key(raw).await else {
             return Err(AuthenticationError::InvalidToken {
                 description: "invalid or unknown MCP API key",
             });
         };
         let repo = self.mcp_repo()?;
-        let Some(cfg) = repo.get_runtime_config(&config_id).await.map_err(|_| {
-            AuthenticationError::InvalidToken {
+        let Some(cfg) = repo
+            .get_runtime_config(&credential.config_id)
+            .await
+            .map_err(|_| AuthenticationError::InvalidToken {
                 description: "MCP configuration store error",
-            }
-        })?
+            })?
         else {
             return Err(AuthenticationError::InvalidToken {
                 description: "MCP configuration for this API key is not available",
@@ -379,6 +380,7 @@ impl PlasmMcpApiKeyAuthProvider {
             cfg.tenant_id.clone(),
             subject,
             cfg.id,
+            credential.key_id,
         ))
     }
 

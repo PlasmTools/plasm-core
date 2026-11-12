@@ -1,0 +1,81 @@
+{
+  "version": 1,
+  "entry_id": "matrix",
+  "http_backend": "http://127.0.0.1:9",
+  "auth": {
+    "scheme": "none"
+  },
+  "values": {
+    "condition": {
+      "type": "string",
+      "description": "Current pump vibration measurement."
+    },
+    "invoice": {
+      "type": "string",
+      "description": "Accounting invoice number identifying a billed service."
+    }
+  },
+  "entities": {
+    "Condition": {
+      "id_field": "value",
+      "description": "Current pump vibration measurement.",
+      "fields": {
+        "value": {
+          "value_ref": "condition",
+          "required": true
+        }
+      }
+    },
+    "Invoice": {
+      "id_field": "value",
+      "description": "Accounting invoice number identifying a billed service.",
+      "fields": {
+        "value": {
+          "value_ref": "invoice",
+          "required": true
+        }
+      }
+    }
+  },
+  "capabilities": {
+    "vibration_read": {
+      "entity": "Condition",
+      "kind": "get",
+      "description": "Read current pump vibration without changing the pump.",
+      "receiver": {
+        "kind": "none"
+      },
+      "provides": [
+        "value"
+      ],
+      "output": {
+        "type": "entity",
+        "entity_type": "Condition"
+      }
+    },
+    "routine_apply": {
+      "entity": "Condition",
+      "kind": "action",
+      "description": "Apply a configured routine whose domain effect is not specified.",
+      "output": {
+        "type": "side_effect",
+        "description": "Performs an unspecified configured change."
+      }
+    },
+    "invoice_read": {
+      "entity": "Invoice",
+      "kind": "get",
+      "description": "Read accounting invoice numbers for billed services.",
+      "receiver": {
+        "kind": "none"
+      },
+      "provides": [
+        "value"
+      ],
+      "output": {
+        "type": "entity",
+        "entity_type": "Invoice"
+      }
+    }
+  }
+}

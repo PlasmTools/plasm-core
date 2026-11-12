@@ -25,6 +25,8 @@ enum TranslateError {
     ModelMissing,
     #[error("BAML TranslatePlan call failed: {0}")]
     Client(#[source] Box<dyn std::error::Error + Send + Sync>),
+    #[error("program validation host failed: {0}")]
+    Host(#[source] plasm_agent::compilation_error::ExecutionFailure),
     #[error("Python program still needs correction: {feedback}")]
     CorrectionsExhausted { feedback: String },
 }
@@ -60,6 +62,18 @@ pub async fn run_repl(
         session_graph_persistence: None,
         oss_local_filesystem_defaults: false,
     })?;
+    let training = match Box::pin(ReplTraining::initialize(
+        &mut host,
+        Arc::get_mut(&mut session).expect("new session"),
+    ))
+    .await
+    {
+        Ok(training) => training,
+        Err(error) => {
+            eprintln!("Training unavailable: {error}; ordinary authoring continues.");
+            None
+        }
+    };
     println!(
         "{}\nEnter a Python Program, then :plan or :run. :help lists commands.",
         session.prompt()
@@ -85,6 +99,10 @@ pub async fn run_repl(
             let (command, arg) = line.split_once(' ').unwrap_or((&line, ""));
             match command {
                 ":quit" | ":exit" | ":q" => break,
+                ":training" => match &training {
+                    Some(training) => if let Err(error) = Box::pin(training.command(&host, &session, arg.trim())).await { eprintln!("Training: {error}"); },
+                    None => eprintln!("Training unavailable: configure trusted host PLASM_REPL_TRAINING_SUBJECT, PLASM_REPL_TRAINING_CREDENTIAL, PLASM_REPL_TRAINING_TENANT, PLASM_REPL_TRAINING_PROJECT and PLASM_WORKFLOW_DATABASE_URL before starting the REPL."),
+                },
                 ":help" | ":?" => print_help(),
                 ":reset" => source.clear(),
                 ":show" => print!("{source}"),
@@ -146,7 +164,7 @@ pub async fn run_repl(
                 }
                 ":plan" | ":run" => match session.compile(&source).await {
                     Ok(bundle) => {
-                        if execute(&session, &host, &bundle, command == ":run", format).await {
+                        if Box::pin(execute(&session, &host, &bundle, command == ":run", format, training.as_ref())).await {
                             source.clear();
                         }
                     }
@@ -181,21 +199,41 @@ async fn execute(
     bundle: &PlasmCompBundle,
     run: bool,
     format: OutputFormat,
+    training: Option<&ReplTraining>,
 ) -> bool {
-    match plasm_agent::plasm_plan_run::run_plasm_comp_python(
+    if let Some(training) = training {
+        if let Err(error) = Box::pin(training.publish(host, session)).await {
+            eprintln!("Training exposure unavailable: {error}; ordinary execution continues.");
+        }
+    }
+    let execute_id = training
+        .map(|training| training.session_id.as_str())
+        .unwrap_or("local");
+    let execution = Box::pin(plasm_agent::plasm_plan_run::run_plasm_comp_python(
         &session.execute,
         host,
         &session.execute.prompt_hash,
-        "local",
+        execute_id,
         bundle,
         run,
         None,
         None,
         None,
         None,
-    )
-    .await
-    {
+    ));
+    let result = if run && training.is_some() {
+        Box::pin(plasm_agent::workflow_learning::native::observe_execution(
+            host,
+            &session.execute,
+            execute_id,
+            bundle,
+            execution,
+        ))
+        .await
+    } else {
+        execution.await
+    };
+    match result {
         Ok(result) => {
             if run {
                 for step in result.return_steps {
@@ -267,7 +305,10 @@ async fn translate(
         });
         match validate_programs(session, std::slice::from_ref(&plan.text)).await {
             Ok(_) => return Ok((plan.text, turns)),
-            Err(diagnostics) => {
+            Err(plasm_eval::ValidationFailure::Host(error)) => {
+                return Err(TranslateError::Host(error))
+            }
+            Err(plasm_eval::ValidationFailure::Program(diagnostics)) => {
                 feedback = build_correction_feedback(
                     goal,
                     attempt as usize,
@@ -281,5 +322,207 @@ async fn translate(
 }
 
 fn print_help() {
-    println!("Python DAG REPL\nPaste one class derived from Program, preserving indentation. Finish with :plan or :run.\n:plan                  compile and review buffered DAG\n:run                   compile and execute buffered DAG\n:load PATH             replace buffer with a Python file\n:show / :reset         inspect / discard buffered source\n:schema [Entity]       show teaching / extend domain declarations\n:clear                 clear materialized rows; retain symbols\n:mode live|replay|hybrid\n:output json|table|compact\n:llm MODEL | :llm off | :llm attempts N\n:quit\n\nThe outer Program declares a DAG. Deferred formatting uses @compute. No native Plasm syntax is accepted.");
+    println!("Python DAG REPL\nPaste one class derived from Program, preserving indentation. Finish with :plan or :run.\n:plan                  compile and review buffered DAG\n:run                   compile and execute buffered DAG\n:load PATH             replace buffer with a Python file\n:show / :reset         inspect / discard buffered source\n:schema [Entity]       show teaching / extend domain declarations\n:clear                 clear materialized rows; retain symbols\n:mode live|replay|hybrid\n:output json|table|compact\n:llm MODEL | :llm off | :llm attempts N\n:training status | runs | candidates | command FILE | review FILE | candidate REVIEW.HASH\n:quit\n\nThe outer Program declares a DAG. Deferred formatting uses @compute. No native Plasm syntax is accepted.");
+}
+
+/// The process host supplies identity. REPL text cannot create human authority.
+struct ReplTraining {
+    config: plasm_agent::workflow_learning::native::NativeLearningConfig,
+    actor: plasm_agent::workflow_learning::training::TrustedTrainingActor,
+    logical: plasm_agent::session_identity::LogicalSessionId,
+    session_id: String,
+    turns: Vec<String>,
+}
+
+impl ReplTraining {
+    async fn initialize(
+        host: &mut PlasmHostState,
+        session: &mut ProgramSession,
+    ) -> Result<Option<Self>, Box<dyn std::error::Error>> {
+        use plasm_agent::workflow_learning::{
+            model::LibraryScope,
+            native::{NativeLearningConfig, NativeLibraryConfig},
+            training::TrustedTrainingActor,
+        };
+        let names = [
+            "PLASM_REPL_TRAINING_SUBJECT",
+            "PLASM_REPL_TRAINING_CREDENTIAL",
+            "PLASM_REPL_TRAINING_TENANT",
+            "PLASM_REPL_TRAINING_PROJECT",
+            "PLASM_WORKFLOW_DATABASE_URL",
+        ];
+        let values: Vec<_> = names
+            .iter()
+            .map(|name| {
+                std::env::var(name)
+                    .ok()
+                    .filter(|value| !value.trim().is_empty())
+            })
+            .collect();
+        if values.iter().all(Option::is_none) {
+            return Ok(None);
+        }
+        let values = values
+            .into_iter()
+            .collect::<Option<Vec<_>>>()
+            .ok_or("incomplete trusted REPL training configuration")?;
+        let config = NativeLearningConfig::Collect(NativeLibraryConfig {
+            scope: LibraryScope {
+                tenant: values[2].clone(),
+                project: values[3].clone(),
+            },
+            database_url: values[4].clone(),
+            serve_examples: false,
+        });
+        config.validate()?;
+        let actor = TrustedTrainingActor::authenticated(
+            config.scope()?,
+            values[0].clone(),
+            values[1].clone(),
+        )?;
+        let mut staged_host = host.clone();
+        staged_host.oss.workflow_learning = config.learning();
+        let mut staged_execute = session.execute.clone();
+        staged_execute.tenant_scope = values[2].clone();
+        staged_execute.principal_subject = values[0].clone();
+        let logical = plasm_agent::session_identity::LogicalSessionId::new_v4();
+        let training = Self {
+            config,
+            actor,
+            logical,
+            session_id: logical.to_string(),
+            turns: vec!["Local Python authoring session".into()],
+        };
+        Box::pin(training.config.register(
+            &staged_host,
+            &staged_execute,
+            &training.logical.to_string(),
+            &training.session_id,
+            &training.turns,
+        ))
+        .await?;
+        staged_host
+            .workflow_learning
+            .repository()
+            .await?
+            .bind_training_controller(&training.actor, logical)
+            .await?;
+        host.oss.workflow_learning = staged_host.oss.workflow_learning;
+        session.execute = staged_execute;
+        println!("Training session {} is ordinary. Use :training command FILE to request prospective capture.", logical);
+        Ok(Some(training))
+    }
+
+    async fn publish(
+        &self,
+        host: &PlasmHostState,
+        session: &ProgramSession,
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        Box::pin(self.config.publish_exposure(
+            host,
+            &session.execute,
+            &self.logical.to_string(),
+            &self.session_id,
+            &self.turns,
+        ))
+        .await?;
+        Ok(())
+    }
+
+    async fn command(
+        &self,
+        host: &PlasmHostState,
+        session: &ProgramSession,
+        input: &str,
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        use plasm_agent::workflow_learning::training::{
+            TrainingCommand, TrainingCommandEnvelope, TrainingState,
+        };
+        let repo = host.workflow_learning.repository().await?;
+        repo.check_training_controller(&self.actor, self.logical)
+            .await?;
+        let (action, argument) = input.split_once(' ').unwrap_or((input, ""));
+        let output = match action {
+            "status" => serde_json::to_value(repo.training_status(self.actor.scope(), self.logical).await?)?,
+            "runs" => self.config.completed_runs(host, &self.logical.to_string(), "Local Python authoring session").await?,
+            "candidates" => serde_json::to_value(repo.list_training_candidates(self.actor.scope(), self.logical, None, 32).await?)?,
+            "candidate" => {
+                let (review, hash) = argument.trim().split_once('.').ok_or("candidate requires REVIEW_UUID.HASH")?;
+                let reference = plasm_agent::workflow_learning::repository::TrainingCandidateRef { review_ref: plasm_agent::session_identity::LogicalSessionId::parse(review)?.as_uuid(), candidate_hash: hash.into() };
+                if repo.training_candidate_session(self.actor.scope(), &reference).await? != self.logical { return Err("candidate does not belong to this session".into()); }
+                serde_json::to_value(repo.read_training_candidate(self.actor.scope(), &reference).await?)?
+            }
+            "command" => {
+                let command: TrainingCommandEnvelope = serde_json::from_str(&std::fs::read_to_string(argument.trim())?)?;
+                if !repl_training_command_allowed(&command.command) {
+                    return Err("REPL commands request consent or publication; human resolution uses the authenticated approval page".into());
+                }
+                let status = Box::pin(repo.training_command(&self.actor, self.logical, &command)).await?;
+                let request_ref = match &status.training_state {
+                    TrainingState::AwaitingAuthorization { request_ref, .. } => Some(*request_ref),
+                    _ if matches!(command.command, TrainingCommand::RequestCandidateDecision { .. } | TrainingCommand::RequestRelease { .. } | TrainingCommand::RequestRunRelease { .. }) => Some(command.idempotency_key),
+                    _ => None,
+                };
+                if let Some(reference) = request_ref {
+                    if let Ok(base) = std::env::var("PLASM_TRAINING_APPROVAL_BASE_URL") {
+                        println!("Authenticated human review: {}/training/requests/{reference}", base.trim_end_matches('/'));
+                    } else { println!("Pending request {reference}. Configure PLASM_TRAINING_APPROVAL_BASE_URL to display the authenticated review link."); }
+                }
+                serde_json::to_value(status)?
+            }
+            "review" => {
+                let body: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(argument.trim())?)?;
+                let expected_revision = body["expected_revision"].as_u64().ok_or("review requires expected_revision")?;
+                let idempotency_key = plasm_agent::session_identity::LogicalSessionId::parse(body["idempotency_key"].as_str().ok_or("review requires idempotency_key")?)?.as_uuid();
+                let subtasks = serde_json::from_value(body["subtasks"].clone())?;
+                let review = Box::pin(self.config.review(host, &session.execute, &self.logical.to_string(), &self.session_id, plasm_agent::workflow_learning::native::NativeReview { subtasks, actor: self.actor.clone(), expected_revision, idempotency_key })).await?;
+                host.workflow_learning.start_worker();
+                review
+            }
+            _ => return Err("Use :training status | runs | candidates | command FILE | review FILE | candidate REVIEW.HASH".into()),
+        };
+        println!("{}", serde_json::to_string_pretty(&output)?);
+        Ok(())
+    }
+}
+
+fn repl_training_command_allowed(
+    command: &plasm_agent::workflow_learning::training::TrainingCommand,
+) -> bool {
+    use plasm_agent::workflow_learning::training::TrainingCommand;
+    matches!(
+        command,
+        TrainingCommand::Request
+            | TrainingCommand::Stop
+            | TrainingCommand::Resume
+            | TrainingCommand::RequestCandidateDecision { .. }
+            | TrainingCommand::RequestRelease { .. }
+            | TrainingCommand::RequestRunRelease { .. }
+    )
+}
+
+#[cfg(test)]
+mod training_tests {
+    use super::*;
+    use plasm_agent::workflow_learning::training::TrainingCommand;
+    #[test]
+    fn repl_training_commands_cannot_supply_human_decisions() {
+        assert!(repl_training_command_allowed(&TrainingCommand::Request));
+        assert!(repl_training_command_allowed(&TrainingCommand::Stop));
+        let reference = plasm_agent::session_identity::LogicalSessionId::new_v4().as_uuid();
+        assert!(!repl_training_command_allowed(
+            &TrainingCommand::ResolveRequest {
+                request_ref: reference,
+                request_revision: 0,
+                approve: true
+            }
+        ));
+        assert!(!repl_training_command_allowed(
+            &TrainingCommand::ResolveRelease {
+                request_ref: reference,
+                request_revision: 0,
+                approve: true
+            }
+        ));
+    }
 }

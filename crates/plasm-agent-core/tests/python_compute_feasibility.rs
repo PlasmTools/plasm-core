@@ -10,8 +10,11 @@ use std::sync::Arc;
 fn fixture() -> Arc<CGS> {
     Arc::new(
         plasm_core::loader::load_schema_dir(
-            &std::path::Path::new(&std::env::var("CARGO_MANIFEST_DIR").expect("test runner must set CARGO_MANIFEST_DIR"))
-                .join("../../fixtures/schemas/python_dag_slice"),
+            &std::path::Path::new(
+                &std::env::var("CARGO_MANIFEST_DIR")
+                    .expect("test runner must set CARGO_MANIFEST_DIR"),
+            )
+            .join("../../fixtures/schemas/python_dag_slice"),
         )
         .expect("fixture"),
     )

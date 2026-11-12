@@ -10,7 +10,7 @@ use plasm_core::{
         EmbeddingProfile, DISCOVERY_RENDERER_VERSION,
     },
     catalog_il::{CatalogManifest, CatalogSetManifest},
-    prerequisites::{CapabilityRef, DeploymentBindings},
+    prerequisites::DeploymentBindings,
     CGS,
 };
 use serde_json::{json, Value};
@@ -90,12 +90,7 @@ pub fn pack(path: &Path, mut cgs: CGS) -> CGS {
     cgs
 }
 
-pub async fn seed_model_boundary(
-    store: &DiscoveryStore,
-    generation: &str,
-    cgs: &CGS,
-    turns: &[&str],
-) {
+pub async fn seed_model_boundary(store: &DiscoveryStore, generation: &str, turns: &[&str]) {
     let url = std::env::var("PLASM_DISCOVERY_DATABASE_URL").expect("isolated test database");
     let pool = sqlx::PgPool::connect(&url).await.unwrap();
     let intent = *turns.last().unwrap();
@@ -105,46 +100,41 @@ pub async fn seed_model_boundary(
     vector[0] = 1.0;
     sqlx::query("INSERT INTO discovery_intent_embeddings VALUES ($1,$2,$3::text::vector) ON CONFLICT DO NOTHING")
         .bind(key).bind(serde_json::to_value(profile).unwrap()).bind(serde_json::to_string(&vector).unwrap()).execute(&pool).await.unwrap();
-    pool.close().await;
     let allowed = DiscoveryAuthorization::catalogs(BTreeSet::from(["matrix".into()]));
-    let retrieval = store.retrieve(generation, intent, &allowed).await.unwrap();
     let provenance = IntentProvenance::from_turns(turns.iter().map(|s| (*s).to_owned())).unwrap();
-    let model = plasm_agent_core::discovery_matcher::JEV_MODEL;
-    for batch in
-        plasm_agent_core::discovery_matcher::issue_batches(model, &provenance, &retrieval).unwrap()
-    {
-        let body: Value = serde_json::from_str(batch.body()).unwrap();
-        let answers: BTreeMap<_,_> = body["questions"].as_object().unwrap().keys().map(|key| (key.clone(),json!({"type":"choice","choice":"relevant","confidence":1.0,"probabilities":{"relevant":1.0,"unrelated":0.0,"uncertain":0.0}}))).collect();
-        store
-            .store_selector_envelope(
-                batch.cache_key(),
-                &json!({"model":model,"provider":"TypeSafe","answers":answers}).to_string(),
-            )
-            .await
-            .unwrap();
-    }
-    let available: BTreeSet<_> = cgs
-        .capabilities
-        .keys()
-        .map(|cap| CapabilityRef {
-            catalog: "matrix".into(),
-            capability: cap.to_string(),
-        })
-        .collect();
-    let support = plasm_agent_core::discovery_support::issue(
-        model,
-        &provenance,
-        &available,
-        &BTreeMap::from([("matrix".into(), cgs.clone())]),
-    )
-    .unwrap();
-    let body: Value = serde_json::from_str(&support.body).unwrap();
-    let answers: BTreeMap<_,_> = body["questions"].as_object().unwrap().keys().map(|key| (key.clone(),json!({"type":"choice","choice":"established","confidence":1.0,"probabilities":{"established":1.0,"not_established":0.0,"undetermined":0.0}}))).collect();
-    store
-        .store_selector_envelope(
-            &support.cache_key,
-            &json!({"model":model,"provider":"TypeSafe","answers":answers}).to_string(),
-        )
+    let model = plasm_agent_core::discovery_matcher::RELEVANCE_MODEL;
+    let (catalogs, deployments) = store
+        .load_discovery_generation(generation, &allowed)
         .await
         .unwrap();
+    let recall = store
+        .retrieve(generation, intent, &allowed, &Default::default())
+        .await
+        .unwrap();
+    plasm_agent_core::discovery_matcher::online::select_retrieved(
+        plasm_agent_core::discovery_matcher::online::SearchContext {
+            model, intent: &provenance, generation, catalogs: &catalogs,
+            deployments: &deployments, allowed: &allowed,
+            exposed: &[], visits: &Default::default(),
+        },
+        &recall,
+        plasm_agent_core::discovery_matcher::operations::OperationSet::from_excerpts(intent, &[intent.to_owned()]).unwrap(),
+        |batch| {
+        let pool = pool.clone();
+        async move {
+        let body: Value = serde_json::from_str(batch.body()).unwrap();
+        let answers: BTreeMap<_, _> = body["questions"]
+            .as_object()
+            .unwrap()
+            .keys()
+            .map(|key| (key.clone(), json!({"type":"choice","choice":"relevant","confidence":1.0,"probabilities":{"relevant":1.0,"uncertain":0.0,"unrelated":0.0}})))
+            .collect();
+        let raw = json!({"model":model,"provider":"OpenAI","answers":answers}).to_string();
+        sqlx::query("INSERT INTO discovery_selector_cache (cache_key, envelope) VALUES ($1,$2) ON CONFLICT (cache_key) DO NOTHING")
+            .bind(batch.cache_key()).bind(&raw).execute(&pool)
+            .await
+            .unwrap();
+        Ok(raw)
+    }}).await.unwrap();
+    pool.close().await;
 }

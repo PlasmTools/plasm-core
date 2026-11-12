@@ -11,6 +11,28 @@ fn execution_mode_label(mode: ExecutionMode) -> &'static str {
 }
 
 impl ExecutionEngine {
+    /// Dispatch one already-compiled mutation under its original entity,
+    /// operation and optional request-identity scopes.
+    async fn dispatch_compiled_mutation(
+        &self,
+        compiled: &CompiledOperation,
+        entity: &str,
+        operation: OperationIdentity,
+        identity: Option<&super::request_identity::RequestIdentity>,
+    ) -> Result<(serde_json::Value, Option<String>), RuntimeError> {
+        let dispatch = with_dispatch_entity(
+            Some(entity),
+            super::mutation_evidence::with_mutation_identity(
+                operation,
+                self.execute_operation_full(compiled),
+            ),
+        );
+        match identity {
+            Some(identity) => identity.scope(dispatch).await,
+            None => dispatch.await,
+        }
+    }
+
     /// Execute a create expression (no target ID — creates a new resource)
     pub(crate) async fn execute_create(
         &self,
@@ -19,43 +41,11 @@ impl ExecutionEngine {
         mat: &mut SessionMaterialization,
         mode: ExecutionMode,
     ) -> Result<ExecutionResult, RuntimeError> {
-        let capability = cgs
-            .get_capability(create.capability.as_str())
-            .ok_or_else(|| RuntimeError::CapabilityNotFound {
-                capability: create.capability.to_string(),
-                entity: create.entity.to_string(),
-            })?;
-
-        let capability_template = compiled_capability_template(capability)?;
-
-        let payload = if let Some(schema) = &capability.inputs.payload {
-            InvokeInputPayload::lift(&create.input.to_value(), &schema.input_type, cgs)
-        } else {
-            create.input.clone()
-        };
-
-        let input = match capability.inputs.payload.as_ref() {
-            Some(schema) => plasm_core::normalize_structured_string_inputs(
-                payload.to_value(),
-                &schema.input_type,
-                cgs,
-            ),
-            None => payload.to_value(),
-        };
-
-        let input = plasm_core::prepare_create_capability_input(capability, create, input, cgs);
-
-        let mut env = CmlEnv::new();
-        env.insert("input".to_string(), input.clone());
-        if let Value::Object(ref map) = input {
-            // Full input overlay: path/query/body vars resolve from the same object (no
-            // separate path-var harvest — that duplicated this loop).
-            for (k, v) in map {
-                env.insert(k.clone(), v.clone());
-            }
-        }
-        normalize_cml_env_inputs(&mut env, cgs, capability)?;
-        plasm_core::apply_entity_ref_scope_splat(&mut env, cgs, capability)?;
+        let (capability, mut env) = super::mutation_prepare::create(create, cgs)?;
+        let catalog = super::session::compiled_catalog()?;
+        let capability_template = catalog
+            .capability(capability.name.as_str())
+            .map_err(RuntimeError::from)?;
 
         apply_preflight_steps(self, capability, cgs, mat, mode, &mut env, None, true).await?;
 
@@ -72,22 +62,22 @@ impl ExecutionEngine {
 
         merge_plasm_execute_session_env(&mut env);
 
-        let compiled = compile_operation_dispatch(&capability_template, &env)?;
+        let compiled = compile_operation_dispatch(capability_template, &env)?;
 
         match mode {
             ExecutionMode::Live => {
                 ensure_mutating_operation(&compiled, "create")?;
-                let http_res = with_dispatch_entity(
-                    Some(create.entity.as_str()),
-                    super::mutation_evidence::with_mutation_identity(
+                let http_res = self
+                    .dispatch_compiled_mutation(
+                        &compiled,
+                        create.entity.as_str(),
                         OperationIdentity {
                             entry_id: create.catalog_entry_id.as_deref().unwrap_or("").into(),
                             capability: create.capability.to_string(),
                         },
-                        self.execute_operation_full(&compiled),
-                    ),
-                )
-                .await;
+                        None,
+                    )
+                    .await;
                 let (response, _) = match http_res {
                     Ok(v) => v,
                     Err(e) => {
@@ -104,7 +94,7 @@ impl ExecutionEngine {
                     }
                 };
                 let response = narrow_http_graphql_response_for_entity_decode(
-                    &capability_template,
+                    capability_template,
                     response,
                     &env,
                 )?;
@@ -186,58 +176,33 @@ impl ExecutionEngine {
         mat: &mut SessionMaterialization,
         mode: ExecutionMode,
     ) -> Result<ExecutionResult, RuntimeError> {
-        let capability = cgs
-            .get_capability(delete.capability.as_str())
-            .ok_or_else(|| RuntimeError::CapabilityNotFound {
-                capability: delete.capability.to_string(),
-                entity: delete.target.entity_type.to_string(),
-            })?;
-
-        let capability_template = compiled_capability_template(capability)?;
-
-        let mut env = CmlEnv::new();
-        let target_ent = cgs
-            .get_entity(delete.target.entity_type.as_str())
-            .ok_or_else(|| RuntimeError::EntityUnknown {
-                entity: delete.target.entity_type.to_string(),
-            })?;
-        let input_for_env = super::compile_preflight::targeted_call_input(delete, capability, cgs);
-        let mut overlay_map = mat.capability_params_for(&delete.target);
-        if let Some(Value::Object(input)) = &input_for_env {
-            overlay_map.extend(input.clone());
-        }
-        let session_overlay = (!overlay_map.is_empty()).then(|| Value::Object(overlay_map));
-        populate_template_path_env(
-            &mut env,
-            capability,
-            &delete.target,
-            plasm_core::IdentityProjectionCtx::Entity(target_ent),
-            session_overlay.as_ref(),
-        )?;
-        if let Some(input) = input_for_env {
-            env.insert("input".to_string(), input);
-        }
-        normalize_cml_env_inputs(&mut env, cgs, capability)?;
-        plasm_core::apply_entity_ref_scope_splat(&mut env, cgs, capability)?;
+        let (capability, _, mut env) = super::mutation_prepare::targeted(delete, cgs, mat)?;
+        let catalog = super::session::compiled_catalog()?;
+        let capability_template = catalog
+            .capability(capability.name.as_str())
+            .map_err(RuntimeError::from)?;
 
         merge_plasm_execute_session_env(&mut env);
 
-        let compiled = compile_operation_dispatch(&capability_template, &env)?;
+        let compiled = compile_operation_dispatch(capability_template, &env)?;
+        // Delete needs neither the template nor its bindings after compilation.
+        drop(env);
+        drop(catalog);
 
         match mode {
             ExecutionMode::Live => {
                 ensure_mutating_operation(&compiled, "delete")?;
-                let (response, _) = with_dispatch_entity(
-                    Some(delete.target.entity_type.as_str()),
-                    super::mutation_evidence::with_mutation_identity(
+                let (response, _) = self
+                    .dispatch_compiled_mutation(
+                        &compiled,
+                        delete.target.entity_type.as_str(),
                         OperationIdentity {
                             entry_id: delete.catalog_entry_id.as_deref().unwrap_or("").into(),
                             capability: delete.capability.to_string(),
                         },
-                        self.execute_operation_full(&compiled),
-                    ),
-                )
-                .await?;
+                        None,
+                    )
+                    .await?;
                 preflight_fibery_command_envelope(&response)?;
 
                 // Remove from cache if present
@@ -293,50 +258,11 @@ impl ExecutionEngine {
         mat: &mut SessionMaterialization,
         mode: ExecutionMode,
     ) -> Result<ExecutionResult, RuntimeError> {
-        let capability = cgs
-            .get_capability(invoke.capability.as_str())
-            .ok_or_else(|| RuntimeError::CapabilityNotFound {
-                capability: invoke.capability.to_string(),
-                entity: invoke.target.entity_type.to_string(),
-            })?;
-
-        let capability_template = compiled_capability_template(capability)?;
-
-        let target_ent = cgs
-            .get_entity(invoke.target.entity_type.as_str())
-            .ok_or_else(|| RuntimeError::EntityUnknown {
-                entity: invoke.target.entity_type.to_string(),
-            })?;
-
-        let input_for_env = super::compile_preflight::targeted_call_input(invoke, capability, cgs);
-
-        let mut env = CmlEnv::new();
-        let mut overlay_map = mat.capability_params_for(&invoke.target);
-        if let Some(Value::Object(input)) = &input_for_env {
-            for (k, v) in input {
-                overlay_map.insert(k.clone(), v.clone());
-            }
-        } else if let Some(input) = &input_for_env {
-            // Non-object invoke payloads still flow via the dedicated `input` env key below.
-            let _ = input;
-        }
-        let overlay = (!overlay_map.is_empty()).then(|| Value::Object(overlay_map));
-        populate_template_path_env(
-            &mut env,
-            capability,
-            &invoke.target,
-            plasm_core::IdentityProjectionCtx::Entity(target_ent),
-            overlay.as_ref(),
-        )?;
-
-        // Aggregate `input` for body: { type: var, name: input }. Object field keys were
-        // already merged into overlay above — do not splat them a second time.
-        if let Some(input) = &input_for_env {
-            env.insert("input".to_string(), input.clone());
-        }
-        normalize_cml_env_inputs(&mut env, cgs, capability)?;
-        plasm_core::apply_entity_ref_scope_splat(&mut env, cgs, capability)?;
-        merge_entity_id_from_into_input_env(&mut env, Some(target_ent), capability);
+        let (capability, _, mut env) = super::mutation_prepare::invoke(invoke, cgs, mat)?;
+        let catalog = super::session::compiled_catalog()?;
+        let capability_template = catalog
+            .capability(capability.name.as_str())
+            .map_err(RuntimeError::from)?;
 
         apply_preflight_steps(
             self,
@@ -363,7 +289,7 @@ impl ExecutionEngine {
 
         merge_plasm_execute_session_env(&mut env);
 
-        let compiled = compile_operation_dispatch(&capability_template, &env)?;
+        let compiled = compile_operation_dispatch(capability_template, &env)?;
 
         match mode {
             ExecutionMode::Live => {
@@ -372,7 +298,7 @@ impl ExecutionEngine {
                     self.request_identity_for(
                         cgs,
                         invoke.target.entity_type.as_str(),
-                        &capability_template,
+                        capability_template,
                         &compiled,
                     )
                     .await?
@@ -380,20 +306,17 @@ impl ExecutionEngine {
                     None
                 };
                 let request_key = request_identity.as_ref().map(|identity| identity.key());
-                let dispatch = with_dispatch_entity(
-                    Some(invoke.target.entity_type.as_str()),
-                    super::mutation_evidence::with_mutation_identity(
+                let http_res = self
+                    .dispatch_compiled_mutation(
+                        &compiled,
+                        invoke.target.entity_type.as_str(),
                         OperationIdentity {
                             entry_id: invoke.catalog_entry_id.as_deref().unwrap_or("").into(),
                             capability: invoke.capability.to_string(),
                         },
-                        self.execute_operation_full(&compiled),
-                    ),
-                );
-                let http_res = match &request_identity {
-                    Some(identity) => identity.scope(dispatch).await,
-                    None => dispatch.await,
-                };
+                        request_identity.as_ref(),
+                    )
+                    .await;
                 let (response, _) = match http_res {
                     Ok(v) => v,
                     Err(e) => {
@@ -410,7 +333,7 @@ impl ExecutionEngine {
                     }
                 };
                 let response = narrow_http_graphql_response_for_entity_decode(
-                    &capability_template,
+                    capability_template,
                     response,
                     &env,
                 )?;

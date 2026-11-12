@@ -18,7 +18,7 @@ use plasm_runtime::{ExecutionResult, RowMatchBudget, TopKSpec};
 pub const DEFAULT_HOST_PAGE_SIZE: usize = 25;
 
 /// Host-only read budget applied to a surface node after plan validation.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
 pub enum PushedReadBudget {
     Limit(usize),
     FilterLimit {

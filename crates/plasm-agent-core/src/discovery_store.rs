@@ -15,13 +15,52 @@ use serde::{Deserialize, Serialize};
 use sqlx::{Connection, Row};
 
 mod database;
+mod search_repository;
+pub(crate) use database::DecisionLease;
 use database::DiscoveryDatabase;
+pub(crate) use search_repository::{BacklogKey, FrontierKey, SearchAdmission, SearchKey};
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
 use std::sync::Arc;
 
 const CHANNEL_LIMIT: i64 = 64;
 pub const CANDIDATE_LIMIT: usize = 2 * CHANNEL_LIMIT as usize;
+
+/// Completed judgments and retained declarations affect recall before either
+/// bounded channel is truncated. They never change authorization or relevance.
+#[derive(Default, Serialize)]
+pub struct RecallFrontier(BTreeMap<String, BTreeMap<String, RecallVisit>>);
+
+#[derive(Default, Serialize)]
+struct RecallVisit {
+    exposed: bool,
+    visits: usize,
+}
+
+impl RecallFrontier {
+    pub fn from_state(exposed: &[CapabilityRef], visits: &BTreeMap<CapabilityRef, usize>) -> Self {
+        let mut frontier = Self::default();
+        for (reference, count) in visits {
+            frontier
+                .0
+                .entry(reference.catalog.clone())
+                .or_default()
+                .entry(reference.capability.clone())
+                .or_default()
+                .visits = *count;
+        }
+        for reference in exposed {
+            frontier
+                .0
+                .entry(reference.catalog.clone())
+                .or_default()
+                .entry(reference.capability.clone())
+                .or_default()
+                .exposed = true;
+        }
+        frontier
+    }
+}
 
 type Result<T> = std::result::Result<T, DiscoveryStoreError>;
 
@@ -105,6 +144,8 @@ impl From<plasm_core::catalog_discovery::CatalogDiscoveryError> for DiscoverySto
 
 #[derive(Debug, thiserror::Error, PartialEq, Eq)]
 pub enum RetrievalValidationError {
+    #[error("retrieval receipts refer to different catalogue generations")]
+    GenerationMismatch,
     #[error("retrieval channel exceeds its admission bound")]
     ChannelBoundExceeded,
     #[error("retrieval channel contains a duplicate candidate identity")]
@@ -210,9 +251,23 @@ pub struct DiscoverySessionPin {
     pub pin_id: String,
 }
 
+/// Store clones share one search index pinned to its catalogue generation.
+type SharedCatalogueSearchCache = Arc<
+    std::sync::Mutex<
+        Option<(
+            String,
+            Arc<crate::discovery_matcher::catalogue_search::CatalogueSearch>,
+        )>,
+    >,
+>;
+
 #[derive(Clone)]
 pub struct DiscoveryStore {
     pool: DiscoveryDatabase,
+    // Store clones (including short-lived Node route services) share cache fills.
+    pub(crate) pending_decisions: std::sync::Arc<crate::discovery_scheduling::DecisionLocks>,
+    pub(crate) provider_budgets: std::sync::Arc<crate::discovery_scheduling::SessionBudgets>,
+    pub(crate) search_index: SharedCatalogueSearchCache,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -223,8 +278,48 @@ pub struct RetrievedCapability {
     pub admissions: BTreeSet<String>,
 }
 
-/// Channel cutoffs are the only admission cutoffs. Identity order is stable;
-/// overlap merges provenance, never suppresses a unique candidate.
+enum RecallChannel {
+    Lexical,
+    Vector,
+}
+
+/// Schedule distinct authored evidence before repeated copies at the same frontier
+/// depth. This is not semantic equivalence: every identity remains eligible and
+/// receives its own downstream validation and judgment. Conditions and typed roles
+/// remain in the exact document key; neither entity nor vocabulary is a priority.
+fn recall_query(channel: RecallChannel) -> String {
+    let (prefix, join, predicate, score) = match channel {
+        RecallChannel::Lexical => (
+            "WITH terms AS (SELECT unnest(tsvector_to_array(to_tsvector('english',$3))) AS term), q AS (SELECT to_tsquery('english',string_agg(quote_literal(term),' | ')) AS query FROM terms),",
+            "CROSS JOIN q",
+            "AND c.search @@ q.query",
+            "ts_rank_cd(c.search,q.query)",
+        ),
+        RecallChannel::Vector => ("WITH", "", "", "-(c.embedding <=> $3::text::vector)"),
+    };
+    format!(
+        "{prefix} scored AS (
+            SELECT c.*,g.entry_id,{score} AS score,
+                COALESCE(($6::jsonb -> g.entry_id -> c.capability ->> 'exposed')::boolean,false) AS exposed,
+                COALESCE(($6::jsonb -> g.entry_id -> c.capability ->> 'visits')::numeric,0) AS visits
+            FROM discovery_capabilities c
+            JOIN discovery_generation_catalogs g USING (revision_id) {join}
+            WHERE g.generation_id=$1 AND g.entry_id=ANY($2)
+              AND (NOT ($5::jsonb ? g.entry_id) OR ($5::jsonb -> g.entry_id) ? c.capability)
+              {predicate}
+        ), scheduled AS (
+            SELECT *,row_number() OVER (
+                PARTITION BY entry_id,document - 'capability',exposed,visits
+                ORDER BY score DESC,revision_id,capability
+            ) AS evidence_rank FROM scored
+        )
+        SELECT * FROM scheduled
+        ORDER BY exposed,visits,evidence_rank,score DESC,revision_id,capability LIMIT $4"
+    )
+}
+
+/// Channel cutoffs are the only admission cutoffs. Interleave ranked channels
+/// before bounded allocation; overlap merges provenance without another quota.
 fn union_candidates(
     lexical: Vec<RetrievedCapability>,
     vector: Vec<RetrievedCapability>,
@@ -232,6 +327,14 @@ fn union_candidates(
     if lexical.len() > CHANNEL_LIMIT as usize || vector.len() > CHANNEL_LIMIT as usize {
         return Err(RetrievalValidationError::ChannelBoundExceeded);
     }
+    let order: Vec<_> = (0..lexical.len().max(vector.len()))
+        .flat_map(|rank| {
+            [&lexical, &vector]
+                .into_iter()
+                .filter_map(move |channel| channel.get(rank))
+        })
+        .map(|candidate| candidate.id.clone())
+        .collect();
     let mut union: BTreeMap<String, RetrievedCapability> = BTreeMap::new();
     for (channel, candidates) in [("lexical", lexical), ("vector", vector)] {
         let mut seen = BTreeSet::new();
@@ -252,10 +355,89 @@ fn union_candidates(
             }
         }
     }
-    Ok(union.into_values().collect())
+    Ok(order
+        .into_iter()
+        .filter_map(|id| union.remove(&id))
+        .collect())
 }
 
 impl RetrievalReceipt {
+    /// Interleave the ranked request and operation recalls without allowing a
+    /// broad request to consume the entire candidate budget. Identity and
+    /// document agreement are checked before any result can enter the union.
+    pub(crate) fn interleave(
+        generation: &str,
+        receipts: Vec<Self>,
+        allowed: &DiscoveryAuthorization,
+    ) -> std::result::Result<Self, RetrievalValidationError> {
+        let mut sources = Vec::with_capacity(receipts.len());
+        let mut lexical_truncated = false;
+        let mut vector_truncated = false;
+        for receipt in receipts {
+            if receipt.generation != generation {
+                return Err(RetrievalValidationError::GenerationMismatch);
+            }
+            receipt.validate(allowed)?;
+            lexical_truncated |= receipt.lexical_truncated;
+            vector_truncated |= receipt.vector_truncated;
+            sources.push(receipt.candidates.into_iter());
+        }
+        let mut candidates: Vec<RetrievedCapability> = Vec::new();
+        let mut seen = BTreeMap::new();
+        let mut first_round = true;
+        loop {
+            let mut advanced = false;
+            for (source_index, source) in sources.iter_mut().enumerate() {
+                let quota = if first_round && source_index == 0 {
+                    2
+                } else {
+                    1
+                };
+                for _ in 0..quota {
+                    let Some(candidate) = source.next() else {
+                        break;
+                    };
+                    advanced = true;
+                    if let Some(&position) = seen.get(&candidate.id) {
+                        let existing: &mut RetrievedCapability = &mut candidates[position];
+                        if existing.reference != candidate.reference
+                            || existing.document != candidate.document
+                        {
+                            return Err(RetrievalValidationError::ChannelDocumentMismatch);
+                        }
+                        existing.admissions.extend(candidate.admissions);
+                    } else if candidates.len() < CANDIDATE_LIMIT {
+                        seen.insert(candidate.id.clone(), candidates.len());
+                        candidates.push(candidate);
+                    } else {
+                        lexical_truncated = true;
+                        vector_truncated = true;
+                    }
+                }
+            }
+            if !advanced {
+                break;
+            }
+            first_round = false;
+        }
+        let result = Self {
+            generation: generation.into(),
+            lexical_count: candidates
+                .iter()
+                .filter(|c| c.admissions.contains("lexical"))
+                .count(),
+            vector_count: candidates
+                .iter()
+                .filter(|c| c.admissions.contains("vector"))
+                .count(),
+            candidates,
+            lexical_truncated,
+            vector_truncated,
+        };
+        result.validate(allowed)?;
+        Ok(result)
+    }
+
     /// Validate the admission boundary independently of downstream selection.
     pub fn validate(
         &self,
@@ -290,6 +472,9 @@ impl RetrievalReceipt {
 #[derive(Debug, Serialize, Deserialize)]
 pub struct RetrievalReceipt {
     pub generation: String,
+    /// Store retrieval returns the recall union; routing returns its judged
+    /// projection plus typed graph nominations. Counts describe this candidate
+    /// set, while truncation flags retain the upstream channel-cutoff evidence.
     pub candidates: Vec<RetrievedCapability>,
     pub lexical_count: usize,
     pub vector_count: usize,
@@ -343,7 +528,12 @@ impl DiscoveryStore {
 
     pub async fn connect(url: &str) -> Result<Self> {
         let pool = DiscoveryDatabase::connect(url).await?;
-        Ok(Self { pool })
+        Ok(Self {
+            pool,
+            pending_decisions: Default::default(),
+            provider_budgets: Default::default(),
+            search_index: Default::default(),
+        })
     }
 
     /// Install the discovery schema explicitly; startup checks extension availability separately.
@@ -621,50 +811,71 @@ impl DiscoveryStore {
         generation: &str,
         intent: &str,
         allowed: &DiscoveryAuthorization,
+        frontier: &RecallFrontier,
     ) -> Result<RetrievalReceipt> {
-        if intent.trim().is_empty() {
+        let mut receipts = self
+            .retrieve_many(generation, &[intent], allowed, frontier)
+            .await?;
+        Ok(receipts.remove(0))
+    }
+
+    /// Embed uncached queries together and run their authorized searches in parallel.
+    pub(crate) async fn retrieve_many(
+        &self,
+        generation: &str,
+        intents: &[&str],
+        allowed: &DiscoveryAuthorization,
+        frontier: &RecallFrontier,
+    ) -> Result<Vec<RetrievalReceipt>> {
+        if intents.iter().any(|intent| intent.trim().is_empty()) {
             return Err(DiscoveryStoreError::EmptyIntent);
         }
         let profile = EmbeddingProfile::default();
-        let cache_key = content_hash(&serde_json::to_vec(&(intent, &profile))?);
-        let cached: Option<String> = sqlx::query_scalar("SELECT embedding::text FROM discovery_intent_embeddings WHERE cache_key=$1 AND profile=$2")
-            .bind(&cache_key).bind(serde_json::to_value(&profile)?).fetch_optional(&mut *self.pool.acquire().await?).await?;
-        let vector = if let Some(cached) = cached {
-            cached
-        } else {
-            let vectors = plasm_catalog::embeddings::EmbeddingClient::from_env()?
-                .embed(&[intent.to_owned()])
+        let profile_json = serde_json::to_value(&profile)?;
+        let mut vectors = Vec::with_capacity(intents.len());
+        let mut missing = Vec::new();
+        for intent in intents {
+            let key = content_hash(&serde_json::to_vec(&(intent, &profile))?);
+            let cached: Option<String> = sqlx::query_scalar("SELECT embedding::text FROM discovery_intent_embeddings WHERE cache_key=$1 AND profile=$2")
+                .bind(&key).bind(&profile_json).fetch_optional(&mut *self.pool.acquire().await?).await?;
+            if cached.is_none() {
+                missing.push((vectors.len(), key, (*intent).to_owned()));
+            }
+            vectors.push(cached);
+        }
+        if !missing.is_empty() {
+            let directory = std::env::var_os("PLASM_DISCOVERY_REJECTION_DIR")
+                .filter(|s| !s.is_empty())
+                .map(Into::into);
+            let mut receipts = plasm_runtime::provider_transport::ProviderReceiptSink::new(
+                "query_embedding",
+                directory,
+            );
+            let inputs: Vec<_> = missing
+                .iter()
+                .map(|(_, _, intent)| intent.clone())
+                .collect();
+            let embeddings = plasm_catalog::embeddings::EmbeddingClient::from_env()?
+                .embed(&inputs, |event| receipts.record(event))
                 .await?;
-            let vector = vector_literal(
-                vectors
-                    .first()
-                    .ok_or(DiscoveryStoreError::MissingIntentEmbedding)?,
-            )?;
-            sqlx::query("INSERT INTO discovery_intent_embeddings VALUES ($1,$2,$3::text::vector) ON CONFLICT DO NOTHING")
-                .bind(&cache_key).bind(serde_json::to_value(&profile)?).bind(&vector).execute(&mut *self.pool.acquire().await?).await?;
-            vector
-        };
-        self.retrieve_vector(generation, intent, &vector, allowed)
-            .await
-    }
-
-    pub async fn cached_selector_envelope(&self, cache_key: &str) -> Result<Option<String>> {
-        sqlx::query_scalar("SELECT envelope FROM discovery_selector_cache WHERE cache_key=$1")
-            .bind(cache_key)
-            .fetch_optional(&mut *self.pool.acquire().await?)
-            .await
-            .map_err(DiscoveryStoreError::from)
-    }
-
-    pub async fn store_selector_envelope(&self, cache_key: &str, envelope: &str) -> Result<()> {
-        sqlx::query(
-            "INSERT INTO discovery_selector_cache (cache_key, envelope) VALUES ($1,$2) ON CONFLICT (cache_key) DO NOTHING",
-        )
-        .bind(cache_key)
-        .bind(envelope)
-        .execute(&mut *self.pool.acquire().await?)
-        .await?;
-        Ok(())
+            if embeddings.len() != missing.len() {
+                return Err(DiscoveryStoreError::MissingIntentEmbedding);
+            }
+            for ((position, key, _), embedding) in missing.into_iter().zip(embeddings) {
+                let vector = vector_literal(&embedding)?;
+                sqlx::query("INSERT INTO discovery_intent_embeddings VALUES ($1,$2,$3::text::vector) ON CONFLICT DO NOTHING")
+                    .bind(&key).bind(&profile_json).bind(&vector).execute(&mut *self.pool.acquire().await?).await?;
+                vectors[position] = Some(vector);
+            }
+        }
+        let vectors = vectors
+            .into_iter()
+            .collect::<Option<Vec<_>>>()
+            .ok_or(DiscoveryStoreError::MissingIntentEmbedding)?;
+        futures::future::try_join_all(intents.iter().zip(vectors.iter()).map(|(intent, vector)| {
+            self.retrieve_vector(generation, intent, vector, allowed, frontier)
+        }))
+        .await
     }
 
     /// Rank within the authorized generation. Typed graph expansion belongs to the routing layer.
@@ -674,13 +885,29 @@ impl DiscoveryStore {
         intent: &str,
         vector: &str,
         allowed: &DiscoveryAuthorization,
+        frontier: &RecallFrontier,
     ) -> Result<RetrievalReceipt> {
         let restrictions = serde_json::to_value(&allowed.capabilities)?;
+        let frontier = serde_json::to_value(frontier)?;
         let allowed: Vec<_> = allowed.catalogs.iter().cloned().collect();
-        let mut lexical = sqlx::query("WITH terms AS (SELECT unnest(tsvector_to_array(to_tsvector('english',$3))) AS term), q AS (SELECT to_tsquery('english',string_agg(quote_literal(term),' | ')) AS query FROM terms) SELECT c.*,g.entry_id FROM discovery_capabilities c JOIN discovery_generation_catalogs g USING (revision_id) CROSS JOIN q WHERE g.generation_id=$1 AND g.entry_id=ANY($2) AND (NOT ($5::jsonb ? g.entry_id) OR ($5::jsonb -> g.entry_id) ? c.capability) AND c.search @@ q.query ORDER BY ts_rank_cd(c.search,q.query) DESC,c.revision_id,c.capability LIMIT $4")
-            .bind(generation).bind(&allowed).bind(intent).bind(CHANNEL_LIMIT + 1).bind(&restrictions).fetch_all(&mut *self.pool.acquire().await?).await?;
-        let mut vector = sqlx::query("SELECT c.*,g.entry_id FROM discovery_capabilities c JOIN discovery_generation_catalogs g USING (revision_id) WHERE g.generation_id=$1 AND g.entry_id=ANY($2) AND (NOT ($5::jsonb ? g.entry_id) OR ($5::jsonb -> g.entry_id) ? c.capability) ORDER BY c.embedding <=> $3::text::vector,c.revision_id,c.capability LIMIT $4")
-            .bind(generation).bind(&allowed).bind(vector).bind(CHANNEL_LIMIT + 1).bind(&restrictions).fetch_all(&mut *self.pool.acquire().await?).await?;
+        let mut lexical = sqlx::query(&recall_query(RecallChannel::Lexical))
+            .bind(generation)
+            .bind(&allowed)
+            .bind(intent)
+            .bind(CHANNEL_LIMIT + 1)
+            .bind(&restrictions)
+            .bind(&frontier)
+            .fetch_all(&mut *self.pool.acquire().await?)
+            .await?;
+        let mut vector = sqlx::query(&recall_query(RecallChannel::Vector))
+            .bind(generation)
+            .bind(&allowed)
+            .bind(vector)
+            .bind(CHANNEL_LIMIT + 1)
+            .bind(&restrictions)
+            .bind(&frontier)
+            .fetch_all(&mut *self.pool.acquire().await?)
+            .await?;
         let lexical_truncated = lexical.len() > CHANNEL_LIMIT as usize;
         let vector_truncated = vector.len() > CHANNEL_LIMIT as usize;
         lexical.truncate(CHANNEL_LIMIT as usize);
@@ -728,7 +955,7 @@ fn candidate_from_row(row: &sqlx::postgres::PgRow) -> Result<RetrievedCapability
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
     use proptest::prelude::*;
 
@@ -743,7 +970,402 @@ mod tests {
         c.id = format!("candidate{id:03}");
         c.reference.capability = format!("read{id}");
         c.document.capability = c.reference.capability.clone();
+        c.document.text_hash = content_hash(c.document.text.as_bytes());
         c
+    }
+
+    #[test]
+    fn operation_recall_interleaves_bounded_authorized_sources() {
+        let broad: Vec<_> = (0..CANDIDATE_LIMIT).map(union_fixture).collect();
+        let specific = union_fixture(CANDIDATE_LIMIT + 1);
+        let allowed =
+            DiscoveryAuthorization::catalogs(BTreeSet::from([specific.reference.catalog.clone()]));
+        let receipt = |candidates| RetrievalReceipt {
+            generation: "generation".into(),
+            candidates,
+            lexical_count: 0,
+            vector_count: 0,
+            lexical_truncated: false,
+            vector_truncated: false,
+        };
+        let result = RetrievalReceipt::interleave(
+            "generation",
+            vec![receipt(broad), receipt(vec![specific.clone()])],
+            &allowed,
+        )
+        .unwrap();
+        assert_eq!(result.candidates.len(), CANDIDATE_LIMIT);
+        assert_eq!(result.candidates[2].reference, specific.reference);
+        assert!(result.lexical_truncated && result.vector_truncated);
+        assert!(matches!(
+            RetrievalReceipt::interleave("other", vec![receipt(vec![specific.clone()])], &allowed),
+            Err(RetrievalValidationError::GenerationMismatch)
+        ));
+        let denied = DiscoveryAuthorization::catalogs(BTreeSet::new());
+        assert!(matches!(
+            RetrievalReceipt::interleave("generation", vec![receipt(vec![specific])], &denied),
+            Err(RetrievalValidationError::UnauthorizedCandidate)
+        ));
+    }
+
+    #[test]
+    fn current_request_keeps_both_leading_recall_channels_ahead_of_fragments() {
+        let current_lexical = union_fixture(0);
+        let current_vector = union_fixture(1);
+        let fragments: Vec<_> = (2..10).map(union_fixture).collect();
+        let allowed = DiscoveryAuthorization::catalogs(BTreeSet::from([current_lexical
+            .reference
+            .catalog
+            .clone()]));
+        let receipt = |candidates| RetrievalReceipt {
+            generation: "generation".into(),
+            candidates,
+            lexical_count: 0,
+            vector_count: 0,
+            lexical_truncated: false,
+            vector_truncated: false,
+        };
+        let mut inputs = vec![receipt(vec![current_lexical, current_vector.clone()])];
+        inputs.extend(
+            fragments
+                .into_iter()
+                .map(|candidate| receipt(vec![candidate])),
+        );
+        let result = RetrievalReceipt::interleave("generation", inputs, &allowed).unwrap();
+        assert_eq!(result.candidates[1].reference, current_vector.reference);
+    }
+
+    #[test]
+    fn recall_frontier_preserves_catalog_identity_and_separates_exposure_from_visits() {
+        let a = CapabilityRef {
+            catalog: "a".into(),
+            capability: "inspect".into(),
+        };
+        let b = CapabilityRef {
+            catalog: "b".into(),
+            capability: "inspect".into(),
+        };
+        let state = RecallFrontier::from_state(
+            std::slice::from_ref(&a),
+            &BTreeMap::from([(a.clone(), 2), (b, 1)]),
+        );
+        let json = serde_json::to_value(state).unwrap();
+        assert_eq!(
+            json["a"]["inspect"],
+            serde_json::json!({"exposed":true,"visits":2})
+        );
+        assert_eq!(
+            json["b"]["inspect"],
+            serde_json::json!({"exposed":false,"visits":1})
+        );
+    }
+
+    #[tokio::test]
+    #[ignore = "requires an isolated PLASM_TEST_POSTGRES_URL with pgvector"]
+    async fn postgres_recall_distinct_evidence_precedes_duplicate_alternatives() {
+        let store = DiscoveryStore::connect(&std::env::var("PLASM_TEST_POSTGRES_URL").unwrap())
+            .await
+            .unwrap();
+        store.migrate().await.unwrap();
+        let mut cgs = prepared("evidence", 1).cgs;
+        let mut duplicate = cgs.capabilities["create"].clone();
+        duplicate.description = "Quartz quartz quartz quartz".into();
+        for i in 0..65 {
+            let name = format!("alternative_{i:03}");
+            let mut capability = duplicate.clone();
+            capability.name = name.clone().into();
+            cgs.capabilities.insert(name.into(), capability);
+        }
+        cgs.capabilities.get_mut("read").unwrap().description = "Quartz".into();
+        duplicate.name = "conditional".into();
+        duplicate.description = "Quartz under an explicit condition".into();
+        cgs.capabilities.insert("conditional".into(), duplicate);
+        let catalog = prepared_cgs("evidence", cgs);
+        let expected_documents: BTreeMap<_, _> = catalog
+            .discovery
+            .capabilities
+            .iter()
+            .map(|c| (c.document.capability.clone(), c.document.clone()))
+            .collect();
+        let generation = store
+            .import(
+                "evidence-proof",
+                vec![catalog],
+                &DeploymentBindings {
+                    bindings: vec![DeploymentBinding {
+                        consumer: CapabilityRef {
+                            catalog: "evidence".into(),
+                            capability: "read".into(),
+                        },
+                        requirement: "scoped_access".into(),
+                        provider_catalog: "evidence".into(),
+                        provider: "value_source".into(),
+                    }],
+                },
+            )
+            .await
+            .unwrap();
+        let permitted: BTreeSet<String> = (1..65)
+            .map(|i| format!("alternative_{i:03}"))
+            .chain(["read".into(), "conditional".into()])
+            .collect();
+        let allowed = DiscoveryAuthorization {
+            catalogs: BTreeSet::from(["evidence".into()]),
+            capabilities: BTreeMap::from([("evidence".into(), permitted.clone())]),
+        };
+        let mut vector = vec![0.0; 1536];
+        vector[0] = 1.0;
+        let vector = vector_literal(&vector).unwrap();
+        let first = store
+            .retrieve_vector(
+                &generation,
+                "quartz",
+                &vector,
+                &allowed,
+                &RecallFrontier::default(),
+            )
+            .await
+            .unwrap();
+        assert_eq!((first.lexical_count, first.vector_count), (64, 64));
+        for target in ["read", "conditional"] {
+            let position = first
+                .candidates
+                .iter()
+                .position(|c| c.reference.capability == target);
+            assert!(position.is_some_and(|p| p < 3),
+                "distinct authored evidence {target} must precede repeated evidence, got {position:?}");
+            assert_eq!(
+                first.candidates[position.unwrap()].admissions,
+                BTreeSet::from(["lexical".into(), "vector".into()])
+            );
+        }
+        assert!(!first
+            .candidates
+            .iter()
+            .any(|c| c.reference.capability == "alternative_000"));
+        let visits = first
+            .candidates
+            .iter()
+            .map(|c| (c.reference.clone(), 1))
+            .collect();
+        let next = store
+            .retrieve_vector(
+                &generation,
+                "quartz",
+                &vector,
+                &allowed,
+                &RecallFrontier::from_state(&[], &visits),
+            )
+            .await
+            .unwrap();
+        let seen: BTreeSet<_> = first
+            .candidates
+            .iter()
+            .chain(&next.candidates)
+            .map(|c| c.reference.capability.clone())
+            .collect();
+        assert_eq!(
+            seen, permitted,
+            "alternatives remain eligible; this is scheduling, not deduplication"
+        );
+        for c in first.candidates.iter().chain(&next.candidates) {
+            assert_eq!(c.document, expected_documents[&c.reference.capability]);
+            assert!(allowed.permits(&c.reference));
+        }
+    }
+
+    #[tokio::test]
+    #[ignore = "requires an isolated PLASM_TEST_POSTGRES_URL with pgvector"]
+    async fn postgres_recall_frontier_advances_both_channels_without_skipping_deferred_candidates()
+    {
+        let store = DiscoveryStore::connect(&std::env::var("PLASM_TEST_POSTGRES_URL").unwrap())
+            .await
+            .unwrap();
+        store.migrate().await.unwrap();
+        let names = (0..65)
+            .map(|i| format!("frontier-{i:03}"))
+            .chain(["frontier-target".into(), "frontier-forbidden".into()])
+            .collect::<Vec<_>>();
+        let catalogs = names.iter().map(|n| prepared(n, 1)).collect();
+        let bindings = DeploymentBindings {
+            bindings: names
+                .iter()
+                .map(|name| DeploymentBinding {
+                    consumer: CapabilityRef {
+                        catalog: name.clone(),
+                        capability: "read".into(),
+                    },
+                    requirement: "scoped_access".into(),
+                    provider_catalog: name.clone(),
+                    provider: "value_source".into(),
+                })
+                .collect(),
+        };
+        let generation = store
+            .import("recall-frontier-proof", catalogs, &bindings)
+            .await
+            .unwrap();
+        let allowed = DiscoveryAuthorization {
+            catalogs: names
+                .iter()
+                .filter(|n| n.as_str() != "frontier-forbidden")
+                .cloned()
+                .collect(),
+            capabilities: names
+                .iter()
+                .map(|n| {
+                    (
+                        n.clone(),
+                        BTreeSet::from([if n == "frontier-target" {
+                            "read"
+                        } else {
+                            "create"
+                        }
+                        .to_owned()]),
+                    )
+                })
+                .collect(),
+        };
+        // Synthetic indexed evidence isolates both channel cutoffs, without a model or task labels.
+        sqlx::query("UPDATE discovery_capabilities c SET search=to_tsvector('english', CASE WHEN capability='read' THEN 'quartz' ELSE 'quartz quartz quartz quartz' END) FROM discovery_generation_catalogs g WHERE c.revision_id=g.revision_id AND g.generation_id=$1")
+            .bind(&generation).execute(&mut *store.pool.acquire().await.unwrap()).await.unwrap();
+        let mut vector = vec![0.0; 1536];
+        vector[0] = 1.0;
+        let vector = vector_literal(&vector).unwrap();
+        let target = CapabilityRef {
+            catalog: "frontier-target".into(),
+            capability: "read".into(),
+        };
+        let first = store
+            .retrieve_vector(
+                &generation,
+                "quartz",
+                &vector,
+                &allowed,
+                &RecallFrontier::default(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(
+            (
+                first.lexical_count,
+                first.vector_count,
+                first.candidates.len()
+            ),
+            (64, 64, 64)
+        );
+        assert!(first.lexical_truncated && first.vector_truncated);
+        assert!(!first.candidates.iter().any(|c| c.reference == target));
+        let first_visits = BTreeMap::from([(first.candidates[0].reference.clone(), 1)]);
+        let partial = store
+            .retrieve_vector(
+                &generation,
+                "quartz",
+                &vector,
+                &allowed,
+                &RecallFrontier::from_state(&[], &first_visits),
+            )
+            .await
+            .unwrap();
+        assert!(
+            !partial.candidates.iter().any(|c| c.reference == target),
+            "63 deferred higher-ranked candidates must remain unvisited, not be skipped as a page"
+        );
+        let visits = first
+            .candidates
+            .iter()
+            .map(|c| (c.reference.clone(), 1))
+            .collect();
+        let next = store
+            .retrieve_vector(
+                &generation,
+                "quartz",
+                &vector,
+                &allowed,
+                &RecallFrontier::from_state(&[], &visits),
+            )
+            .await
+            .unwrap();
+        let found = next
+            .candidates
+            .iter()
+            .find(|c| c.reference == target)
+            .unwrap();
+        assert_eq!(
+            found.admissions,
+            BTreeSet::from(["lexical".into(), "vector".into()])
+        );
+        assert!(
+            next.candidates
+                .iter()
+                .position(|c| c.reference == target)
+                .unwrap()
+                < 2
+        );
+        let exposed = first
+            .candidates
+            .iter()
+            .map(|c| c.reference.clone())
+            .collect::<Vec<_>>();
+        let retained = store
+            .retrieve_vector(
+                &generation,
+                "quartz",
+                &vector,
+                &allowed,
+                &RecallFrontier::from_state(&exposed, &BTreeMap::new()),
+            )
+            .await
+            .unwrap();
+        assert!(
+            retained
+                .candidates
+                .iter()
+                .position(|c| c.reference == target)
+                .unwrap()
+                < 2
+        );
+        for receipt in [&first, &partial, &next, &retained] {
+            assert!(receipt.candidates.len() <= CANDIDATE_LIMIT);
+            assert!(receipt
+                .candidates
+                .iter()
+                .all(|c| allowed.permits(&c.reference)));
+        }
+        let replay = store
+            .retrieve_vector(
+                &generation,
+                "quartz",
+                &vector,
+                &allowed,
+                &RecallFrontier::from_state(&[], &visits),
+            )
+            .await
+            .unwrap();
+        assert_eq!(
+            serde_json::to_value(&next).unwrap(),
+            serde_json::to_value(replay).unwrap()
+        );
+    }
+
+    #[test]
+    fn hybrid_union_preserves_channel_priority_before_bounded_allocation() {
+        let lexical = vec![union_fixture(9), union_fixture(1)];
+        let vector = vec![union_fixture(8), union_fixture(1), union_fixture(7)];
+        let union = union_candidates(lexical.clone(), vector.clone()).unwrap();
+        assert_eq!(
+            union.iter().map(|c| c.id.as_str()).collect::<Vec<_>>(),
+            vec![
+                lexical[0].id.as_str(),
+                vector[0].id.as_str(),
+                lexical[1].id.as_str(),
+                vector[2].id.as_str()
+            ]
+        );
+        assert_eq!(
+            union[2].admissions,
+            BTreeSet::from(["lexical".into(), "vector".into()])
+        );
     }
 
     #[test]
@@ -837,7 +1459,7 @@ mod tests {
     };
     use plasm_core::prerequisites::DeploymentBinding;
 
-    fn prepared(entry: &str, version: u64) -> PreparedCatalog {
+    pub(crate) fn prepared(entry: &str, version: u64) -> PreparedCatalog {
         let mut cgs = plasm_core::loader::load_schema_dir(
             &Path::new(crate::test_manifest_dir())
                 .join("../../fixtures/schemas/prerequisite_matrix"),
@@ -845,6 +1467,11 @@ mod tests {
         .unwrap();
         cgs.bind_registry_entry_id(entry);
         cgs.version = version;
+        prepared_cgs(entry, cgs)
+    }
+
+    fn prepared_cgs(entry: &str, cgs: CGS) -> PreparedCatalog {
+        let version = cgs.version;
         let cgs = cgs.fresh_catalog_digest();
         let hash = cgs.catalog_cgs_hash_hex();
         let capabilities = capability_documents(&cgs)
@@ -958,13 +1585,57 @@ mod tests {
 
     #[tokio::test]
     #[ignore = "requires an isolated PLASM_TEST_POSTGRES_URL with pgvector"]
+    async fn postgres_operation_queries_have_independent_authorized_rankings() {
+        let store = DiscoveryStore::connect(&std::env::var("PLASM_TEST_POSTGRES_URL").unwrap())
+            .await
+            .unwrap();
+        store.migrate().await.unwrap();
+        let mut deployment = bindings();
+        deployment
+            .bindings
+            .retain(|binding| binding.consumer.catalog == "matrix");
+        let generation = store
+            .import(
+                "operation-query-contract",
+                vec![prepared("matrix", 1)],
+                &deployment,
+            )
+            .await
+            .unwrap();
+        let intents = [
+            "Obscure individual read",
+            "Obscure sensor calibration operation",
+        ];
+        for (index, intent) in intents.iter().enumerate() {
+            let profile = EmbeddingProfile::default();
+            let key = content_hash(&serde_json::to_vec(&(intent, &profile)).unwrap());
+            let mut vector = vec![0.0; 1536];
+            vector[1 - index] = 1.0;
+            sqlx::query("INSERT INTO discovery_intent_embeddings VALUES ($1,$2,$3::text::vector) ON CONFLICT DO NOTHING")
+                .bind(key).bind(serde_json::to_value(profile).unwrap()).bind(vector_literal(&vector).unwrap())
+                .execute(&mut *store.pool.acquire().await.unwrap()).await.unwrap();
+        }
+        let allowed = DiscoveryAuthorization::catalogs(BTreeSet::from(["matrix".into()]));
+        let receipts = store
+            .retrieve_many(&generation, &intents, &allowed, &RecallFrontier::default())
+            .await
+            .unwrap();
+        assert_eq!(receipts.len(), 2);
+        for receipt in &receipts {
+            receipt.validate(&allowed).unwrap();
+        }
+        assert_eq!(receipts[0].candidates[0].reference.capability, "read");
+        assert_ne!(receipts[1].candidates[0].reference.capability, "read");
+    }
+
+    #[tokio::test]
+    #[ignore = "requires an isolated PLASM_TEST_POSTGRES_URL with pgvector"]
     async fn postgres_union_routes_every_candidate_through_paged_judgment() {
         let store = DiscoveryStore::connect(&std::env::var("PLASM_TEST_POSTGRES_URL").unwrap())
             .await
             .unwrap();
         store.migrate().await.unwrap();
-        // Enough candidates for multiple relevance pages, while the selected
-        // whole-environment contract remains within its independent byte bound.
+        // Enough candidates for multiple relevance pages.
         // disjoint_channels_retain_all_128_and_reject_corruption covers the union ceiling.
         let catalogs: Vec<_> = (0..32)
             .map(|i| prepared(&format!("union-{i:02}"), 1))
@@ -1000,24 +1671,34 @@ mod tests {
             .bind(key).bind(serde_json::to_value(profile).unwrap()).bind(vector_literal(&vector).unwrap())
             .execute(&mut *store.pool.acquire().await.unwrap()).await.unwrap();
         let allowed = DiscoveryAuthorization::catalogs(names);
-        let retrieval = store.retrieve(&generation, intent, &allowed).await.unwrap();
+        let retrieval = store
+            .retrieve(&generation, intent, &allowed, &RecallFrontier::default())
+            .await
+            .unwrap();
         retrieval.validate(&allowed).unwrap();
         assert!(retrieval.candidates.len() > 32);
         assert!(retrieval.candidates.len() <= 128);
         let provenance =
             crate::intent_provenance::IntentProvenance::from_turns([intent.into()]).unwrap();
-        let batches = crate::discovery_matcher::issue_batches(
-            crate::discovery_matcher::JEV_MODEL,
-            &provenance,
+        let (catalogs, _) = store
+            .load_discovery_generation(&generation, &allowed)
+            .await
+            .unwrap();
+        let evidence = crate::discovery_matcher::evidence::CatalogEvidence::from_catalogs(
             &retrieval,
+            &catalogs,
+            &bindings,
+            &|r| allowed.permits(r),
         )
         .unwrap();
-        assert!(batches.len() > 2);
-        let selected: Vec<_> = retrieval
-            .candidates
-            .iter()
-            .map(|candidate| candidate.reference.clone())
-            .collect();
+        let batches = crate::discovery_matcher::issue_batches(
+            crate::discovery_matcher::RELEVANCE_MODEL,
+            &provenance,
+            &retrieval,
+            &evidence,
+        )
+        .unwrap();
+        assert!(!batches.is_empty());
         for batch in batches {
             let body: serde_json::Value = serde_json::from_str(batch.body()).unwrap();
             let answers: BTreeMap<_, _> = body["questions"]
@@ -1028,59 +1709,19 @@ mod tests {
                     (
                         key.clone(),
                         serde_json::json!({
-                            "type":"choice","choice":"relevant","confidence":1.0,
-                            "probabilities":{"relevant":1.0,"unrelated":0.0,"uncertain":0.0}
+                            "type":"choice","choice":"relevant","confidence":1.0,"probabilities":{"relevant":1.0,"uncertain":0.0,"unrelated":0.0}
                         }),
                     )
                 })
                 .collect();
-            let raw=serde_json::json!({"model":crate::discovery_matcher::JEV_MODEL,"provider":"TypeSafe","answers":answers}).to_string();
+            let raw=serde_json::json!({"model":crate::discovery_matcher::RELEVANCE_MODEL,"provider":"OpenAI","answers":answers}).to_string();
             store
-                .store_selector_envelope(batch.cache_key(), &raw)
+                .searches()
+                .record_decision(batch.cache_key(), &raw)
                 .await
                 .unwrap();
         }
         let expected = retrieval.candidates.len();
-        // Relevance judges every recalled candidate. Whole-environment support
-        // separately judges the selected closure; seed that phase too so this
-        // database integration test cannot call a model provider.
-        let (catalogs, bindings) = store
-            .load_discovery_generation(&generation, &allowed)
-            .await
-            .unwrap();
-        let references = catalogs.iter().map(|(id, cgs)| (id.clone(), cgs)).collect();
-        let closure = plasm_core::prerequisites::prerequisite_closure(
-            &references,
-            &bindings,
-            &selected,
-            &allowed.catalogs,
-        )
-        .unwrap();
-        let available = closure
-            .business
-            .iter()
-            .chain(&closure.prerequisites)
-            .chain(&closure.input_sources)
-            .cloned()
-            .collect();
-        let support = crate::discovery_support::issue(
-            crate::discovery_matcher::JEV_MODEL,
-            &provenance,
-            &available,
-            &catalogs,
-        )
-        .unwrap();
-        let support_raw = serde_json::json!({
-            "model":crate::discovery_matcher::JEV_MODEL,"provider":"TypeSafe",
-            "answers":{"support":{"type":"choice","choice":"established","confidence":1.0,
-                "probabilities":{"established":1.0,"not_established":0.0,"undetermined":0.0}}}
-        })
-        .to_string();
-        crate::discovery_support::decode(&support, &support_raw).unwrap();
-        store
-            .store_selector_envelope(&support.cache_key, &support_raw)
-            .await
-            .unwrap();
         let service = crate::discovery_service::DiscoveryService::cached_test_service(store);
         let receipt = service
             .route(&generation, &provenance, &allowed, &[])
@@ -1088,10 +1729,7 @@ mod tests {
             .unwrap();
         assert_eq!(receipt.matching.matches.len(), expected);
         assert_eq!(receipt.closure.as_ref().unwrap().business.len(), expected);
-        assert_eq!(
-            receipt.environment_support.as_ref().unwrap().choice,
-            crate::discovery_support::SupportChoice::Established
-        );
+
         let wire = serde_json::to_value(&receipt).unwrap();
         assert!(wire.get("reranking").is_none());
         let decoded: crate::discovery_service::RoutingReceipt =
@@ -1240,6 +1878,7 @@ mod tests {
                 "zzzzunmatched",
                 &vector_literal(&vector).unwrap(),
                 &allowed,
+                &RecallFrontier::default(),
             )
             .await
             .unwrap();
@@ -1252,10 +1891,8 @@ mod tests {
             .candidates
             .iter()
             .any(|candidate| candidate.reference.capability == "read"));
-        assert!(receipt
-            .candidates
-            .windows(2)
-            .all(|pair| pair[0].id < pair[1].id));
+        assert_eq!(receipt.candidates[0].reference.capability, "read",
+            "empty-frontier vector recall preserves similarity rank rather than opaque identity order");
         assert!(receipt
             .candidates
             .iter()
@@ -1266,6 +1903,7 @@ mod tests {
                 "acquire unrelated words",
                 &vector_literal(&vector).unwrap(),
                 &allowed,
+                &RecallFrontier::default(),
             )
             .await
             .unwrap();
@@ -1279,6 +1917,7 @@ mod tests {
                 "read",
                 &vector_literal(&vector).unwrap(),
                 &DiscoveryAuthorization::catalogs(BTreeSet::new()),
+                &RecallFrontier::default(),
             )
             .await
             .unwrap();
@@ -1293,6 +1932,7 @@ mod tests {
                 "acquire read",
                 &vector_literal(&vector).unwrap(),
                 &restricted,
+                &RecallFrontier::default(),
             )
             .await
             .unwrap();

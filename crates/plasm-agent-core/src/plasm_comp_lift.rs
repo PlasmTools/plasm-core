@@ -14,7 +14,7 @@ pub enum PlasmCompLiftError {
 }
 
 /// In-memory executable comp: bind graph + topo-ordered typed step payloads.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize)]
 pub(crate) struct ExecutablePlasmComp {
     pub bind: PlasmBindGraph,
     pub steps_topo: Vec<(StepId, PlasmStepPayload)>,

@@ -1,0 +1,9 @@
+source_query:
+  method: GET
+  path: [{type: literal, value: sources}]
+register_resource:
+  method: POST
+  path: [{type: literal, value: resources}]
+inspect_resource:
+  method: GET
+  path: [{type: literal, value: resources}, {type: var, name: handle}]

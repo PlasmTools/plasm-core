@@ -14,9 +14,10 @@ export async function checkSessionExtension(observe: (intent: string) => Promise
   const routed: IntentProvenance[] = [];
   let insufficient = false;
   let malformedTeaching = false;
+  let guidanceOnly = false;
   const provenanceBySession = new Map<string, IntentProvenance>();
   const unused = async (): Promise<never> => { throw new Error("unexpected engine operation"); };
-  const engine: PlasmEngine = {
+  const engine: PlasmEngine = { sealEffectWorkflows: async () => {}, takeCompletedTeaching: async () => "",
   close: async () => {},
     loadCatalog: unused, synthesizeTeaching: unused, dryRun: unused,
     activateDiscovery: unused, runPlan: unused, run: unused, introspectCatalog: unused,
@@ -28,10 +29,9 @@ export async function checkSessionExtension(observe: (intent: string) => Promise
       await observe(intent);
       routed.push(provenance);
       const pin = sessionId ?? randomUUID();
-      const matches=[{capability_id:"matrix:read",choice:insufficient?"unrelated":"relevant",probabilities:{relevant:insufficient?0:1,unrelated:insufficient?1:0,uncertain:0},confidence:1}];
+      const matches=[{capability_id:"matrix:read",choice:insufficient?"unrelated":"relevant"}];
       const packet = routingPacketSchema.parse({
         routing: {
-          environment_support: {choice: insufficient ? "not_established" : "undetermined", request_hash: "abstract"},
           intent_provenance: provenance, intent, pin_id: pin,
           authorization: { catalogs: ["matrix"], capabilities: {} },
           retrieval: {
@@ -41,14 +41,21 @@ export async function checkSessionExtension(observe: (intent: string) => Promise
             }]
           },
           matching: {matches},
-          recovery: insufficient ? {candidates:[{reference:{catalog:"matrix",capability:"read"},choice:"unrelated",relevance_probability:0}],available_catalogs:[],guidance:"No relevant capability in this bounded packet."}:null,
+          search: {policy: "additive-connected-frontier-current-hybrid-evidence-3-judgments-3-attempts-16000-byte-packet-v43",
+            exposed: [],
+            considered: [{catalog:"matrix",capability:"read"}], unexplored: [], deferred: [],
+            requests: 1, input_bytes: 1000, reported_input_tokens: 200, missing_usage: 0},
+          recovery: insufficient ? {candidates:[{reference:{catalog:"matrix",capability:"read"},choice:"unrelated"}],available_catalogs:[],guidance:"No relevant capability in this bounded packet."}:null,
           closure: insufficient ? (sessionId ? { business: [], input_sources: [], prerequisites: [], acquisitions: [], edges: [] } : null) : { business: [{ catalog: "matrix", capability: "read" }], input_sources: [], prerequisites: [], acquisitions: [], edges: [] },
         },
-        teaching: insufficient ? (sessionId ? { prompt: "", delta_refs: [] } : null) : { prompt: "e1\tRecord", delta_refs: ["matrix:Record"] },
+        teaching: insufficient ? (sessionId ? { prompt: "", declarations_changed: false, delta_refs: [] } : null) : { prompt: "e1\tRecord", declarations_changed: true, delta_refs: ["matrix:Record"] },
       });
       if (malformedTeaching) {
-        packet.teaching = { prompt: "", delta_refs: ["matrix:Record"] };
+        packet.teaching = { prompt: "", declarations_changed: true, delta_refs: ["matrix:Record"] };
         return packet;
+      }
+      if (guidanceOnly) {
+        packet.teaching = { prompt: "Bind credential from the existing source.", declarations_changed: false, delta_refs: ["matrix:Record"] };
       }
       const previous = provenanceBySession.get(pin);
       if (previous) {
@@ -63,7 +70,7 @@ export async function checkSessionExtension(observe: (intent: string) => Promise
     const partialRuntime = new AgentRuntime({ agentRoot: root, engine, archive: null, hostTransport: null });
     const partiallyOpened = await partialRuntime.plasmContext({ intent: "Read selected records then publish them",  });
     assert.ok(partiallyOpened.includes("e1\tRecord"));
-    assert.match(partiallyOpened, /Support for the current intent remains undetermined/);
+    assert.doesNotMatch(partiallyOpened, /support classifier|support.*undetermined|establish a plan/i);
     const partialRef = partiallyOpened.match(/l_[A-Za-z0-9_-]{22}/)?.[0];
     assert.ok(partialRef);
     const beforePartial = await partialRuntime.sessionManager.getByLogicalRef(partialRef);
@@ -72,7 +79,7 @@ export async function checkSessionExtension(observe: (intent: string) => Promise
     insufficient = true;
     const unresolved = await partialRuntime.plasmContext({ intent: "Find a related record",  sessionMode: "extend", logicalSessionRef: partialRef });
     assert.ok(unresolved.includes("No relevant capability"));
-    assert.match(unresolved, /This does not mean the task is impossible/);
+    assert.doesNotMatch(unresolved, /establish a plan|support classifier/i);
     const afterEmpty = await partialRuntime.sessionManager.getByLogicalRef(partialRef);
     assert.equal(afterEmpty?.teachingPrompt, beforePartial.teachingPrompt);
     assert.deepEqual(afterEmpty?.waves, beforePartial.waves, "empty deltas do not invent teaching waves");
@@ -106,12 +113,98 @@ export async function checkSessionExtension(observe: (intent: string) => Promise
     insufficient = true;
     const missingIntent = "  Resolve only the selected records.  ";
     const missing = await runtime.plasmContext({ intent: missingIntent,  });
-    assert.match(missing, /This does not mean the task is impossible/);
+    assert.match(missing, /No relevant capability in this bounded packet/);
     const missingRef = missing.match(/l_[A-Za-z0-9_-]{22}/)?.[0];
     assert.ok(missingRef, "insufficient new discovery retains its session reference");
     insufficient = false;
     await runtime.plasmContext({ intent: "Resolve the related records.",  sessionMode: "extend", logicalSessionRef: missingRef });
     assert.deepEqual(routed.at(-1)?.nodes.map(n => n.intent), [initial, missingIntent, "Resolve the related records."]);
+    const sealed: string[] = [];
+    const evaluationEngine: PlasmEngine = { ...engine, learning: {
+      configure: async () => {}, configureTraining: unused,
+      sealTrainingEvaluation: async id => { sealed.push(id); },
+      trainingStatus: unused, trainingCommand: unused, trainingCandidates: unused,
+      drainSession: unused, releaseSession: unused, completedExecutions: unused,
+      readProgram: unused, review: unused, fetchExample: unused,
+    } };
+    const evaluation = new AgentRuntime({ agentRoot: root, engine: evaluationEngine, archive: null, hostTransport: null,
+      workflowLearning: { mode: "admission", scope: { tenant: "test", project: "test" }, databaseUrl: "postgresql://fixture" }, trainingEvaluation: true });
+    insufficient = true;
+    const noMatch = await evaluation.plasmContext({ intent: "Find an unavailable capability." });
+    const evaluationRef = noMatch.match(/l_[A-Za-z0-9_-]{22}/)?.[0];
+    assert.ok(evaluationRef);
+    assert.equal(sealed.length, 0, "no native execution session exists for an empty discovery");
+    await evaluation.plasmContext({ intent: "Still unavailable.", sessionMode: "extend", logicalSessionRef: evaluationRef });
+    assert.equal(sealed.length, 0, "an empty extension must not seal a nonexistent execution session");
+    insufficient = false;
+    await evaluation.plasmContext({ intent: "Find an available capability.", sessionMode: "extend", logicalSessionRef: evaluationRef });
+    assert.equal(sealed.length, 1, "evaluation isolation is sealed before exposing an executable session");
+    await evaluation.plasmContext({ intent: "Find another capability.", sessionMode: "extend", logicalSessionRef: evaluationRef });
+    assert.equal(sealed.length, 1, "an existing evaluation session is sealed once");
+    await evaluation.close();
+    let deliveries = 0;
+    let recallReady = false;
+    const deliveryEngine: PlasmEngine = { ...evaluationEngine,
+      dryRun: async () => ({ writeCount: 1, planCommitRef: "pc1", summary: "Plan ready", compJson: "{}" }),
+      takeCompletedTeaching: async (_id, includeExamples = true) => includeExamples && recallReady && ++deliveries <= 2 ? `Optional workflow examples for the original intent:\n- example ${deliveries}: Read records` : "",
+    };
+    const delivery = new AgentRuntime({ agentRoot: root, engine: deliveryEngine, archive: null, hostTransport: null,
+      workflowLearning: { mode: "examples", scope: { tenant: "test", project: "test" }, databaseUrl: "postgresql://fixture" } });
+    const deliveryContext = await delivery.plasmContext({ intent: "Read records" });
+    const deliveryRef = deliveryContext.match(/l_[A-Za-z0-9_-]{22}/)?.[0];
+    assert.ok(deliveryRef);
+    recallReady = true;
+    const deliveredDuringDiscovery = await delivery.plasmContext({ intent: "Find related records", sessionMode: "extend", logicalSessionRef: deliveryRef });
+    assert.match(deliveredDuringDiscovery, /example 1: Read records/);
+    const delivered = await delivery.plasm({ logicalSessionRef: deliveryRef, program: "example" });
+    assert.match(delivered, /example 2: Read records/);
+    const deliveredAgain = await delivery.plasm({ logicalSessionRef: deliveryRef, program: "example" });
+    assert.doesNotMatch(deliveredAgain, /Optional workflow examples/);
+    await delivery.close();
+    const combinedEvents: string[] = [];
+    const combinedEngine: PlasmEngine = {
+      ...evaluationEngine,
+      routeIntent: async (...args) => {
+        combinedEvents.push("route");
+        if (args[0].nodes.at(-1)?.intent === "Fail discovery") throw new Error("routing unavailable");
+        return { ...await engine.routeIntent(...args),
+          workflow_examples: [{ example_ref: randomUUID(), purpose: "Read records", outputs: [], assurance: "agent_attested" }] };
+      },
+      takeCompletedTeaching: async (_session, includeExamples) => {
+        combinedEvents.push("poll");
+        assert.equal(includeExamples, false, "already offered examples must not be repeated");
+        return "Additional discovery for the current request:\ne1: RelatedRecord";
+      },
+    };
+    const combined = new AgentRuntime({ agentRoot: root, engine: combinedEngine, archive: null, hostTransport: null,
+      workflowLearning: { mode: "examples", scope: { tenant: "test", project: "test" }, databaseUrl: "postgresql://fixture" } });
+    const combinedContext = await combined.plasmContext({ intent: "Read related records" });
+    assert.match(combinedContext, /Optional workflow examples/);
+    assert.match(combinedContext, /Additional discovery for the current request/);
+    const combinedRef = combinedContext.match(/l_[A-Za-z0-9_-]{22}/)?.[0];
+    assert.ok(combinedRef);
+    combinedEvents.length = 0;
+    const refined = await combined.plasmContext({ intent: "Refine related records", sessionMode: "extend", logicalSessionRef: combinedRef });
+    assert.deepEqual(combinedEvents.slice(0, 2), ["poll", "route"], "ready guidance is collected before changing intent");
+    assert.match(refined, /Completed discovery for the previous request/);
+    await assert.rejects(
+      combined.plasmContext({ intent: "Fail discovery", sessionMode: "extend", logicalSessionRef: combinedRef }),
+      /Completed discovery for the previous request:[\s\S]*Current discovery failed: routing unavailable/,
+    );
+    await combined.close();
+    const failedSealEngine: PlasmEngine = { ...evaluationEngine, learning: { ...evaluationEngine.learning!,
+      sealTrainingEvaluation: async () => { throw new Error("evaluation seal failed"); },
+    } };
+    const failedSeal = new AgentRuntime({ agentRoot: root, engine: failedSealEngine, archive: null, hostTransport: null,
+      workflowLearning: { mode: "admission", scope: { tenant: "test", project: "test" }, databaseUrl: "postgresql://fixture" }, trainingEvaluation: true });
+    insufficient = true;
+    const failedSealNoMatch = await failedSeal.plasmContext({ intent: "Find a missing capability." });
+    const failedSealRef = failedSealNoMatch.match(/l_[A-Za-z0-9_-]{22}/)?.[0];
+    assert.ok(failedSealRef);
+    await assert.rejects(() => failedSeal.plasm({ logicalSessionRef: failedSealRef, program: "not executed" }), /evaluation seal failed/);
+    insufficient = false;
+    await assert.rejects(() => failedSeal.plasmContext({ intent: "Find an available capability." }), /evaluation seal failed/);
+    await failedSeal.close();
     for (const invalid of ["\0", "\ud800"]) {
       const before = routed.length;
       await assert.rejects(() => runtime.plasmContext({ intent: `Read${invalid}`,  }));
@@ -150,11 +243,20 @@ export async function checkSessionExtension(observe: (intent: string) => Promise
       intent: "Same new workflow",
     })));
     assert.notEqual(newWorkflows[0]!.match(/l_[A-Za-z0-9_-]{22}/)?.[0], newWorkflows[1]!.match(/l_[A-Za-z0-9_-]{22}/)?.[0]);
+    guidanceOnly = true;
+    const repeated = await runtime.plasmContext({ ...duplicateRequest, intent: "Use existing declarations" });
+    assert.match(repeated, /No new declarations/);
+    assert.match(repeated, /Bind credential from the existing source/);
+    assert.doesNotMatch(repeated, /Additional declarations/);
+    guidanceOnly = false;
+    const added = await runtime.plasmContext({ ...duplicateRequest, intent: "Find a new operation" });
+    assert.match(added, /Additional declarations/);
     malformedTeaching = true;
     await assert.rejects(() => runtime.plasmContext({ intent: "Malformed initial teaching" }), /canonical teaching/);
     const beforeMalformed = await runtime.sessionManager.getByLogicalRef(ref);
     await assert.rejects(() => runtime.plasmContext({ intent: "Malformed incremental teaching", sessionMode: "extend", logicalSessionRef: ref }), /canonical teaching/);
     assert.deepEqual(await runtime.sessionManager.getByLogicalRef(ref), beforeMalformed);
+    malformedTeaching = false;
     if (exercise) await exercise(runtime, ref, engine);
     console.log("session-extension: new -> persist -> concurrent extend passed");
   } finally {

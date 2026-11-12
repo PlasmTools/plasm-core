@@ -1,0 +1,242 @@
+[
+  {
+    "id": "connection-v2-support-0",
+    "pair": "connection-v2-support-0",
+    "family": "support",
+    "request": "Archive the prepared audio segment.",
+    "targets": [
+      "op_a"
+    ],
+    "witness": true
+  },
+  {
+    "id": "connection-v2-support-1",
+    "pair": "connection-v2-support-1",
+    "family": "support",
+    "request": "Vent the pressure vessel.",
+    "targets": [
+      "op_a"
+    ],
+    "witness": true
+  },
+  {
+    "id": "connection-v2-support-2",
+    "pair": "connection-v2-support-2",
+    "family": "support",
+    "request": "Register the geometric mesh.",
+    "targets": [
+      "op_a"
+    ],
+    "witness": true
+  },
+  {
+    "id": "connection-v2-support-3",
+    "pair": "connection-v2-support-3",
+    "family": "support",
+    "request": "Irrigate the seed tray.",
+    "targets": [
+      "op_a"
+    ],
+    "witness": true
+  },
+  {
+    "id": "connection-v2-different_outcome-0",
+    "pair": "connection-v2-different_outcome-0",
+    "family": "different_outcome",
+    "request": "Archive the prepared audio segment.",
+    "targets": [
+      "op_a"
+    ],
+    "witness": true
+  },
+  {
+    "id": "connection-v2-different_outcome-1",
+    "pair": "connection-v2-different_outcome-1",
+    "family": "different_outcome",
+    "request": "Vent the pressure vessel.",
+    "targets": [
+      "op_a"
+    ],
+    "witness": true
+  },
+  {
+    "id": "connection-v2-different_outcome-2",
+    "pair": "connection-v2-different_outcome-2",
+    "family": "different_outcome",
+    "request": "Register the geometric mesh.",
+    "targets": [
+      "op_a"
+    ],
+    "witness": true
+  },
+  {
+    "id": "connection-v2-different_outcome-3",
+    "pair": "connection-v2-different_outcome-3",
+    "family": "different_outcome",
+    "request": "Irrigate the seed tray.",
+    "targets": [
+      "op_a"
+    ],
+    "witness": true
+  },
+  {
+    "id": "connection-v2-prohibited-0",
+    "pair": "connection-v2-prohibited-0",
+    "family": "prohibited",
+    "request": "Keep the audio segment local; do not archive it.",
+    "targets": [
+      "op_a"
+    ],
+    "witness": true
+  },
+  {
+    "id": "connection-v2-prohibited-1",
+    "pair": "connection-v2-prohibited-1",
+    "family": "prohibited",
+    "request": "Keep the pressure vessel sealed; do not vent it.",
+    "targets": [
+      "op_a"
+    ],
+    "witness": true
+  },
+  {
+    "id": "connection-v2-prohibited-2",
+    "pair": "connection-v2-prohibited-2",
+    "family": "prohibited",
+    "request": "Keep the mesh unregistered; do not register it.",
+    "targets": [
+      "op_a"
+    ],
+    "witness": true
+  },
+  {
+    "id": "connection-v2-prohibited-3",
+    "pair": "connection-v2-prohibited-3",
+    "family": "prohibited",
+    "request": "Keep the seed tray dry; do not irrigate it.",
+    "targets": [
+      "op_a"
+    ],
+    "witness": true
+  },
+  {
+    "id": "connection-v2-opaque-0",
+    "pair": "connection-v2-opaque-0",
+    "family": "opaque",
+    "request": "Archive the prepared audio segment.",
+    "targets": [
+      "op_a"
+    ],
+    "witness": true
+  },
+  {
+    "id": "connection-v2-opaque-1",
+    "pair": "connection-v2-opaque-1",
+    "family": "opaque",
+    "request": "Vent the pressure vessel.",
+    "targets": [
+      "op_a"
+    ],
+    "witness": true
+  },
+  {
+    "id": "connection-v2-opaque-2",
+    "pair": "connection-v2-opaque-2",
+    "family": "opaque",
+    "request": "Register the geometric mesh.",
+    "targets": [
+      "op_a"
+    ],
+    "witness": true
+  },
+  {
+    "id": "connection-v2-opaque-3",
+    "pair": "connection-v2-opaque-3",
+    "family": "opaque",
+    "request": "Irrigate the seed tray.",
+    "targets": [
+      "op_a"
+    ],
+    "witness": true
+  },
+  {
+    "id": "connection-v2-absent_witness-0",
+    "pair": "connection-v2-absent_witness-0",
+    "family": "absent_witness",
+    "request": "Archive the prepared audio segment.",
+    "targets": [
+      "op_a"
+    ],
+    "witness": false
+  },
+  {
+    "id": "connection-v2-absent_witness-1",
+    "pair": "connection-v2-absent_witness-1",
+    "family": "absent_witness",
+    "request": "Vent the pressure vessel.",
+    "targets": [
+      "op_a"
+    ],
+    "witness": false
+  },
+  {
+    "id": "connection-v2-absent_witness-2",
+    "pair": "connection-v2-absent_witness-2",
+    "family": "absent_witness",
+    "request": "Register the geometric mesh.",
+    "targets": [
+      "op_a"
+    ],
+    "witness": false
+  },
+  {
+    "id": "connection-v2-absent_witness-3",
+    "pair": "connection-v2-absent_witness-3",
+    "family": "absent_witness",
+    "request": "Irrigate the seed tray.",
+    "targets": [
+      "op_a"
+    ],
+    "witness": false
+  },
+  {
+    "id": "connection-v2-direct-0",
+    "pair": "connection-v2-direct-0",
+    "family": "direct",
+    "request": "Archive the prepared audio segment.",
+    "targets": [
+      "op_a"
+    ],
+    "witness": false
+  },
+  {
+    "id": "connection-v2-direct-1",
+    "pair": "connection-v2-direct-1",
+    "family": "direct",
+    "request": "Vent the pressure vessel.",
+    "targets": [
+      "op_a"
+    ],
+    "witness": false
+  },
+  {
+    "id": "connection-v2-direct-2",
+    "pair": "connection-v2-direct-2",
+    "family": "direct",
+    "request": "Register the geometric mesh.",
+    "targets": [
+      "op_a"
+    ],
+    "witness": false
+  },
+  {
+    "id": "connection-v2-direct-3",
+    "pair": "connection-v2-direct-3",
+    "family": "direct",
+    "request": "Irrigate the seed tray.",
+    "targets": [
+      "op_a"
+    ],
+    "witness": false
+  }
+]

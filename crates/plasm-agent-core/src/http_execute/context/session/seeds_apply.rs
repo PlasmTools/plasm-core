@@ -623,7 +623,6 @@ mod sufficiency_tests {
             .unwrap();
         let before_symbols = before.teaching_exposure.as_ref().unwrap().entities.clone();
         host.oss.discovery_route = Some(Arc::new(RoutingReceipt {
-            environment_support: None,
             intent_provenance: crate::intent_provenance::IntentProvenance::from_turns([
                 "test".into()
             ])
@@ -640,7 +639,11 @@ mod sufficiency_tests {
                 lexical_truncated: false,
                 vector_truncated: false,
             },
-            matching: CapabilityMatchReceipt { matches: vec![] },
+            matching: CapabilityMatchReceipt {
+                matches: vec![],
+                budget_retained: vec![],
+            },
+            search: Default::default(),
 
             closure: Some(plasm_core::prerequisites::PrerequisiteClosure {
                 business: vec![],

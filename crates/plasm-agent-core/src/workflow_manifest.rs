@@ -109,6 +109,7 @@ impl WorkflowManifest {
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct InstantiateRequest {
+    pub logical_session_ref: String,
     pub parameters: BTreeMap<String, serde_json::Value>,
 }
 

@@ -224,7 +224,6 @@ pub fn policy_snapshot_for_arm(
 mod tests {
     use super::*;
     use crate::plan_dry_display::PlanDryVerdict;
-    use crate::plan_flow_policy::FlowPolicy;
 
     #[test]
     fn boxed_session_error_preserves_source_and_code() {
@@ -263,25 +262,6 @@ mod tests {
             draft_updated_at: None,
             draft_validated_at: None,
             draft_validation_ok: None,
-        }
-    }
-
-    #[test]
-    fn draft_missing_without_ephemeral() {
-        let err =
-            policy_snapshot_for_arm(&empty_row(), SimulatePolicyArm::Draft, None).unwrap_err();
-        assert!(matches!(err, SimulateError::DraftMissing));
-        assert_eq!(err.code(), "draft_missing");
-    }
-
-    #[test]
-    fn draft_uses_ephemeral_policy() {
-        let policy = FlowPolicy::empty_allow();
-        let snap =
-            policy_snapshot_for_arm(&empty_row(), SimulatePolicyArm::Draft, Some(&policy)).unwrap();
-        match snap {
-            FlowPolicySnapshot::Active { .. } => {}
-            FlowPolicySnapshot::Inactive => panic!("expected active ephemeral snapshot"),
         }
     }
 

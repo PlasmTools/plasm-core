@@ -49,7 +49,7 @@ const recovered = await runEveToolLoop({
   tools: {
     write_effect: tool({ description: "Commit an effect", inputSchema: toolInput(z.object({})),
       execute: async () => { writes += 1; return "effect committed"; } }),
-    ...createEvalTerminalTools(),
+    ...createEvalTerminalTools({sealEffectWorkflows: async () => {}}),
   },
 });
 assert.equal(recoveredModel.calls(), 4);
@@ -66,7 +66,7 @@ const exhaustedModel = modelFor(["empty"]);
 const exhausted = await runEveToolLoop({
   model: exhaustedModel.model, system: "system", agentName: "empty-response-budget",
   messages: [{ role: "user", content: "perform the task" }], maxSteps: 3,
-  telemetry: { isEnabled: false }, tools: createEvalTerminalTools(),
+  telemetry: { isEnabled: false }, tools: createEvalTerminalTools({sealEffectWorkflows: async () => {}}),
 });
 assert.equal(exhaustedModel.calls(), 3, "empty completions use the original step budget");
 assert.equal(exhausted.stopReason, "budget_exhausted");
@@ -79,7 +79,7 @@ const proseModel = modelFor(["prose", "done"]);
 const prose = await runEveToolLoop({
   model: proseModel.model, system: "system", agentName: "ordinary-prose-stop",
   messages: [{ role: "user", content: "perform the task" }], maxSteps: 3,
-  telemetry: { isEnabled: false }, tools: createEvalTerminalTools(),
+  telemetry: { isEnabled: false }, tools: createEvalTerminalTools({sealEffectWorkflows: async () => {}}),
 });
 assert.equal(proseModel.calls(), 1, "ordinary prose is not an empty provider completion");
 assert.equal(prose.stopReason, "unterminated");

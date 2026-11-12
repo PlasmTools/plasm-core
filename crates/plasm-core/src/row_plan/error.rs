@@ -1,6 +1,5 @@
 //! Typed row-compute errors — no stringly engine failures.
 
-use crate::identity::EntityName;
 use crate::money::{CrossCurrencyError, MoneyError};
 use crate::plasm_monad::ArithOp;
 use thiserror::Error;
@@ -9,20 +8,28 @@ use crate::value_contract::ValueContract;
 
 #[derive(Debug, Clone, Error)]
 pub enum RowComputeError {
+    #[error("singleton unpack requires exactly one row, found {actual}")]
+    SingletonUnpackCardinality { actual: usize },
     #[error(transparent)]
     Contract(#[from] crate::row_plan::contracts::RowContractError),
     #[error(transparent)]
     ArithmeticContract(#[from] crate::value_arithmetic::ArithmeticContractError),
     #[error(transparent)]
     Correspondence(#[from] RowCorrespondenceError),
-    #[error("field `{field}` is unobserved (not null)")]
+    #[error("field `{field}` is unobserved, not null. Inspect the input producer's result; select the variant that exposes this field or obtain the missing observation before reading it. Do not substitute null for missing data.")]
     MissingField { field: String },
+    #[error("input row {index} (zero-based): {source}")]
+    Input {
+        index: usize,
+        #[source]
+        source: Box<RowComputeError>,
+    },
     #[error("row count exceeds the supported integer range")]
     RowCountOverflow,
     #[error("money sum requires a money contract")]
     MoneySumRequiresMoney,
-    #[error("contains requires two string values")]
-    ContainsRequiresStrings,
+    #[error("contains requires a string, array, set, or record with a compatible operand")]
+    ContainsRequiresCompatibleOperands,
     #[error("membership requires a string or array on the right")]
     MembershipRequiresCollection,
     #[error("string membership requires a string on the left")]
@@ -46,8 +53,6 @@ pub enum RowComputeError {
     #[error(transparent)]
     Schema(#[from] FrameSchemaError),
     #[error(transparent)]
-    Collect(#[from] CollectError),
-    #[error(transparent)]
     Expr(#[from] crate::plasm_monad::WithExprError),
     #[error(transparent)]
     Predicate(#[from] RowFilterError),
@@ -64,9 +69,20 @@ pub enum RowComputeError {
     #[error(transparent)]
     StepId(#[from] crate::plasm_monad::StepIdError),
     #[error(transparent)]
-    Scan(#[from] ScanError),
-    #[error(transparent)]
     Fusion(#[from] FusionError),
+}
+
+impl RowComputeError {
+    /// Retain known input correspondence; derived rows need not have one.
+    pub fn at_input(self, index: Option<usize>) -> Self {
+        match index {
+            Some(index) => Self::Input {
+                index,
+                source: Box::new(self),
+            },
+            None => self,
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Error)]
@@ -123,31 +139,11 @@ pub enum RowCorrespondenceError {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Error)]
-pub enum CollectError {
-    #[error("collect is only legal at a program-return, page, invoke-arg, or render barrier")]
-    CollectNotAtBarrier,
-    #[error("render row cap exceeded: got {got}, max {max}")]
-    RenderRowCap { got: usize, max: usize },
-    #[error("silent page exhaust is forbidden")]
-    PageExhaustSilent,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Error)]
 pub enum RowFilterError {
     #[error("row filter requires at least one predicate")]
     Empty,
     #[error("row filter cannot be rewritten as a catalog filter")]
     CrossPlanePushdown,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Error)]
-pub enum ScanError {
-    #[error("unbound frame")]
-    UnboundFrame,
-    #[error("fixture scan `{0}` is not loaded")]
-    MissingFixture(u64),
-    #[error("entity `{0}` is not in the graph snapshot")]
-    MissingGraphEntity(EntityName),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Error)]

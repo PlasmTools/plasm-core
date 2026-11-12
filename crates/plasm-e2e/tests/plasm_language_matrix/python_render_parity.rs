@@ -117,7 +117,11 @@ async fn python_compute_after_fanout_preserves_output_ownership_and_projection()
     let update = symbols.method_sym_for(entry, "LangItem", "update");
     for (annotation, projection, expected_error) in [
         ("Row".to_owned(), ".select(\"id\")", "unresolved-attribute"),
-        (format!("Value[{line}]"), "", "annotation does not match source entity"),
+        (
+            format!("Value[{line}]"),
+            "",
+            "annotation does not match source entity",
+        ),
     ] {
         let source = format!("class Invalid(Program):\n    @compute\n    def text(self, rows: list[{annotation}]) -> str:\n        return ''.join(row.id for row in rows)\n    def build(self):\n        done = {item}.query().flat_map(lambda row: row.{update}(title=row.title, score=row.score, owner=row.owner)){projection}\n        return self.text(done)\n");
         // Use a consumed field excluded by the projection, while both entities

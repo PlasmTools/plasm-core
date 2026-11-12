@@ -1,0 +1,218 @@
+{
+  "version": 3,
+  "searches": 12,
+  "distractors": 20,
+  "description_clause": "Process prepared material into the final result. Preserve the source, attribution and audit fields. Readiness is unknown until the prepared material is observed. ",
+  "cases": [
+    {
+      "id": "small",
+      "repeat": 1,
+      "needs": [
+        "Process the prepared material and retain the original source."
+      ],
+      "labels": {
+        "source_read": "relevant",
+        "prepare": "relevant",
+        "process": "relevant",
+        "opaque": "uncertain"
+      },
+      "expected": [
+        "source_read",
+        "prepare",
+        "process"
+      ],
+      "denied": [],
+      "reject": false,
+      "positive": true
+    },
+    {
+      "id": "large_fit",
+      "repeat": 45,
+      "needs": [
+        "Process the prepared material and retain the original source."
+      ],
+      "labels": {
+        "source_read": "relevant",
+        "prepare": "relevant",
+        "process": "relevant",
+        "opaque": "uncertain"
+      },
+      "expected": [
+        "source_read",
+        "prepare",
+        "process"
+      ],
+      "denied": [],
+      "reject": false,
+      "positive": true
+    },
+    {
+      "id": "large_path",
+      "repeat": 90,
+      "needs": [
+        "Process the prepared material and retain the original source."
+      ],
+      "labels": {
+        "source_read": "relevant",
+        "prepare": "relevant",
+        "process": "relevant",
+        "opaque": "uncertain"
+      },
+      "expected": [
+        "source_read",
+        "prepare",
+        "process"
+      ],
+      "denied": [],
+      "reject": false,
+      "positive": true
+    },
+    {
+      "id": "oversized",
+      "repeat": 260,
+      "needs": [
+        "Process the prepared material and retain the original source."
+      ],
+      "labels": {
+        "source_read": "relevant",
+        "prepare": "relevant",
+        "process": "relevant",
+        "opaque": "uncertain"
+      },
+      "expected": [
+        "source_read",
+        "prepare",
+        "process"
+      ],
+      "denied": [],
+      "reject": false,
+      "positive": false
+    },
+    {
+      "id": "paraphrased",
+      "repeat": 45,
+      "needs": [
+        "Process the prepared material and retain the original source.",
+        "Read the source needed for processing.",
+        "Prepare the source for processing.",
+        "Process the prepared material."
+      ],
+      "labels": {
+        "source_read": "relevant",
+        "prepare": "relevant",
+        "process": "relevant",
+        "opaque": "uncertain"
+      },
+      "expected": [
+        "source_read",
+        "prepare",
+        "process"
+      ],
+      "denied": [],
+      "reject": false,
+      "positive": true
+    },
+    {
+      "id": "long_history",
+      "repeat": 45,
+      "needs": [
+        "Process the prepared material and retain the original source. Preserve the original record and its attribution.  Preserve the original record and its attribution.  Preserve the original record and its attribution.  Preserve the original record and its attribution.  Preserve the original record and its attribution.  Preserve the original record and its attribution.  Preserve the original record and its attribution.  Preserve the original record and its attribution. ",
+        "Read the source needed for processing. Preserve the original record and its attribution.  Preserve the original record and its attribution.  Preserve the original record and its attribution.  Preserve the original record and its attribution.  Preserve the original record and its attribution.  Preserve the original record and its attribution.  Preserve the original record and its attribution.  Preserve the original record and its attribution. ",
+        "Prepare the source for processing. Preserve the original record and its attribution.  Preserve the original record and its attribution.  Preserve the original record and its attribution.  Preserve the original record and its attribution.  Preserve the original record and its attribution.  Preserve the original record and its attribution.  Preserve the original record and its attribution.  Preserve the original record and its attribution. ",
+        "Process the prepared material. Preserve the original record and its attribution.  Preserve the original record and its attribution.  Preserve the original record and its attribution.  Preserve the original record and its attribution.  Preserve the original record and its attribution.  Preserve the original record and its attribution.  Preserve the original record and its attribution.  Preserve the original record and its attribution. "
+      ],
+      "labels": {
+        "source_read": "relevant",
+        "prepare": "relevant",
+        "process": "relevant",
+        "opaque": "uncertain"
+      },
+      "expected": [
+        "source_read",
+        "prepare",
+        "process"
+      ],
+      "denied": [],
+      "reject": false,
+      "positive": true
+    },
+    {
+      "id": "independent",
+      "repeat": 1,
+      "needs": [
+        "Process the prepared material and retain the original source. Also apply the configured routine if it contributes; its effect is unspecified."
+      ],
+      "labels": {
+        "source_read": "relevant",
+        "prepare": "relevant",
+        "process": "relevant",
+        "opaque": "uncertain"
+      },
+      "expected": [
+        "source_read",
+        "prepare",
+        "process",
+        "opaque"
+      ],
+      "denied": [],
+      "reject": false,
+      "positive": true
+    },
+    {
+      "id": "denied",
+      "repeat": 1,
+      "needs": [
+        "Process the prepared material and retain the original source."
+      ],
+      "labels": {
+        "source_read": "relevant",
+        "prepare": "relevant",
+        "process": "relevant",
+        "opaque": "uncertain"
+      },
+      "expected": [
+        "source_read",
+        "prepare",
+        "process"
+      ],
+      "denied": [
+        "process"
+      ],
+      "reject": false,
+      "positive": false
+    },
+    {
+      "id": "judgment_rejection",
+      "repeat": 1,
+      "needs": [
+        "Process the prepared material and retain the original source."
+      ],
+      "labels": {
+        "source_read": "relevant",
+        "prepare": "relevant",
+        "process": "relevant",
+        "opaque": "uncertain"
+      },
+      "expected": [
+        "source_read",
+        "prepare",
+        "process"
+      ],
+      "denied": [],
+      "reject": true,
+      "positive": false
+    }
+  ],
+  "exposure_schedules": [
+    [
+      "source_read",
+      "prepare"
+    ],
+    [
+      "source_read"
+    ],
+    [
+      "prepare"
+    ]
+  ]
+}

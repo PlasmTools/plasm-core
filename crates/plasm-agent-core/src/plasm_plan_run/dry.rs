@@ -11,7 +11,9 @@ pub enum DryPlanValidationError {
         "plan node {index} relation target catalog `{entry_id}` is not loaded in this session"
     )]
     RelationTargetCatalogNotLoaded { index: usize, entry_id: String },
-    #[error("plan node {index} relation target entity `{entity}` is not present in catalog `{entry_id}`")]
+    #[error(
+        "plan node {index} relation target entity `{entity}` is not present in catalog `{entry_id}`"
+    )]
     RelationTargetEntityNotPresent {
         index: usize,
         entity: String,
@@ -55,7 +57,9 @@ pub enum DryPlanValidationError {
         #[source]
         source: plasm_core::CatalogOwnershipError,
     },
-    #[error("plan node {index} relation source catalog `{entry_id}` is not loaded for entity `{entity}`")]
+    #[error(
+        "plan node {index} relation source catalog `{entry_id}` is not loaded for entity `{entity}`"
+    )]
     RelationSourceCatalogNotLoaded {
         index: usize,
         entry_id: String,
@@ -81,7 +85,9 @@ pub enum DryPlanValidationError {
         actual: String,
         expected: String,
     },
-    #[error("plan node {index} relation cardinality {actual} does not match catalog cardinality {expected}")]
+    #[error(
+        "plan node {index} relation cardinality {actual} does not match catalog cardinality {expected}"
+    )]
     RelationCardinalityMismatch {
         index: usize,
         actual: crate::plasm_plan::RelationCardinality,
@@ -104,7 +110,9 @@ pub fn evaluate_plasm_comp_dry(
     es: &ExecuteSession,
     bundle: &crate::plasm_comp_bundle::PlasmCompBundle,
 ) -> Result<DryPlasmPlanEvaluation, crate::program_diagnostic::ProgramStageError> {
-    evaluate_executable_comp_dry(es, bundle.executable(), bundle.artifact())
+    let mut dry = evaluate_executable_comp_dry(es, bundle.executable(), bundle.artifact())?;
+    dry.compilation_symbols = bundle.compilation_symbols().clone();
+    Ok(dry)
 }
 
 /// Production async admission waits for a coherent graph snapshot instead of
@@ -158,6 +166,7 @@ pub fn evaluate_executable_comp_dry(
     let parallel_root_surfaces_only =
         compute_parallel_root_surfaces_only(prepared.validated.artifact());
     Ok(DryPlasmPlanEvaluation {
+        compilation_symbols: Default::default(),
         version,
         name: comp.name.clone(),
         artifact: artifact.clone(),
@@ -820,6 +829,7 @@ pub(crate) fn dry_stage_result(index: usize, n: &ValidatedPlanNode) -> serde_jso
             "depends_on": node_ids_json(n.depends_on()),
             "uses_result": n.uses_result(),
             "data": data.data,
+            "recorded_output": data.recorded_output,
             "simulation": {
                 "kind": "static_data",
                 "execution": "materializes static Plan data through the phased Plan runner"

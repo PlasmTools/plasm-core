@@ -147,402 +147,491 @@ pub(super) async fn materialize(
     }
     let mut scope_path = ctx.scope_path.clone();
     scope_path.push(map.id.to_string());
+    let selection = plasm_runtime::execution_failure::EffectSelectionEvidence {
+        collection: source.result.collection.membership().identity().clone(),
+        coverage: source.result.collection.coverage(),
+        count: source.result.count(),
+        scope_path: scope_path.clone(),
+        occurrence_path: ctx.occurrence_path.clone(),
+    };
     let mut operations = plasm_runtime::OperationLedger::empty();
-    let execution: Result<_, ExecutionFailure> = async {
-    let mut execution_source = ExecutionSource::Cache;
-    let layers = body.execution_layers()?;
-    let mut rows = Vec::with_capacity(parents.len());
-    let mut value_shapes = Vec::with_capacity(parents.len());
-    let mut identities = Vec::new();
-    let mut returned_children = Vec::new();
-    let mut retained_parents = Vec::new();
-    let mut dependencies = vec![source.result.collection.clone()];
-    dependencies.extend(captured.values().map(|m| m.result.collection.clone()));
-    let mut instances = Vec::with_capacity(parents.len());
-    let mut completed = 0usize;
-    let mut fingerprints: BTreeSet<_> =
-        source.result.request_fingerprints.iter().cloned().collect();
-    let mut stats = source.result.stats.clone();
-    // The template is reviewed once. Each occurrence owns a fresh environment and ordinal.
-    use crate::occurrence_progress::{OccurrenceGuard, OccurrencePhase, OccurrenceProgress};
-    let parent_count = parents.len();
-    if parents.is_empty() {
-        for node in map.plan.nodes() {
-            if let ValidatedPlanNode::Surface(surface) = node {
-                let expr = surface
-                    .ir
-                    .as_ref()
-                    .map(|ir| &ir.expr)
-                    .or_else(|| surface.ir_template.as_ref().map(|ir| &ir.expr));
-                if let Some(ack) = expr.and_then(|expr| {
-                    plasm_runtime::OperationAck::try_from_mutating_expr(
-                        expr,
-                        Some(&scoped.cgs),
-                        ExecutionSource::Cache,
-                        0,
-                        0,
-                    )
-                }) {
-                    operations.merge_ack(ack);
-                }
-            }
-        }
-        let mut event = OccurrenceProgress::running(
-            scope_path.clone(),
-            body.parent.local.to_string(),
-            ctx.occurrence_path.clone(),
-        );
-        event.phase = OccurrencePhase::NotInvoked;
-        if let Some(scope) = ctx.execution_scope {
-            scope.report_occurrence(event);
-        }
-    }
-    let semantic_parent_rows = source
-        .resolve_materialized_source_parents(&rehydrator)
-        .await
-        .map_err(scope_rehydration_failure)?;
-    let semantic_parents: std::collections::HashMap<_, _> = semantic_parent_rows.iter().enumerate().map(|(index, row)| (&row.reference, index)).collect();
-    for (occurrence, parent) in parents.into_iter().enumerate() {
-        ctx.scope_budget
-            .enter()
-            .map_err(|diagnostic| {
-                scope_failure("scope_expansion_budget_exceeded", diagnostic.to_string())
-            })?;
-        let mut occurrence_path = ctx.occurrence_path.clone();
-        occurrence_path.push(occurrence);
-        let mut invocation = OccurrenceGuard::new(
-            ctx.execution_scope,
-            OccurrenceProgress::running(
-                ctx.scope_path.clone(),
-                map.id.to_string(),
-                occurrence_path.clone(),
-            ),
-        );
-        if let Some(scope) = ctx.execution_scope {
-            scope.check()?;
-        }
-        let identity = source.row_identities[occurrence].as_ref().map(|row| &row.reference);
-        let captured_entities = if let Some(index) = identity.and_then(|identity| semantic_parents.get(identity)) {
-            semantic_parent_rows.select([*index])?
-        } else {
-            rows_to_entities_with_refs(&source.qualified_entity.entity, std::slice::from_ref(&parent), None)?.into()
-        };
-        use plasm_core::collection_codec::CollectionCodec;
-        let record = plasm_core::collection_codec::RecordingCodec::new().record(
-            source.result.collection.membership().identity().derived(&("capture", &scope_path, &occurrence_path))?,
-            captured_entities.iter().map(|row| row.reference.clone()).collect(),
-            plasm_core::collection_codec::Observation::ExactOutput { decoded: 1 })?;
-        let collection = plasm_runtime::execution::ExecutionCollection::materialized(record, captured_entities)?;
-        let mut capture_result = (*source.result).clone();
-        capture_result.collection = collection;
-        capture_result.stats = Default::default();
-        capture_result.operations = Default::default();
-        capture_result.request_fingerprints.clear();
-        capture_result.has_more = false;
-        capture_result.pagination_resume = None;
-        capture_result.paging_handle = None;
-        let capture = MaterializedNode {
-            value_shapes: vec![source
-                .value_shape_at(occurrence)
-                .map_err(|diagnostic| {
-                    scope_failure("scope_parent_value_shape_invalid", diagnostic.to_string())
-                })?],
-            optional_fields: source.optional_fields.clone(),
-            qualified_entity: source.qualified_entity.clone(),
-            result: Arc::new(capture_result),
-            row_source: inline_row_source_owned(vec![parent.clone()]),
-            row_identities: vec![source.row_identities[occurrence].clone()],
-            artifact: None, display: "captured parent".into(), projection: source.projection.clone(),
-        };
-        let mut environment = captured.clone();
-        environment.insert(local.clone(), capture);
-        let mut steps = Vec::new();
-        // Child operations share cancellation, graph, transport and credentials. Flat UI trace
-        // callbacks cannot identify occurrences: publish structured scope evidence below instead.
-        let child_ctx = PlanStepMaterializeCtx {
-            es: ctx.es,
-            st: ctx.st,
-            session_id: ctx.session_id,
-            plan_shared: ctx.plan_shared,
-            prepared_computes: ctx.prepared_computes,
-            approval_policy: ctx.approval_policy,
-            flow: ctx.flow,
-            trace: None,
-            sink: None,
-            python_host_calls: ctx.python_host_calls,
-            scope_path: scope_path.clone(),
-            scope_budget: ctx.scope_budget.clone(),
-            occurrence_path: occurrence_path.clone(),
-            rows_progress: ctx.rows_progress.clone(),
-            execution_scope: ctx.execution_scope,
-        };
-        for layer in &layers {
-            for step in layer {
-                if let Some(scope) = ctx.execution_scope {
-                    scope.check()?;
-                }
-                let node = map
-                    .plan
-                    .nodes()
-                    .iter()
-                    .find(|n| n.id().as_str() == step.as_str())
-                    .ok_or_else(|| scope_failure("scope_body_node_missing", "missing body node"))?
-                    .clone();
-                let step_idx = map.plan.node_index(node.id()).ok_or_else(|| {
-                    scope_failure("scope_body_node_index_missing", "missing body index")
-                })?;
-                let has_effects = matches!(
-                    node.effect_class(),
-                    EffectClass::Write | EffectClass::SideEffect
-                );
-                let selection = plasm_runtime::EffectSelectionReference {
-                    collection: source.result.collection.membership().identity().clone(),
-                    index: occurrence,
-                };
-                let outcome = selection.scope(Box::pin(materialize_executable_plan_step(
-                    &child_ctx,
-                    step_idx,
-                    step,
-                    node,
-                    map.plan.nodes(),
-                    &environment,
-                )))
-                .await;
-                let address = plasm_runtime::OperationInvocationAddress {
-                    scope_path: scope_path.iter().cloned().chain(std::iter::once(step.to_string())).collect(),
-                    occurrence_path: occurrence_path.clone(),
-                    source_index: occurrence,
-                    source_identity: source.row_identities[occurrence].as_ref().map(|identity| identity.reference.to_string()),
-                };
-                let outcome = match outcome {
-                    Ok(outcome) => outcome,
-                    Err(error) => {
-                        invocation.fail(error.to_string());
-                        return Err(error.qualify_effects(&address).at(step.to_string(), occurrence_path.clone()));
-                    }
-                };
-
-                if has_effects {
-                    for mut ack in outcome.mat.result.operations.entries().iter().cloned() {
-                        address.qualify_ack(&mut ack);
+    let work = Box::pin(async {
+        let mut execution_source = ExecutionSource::Cache;
+        let layers = body.execution_layers()?;
+        let mut rows = Vec::with_capacity(parents.len());
+        let mut value_shapes = Vec::with_capacity(parents.len());
+        let mut identities = Vec::new();
+        let mut returned_children = Vec::new();
+        let mut retained_parents = Vec::new();
+        let mut dependencies = vec![source.result.collection.clone()];
+        dependencies.extend(captured.values().map(|m| m.result.collection.clone()));
+        let mut instances = Vec::with_capacity(parents.len());
+        let mut completed = 0usize;
+        let mut fingerprints: BTreeSet<_> =
+            source.result.request_fingerprints.iter().cloned().collect();
+        let mut stats = source.result.stats.clone();
+        // The template is reviewed once. Each occurrence owns a fresh environment and ordinal.
+        use crate::occurrence_progress::{OccurrenceGuard, OccurrencePhase, OccurrenceProgress};
+        let parent_count = parents.len();
+        if parents.is_empty() {
+            for node in map.plan.nodes() {
+                if let ValidatedPlanNode::Surface(surface) = node {
+                    let expr = surface
+                        .ir
+                        .as_ref()
+                        .map(|ir| &ir.expr)
+                        .or_else(|| surface.ir_template.as_ref().map(|ir| &ir.expr));
+                    if let Some(ack) = expr.and_then(|expr| {
+                        plasm_runtime::OperationAck::try_from_mutating_expr(
+                            expr,
+                            Some(&scoped.cgs),
+                            ExecutionSource::Cache,
+                            0,
+                            0,
+                        )
+                    }) {
                         operations.merge_ack(ack);
                     }
                 }
-                execution_source = super::plan_fanout_parallel::combine_execution_source(
-                    execution_source,
-                    outcome.mat.result.source,
-                );
-                fingerprints.extend(outcome.mat.result.request_fingerprints.iter().cloned());
-                stats.network_requests += outcome.mat.result.stats.network_requests;
-                steps.push(serde_json::json!({
-                    "address": {"scope_path": scope_path, "local_step": step.as_str()},
-                    "occurrence_path": occurrence_path, "phase": "done",
-                    "rows": outcome.mat.result.count(),
-                    "artifact_uri": outcome.mat.artifact.as_ref().map(|a| &a.plasm_uri),
-                    "request_fingerprints": outcome.mat.result.request_fingerprints,
-                    "operations": outcome.mat.result.operations,
-                    "scope_instances": outcome.scope_instances,
-                }));
-                dependencies.push(outcome.mat.result.collection.clone());
-                environment.insert(outcome.node_id, outcome.mat);
+            }
+            let mut event = OccurrenceProgress::running(
+                scope_path.clone(),
+                body.parent.local.to_string(),
+                ctx.occurrence_path.clone(),
+            );
+            event.phase = OccurrencePhase::NotInvoked;
+            if let Some(scope) = ctx.execution_scope {
+                scope.report_occurrence(event);
             }
         }
-        let plasm_core::PlasmReturn::Step { step } = &body.body.return_ else {
-            return Err(scope_failure(
-                "scope_return_cardinality_invalid",
-                "map body must return one step",
-            ));
-        };
-        let output = environment
-            .get(&PlanNodeId::new(step.as_str())?)
-            .ok_or_else(|| scope_failure("scope_output_missing", "body output missing"))?;
-        if flatten {
-            let output_scope = entry_scoped_execute_session(ctx.es, Some(&output.qualified_entity))
-                .map_err(|diagnostic| scope_failure("scope_output_catalog_context_invalid", diagnostic.to_string()))?;
-            let reader = crate::graph_rehydrate::GraphSurfaceRehydrator::new(
-                &output_scope,
-                ctx.st,
-                ctx.session_id,
-                &output_scope.cgs,
+        let semantic_parent_rows = source
+            .resolve_materialized_source_parents(&rehydrator)
+            .await
+            .map_err(scope_rehydration_failure)?;
+        let semantic_parents: std::collections::HashMap<_, _> = semantic_parent_rows
+            .iter()
+            .enumerate()
+            .map(|(index, row)| (&row.reference, index))
+            .collect();
+        for (occurrence, parent) in parents.into_iter().enumerate() {
+            ctx.scope_budget.enter().map_err(|diagnostic| {
+                scope_failure("scope_expansion_budget_exceeded", diagnostic.to_string())
+            })?;
+            let mut occurrence_path = ctx.occurrence_path.clone();
+            occurrence_path.push(occurrence);
+            let mut invocation = OccurrenceGuard::new(
+                ctx.execution_scope,
+                OccurrenceProgress::running(
+                    ctx.scope_path.clone(),
+                    map.id.to_string(),
+                    occurrence_path.clone(),
+                ),
             );
-            let values = reader
-                .resolve_row_source_rows(&output.row_source, None)
-                .await
-                .map_err(|diagnostic| {
-                    scope_failure("scope_output_rehydration_failed", diagnostic.to_string())
-                })?;
-            if values.len() != output.result.count()
-                || values.len() != output.row_identities.len()
-                || (!output.value_shapes.is_empty() && values.len() != output.value_shapes.len())
-            {
-                return Err(scope_failure(
-                    "scope_output_occurrence_mismatch",
-                    "scope output occurrence metadata count mismatch",
-                ));
+            if let Some(scope) = ctx.execution_scope {
+                scope.check()?;
             }
-            dependencies.push(output.result.collection.clone());
-            returned_children.push(output.result.collection.computation_source().clone());
-            completed += 1;
-            invocation.finish(
-                OccurrencePhase::Done,
-                Some(values.len()),
-                None,
-                Vec::new(),
-                None,
-            );
-            for index in 0..values.len() {
-                value_shapes.push(output
-                    .value_shape_at(index)
+            let identity = source.row_identities[occurrence]
+                .as_ref()
+                .map(|row| &row.reference);
+            let captured_entities =
+                if let Some(index) = identity.and_then(|identity| semantic_parents.get(identity)) {
+                    semantic_parent_rows.select([*index])?
+                } else {
+                    rows_to_entities_with_refs(
+                        &source.qualified_entity.entity,
+                        std::slice::from_ref(&parent),
+                        None,
+                    )?
+                    .into()
+                };
+            use plasm_core::collection_codec::CollectionCodec;
+            let record = plasm_core::collection_codec::RecordingCodec::new().record(
+                source.result.collection.membership().identity().derived(&(
+                    "capture",
+                    &scope_path,
+                    &occurrence_path,
+                ))?,
+                captured_entities
+                    .iter()
+                    .map(|row| row.reference.clone())
+                    .collect(),
+                plasm_core::collection_codec::Observation::ExactOutput { decoded: 1 },
+            )?;
+            let collection = plasm_runtime::execution::ExecutionCollection::materialized(
+                record,
+                captured_entities,
+            )?;
+            let mut capture_result = (*source.result).clone();
+            capture_result.collection = collection;
+            capture_result.stats = Default::default();
+            capture_result.operations = Default::default();
+            capture_result.request_fingerprints.clear();
+            capture_result.has_more = false;
+            capture_result.pagination_resume = None;
+            capture_result.paging_handle = None;
+            let capture = MaterializedNode {
+                value_shapes: vec![source.value_shape_at(occurrence).map_err(|diagnostic| {
+                    scope_failure("scope_parent_value_shape_invalid", diagnostic.to_string())
+                })?],
+                optional_fields: source.optional_fields.clone(),
+                qualified_entity: source.qualified_entity.clone(),
+                result: Arc::new(capture_result),
+                row_source: inline_row_source_owned(vec![parent.clone()]),
+                row_identities: vec![source.row_identities[occurrence].clone()],
+                artifact: None,
+                display: "captured parent".into(),
+                projection: source.projection.clone(),
+            };
+            let mut environment = captured.clone();
+            environment.insert(local.clone(), capture);
+            let mut steps = Vec::new();
+            // Child operations share cancellation, graph, transport and credentials. Flat UI trace
+            // callbacks cannot identify occurrences: publish structured scope evidence below instead.
+            let child_ctx = PlanStepMaterializeCtx {
+                es: ctx.es,
+                st: ctx.st,
+                session_id: ctx.session_id,
+                plan_shared: ctx.plan_shared,
+                prepared_computes: ctx.prepared_computes,
+                approval_policy: ctx.approval_policy,
+                flow: ctx.flow,
+                trace: None,
+                sink: None,
+                python_host_calls: ctx.python_host_calls,
+                scope_path: scope_path.clone(),
+                scope_budget: ctx.scope_budget.clone(),
+                occurrence_path: occurrence_path.clone(),
+                rows_progress: ctx.rows_progress.clone(),
+                execution_scope: ctx.execution_scope,
+            };
+            for layer in &layers {
+                for step in layer {
+                    if let Some(scope) = ctx.execution_scope {
+                        scope.check()?;
+                    }
+                    let node = map
+                        .plan
+                        .nodes()
+                        .iter()
+                        .find(|n| n.id().as_str() == step.as_str())
+                        .ok_or_else(|| {
+                            scope_failure("scope_body_node_missing", "missing body node")
+                        })?
+                        .clone();
+                    let step_idx = map.plan.node_index(node.id()).ok_or_else(|| {
+                        scope_failure("scope_body_node_index_missing", "missing body index")
+                    })?;
+                    let has_effects = matches!(
+                        node.effect_class(),
+                        EffectClass::Write | EffectClass::SideEffect
+                    );
+                    let selection = plasm_runtime::EffectSelectionReference {
+                        collection: source.result.collection.membership().identity().clone(),
+                        index: occurrence,
+                    };
+                    let outcome = selection
+                        .scope(Box::pin(materialize_executable_plan_step(
+                            &child_ctx,
+                            step_idx,
+                            step,
+                            node,
+                            map.plan.nodes(),
+                            &environment,
+                        )))
+                        .await;
+                    let address = plasm_runtime::OperationInvocationAddress {
+                        scope_path: scope_path
+                            .iter()
+                            .cloned()
+                            .chain(std::iter::once(step.to_string()))
+                            .collect(),
+                        occurrence_path: occurrence_path.clone(),
+                        source_index: occurrence,
+                        source_identity: source.row_identities[occurrence]
+                            .as_ref()
+                            .map(|identity| identity.reference.to_string()),
+                    };
+                    let outcome = match outcome {
+                        Ok(outcome) => outcome,
+                        Err(error) => {
+                            invocation.fail(error.to_string());
+                            return Err(error
+                                .qualify_effects(&address)
+                                .at(step.to_string(), occurrence_path.clone()));
+                        }
+                    };
+
+                    if has_effects {
+                        for mut ack in outcome.mat.result.operations.entries().iter().cloned() {
+                            address.qualify_ack(&mut ack);
+                            operations.merge_ack(ack);
+                        }
+                    }
+                    execution_source = super::plan_fanout_parallel::combine_execution_source(
+                        execution_source,
+                        outcome.mat.result.source,
+                    );
+                    fingerprints.extend(outcome.mat.result.request_fingerprints.iter().cloned());
+                    stats.network_requests += outcome.mat.result.stats.network_requests;
+                    let step_evidence = serde_json::json!({
+                        "address": {"scope_path": scope_path, "local_step": step.as_str()},
+                        "occurrence_path": occurrence_path, "phase": "done",
+                        "rows": outcome.mat.result.count(),
+                        "artifact_uri": outcome.mat.artifact.as_ref().map(|a| &a.plasm_uri),
+                        "request_fingerprints": outcome.mat.result.request_fingerprints,
+                        "operations": outcome.mat.result.operations,
+                        "scope_instances": outcome.scope_instances,
+                    });
+                    steps.push(step_evidence);
+                    dependencies.push(outcome.mat.result.collection.clone());
+                    environment.insert(outcome.node_id, outcome.mat);
+                }
+            }
+            let plasm_core::PlasmReturn::Step { step } = &body.body.return_ else {
+                return Err(scope_failure(
+                    "scope_return_cardinality_invalid",
+                    "map body must return one step",
+                ));
+            };
+            let output = environment
+                .get(&PlanNodeId::new(step.as_str())?)
+                .ok_or_else(|| scope_failure("scope_output_missing", "body output missing"))?;
+            if flatten {
+                let output_scope =
+                    entry_scoped_execute_session(ctx.es, Some(&output.qualified_entity)).map_err(
+                        |diagnostic| {
+                            scope_failure(
+                                "scope_output_catalog_context_invalid",
+                                diagnostic.to_string(),
+                            )
+                        },
+                    )?;
+                let reader = crate::graph_rehydrate::GraphSurfaceRehydrator::new(
+                    &output_scope,
+                    ctx.st,
+                    ctx.session_id,
+                    &output_scope.cgs,
+                );
+                let values = reader
+                    .resolve_row_source_rows(&output.row_source, None)
+                    .await
                     .map_err(|diagnostic| {
+                        scope_failure("scope_output_rehydration_failed", diagnostic.to_string())
+                    })?;
+                if values.len() != output.result.count()
+                    || values.len() != output.row_identities.len()
+                    || (!output.value_shapes.is_empty()
+                        && values.len() != output.value_shapes.len())
+                {
+                    return Err(scope_failure(
+                        "scope_output_occurrence_mismatch",
+                        "scope output occurrence metadata count mismatch",
+                    ));
+                }
+                dependencies.push(output.result.collection.clone());
+                returned_children.push(output.result.collection.computation_source().clone());
+                completed += 1;
+                invocation.finish(
+                    OccurrencePhase::Done,
+                    Some(values.len()),
+                    None,
+                    Vec::new(),
+                    None,
+                );
+                for index in 0..values.len() {
+                    value_shapes.push(output.value_shape_at(index).map_err(|diagnostic| {
                         scope_failure("scope_output_value_shape_invalid", diagnostic.to_string())
                     })?);
+                }
+                rows.extend(values);
+                identities.extend(output.row_identities.clone());
+                instances
+                    .push(serde_json::json!({"occurrence_path":occurrence_path, "steps":steps}));
+                continue;
             }
-            rows.extend(values);
-            identities.extend(output.row_identities.clone());
-            instances.push(serde_json::json!({"occurrence_path":occurrence_path, "steps":steps}));
-            continue;
-        }
-        crate::python_compute::require_complete_collection(&output.result)?;
-        let values = output
-            .row_source
-            .inline_rows()
-            .ok_or_else(|| scope_failure("scope_output_not_inline", "body output must be inline"))?;
-        body.check_output_count(values.len())?;
-        if filtering || quantifying.is_some() {
-            let keep = values[0]
-                .get("predicate")
-                .and_then(plasm_core::Value::as_bool)
-                .ok_or_else(|| scope_failure("scope_predicate_result_invalid", "predicate scope did not return a Boolean"))?;
-            if filtering && keep {
-                retained_parents.push(occurrence);
-                rows.push(parent);
-                value_shapes.push(source
-                    .value_shape_at(occurrence)
-                    .map_err(|diagnostic| {
+            crate::python_compute::require_complete_collection(&output.result)?;
+            let values = output.row_source.inline_rows().ok_or_else(|| {
+                scope_failure("scope_output_not_inline", "body output must be inline")
+            })?;
+            body.check_output_count(values.len())?;
+            if filtering || quantifying.is_some() {
+                let keep = values[0]
+                    .get("predicate")
+                    .and_then(plasm_core::Value::as_bool)
+                    .ok_or_else(|| {
+                        scope_failure(
+                            "scope_predicate_result_invalid",
+                            "predicate scope did not return a Boolean",
+                        )
+                    })?;
+                if filtering && keep {
+                    retained_parents.push(occurrence);
+                    rows.push(parent);
+                    value_shapes.push(source.value_shape_at(occurrence).map_err(|diagnostic| {
                         scope_failure("scope_parent_value_shape_invalid", diagnostic.to_string())
                     })?);
-                identities.push(source.row_identities[occurrence].clone());
+                    identities.push(source.row_identities[occurrence].clone());
+                }
+                completed += 1;
+                invocation.finish(
+                    OccurrencePhase::Done,
+                    Some(usize::from(keep)),
+                    None,
+                    Vec::new(),
+                    None,
+                );
+                instances
+                    .push(serde_json::json!({"occurrence_path":occurrence_path, "steps":steps}));
+                if quantifying.is_some_and(|all| keep != all) {
+                    quantified = keep;
+                    // Quantifier scopes are validated as read-only before execution.
+                    break;
+                }
+                continue;
             }
-            completed += 1;
-            invocation.finish(
-                OccurrencePhase::Done,
-                Some(usize::from(keep)),
-                None,
-                Vec::new(),
-                None,
-            );
-            instances.push(serde_json::json!({"occurrence_path":occurrence_path, "steps":steps}));
-            if quantifying.is_some_and(|all| keep != all) {
-                quantified = keep;
-                break;
-            }
-            continue;
-        }
-        let row = materialize_record(&schema, &values[0], &scoped.cgs, &body.parent.entity.entry_id, &|entry| ctx.es.contexts_by_entry.get(entry).map(|context| context.cgs.as_ref()))
+            let row = materialize_record(
+                &schema,
+                &values[0],
+                &scoped.cgs,
+                &body.parent.entity.entry_id,
+                &|entry| {
+                    ctx.es
+                        .contexts_by_entry
+                        .get(entry)
+                        .map(|context| context.cgs.as_ref())
+                },
+            )
             .map_err(|diagnostic| {
-                scope_failure("scope_record_materialization_failed", diagnostic.to_string())
+                scope_failure(
+                    "scope_record_materialization_failed",
+                    diagnostic.to_string(),
+                )
             })?;
-        rows.push(plasm_core::ValueRow::from(row));
-        value_shapes.push(MaterializedValueShape::Record);
-        completed += 1;
-        invocation.finish(OccurrencePhase::Done, Some(1), None, Vec::new(), None);
-        instances.push(serde_json::json!({"occurrence_path":occurrence_path, "steps":steps}));
-    }
-    let node = ValidatedPlanNode::MapBody(map.clone());
-    if quantifying.is_some() {
-        rows.push(plasm_core::ValueRow::from_iter([(
-            "predicate".into(),
-            plasm_core::Value::Bool(quantified),
-        )]));
-        value_shapes.push(MaterializedValueShape::Record);
-    }
-    fingerprints.insert(
-        compute_fingerprint(&node, &rows, &value_shapes, &identities).map_err(|diagnostic| {
-            scope_failure("scope_result_fingerprint_failed", diagnostic.to_string())
-        })?,
-    );
-    let entity = match &body.output {
-        plasm_core::plasm_monad::ScopedOutput::Rows { entity, .. } => entity.entity.clone(),
-        plasm_core::plasm_monad::ScopedOutput::Record
-        | plasm_core::plasm_monad::ScopedOutput::Quantify { .. } => {
-            format!("PlanComputed_{}", map.id)
+            let row = plasm_core::ValueRow::from(row);
+            rows.push(row);
+            value_shapes.push(MaterializedValueShape::Record);
+            completed += 1;
+            invocation.finish(OccurrencePhase::Done, Some(1), None, Vec::new(), None);
+            instances.push(serde_json::json!({"occurrence_path":occurrence_path, "steps":steps}));
         }
-        plasm_core::plasm_monad::ScopedOutput::Filter => source.qualified_entity.entity.clone(),
-    };
-    let entry_id = match &body.output {
-        plasm_core::plasm_monad::ScopedOutput::Rows { entity, .. } => entity.entry_id.clone(),
-        plasm_core::plasm_monad::ScopedOutput::Record
-        | plasm_core::plasm_monad::ScopedOutput::Quantify { .. } => {
-            source.qualified_entity.entry_id.clone()
+        let node = ValidatedPlanNode::MapBody(map.clone());
+        if quantifying.is_some() {
+            rows.push(plasm_core::ValueRow::from_iter([(
+                "predicate".into(),
+                plasm_core::Value::Bool(quantified),
+            )]));
+            value_shapes.push(MaterializedValueShape::Record);
         }
-        plasm_core::plasm_monad::ScopedOutput::Filter => source.qualified_entity.entry_id.clone(),
-    };
-    let collection = match &body.output {
-        plasm_core::plasm_monad::ScopedOutput::Rows { .. } => source.result.collection.flat_map(
-            &("map_body", &map.id, &scope_path),
-            &returned_children,
-        )?,
-        plasm_core::plasm_monad::ScopedOutput::Filter => source.result.collection.computation_source().filter(
-            &("map_body", &map.id, &scope_path),
-            &retained_parents,
-            &dependencies.iter().skip(1).collect::<Vec<_>>(),
-        )?,
-        plasm_core::plasm_monad::ScopedOutput::Record
-        | plasm_core::plasm_monad::ScopedOutput::Quantify { .. } => plasm_runtime::execution::ExecutionCollection::evaluate(
-            plasm_runtime::execution::RowMaterialization::Computed,
-            source.result.collection.membership().identity().derived(&("map_body", &map.id, &scope_path))?,
-            &dependencies.iter().collect::<Vec<_>>(), rows_to_entities(&entity, &rows)?.into(),
-        )?,
-    };
-    let result = ExecutionResult {
-        collection,
-        has_more: false,
-        pagination_resume: None,
-        paging_handle: None,
-        source: execution_source,
-        stats,
-        request_fingerprints: fingerprints.into_iter().collect(),
-        operations: operations.clone(),
-    };
-    let display = format!("map body {} ({} parents)", map.id, parent_count);
-    let artifact = archive_plasm_result_snapshot(
-        ctx.st,
-        ctx.es,
-        ctx.session_id,
-        &QualifiedEntityKey { entry_id: entry_id.clone(), entity: entity.clone() },
-        vec![display.clone()],
-        &evidence_plan::parsed_expr_for_plan_node(&node),
-        &result,
-        ctx.trace,
-    )
-    .await
-    .map_err(|diagnostic| scope_failure("scope_artifact_persistence_failed", diagnostic.to_string()))?;
-    let evidence = serde_json::json!({"scope_path":scope_path,
+        fingerprints.insert(
+            compute_fingerprint(&node, &rows, &value_shapes, &identities).map_err(
+                |diagnostic| {
+                    scope_failure("scope_result_fingerprint_failed", diagnostic.to_string())
+                },
+            )?,
+        );
+        let entity = match &body.output {
+            plasm_core::plasm_monad::ScopedOutput::Rows { entity, .. } => entity.entity.clone(),
+            plasm_core::plasm_monad::ScopedOutput::Record
+            | plasm_core::plasm_monad::ScopedOutput::Quantify { .. } => {
+                format!("PlanComputed_{}", map.id)
+            }
+            plasm_core::plasm_monad::ScopedOutput::Filter => source.qualified_entity.entity.clone(),
+        };
+        let entry_id = match &body.output {
+            plasm_core::plasm_monad::ScopedOutput::Rows { entity, .. } => entity.entry_id.clone(),
+            plasm_core::plasm_monad::ScopedOutput::Record
+            | plasm_core::plasm_monad::ScopedOutput::Quantify { .. } => {
+                source.qualified_entity.entry_id.clone()
+            }
+            plasm_core::plasm_monad::ScopedOutput::Filter => {
+                source.qualified_entity.entry_id.clone()
+            }
+        };
+        let collection = match &body.output {
+            plasm_core::plasm_monad::ScopedOutput::Rows { .. } => source
+                .result
+                .collection
+                .flat_map(&("map_body", &map.id, &scope_path), &returned_children)?,
+            plasm_core::plasm_monad::ScopedOutput::Filter => {
+                source.result.collection.computation_source().filter(
+                    &("map_body", &map.id, &scope_path),
+                    &retained_parents,
+                    &dependencies.iter().skip(1).collect::<Vec<_>>(),
+                )?
+            }
+            plasm_core::plasm_monad::ScopedOutput::Record
+            | plasm_core::plasm_monad::ScopedOutput::Quantify { .. } => {
+                plasm_runtime::execution::ExecutionCollection::evaluate(
+                    plasm_runtime::execution::RowMaterialization::Computed,
+                    source.result.collection.membership().identity().derived(&(
+                        "map_body",
+                        &map.id,
+                        &scope_path,
+                    ))?,
+                    &dependencies.iter().collect::<Vec<_>>(),
+                    rows_to_entities(&entity, &rows)?.into(),
+                )?
+            }
+        };
+        let result = ExecutionResult {
+            collection,
+            has_more: false,
+            pagination_resume: None,
+            paging_handle: None,
+            source: execution_source,
+            stats,
+            request_fingerprints: fingerprints.into_iter().collect(),
+            operations: operations.clone(),
+        };
+        let display = format!("map body {} ({} parents)", map.id, parent_count);
+        let artifact = archive_plasm_result_snapshot(
+            ctx.st,
+            ctx.es,
+            ctx.session_id,
+            &QualifiedEntityKey {
+                entry_id: entry_id.clone(),
+                entity: entity.clone(),
+            },
+            vec![display.clone()],
+            &evidence_plan::parsed_expr_for_plan_node(&node),
+            &result,
+            ctx.trace,
+        )
+        .await
+        .map_err(|diagnostic| {
+            scope_failure("scope_artifact_persistence_failed", diagnostic.to_string())
+        })?;
+        let evidence = serde_json::json!({"scope_path":scope_path,
         "phase": if parent_count == 0 {"not_invoked"} else {"done"}, "occurrences":parent_count, "completed":completed, "rows":rows.len(), "instances":instances});
-    Ok((
-        MaterializedNode {
-            value_shapes,
-            optional_fields: schema.optional_fields.clone(),
-            qualified_entity: QualifiedEntityKey { entry_id, entity },
-            row_identities: if flatten || filtering {
-                identities
-            } else {
-                vec![None; rows.len()]
+        Ok((
+            MaterializedNode {
+                value_shapes,
+                optional_fields: schema.optional_fields.clone(),
+                qualified_entity: QualifiedEntityKey { entry_id, entity },
+                row_identities: if flatten || filtering {
+                    identities
+                } else {
+                    vec![None; rows.len()]
+                },
+                row_source: inline_row_source_owned(rows),
+                result: Arc::new(result),
+                artifact: Some(artifact),
+                display,
+                projection: if filtering {
+                    source.projection.clone()
+                } else {
+                    None
+                },
             },
-            row_source: inline_row_source_owned(rows),
-            result: Arc::new(result),
-            artifact: Some(artifact),
-            display,
-            projection: if filtering {
-                source.projection.clone()
-            } else {
-                None
-            },
-        },
-        evidence,
-    ))
-    }.await;
-    execution.map_err(|failure| failure.with_effects(&operations))
+            evidence,
+        ))
+    });
+    let execution: Result<_, ExecutionFailure> = work.await;
+    execution.map_err(|failure| {
+        failure
+            .with_effects(&operations)
+            .with_effect_selection(selection)
+    })
 }
 
 /// A run-wide ceiling shared by all root, sibling and nested map occurrences.

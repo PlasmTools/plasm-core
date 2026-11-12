@@ -2,7 +2,7 @@
 use serde::{ser::SerializeSeq, Serialize, Serializer};
 use std::sync::Arc;
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, Serialize)]
 struct Occurrence {
     source: usize,
     row: usize,
@@ -15,6 +15,7 @@ pub struct SharedRows<R> {
     sources: Arc<[Arc<[R]>]>,
     order: Arc<[Occurrence]>,
 }
+
 impl<R> Default for SharedRows<R> {
     fn default() -> Self {
         Vec::new().into()
@@ -265,7 +266,7 @@ mod tests {
 }
 
 #[cfg(test)]
-mod retention_tests {
+mod sharing_tests {
     use super::*;
 
     #[test]

@@ -66,6 +66,64 @@ fn test_session() -> ExecuteSession {
 }
 
 #[tokio::test]
+async fn effect_result_projection_reports_producer_and_available_fields() {
+    let session = test_session();
+    let symbols = session.teaching_exposure.as_ref().unwrap().to_symbol_map();
+    let item = symbols.entity_sym_for("langmatrix", "LangItem");
+    let create = symbols.method_sym_for("langmatrix", "LangItem", "langitem_create");
+    // The entity has contact_email, but create does not provide it in its result.
+    for body in [
+        format!(
+            "created = {item}.{create}(title=\"probe\", score=1, owner=\"fixture\")\n        return created.select(\"contact_email\")"
+        ),
+        format!("return {item}.{create}(title=\"probe\", score=1, owner=\"fixture\").select(\"contact_email\")"),
+    ] {
+        let source = format!("class P(Program):\n    def build(self):\n        {body}");
+        let error = crate::plasm_compile::compile_python_program(&session, &source)
+            .await
+            .unwrap_err();
+        let message = error.to_string();
+        if body.starts_with("created =") {
+            assert!(message.contains("binding `created`"), "{message}");
+        }
+        for expected in [
+            "contact_email",
+            "binding",
+            "producer",
+            "langmatrix/langitem_create",
+            "Available result fields:",
+            "title",
+            "advertised read capability",
+            "do not repeat the mutation",
+        ] {
+            assert!(message.contains(expected), "{message}");
+        }
+        let response = crate::program_diagnostic::plan_run_from_stage(
+            &PromptPipelineConfig::default(),
+            None,
+            &session,
+            &source,
+            "l_fixture",
+            error.into_program().expect("authored program rejection"),
+        );
+        let wire = response.run_markdown.expect("agent-facing tool response");
+        assert!(wire.contains("Available result fields:"), "{wire}");
+        assert!(wire.contains("langmatrix/langitem_create"), "{wire}");
+        assert!(wire.contains("do not repeat the mutation"), "{wire}");
+        let lawful = source.replace("select(\"contact_email\")", "select(\"id\")");
+        crate::plasm_compile::compile_python_program(&session, &lawful)
+            .await
+            .expect("provided identity remains selectable");
+    }
+    let reread = format!(
+        "class P(Program):\n    def build(self):\n        created = {item}.{create}(title=\"probe\", score=1, owner=\"fixture\")\n        observed = {item}.get(identity=created.id)\n        return observed.select(\"contact_email\")"
+    );
+    crate::plasm_compile::compile_python_program(&session, &reread)
+        .await
+        .expect("advertised read admits the complete entity field");
+}
+
+#[tokio::test]
 async fn search_group_by_checks_fields_and_preserves_observed_relation_types() {
     let session = test_session();
     let symbols = session.teaching_exposure.as_ref().unwrap().to_symbol_map();

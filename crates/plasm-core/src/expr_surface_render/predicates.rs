@@ -2,7 +2,7 @@ use crate::predicate::Predicate;
 use crate::symbol_tuning::SymbolMap;
 use crate::CompOp;
 
-use super::values::render_surface_value;
+use super::values::render_surface_value_named;
 
 pub(crate) fn comp_op_str(op: CompOp) -> &'static str {
     match op {
@@ -24,13 +24,14 @@ pub(crate) fn render_predicate_wire(
     entry_id: Option<&str>,
     capability: Option<&str>,
     map: Option<&SymbolMap>,
+    names: &std::collections::HashMap<String, String>,
 ) -> String {
     match pred {
         Predicate::True => "true".to_string(),
         Predicate::False => "false".to_string(),
         Predicate::Comparison { field, op, value } => {
             let f = field_token_wire(entry_id, entity, field, capability, map);
-            let v = render_surface_value(&value.to_value());
+            let v = render_surface_value_named(&value.to_value(), names);
             if v.is_empty() {
                 f
             } else {
@@ -39,13 +40,13 @@ pub(crate) fn render_predicate_wire(
         }
         Predicate::And { args } => args
             .iter()
-            .map(|p| render_predicate_wire(p, entity, entry_id, capability, map))
+            .map(|p| render_predicate_wire(p, entity, entry_id, capability, map, names))
             .collect::<Vec<_>>()
             .join(","),
         Predicate::Or { args } => {
             let inner = args
                 .iter()
-                .map(|p| render_predicate_wire(p, entity, entry_id, capability, map))
+                .map(|p| render_predicate_wire(p, entity, entry_id, capability, map, names))
                 .collect::<Vec<_>>()
                 .join(" OR ");
             format!("({inner})")
@@ -53,7 +54,7 @@ pub(crate) fn render_predicate_wire(
         Predicate::Not { predicate } => {
             format!(
                 "NOT ({})",
-                render_predicate_wire(predicate, entity, entry_id, capability, map)
+                render_predicate_wire(predicate, entity, entry_id, capability, map, names)
             )
         }
         Predicate::ExistsRelation {
@@ -64,7 +65,7 @@ pub(crate) fn render_predicate_wire(
             match predicate {
                 Some(p) => format!(
                     "EXISTS {rel} WHERE {}",
-                    render_predicate_wire(p, entity, entry_id, capability, map)
+                    render_predicate_wire(p, entity, entry_id, capability, map, names)
                 ),
                 None => format!("EXISTS {rel}"),
             }
@@ -77,13 +78,14 @@ pub(crate) fn split_search_predicate(
     q_field: &str,
     text: &mut String,
     filters: &mut Vec<Predicate>,
+    names: &std::collections::HashMap<String, String>,
 ) {
     match pred {
         Predicate::And { args } => {
             for p in args {
                 if let Predicate::Comparison { field, op, value } = p {
                     if field == q_field && *op == CompOp::Eq {
-                        *text = render_surface_value(&value.to_value());
+                        *text = render_surface_value_named(&value.to_value(), names);
                         continue;
                     }
                 }
@@ -91,7 +93,7 @@ pub(crate) fn split_search_predicate(
             }
         }
         Predicate::Comparison { field, op, value } if field == q_field && *op == CompOp::Eq => {
-            *text = render_surface_value(&value.to_value());
+            *text = render_surface_value_named(&value.to_value(), names);
         }
         other => filters.push(other.clone()),
     }

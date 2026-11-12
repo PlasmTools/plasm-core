@@ -45,6 +45,7 @@ fn ticket_query_fixture_cgs() -> CGS {
     })
     .unwrap();
     cgs.add_capability(CapabilitySchema {
+        no_effect_rejections: Vec::new(),
         name: "ticket_get".into(),
         description: String::new(),
         kind: CapabilityKind::Get,

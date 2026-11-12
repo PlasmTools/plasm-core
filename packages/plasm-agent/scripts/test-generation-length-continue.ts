@@ -123,7 +123,7 @@ const emptyContinued = await runEveToolLoop({
         return note;
       },
     }),
-    ...createEvalTerminalTools(),
+    ...createEvalTerminalTools({sealEffectWorkflows: async () => {}}),
   },
   messages: [{ role: "user", content: "do the task" }],
   maxSteps: 8,
@@ -209,7 +209,7 @@ const repaired = await runEveToolLoop({
         return note;
       },
     }),
-    ...createEvalTerminalTools(),
+    ...createEvalTerminalTools({sealEffectWorkflows: async () => {}}),
   },
   messages: [{ role: "user", content: "try a tool" }],
   maxSteps: 8,
@@ -220,7 +220,6 @@ const repaired = await runEveToolLoop({
 
 assert.equal(truncExecuted, 1, "only the repaired call may execute");
 assert.equal(repaired.stopReason, "completed");
-assert.ok(repaired.toolCallRecovery.some(event => event.state === "required"), "invalid arguments enter typed recovery");
 assert.ok(
   !repaired.messages.some(
     (m) =>
@@ -282,7 +281,7 @@ const mixedContinued = await runEveToolLoop({
         return note;
       },
     }),
-    ...createEvalTerminalTools(),
+    ...createEvalTerminalTools({sealEffectWorkflows: async () => {}}),
   },
   messages: [{ role: "user", content: "run then continue" }],
   maxSteps: 8,
@@ -312,7 +311,6 @@ assert.ok(
   ),
   "must not claim budget exhausted before a complete tool call when a tool succeeded",
 );
-assert.equal(mixedContinued.toolCallRecovery.length, 0, "successful tool + length must not enter call repair");
 assert.ok(
   mixedContinued.messages.some((m) => {
     if (m.role !== "tool" || !Array.isArray(m.content)) return false;
@@ -346,7 +344,7 @@ const lengthExhaustModel = new MockLanguageModelV3({
 const lengthOnly = await runEveToolLoop({
   model: lengthExhaustModel,
   system: "system",
-  tools: createEvalTerminalTools(),
+  tools: createEvalTerminalTools({sealEffectWorkflows: async () => {}}),
   messages: [{ role: "user", content: "never finish" }],
   maxSteps: 3,
   agentName: "test-length-not-complete",

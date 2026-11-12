@@ -1,5 +1,13 @@
 # Python language conformance matrix
 
+Local dictionary field inference is exercised through production admission and
+live Monty execution in `python_compute_dictionary_and_multiple_inputs_live`:
+dynamic-key record accumulation, repeated inputs, per-field list mutation,
+deduplication and empty input. The separate
+`python_compute_dictionary_field_precision_rejects_invalidated_writes` witness
+checks dynamic field writes, alias mutation and dictionary updates. These preserve
+ordinary dictionary contracts; they do not grant fixed-record or entity authority.
+
 Declaration reachability and private compute naming are covered by the live
 `compute_private_unused` case and the declaration-constructor registry. Abstract
 `python_admission_corrections` tests additionally preserve typed causes, validate
@@ -307,6 +315,13 @@ these abstract fixture witnesses to typed arrays: split results, nested targets,
 duplicate names, and too few/many values. One Python check validates the entire
 target before exposing any leaf; failures carry `python_exception` and dispatch
 no dependent writes. This does not admit starred or nullable container targets.
+
+`entity_singleton_unpack_checks_cardinality_before_later_effects` covers
+single-target unpacking of catalog-backed entity rowsets. The typed
+`require_one` row operation checks the complete input for exactly one occurrence,
+retains that occurrence's identity, and orders later work after the check,
+including in callback scopes and when the target is unused. Structural
+projection rowsets are not admitted by this path.
 `explicit_unique_selection_checks_candidates_before_effects` checks zero, one,
 and two candidates using an explicit pure assertion; ambiguous/empty selections
 dispatch no writes. `explicit_membership_difference_excludes_existing_effect_targets`
@@ -732,6 +747,16 @@ nullable unions and nested lists; unknown symbols remain rejected.
 `python_row_entity_annotation_runs_without_granting_authority` exercises a Python
 Program through compilation and execution, and rejects relation traversal from
 its computed records. Canonical teaching remains unchanged.
+
+`narrowed_entity_row_return_matrix` accepts a row narrowed by a predicate under
+`Row`, `Row[eN]` and `Value[eN]` return annotations. It rejects missing required
+fields, a null row, wrong field types and assignment to materialized fields.
+`scoped_parent_reads_keep_distinct_complete_relations` exercises twenty concurrent
+reads: identical complete observations and distinct identities coexist. Its
+corrected whole-parent case retains both members in every returned complete
+relation. The runtime test `membership_evidence_conflicts_on_divergent_exhaustive_occurrences`
+deterministically verifies divergent concurrent complete memberships; retry
+exhaustion is schedule-dependent and is not required by the integration matrix.
 
 ### Scoped callback laws
 

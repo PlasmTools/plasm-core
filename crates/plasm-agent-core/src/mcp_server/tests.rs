@@ -182,7 +182,9 @@ fn mcp_server_initialize_instructions_snapshot() {
 fn mcp_server_initialize_workflow_uses_session_mode_not_intent_key() {
     let text = plasm_core::prompt_render::MCP_INITIALIZE_WORKFLOW;
     assert!(text.contains("session_mode"));
-    assert!(text.contains("logical_session_ref"));
+    assert!(
+        plasm_core::prompt_render::PLASM_CONTEXT_TOOL_DESCRIPTION.contains("logical_session_ref")
+    );
     assert!(!text.contains(plasm_core::prompt_render::TEACHING_VALID_EXPR_MARKER));
     assert!(!text.contains("Row text:"));
     assert!(!text.contains("Heredoc:"));
@@ -191,7 +193,8 @@ fn mcp_server_initialize_workflow_uses_session_mode_not_intent_key() {
     assert!(!text.contains("several discovery calls"));
     assert!(!text.contains("pass **`query`**"));
     assert!(!text.contains("syntax guide in MCP initialize"));
-    assert!(text.contains("Reuse its `logical_session_ref` for `plasm` / `plasm_run`"));
+    assert!(plasm_core::prompt_render::PLASM_CONTEXT_TOOL_DESCRIPTION
+        .contains("session_mode: \"extend\""));
     assert!(text.contains("no tool call"));
     assert!(!text.contains("until observation matches"));
     assert!(!text.contains("Then reply with exactly: DONE"));
@@ -209,7 +212,7 @@ fn mcp_tool_descriptions_are_self_contained_without_initialize() {
     assert!(plasm_desc.contains(plasm_core::prompt_render::MCP_TOOL_SYNTAX_CONTRACT_MARKER));
     assert!(plasm_desc.contains("logical_session_ref") && plasm_desc.contains("run_ref"));
     assert!(plasm_desc.contains("@compute"));
-    assert!(plasm_desc.contains("incremental declarations arrive through plasm_context"));
+    assert!(plasm_desc.contains("Session declarations arrive through plasm_context"));
     assert!(plasm_desc.contains(plasm_core::prompt_render::TEACHING_VALID_EXPR_MARKER));
 
     assert!(plasm_core::prompt_render::PLASM_MCP_TOOL_DESCRIPTION
@@ -389,8 +392,8 @@ fn plasm_context_tool_description_contract_append_vs_refresh() {
         "initialize workflow must not treat intent as session key"
     );
     assert!(
-        workflow.contains("Reuse its `logical_session_ref` for `plasm` / `plasm_run`"),
-        "expected steady-state guidance in initialize workflow"
+        desc.contains("logical_session_ref") && desc.contains("session_mode: \"extend\""),
+        "expected steady-state guidance in context tool description"
     );
 }
 

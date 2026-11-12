@@ -68,9 +68,9 @@ fn prompt_matrix_entity_union_teaches_variants_and_lawful_narrowing() {
     assert!(!wave.declarations.contains("private_wire_marker"));
     let language = wave.language.unwrap();
     assert!(language.contains("rows.of_type(eN)"));
-    assert!(language.contains("target must be a declared"));
-    assert!(language.contains("retains their recorded identity"));
-    assert!(language.contains("computed dictionaries cannot be narrowed into entities"));
+    assert!(language.contains("select a declared variant before its fields/relations/actions"));
+    assert!(language.contains("preserves original identity"));
+    assert!(language.contains("never turns computed records into entities"));
 }
 
 fn fixture() -> CGS {
@@ -79,6 +79,73 @@ fn fixture() -> CGS {
             .join("../../fixtures/schemas/python_dag_slice"),
     )
     .unwrap()
+}
+
+#[test]
+fn python_card_retains_read_visibility_and_variant_presence_contracts() {
+    let mut cgs = fixture();
+    let query_contract = "List records where the principal participates; creation alone does not confer list visibility.";
+    let get_contract = "Read a record by identity when its creator or participant; list absence does not imply nonexistence.";
+    let field_contract = "Payload title only for titled events; omission is unobserved, not null.";
+    cgs.capabilities.get_mut("item_query").unwrap().description = query_contract.into();
+    cgs.capabilities.get_mut("item_get").unwrap().description = get_contract.into();
+    let field = cgs
+        .entities
+        .get_mut("Item")
+        .unwrap()
+        .fields
+        .get_mut("title")
+        .unwrap();
+    field.required = false;
+    field.description = field_contract.into();
+    let mut exposure = TeachingExposureSession::new(&cgs, "fixture", &["Item"]);
+    let initial = prepare_python_teaching_wave(&exposure, &PythonTeachingState::default()).unwrap();
+    for contract in [query_contract, get_contract, field_contract] {
+        assert!(
+            initial.declarations.contains(contract),
+            "missing {contract}: {}",
+            initial.declarations
+        );
+    }
+    exposure.expose_entities(
+        &[&cgs],
+        std::sync::Arc::new(cgs.clone()),
+        "fixture",
+        &["Tag"],
+    );
+    let extension = prepare_python_teaching_wave(&exposure, &initial.next_state).unwrap();
+    for contract in [query_contract, get_contract, field_contract] {
+        assert!(!extension.declarations.contains(contract));
+        assert!(extension
+            .next_state
+            .declarations
+            .values()
+            .any(|body| body.contains(contract)));
+    }
+}
+
+#[test]
+fn python_card_retains_read_absence_contract_without_changing_result_type() {
+    let mut cgs = fixture();
+    let contract = "Read the latest record. If none exists, the service rejects the read with HTTP 422; it does not return an empty rowset or null. This read can stop a program.";
+    cgs.capabilities.get_mut("item_get").unwrap().description = contract.into();
+    let mut exposure = TeachingExposureSession::new(&cgs, "fixture", &["Item"]);
+    let initial = prepare_python_teaching_wave(&exposure, &PythonTeachingState::default()).unwrap();
+    assert!(initial.declarations.contains(contract));
+    assert!(initial.declarations.contains("-> Singleton[e1]"));
+    exposure.expose_entities(
+        &[&cgs],
+        std::sync::Arc::new(cgs.clone()),
+        "fixture",
+        &["Tag"],
+    );
+    let extension = prepare_python_teaching_wave(&exposure, &initial.next_state).unwrap();
+    assert!(!extension.declarations.contains(contract));
+    assert!(extension
+        .next_state
+        .declarations
+        .values()
+        .any(|body| body.contains(contract)));
 }
 
 #[test]
@@ -485,6 +552,53 @@ fn compact_card_groups_identical_cgs_comments_with_explicit_owners() {
     assert!(!wave.declarations.contains("def "));
     assert!(!wave.declarations.contains("class e"));
     assert_eq!(wave.declarations.matches("-> EffectAck").count(), 3);
+}
+
+#[test]
+fn language_card_preserves_distinct_effect_contracts_and_owners() {
+    let cgs = fixture();
+    let mut exposure = TeachingExposureSession::new(&cgs, "fixture", &["Item"]);
+    let symbols = exposure.to_symbol_map();
+    let owner = symbols.entity_sym_for("fixture", "Item");
+    let wave = prepare_python_teaching_wave(&exposure, &PythonTeachingState::default()).unwrap();
+    for name in ["item_touch", "item_publish"] {
+        let cap = &cgs.capabilities[name];
+        let OutputType::SideEffect { description } =
+            &cap.output_schema.as_ref().unwrap().output_type
+        else {
+            panic!("fixture must declare an effect");
+        };
+        let method = symbols.method_sym_for("fixture", "Item", name);
+        for annotation in [cap.description.as_str(), description.as_str()] {
+            assert_eq!(wave.declarations.matches(annotation).count(), 1);
+            let signature = wave
+                .declarations
+                .lines()
+                .skip_while(|line| !line.contains(annotation))
+                .find(|line| !line.trim().starts_with('#'))
+                .unwrap();
+            assert!(
+                signature.contains(&format!("{owner}.{method}")),
+                "{signature}"
+            );
+        }
+    }
+    exposure.expose_entities(
+        &[&cgs],
+        std::sync::Arc::new(cgs.clone()),
+        "fixture",
+        &["Tag"],
+    );
+    let extension = prepare_python_teaching_wave(&exposure, &wave.next_state).unwrap();
+    for name in ["item_touch", "item_publish"] {
+        let description = &cgs.capabilities[name].description;
+        assert!(!extension.declarations.contains(description));
+        assert!(extension
+            .next_state
+            .declarations
+            .values()
+            .any(|body| body.contains(description)));
+    }
 }
 
 #[test]

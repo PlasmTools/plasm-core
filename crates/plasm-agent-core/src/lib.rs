@@ -24,12 +24,11 @@ pub mod catalog_runtime;
 pub mod cli_builder;
 pub mod control_plane_http;
 mod decision_codec;
-mod decision_transport;
 pub mod discovery_matcher;
 pub mod discovery_recovery;
+mod discovery_scheduling;
 pub mod discovery_service;
 pub mod discovery_store;
-pub mod discovery_support;
 pub mod dispatch;
 pub mod domain_revision;
 pub mod dotenv_safe;
@@ -60,6 +59,7 @@ pub mod http_oauth_link;
 pub mod http_outbound_secrets;
 pub mod http_problem_util;
 mod http_traces;
+mod http_training;
 pub mod incoming_auth;
 pub mod incoming_auth_device;
 pub mod input_field_cli;
@@ -81,6 +81,7 @@ mod mcp_plasm_run_phases;
 pub mod mcp_policy;
 pub mod mcp_run_await;
 mod mcp_run_markdown;
+pub mod program_symbol_context;
 pub mod secret_store;
 pub use mcp_run_markdown::{ArtifactAccessMode, McpResultTransportPolicy};
 mod mcp_oauth_http;
@@ -112,6 +113,7 @@ mod operation_progress_sse;
 pub mod oss_local_state;
 pub mod outbound_secret_provider;
 pub mod output;
+pub mod plan_authorization;
 pub mod plan_commit_store;
 mod plan_dry_compact;
 mod plan_dry_display;
@@ -242,16 +244,26 @@ mod tool_model;
 pub mod trace_hub;
 pub(crate) mod trace_hub_metrics;
 pub mod trace_sink_emit;
+mod training_ui;
 mod web_connected_account_notify;
 pub mod wire_protocol;
+pub mod workflow_learning;
+mod workflow_learning_mcp;
 pub mod workflow_manifest;
 mod workflow_mcp;
 pub mod workflow_program_template;
 pub mod workflow_readiness;
 pub mod workflow_registry;
+mod workflow_training_mcp;
+mod workflow_training_wire;
 pub mod workflow_view_model;
 
 pub use crate::cli_builder::AgentCliSurface;
+
+/// Initialize OTLP metrics for an embedded host without installing a tracing subscriber.
+pub fn init_embedded_metrics() -> Result<(), plasm_otel::TelemetryInitError> {
+    plasm_otel::init_embedded_metrics("plasm-agent")
+}
 
 /// Dotenv + telemetry init shared with `plasm-repl` and other front binaries.
 pub fn init_agent_runtime() -> Result<(), Box<dyn std::error::Error>> {

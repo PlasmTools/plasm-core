@@ -1,0 +1,38 @@
+{
+  "certificate_primary": {
+    "method": "GET",
+    "path": [
+      {
+        "type": "literal",
+        "value": "certificate_primary"
+      }
+    ]
+  },
+  "certificate_secondary": {
+    "method": "GET",
+    "path": [
+      {
+        "type": "literal",
+        "value": "certificate_secondary"
+      }
+    ]
+  },
+  "sensor_validate": {
+    "method": "POST",
+    "path": [
+      {
+        "type": "literal",
+        "value": "sensor_validate"
+      }
+    ]
+  },
+  "paint_read": {
+    "method": "GET",
+    "path": [
+      {
+        "type": "literal",
+        "value": "paint_read"
+      }
+    ]
+  }
+}

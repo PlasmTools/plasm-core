@@ -8,6 +8,8 @@
 //! - `GET /execute/:prompt_hash/:session` — `200` + JSON (`prompt`, `entry_id`, `entities`, …)
 //! - `POST /execute/:prompt_hash/:session` — `text/plain` or JSON program string (`{"program": "..."}`); `Accept`: json | ndjson | table (**default** when omitted: **json**)
 
+pub use crate::training_ui::authenticate_local_training_owner;
+
 use axum::extract::Extension;
 use axum::routing::get;
 use axum::Router;
@@ -82,6 +84,18 @@ pub struct PlasmHostBootstrap {
 /// Build shared state for HTTP + MCP (registry, engine, session store).
 pub fn build_plasm_host_state(
     bootstrap: PlasmHostBootstrap,
+) -> Result<PlasmHostState, HostBootstrapError> {
+    let learning = Arc::new(crate::workflow_learning::WorkflowLearning::default());
+    if tokio::runtime::Handle::try_current().is_ok() {
+        learning.start_worker();
+    }
+    build_plasm_host_state_with_learning(bootstrap, learning)
+}
+
+/// Explicit native/application policy; never starts an environment-selected learner.
+pub fn build_plasm_host_state_with_learning(
+    bootstrap: PlasmHostBootstrap,
+    workflow_learning: Arc<crate::workflow_learning::WorkflowLearning>,
 ) -> Result<PlasmHostState, HostBootstrapError> {
     let PlasmHostBootstrap {
         engine,
@@ -162,6 +176,7 @@ pub fn build_plasm_host_state(
             oauth_link_catalog: None,
             outbound_secret_provider: None,
             workflows,
+            workflow_learning,
             redis_backend: None,
             live_plan_pool,
             blocking_compute,
@@ -183,6 +198,12 @@ pub fn health_public_routes() -> Router {
         .merge(crate::run_ui_progress::run_ui_progress_routes())
 }
 
+/// Authenticated owner bridge routes. Their own control-plane guard is mandatory;
+/// mount outside ordinary incoming bearer authentication in every host.
+pub fn training_control_routes() -> Router {
+    crate::training_ui::routes()
+}
+
 /// The traced OSS tool/discovery/execute surface (and related `/v1/*` helpers) under incoming-auth
 /// middleware.
 ///
@@ -200,6 +221,7 @@ pub fn oss_traced_routes() -> Router {
             .merge(trace_routes())
             .merge(execute_routes())
             .merge(crate::http_workflow::workflow_routes())
+            .merge(crate::http_training::training_routes())
             .merge(crate::http_plan_ui::plan_ui_routes())
             .merge(crate::http_run_ui::run_ui_routes())
             .layer(axum::middleware::from_fn(incoming_auth_http_middleware)),
@@ -220,6 +242,7 @@ pub fn discovery_execute_router(state: PlasmHostState) -> Router {
     let health_public = health_public_routes();
 
     let mut pre_internal = Router::new()
+        .merge(training_control_routes())
         .merge(http_oauth_link::oauth_link_routes())
         .merge(http_outbound_secrets::outbound_secrets_routes())
         .merge(http_mcp_bindings::mcp_bindings_routes())

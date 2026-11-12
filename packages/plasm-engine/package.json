@@ -14,6 +14,9 @@
   },
   "main": "runtime.cjs",
   "types": "index.d.ts",
+  "bin": {
+    "plasm-workflow-archive": "scripts/workflow-archive.mjs"
+  },
   "files": [
     "index.js",
     "index.d.ts",
@@ -21,7 +24,8 @@
     "LICENSE-MIT",
     "LICENSE-APACHE",
     "README.md",
-    "runtime.cjs"
+    "runtime.cjs",
+    "scripts/workflow-archive.mjs"
   ],
   "scripts": {
     "build": "node scripts/build.mjs",

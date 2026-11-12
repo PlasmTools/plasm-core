@@ -184,9 +184,14 @@ pub fn make_appliance_data_root(prefix: &str) -> (tempfile::TempDir, PathBuf) {
 }
 
 pub fn repo_root() -> PathBuf {
-    let manifest = PathBuf::from(std::env::var("CARGO_MANIFEST_DIR").expect("test runner must set CARGO_MANIFEST_DIR"));
+    let manifest = PathBuf::from(
+        std::env::var("CARGO_MANIFEST_DIR").expect("test runner must set CARGO_MANIFEST_DIR"),
+    );
     let root = manifest.join("../..").canonicalize().expect("core root");
-    assert!(root.join("fixtures/schemas/overshow_tools").is_dir(), "core fixture directory must exist");
+    assert!(
+        root.join("fixtures/schemas/overshow_tools").is_dir(),
+        "core fixture directory must exist"
+    );
     root
 }
 

@@ -108,6 +108,8 @@ pub struct ExecuteRunToolOutput {
 
 #[derive(Debug, Clone)]
 pub struct PublishedResultStep {
+    /// Presentation provenance only; does not confer catalog identity on computed rows.
+    pub source_heading: Option<String>,
     pub name: Option<String>,
     pub node_id: Option<String>,
     pub entry_id: Option<String>,
@@ -266,10 +268,9 @@ pub(crate) fn resolve_paging_storage_handle(
     }
 }
 
-mod context;
+pub(crate) mod context;
 #[cfg(test)]
 pub(crate) use context::execute_session_create_response_inner;
-pub(crate) use context::upsert_logical_ledger_from_snapshot;
 pub(crate) use context::{
     patch_cgs_context_outbound_hosted, patch_cgs_context_resolved_http_backend,
     resolve_http_backend_for_entry,

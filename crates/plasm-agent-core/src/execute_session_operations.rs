@@ -93,6 +93,11 @@ impl super::ExecuteSession {
             let Ok(handle) = OperationHandle::parse(&desc.handle) else {
                 continue;
             };
+            // A persisted descriptor has no executor. Never replace this host's
+            // live operation with its own (possibly stale) persisted snapshot.
+            if map.get(&handle).is_some_and(|op| op.live_executor) {
+                continue;
+            }
             wire.started_at_unix_by_handle
                 .insert(desc.handle.clone(), desc.started_at_unix);
             let phase = match desc.phase {
@@ -264,6 +269,10 @@ mod tests {
         assert_eq!(snap.operations.len(), 1);
         assert_eq!(snap.operations[0].handle, handle.as_str());
         assert_eq!(snap.operations[0].progress.step, 2);
+
+        es.restore_persisted_operations(&snap);
+        assert!(es.operation_has_live_executor(&handle));
+        assert!(es.cancel_operation(&handle, None));
 
         let es2 = ExecuteSession::new(
             "ph".into(),

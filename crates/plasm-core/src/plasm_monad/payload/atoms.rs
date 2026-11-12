@@ -36,6 +36,7 @@ macro_rules! plan_string_atom {
                 &self.0
             }
 
+
             pub fn into_inner(self) -> String {
                 self.0
             }

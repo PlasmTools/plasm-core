@@ -107,6 +107,7 @@ pub fn synthetic_published_result_step_with_paging(
         })
         .collect();
     PublishedResultStep {
+        source_heading: None,
         name: Some("moves".into()),
         node_id: None,
         entry_id: Some("pokeapi".into()),

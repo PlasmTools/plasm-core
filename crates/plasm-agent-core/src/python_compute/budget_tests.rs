@@ -2,6 +2,47 @@ use super::*;
 use plasm_runtime::{InputBudgetUnit, RecoveryDisposition};
 
 #[test]
+fn compute_source_budget_measures_utf8_and_keeps_the_existing_boundary() {
+    let cgs = plasm_core::loader::load_schema_dir(
+        &std::path::Path::new(crate::test_manifest_dir())
+            .join("../../fixtures/schemas/python_value_contract"),
+    )
+    .unwrap();
+    let symbols =
+        plasm_core::TeachingExposureSession::new(&cgs, "types", &["Sample"]).to_symbol_map();
+    for source in ["x".repeat(4097), "é".repeat(2049), "\n".repeat(4097)] {
+        let Err(PythonComputeRejection::Typed(PythonComputeError::SourceBudgetExceeded {
+            actual_bytes,
+            limit_bytes,
+        })) = PreparedCompute::prepare(
+            &source,
+            &cgs,
+            "types",
+            symbols.as_ref(),
+            ComputeInputMode::Singleton,
+        )
+        else {
+            panic!("source budget rejection")
+        };
+        assert_eq!(actual_bytes, source.len());
+        assert_eq!(limit_bytes, 4096);
+    }
+    // Exactly 4096 bytes passes the source-size gate (syntax can still be rejected).
+    assert!(!matches!(
+        PreparedCompute::prepare(
+            &"x".repeat(4096),
+            &cgs,
+            "types",
+            symbols.as_ref(),
+            ComputeInputMode::Singleton
+        ),
+        Err(PythonComputeRejection::Typed(
+            PythonComputeError::SourceBudgetExceeded { .. }
+        ))
+    ));
+}
+
+#[test]
 fn named_input_budget_reports_accounted_bytes_without_payloads() {
     let rows = vec![crate::fixture_row!({"secret": "x".repeat(MAX_INPUT_BYTES)})];
     let error = validate_named_input_budget(&rows, "source").unwrap_err();

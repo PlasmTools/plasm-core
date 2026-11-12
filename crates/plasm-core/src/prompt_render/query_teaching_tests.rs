@@ -513,6 +513,7 @@ fn simple_string_id_identity_row_uses_id_hole() {
         ]
     });
     cgs.add_capability(CapabilitySchema {
+        no_effect_rejections: Vec::new(),
         name: "specimen_get".into(),
         description: "Fetch one specimen by name".into(),
         kind: CapabilityKind::Get,

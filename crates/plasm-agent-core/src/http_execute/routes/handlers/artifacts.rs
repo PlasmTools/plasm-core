@@ -5,6 +5,7 @@ use crate::run_artifacts::CodePlanArchiveDocument;
 
 pub(crate) async fn get_execute_code_plan(
     Extension(st): Extension<PlasmHostState>,
+    Extension(IncomingPrincipal(principal)): Extension<IncomingPrincipal>,
     Path((ph, sid, plan_id_str)): Path<(String, String, String)>,
 ) -> Response {
     let prompt_hash = match ph.parse::<PromptHashHex>() {
@@ -77,6 +78,33 @@ pub(crate) async fn get_execute_code_plan(
         }
     };
 
+    // Source is sensitive: apply the same tenant check as execute session routes
+    // before returning it, including when the archive outlives the session.
+    let Some(sess) = (match st
+        .try_get_execute_session(prompt_hash.as_str(), session_id.as_str())
+        .await
+    {
+        Ok(session) => session,
+        Err(error) => return crate::http_execute::session_lookup_unavailable(error),
+    }) else {
+        return problem_response(
+            Problem::custom(
+                ProblemStatus::NOT_FOUND,
+                Uri::from_static(problem_types::EXECUTE_UNKNOWN_SESSION),
+            )
+            .with_title("Not Found")
+            .with_detail("unknown or expired execute session"),
+        );
+    };
+    if !session_allows_principal(&sess, principal.as_ref()) {
+        return incoming_auth_problem(
+            crate::incoming_auth::IncomingAuthFailure::Invalid(
+                crate::incoming_auth::IncomingAuthError::SessionTenantMismatch,
+            ),
+            true,
+        );
+    }
+
     tracing::info!(
         target: "plasm_agent::http_execute",
         prompt_hash = %prompt_hash.as_str(),
@@ -90,6 +118,9 @@ pub(crate) async fn get_execute_code_plan(
         "comp": doc.comp,
         "plan_ux_reflection": doc.plan_ux_reflection,
         "plan_id": doc.plan_id,
+        "prompt_hash": doc.prompt_hash,
+        "session_id": doc.session_id,
+        "code": doc.code,
         "plan_handle": doc.plan_handle,
         "name": doc.name,
     }))

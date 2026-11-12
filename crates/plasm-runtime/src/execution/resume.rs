@@ -65,6 +65,20 @@ impl ExecutionEngine {
         consume: StreamConsumeOpts,
         opts: &ExecuteOptions,
     ) -> Result<QueryStream<'a>, RuntimeError> {
+        let actual = cgs.current_execution_catalog_hash_hex();
+        if resume.catalog_hash != actual {
+            return Err(RuntimeError::PaginationCatalogMismatch {
+                expected: resume.catalog_hash,
+                actual,
+            });
+        }
+        let actual_compiled = opts.required_compiled_catalog()?.cgs_hash().to_owned();
+        if resume.compiled_catalog_hash != actual_compiled {
+            return Err(RuntimeError::PaginationCompiledCatalogMismatch {
+                expected: resume.compiled_catalog_hash,
+                actual: actual_compiled,
+            });
+        }
         let qexpr = plasm_core::Expr::Query(resume.query.clone());
         if opts.preflight.is_none() {
             if let Some(ref fed) = opts.federation {
@@ -83,9 +97,11 @@ impl ExecutionEngine {
         let state: PaginationLoopState = resume.state.try_into()?;
         let QueryPaginationResumeData {
             query,
+            residual,
             env,
             template,
             config,
+            compiled_catalog_hash,
             ..
         } = resume;
         self.paginated_query_stream(
@@ -97,9 +113,11 @@ impl ExecutionEngine {
             config,
             env,
             capability,
+            residual,
             consume,
             Some(state),
             opts.graph_page_spill.clone(),
+            compiled_catalog_hash,
         )
     }
 }

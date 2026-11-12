@@ -35,7 +35,7 @@ export const resolvedEffectEvidenceSchema = z.object({
 
 export const executionFailureSchema = z.object({
   cause: z.enum(["program", "response_contract", "catalog", "runtime", "upstream", "transport", "authorization", "cancelled", "unclassified"]),
-  recovery: z.enum(["repair_program", "obtain_authorization", "reconcile_effects", "stop"]),
+  recovery: z.enum(["repair_program", "obtain_authorization", "reconcile_effects", "replan_after_rejection", "stop"]),
   code: z.string(),
   // Diagnostic prose is visible to the agent, never recovery authority.
   diagnostic: z.string(),
@@ -50,8 +50,15 @@ export const executionFailureSchema = z.object({
   dispatches: z.array(z.object({
     resolved_effect: resolvedEffectEvidenceSchema.optional(),
     operation: z.object({ entry_id: z.string(), capability: z.string() }).strict(),
-    request_fingerprint: z.string(), status: z.enum(["unresolved", "response_received"]),
+    request_fingerprint: z.string(), status: z.enum(["unresolved", "response_received", "rejected_without_effect"]),
   }).strict()),
+  effect_selections: z.array(z.object({
+    collection: collectionReferenceSchema,
+    coverage: z.enum(["complete", "partial", "unknown"]),
+    count: z.number().int().nonnegative(),
+    scope_path: z.array(z.string()),
+    occurrence_path: z.array(z.number().int().nonnegative()),
+  }).strict()).optional(),
   effects_unresolved: z.boolean(),
   // Original provider envelope is evidence, never recovery authority.
   mcp_tool_result: jsonValueSchema.optional(),
@@ -74,9 +81,10 @@ export const executionFailureSchema = z.object({
     ]).nullable(),
   }).strict().optional(),
 }).strict().refine(failure => {
-  const effects = failure.effects_unresolved || failure.dispatches.length > 0 || failure.effects.some(effect => effect.completed > 0);
+  const effects = failure.effects_unresolved || failure.dispatches.some(dispatch => dispatch.status !== "rejected_without_effect") || failure.effects.some(effect => effect.completed > 0);
   if (failure.recovery === "repair_program") return failure.cause === "program" && !effects;
   if (failure.recovery === "obtain_authorization") return failure.cause === "authorization" && !effects;
+  if (failure.recovery === "replan_after_rejection") return failure.cause === "upstream" && !effects && failure.dispatches.some(dispatch => dispatch.status === "rejected_without_effect");
   return true;
 }, "recovery authority must agree with cause and effect evidence");
 export type ExecutionFailure = z.infer<typeof executionFailureSchema>;
@@ -114,7 +122,7 @@ export function terminalExecutionFailure(results: readonly { toolName: string; o
     if (!part.output || typeof part.output !== "object" || !("status" in part.output) || part.output.status !== "execution_failed") continue;
     const result = failureObservationSchema.safeParse(part.output);
     if (!result.success) return failureObservation(undefined).failure;
-    if (!["repair_program", "reconcile_effects"].includes(result.data.failure.recovery)) return result.data.failure;
+    if (!["repair_program", "reconcile_effects", "replan_after_rejection"].includes(result.data.failure.recovery)) return result.data.failure;
   }
   return undefined;
 }

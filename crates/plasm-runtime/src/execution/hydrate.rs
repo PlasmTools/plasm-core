@@ -2303,6 +2303,7 @@ mod tests {
         let paid = super::super::predicates::filter_entities_by_predicate(
             listed.entities().iter().cloned().collect(),
             &Predicate::eq("payer", "alice"),
+            &cgs,
         )
         .expect("payer filter");
         let paid_ids: Vec<String> = paid
@@ -2318,6 +2319,7 @@ mod tests {
         let owed = super::super::predicates::filter_entities_by_predicate(
             listed.entities().iter().cloned().collect(),
             &Predicate::eq("debtor", "alice"),
+            &cgs,
         )
         .expect("debtor filter");
         let owed_ids: Vec<String> = owed

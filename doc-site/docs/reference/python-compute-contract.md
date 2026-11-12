@@ -246,6 +246,33 @@ CSV case alone cannot establish completion.
 
 ## Implementation ledger
 
+### Recorded completed outputs
+
+`self.recorded("pr…")` in `Program.build` imports an available, complete
+catalogue output from the current session's artifact working set. Admission pins
+the observed structural records into the plan; it never replays the producer.
+The records retain observed fields and flow evidence, not live entity identity.
+Missing fields remain missing, and ordinary get/query operations remain fresh.
+New effects still require review and execution authorization. `provides` remains
+solely a hydration mechanism.
+
+Complete pinned membership of exactly one row permits direct field extraction
+from the recorded binding, including fields supplied to fresh reads and reviewed
+effects. Empty and plural outputs remain rowsets; direct field access reports the
+authored binding and requires selection or mapping, without replaying acquisition.
+This cardinality proof does not restore receiver identity or change stored rows.
+
+Reuse rejects incomplete collections, unavailable artifacts, and absent producer
+flow evidence. Computed outputs without catalogue provenance are unsupported.
+This implementation does not resolve evicted artifacts from durable storage.
+Producer flow is attached to the specific hot artifact resource index; explicit
+empty evidence differs from missing evidence. Plan wire version 4 retains that
+evidence through serialization. Bind recorded data before callbacks.
+
+Witnesses: `recorded_output_restore_never_replays_effects_or_satisfies_fresh_reads`,
+`recorded_output_keeps_catalog_labels_and_historical_provenance`, and
+`forbidden_untrusted_to_outbound_sink_denies_mutation`.
+
 ### Numeric inference and rejection evidence
 
 Numeric operator declarations must describe Monty's actual result carriers, including
@@ -299,6 +326,16 @@ Equal-valued copies and modified records do not gain receiver authority. No
 identity witness is added to model-visible record fields. Result fingerprints
 include retained host identities. Explicit output annotations, mixed owners
 and nested output containers do not acquire authority through this rule.
+
+Receiver rejection distinguishes missing identity from unproven singleton
+cardinality. Named compute results report the authored receiver binding, compute
+method and call line, including aliases; explicit return annotations are
+distinguished from inferred outputs without occurrence-selection proof. Unknown
+provenance is not attributed to a producer. The suggested verification repair is
+a one-row compute gate followed by `flat_map` over the original entity receiver,
+so verification failure prevents the write rather than bypassing the dependency.
+Abstract witnesses: `receiver_identity_diagnostic_names_authored_binding_and_origin`
+and `receiver_identity_repair_preserves_verification_dependency`.
 
 Pure helpers containing Python calls, indexing or comprehensions use the same
 checked compute boundary as multi-statement pure helpers. Structural record
@@ -385,6 +422,13 @@ retains its input-derived meaning. Neither spelling grants entity or mutation
 authority. Teaching retains `Value[eN]` as its canonical explicit spelling.
 Witnesses: `row_entity_annotation_matches_value_contract_recursively` and
 `python_row_entity_annotation_runs_without_granting_authority`.
+
+Materialized record boundary declarations are read-only structural protocols,
+matching inference declarations. A row whose fields have been narrowed may be
+returned under the wider entity record contract. This does not supply unobserved
+fields, admit a null row, permit field assignment, or weaken mutable container
+invariance. `narrowed_entity_row_return_matrix` covers these admission boundaries;
+the recursive value matrix retains missing versus observed-null runtime checks.
 
 ### Federated map record materialization
 
@@ -764,6 +808,37 @@ attribute. Empty dictionaries are valid when their key/value contracts are known
 mutated containers use upstream inference, not return-literal inspection. Dictionaries
 survive serialization and subsequent typed compute without gaining entity authority.
 
+### Local dictionary field inference
+
+Within a compute function, the upstream checker can retain literal-key field types
+for a locally constructed dictionary of records. For example, a title and a list
+remain distinct in this accumulator:
+
+```python
+groups = {}
+for row in rows:
+    key = str(row.id)
+    if key not in groups:
+        groups[key] = {"title": str(row.title), "items": []}
+    groups[key]["items"].append(str(row.title))
+```
+
+This precision requires evidence for the local value producers and uses. An
+unclassified alias or container escape, nested-scope capture (including a generator
+expression), dynamic field write, or destructive mutation invalidates the
+refinement. Ordinary dictionary checking then applies;
+the checker does not assume that an uncertain field is still a list. Incompatible
+field use remains an admission error. This is upstream inference, not Plasm source
+rewriting or a second checker.
+
+The refinement neither guarantees a key's presence nor changes the materialized
+`Dictionary { key, value }` contract. Missing-key access still raises `KeyError`.
+Returning a dictionary does not export a fixed-record guarantee or entity authority,
+and another compute invocation checks its actual input contract independently.
+Returning the accumulator itself can still require an explicit closed dictionary
+annotation when ordinary container inference retains an unresolved empty-list
+element type. Local field precision is not permission to materialize `Unknown`.
+
 Compute argument assignment follows Python typing, but runtime input validation
 retains the actual contract (for example, Boolean stays Boolean even when Python
 allows it as an `int` argument). Independent arguments are packed without a join or
@@ -831,6 +906,8 @@ parser or type checker:
 | `python_compute/returns.rs` | Translate catalog-owned annotation references into upstream declarations |
 | `python_compute.rs`, `multiple.rs` | Validate normalized materialization ports and checker-produced value contracts |
 | `python_program_diagnostic.rs` | Ruff parser recovery for an explicitly unexecuted, untyped prefix sketch; bounded source excerpt and Unicode-aware line/column caret on syntax rejection |
+| `callback_flow.rs` / `PythonProgramError::CallbackBranchKindMismatch` | Mixed row/action branches remain rejected. The diagnostic directs an action/no-action branch to `None`, preserving its condition, or filtering before dispatch. `python_mixed_branch_diagnostic_repair_preserves_action_guard` checks both branch orders and both guard outcomes against abstract transport calls. No admission or execution-policy change. |
+| `python/body.rs` / `PythonSourceError::AcknowledgementRowReceiver` | A callback cannot iterate an `EffectAck` as rows. Reject at the source span with the producer binding, before an empty-schema validation failure. Repair keeps subsequent effects and verification reads in source order in the same guarded scope. `python_ack_receiver_diagnostic_preserves_sequenced_effects` covers direct and scoped acknowledgements, both guard outcomes, zero dispatch on rejection and exact repaired transport order. No schema relaxation or implicit effect replay. |
 | `program_diagnostic.rs` / TS `tool-call-recovery.ts` | Native parse failures retain `program_syntax` through the host. JSON/schema and syntax repair have at most two subsequent generations within the existing turn budget; type/planning/service failures retain their own recovery semantics. Original calls remain in audit history; failed call/result pairs are omitted from normal assistant replay. Argument repair receives structured validator facts and the registered schema, not rejected values or raw SDK error messages. No source rewriting or prefix execution. |
 | AST templates in expression/callback lowering | Construct dependency substitutions; upstream checking still admits resulting Python |
 

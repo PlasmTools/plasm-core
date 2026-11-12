@@ -141,6 +141,8 @@ pub(crate) struct PlasmMcpHandler {
     pub(crate) plasm: Arc<PlasmHostState>,
     /// MCP transport session key -> per-session mutable state.
     pub(crate) session_states: Arc<RwLock<HashMap<String, Arc<Mutex<McpTransportState>>>>>,
+    /// Serializes discovery for a logical session within this host.
+    discovery_gates: Arc<plasm_context::DiscoveryGates>,
     transport_redis: Option<Arc<crate::mcp_transport_store::PlasmTransportRedisStore>>,
     peers: Arc<RwLock<HashMap<String, rmcp::Peer<rmcp::RoleServer>>>>,
 }
@@ -150,6 +152,7 @@ impl PlasmMcpHandler {
         Self {
             plasm,
             session_states: Arc::new(RwLock::new(HashMap::new())),
+            discovery_gates: Arc::new(plasm_context::DiscoveryGates::default()),
             transport_redis: None,
             peers: Arc::new(RwLock::new(HashMap::new())),
         }

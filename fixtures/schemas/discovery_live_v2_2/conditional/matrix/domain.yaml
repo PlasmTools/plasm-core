@@ -1,0 +1,148 @@
+{
+  "version": 1,
+  "entry_id": "matrix",
+  "http_backend": "http://127.0.0.1:9",
+  "auth": {
+    "scheme": "none"
+  },
+  "values": {
+    "rows": {
+      "type": "string",
+      "description": "Tabular survey observations."
+    },
+    "file": {
+      "type": "string",
+      "description": "Durable survey export file."
+    },
+    "preview": {
+      "type": "string",
+      "description": "Transient preview of survey observations."
+    },
+    "invoice": {
+      "type": "string",
+      "description": "Accounting invoice number identifying a billed service."
+    }
+  },
+  "entities": {
+    "Rows": {
+      "id_field": "value",
+      "description": "Tabular survey observations.",
+      "fields": {
+        "value": {
+          "value_ref": "rows",
+          "required": true
+        }
+      }
+    },
+    "File": {
+      "id_field": "value",
+      "description": "Durable survey export file.",
+      "fields": {
+        "value": {
+          "value_ref": "file",
+          "required": true
+        }
+      }
+    },
+    "Preview": {
+      "id_field": "value",
+      "description": "Transient preview of survey observations.",
+      "fields": {
+        "value": {
+          "value_ref": "preview",
+          "required": true
+        }
+      }
+    },
+    "Invoice": {
+      "id_field": "value",
+      "description": "Accounting invoice number identifying a billed service.",
+      "fields": {
+        "value": {
+          "value_ref": "invoice",
+          "required": true
+        }
+      }
+    }
+  },
+  "capabilities": {
+    "survey_read": {
+      "entity": "Rows",
+      "kind": "get",
+      "description": "Read tabular survey observations.",
+      "receiver": {
+        "kind": "none"
+      },
+      "provides": [
+        "value"
+      ],
+      "output": {
+        "type": "entity",
+        "entity_type": "Rows"
+      }
+    },
+    "survey_export": {
+      "entity": "File",
+      "kind": "action",
+      "description": "Write a durable export file from survey observations.",
+      "arguments": {
+        "input_type": {
+          "type": "object",
+          "fields": [
+            {
+              "name": "input0",
+              "value_ref": "rows",
+              "required": true
+            }
+          ]
+        }
+      },
+      "provides": [
+        "value"
+      ],
+      "output": {
+        "type": "entity",
+        "entity_type": "File"
+      }
+    },
+    "survey_preview": {
+      "entity": "Preview",
+      "kind": "action",
+      "description": "Render a transient preview from survey observations without writing an export file.",
+      "arguments": {
+        "input_type": {
+          "type": "object",
+          "fields": [
+            {
+              "name": "input0",
+              "value_ref": "rows",
+              "required": true
+            }
+          ]
+        }
+      },
+      "provides": [
+        "value"
+      ],
+      "output": {
+        "type": "entity",
+        "entity_type": "Preview"
+      }
+    },
+    "invoice_read": {
+      "entity": "Invoice",
+      "kind": "get",
+      "description": "Read accounting invoice numbers for billed services.",
+      "receiver": {
+        "kind": "none"
+      },
+      "provides": [
+        "value"
+      ],
+      "output": {
+        "type": "entity",
+        "entity_type": "Invoice"
+      }
+    }
+  }
+}

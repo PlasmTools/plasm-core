@@ -1,0 +1,22 @@
+[
+  {
+    "id": "concentrated",
+    "resources": 1,
+    "descriptions": [
+      "Archive a historical firing receipt for a ceramic batch. This stores text only; it does not prepare or fire samples.",
+      "Record a previous calibration stamp for a specimen. This audit entry does not observe current cabinet membership or stamp specimens.",
+      "Draft a private journal annotation about public laboratory bulletins. This does not publish a bulletin.",
+      "Summarize historical laboratory routine receipts. This changes only the archive, not laboratory resources."
+    ]
+  },
+  {
+    "id": "distributed",
+    "resources": 100,
+    "descriptions": [
+      "Archive a historical firing receipt for a ceramic batch. This stores text only; it does not prepare or fire samples.",
+      "Record a previous calibration stamp for a specimen. This audit entry does not observe current cabinet membership or stamp specimens.",
+      "Draft a private journal annotation about public laboratory bulletins. This does not publish a bulletin.",
+      "Summarize historical laboratory routine receipts. This changes only the archive, not laboratory resources."
+    ]
+  }
+]

@@ -7233,7 +7233,7 @@ checksum = "b4596b6d070b27117e987119b4dac604f3c58cfb0b191112e24771b2faeac1a6"
 
 [[package]]
 name = "plasm"
-version = "0.5.5"
+version = "0.6.1"
 dependencies = [
  "anyhow",
  "arc-swap",
@@ -7281,7 +7281,7 @@ dependencies = [
 
 [[package]]
 name = "plasm-agent-core"
-version = "0.5.5"
+version = "0.6.1"
 dependencies = [
  "aes-gcm",
  "anyhow",
@@ -7350,12 +7350,13 @@ dependencies = [
 
 [[package]]
 name = "plasm-catalog"
-version = "0.5.5"
+version = "0.6.1"
 dependencies = [
  "base64 0.22.1",
  "clap",
  "plasm-compile",
  "plasm-core",
+ "plasm-runtime",
  "reqwest 0.12.28",
  "serde",
  "serde_json",
@@ -7368,7 +7369,7 @@ dependencies = [
 
 [[package]]
 name = "plasm-cli"
-version = "0.5.5"
+version = "0.6.1"
 dependencies = [
  "axum",
  "beavuck-hermit",
@@ -7390,7 +7391,7 @@ dependencies = [
 
 [[package]]
 name = "plasm-cml"
-version = "0.5.5"
+version = "0.6.1"
 dependencies = [
  "alloy-chains",
  "alloy-dyn-abi",
@@ -7410,7 +7411,7 @@ dependencies = [
 
 [[package]]
 name = "plasm-compile"
-version = "0.5.5"
+version = "0.6.1"
 dependencies = [
  "ciborium",
  "indexmap 2.14.2",
@@ -7427,7 +7428,7 @@ dependencies = [
 
 [[package]]
 name = "plasm-core"
-version = "0.5.5"
+version = "0.6.1"
 dependencies = [
  "base64 0.22.1",
  "chrono",
@@ -7458,7 +7459,7 @@ dependencies = [
 
 [[package]]
 name = "plasm-discovery-eval"
-version = "0.5.5"
+version = "0.6.1"
 dependencies = [
  "clap",
  "plasm-core",
@@ -7469,7 +7470,7 @@ dependencies = [
 
 [[package]]
 name = "plasm-e2e"
-version = "0.5.5"
+version = "0.6.1"
 dependencies = [
  "alloy",
  "alloy-rpc-client",
@@ -7497,7 +7498,7 @@ dependencies = [
 
 [[package]]
 name = "plasm-eval"
-version = "0.5.5"
+version = "0.6.1"
 dependencies = [
  "anyhow",
  "baml",
@@ -7519,7 +7520,7 @@ dependencies = [
 
 [[package]]
 name = "plasm-eval-common"
-version = "0.5.5"
+version = "0.6.1"
 dependencies = [
  "serde",
  "serde_json",
@@ -7527,7 +7528,7 @@ dependencies = [
 
 [[package]]
 name = "plasm-evidence"
-version = "0.5.5"
+version = "0.6.1"
 dependencies = [
  "ed25519-dalek",
  "hex",
@@ -7542,7 +7543,7 @@ dependencies = [
 
 [[package]]
 name = "plasm-mock"
-version = "0.5.5"
+version = "0.6.1"
 dependencies = [
  "axum",
  "indexmap 2.14.2",
@@ -7560,7 +7561,7 @@ dependencies = [
 
 [[package]]
 name = "plasm-node"
-version = "0.5.5"
+version = "0.6.1"
 dependencies = [
  "async-trait",
  "indexmap 2.14.2",
@@ -7582,7 +7583,7 @@ dependencies = [
 
 [[package]]
 name = "plasm-otel"
-version = "0.5.5"
+version = "0.6.1"
 dependencies = [
  "axum",
  "http 1.5.0",
@@ -7600,7 +7601,7 @@ dependencies = [
 
 [[package]]
 name = "plasm-repl"
-version = "0.5.5"
+version = "0.6.1"
 dependencies = [
  "clap",
  "plasm",
@@ -7617,7 +7618,7 @@ dependencies = [
 
 [[package]]
 name = "plasm-runtime"
-version = "0.5.5"
+version = "0.6.1"
 dependencies = [
  "alloy-chains",
  "alloy-dyn-abi",
@@ -7658,7 +7659,7 @@ dependencies = [
 
 [[package]]
 name = "plasm-sdk-transport"
-version = "0.5.5"
+version = "0.6.1"
 dependencies = [
  "async-trait",
  "serde_json",
@@ -7668,7 +7669,7 @@ dependencies = [
 
 [[package]]
 name = "plasm-server"
-version = "0.5.5"
+version = "0.6.1"
 dependencies = [
  "arboard",
  "chrono",
@@ -7695,7 +7696,7 @@ dependencies = [
 
 [[package]]
 name = "plasm-trace"
-version = "0.5.5"
+version = "0.6.1"
 dependencies = [
  "plasm-core",
  "plasm-runtime",
@@ -7708,7 +7709,7 @@ dependencies = [
 
 [[package]]
 name = "plasm-trace-sink"
-version = "0.5.5"
+version = "0.6.1"
 dependencies = [
  "async-trait",
  "axum",
@@ -7740,7 +7741,7 @@ dependencies = [
 
 [[package]]
 name = "plasm-trace-wire"
-version = "0.5.5"
+version = "0.6.1"
 dependencies = [
  "chrono",
  "serde",
@@ -7750,7 +7751,7 @@ dependencies = [
 
 [[package]]
 name = "plasm-workflow-codegen"
-version = "0.5.5"
+version = "0.6.1"
 dependencies = [
  "genco",
  "insta",

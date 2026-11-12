@@ -58,7 +58,19 @@ pub const RUN_EXPLORER: McpAppBundle = McpAppBundle {
     resource_metric: "run_explorer_ui",
 };
 
-static BUNDLES: &[&McpAppBundle] = &[&PLAN_REVIEW, &WORKFLOW, &RUN_EXPLORER];
+pub const TRAINING: McpAppBundle = McpAppBundle {
+    uri: "ui://plasm/training",
+    mime: "text/html;profile=mcp-app",
+    mcp_inline_html: crate::training_ui::TRAINING_HTML,
+    http_page_html: crate::training_ui::TRAINING_HTML,
+    http_page_js: "",
+    shell_html: crate::training_ui::TRAINING_HTML,
+    shell_js: "",
+    path_prefix: "/v1/training/ui",
+    resource_metric: "training_ui",
+};
+
+static BUNDLES: &[&McpAppBundle] = &[&PLAN_REVIEW, &WORKFLOW, &RUN_EXPLORER, &TRAINING];
 
 /// CSP metadata for inline MCP App resources (same-origin API fetch in HTTP standalone mode).
 pub fn resource_read_content_meta() -> Map<String, serde_json::Value> {
@@ -162,6 +174,13 @@ pub fn mount_bundle(bundle: &'static McpAppBundle) -> Router {
 pub fn mcp_app_resource_templates() -> Vec<rmcp::model::ResourceTemplate> {
     use rmcp::model::ResourceTemplate;
     vec![
+        {
+            let mut model = ResourceTemplate::new(TRAINING.uri, "plasm_training_app");
+            model.mime_type = Some(TRAINING.mime.into());
+            model.title = Some("Plasm training and teaching review".into());
+            model.description = Some("Inspect training consent, whole-program candidates, and authenticated human decision requests.".into());
+            model
+        },
         {
             let mut model = ResourceTemplate::new("", "");
             model.annotations = None;

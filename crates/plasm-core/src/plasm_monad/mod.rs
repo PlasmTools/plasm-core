@@ -37,8 +37,8 @@ pub use payload::{
     PlanDataInput, PlanExprIr, PlanExprTemplate, PlanInputBinding, PlanPredicate, PlanPredicateOp,
     PlanQualifiedEntityKey, PlanRelationTraversal, PlanResultUse, PlasmDataValue,
     PlasmDataValueError, PlasmDataValueEvaluationError, PlasmStepPayload, PurePayload,
-    PythonRowSelection, PythonSelectionPort, RelationCardinality, RelationName,
-    RelationSourceCardinality, SyntheticFieldSchema, SyntheticResultSchema,
+    PythonRowSelection, PythonSelectionPort, RecordedOutputOrigin, RelationCardinality,
+    RelationName, RelationSourceCardinality, SyntheticFieldSchema, SyntheticResultSchema,
     SyntheticResultSchemaError, SyntheticValueKind, UnfoldUntilPayload, WithColumn, WithExpr,
     WithExprError, WithLiteral,
 };

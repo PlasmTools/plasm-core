@@ -69,7 +69,7 @@ impl std::fmt::Display for PlanCommitVerifyError {
         match self {
             Self::Unknown { commit_ref } => write!(
                 f,
-                "unknown plan_commit_ref `{commit_ref}` — call `plasm` dry-run again"
+                "No operation ran. `{commit_ref}` was not issued for this session. Submit Python source to `plasm` and use only the exact `run_ref` it returns; never guess a reference."
             ),
             Self::Expired { commit_ref } => write!(
                 f,
@@ -439,6 +439,7 @@ mod tests {
         PlanCommitRecord::rehydrated_from_persisted(
             es,
             RehydratedPlanCommit {
+                authorization: crate::plan_authorization::PlanAuthorization::default().snapshot(),
                 commit_ref,
                 commit_id,
                 domain_revision,
@@ -452,6 +453,181 @@ mod tests {
             },
         )
         .expect("rehydrate")
+    }
+
+    fn authorization_test_host() -> crate::server_state::PlasmHostState {
+        crate::http::build_plasm_host_state(crate::http::PlasmHostBootstrap {
+            engine: plasm_runtime::ExecutionEngine::new(plasm_runtime::ExecutionConfig::default())
+                .unwrap(),
+            mode: plasm_runtime::ExecutionMode::Live,
+            registry: Arc::new(plasm_core::discovery::CgsRegistry::from_pairs(vec![])),
+            catalog_bootstrap: crate::catalog_runtime::CatalogBootstrap::Fixed,
+            incoming_auth: None,
+            run_artifacts: Arc::new(crate::run_artifacts::RunArtifactStore::memory()),
+            session_graph_persistence: None,
+            oss_local_filesystem_defaults: false,
+        })
+        .unwrap()
+    }
+
+    #[tokio::test]
+    #[ignore = "requires isolated PLASM_TEST_REDIS_URL"]
+    async fn authorization_stale_replica_dispatch_matrix() {
+        use crate::plan_authorization::{execute_authorized, PlanAuthorization};
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        let mut host = authorization_test_host();
+        host.oss.redis_backend = Some(Arc::new(
+            crate::mcp_transport_store::RedisBackend::connect(
+                &std::env::var("PLASM_TEST_REDIS_URL").unwrap(),
+                std::time::Duration::from_secs(60),
+            )
+            .await
+            .unwrap(),
+        ));
+        let a = minimal_session();
+        let b = minimal_session();
+        let reference = a.mint_plan_commit_ref();
+        let record = PlanCommitRecord::for_tests(
+            reference.clone(),
+            PlanCommitId::from_canonical_bytes([0; 32]),
+            minimal_artifact(),
+            PlanDryVerdict::Ok,
+        );
+        let stale = record.authorization.snapshot();
+        let mut replica = record.clone();
+        replica.authorization = PlanAuthorization::restore(stale.clone());
+        a.register_plan_commit(record);
+        b.register_plan_commit(replica.clone());
+        let effects = AtomicUsize::new(0);
+        let dispatch = || async {
+            effects.fetch_add(1, Ordering::SeqCst);
+            tokio::task::yield_now().await;
+            Ok(())
+        };
+        let (first, second) = tokio::join!(
+            execute_authorized(&a, &host, Some(&reference), dispatch()),
+            execute_authorized(&b, &host, Some(&reference), dispatch())
+        );
+        assert_ne!(first.is_ok(), second.is_ok());
+        assert_eq!(effects.load(Ordering::SeqCst), 1);
+        let c = minimal_session();
+        replica.authorization = PlanAuthorization::restore(stale);
+        c.register_plan_commit(replica);
+        assert!(execute_authorized(&c, &host, Some(&reference), dispatch())
+            .await
+            .is_err());
+        assert_eq!(effects.load(Ordering::SeqCst), 1);
+    }
+
+    #[tokio::test]
+    async fn authorization_dispatch_matrix_preserves_partial_effects_and_stale_snapshots() {
+        use crate::plan_authorization::execute_authorized;
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        let host = authorization_test_host();
+        let es = minimal_session();
+        let effects = AtomicUsize::new(0);
+        for failure in [false, true] {
+            let reference = es.mint_plan_commit_ref();
+            es.register_plan_commit(PlanCommitRecord::for_tests(
+                reference.clone(),
+                PlanCommitId::from_canonical_bytes([0; 32]),
+                minimal_artifact(),
+                PlanDryVerdict::Ok,
+            ));
+            let stale = es.snapshot_plan_commits_for_persist();
+            let before = effects.load(Ordering::SeqCst);
+            let result = execute_authorized(&es, &host, Some(&reference), async {
+                effects.fetch_add(1, Ordering::SeqCst);
+                if failure {
+                    Err(plasm_runtime::ExecutionFailure::new(
+                        plasm_runtime::FailureCause::Runtime,
+                        "fixture_partial_failure",
+                        "first effect completed, second failed",
+                    ))
+                } else {
+                    Ok(())
+                }
+            })
+            .await;
+            assert_eq!(result.is_err(), failure);
+            if let Err(error) = result {
+                assert!(error.to_string().contains("first effect completed"));
+                assert!(error.diagnostic().contains(&format!(
+                    "Review `{reference}` has been used and cannot run again"
+                )));
+                assert!(crate::agent_presentation::render_failure(&error)
+                    .into_string()
+                    .contains(&format!("Review `{reference}` has been used")));
+            }
+            es.restore_persisted_plan_commits(&stale.records, stale.next_sequence);
+            let duplicate = execute_authorized(&es, &host, Some(&reference), async {
+                effects.fetch_add(1, Ordering::SeqCst);
+                Ok(())
+            })
+            .await;
+            let rejected = duplicate.unwrap_err();
+            assert_eq!(rejected.code, "plan_authorization_consumed");
+            assert_eq!(
+                rejected.recovery,
+                plasm_runtime::RecoveryDisposition::ReconcileEffects
+            );
+            assert_eq!(effects.load(Ordering::SeqCst), before + 1);
+            // A new review of the same semantic plan grants a new single-use authorization.
+            let fresh = es.mint_plan_commit_ref();
+            es.register_plan_commit(PlanCommitRecord::for_tests(
+                fresh.clone(),
+                PlanCommitId::from_canonical_bytes([0; 32]),
+                minimal_artifact(),
+                PlanDryVerdict::Ok,
+            ));
+            execute_authorized(&es, &host, Some(&fresh), async {
+                effects.fetch_add(1, Ordering::SeqCst);
+                Ok(())
+            })
+            .await
+            .unwrap();
+            let repeat = execute_authorized(&es, &host, Some(&fresh), async {
+                effects.fetch_add(1, Ordering::SeqCst);
+                Ok(())
+            })
+            .await;
+            assert!(repeat.is_err());
+            assert_eq!(effects.load(Ordering::SeqCst), before + 2);
+        }
+        let reference = es.mint_plan_commit_ref();
+        es.register_plan_commit(PlanCommitRecord::for_tests(
+            reference.clone(),
+            PlanCommitId::from_canonical_bytes([0; 32]),
+            minimal_artifact(),
+            PlanDryVerdict::Ok,
+        ));
+        let execution = execute_authorized(&es, &host, Some(&reference), async {
+            effects.fetch_add(1, Ordering::SeqCst);
+            std::future::pending::<Result<(), plasm_runtime::ExecutionFailure>>().await
+        });
+        assert!(
+            tokio::time::timeout(std::time::Duration::from_millis(10), execution)
+                .await
+                .is_err()
+        );
+        let before = effects.load(Ordering::SeqCst);
+        let result = execute_authorized(&es, &host, Some(&reference), async {
+            effects.fetch_add(1, Ordering::SeqCst);
+            Ok(())
+        })
+        .await;
+        assert!(result.unwrap_err().to_string().contains("indeterminate"));
+        assert_eq!(effects.load(Ordering::SeqCst), before);
+        // Paging and explicitly fresh direct executions are not reviewed-token replays.
+        for _ in 0..2 {
+            execute_authorized(&es, &host, None, async {
+                effects.fetch_add(1, Ordering::SeqCst);
+                Ok(())
+            })
+            .await
+            .unwrap();
+        }
+        assert_eq!(effects.load(Ordering::SeqCst), before + 2);
     }
 
     pub(super) fn minimal_session() -> ExecuteSession {
@@ -486,6 +662,7 @@ mod tests {
         steps.insert(
             "x".into(),
             PlasmStepPayload::Pure(PurePayload {
+                recorded_output: None,
                 data: plasm_core::PlasmDataValue::Literal {
                     value: plasm_core::operand_binding::ResolvedValue::from_wire(
                         serde_json::json!("ok"),
@@ -522,6 +699,8 @@ mod tests {
         let pc = es.mint_plan_commit_ref();
         let err = verify_plan_commit_id(&es, &pc, PlanCommitId::from_canonical_bytes([0u8; 32]))
             .expect_err("unknown");
+        assert!(err.to_string().contains("No operation ran"));
+        assert!(err.to_string().contains("never guess a reference"));
         assert!(matches!(err, PlanCommitVerifyError::Unknown { .. }));
 
         let record = rehydrate_record(

@@ -275,6 +275,8 @@ pub enum PersistedSymbolLedgerDecodeError {
     Postcard(#[source] postcard::Error),
     #[error("persisted entity/catalog pairing lengths differ")]
     EntityCatalogPairingLengthMismatch,
+    #[error("persisted symbol ledger catalog contracts do not match the live catalogs")]
+    CatalogPinsMismatch,
     #[error("ident metadata decode failed for fingerprint `{fingerprint}`")]
     IdentMetadata {
         fingerprint: String,
@@ -305,6 +307,9 @@ impl PersistedSymbolLedger {
     ) -> Result<TeachingExposureSession, PersistedSymbolLedgerDecodeError> {
         if self.entities.len() != self.entity_catalog_entry_ids.len() {
             return Err(PersistedSymbolLedgerDecodeError::EntityCatalogPairingLengthMismatch);
+        }
+        if !catalog_pins_match(&self.catalog_cgs_hashes, catalog_cgs) {
+            return Err(PersistedSymbolLedgerDecodeError::CatalogPinsMismatch);
         }
         let mut session = TeachingExposureSession::from_persisted(
             self.surface.clone().into(),
@@ -512,6 +517,30 @@ mod tests {
             exp.qualified_entity_symbol("langmatrix", "LangTag"),
             restored.qualified_entity_symbol("langmatrix", "LangTag")
         );
+    }
+
+    #[test]
+    fn hydration_rejects_changed_or_missing_catalog_contracts() {
+        let dir = PathBuf::from(crate::test_manifest_dir())
+            .join("../../fixtures/schemas/plasm_language_matrix");
+        let cgs = load_schema_dir(&dir).expect("matrix");
+        let exp = TeachingExposureSession::new(&cgs, "langmatrix", &["HomographRowA"]);
+        let mut snapshot =
+            PersistedSymbolLedger::from_session(&exp, catalog_cgs_hashes_from_session(&exp))
+                .expect("snapshot");
+        assert!(matches!(
+            snapshot.hydrate(&IndexMap::new()),
+            Err(PersistedSymbolLedgerDecodeError::CatalogPinsMismatch)
+        ));
+        let mut live = IndexMap::new();
+        live.insert("langmatrix".to_string(), Arc::new(cgs));
+        snapshot
+            .catalog_cgs_hashes
+            .insert("langmatrix".into(), "changed".into());
+        assert!(matches!(
+            snapshot.hydrate(&live),
+            Err(PersistedSymbolLedgerDecodeError::CatalogPinsMismatch)
+        ));
     }
 
     #[test]

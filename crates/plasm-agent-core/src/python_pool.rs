@@ -5,7 +5,7 @@ use monty_pool::{on_print_sync, Checkout, Pool, PoolConfig, ReplConfig, TurnEven
 use monty_types::{MontyObject, MontyUuid, ResourceLimits};
 use plasm_runtime::{ExecutionFailure, FailureCause};
 pub(crate) use selection::{ComputeOutput, SelectedOccurrence};
-use std::{collections::BTreeMap, path::PathBuf, time::Duration};
+use std::{collections::BTreeMap, path::PathBuf, sync::Arc, time::Duration};
 use thiserror::Error;
 use tokio::sync::OnceCell;
 
@@ -123,7 +123,7 @@ pub(crate) struct SuspendedPythonHostCall {
 pub struct PythonPool {
     binary: Option<PathBuf>,
     clock: Option<monty_types::DateTimeSource>,
-    pool: OnceCell<Pool>,
+    pool: Arc<OnceCell<Pool>>,
 }
 impl PythonPool {
     /// The executable is a trusted deployment artifact from the same revision as monty-pool.
@@ -131,13 +131,28 @@ impl PythonPool {
         Self {
             binary: Some(binary),
             clock: None,
-            pool: OnceCell::new(),
+            pool: Arc::new(OnceCell::new()),
         }
     }
     /// Evaluation clock injection is scoped to this pool, never global mutable state.
     pub fn with_clock(mut self, clock: monty_types::DateTimeSource) -> Self {
         self.clock = Some(clock);
         self
+    }
+    /// Create a session clock view while retaining the same worker pool and capacity.
+    pub fn for_session_clock(
+        &self,
+        raw: &str,
+    ) -> Result<Self, plasm_core::temporal::TemporalNowError> {
+        let now = plasm_core::temporal::parse_temporal_now_env(raw)?;
+        Ok(Self {
+            binary: self.binary.clone(),
+            clock: Some(monty_types::DateTimeSource::Fixed {
+                unix_seconds: now.timestamp(),
+                microsecond: now.timestamp_subsec_micros(),
+            }),
+            pool: Arc::clone(&self.pool),
+        })
     }
     async fn get(&self) -> Result<&Pool, ExecutionFailure> {
         self.pool

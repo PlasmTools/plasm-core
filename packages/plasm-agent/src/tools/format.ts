@@ -1,38 +1,27 @@
+export type ContextExposure = "initial" | "extended" | "unchanged";
+
 export function formatPlasmContextMarkdown(
   logicalSessionRef: string,
   prompt: string,
-  reused: boolean,
-  opts?: { teachingPrompt?: string },
+  exposure: ContextExposure,
 ): string {
   const delta = prompt.trim();
   const header = `**logical_session_ref:** \`${logicalSessionRef}\``;
-  // Live teaching delta (new open or real extend) — full language card, never a compressed roster.
-  if (delta) {
-    const reuseNote = reused
-      ? `\n\nUnchanged — seeds already exposed. **Do not call plasm_context again** until you need new entities.\n`
-      : `\n\n`;
-    return `${header}${reuseNote}${delta}\n`;
-  }
-  // Seedless reuse: protocol only. Re-dumping the full card rewards plasm_context spam
-  // after successful reads (card already in transcript from the open wave).
-  if (reused) {
-    return [
-      header,
-      "",
-      "Unchanged — seeds already exposed. **Do not call plasm_context again** until you need new entities.",
-      "Reuse this ref on **plasm** / **plasm_run**.",
-    ].join("\n");
-  }
-  const card = (opts?.teachingPrompt ?? "").trim();
-  if (!card) return `${header}\n`;
-  return `${header}\n\n${card}\n`;
+  const notes: Record<ContextExposure, string> = {
+    initial: "Initial declarations follow.",
+    extended: "Additional declarations follow; previously exposed declarations and symbols remain available.",
+    unchanged: "No new declarations. Previously exposed declarations and symbols remain available.",
+  };
+  // The native delta can contain prerequisite guidance without new declarations.
+  // Preserve that text, and use the native exposure result rather than its byte length.
+  return [header, notes[exposure], delta].filter(Boolean).join("\n\n");
 }
 
 /** Protocol-only dry surface — domain meaning lives in the language card / CGS. */
 export function formatPlasmDryRunMarkdown(summary: string, runRef: string): string {
   return (
     `\`\`\`text\n${summary.trim()}\n\`\`\`\n\n` +
-    `**Run:** pass \`run_ref\`: \`${runRef}\` to **\`plasm_run\`**. Do not echo the program.`
+    `**Run:** pass \`run_ref\`: \`${runRef}\` to **\`plasm_run\`**.`
   );
 }
 
