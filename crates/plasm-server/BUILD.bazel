@@ -9,6 +9,7 @@ rust_integration_tests(
     ],
     data = ["//:test_fixtures"],
     runtime_tools = {":plasm-server": "CARGO_BIN_EXE_plasm-server"},
+    test_sources = {"appliance_headless_boot": ["tests/appliance_boot_support.rs"]},
     tests = {
         "appliance_headless_boot": "tests/appliance_headless_boot.rs",
         "appliance_boot_support": "tests/appliance_boot_support.rs",
