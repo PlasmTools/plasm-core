@@ -3,6 +3,39 @@ use super::*;
 use crate::discovery_matcher::online::tests::fixture;
 
 #[test]
+fn bounded_packet_sizing_rejects_only_when_full_packet_exceeds_limit() {
+    let catalogs = fixture();
+    let deployments = Default::default();
+    let allowed = DiscoveryAuthorization::catalogs(BTreeSet::from(["matrix".into()]));
+    let index = CatalogueSearch::new(&catalogs, &deployments, &allowed).unwrap();
+    let intent = IntentProvenance::from_turns(["Inspect and prepare the sample.".into()]).unwrap();
+    let context = SearchContext {
+        model: RELEVANCE_MODEL,
+        intent: &intent,
+        generation: "size-bound",
+        catalogs: &catalogs,
+        deployments: &deployments,
+        allowed: &allowed,
+        exposed: &[],
+        visits: &Default::default(),
+    };
+    let mut bundle = Bundle::new();
+    for key in index.candidates.keys() {
+        bundle.insert(key.clone(), Vec::new());
+        let full = body_size(&bundle, &index, context, &mut BTreeMap::new()).unwrap();
+        for limit in [0, full / 2, full.saturating_sub(1), full, full + 1] {
+            let bounded =
+                body_size_up_to(&bundle, &index, context, &mut BTreeMap::new(), Some(limit))
+                    .unwrap();
+            assert_eq!(bounded > limit, full > limit);
+            if bounded <= limit {
+                assert_eq!(bounded, full);
+            }
+        }
+    }
+}
+
+#[test]
 fn deferred_recalled_root_precedes_optional_consumer_but_not_current_lead() {
     let catalogs = fixture();
     let deployments = Default::default();

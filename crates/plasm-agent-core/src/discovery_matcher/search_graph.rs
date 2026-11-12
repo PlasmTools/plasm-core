@@ -73,6 +73,10 @@ impl<K: Ord + Clone> SearchGraph<K> {
     pub fn edges(&self) -> impl Iterator<Item = &Edge<K>> {
         self.incoming.values().flatten()
     }
+
+    pub fn incoming(&self, consumer: &K) -> impl Iterator<Item = &Edge<K>> {
+        self.incoming.get(consumer).into_iter().flatten()
+    }
 }
 
 #[cfg(test)]
@@ -85,6 +89,28 @@ mod tests {
             consumer,
             relationship,
             provenance: format!("catalogue:{source}:{consumer}"),
+        }
+    }
+
+    #[test]
+    fn incoming_index_matches_complete_edge_filter() {
+        let graph = SearchGraph::new(
+            (0..4).collect(),
+            [
+                edge(1, 0, Relationship::SuppliesInput),
+                edge(2, 0, Relationship::MayCreateResource),
+                edge(0, 1, Relationship::RequiredAcquisition),
+            ],
+        )
+        .unwrap();
+        for consumer in 0..4 {
+            assert_eq!(
+                graph.incoming(&consumer).collect::<Vec<_>>(),
+                graph
+                    .edges()
+                    .filter(|edge| edge.consumer == consumer)
+                    .collect::<Vec<_>>()
+            );
         }
     }
 

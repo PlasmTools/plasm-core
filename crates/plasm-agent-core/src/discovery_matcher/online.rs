@@ -384,8 +384,8 @@ pub(super) fn packet_scope(
     route.extend(
         index
             .graph
-            .edges()
-            .filter(|edge| edge.consumer == *target && context.exposed.contains(&edge.source))
+            .incoming(target)
+            .filter(|edge| context.exposed.contains(&edge.source))
             .cloned(),
     );
     route.sort();

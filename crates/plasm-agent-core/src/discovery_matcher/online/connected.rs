@@ -96,8 +96,8 @@ fn variants(
     let mut groups = BTreeMap::new();
     for edge in index
         .graph
-        .edges()
-        .filter(|edge| &edge.consumer == key && edge.relationship == Relationship::SuppliesInput)
+        .incoming(key)
+        .filter(|edge| edge.relationship == Relationship::SuppliesInput)
     {
         let slot = nomination_slot(index, edge)?;
         if matches!(&slot, NominationSlot::Input(_, input) if supplied.contains(input)) {
@@ -160,6 +160,17 @@ fn body_size(
     context: SearchContext<'_>,
     cache: &mut BTreeMap<(CapabilityRef, Route), LocalPacket>,
 ) -> Result<usize, DiscoveryMatcherError> {
+    body_size_up_to(selected, index, context, cache, None)
+}
+
+fn body_size_up_to(
+    selected: &Bundle,
+    index: &CatalogueSearch,
+    context: SearchContext<'_>,
+    cache: &mut BTreeMap<(CapabilityRef, Route), LocalPacket>,
+    limit: Option<usize>,
+) -> Result<usize, DiscoveryMatcherError> {
+    let mut local = Vec::new();
     for (key, path) in selected {
         if context.exposed.contains(key) {
             continue;
@@ -183,13 +194,20 @@ fn body_size(
                 prepared,
             });
         }
+        local.push((key.clone(), path.clone()));
+        if let Some(limit) = limit {
+            // Items are visited in packet order. Appending a question can only
+            // add evidence, definitions and references; existing IDs stay fixed.
+            // A prefix already over budget therefore cannot become affordable.
+            let prepared: Vec<_> = local.iter().map(|key| &cache[key].prepared).collect();
+            let size = request_packing::connected_size(&prepared)?;
+            if size > limit {
+                return Ok(size);
+            }
+        }
     }
-    let local = selected
-        .iter()
-        .filter(|(key, _)| !context.exposed.contains(key))
-        .map(|(key, path)| &cache[&(key.clone(), path.clone())].prepared)
-        .collect::<Vec<_>>();
-    request_packing::connected_size(&local)
+    let prepared: Vec<_> = local.iter().map(|key| &cache[key].prepared).collect();
+    request_packing::connected_size(&prepared)
 }
 
 #[cfg(test)]
@@ -414,7 +432,13 @@ pub(super) fn plan_ordered(
             for bundle in alternatives {
                 let mut trial = proposed.clone();
                 trial.extend(bundle.clone());
-                let size = body_size(&trial, index, context, &mut cache)?;
+                let size = body_size_up_to(
+                    &trial,
+                    index,
+                    context,
+                    &mut cache,
+                    Some(search_budget::MAX_INPUT_BYTES),
+                )?;
                 if size > search_budget::MAX_INPUT_BYTES {
                     continue;
                 }

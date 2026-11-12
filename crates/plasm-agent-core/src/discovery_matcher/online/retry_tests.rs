@@ -6,6 +6,43 @@ use plasm_runtime::provider_transport::ProviderTransportError;
 use std::sync::{Arc, Mutex};
 
 #[tokio::test]
+async fn slow_first_checkpoint_does_not_expire_provider_deadline() {
+    let catalogs = fixture();
+    let deployments = Default::default();
+    let allowed = DiscoveryAuthorization::catalogs(BTreeSet::from(["matrix".into()]));
+    let intent = IntentProvenance::from_turns(["Produce spectrum".into()]).unwrap();
+    let context = SearchContext {
+        visits: &Default::default(),
+        model: RELEVANCE_MODEL,
+        intent: &intent,
+        generation: "slow-first-checkpoint",
+        catalogs: &catalogs,
+        deployments: &deployments,
+        allowed: &allowed,
+        exposed: &[],
+    };
+    let index = CatalogueSearch::new(&catalogs, &deployments, &allowed).unwrap();
+    let mut calls = 0;
+    let result = select_indexed(
+        context,
+        &index,
+        |batch| {
+            calls += 1;
+            async move { Ok(answer(&batch, "uncertain")) }
+        },
+        |p| async move {
+            if p.accounting.requests == 1 && matches!(p.state, ProgressState::Admitted) {
+                tokio::time::sleep(std::time::Duration::from_secs(31)).await;
+            }
+            Ok(())
+        },
+    )
+    .await;
+    assert!(result.is_ok(), "{result:?}");
+    assert!(calls > 0);
+}
+
+#[tokio::test]
 async fn successful_response_persistence_does_not_expire_provider_deadline() {
     exercise_response_checkpoint(false, false, 31).await;
 }

@@ -76,7 +76,6 @@ where
     let mut deferred = BTreeMap::new();
     let mut pending = BTreeSet::new();
     let mut visits = context.visits.clone();
-    let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(30);
     let mut completed_waves = 0;
     loop {
         let wave_context = SearchContext {
@@ -148,6 +147,9 @@ where
         ))
         .await
         .map_err(DiscoveryMatcherError::Checkpoint)?;
+        // Planning and checkpointing are local work, not provider latency.
+        // Give each admitted packet its own bounded provider retry window.
+        let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(30);
         let raw = loop {
             let result = tokio::time::timeout_at(deadline, decide(batch.clone()))
                 .await
