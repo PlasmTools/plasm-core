@@ -1,5 +1,17 @@
 # CGS & CML Reference
 
+## Provider rejection contracts
+
+An effect capability may declare `no_effect_rejections` only when the provider
+guarantees that the particular invocation made no change for the complete
+matched response. Use a 4xx status and either `detail: {kind: exact, value: "…"}`
+or `detail: {kind: decimal_amount, prefix: "…", suffix: "…"}`. The latter
+matches only a decimal number between nonempty, exact text fragments. Verify the
+provider's actual semantics before authoring a rule; a 4xx status or a received
+response alone does not prove that no effect occurred. Other responses remain
+unknown. A rejection says nothing about earlier completed or other concurrent
+effects in the same program.
+
 This is the canonical OSS reference for authoring Plasm API catalogs. The compiler and runtime crates are the ground truth (`crates/plasm-core`, `crates/plasm-cml`, `crates/plasm-compile`, `crates/plasm-runtime`); this file exists to keep agents and humans aligned on doctrine.
 
 ## MCP response selection
@@ -1964,3 +1976,23 @@ The assertion runs before field decoding, identity validation and cache publicat
 A mismatch is a response-contract failure; it never relabels the record, retries the
 operation or treats the response as absence. Exact Get request-key correspondence
 continues to apply after the assertion.
+## Informal resource ontology
+
+Use existing entities, value domains, capability descriptions and declared outputs
+to distinguish a source of resource details from a resource registered at a
+particular destination. These are contextual roles, not new CGS kinds: a record
+usable by one service may still require registration by another.
+
+- Give source identities and destination handles separate semantic slots. Share
+  a value domain for transferred data only when its meaning actually agrees.
+- Describe a registration capability's input, destination effect and returned
+  handle. Registration is not evidence of current readiness or permission.
+- Describe the fields that establish these distinctions. Generic primitive types
+  alone do not explain an output's domain meaning to discovery.
+- Model readiness through declared observations. Missing evidence, an explicit
+  null, and an observed negative value remain distinct; none implies authority.
+- Keep workflow obligations out of catalogue resource state. Deferral is open
+  work, resolution is an explicit claim, and cancellation is not completion.
+
+Abstract reference: `fixtures/schemas/resource_registration`; no new annotation,
+workflow recipe or global resource taxonomy is required.
