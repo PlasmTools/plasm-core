@@ -3,6 +3,8 @@ use super::*;
 
 type Route = Vec<Edge<CapabilityRef>>;
 type Bundle = BTreeMap<CapabilityRef, Route>;
+// Combinations share immutable paths until a complete trial needs an owned bundle.
+type VariantBundle = BTreeMap<CapabilityRef, std::sync::Arc<Route>>;
 type InputGroups = BTreeMap<NominationSlot, Vec<Edge<CapabilityRef>>>;
 type GroupCache = BTreeMap<CapabilityRef, std::sync::Arc<InputGroups>>;
 
@@ -164,9 +166,9 @@ fn variants(
     proposed: &Bundle,
     ancestors: &BTreeSet<CapabilityRef>,
     cache: &mut GroupCache,
-) -> Result<Vec<Bundle>, DiscoveryMatcherError> {
+) -> Result<Vec<VariantBundle>, DiscoveryMatcherError> {
     if proposed.contains_key(key) {
-        return Ok(vec![Bundle::new()]);
+        return Ok(vec![VariantBundle::new()]);
     }
     if ancestors.contains(key) {
         return Ok(Vec::new());
@@ -176,7 +178,10 @@ fn variants(
     next_ancestors.insert(key.clone());
     // Every returned bundle retains this root and route; recursive suppliers
     // that are already proposed return an empty bundle and cannot replace them.
-    let mut states = vec![Bundle::from([(key.clone(), route.clone())])];
+    let mut states = vec![VariantBundle::from([(
+        key.clone(),
+        std::sync::Arc::new(route.clone()),
+    )])];
     for options in groups.values() {
         let mut next = Vec::new();
         for edge in options {
@@ -543,6 +548,10 @@ pub(super) fn plan_ordered(
             )?;
             debug_assert_eq!(count, alternatives.len());
             for bundle in alternatives {
+                let bundle: Bundle = bundle
+                    .into_iter()
+                    .map(|(key, path)| (key, (*path).clone()))
+                    .collect();
                 let mut trial = proposed.clone();
                 trial.extend(bundle.clone());
                 let size = body_size_up_to(
