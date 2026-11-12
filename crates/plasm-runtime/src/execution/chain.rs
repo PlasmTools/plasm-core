@@ -72,6 +72,36 @@ struct RelationGet {
     inherited: CapabilityParamEnv,
 }
 
+fn empty_chain_result(source_result: &ExecutionResult) -> Result<ExecutionResult, RuntimeError> {
+    Ok(ExecutionResult {
+        collection: source_result.collection.flat_map(&"empty_chain", &[])?,
+        has_more: false,
+        pagination_resume: None,
+        paging_handle: None,
+        source: source_result.source,
+        stats: source_result.stats.clone(),
+        request_fingerprints: source_result.request_fingerprints.clone(),
+        operations: source_result.operations.clone(),
+    })
+}
+
+fn ensure_chain_capability_domain(
+    capability: &plasm_core::CapabilitySchema,
+    target_key: &str,
+    selected_entity_materialization: bool,
+) -> Result<(), RuntimeError> {
+    if !selected_entity_materialization && capability.domain.as_str() != target_key {
+        return Err(RuntimeError::Chain(
+            crate::ChainError::CapabilityDomainMismatch {
+                capability: capability.name.to_string(),
+                expected: target_key.to_string(),
+                actual: capability.domain.to_string(),
+            },
+        ));
+    }
+    Ok(())
+}
+
 impl ExecutionEngine {
     /// Resolve each parent occurrence before coalescing equivalent detail requests.
     async fn resolve_relation_occurrences(
@@ -222,16 +252,7 @@ impl ExecutionEngine {
     ) -> Result<ExecutionResult, RuntimeError> {
         source_result.collection.materialize(Demand::Observed)?;
         if source_result.count() == 0 {
-            return Ok(ExecutionResult {
-                collection: source_result.collection.flat_map(&"empty_chain", &[])?,
-                has_more: false,
-                pagination_resume: None,
-                paging_handle: None,
-                source: source_result.source,
-                stats: source_result.stats,
-                request_fingerprints: source_result.request_fingerprints.clone(),
-                operations: source_result.operations.clone(),
-            });
+            return empty_chain_result(&source_result);
         }
 
         let source_entity_name_owned: String = if matches!(chain.source.as_ref(), Expr::Chain(_)) {
@@ -700,35 +721,19 @@ impl ExecutionEngine {
                 entity: target_key.to_string(),
             }
         })?;
-        if rel
-            .materialize
-            .as_ref()
-            .and_then(|mat| mat.selected_entity())
-            .is_none()
-            && cap.domain.as_str() != target_key
-        {
-            return Err(RuntimeError::Chain(
-                crate::ChainError::CapabilityDomainMismatch {
-                    capability: capability.to_string(),
-                    expected: target_key.to_string(),
-                    actual: cap.domain.to_string(),
-                },
-            ));
-        }
+        ensure_chain_capability_domain(
+            cap,
+            target_key,
+            rel.materialize
+                .as_ref()
+                .and_then(|mat| mat.selected_entity())
+                .is_some(),
+        )?;
         let capability_name = cap.name.clone();
 
         source_result.collection.materialize(Demand::Observed)?;
         if source_result.count() == 0 {
-            return Ok(ExecutionResult {
-                collection: source_result.collection.flat_map(&"empty_chain", &[])?,
-                has_more: false,
-                pagination_resume: None,
-                paging_handle: None,
-                source: source_result.source,
-                stats: source_result.stats.clone(),
-                request_fingerprints: source_result.request_fingerprints.clone(),
-                operations: source_result.operations.clone(),
-            });
+            return empty_chain_result(source_result);
         }
 
         let via = via_param.clone();
@@ -794,34 +799,18 @@ impl ExecutionEngine {
                 entity: target_key.to_string(),
             }
         })?;
-        if rel
-            .materialize
-            .as_ref()
-            .and_then(|mat| mat.selected_entity())
-            .is_none()
-            && cap.domain.as_str() != target_key
-        {
-            return Err(RuntimeError::Chain(
-                crate::ChainError::CapabilityDomainMismatch {
-                    capability: capability.to_string(),
-                    expected: target_key.to_string(),
-                    actual: cap.domain.to_string(),
-                },
-            ));
-        }
+        ensure_chain_capability_domain(
+            cap,
+            target_key,
+            rel.materialize
+                .as_ref()
+                .and_then(|mat| mat.selected_entity())
+                .is_some(),
+        )?;
 
         source_result.collection.materialize(Demand::Observed)?;
         if source_result.count() == 0 {
-            return Ok(ExecutionResult {
-                collection: source_result.collection.flat_map(&"empty_chain", &[])?,
-                has_more: false,
-                pagination_resume: None,
-                paging_handle: None,
-                source: source_result.source,
-                stats: source_result.stats.clone(),
-                request_fingerprints: source_result.request_fingerprints.clone(),
-                operations: source_result.operations.clone(),
-            });
+            return empty_chain_result(source_result);
         }
 
         let capability_name = cap.name.clone();
@@ -892,16 +881,7 @@ impl ExecutionEngine {
 
         source_result.collection.materialize(Demand::Observed)?;
         if source_result.count() == 0 {
-            return Ok(ExecutionResult {
-                collection: source_result.collection.flat_map(&"empty_chain", &[])?,
-                has_more: false,
-                pagination_resume: None,
-                paging_handle: None,
-                source: source_result.source,
-                stats: source_result.stats.clone(),
-                request_fingerprints: source_result.request_fingerprints.clone(),
-                operations: source_result.operations.clone(),
-            });
+            return empty_chain_result(source_result);
         }
 
         let relation_key = rel.name.as_str();
@@ -990,15 +970,7 @@ impl ExecutionEngine {
                 entity: target_key.to_string(),
             }
         })?;
-        if cap.domain.as_str() != target_key {
-            return Err(RuntimeError::Chain(
-                crate::ChainError::CapabilityDomainMismatch {
-                    capability: capability.to_string(),
-                    expected: target_key.to_string(),
-                    actual: cap.domain.to_string(),
-                },
-            ));
-        }
+        ensure_chain_capability_domain(cap, target_key, false)?;
 
         let target_ent = cgs
             .get_entity(target_key)
@@ -1026,16 +998,7 @@ impl ExecutionEngine {
         }
 
         if gets.is_empty() {
-            return Ok(ExecutionResult {
-                collection: source_result.collection.flat_map(&"empty_chain", &[])?,
-                has_more: false,
-                pagination_resume: None,
-                paging_handle: None,
-                source: source_result.source,
-                stats: source_result.stats.clone(),
-                request_fingerprints: source_result.request_fingerprints.clone(),
-                operations: source_result.operations.clone(),
-            });
+            return empty_chain_result(source_result);
         }
 
         let total_network = source_result.stats.network_requests;

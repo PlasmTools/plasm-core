@@ -27,6 +27,9 @@ rust_library(
 )
 
 rust_integration_tests(
+    test_sources = {
+        "plasm_language_matrix": ["tests/plasm_language_matrix_views.rs"] + glob(["tests/plasm_language_matrix_views/**/*.rs"]),
+    },
     tests = {
         "appworld_catalog_contracts": "tests/appworld_catalog_contracts.rs",
         "catalog_wire_boundaries": "tests/catalog_wire_boundaries.rs",

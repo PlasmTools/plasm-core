@@ -3,20 +3,21 @@
 load("@crates//:defs.bzl", "aliases", "all_crate_deps")
 load(":native_test.bzl", rust_test = "rust_test_with_monty")
 
-def rust_integration_tests(tests, deps, compile_data = [], data = [], crate_features = [], runtime_tools = {}, cargo_deps = None):
+def rust_integration_tests(tests, deps, compile_data = [], data = [], crate_features = [], runtime_tools = {}, cargo_deps = None, test_sources = {}):
     """Declare one libtest executable per Cargo integration target."""
-    sources = native.glob(["tests/**/*.rs"])
+    support_sources = native.glob(["tests/common/**/*.rs", "tests/support/**/*.rs"], allow_empty = True)
+    test_data = native.glob(["tests/**"], exclude = ["tests/**/*.rs"], allow_empty = True)
     for name, source in tests.items():
         rust_test(
             name = name + "_tests",
-            srcs = sources,
+            srcs = depset([source] + support_sources + native.glob(["tests/%s/**/*.rs" % name], exclude = [source], allow_empty = True) + test_sources.get(name, [])).to_list(),
             crate_root = source,
             crate_name = name,
             edition = "2021",
             aliases = aliases(),
             crate_features = crate_features,
-            compile_data = compile_data + native.glob(["tests/**"]),
-            data = data + ["Cargo.toml"] + native.glob(["tests/**"]),
+            compile_data = compile_data + test_data,
+            data = data + ["Cargo.toml"] + test_data,
             deps = deps + (all_crate_deps(normal = True, normal_dev = True) if cargo_deps == None else cargo_deps),
             proc_macro_deps = all_crate_deps(proc_macro = True, proc_macro_dev = True),
             visibility = ["//visibility:public"],
