@@ -171,7 +171,7 @@ async fn execute_plasm_tool_dry_run_inner(
     let auto_execute = dry.fuse_clean_read();
     if auto_execute {
         phase = Instant::now();
-        let _plan_refs = CodePlanTraceInput {
+        let plan_refs = CodePlanTraceInput {
             hub: &ctx.host.trace_hub,
             store: Arc::clone(&ctx.host.run_artifacts),
             mcp_key: ctx.ls_key,
@@ -183,12 +183,12 @@ async fn execute_plasm_tool_dry_run_inner(
             plan_call_index: ctx.call_index,
             code_chars: program_for_trace.chars().count() as u64,
         }
-        .emit_evaluate(Some(plan_ux_reflection), inline_fits)
+        .emit_evaluate(Some(plan_ux_reflection.clone()), inline_fits)
         .await;
         record_mcp_plasm_dry_run_phase("trace_emit", phase.elapsed());
         record_mcp_plasm_dry_run_phase("total", total_started.elapsed());
 
-        return super::committed_plasm_run::execute_mcp_live_run(
+        let mut result = super::committed_plasm_run::execute_mcp_live_run(
             super::committed_plasm_run::ExecuteMcpLiveRun {
                 es: Arc::clone(&ctx.es),
                 host: Arc::clone(&ctx.host),
@@ -218,7 +218,31 @@ async fn execute_plasm_tool_dry_run_inner(
             },
         )
         .await
-        .map_err(HostFault::from);
+        .map_err(HostFault::from)?;
+        result.inline_plan_ui = inline_fits.then(|| UiInlinePlanPayload {
+            comp: comp_val.expect("inline_fits implies comp_val"),
+            plan_ux_reflection,
+        });
+        if let Some(plasm) = result
+            .run_plasm_meta
+            .as_mut()
+            .and_then(|meta| meta.get_mut("plasm"))
+            .and_then(|value| value.as_object_mut())
+        {
+            plasm.insert(
+                "plan_uri".into(),
+                serde_json::Value::String(plan_refs.plan_uri),
+            );
+            plasm.insert(
+                "plan_http_path".into(),
+                serde_json::Value::String(plan_refs.plan_http_path),
+            );
+            plasm.insert(
+                "canonical_plan_uri".into(),
+                serde_json::Value::String(plan_refs.canonical_plan_uri),
+            );
+        }
+        return Ok(result);
     }
 
     let commit_ref = ctx.es.mint_plan_commit_ref();

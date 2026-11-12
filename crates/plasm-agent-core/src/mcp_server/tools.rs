@@ -113,7 +113,7 @@ pub(crate) fn plasm_tools(artifact_access: ArtifactAccessMode, ui_apps_enabled: 
     tools.push({
         let mut model = Tool::default();
         model.name = "plasm".into();
-        model.title = Some("Plan Plasm (dry-run)".into());
+        model.title = Some("Plasm plan and results".into());
         model.description = Some(PLASM_MCP_TOOL_DESCRIPTION.into());
         model.input_schema = crate::mcp_server::schema::object_schema(
             vec!["logical_session_ref".into(), "program".into()],

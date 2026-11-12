@@ -207,9 +207,7 @@ pub fn inline_ui_payload_fits(comp: &Value, plan_ux: &Value) -> bool {
 
 /// View lane payload from `_meta.plasm` (spec `structuredContent.ui`).
 ///
-/// Plan Review DAG (`comp` / `plan_ux_reflection`) is only attached for dry-run
-/// [`UiPayloadKind::PlanReview`]. Fused clean-reads are run-shaped — Run Explorer only;
-/// callers must not pass [`UiInlinePlanPayload`] on that path.
+/// The UI payload carries plan evidence for both reviewed plans and completed reads.
 fn structured_ui_payload_from_meta(
     plasm: &Value,
     inline_plan_ui: Option<&UiInlinePlanPayload>,
@@ -219,28 +217,24 @@ fn structured_ui_payload_from_meta(
     let mut out = Map::new();
     out.insert("kind".to_string(), Value::String(kind.as_str().to_string()));
 
-    // Plan fetch refs only on Plan Review (dry-run / `run_ref` responses).
-    if kind == UiPayloadKind::PlanReview {
-        for key in UI_PLAN_REF_KEYS {
-            if let Some(v) = obj.get(*key) {
-                out.insert(key.to_string(), v.clone());
-            }
+    // Plan fetch references are available to either review or completed-read views.
+    for key in UI_PLAN_REF_KEYS {
+        if let Some(v) = obj.get(*key) {
+            out.insert(key.to_string(), v.clone());
         }
     }
 
-    // Inline plan DAG: dry-run review only. Ignore accidental inline on run-shaped meta.
-    if kind == UiPayloadKind::PlanReview {
-        if let Some(inline) = inline_plan_ui {
-            out.insert("comp".to_string(), inline.comp.clone());
-            out.insert(
-                "plan_ux_reflection".to_string(),
-                inline.plan_ux_reflection.clone(),
-            );
-        } else {
-            for key in UI_PLAN_INLINE_KEYS {
-                if let Some(v) = obj.get(*key) {
-                    out.insert(key.to_string(), v.clone());
-                }
+    // Keep plan evidence in the UI lane, separate from agent-facing metadata.
+    if let Some(inline) = inline_plan_ui {
+        out.insert("comp".to_string(), inline.comp.clone());
+        out.insert(
+            "plan_ux_reflection".to_string(),
+            inline.plan_ux_reflection.clone(),
+        );
+    } else {
+        for key in UI_PLAN_INLINE_KEYS {
+            if let Some(v) = obj.get(*key) {
+                out.insert(key.to_string(), v.clone());
             }
         }
     }
@@ -285,18 +279,16 @@ pub(crate) fn take_plasm_map(meta: &Map<String, Value>) -> Option<&Map<String, V
 
 /// Build MCP `outputSchema` documenting dual-lane tool results for `plasm`.
 pub fn plasm_tool_output_schema() -> std::sync::Arc<serde_json::Map<String, serde_json::Value>> {
-    tool_ui_output_schema(UiPayloadKind::PlanReview)
+    tool_ui_output_schema()
 }
 
 /// Build MCP `outputSchema` documenting dual-lane tool results for `plasm_run`.
 pub fn plasm_run_tool_output_schema() -> std::sync::Arc<serde_json::Map<String, serde_json::Value>>
 {
-    tool_ui_output_schema(UiPayloadKind::RunExplorer)
+    tool_ui_output_schema()
 }
 
-fn tool_ui_output_schema(
-    kind: UiPayloadKind,
-) -> std::sync::Arc<serde_json::Map<String, serde_json::Value>> {
+fn tool_ui_output_schema() -> std::sync::Arc<serde_json::Map<String, serde_json::Value>> {
     use std::collections::BTreeMap;
 
     let mut ui_props = BTreeMap::new();
@@ -304,33 +296,30 @@ fn tool_ui_output_schema(
         "kind".into(),
         json_schema_string("MCP App view payload discriminator"),
     );
-    if kind == UiPayloadKind::PlanReview {
-        ui_props.insert(
-            "comp".into(),
-            json_schema_ref("Plasm comp wire DAG (inline when small)"),
-        );
-        ui_props.insert(
-            "plan_ux_reflection".into(),
-            json_schema_ref("Plan UX reflection (inline when small)"),
-        );
-        ui_props.insert(
-            "plan_http_path".into(),
-            json_schema_string("HTTP GET path for plan archive JSON when not inlined"),
-        );
-        ui_props.insert(
-            "plan_uri".into(),
-            json_schema_string("MCP resources/read URI for plan archive when not inlined"),
-        );
-    } else {
-        ui_props.insert(
-            "result_delivery".into(),
-            json_schema_string("`inline` or `snapshot_only`"),
-        );
-        ui_props.insert(
-            "steps".into(),
-            json_schema_ref("Run step render/fetch descriptors with optional preview_entities"),
-        );
-    }
+    ui_props.insert(
+        "comp".into(),
+        json_schema_ref("Plasm comp wire DAG (inline when small)"),
+    );
+    ui_props.insert(
+        "plan_ux_reflection".into(),
+        json_schema_ref("Plan UX reflection (inline when small)"),
+    );
+    ui_props.insert(
+        "plan_http_path".into(),
+        json_schema_string("HTTP GET path for plan archive JSON when not inlined"),
+    );
+    ui_props.insert(
+        "plan_uri".into(),
+        json_schema_string("MCP resources/read URI for plan archive when not inlined"),
+    );
+    ui_props.insert(
+        "result_delivery".into(),
+        json_schema_string("`inline` or `snapshot_only`"),
+    );
+    ui_props.insert(
+        "steps".into(),
+        json_schema_ref("Run step render/fetch descriptors with optional preview_entities"),
+    );
 
     let mut structured_props = BTreeMap::new();
     structured_props.insert(
@@ -544,7 +533,10 @@ mod tests {
     }
 
     #[test]
-    fn finalize_fused_clean_read_is_run_explorer_without_plan_dag() {
+    fn finalize_fused_clean_read_contains_results_and_plan() {
+        let schema = Value::Object((*plasm_tool_output_schema()).clone());
+        assert!(schema.pointer("/properties/ui/properties/comp").is_some());
+        assert!(schema.pointer("/properties/ui/properties/steps").is_some());
         let mut tool_meta = Map::new();
         let plasm = json!({
             "logical_session_ref": "l_AAAAAAAAQACAAAAAAAAAAQ",
@@ -568,7 +560,7 @@ mod tests {
         let comp = json!({ "version": 1, "steps": { "n1": { "kind": "invoke" } }, "bind": { "topo": ["n1"] }, "return": { "kind": "step", "step": "n1" } });
         let ux = json!({ "schema_version": 3, "flow": { "verdict": "clean" }, "steps": [{ "operation": "query" }] });
         let res = CallToolResult::success(vec![rmcp::model::ContentBlock::text(markdown)]);
-        // Even if a caller wrongly passes inline plan on a fused read, UI lane stays Run Explorer.
+        // A completed read carries both its result rows and its plan in the UI lane.
         let out = finalize_mcp_tool_result(
             res,
             tool_meta,
@@ -590,10 +582,11 @@ mod tests {
                 .and_then(|v| v.as_str()),
             Some("run_explorer")
         );
-        assert!(wire.pointer("/structuredContent/ui/comp").is_none());
-        assert!(wire
-            .pointer("/structuredContent/ui/plan_ux_reflection")
-            .is_none());
+        assert_eq!(wire.pointer("/structuredContent/ui/comp"), Some(&comp));
+        assert_eq!(
+            wire.pointer("/structuredContent/ui/plan_ux_reflection"),
+            Some(&ux)
+        );
         assert_eq!(
             wire.pointer("/structuredContent/ui/steps/0/return_label")
                 .and_then(|v| v.as_str()),
