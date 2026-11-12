@@ -118,6 +118,24 @@ impl RunArtifactBackend for MemoryRunArtifactBackend {
             .cloned()
     }
 
+    async fn put_plan_id_for_index(
+        &self,
+        prompt_hash: &str,
+        session_id: &str,
+        plan_index: u64,
+        plan_id: Uuid,
+    ) -> Result<(), RunArtifactError> {
+        self.inner
+            .write()
+            .expect("run artifact mutex poisoned")
+            .plan_by_index
+            .insert(
+                (prompt_hash.to_string(), session_id.to_string(), plan_index),
+                plan_id,
+            );
+        Ok(())
+    }
+
     async fn get_plan_id_for_index(
         &self,
         prompt_hash: &str,

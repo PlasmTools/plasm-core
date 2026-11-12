@@ -80,12 +80,7 @@ impl RunArtifactBackend for ObjectStoreRunArtifactBackend {
         let n = encoded.len();
         let key = code_plan_object_key(&self.prefix, prompt_hash, session_id, plan_id);
         self.store.put(&key, encoded.into()).await?;
-        let idx = code_plan_index_pointer_key(&self.prefix, prompt_hash, session_id, plan_index);
-        self.store
-            .put(
-                &idx,
-                plan_id.as_hyphenated().to_string().into_bytes().into(),
-            )
+        self.put_plan_id_for_index(prompt_hash, session_id, plan_index, plan_id)
             .await?;
         Ok(n)
     }
@@ -99,6 +94,23 @@ impl RunArtifactBackend for ObjectStoreRunArtifactBackend {
         let key = code_plan_object_key(&self.prefix, prompt_hash, session_id, plan_id);
         let res = self.store.get(&key).await.ok()?;
         res.bytes().await.ok().map(|b| b.to_vec())
+    }
+
+    async fn put_plan_id_for_index(
+        &self,
+        prompt_hash: &str,
+        session_id: &str,
+        plan_index: u64,
+        plan_id: Uuid,
+    ) -> Result<(), RunArtifactError> {
+        let key = code_plan_index_pointer_key(&self.prefix, prompt_hash, session_id, plan_index);
+        self.store
+            .put(
+                &key,
+                plan_id.as_hyphenated().to_string().into_bytes().into(),
+            )
+            .await?;
+        Ok(())
     }
 
     async fn get_plan_id_for_index(

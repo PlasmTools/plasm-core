@@ -44,6 +44,14 @@ pub trait RunArtifactBackend: Send + Sync {
         encoded: Vec<u8>,
     ) -> Result<usize, RunArtifactError>;
 
+    async fn put_plan_id_for_index(
+        &self,
+        prompt_hash: &str,
+        session_id: &str,
+        plan_index: u64,
+        plan_id: Uuid,
+    ) -> Result<(), RunArtifactError>;
+
     async fn get_plan_encoded(
         &self,
         prompt_hash: &str,

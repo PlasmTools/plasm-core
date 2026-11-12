@@ -112,6 +112,8 @@ pub enum DiscoveryStoreError {
     StoredRecipeDigestMismatch,
     #[error("discovery generation is unknown")]
     UnknownGeneration,
+    #[error("the verified discovery catalogue cache is poisoned")]
+    CatalogueCachePoisoned,
     #[error("session is pinned to a different registry generation")]
     PinGenerationConflict,
     #[error("deployment has no active discovery generation")]
@@ -261,6 +263,12 @@ type SharedCatalogueSearchCache = Arc<
     >,
 >;
 
+struct VerifiedCatalogues {
+    generation: String,
+    fingerprints: Vec<(String, String, String)>,
+    catalogues: Arc<BTreeMap<String, CGS>>,
+}
+
 #[derive(Clone)]
 pub struct DiscoveryStore {
     pool: DiscoveryDatabase,
@@ -268,6 +276,7 @@ pub struct DiscoveryStore {
     pub(crate) pending_decisions: std::sync::Arc<crate::discovery_scheduling::DecisionLocks>,
     pub(crate) provider_budgets: std::sync::Arc<crate::discovery_scheduling::SessionBudgets>,
     pub(crate) search_index: SharedCatalogueSearchCache,
+    verified_catalogues: Arc<std::sync::Mutex<Option<VerifiedCatalogues>>>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -533,6 +542,7 @@ impl DiscoveryStore {
             pending_decisions: Default::default(),
             provider_budgets: Default::default(),
             search_index: Default::default(),
+            verified_catalogues: Default::default(),
         })
     }
 
@@ -736,21 +746,57 @@ impl DiscoveryStore {
         &self,
         generation: &str,
         allowed: &DiscoveryAuthorization,
-    ) -> Result<(BTreeMap<String, CGS>, DeploymentBindings)> {
+    ) -> Result<(Arc<BTreeMap<String, CGS>>, DeploymentBindings)> {
         let bindings = self.generation_bindings(generation).await?;
         let allowed: Vec<_> = allowed.catalogs.iter().collect();
         let rows = sqlx::query("SELECT g.entry_id,r.cgs,r.manifest FROM discovery_generation_catalogs g JOIN discovery_revisions r USING(revision_id) WHERE g.generation_id=$1 AND g.entry_id=ANY($2) ORDER BY g.entry_id")
             .bind(generation).bind(allowed).fetch_all(&mut *self.pool.acquire().await?).await?;
-        let catalogs = rows
+        let catalog_rows = rows
             .into_iter()
             .map(|row| {
                 let bytes: Vec<u8> = row.try_get("cgs")?;
                 let manifest: CatalogManifest = serde_json::from_value(row.try_get("manifest")?)?;
-                let cgs =
-                    plasm_core::catalog_il::load_catalog_il_verified(&bytes, &manifest.cgs_hash)?;
-                Ok((row.try_get("entry_id")?, cgs))
+                let name: String = row.try_get("entry_id")?;
+                Ok((name, bytes, manifest.cgs_hash))
             })
-            .collect::<Result<BTreeMap<_, _>>>()?;
+            .collect::<Result<Vec<_>>>()?;
+        // Re-read the database and fingerprint its exact bytes on every request:
+        // a changed catalogue or manifest must still be re-verified, never hidden
+        // by the cache. Only decoded, verified immutable graphs are shared.
+        let fingerprints: Vec<_> = catalog_rows
+            .iter()
+            .map(|(name, bytes, hash)| (name.clone(), content_hash(bytes), hash.clone()))
+            .collect();
+        let cached = self
+            .verified_catalogues
+            .lock()
+            .map_err(|_| DiscoveryStoreError::CatalogueCachePoisoned)?
+            .as_ref()
+            .filter(|entry| entry.generation == generation && entry.fingerprints == fingerprints)
+            .map(|entry| Arc::clone(&entry.catalogues));
+        let catalogs = if let Some(cached) = cached {
+            cached
+        } else {
+            let catalogs = Arc::new(
+                catalog_rows
+                    .into_iter()
+                    .map(|(name, bytes, hash)| {
+                        let cgs = plasm_core::catalog_il::load_catalog_il_verified(&bytes, &hash)?;
+                        Ok((name, cgs))
+                    })
+                    .collect::<Result<BTreeMap<_, _>>>()?,
+            );
+            *self
+                .verified_catalogues
+                .lock()
+                .map_err(|_| DiscoveryStoreError::CatalogueCachePoisoned)? =
+                Some(VerifiedCatalogues {
+                    generation: generation.to_owned(),
+                    fingerprints,
+                    catalogues: Arc::clone(&catalogs),
+                });
+            catalogs
+        };
         Ok((catalogs, bindings))
     }
 
@@ -1857,6 +1903,57 @@ pub(crate) mod tests {
             .await
             .unwrap();
         assert_eq!(semantic.keys().collect::<Vec<_>>(), vec!["matrix"]);
+        let matrix_only = DiscoveryAuthorization::catalogs(BTreeSet::from(["matrix".into()]));
+        let warm = store
+            .load_discovery_generation(&generation, &matrix_only)
+            .await
+            .unwrap()
+            .0;
+        assert!(
+            Arc::ptr_eq(&semantic, &warm),
+            "unchanged verified catalogue is shared"
+        );
+        let none = store
+            .load_discovery_generation(
+                &generation,
+                &DiscoveryAuthorization::catalogs(BTreeSet::new()),
+            )
+            .await
+            .unwrap()
+            .0;
+        assert!(
+            none.is_empty(),
+            "catalogue authorization is applied on a cache hit or miss"
+        );
+        let warmed = store
+            .load_discovery_generation(&generation, &matrix_only)
+            .await
+            .unwrap()
+            .0;
+        let original: Vec<u8> = sqlx::query_scalar("SELECT r.cgs FROM discovery_revisions r JOIN discovery_generation_catalogs g USING (revision_id) WHERE g.generation_id=$1 AND g.entry_id='matrix'")
+            .bind(&generation).fetch_one(&mut *store.pool.acquire().await.unwrap()).await.unwrap();
+        let mut damaged = original.clone();
+        damaged.push(b'!');
+        sqlx::query("UPDATE discovery_revisions SET cgs=$1 WHERE revision_id=(SELECT revision_id FROM discovery_generation_catalogs WHERE generation_id=$2 AND entry_id='matrix')")
+            .bind(&damaged).bind(&generation).execute(&mut *store.pool.acquire().await.unwrap()).await.unwrap();
+        assert!(
+            store
+                .load_discovery_generation(&generation, &matrix_only)
+                .await
+                .is_err(),
+            "changed bytes cannot reuse a verified graph"
+        );
+        sqlx::query("UPDATE discovery_revisions SET cgs=$1 WHERE revision_id=(SELECT revision_id FROM discovery_generation_catalogs WHERE generation_id=$2 AND entry_id='matrix')")
+            .bind(&original).bind(&generation).execute(&mut *store.pool.acquire().await.unwrap()).await.unwrap();
+        let restored = store
+            .load_discovery_generation(&generation, &matrix_only)
+            .await
+            .unwrap()
+            .0;
+        assert!(
+            Arc::ptr_eq(&warmed, &restored),
+            "restored exact bytes match the last verified catalogue"
+        );
         assert_eq!(
             semantic["matrix"].catalog_cgs_hash_hex(),
             loaded["matrix"].catalog_cgs_hash_hex()

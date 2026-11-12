@@ -40,6 +40,7 @@ pub(crate) enum CodePlanTraceEmit<'a> {
         plan_id: Option<Uuid>,
         plan_ux_reflection: Option<serde_json::Value>,
         out: Option<&'a PlasmPlanRunResult>,
+        archive_index_only: bool,
     },
 }
 
@@ -52,7 +53,13 @@ pub(crate) struct CodePlanEmitRefs {
 
 pub(crate) struct CodePlanTraceOutcome {
     pub refs: CodePlanEmitRefs,
-    pub execute_plan_id: Option<Uuid>,
+    pub execute_plan_id: Option<StartedPlan>,
+}
+
+pub(crate) struct StartedPlan {
+    pub id: Uuid,
+    archived: bool,
+    reflection: Option<serde_json::Value>,
 }
 
 /// Emit evaluate or execute code-plan trace segments (+ optional plan archive).
@@ -96,6 +103,7 @@ pub(crate) async fn emit_code_plan_trace(
             plan_ux_reflection, ..
         } => plan_ux_reflection.clone(),
     };
+    let initial_reflection = archived_plan_ux.clone();
     let doc = CodePlanArchiveDocument {
         kind: "code_plan".into(),
         plan_id: plan_id.to_string(),
@@ -118,23 +126,41 @@ pub(crate) async fn emit_code_plan_trace(
     let canonical_plan_uri =
         plasm_code_plan_resource_uri(input.prompt_hash, input.session_id, &plan_id);
     let plan_http_path = code_plan_http_path(input.prompt_hash, input.session_id, &plan_id);
+    let index_only = matches!(
+        &emit,
+        CodePlanTraceEmit::Execute {
+            archive_index_only: true,
+            ..
+        }
+    );
+    let mut archived = false;
     if !skip_archive && !defer_archive {
-        if let Err(e) = input
-            .store
-            .insert_code_plan(
-                input.prompt_hash,
-                input.session_id,
-                plan_id,
-                plan_index,
-                &doc,
-            )
-            .await
-        {
+        let result = if index_only {
+            input
+                .store
+                .put_code_plan_index(input.prompt_hash, input.session_id, plan_index, plan_id)
+                .await
+        } else {
+            input
+                .store
+                .insert_code_plan(
+                    input.prompt_hash,
+                    input.session_id,
+                    plan_id,
+                    plan_index,
+                    &doc,
+                )
+                .await
+                .map(|_| ())
+        };
+        if let Err(e) = result {
             tracing::warn!(
                 target: "plasm_agent::mcp",
                 error = %e,
                 "failed to archive Plasm program plan for trace (non-fatal)"
             );
+        } else {
+            archived = true;
         }
     } else if defer_archive {
         crate::metrics::record_mcp_response_deferred_io("plan_archive");
@@ -234,7 +260,13 @@ pub(crate) async fn emit_code_plan_trace(
                 .await;
             CodePlanTraceOutcome {
                 refs,
-                execute_plan_id: matches!(phase, CODE_PLAN_EXECUTION_STARTED).then_some(plan_id),
+                execute_plan_id: matches!(phase, CODE_PLAN_EXECUTION_STARTED).then_some(
+                    StartedPlan {
+                        id: plan_id,
+                        archived,
+                        reflection: initial_reflection,
+                    },
+                ),
             }
         }
     }
@@ -257,14 +289,18 @@ impl<'a> CodePlanTraceInput<'a> {
         .refs
     }
 
-    pub(crate) async fn emit_execute_started(self) -> Uuid {
+    pub(crate) async fn emit_execute_started(
+        self,
+        plan_ux_reflection: Option<serde_json::Value>,
+    ) -> StartedPlan {
         emit_code_plan_trace(
             self,
             CodePlanTraceEmit::Execute {
                 phase: CODE_PLAN_EXECUTION_STARTED,
                 plan_id: None,
-                plan_ux_reflection: None,
+                plan_ux_reflection,
                 out: None,
+                archive_index_only: false,
             },
         )
         .await
@@ -280,6 +316,7 @@ impl<'a> CodePlanTraceInput<'a> {
                 plan_id: Some(execute_plan_id),
                 plan_ux_reflection: None,
                 out: None,
+                archive_index_only: false,
             },
         )
         .await;
@@ -287,17 +324,21 @@ impl<'a> CodePlanTraceInput<'a> {
 
     pub(crate) async fn emit_execute_completed(
         self,
-        execute_plan_id: Option<Uuid>,
+        execute_plan_id: Option<StartedPlan>,
         plan_ux_reflection: Option<serde_json::Value>,
         out: &PlasmPlanRunResult,
     ) {
+        let archive_index_only = execute_plan_id
+            .as_ref()
+            .is_some_and(|p| p.archived && p.reflection == plan_ux_reflection);
         emit_code_plan_trace(
             self,
             CodePlanTraceEmit::Execute {
                 phase: CODE_PLAN_EXECUTION_COMPLETED,
-                plan_id: execute_plan_id,
+                plan_id: execute_plan_id.as_ref().map(|p| p.id),
                 plan_ux_reflection,
                 out: Some(out),
+                archive_index_only,
             },
         )
         .await;
@@ -345,7 +386,7 @@ mod tests {
             plan_call_index: 1,
             code_chars: source.chars().count() as u64,
         };
-        let plan_id = input().emit_execute_started().await;
+        let plan_id = input().emit_execute_started(None).await.id;
         let before = store
             .get_code_plan_payload_result("source-test", "session-test", plan_id)
             .await
@@ -362,6 +403,110 @@ mod tests {
             serde_json::from_slice(&after.bytes).expect("archive JSON");
         assert_eq!(doc.code, source);
         assert_eq!(doc.plan_id, plan_id.to_string());
+    }
+
+    #[tokio::test]
+    async fn completed_plan_reuses_started_archive_and_repairs_index() {
+        use crate::run_artifacts::{CodePlanArchiveDocument, RunArtifactStore};
+        use crate::test_support::session_fixtures::ExecuteSessionFixture;
+
+        let hub = crate::trace_hub::TraceHub::default();
+        let store = Arc::new(RunArtifactStore::default());
+        let es = ExecuteSessionFixture::new()
+            .entities(Vec::new())
+            .build(Arc::new(plasm_core::CGS::default()));
+        let input = || super::CodePlanTraceInput {
+            hub: &hub,
+            store: Arc::clone(&store),
+            mcp_key: "trace-test",
+            es: &es,
+            prompt_hash: "source-test",
+            session_id: "session-test",
+            comp: minimal_shared_comp(),
+            program: "class P(Program): pass",
+            plan_call_index: 1,
+            code_chars: 22,
+        };
+        let reflection = serde_json::json!({"verdict":"allow"});
+        let started = input().emit_execute_started(Some(reflection.clone())).await;
+        let id = started.id;
+        let before = store
+            .get_code_plan_payload_result("source-test", "session-test", id)
+            .await
+            .unwrap()
+            .unwrap();
+        let doc: CodePlanArchiveDocument = serde_json::from_slice(&before.bytes).unwrap();
+        assert_eq!(doc.plan_ux_reflection, Some(reflection.clone()));
+        store
+            .put_code_plan_index("source-test", "session-test", 1, uuid::Uuid::new_v4())
+            .await
+            .unwrap();
+        let result = PlasmPlanRunResult {
+            version: serde_json::Value::Null,
+            agent_outcome: crate::plasm_plan_run::PlanAgentOutcome::Ready,
+            node_results: vec![],
+            graph_summary: serde_json::Value::Null,
+            comp: None,
+            code_plan_run_artifacts: vec![],
+            run_markdown: None,
+            run_plasm_meta: None,
+            return_steps: vec![],
+            inline_plan_ui: None,
+        };
+        input()
+            .emit_execute_completed(Some(started), Some(reflection), &result)
+            .await;
+        let after = store
+            .get_code_plan_payload_result_by_index("source-test", "session-test", 1)
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            before.bytes, after.bytes,
+            "completion updates the pointer without rewriting the document"
+        );
+        let missing_id = uuid::Uuid::new_v4();
+        input()
+            .emit_execute_completed(
+                Some(super::StartedPlan {
+                    id: missing_id,
+                    archived: false,
+                    reflection: None,
+                }),
+                Some(serde_json::json!({"verdict":"allow"})),
+                &result,
+            )
+            .await;
+        let recovered = store
+            .get_code_plan_payload_result("source-test", "session-test", missing_id)
+            .await
+            .unwrap()
+            .unwrap();
+        let recovered: CodePlanArchiveDocument = serde_json::from_slice(&recovered.bytes).unwrap();
+        assert_eq!(
+            recovered.plan_id,
+            missing_id.to_string(),
+            "failed initial archive is written at completion"
+        );
+        let changed = input()
+            .emit_execute_started(Some(serde_json::json!({"verdict":"review"})))
+            .await;
+        let changed_id = changed.id;
+        let final_reflection = serde_json::json!({"verdict":"allow"});
+        input()
+            .emit_execute_completed(Some(changed), Some(final_reflection.clone()), &result)
+            .await;
+        let changed = store
+            .get_code_plan_payload_result("source-test", "session-test", changed_id)
+            .await
+            .unwrap()
+            .unwrap();
+        let changed: CodePlanArchiveDocument = serde_json::from_slice(&changed.bytes).unwrap();
+        assert_eq!(
+            changed.plan_ux_reflection,
+            Some(final_reflection),
+            "changed final reflection is archived"
+        );
     }
 
     fn minimal_execute_segment(phase: &str, plan_id: &str) -> TraceSegment {

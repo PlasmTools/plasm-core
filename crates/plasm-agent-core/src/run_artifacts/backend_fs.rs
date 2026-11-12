@@ -218,11 +218,8 @@ impl RunArtifactBackend for FsRunArtifactBackend {
             tokio::fs::create_dir_all(parent).await?;
         }
         tokio::fs::write(&path, encoded).await?;
-        let index_path = self.plan_index_path(prompt_hash, session_id, plan_index)?;
-        if let Some(parent) = index_path.parent() {
-            tokio::fs::create_dir_all(parent).await?;
-        }
-        tokio::fs::write(&index_path, plan_id.as_hyphenated().to_string()).await?;
+        self.put_plan_id_for_index(prompt_hash, session_id, plan_index, plan_id)
+            .await?;
         Ok(n)
     }
 
@@ -234,6 +231,21 @@ impl RunArtifactBackend for FsRunArtifactBackend {
     ) -> Option<Vec<u8>> {
         let path = self.plan_blob_path(prompt_hash, session_id, plan_id).ok()?;
         tokio::fs::read(&path).await.ok()
+    }
+
+    async fn put_plan_id_for_index(
+        &self,
+        prompt_hash: &str,
+        session_id: &str,
+        plan_index: u64,
+        plan_id: Uuid,
+    ) -> Result<(), RunArtifactError> {
+        let path = self.plan_index_path(prompt_hash, session_id, plan_index)?;
+        if let Some(parent) = path.parent() {
+            tokio::fs::create_dir_all(parent).await?;
+        }
+        tokio::fs::write(path, plan_id.as_hyphenated().to_string()).await?;
+        Ok(())
     }
 
     async fn get_plan_id_for_index(

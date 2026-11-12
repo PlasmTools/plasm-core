@@ -217,6 +217,18 @@ impl RunArtifactStore {
         })
     }
 
+    pub(crate) async fn put_code_plan_index(
+        &self,
+        prompt_hash: &str,
+        session_id: &str,
+        plan_index: u64,
+        plan_id: Uuid,
+    ) -> Result<(), RunArtifactError> {
+        self.inner
+            .put_plan_id_for_index(prompt_hash, session_id, plan_index, plan_id)
+            .await
+    }
+
     pub async fn get_code_plan_payload_result(
         &self,
         prompt_hash: &str,

@@ -348,7 +348,7 @@ async fn execute_mcp_live_run_inner(
     ));
     let execute_plan_id =
         code_plan_trace_input(&artifacts, es.as_ref(), &wire, Arc::clone(&comp_wire))
-            .emit_execute_started()
+            .emit_execute_started(plan_ux_reflection.clone())
             .await;
 
     let await_out =
@@ -389,7 +389,7 @@ async fn execute_mcp_live_run_inner(
             Ok(result) => result,
             Err(err) => {
                 code_plan_trace_input(&artifacts, es.as_ref(), &wire, Arc::clone(&comp_wire))
-                    .emit_execute_failed(execute_plan_id)
+                    .emit_execute_failed(execute_plan_id.id)
                     .await;
                 return Err(err);
             }
