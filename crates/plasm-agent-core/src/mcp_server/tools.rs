@@ -93,18 +93,17 @@ pub(crate) fn plasm_tools(artifact_access: ArtifactAccessMode, ui_apps_enabled: 
             model
         });
         model.icons = None;
-        model.meta =
-            if attach_ui_meta && crate::workflow_learning::WorkflowLearning::default().enabled() {
-                Some(
-                    serde_json::json!({"ui":{"resourceUri":crate::mcp_app::TRAINING.uri}})
-                        .as_object()
-                        .expect("training UI metadata")
-                        .clone()
-                        .into(),
-                )
-            } else {
-                None
-            };
+        model.meta = if attach_ui_meta {
+            Some(
+                serde_json::json!({"ui":{"resourceUri":crate::mcp_app::DISCOVERY.uri}})
+                    .as_object()
+                    .expect("discovery UI metadata")
+                    .clone()
+                    .into(),
+            )
+        } else {
+            None
+        };
         model.output_schema = None;
         model
     }];

@@ -1184,33 +1184,13 @@ impl DiscoveryService {
         } else {
             None
         };
-        let mut intent_analysis = discovery_assessment_summary(&search);
         let uncovered: Vec<_> = matrix
             .uncovered_operations()
             .filter(|text| !matrix.contextual_fragment(text))
             .take(4)
             .collect();
-        let has_contextual_fragments = matrix.has_contextual_fragments();
-        if has_contextual_fragments {
-            intent_analysis.push_str("\n\nSome request fragments were assessed as context rather than independent requirements; their coverage remains unverified.");
-        }
-        if !uncovered.is_empty() {
-            intent_analysis.push_str("\n\nThese request fragments have no affirmative independent coverage assessment (up to four shown). Fragments are mechanical text ranges, not interpreted requirements. Earlier declarations remain available; this does not establish that a capability is unavailable:");
-            for span in &uncovered {
-                intent_analysis.push_str("\n- ");
-                intent_analysis.push_str(span);
-            }
-        }
-        if !uncovered.is_empty() || has_contextual_fragments {
-            let partial_recovery = DiscoveryRecovery::from_unmatched(
-                &matching,
-                &retrieval,
-                &catalogs,
-                allowed.catalogs.iter(),
-            );
-            intent_analysis.push_str("\n\n");
-            intent_analysis.push_str(&partial_recovery.render_partial_catalogs());
-        }
+        let intent_analysis =
+            discovery_intent_analysis(&search, &uncovered, matrix.has_contextual_fragments());
         Ok(RoutingReceipt {
             intent_provenance: provenance.clone(),
             authorization: allowed.clone(),
@@ -1250,6 +1230,28 @@ impl DiscoveryService {
         )
         .await
     }
+}
+
+fn discovery_intent_analysis(
+    search: &matcher::online::SearchReceipt,
+    uncovered: &[&str],
+    has_contextual_fragments: bool,
+) -> String {
+    let mut analysis = discovery_assessment_summary(search);
+    if has_contextual_fragments {
+        analysis.push_str("\n\nSome request fragments were assessed as context rather than independent requirements; their coverage remains unverified.");
+    }
+    if !uncovered.is_empty() {
+        analysis.push_str("\n\nThese request fragments have no affirmative independent coverage assessment (up to four shown). Fragments are mechanical text ranges, not interpreted requirements. Earlier declarations remain available; this does not establish that a capability is unavailable:");
+        for span in uncovered {
+            analysis.push_str("\n- ");
+            analysis.push_str(span);
+        }
+    }
+    if !uncovered.is_empty() || has_contextual_fragments {
+        analysis.push_str("\n\nExtend the same logical session with the remaining discovery need to assess more candidates.");
+    }
+    analysis
 }
 
 fn discovery_assessment_summary(search: &matcher::online::SearchReceipt) -> String {
@@ -1318,6 +1320,20 @@ mod concurrency_tests;
 mod tests {
     use super::*;
     use std::collections::BTreeSet;
+
+    #[test]
+    fn partial_discovery_keeps_uncertainty_without_integration_inventory() {
+        let packet: serde_json::Value = serde_json::from_str(include_str!(
+            "../../../fixtures/discovery/partial-routing.json"
+        ))
+        .unwrap();
+        let receipt: RoutingReceipt = serde_json::from_value(packet["routing"].clone()).unwrap();
+        let text = discovery_intent_analysis(&receipt.search, &["Find owned records"], true);
+        assert!(text.contains("Find owned records"));
+        assert!(text.contains("coverage remains unverified"));
+        assert!(text.contains("same logical session"));
+        assert!(!text.contains("Available integrations"));
+    }
 
     #[test]
     fn assessment_summary_reports_packet_deferral_without_claiming_relevance() {

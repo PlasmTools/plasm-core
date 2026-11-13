@@ -70,7 +70,25 @@ pub const TRAINING: McpAppBundle = McpAppBundle {
     resource_metric: "training_ui",
 };
 
-static BUNDLES: &[&McpAppBundle] = &[&PLAN_REVIEW, &WORKFLOW, &RUN_EXPLORER, &TRAINING];
+pub const DISCOVERY: McpAppBundle = McpAppBundle {
+    uri: crate::discovery_ui::URI,
+    mime: "text/html;profile=mcp-app",
+    mcp_inline_html: crate::discovery_ui::HTML,
+    http_page_html: crate::discovery_ui::HTML,
+    http_page_js: "",
+    shell_html: crate::discovery_ui::HTML,
+    shell_js: "",
+    path_prefix: "/v1/discovery/ui",
+    resource_metric: "discovery_ui",
+};
+
+static BUNDLES: &[&McpAppBundle] = &[
+    &PLAN_REVIEW,
+    &WORKFLOW,
+    &RUN_EXPLORER,
+    &TRAINING,
+    &DISCOVERY,
+];
 
 /// CSP metadata for inline MCP App resources (same-origin API fetch in HTTP standalone mode).
 pub fn resource_read_content_meta() -> Map<String, serde_json::Value> {
@@ -143,6 +161,13 @@ pub fn attach_mcp_app_ui_on_tool_meta(meta: &mut Map<String, serde_json::Value>)
     let Some(plasm) = plasm_object(meta) else {
         return;
     };
+    if plasm.get("discovery").is_some() {
+        meta.insert(
+            "ui".into(),
+            serde_json::json!({"resourceUri": DISCOVERY.uri}),
+        );
+        return;
+    }
     if plasm_dry_run(plasm) {
         meta.insert(
             "ui".into(),
@@ -174,6 +199,14 @@ pub fn mount_bundle(bundle: &'static McpAppBundle) -> Router {
 pub fn mcp_app_resource_templates() -> Vec<rmcp::model::ResourceTemplate> {
     use rmcp::model::ResourceTemplate;
     vec![
+        {
+            let mut model = ResourceTemplate::new(DISCOVERY.uri, "plasm_discovery_app");
+            model.mime_type = Some(DISCOVERY.mime.into());
+            model.title = Some("Plasm discovery".into());
+            model.description =
+                Some("Inspect the request, selected capabilities, and discovery coverage.".into());
+            model
+        },
         {
             let mut model = ResourceTemplate::new(TRAINING.uri, "plasm_training_app");
             model.mime_type = Some(TRAINING.mime.into());
@@ -340,6 +373,19 @@ async fn serve_shell_html(body: &'static str) -> Response {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn discovery_with_training_uses_declared_discovery_view() {
+        let mut meta = serde_json::Map::new();
+        meta.insert(
+            "plasm".into(),
+            serde_json::json!({
+                "discovery": {}, "training": {"capture_availability": "available"}
+            }),
+        );
+        attach_mcp_app_ui_on_tool_meta(&mut meta);
+        assert_eq!(meta["ui"]["resourceUri"], DISCOVERY.uri);
+    }
 
     #[test]
     fn bundles_resolve_by_uri() {

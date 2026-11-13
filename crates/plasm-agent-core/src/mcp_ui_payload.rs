@@ -46,6 +46,7 @@ pub struct UiInlinePlanPayload {
 /// MCP App view payload discriminator (`structuredContent.ui.kind`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum UiPayloadKind {
+    Discovery,
     PlanReview,
     RunExplorer,
 }
@@ -53,6 +54,7 @@ pub enum UiPayloadKind {
 impl UiPayloadKind {
     pub fn as_str(self) -> &'static str {
         match self {
+            Self::Discovery => "discovery",
             Self::PlanReview => "plan_review",
             Self::RunExplorer => "run_explorer",
         }
@@ -60,6 +62,9 @@ impl UiPayloadKind {
 
     /// Prefer typed flags from builders; JSON inference only for finalize projection.
     pub fn from_plasm_obj(obj: &Map<String, Value>) -> Option<Self> {
+        if obj.get("discovery").is_some() {
+            return Some(Self::Discovery);
+        }
         if obj.get("dry_run").and_then(|v| v.as_bool()) == Some(true) {
             return Some(Self::PlanReview);
         }
@@ -216,6 +221,9 @@ fn structured_ui_payload_from_meta(
     let kind = UiPayloadKind::from_plasm_obj(obj)?;
     let mut out = Map::new();
     out.insert("kind".to_string(), Value::String(kind.as_str().to_string()));
+    if let Some(discovery) = obj.get("discovery") {
+        out.insert("discovery".to_string(), discovery.clone());
+    }
 
     // Plan fetch references are available to either review or completed-read views.
     for key in UI_PLAN_REF_KEYS {

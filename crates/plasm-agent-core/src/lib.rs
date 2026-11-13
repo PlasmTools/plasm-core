@@ -232,6 +232,7 @@ pub mod terminal_result_format;
 mod terminal_session;
 mod terminal_state;
 pub use terminal::DEFAULT_PLASM_HTTP_ORIGIN;
+mod discovery_ui;
 mod http_plan_ui;
 mod http_run_ui;
 mod http_workflow;

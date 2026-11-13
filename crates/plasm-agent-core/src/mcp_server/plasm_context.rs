@@ -9,19 +9,19 @@ use serde_json::json;
 use tracing::Instrument;
 
 use crate::http_execute::{
-    ApplyCapabilitySeedsOutcome, PlasmContextToolMetaParams, apply_capability_seeds_for_mcp,
-    build_plasm_context_agent_markdown, build_plasm_context_tool_meta,
+    apply_capability_seeds_for_mcp, build_plasm_context_agent_markdown,
+    build_plasm_context_tool_meta, ApplyCapabilitySeedsOutcome, PlasmContextToolMetaParams,
 };
 use crate::incoming_auth::tenant_scope;
 use crate::mcp_logical_ref::format_logical_session_wire_ref;
 use crate::session_identity::{
-    LogicalSessionId, PlasmContextSessionMode, accumulated_intent_meta_preview,
+    accumulated_intent_meta_preview, LogicalSessionId, PlasmContextSessionMode,
 };
 use crate::trace_hub::PlasmContextTrace;
 
 use super::tool_parse::{parse_optional_principal, parse_plasm_context_session_mode};
 use super::transport::PlasmExecBinding;
-use super::{MAX_MCP_EXEC_BINDINGS, PlasmMcpHandler};
+use super::{PlasmMcpHandler, MAX_MCP_EXEC_BINDINGS};
 use crate::discovery_service::{DiscoveryService, RouteTurn};
 use plasm_core::discovery::CgsCatalog;
 
@@ -528,6 +528,10 @@ impl PlasmMcpHandler {
             )
             .await
             .map_err(|error| ToolFailure::rejected(error.to_string()))?;
+        let ui_apps_enabled = self.mcp_ui_apps_enabled_for_runtime(runtime).await;
+        let artifact_mode = self.resolved_artifact_access_mode(key, runtime).await;
+        let discovery_profile =
+            crate::mcp_delivery::McpDeliveryProfile::resolve(ui_apps_enabled, artifact_mode);
         if receipt.closure.is_none() {
             let content = if let Some(recovery) = &receipt.recovery {
                 recovery.render_unmatched_markdown()
@@ -559,6 +563,12 @@ impl PlasmMcpHandler {
             );
             let mut meta = serde_json::Map::new();
             meta.insert("logical_session_ref".into(), json!(wire_ref));
+            if ui_apps_enabled {
+                meta.insert(
+                    "discovery".into(),
+                    crate::discovery_ui::project(intent, &receipt),
+                );
+            }
             meta.insert(
                 "routing".into(),
                 serde_json::to_value(&receipt).map_err(|e| ToolFailure::rejected(e.to_string()))?,
@@ -566,7 +576,7 @@ impl PlasmMcpHandler {
             return Ok(crate::mcp_ui_payload::DualLaneToolResult {
                 content,
                 plasm_meta: meta,
-                profile: crate::mcp_delivery::McpDeliveryProfile::ContentOnly,
+                profile: discovery_profile,
                 inline_plan_ui: None,
             }
             .into_call_tool_result());
@@ -993,6 +1003,12 @@ impl PlasmMcpHandler {
                 session_churn: session_churn.as_ref(),
             },
         );
+        if ui_apps_enabled {
+            plasm.insert(
+                "discovery".into(),
+                crate::discovery_ui::project(intent, route),
+            );
+        }
         if let Some(training) = training {
             let actor = crate::workflow_training_mcp::caller_actor(
                 crate::workflow_learning::scope(&scope, tcfg.as_deref()),
@@ -1043,7 +1059,7 @@ impl PlasmMcpHandler {
             crate::mcp_ui_payload::DualLaneToolResult {
                 content: text,
                 plasm_meta: plasm,
-                profile: crate::mcp_delivery::McpDeliveryProfile::ContentOnly,
+                profile: discovery_profile,
                 inline_plan_ui: None,
             }
             .into_call_tool_result()
