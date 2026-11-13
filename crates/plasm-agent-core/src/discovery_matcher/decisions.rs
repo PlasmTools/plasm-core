@@ -25,6 +25,7 @@ pub(super) enum State<'a> {
 }
 
 #[derive(Serialize)]
+#[cfg_attr(test, derive(Clone))]
 pub(super) struct Question {
     #[serde(rename = "type")]
     pub kind: &'static str,

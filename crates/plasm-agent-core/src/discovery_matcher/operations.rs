@@ -127,6 +127,18 @@ struct GraphWitness {
     bindings: Vec<serde_json::Value>,
 }
 
+/// One planning wave can try several packet sizes; project each exact route once.
+pub(super) type GraphWitnessCache = BTreeMap<
+    (
+        plasm_core::prerequisites::CapabilityRef,
+        Vec<super::search_graph::Edge<plasm_core::prerequisites::CapabilityRef>>,
+    ),
+    (
+        super::witnesses::Scope,
+        BTreeSet<plasm_core::prerequisites::CapabilityRef>,
+    ),
+>;
+
 #[cfg(test)]
 #[derive(Serialize)]
 struct CapabilityWitness<'a> {
@@ -196,6 +208,7 @@ impl DecisionBatch {
             Vec<super::search_graph::Edge<plasm_core::prerequisites::CapabilityRef>>,
         )],
         questions: &[DecisionQuestion],
+        witness_cache: &mut GraphWitnessCache,
     ) -> Result<Self, OperationError> {
         let selection_request = context.intent.selection_request();
         let intent = selection_request.as_str();
@@ -254,17 +267,24 @@ impl DecisionBatch {
                 label.clone()
             } else {
                 let label = format!("w{}", witness_labels.len() + 1);
-                let (witness, _, scope_members) =
-                    super::online::packet_scope(index, &question.capability, path, context)
-                        .map_err(|_| OperationError::InvalidGraphWitness)?;
-                members.extend(scope_members);
+                let cache_key = (question.capability.clone(), path.clone());
+                if let std::collections::btree_map::Entry::Vacant(entry) =
+                    witness_cache.entry(cache_key.clone())
+                {
+                    let (witness, _, scope_members) =
+                        super::online::packet_scope(index, &question.capability, path, context)
+                            .map_err(|_| OperationError::InvalidGraphWitness)?;
+                    entry.insert((witness, scope_members));
+                }
+                let (witness, scope_members) = &witness_cache[&cache_key];
+                members.extend(scope_members.iter().cloned());
                 evidence.insert(
                     label.clone(),
                     GraphWitness {
-                        capabilities: witness.cards,
-                        types: witness.types,
-                        type_refs: witness.references,
-                        bindings: witness.bindings,
+                        capabilities: witness.cards.clone(),
+                        types: witness.types.clone(),
+                        type_refs: witness.references.clone(),
+                        bindings: witness.bindings.clone(),
                     },
                 );
                 witness_labels.insert(question.capability.clone(), label.clone());

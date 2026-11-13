@@ -268,7 +268,7 @@ fn input_supply_cycles_do_not_suppress_a_connected_candidate() {
         exposed: &exposed,
         visits: &visits,
     };
-    let plan = plan_ordered(&index, context, vec![root]).unwrap();
+    let plan = plan_ordered(&index, context, vec![root], &mut PacketCache::default()).unwrap();
     assert!(plan.wave.iter().any(|(key, _)| key == &source));
     assert!(plan.wave.iter().any(|(key, _)| key == &alternate));
 }

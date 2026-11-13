@@ -99,25 +99,26 @@ fn measure(scope: VisitScope, scenario: Scenario, distractors: usize) -> Observa
             recalled.sort_by_key(|key| visits.get(key).copied().unwrap_or(0));
             recalled.insert(0, requested);
         }
-        let planner = if matches!(scope, VisitScope::Split) {
-            connected::plan_ordered
-        } else {
-            connected::plan_recalled
+        let context = SearchContext {
+            model: RELEVANCE_MODEL,
+            intent: &intent,
+            generation: "reformulation-scope-v1",
+            catalogs: &catalogs,
+            deployments: &deployments,
+            allowed: &allowed,
+            exposed: &[],
+            visits,
         };
-        let plan = planner(
-            &index,
-            SearchContext {
-                model: RELEVANCE_MODEL,
-                intent: &intent,
-                generation: "reformulation-scope-v1",
-                catalogs: &catalogs,
-                deployments: &deployments,
-                allowed: &allowed,
-                exposed: &[],
-                visits,
-            },
-            recalled,
-        )
+        let plan = if matches!(scope, VisitScope::Split) {
+            connected::plan_ordered(
+                &index,
+                context,
+                recalled,
+                &mut connected::PacketCache::default(),
+            )
+        } else {
+            connected::plan_recalled(&index, context, recalled)
+        }
         .unwrap();
         let issued = plan.issued.unwrap();
         max_bytes = max_bytes.max(issued.body().len());

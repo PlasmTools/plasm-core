@@ -349,6 +349,7 @@ impl Serialize for OrderedCards {
         map.end()
     }
 }
+#[derive(Clone)]
 pub(super) struct Scope {
     pub cards: OrderedCards,
     pub types: ProjectedDefinitions,

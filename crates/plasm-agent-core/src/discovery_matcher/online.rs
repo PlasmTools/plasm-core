@@ -39,7 +39,7 @@ use crate::discovery_store::{DiscoveryAuthorization, RetrievalReceipt};
 use plasm_core::{prerequisites::DeploymentBindings, CGS};
 
 pub(crate) const SEARCH_POLICY: &str =
-    "additive-connected-frontier-current-hybrid-evidence-3-judgments-3-attempts-32000-byte-packet-v45";
+    "additive-connected-frontier-current-hybrid-evidence-3-judgments-3-attempts-32000-byte-packet-v46";
 
 #[derive(Clone, Copy)]
 pub struct SearchContext<'a> {
@@ -641,6 +641,8 @@ fn prepare_operation_wave(
     recall: &RetrievalReceipt,
     matrix: &mut operations::OperationMatrix,
     deferred_priorities: &BTreeMap<CapabilityRef, usize>,
+    packet_limit: usize,
+    cache: &mut connected::PacketCache,
 ) -> Result<(connected::Plan, Option<operations::DecisionBatch>), DiscoveryMatcherError> {
     validate_recall(context, index, recall)?;
     for reference in context.exposed {
@@ -657,7 +659,7 @@ fn prepare_operation_wave(
         .map(|candidate| candidate.reference.clone())
         .collect();
     let mut plan =
-        connected::plan_recalled_with_deferred(index, context, roots, deferred_priorities)?;
+        connected::plan_recalled_with_deferred(index, context, roots, deferred_priorities, cache)?;
     let authorized = index
         .candidates
         .keys()
@@ -670,6 +672,7 @@ fn prepare_operation_wave(
         .map(|(reference, _)| reference.clone())
         .collect();
     matrix.add_candidates(&authorized, &admitted)?;
+    let mut witness_cache = operations::GraphWitnessCache::new();
     while !admitted.is_empty() {
         for limit in (1..=request_packing::MAX_QUESTIONS).rev() {
             let pairs = matrix.next_packet_for(&admitted, limit)?;
@@ -690,20 +693,20 @@ fn prepare_operation_wave(
                 index,
                 &plan.wave,
                 &questions,
+                &mut witness_cache,
             ) {
-                Ok(batch) => return Ok((plan, Some(batch))),
-                Err(operations::OperationError::DecisionPacketTooLarge { .. }) if limit > 1 => {
-                    continue
-                }
-                Err(operations::OperationError::DecisionPacketTooLarge { .. }) => {
-                    let reference = questions[0].capability.clone();
-                    plan.deferred
-                        .insert(reference.clone(), DeferredReason::InputBytes);
-                    admitted.retain(|candidate| candidate != &reference);
-                    break;
-                }
+                Ok(batch) if batch.body().len() <= packet_limit => return Ok((plan, Some(batch))),
+                Ok(_) | Err(operations::OperationError::DecisionPacketTooLarge { .. }) => {}
                 Err(error) => return Err(error.into()),
             }
+            if limit > 1 {
+                continue;
+            }
+            let reference = questions[0].capability.clone();
+            plan.deferred
+                .insert(reference.clone(), DeferredReason::InputBytes);
+            admitted.retain(|candidate| candidate != &reference);
+            break;
         }
     }
     Ok((plan, None))

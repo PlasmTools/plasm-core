@@ -77,13 +77,21 @@ where
     let mut pending = BTreeSet::new();
     let mut visits = context.visits.clone();
     let mut completed_waves = 0;
+    let mut packet_cache = connected::PacketCache::default();
     loop {
         let wave_context = SearchContext {
             visits: &visits,
             ..context
         };
-        let (plan, batch) =
-            prepare_operation_wave(wave_context, index, recall, matrix, deferred_priorities)?;
+        let (plan, batch) = prepare_operation_wave(
+            wave_context,
+            index,
+            recall,
+            matrix,
+            deferred_priorities,
+            budget.remaining_packet_bytes(),
+            &mut packet_cache,
+        )?;
         for (reference, _) in &plan.wave {
             deferred.remove(reference);
             pending.insert(reference.clone());

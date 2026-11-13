@@ -36,6 +36,23 @@ struct LocalPacket {
     prepared: request_packing::PreparedLocal,
 }
 
+/// Immutable projections are reusable only within one search: visits change
+/// between waves, but its intent, authorization, catalogues and exposure do not.
+#[derive(Default)]
+pub(super) struct PacketCache {
+    entries: BTreeMap<(CapabilityRef, Route), LocalPacket>,
+}
+
+impl PacketCache {
+    fn begin_wave(&mut self) {
+        // Limit extra retention across waves; each individual wave remains
+        // bounded by the existing catalogue and packet admission rules.
+        if self.entries.len() > 256 {
+            self.entries.clear();
+        }
+    }
+}
+
 /// Required acquisitions are ancestry, not optional allocation slots. A path
 /// may start with several of them before reaching its first nominated supplier.
 fn allocation_slot(
@@ -202,7 +219,7 @@ pub(super) fn plan_recalled(
     roots: Vec<CapabilityRef>,
 ) -> Result<Plan, DiscoveryMatcherError> {
     let order = order_recalled(index, context, roots, &BTreeMap::new());
-    plan_ordered(index, context, order)
+    plan_ordered(index, context, order, &mut PacketCache::default())
 }
 
 pub(super) fn plan_recalled_with_deferred(
@@ -210,10 +227,12 @@ pub(super) fn plan_recalled_with_deferred(
     context: SearchContext<'_>,
     roots: Vec<CapabilityRef>,
     deferred: &BTreeMap<CapabilityRef, usize>,
+    cache: &mut PacketCache,
 ) -> Result<Plan, DiscoveryMatcherError> {
+    cache.begin_wave();
     let recalled: BTreeSet<_> = roots.iter().cloned().collect();
     let order = order_recalled(index, context, roots, deferred);
-    let plan = plan_ordered(index, context, order.clone())?;
+    let plan = plan_ordered(index, context, order.clone(), cache)?;
     // A leading request candidate can occupy nearly the whole packet. A
     // currently recalled candidate that repeatedly could not share its packet
     // must eventually get a turn, rather than accumulating deferrals forever.
@@ -231,7 +250,7 @@ pub(super) fn plan_recalled_with_deferred(
     };
     let mut retry = vec![blocked.clone()];
     retry.extend(order.into_iter().filter(|key| key != &blocked));
-    let alternate = plan_ordered(index, context, retry)?;
+    let alternate = plan_ordered(index, context, retry, cache)?;
     if alternate.wave.iter().any(|(member, _)| member == &blocked) {
         Ok(alternate)
     } else {
@@ -245,6 +264,7 @@ pub(super) fn plan_ordered(
     index: &CatalogueSearch,
     context: SearchContext<'_>,
     order: Vec<CapabilityRef>,
+    cache: &mut PacketCache,
 ) -> Result<Plan, DiscoveryMatcherError> {
     let ranks: BTreeMap<_, _> = order
         .iter()
@@ -256,7 +276,7 @@ pub(super) fn plan_ordered(
     // A failed optional route does not establish that the direct root is too
     // large. Only direct admission failures can suppress another root trial.
     let mut root_deferred = BTreeSet::new();
-    let mut cache = BTreeMap::new();
+    let cache = &mut cache.entries;
     let mut served = BTreeMap::<NominationSlot, usize>::new();
     #[cfg(test)]
     let mut diagnostic = Vec::new();
@@ -276,11 +296,11 @@ pub(super) fn plan_ordered(
     {
         let mut trial = proposed.clone();
         trial.insert(key.clone(), Vec::new());
-        if body_size(&trial, index, context, &mut cache)? <= search_budget::MAX_INPUT_BYTES {
+        if body_size(&trial, index, context, cache)? <= search_budget::MAX_INPUT_BYTES {
             #[cfg(test)]
             diagnostic.push(serde_json::json!({"kind":"initial_root","root":key,
-                "before_bytes":body_size(&proposed,index,context,&mut cache)?,
-                "after_bytes":body_size(&trial,index,context,&mut cache)?}));
+                "before_bytes":body_size(&proposed,index,context,cache)?,
+                "after_bytes":body_size(&trial,index,context,cache)?}));
             proposed = trial;
         } else {
             deferred.insert(key.clone(), DeferredReason::InputBytes);
@@ -342,7 +362,7 @@ pub(super) fn plan_ordered(
                 &trial,
                 index,
                 context,
-                &mut cache,
+                cache,
                 Some(search_budget::MAX_INPUT_BYTES),
             )?;
             if size > search_budget::MAX_INPUT_BYTES {
@@ -384,7 +404,7 @@ pub(super) fn plan_ordered(
             }
             let mut trial = proposed.clone();
             trial.insert(key.clone(), Vec::new());
-            if body_size(&trial, index, context, &mut cache)? <= search_budget::MAX_INPUT_BYTES {
+            if body_size(&trial, index, context, cache)? <= search_budget::MAX_INPUT_BYTES {
                 fitting_root = Some(Bundle::from([(key.clone(), Vec::new())]));
                 break;
             }
@@ -407,8 +427,8 @@ pub(super) fn plan_ordered(
             trial.extend(bundle.clone());
             diagnostic.push(serde_json::json!({"kind":admission_kind,
                 "members":bundle.iter().map(|(key,path)|serde_json::json!({"reference":key,"path":path})).collect::<Vec<_>>(),
-                "before_bytes":body_size(&proposed,index,context,&mut cache)?,
-                "after_bytes":body_size(&trial,index,context,&mut cache)?}));
+                "before_bytes":body_size(&proposed,index,context,cache)?,
+                "after_bytes":body_size(&trial,index,context,cache)?}));
         }
         for (key, path) in bundle {
             if let Some(slot) = allocation_slot(index, &path)? {
@@ -438,7 +458,7 @@ pub(super) fn plan_ordered(
         .filter(|(key, _)| !context.exposed.contains(key))
         .map(|(key, path)| {
             let local = cache
-                .remove(&(key.clone(), path.clone()))
+                .get(&(key.clone(), path.clone()))
                 .expect("selected packet was prepared");
             members.extend(local.members.iter().cloned());
             issue_scope(
@@ -447,7 +467,7 @@ pub(super) fn plan_ordered(
                 &local.question,
                 &std::sync::Arc::new(vec![local.question.clone()]),
                 &index.labels,
-                local.scope,
+                local.scope.clone(),
                 false,
             )
         })

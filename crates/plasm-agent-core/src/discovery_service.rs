@@ -1267,7 +1267,7 @@ fn discovery_assessment_summary(search: &matcher::online::SearchReceipt) -> Stri
         .iter()
         .any(|item| matches!(item.reason, matcher::online::DeferredReason::InputBytes))
     {
-        summary.push_str("\n\nSome candidates could not be assessed within the discovery packet limit; their relevance remains unknown. A later search may help if their complete evidence fits on its own.");
+        summary.push_str("\n\nSome candidates did not fit within this search's packet or total-byte budget; their relevance remains unknown. A later search can assess them if their complete evidence fits.");
     }
     summary
 }
@@ -1322,7 +1322,7 @@ mod tests {
     #[test]
     fn assessment_summary_reports_packet_deferral_without_claiming_relevance() {
         let mut search = matcher::online::SearchReceipt::default();
-        assert!(!discovery_assessment_summary(&search).contains("packet limit"));
+        assert!(!discovery_assessment_summary(&search).contains("total-byte budget"));
         search.deferred.push(matcher::online::DeferredCandidate {
             reference: CapabilityRef {
                 catalog: "matrix".into(),
@@ -1331,9 +1331,9 @@ mod tests {
             reason: matcher::online::DeferredReason::InputBytes,
         });
         let summary = discovery_assessment_summary(&search);
-        assert!(summary.contains("could not be assessed within the discovery packet limit"));
+        assert!(summary.contains("did not fit within this search's packet or total-byte budget"));
         assert!(summary.contains("relevance remains unknown"));
-        assert!(summary.contains("if their complete evidence fits on its own"));
+        assert!(summary.contains("if their complete evidence fits"));
     }
 
     #[test]

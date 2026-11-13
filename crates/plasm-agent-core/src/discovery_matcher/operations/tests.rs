@@ -380,6 +380,7 @@ fn operation_packet_carries_the_connected_catalogue_witness() {
         capability: edge.consumer.clone(),
     };
     let wave = vec![(edge.consumer.clone(), vec![edge])];
+    let mut witness_cache = GraphWitnessCache::new();
     let batch = DecisionBatch::from_graph(
         context,
         &operations,
@@ -387,15 +388,19 @@ fn operation_packet_carries_the_connected_catalogue_witness() {
         &index,
         &wave,
         std::slice::from_ref(&question),
+        &mut witness_cache,
     )
     .unwrap();
+    let repeated = DecisionBatch::from_graph(context, &operations, &scope, &index, &wave, std::slice::from_ref(&question), &mut witness_cache).unwrap();
+    assert_eq!(batch.body(), repeated.body());
+    assert_eq!(witness_cache.len(), 1);
     let wire: serde_json::Value = serde_json::from_str(batch.body()).unwrap();
     let witness = &wire["state"]["question_evidence"]["w1"];
     assert!(witness["capabilities"].as_object().unwrap().len() >= 2);
     assert!(!witness["bindings"].as_array().unwrap().is_empty());
     assert!(witness["types"].is_object());
     assert!(matches!(
-        DecisionBatch::from_graph(context, &operations, &scope, &index, &[], &[question]),
+        DecisionBatch::from_graph(context, &operations, &scope, &index, &[], &[question], &mut witness_cache),
         Err(OperationError::InvalidGraphWitness)
     ));
 }

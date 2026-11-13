@@ -259,9 +259,15 @@ fn measure(distractors: usize, position: usize, case: Case, arm: Arm) -> Option<
             }
         }
         let plan = if deferred_nomination {
-            plan_recalled_with_deferred(&index, context, roots, &deferred_age)
+            plan_recalled_with_deferred(
+                &index,
+                context,
+                roots,
+                &deferred_age,
+                &mut PacketCache::default(),
+            )
         } else if experimental {
-            plan_ordered(&index, context, roots)
+            plan_ordered(&index, context, roots, &mut PacketCache::default())
         } else {
             plan_recalled(&index, context, roots)
         }

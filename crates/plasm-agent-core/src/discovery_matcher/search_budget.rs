@@ -126,6 +126,15 @@ impl<K: Ord + Clone> SearchBudget<K> {
         self.requests
     }
 
+    /// Largest packet still admissible in this search, without refunding work.
+    pub fn remaining_packet_bytes(&self) -> usize {
+        if self.requests == 0 {
+            MAX_INPUT_BYTES
+        } else {
+            MAX_INPUT_BYTES.min(MAX_TRANSMITTED_BYTES.saturating_sub(self.input_bytes))
+        }
+    }
+
     pub fn input_bytes(&self) -> usize {
         self.input_bytes
     }
@@ -153,6 +162,7 @@ mod tests {
         assert_eq!(budget, before);
         budget.reserve_followup([1], &"x".repeat(18_000)).unwrap();
         assert_eq!(budget.input_bytes(), 48_000);
+        assert_eq!(budget.remaining_packet_bytes(), 0);
         assert_eq!(
             budget.reserve_followup([2], "x"),
             Err(BudgetStop::InputBytes)

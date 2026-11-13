@@ -58,6 +58,159 @@ fn recall(index: &CatalogueSearch, names: &[&str]) -> RetrievalReceipt {
 }
 
 #[test]
+fn operation_packet_uses_the_remaining_turn_budget() {
+    use super::super::operations::{MatrixScope, OperationMatrix, OperationSet, RequestIdentity};
+    let catalogs = tests::fixture();
+    let allowed = DiscoveryAuthorization::catalogs(BTreeSet::from(["matrix".into()]));
+    let deployments = DeploymentBindings::default();
+    let index = CatalogueSearch::new(&catalogs, &deployments, &allowed).unwrap();
+    let request = "Read the source, process the result, and inspect the output.";
+    let intent = IntentProvenance::from_turns([request.into()]).unwrap();
+    let operations = OperationSet::from_request(request).unwrap();
+    let authorized = index.candidates.keys().cloned().collect();
+    let scope = MatrixScope::new(
+        "session",
+        "frozen",
+        &authorized,
+        RequestIdentity::from_request(request),
+    )
+    .unwrap();
+    let mut matrix = OperationMatrix::new(scope, request, operations, &authorized, vec![]).unwrap();
+    let visits = BTreeMap::new();
+    let context = SearchContext {
+        model: RELEVANCE_MODEL,
+        intent: &intent,
+        generation: "frozen",
+        catalogs: &catalogs,
+        deployments: &deployments,
+        allowed: &allowed,
+        exposed: &[],
+        visits: &visits,
+    };
+    let recall = recall(&index, &["process", "source_read"]);
+    let (_, full) = prepare_operation_wave(
+        context,
+        &index,
+        &recall,
+        &mut matrix,
+        &BTreeMap::new(),
+        search_budget::MAX_INPUT_BYTES,
+        &mut connected::PacketCache::default(),
+    )
+    .unwrap();
+    let full = full.unwrap();
+    let full_questions = serde_json::from_str::<serde_json::Value>(full.body()).unwrap()
+        ["questions"]
+        .as_object()
+        .unwrap()
+        .len();
+    assert!(full_questions > 1);
+    let remaining = full.body().len() - 1;
+    let (_, reduced) = prepare_operation_wave(
+        context,
+        &index,
+        &recall,
+        &mut matrix,
+        &BTreeMap::new(),
+        remaining,
+        &mut connected::PacketCache::default(),
+    )
+    .unwrap();
+    let reduced = reduced.expect("a smaller valid packet fits the remaining allowance");
+    assert!(reduced.body().len() <= remaining);
+    let reduced_questions = serde_json::from_str::<serde_json::Value>(reduced.body()).unwrap()
+        ["questions"]
+        .as_object()
+        .unwrap()
+        .len();
+    assert!(reduced_questions < full_questions);
+    let (plan, none) = prepare_operation_wave(
+        context,
+        &index,
+        &recall,
+        &mut matrix,
+        &BTreeMap::new(),
+        0,
+        &mut connected::PacketCache::default(),
+    )
+    .unwrap();
+    assert!(none.is_none());
+    assert!(plan
+        .deferred
+        .values()
+        .any(|reason| matches!(reason, DeferredReason::InputBytes)));
+}
+
+#[test]
+fn reused_wave_evidence_preserves_planning_after_visits_change() {
+    let catalogs = tests::fixture();
+    let allowed = DiscoveryAuthorization::catalogs(BTreeSet::from(["matrix".into()]));
+    let deployments = DeploymentBindings::default();
+    let index = CatalogueSearch::new(&catalogs, &deployments, &allowed).unwrap();
+    let intent = IntentProvenance::from_turns(["Read and inspect the sample.".into()]).unwrap();
+    let visits = BTreeMap::new();
+    let context = SearchContext {
+        model: RELEVANCE_MODEL,
+        intent: &intent,
+        generation: "frozen",
+        catalogs: &catalogs,
+        deployments: &deployments,
+        allowed: &allowed,
+        exposed: &[],
+        visits: &visits,
+    };
+    let roots: Vec<_> = ["process", "source_read", "opaque"]
+        .into_iter()
+        .map(|name| CapabilityRef {
+            catalog: "matrix".into(),
+            capability: name.into(),
+        })
+        .collect();
+    let mut cache = connected::PacketCache::default();
+    let first = connected::plan_recalled_with_deferred(
+        &index,
+        context,
+        roots.clone(),
+        &BTreeMap::new(),
+        &mut cache,
+    )
+    .unwrap();
+    let mut visits = BTreeMap::new();
+    for (reference, _) in first.wave.iter().take(2) {
+        visits.insert(reference.clone(), 1);
+    }
+    let context = SearchContext {
+        visits: &visits,
+        ..context
+    };
+    let reused = connected::plan_recalled_with_deferred(
+        &index,
+        context,
+        roots.clone(),
+        &BTreeMap::new(),
+        &mut cache,
+    )
+    .unwrap();
+    let fresh = connected::plan_recalled_with_deferred(
+        &index,
+        context,
+        roots,
+        &BTreeMap::new(),
+        &mut connected::PacketCache::default(),
+    )
+    .unwrap();
+    assert_eq!(reused.wave, fresh.wave);
+    assert_eq!(
+        reused.issued.as_ref().map(|x| x.body()),
+        fresh.issued.as_ref().map(|x| x.body())
+    );
+    assert_eq!(
+        format!("{:?}", reused.deferred),
+        format!("{:?}", fresh.deferred)
+    );
+}
+
+#[test]
 fn deferred_recall_precedes_unrelated_graph_nominations_at_the_backlog_bound() {
     let catalogs = tests::fixture();
     let allowed = DiscoveryAuthorization::catalogs(BTreeSet::from(["matrix".into()]));
@@ -117,7 +270,7 @@ fn connected_wave_preserves_recall_priority_for_operation_scheduling() {
         })
         .collect();
     let plan =
-        connected::plan_recalled_with_deferred(&index, context, roots.clone(), &BTreeMap::new())
+        connected::plan_recalled_with_deferred(&index, context, roots.clone(), &BTreeMap::new(), &mut connected::PacketCache::default())
             .unwrap();
     let source = plan
         .wave
@@ -336,6 +489,8 @@ async fn connected_planner_schedules_operation_pairs_and_keeps_the_rest_pending(
         &recall(&index, &["process", "source_read"]),
         &mut matrix,
         &BTreeMap::new(),
+        search_budget::MAX_INPUT_BYTES,
+        &mut connected::PacketCache::default(),
     )
     .unwrap();
     let batch = batch.unwrap();
