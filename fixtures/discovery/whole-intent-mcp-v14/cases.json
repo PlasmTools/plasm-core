@@ -1,0 +1,5 @@
+[
+  {"id":"issue_and_creature","intent":"Search GitHub issue conversations for the supplied search terms, and read Bulbasaur from PokeAPI by name. Do not change anything.","expected":["github/issue_search","pokeapi/pokemon_get"]},
+  {"id":"repository_and_web","intent":"Get the GitHub repository identified by the supplied owner and name, and search the web with Tavily for the provided topic. This is read-only.","expected":["github/repo_get","tavily/web_search"]},
+  {"id":"shipment_unit_and_creature","intent":"List shipments, determine shipment weight in kilograms, and retrieve Eevee from PokeAPI by name. Do not modify shipments.","expected":["dispatch_fixture/shipment_list","pokeapi/pokemon_get"],"unresolved":"weight"}
+]

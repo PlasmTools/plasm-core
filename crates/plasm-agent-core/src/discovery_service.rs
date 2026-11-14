@@ -72,8 +72,11 @@ impl DeferredBacklog {
             .deferred
             .iter()
             .filter(|item| {
-                matches!(item.reason, matcher::online::DeferredReason::InputBytes)
-                    && receipt.authorization.permits(&item.reference)
+                matches!(
+                    item.reason,
+                    matcher::online::DeferredReason::InputBytes
+                        | matcher::online::DeferredReason::ProjectionLimit
+                ) && receipt.authorization.permits(&item.reference)
                     && !receipt.search.exposed.contains(&item.reference)
             })
             .take(crate::discovery_store::CANDIDATE_LIMIT)
@@ -1033,9 +1036,13 @@ impl DiscoveryService {
                     .omitted()
                     .iter()
                     .cloned()
-                    .map(|reference| matcher::online::DeferredCandidate {
-                        reference,
-                        reason: matcher::online::DeferredReason::InputBytes,
+                    .map(|reference| {
+                        let reason = if packet.was_projected(&reference) {
+                            matcher::online::DeferredReason::InputBytes
+                        } else {
+                            matcher::online::DeferredReason::ProjectionLimit
+                        };
+                        matcher::online::DeferredCandidate { reference, reason }
                     })
                     .collect(),
                 requests: usize::from(sent),

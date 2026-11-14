@@ -13,6 +13,13 @@ fn write(path: &std::path::Path, value: &impl Serialize) {
     std::fs::write(path, serde_json::to_vec(value).unwrap()).unwrap();
 }
 
+fn pipeline_deployments() -> DeploymentBindings {
+    match std::env::var_os("PLASM_TEST_DEPLOYMENT_BINDINGS") {
+        Some(path) => serde_json::from_slice(&std::fs::read(path).unwrap()).unwrap(),
+        None => DeploymentBindings::default(),
+    }
+}
+
 fn remove_orphan_fixture_entities(cgs: &mut CGS) {
     let before = capability_documents(cgs).unwrap();
     let domains: BTreeSet<_> = cgs
@@ -101,7 +108,7 @@ async fn publish(
         .import(
             "fixed-production-pipeline",
             prepared,
-            &DeploymentBindings::default(),
+            &pipeline_deployments(),
         )
         .await
         .unwrap()
@@ -131,15 +138,11 @@ async fn whole_intent_multivendor_mcp_live() {
         .unwrap_or_else(|| root.join("fixtures/discovery/whole-intent-mcp-v1/cases.json"));
     let cases: Vec<serde_json::Value> =
         serde_json::from_slice(&std::fs::read(cases_path).unwrap()).unwrap();
-    let names = [
-        "hackernews",
-        "omdb",
-        "openmeteo",
-        "graphqlzero",
-        "dispatch_fixture",
-    ];
+    let names_config = std::env::var("PLASM_WHOLE_INTENT_CATALOGS")
+        .unwrap_or_else(|_| "hackernews,omdb,openmeteo,graphqlzero,dispatch_fixture".into());
+    let names: Vec<_> = names_config.split(',').collect();
     let mut catalogs = BTreeMap::new();
-    for name in names {
+    for &name in &names {
         let path = if name == "dispatch_fixture" {
             root.join("fixtures/schemas/whole_intent_uncertainty")
         } else {
@@ -155,7 +158,7 @@ async fn whole_intent_multivendor_mcp_live() {
     store.migrate().await.unwrap();
     let catalog_dir = out.join("catalogs");
     publish(&catalog_dir, &catalogs, &store).await;
-    for name in names {
+    for &name in &names {
         let source = catalog_dir.join(name);
         let mut manifest: CatalogManifest =
             serde_json::from_slice(&std::fs::read(source.join("manifest.json")).unwrap()).unwrap();
@@ -184,7 +187,7 @@ async fn whole_intent_multivendor_mcp_live() {
     );
     write(
         &catalog_dir.join("deployment-bindings.json"),
-        &DeploymentBindings::default(),
+        &pipeline_deployments(),
     );
     let registry = Arc::new(plasm_core::discovery::CgsRegistry::from_pairs(
         catalogs

@@ -60,6 +60,7 @@ pub struct SearchContext<'a> {
 pub enum DeferredReason {
     Requests,
     InputBytes,
+    ProjectionLimit,
     ReportedInputTokens,
     OperationPending,
     OperationUncertain,

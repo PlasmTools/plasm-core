@@ -877,6 +877,10 @@ fn deferred_backlog_is_scoped_idempotent_and_never_grants_relevance() {
         catalog: "other".into(),
         capability: "denied".into(),
     };
+    let unprojected = CapabilityRef {
+        catalog: "matrix".into(),
+        capability: "unprojected".into(),
+    };
     receipt.search.deferred = vec![
         matcher::online::DeferredCandidate {
             reference: deferred.clone(),
@@ -885,6 +889,10 @@ fn deferred_backlog_is_scoped_idempotent_and_never_grants_relevance() {
         matcher::online::DeferredCandidate {
             reference: denied,
             reason: matcher::online::DeferredReason::InputBytes,
+        },
+        matcher::online::DeferredCandidate {
+            reference: unprojected.clone(),
+            reason: matcher::online::DeferredReason::ProjectionLimit,
         },
     ];
     let mut backlog = DeferredBacklog::default();
@@ -896,10 +904,22 @@ fn deferred_backlog_is_scoped_idempotent_and_never_grants_relevance() {
             .get(&deferred),
         Some(&1)
     );
+    assert_eq!(
+        backlog
+            .priorities("new", &receipt.authorization)
+            .get(&unprojected),
+        Some(&1)
+    );
     backlog.observe(1, "old".into(), &receipt, "receipt-one".into());
     assert_eq!(backlog.entries[0].age, 1);
     backlog.observe(2, "new".into(), &receipt, "receipt-two".into());
     assert_eq!(backlog.entries[0].age, 2);
+    assert_eq!(
+        backlog
+            .priorities("another", &receipt.authorization)
+            .get(&unprojected),
+        Some(&2)
+    );
     backlog.observe(1, "old".into(), &receipt, "late".into());
     assert_eq!(backlog.last_intent, "new");
     assert_eq!(backlog.entries[0].age, 2);
