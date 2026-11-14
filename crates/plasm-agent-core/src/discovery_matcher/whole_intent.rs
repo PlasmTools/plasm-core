@@ -296,6 +296,7 @@ fn request_body(
     included: &BTreeMap<CapabilityRef, String>,
     evidence: &super::evidence::CatalogEvidence,
     binding_cache: &mut [Option<BindingProjection>],
+    coverage_only: bool,
 ) -> Result<String, WholeIntentError> {
     let bindings = compact_bindings(&evidence.bindings, included, binding_cache)?;
     let mut state = serde_json::to_value(&EvidencePacket {
@@ -310,7 +311,7 @@ fn request_body(
     })?;
     state["rules"] = json!(INSTRUCTIONS);
     let mut questions = Map::new();
-    for card in cards {
+    for card in cards.iter().filter(|_| !coverage_only) {
         let id = card["id"].as_str().ok_or(WholeIntentError::InvalidInput)?;
         let catalog = card["catalog"]
             .as_str()
@@ -326,10 +327,17 @@ fn request_body(
             .ok_or(WholeIntentError::InvalidInput)?;
         questions.insert(id.into(),json!({"type":"choice","instructions":format!("Request: {intent}\nCandidate: {catalog}/{capability}; entity {entity}; {contract}\nDoes this candidate support its own independent requested outcome? A condition applying to a different outcome must not affect this judgment. Use candidate {id} and its full definitions."),"criteria":{"relevant":"documented support for at least one independently requested outcome or necessary input","uncertain":"support for its own outcome cannot be established","unrelated":"no independent requested outcome is supported"}}));
         questions.insert(format!("minimal_{id}"),json!({"type":"choice","instructions":format!("Given the complete intent and all candidates, should {catalog}/{capability} candidate {id} be included in the minimal sufficient set? Exclude a candidate when a more direct candidate already satisfies the same requested outcome. Keep needed complementary operations."),"criteria":{"include":"necessary or most direct","exclude":"unrelated or redundant","uncertain":"cannot establish whether needed"}}));
+        questions.insert(format!("role_{id}"),json!({"type":"choice","instructions":format!("Request: {intent}\nCandidate: {catalog}/{capability}; entity {entity}; {contract}\nDoes this operation directly deliver requested records or a required effect, or a required input unavailable from the request? Other outcomes are independent; local filtering may follow a read."),"criteria":{"include":"requested or strictly necessary input","exclude":"not requested and not necessary","uncertain":"cannot determine from evidence"}}));
     }
-    questions.insert("coverage".into(),json!({"type":"choice","instructions":"Can the documented candidates together establish ALL independently requested outcomes, using the supplied inputs and applying state.rules?","criteria":{"supported":"every outcome and restriction is supported by the documented capabilities","unresolved":"a specific required operation or property is absent from the evidence","uncertain":"the evidence is insufficient to establish full coverage"}}));
+    if coverage_only {
+        questions.insert("coverage".into(), coverage_question());
+    }
     let request = json!({"model":model,"state":state,"questions":questions});
     Ok(serde_json::to_string(&request)?)
+}
+
+fn coverage_question() -> Value {
+    json!({"type":"choice","instructions":"Can the documented candidates together establish ALL independently requested outcomes, using the supplied inputs and applying state.rules?","criteria":{"supported":"every outcome and restriction is supported by the documented capabilities","unresolved":"a specific required operation or property is absent from the evidence","uncertain":"the evidence is insufficient to establish full coverage"}})
 }
 
 struct PreparedCandidate {
@@ -341,6 +349,7 @@ struct PreparedCandidate {
 
 struct PacketAssembly<'a> {
     byte_limit: usize,
+    coverage_only: bool,
     model: &'a str,
     intent: &'a str,
     evidence: &'a super::evidence::CatalogEvidence,
@@ -418,6 +427,7 @@ impl PacketAssembly<'_> {
             &self.included,
             self.evidence,
             &mut self.binding_cache,
+            self.coverage_only,
         )?;
         if body.len() <= self.byte_limit {
             self.body = Some(body);
@@ -467,6 +477,7 @@ impl WholeIntentPacket {
             deferred_priorities,
             exposed,
             packet_byte_limit(),
+            false,
         )
     }
 
@@ -481,6 +492,7 @@ impl WholeIntentPacket {
         deferred_priorities: &BTreeMap<CapabilityRef, usize>,
         exposed: &[CapabilityRef],
         byte_limit: usize,
+        coverage_only: bool,
     ) -> Result<Self, WholeIntentError> {
         if model.trim().is_empty() || intent.trim().is_empty() {
             return Err(WholeIntentError::InvalidInput);
@@ -573,6 +585,7 @@ impl WholeIntentPacket {
         }
         let mut assembly = PacketAssembly {
             byte_limit: byte_limit.min(packet_byte_limit()),
+            coverage_only,
             model,
             intent,
             evidence: &evidence,
@@ -635,11 +648,11 @@ impl WholeIntentPacket {
                 format!("minimal_c{i}"),
                 vec!["include", "exclude", "uncertain"],
             );
+            questions.insert(
+                format!("role_c{i}"),
+                vec!["include", "exclude", "uncertain"],
+            );
         }
-        questions.insert(
-            "coverage".into(),
-            vec!["supported", "unresolved", "uncertain"],
-        );
         questions
     }
 
@@ -654,7 +667,13 @@ impl WholeIntentPacket {
             .filter_map(|(i, c)| {
                 (answers[&format!("c{i}")].choice == "uncertain"
                     || (answers[&format!("c{i}")].choice == "relevant"
+                        && answers[&format!("minimal_c{i}")].choice == "include"
+                        && answers[&format!("role_c{i}")].choice != "include")
+                    || (answers[&format!("c{i}")].choice == "relevant"
                         && answers[&format!("minimal_c{i}")].choice == "uncertain")
+                    || (answers[&format!("c{i}")].choice == "relevant"
+                        && answers[&format!("minimal_c{i}")].choice == "exclude"
+                        && answers[&format!("role_c{i}")].choice != "include")
                     || (answers[&format!("c{i}")].choice == "unrelated"
                         && answers[&format!("minimal_c{i}")].choice == "include"))
                     .then_some(c.reference.clone())
@@ -671,36 +690,29 @@ impl WholeIntentPacket {
             .map_err(|_| WholeIntentError::InvalidResponse)?;
         let mut selected = BTreeSet::new();
         let mut selected_ids = Vec::new();
-        let mut has_uncertain = false;
         for (i, candidate) in self.candidates.iter().enumerate() {
             let id = format!("c{i}");
             match answers[&id].choice.as_str() {
-                "relevant" if answers[&format!("minimal_{id}")].choice == "include" => {
+                "relevant"
+                    if answers[&format!("minimal_{id}")].choice == "include"
+                        && answers[&format!("role_{id}")].choice == "include" =>
+                {
                     selected.insert(candidate.reference.clone());
                     selected_ids.push(id);
                 }
-                "uncertain" => has_uncertain = true,
-                // Overall coverage was judged against all presented candidates,
-                // so it cannot prove coverage after dropping a relevant one.
                 "relevant" if answers[&format!("minimal_{id}")].choice == "exclude" => {
-                    has_uncertain = true;
                     let competing = self.candidates.iter().enumerate().any(|(j, other)| {
                         i != j
                             && other.reference.catalog == candidate.reference.catalog
                             && other.document.entity == candidate.document.entity
                             && answers[&format!("c{j}")].choice == "relevant"
                             && answers[&format!("minimal_c{j}")].choice == "include"
+                            && answers[&format!("role_c{j}")].choice == "include"
                     });
-                    if !competing {
+                    if !competing && answers[&format!("role_{id}")].choice == "include" {
                         selected.insert(candidate.reference.clone());
                         selected_ids.push(id);
                     }
-                }
-                "relevant" if answers[&format!("minimal_{id}")].choice == "uncertain" => {
-                    has_uncertain = true
-                }
-                "unrelated" if answers[&format!("minimal_{id}")].choice == "include" => {
-                    has_uncertain = true
                 }
                 _ => {}
             }
@@ -714,9 +726,13 @@ impl WholeIntentPacket {
                 },
             });
         }
-        if answers["coverage"].choice != "supported" || has_uncertain || selected.is_empty() {
-            requirements.push(Requirement { requirement:self.intent.clone(), assessment:Assessment::Gap { gap:"The full evidence does not establish every requested outcome and constraint.".into() } });
-        }
+        requirements.push(Requirement {
+            requirement: self.intent.clone(),
+            assessment: Assessment::Gap {
+                gap: "Completeness has not yet been established against the selected contracts."
+                    .into(),
+            },
+        });
         let value: Value = serde_json::from_str(raw)?;
         Ok((
             Selection {
@@ -754,8 +770,7 @@ impl CoveragePacket {
             return Err(WholeIntentError::Budget);
         }
         let mut request: Value = serde_json::from_str(&packet.body)?;
-        let coverage = request["questions"]["coverage"].clone();
-        request["questions"] = json!({"coverage":coverage});
+        request["questions"] = json!({"coverage":coverage_question()});
         let body = serde_json::to_string(&request)?;
         #[cfg(test)]
         if let Some(directory) = std::env::var_os("PLASM_PACKET_AUDIT_DIR") {
@@ -1151,6 +1166,7 @@ mod tests {
         let records = BTreeMap::new();
         let make_assembly = || PacketAssembly {
             byte_limit: MAX_BODY_BYTES,
+            coverage_only: false,
             model: DEFAULT_MODEL,
             intent: "Read records.",
             evidence: &evidence,
@@ -1178,6 +1194,69 @@ mod tests {
         assert!(!batched
             .included
             .contains_key(&candidates[1].candidate.reference));
+    }
+
+    #[test]
+    fn coverage_admission_counts_only_the_request_sent() {
+        let candidate = packet().candidates[0].clone();
+        let card = json!({"id":"c0","catalog":"matrix","entity":"Record","capability":"read","operation":{"contract":"Read records."}});
+        let evidence = super::super::evidence::CatalogEvidence::default();
+        let values = Map::new();
+        let records = BTreeMap::new();
+        let included = BTreeMap::from([(candidate.reference.clone(), "c0".to_owned())]);
+        let full = request_body(
+            DEFAULT_MODEL,
+            "Read a record.",
+            std::slice::from_ref(&card),
+            &values,
+            &Map::new(),
+            &included,
+            &evidence,
+            &mut [],
+            false,
+        )
+        .unwrap();
+        let coverage = request_body(
+            DEFAULT_MODEL,
+            "Read a record.",
+            std::slice::from_ref(&card),
+            &values,
+            &Map::new(),
+            &included,
+            &evidence,
+            &mut [],
+            true,
+        )
+        .unwrap();
+        assert!(coverage.len() < full.len());
+        let prepared = [PreparedCandidate {
+            candidate,
+            card,
+            values: Vec::new(),
+            records: Vec::new(),
+        }];
+        let make = |coverage_only| PacketAssembly {
+            byte_limit: coverage.len(),
+            coverage_only,
+            model: DEFAULT_MODEL,
+            intent: "Read a record.",
+            evidence: &evidence,
+            all_values: &values,
+            all_records: &records,
+            cards: Vec::new(),
+            candidates: Vec::new(),
+            values: Map::new(),
+            records: Map::new(),
+            included: BTreeMap::new(),
+            binding_cache: Vec::new(),
+            body: None,
+        };
+        let mut full_assembly = make(false);
+        full_assembly.admit(&prepared).unwrap();
+        let mut coverage_assembly = make(true);
+        coverage_assembly.admit(&prepared).unwrap();
+        assert!(full_assembly.body.is_none());
+        assert_eq!(coverage_assembly.body.as_deref(), Some(coverage.as_str()));
     }
 
     #[test]
@@ -1289,7 +1368,7 @@ mod tests {
             .is_empty());
     }
 
-    fn response(a: &str, b: &str, coverage: &str) -> String {
+    fn response(a: &str, b: &str, _coverage: &str) -> String {
         let answer = |choice: &str, options: &[&str]| {
             let probabilities: Map<String, Value> = options
                 .iter()
@@ -1297,7 +1376,7 @@ mod tests {
                 .collect();
             json!({"type":"choice","choice":choice,"confidence":1.0,"probabilities":probabilities})
         };
-        json!({"model":DEFAULT_MODEL,"provider":"OpenAI","answers":{"c0":answer(a,&["relevant","uncertain","unrelated"]),"c1":answer(b,&["relevant","uncertain","unrelated"]),"minimal_c0":answer("include",&["include","exclude","uncertain"]),"minimal_c1":answer("include",&["include","exclude","uncertain"]),"coverage":answer(coverage,&["supported","unresolved","uncertain"])},"usage":{"input_tokens":42}}).to_string()
+        json!({"model":DEFAULT_MODEL,"provider":"OpenAI","answers":{"c0":answer(a,&["relevant","uncertain","unrelated"]),"c1":answer(b,&["relevant","uncertain","unrelated"]),"minimal_c0":answer("include",&["include","exclude","uncertain"]),"minimal_c1":answer("include",&["include","exclude","uncertain"]),"role_c0":answer("include",&["include","exclude","uncertain"]),"role_c1":answer("include",&["include","exclude","uncertain"])},"usage":{"input_tokens":42}}).to_string()
     }
 
     #[test]
@@ -1329,6 +1408,25 @@ mod tests {
             packet.uncertain(&raw).unwrap(),
             BTreeSet::from([packet.candidates[1].reference.clone()])
         );
+    }
+
+    #[test]
+    fn conflicting_unneeded_role_remains_uncertain_without_exposure() {
+        let mut packet = packet();
+        packet.candidates[1].document.entity = "different entity".into();
+        let mut value: Value =
+            serde_json::from_str(&response("relevant", "unrelated", "supported")).unwrap();
+        for key in ["minimal_c0", "role_c0"] {
+            value["answers"][key]["choice"] = json!("exclude");
+            value["answers"][key]["probabilities"] =
+                json!({"include":0.0,"exclude":1.0,"uncertain":0.0});
+        }
+        let raw = value.to_string();
+        assert!(packet.decode(&raw).unwrap().1.is_empty());
+        assert!(packet
+            .uncertain(&raw)
+            .unwrap()
+            .contains(&packet.candidates[0].reference));
     }
 
     #[test]

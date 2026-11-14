@@ -1085,6 +1085,7 @@ impl DiscoveryService {
                     deferred_priorities,
                     exposed,
                     matcher::whole_intent::MAX_BODY_BYTES.saturating_sub(nomination.body().len()),
+                    false,
                 )?;
                 let checkpoint = decision_checkpoint::DecisionCheckpoint::new(
                     &self.store,
@@ -1140,11 +1141,15 @@ impl DiscoveryService {
                         deferred_priorities,
                         exposed,
                         remaining,
+                        true,
                     );
                     match selected_packet {
                         Ok(selected_packet) if selected_packet.omitted().is_empty() => {
                             let coverage =
                                 matcher::whole_intent::CoveragePacket::new(&selected_packet)?;
+                            if coverage.body().len() > remaining {
+                                return Err(matcher::whole_intent::WholeIntentError::Budget.into());
+                            }
                             let coverage_checkpoint = decision_checkpoint::DecisionCheckpoint::new(
                                 &self.store,
                                 &self.store.pending_decisions,

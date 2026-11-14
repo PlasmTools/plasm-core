@@ -243,7 +243,13 @@ fn selector_response(body: &str, only_business_read: bool) -> String {
         .filter(|candidate| {
             !only_business_read || candidate.to_string().contains("Read business records")
         })
-        .map(|candidate| candidate["id"].as_str().unwrap())
+        .map(|candidate| {
+            if candidate.is_array() {
+                candidate[0].as_str().unwrap()
+            } else {
+                candidate["id"].as_str().unwrap()
+            }
+        })
         .collect();
     let mut answers = serde_json::Map::new();
     for (key, question) in request["questions"].as_object().unwrap() {
@@ -255,7 +261,11 @@ fn selector_response(body: &str, only_business_read: bool) -> String {
                 "supported"
             }
         } else if criteria.contains_key("include") {
-            if ids.contains(&key.strip_prefix("minimal_").unwrap_or(key.as_str())) {
+            if ids.contains(
+                &key.strip_prefix("minimal_")
+                    .or_else(|| key.strip_prefix("role_"))
+                    .unwrap_or(key.as_str()),
+            ) {
                 "include"
             } else {
                 "exclude"
