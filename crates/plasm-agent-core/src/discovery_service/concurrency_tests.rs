@@ -235,8 +235,7 @@ struct AcceptBusinessRead;
 
 fn selector_response(body: &str, only_business_read: bool) -> String {
     let request: serde_json::Value = serde_json::from_str(body).unwrap();
-    let state: serde_json::Value =
-        serde_json::from_str(request["messages"][1]["content"].as_str().unwrap()).unwrap();
+    let state = &request["state"];
     let ids: Vec<_> = state["candidates"]
         .as_array()
         .unwrap()
@@ -246,13 +245,38 @@ fn selector_response(body: &str, only_business_read: bool) -> String {
         })
         .map(|candidate| candidate["id"].as_str().unwrap())
         .collect();
-    let assessment = if ids.is_empty() {
-        serde_json::json!({"gap":"No matching candidate"})
-    } else {
-        serde_json::json!({"supported_by":ids})
-    };
-    let content = serde_json::json!({"constraints":[],"requirements":[{"requirement":"Requested work","assessment":assessment}]}).to_string();
-    serde_json::json!({"model":request["model"],"provider":"mock","choices":[{"finish_reason":"stop","message":{"content":content}}],"usage":{"prompt_tokens":1}}).to_string()
+    let mut answers = serde_json::Map::new();
+    for (key, question) in request["questions"].as_object().unwrap() {
+        let criteria = question["criteria"].as_object().unwrap();
+        let choice = if key == "coverage" {
+            if ids.is_empty() {
+                "unresolved"
+            } else {
+                "supported"
+            }
+        } else if criteria.contains_key("include") {
+            if ids.contains(&key.strip_prefix("minimal_").unwrap_or(key.as_str())) {
+                "include"
+            } else {
+                "exclude"
+            }
+        } else if ids.contains(&key.as_str()) {
+            "relevant"
+        } else {
+            "unrelated"
+        };
+        let probabilities: serde_json::Map<_, _> = criteria
+            .keys()
+            .map(|k| {
+                (
+                    k.clone(),
+                    serde_json::json!(if k == choice { 1.0 } else { 0.0 }),
+                )
+            })
+            .collect();
+        answers.insert(key.clone(),serde_json::json!({"type":"choice","choice":choice,"confidence":1.0,"probabilities":probabilities}));
+    }
+    serde_json::json!({"model":request["model"],"provider":"OpenAI","answers":answers,"usage":{"input_tokens":1}}).to_string()
 }
 
 #[async_trait::async_trait]
@@ -757,7 +781,7 @@ async fn hybrid_service_admits_vector_only_candidate() {
         .matches
         .iter()
         .any(|m| m.capability_id == candidate.id));
-    assert_eq!(transport.0.load(Ordering::SeqCst), 1);
+    assert_eq!(transport.0.load(Ordering::SeqCst), 3);
     let other = DiscoveryService::cached_test_service(DiscoveryStore::connect(&url).await.unwrap());
     let reused = other
         .route_cached(&key, &[], || async {
@@ -881,6 +905,10 @@ fn deferred_backlog_is_scoped_idempotent_and_never_grants_relevance() {
         catalog: "matrix".into(),
         capability: "unprojected".into(),
     };
+    let not_nominated = CapabilityRef {
+        catalog: "matrix".into(),
+        capability: "not_nominated".into(),
+    };
     receipt.search.deferred = vec![
         matcher::online::DeferredCandidate {
             reference: deferred.clone(),
@@ -894,6 +922,10 @@ fn deferred_backlog_is_scoped_idempotent_and_never_grants_relevance() {
             reference: unprojected.clone(),
             reason: matcher::online::DeferredReason::ProjectionLimit,
         },
+        matcher::online::DeferredCandidate {
+            reference: not_nominated.clone(),
+            reason: matcher::online::DeferredReason::NotNominated,
+        },
     ];
     let mut backlog = DeferredBacklog::default();
     backlog.observe(1, "old".into(), &receipt, "receipt-one".into());
@@ -902,6 +934,12 @@ fn deferred_backlog_is_scoped_idempotent_and_never_grants_relevance() {
         backlog
             .priorities("new", &receipt.authorization)
             .get(&deferred),
+        Some(&1)
+    );
+    assert_eq!(
+        backlog
+            .priorities("new", &receipt.authorization)
+            .get(&not_nominated),
         Some(&1)
     );
     assert_eq!(

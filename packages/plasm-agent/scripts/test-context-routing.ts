@@ -41,7 +41,7 @@ deferredExisting.routing.search.deferred = [{
 assert.throws(() => decodeRoutingPacket(JSON.stringify(deferredExisting)), AgentExecutionFailure);
 const invalidEmptyInitial = structuredClone(noAdditions);
 invalidEmptyInitial.routing.search.exposed = [];
-assert.throws(() => decodeRoutingPacket(JSON.stringify(invalidEmptyInitial)), AgentExecutionFailure);
+assert.deepEqual(decodeRoutingPacket(JSON.stringify(invalidEmptyInitial)), invalidEmptyInitial);
 const pendingInitial = structuredClone(invalidEmptyInitial);
 pendingInitial.routing.closure = null;
 pendingInitial.teaching = null;
@@ -59,15 +59,24 @@ invalidDeferredRelevant.routing.search.deferred[0]!.reason = "input_bytes";
 assert.throws(() => decodeRoutingPacket(JSON.stringify(invalidDeferredRelevant)), AgentExecutionFailure);
 const rejudged = structuredClone(packet);
 rejudged.routing.search.exposed = [packet.routing.retrieval.candidates[0]!.reference];
-assert.throws(() => decodeRoutingPacket(JSON.stringify(rejudged)), AgentExecutionFailure);
+assert.deepEqual(decodeRoutingPacket(JSON.stringify(rejudged)), rejudged);
 // Deferred work is unexplored, not an uncertain judgment or exposed declaration.
 const budget = structuredClone(packet);
 budget.routing.search.unexplored = [{catalog:"matrix",capability:"other"}];
 budget.routing.search.deferred = [{reference:{catalog:"matrix",capability:"other"},reason:"input_bytes"}];
 assert.deepEqual(decodeRoutingPacket(JSON.stringify(budget)), budget);
+// Recalled candidates that were not nominated remain unassessed, not rejected.
+const notNominated = structuredClone(packet);
+const unassessedCandidate = structuredClone(notNominated.routing.retrieval.candidates[0]!);
+unassessedCandidate.id = "matrix/unassessed";
+unassessedCandidate.reference = {catalog:"matrix",capability:"unassessed"};
+notNominated.routing.retrieval.candidates.push(unassessedCandidate);
+notNominated.routing.search.unexplored.push(unassessedCandidate.reference);
+notNominated.routing.search.deferred.push({reference:unassessedCandidate.reference,reason:"not_nominated"});
+assert.deepEqual(decodeRoutingPacket(JSON.stringify(notNominated)), notNominated);
 const retried = structuredClone(budget);
-retried.routing.search.requests = 3;
-retried.routing.search.input_bytes *= 3;
+retried.routing.search.requests = 2;
+retried.routing.search.input_bytes *= 2;
 retried.routing.search.missing_usage = 2;
 assert.deepEqual(decodeRoutingPacket(JSON.stringify(retried)), retried);
 const distinctWaves = structuredClone(retried);
@@ -75,7 +84,7 @@ distinctWaves.routing.search.input_bytes += 1;
 assert.deepEqual(decodeRoutingPacket(JSON.stringify(distinctWaves)), distinctWaves);
 for (const corrupt of [
   (p: typeof retried) => { p.routing.search.requests = 4; },
-  (p: typeof retried) => { p.routing.search.input_bytes = 48001; },
+  (p: typeof retried) => { p.routing.search.input_bytes = 128001; },
   (p: typeof retried) => { p.routing.search.missing_usage = 4; },
 ]) {
   const invalid = structuredClone(retried); corrupt(invalid);
@@ -92,10 +101,10 @@ assert.deepEqual(decodeRoutingPacket(JSON.stringify(requiredDeferred)), required
 const unretainedSupport = structuredClone(packet);
 unretainedSupport.routing.search.considered.push(support);
 unretainedSupport.routing.search.unexplored.push(support);
-assert.deepEqual(decodeRoutingPacket(JSON.stringify(unretainedSupport)), unretainedSupport);
+assert.throws(() => decodeRoutingPacket(JSON.stringify(unretainedSupport)), AgentExecutionFailure);
 for (const corrupt of [
   (p:typeof budget) => {p.routing.search.requests = 4;},
-  (p:typeof budget) => {p.routing.search.input_bytes = 16001;},
+  (p:typeof budget) => {p.routing.search.input_bytes = 128001;},
   (p:typeof budget) => {p.routing.search.missing_usage = 2;},
   (p:typeof budget) => {p.routing.search.considered = [];},
   (p:typeof budget) => {p.routing.search.unexplored.push(p.routing.search.considered[0]!);},

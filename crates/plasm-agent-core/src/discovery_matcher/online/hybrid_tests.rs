@@ -10,7 +10,10 @@ fn shared_routing_fixture_uses_current_native_policy() {
         "../../../../../fixtures/discovery/partial-routing.json"
     ))
     .unwrap();
-    assert_eq!(packet["routing"]["search"]["policy"], SEARCH_POLICY);
+    assert_eq!(
+        packet["routing"]["search"]["policy"],
+        crate::discovery_matcher::whole_intent::POLICY
+    );
 }
 
 #[test]

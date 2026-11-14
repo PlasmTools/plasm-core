@@ -45,7 +45,7 @@ const routingSchema = z.object({
   intent_provenance: intentProvenanceSchema,
   intent_analysis: z.string().optional(),
   intent: workflowIntentSchema,
-  pin_id: z.string().uuid(),
+  pin_id: z.string(),
   authorization: z.object({ catalogs: z.array(z.string()), capabilities: z.record(z.string(), z.array(z.string())) }).strict(),
   retrieval: z.object({
     generation: z.string(),
@@ -59,16 +59,16 @@ const routingSchema = z.object({
     budget_retained: z.array(scopeBudgetRetention).max(0).optional(),
   }).strict(),
   search: z.object({
-    policy: z.literal("additive-connected-frontier-current-hybrid-evidence-3-judgments-3-attempts-16000-byte-packet-v43"),
+    policy: z.literal("whole-intent-luna-decisions-contract-assessment-v10"),
     exposed: z.array(capability),
     considered: z.array(capability),
     unexplored: z.array(capability),
     deferred: z.array(z.object({
       reference: capability,
-      reason: z.enum(["requests", "input_bytes", "acquisition_cycle", "reported_input_tokens", "operation_pending", "operation_uncertain", "provider_unavailable"]),
+      reason: z.enum(["requests", "input_bytes", "projection_limit", "not_nominated", "acquisition_cycle", "reported_input_tokens", "operation_pending", "operation_uncertain", "provider_unavailable"]),
     }).strict()),
     requests: z.number().int().min(0).max(3),
-    input_bytes: z.number().int().min(0).max(48000),
+    input_bytes: z.number().int().min(0).max(128000),
     reported_input_tokens: z.number().int().nonnegative().safe(),
     missing_usage: z.number().int().min(0).max(3),
   }).strict(),
@@ -100,15 +100,14 @@ const routingSchema = z.object({
   if (candidates.size !== routing.retrieval.candidates.length
     || new Set(routing.retrieval.candidates.map(c => capabilityKey(c.reference))).size !== candidates.size
     || new Set(matches.map(m => m.capability_id)).size !== matches.length
-    || !sameSet(matches.map(m => m.capability_id), candidates.keys())) {
-    ctx.addIssue({code:"custom",path:["matching"],message:"relevance decisions must cover each candidate exactly once"});
+    || matches.some(m => !candidates.has(m.capability_id))) {
+    ctx.addIssue({code:"custom",path:["matching"],message:"relevance decisions must uniquely identify retrieved candidates"});
   }
-  if (!sameSet(selected, routing.closure?.business.map(capabilityKey) ?? [])
-    || (routing.closure?.input_sources.length ?? 0) !== 0) {
+  if (!sameSet(selected, routing.closure?.business.map(capabilityKey) ?? [])) {
     ctx.addIssue({code:"custom",path:["closure"],message:"closure must retain exactly the current relevant and uncertain capabilities"});
   }
-  if (Boolean(routing.recovery) !== (selected.length === 0 && routing.search.exposed.length === 0
-    && routing.search.deferred.length === 0)) {
+  if (routing.recovery && (selected.length !== 0 || routing.search.exposed.length !== 0
+    || routing.search.deferred.length !== 0)) {
     ctx.addIssue({code:"custom",path:["recovery"],message:"empty-selection diagnostic contradicts relevance decisions"});
   }
   if (routing.recovery) {
@@ -124,20 +123,21 @@ const routingSchema = z.object({
   const unexplored = new Set(routing.search.unexplored.map(capabilityKey));
   if (considered.size !== routing.search.considered.length
     || exposed.size !== routing.search.exposed.length
-    || routing.retrieval.candidates.some(candidate => exposed.has(capabilityKey(candidate.reference)))
     || routing.search.unexplored.some(ref => exposed.has(capabilityKey(ref)))
     || unexplored.size !== routing.search.unexplored.length
-    || routing.retrieval.candidates.some(candidate => unexplored.has(capabilityKey(candidate.reference)))
+    || routing.search.unexplored.some(ref => considered.has(capabilityKey(ref)))
     || (closure?.prerequisites.some(ref => unexplored.has(capabilityKey(ref))) ?? false)
     || new Set(routing.search.deferred.map(item => capabilityKey(item.reference))).size !== routing.search.deferred.length
     || routing.search.deferred.some(item => !unexplored.has(capabilityKey(item.reference))
       && !(closure?.prerequisites.some(ref => capabilityKey(ref) === capabilityKey(item.reference)) ?? false)
       && !((item.reason === "operation_pending" || item.reason === "operation_uncertain" || item.reason === "provider_unavailable")
         && routing.retrieval.candidates.some(candidate => capabilityKey(candidate.reference) === capabilityKey(item.reference))))
-    || routing.retrieval.candidates.some(candidate => !considered.has(capabilityKey(candidate.reference)))
+    || routing.retrieval.candidates.some(candidate => !considered.has(capabilityKey(candidate.reference))
+      && !unexplored.has(capabilityKey(candidate.reference)) && !exposed.has(capabilityKey(candidate.reference)))
+    || matches.some(match => { const candidate = candidates.get(match.capability_id); return !candidate || !considered.has(capabilityKey(candidate.reference)); })
     || routing.search.missing_usage > routing.search.requests
     || (routing.search.requests === 0 ? routing.search.input_bytes !== 0
-      : routing.search.input_bytes === 0 || routing.search.input_bytes > routing.search.requests * 16000
+      : routing.search.input_bytes === 0
         )
     || (closure?.prerequisites.some(ref => !considered.has(capabilityKey(ref))) ?? false)) {
     ctx.addIssue({code: "custom", path: ["search"], message: "bounded search accounting contradicts judged capabilities or required acquisitions"});

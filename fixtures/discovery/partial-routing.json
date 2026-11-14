@@ -57,7 +57,7 @@
       ]
     },
     "search": {
-      "policy": "additive-connected-frontier-current-hybrid-evidence-3-judgments-3-attempts-32000-byte-packet-v46",
+      "policy": "whole-intent-luna-decisions-contract-assessment-v10",
       "exposed": [],
       "considered": [{"catalog":"matrix","capability":"record_read"}],
       "unexplored": [],

@@ -337,6 +337,13 @@ async fn whole_intent_multivendor_mcp_live() {
             if !mcp_text.contains(unresolved) || !mcp_text.contains("unresolved") {
                 errors.push("uncertainty missing from MCP response");
             }
+        } else if receipts
+            .iter()
+            .filter_map(|r| r["intent_analysis"].as_str())
+            .flat_map(str::lines)
+            .any(|line| line.contains(": unresolved"))
+        {
+            errors.push("supported request falsely marked unresolved");
         }
         if !errors.is_empty() {
             failures.push(case["id"].as_str().unwrap().to_owned());

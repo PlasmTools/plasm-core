@@ -113,7 +113,7 @@ for (const scenario of cases) {
           retrieval: {generation: "fixture", candidates: [{id: "matrix:pwexpense_query",
             reference: {catalog: "matrix", capability: "pwexpense_query"}, document: {entity: "PwExpense"}}]},
           matching: {matches: [{capability_id: "matrix:pwexpense_query", choice: "relevant"}]},
-          search: {policy: "additive-connected-frontier-current-hybrid-evidence-3-judgments-3-attempts-16000-byte-packet-v43",
+          search: {policy: "whole-intent-luna-decisions-contract-assessment-v10",
             exposed: [], considered: [{catalog: "matrix", capability: "pwexpense_query"}], unexplored: [], deferred: [],
             requests: 1, input_bytes: 1, reported_input_tokens: 1, missing_usage: 0},
           recovery: null, closure: {business: [{catalog: "matrix", capability: "pwexpense_query"}],

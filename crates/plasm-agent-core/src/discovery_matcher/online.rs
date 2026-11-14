@@ -61,6 +61,7 @@ pub enum DeferredReason {
     Requests,
     InputBytes,
     ProjectionLimit,
+    NotNominated,
     ReportedInputTokens,
     OperationPending,
     OperationUncertain,
