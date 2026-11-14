@@ -72,6 +72,14 @@ pub(crate) struct Requirement {
 pub(crate) enum Assessment {
     Supported { supported_by: Vec<String> },
     Gap { gap: String },
+    Uncertain { uncertainty: String },
+}
+
+#[derive(Debug, PartialEq, Eq)]
+pub(crate) enum CoverageAssessment {
+    Supported,
+    Unresolved,
+    Uncertain,
 }
 
 /// Preserve recall's whole-intent ranking after giving each recalled catalogue
@@ -791,7 +799,10 @@ impl CoveragePacket {
     pub(crate) fn body(&self) -> &str {
         &self.body
     }
-    pub(crate) fn decode(&self, raw: &str) -> Result<(bool, Option<u64>), WholeIntentError> {
+    pub(crate) fn decode(
+        &self,
+        raw: &str,
+    ) -> Result<(CoverageAssessment, Option<u64>), WholeIntentError> {
         let choices = crate::decision_codec::decode_choices(
             &self.model,
             ["coverage"],
@@ -801,7 +812,12 @@ impl CoveragePacket {
         .map_err(|_| WholeIntentError::InvalidResponse)?;
         let response: Value = serde_json::from_str(raw)?;
         Ok((
-            choices["coverage"].choice == "supported",
+            match choices["coverage"].choice.as_str() {
+                "supported" => CoverageAssessment::Supported,
+                "unresolved" => CoverageAssessment::Unresolved,
+                "uncertain" => CoverageAssessment::Uncertain,
+                _ => return Err(WholeIntentError::InvalidResponse),
+            },
             response
                 .pointer("/usage/input_tokens")
                 .and_then(Value::as_u64),
@@ -1437,8 +1453,19 @@ mod tests {
         let good = json!({"model":DEFAULT_MODEL,"provider":"OpenAI","answers":{"coverage":{"type":"choice","choice":"supported","confidence":1.0,"probabilities":{"supported":1.0,"unresolved":0.0,"uncertain":0.0}}},"usage":{"input_tokens":12}});
         assert_eq!(
             coverage.decode(&good.to_string()).unwrap(),
-            (true, Some(12))
+            (CoverageAssessment::Supported, Some(12))
         );
+        for (choice, expected) in [
+            ("unresolved", CoverageAssessment::Unresolved),
+            ("uncertain", CoverageAssessment::Uncertain),
+        ] {
+            let mut answer = good.clone();
+            answer["answers"]["coverage"]["choice"] = json!(choice);
+            assert_eq!(
+                coverage.decode(&answer.to_string()).unwrap(),
+                (expected, Some(12))
+            );
+        }
         let mut extra = good;
         extra["answers"]["other"] = extra["answers"]["coverage"].clone();
         assert!(coverage.decode(&extra.to_string()).is_err());

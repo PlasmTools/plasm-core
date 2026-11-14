@@ -1113,7 +1113,7 @@ impl DiscoveryService {
                 let mut coverage_sent = false;
                 let mut coverage_usage = None;
                 let mut coverage_bytes = 0;
-                let mut coverage_supported = false;
+                let mut coverage_assessment = matcher::whole_intent::CoverageAssessment::Uncertain;
                 if !selected.is_empty() {
                     let selected_recall = RetrievalReceipt {
                         generation: recall.generation.clone(),
@@ -1176,7 +1176,7 @@ impl DiscoveryService {
                                 })
                                 .await
                                 .map_err(|error| matcher::DiscoveryMatcherError::Provider(error))?;
-                            (coverage_supported, coverage_usage) = coverage.decode(&raw)?;
+                            (coverage_assessment, coverage_usage) = coverage.decode(&raw)?;
                             coverage_checkpoint
                                 .persist()
                                 .await
@@ -1196,11 +1196,18 @@ impl DiscoveryService {
                         matcher::whole_intent::Assessment::Supported { .. }
                     )
                 });
-                if !coverage_supported {
-                    selection.requirements.push(matcher::whole_intent::Requirement {
-                        requirement: selection_request.clone(),
-                        assessment: matcher::whole_intent::Assessment::Gap { gap: "The selected contracts do not establish every requested outcome and constraint.".into() },
-                    });
+                let coverage_result = match coverage_assessment {
+                    matcher::whole_intent::CoverageAssessment::Supported => None,
+                    matcher::whole_intent::CoverageAssessment::Unresolved => Some(matcher::whole_intent::Assessment::Gap { gap: "The selected contracts do not establish every requested outcome and constraint.".into() }),
+                    matcher::whole_intent::CoverageAssessment::Uncertain => Some(matcher::whole_intent::Assessment::Uncertain { uncertainty: "The selected contracts could not be verified to cover every requested outcome and constraint.".into() }),
+                };
+                if let Some(assessment) = coverage_result {
+                    selection
+                        .requirements
+                        .push(matcher::whole_intent::Requirement {
+                            requirement: selection_request.clone(),
+                            assessment,
+                        });
                 }
                 let mut analysis = String::from("**Whole-intent discovery:** assessments are bounded by the presented authorized evidence.");
                 for constraint in &selection.constraints {
@@ -1217,6 +1224,10 @@ impl DiscoveryService {
                         matcher::whole_intent::Assessment::Gap { gap } => {
                             analysis.push_str(": unresolved — ");
                             analysis.push_str(gap);
+                        }
+                        matcher::whole_intent::Assessment::Uncertain { uncertainty } => {
+                            analysis.push_str(": uncertain — ");
+                            analysis.push_str(uncertainty);
                         }
                     }
                 }
