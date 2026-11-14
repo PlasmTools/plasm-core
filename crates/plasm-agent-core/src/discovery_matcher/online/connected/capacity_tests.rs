@@ -123,6 +123,46 @@ fn repeatedly_deferred_recalled_root_eventually_receives_capacity() {
     ));
 }
 
+#[test]
+fn oldest_blocked_recalled_root_gets_the_overdue_turn() {
+    let mut catalogs = fixture();
+    let cgs = catalogs.get_mut("matrix").unwrap();
+    let prototype = cgs.capabilities["opaque"].clone();
+    cgs.capabilities.clear();
+    for n in 0..3 {
+        let mut cap = prototype.clone();
+        cap.name = reference(n).capability.into();
+        cap.description = "Preserve authored constraints and recorded material. ".repeat(140);
+        cgs.capabilities.insert(cap.name.clone(), cap);
+    }
+    let allowed = DiscoveryAuthorization::catalogs(BTreeSet::from(["matrix".into()]));
+    let deployments = Default::default();
+    let index = CatalogueSearch::new(&catalogs, &deployments, &allowed).unwrap();
+    let intent = IntentProvenance::from_turns(["Inspect the sample.".into()]).unwrap();
+    let visits = BTreeMap::new();
+    let context = SearchContext {
+        model: RELEVANCE_MODEL,
+        intent: &intent,
+        generation: "fairness",
+        catalogs: &catalogs,
+        deployments: &deployments,
+        allowed: &allowed,
+        exposed: &[],
+        visits: &visits,
+    };
+    let roots = vec![reference(0), reference(1), reference(2)];
+    let deferred = BTreeMap::from([(reference(1), 4), (reference(2), 9)]);
+    let plan = plan_recalled_with_deferred(
+        &index,
+        context,
+        roots,
+        &deferred,
+        &mut PacketCache::default(),
+    )
+    .unwrap();
+    assert!(plan.wave.iter().any(|(key, _)| *key == reference(2)));
+}
+
 fn measure(distractors: usize, position: usize, case: Case, arm: Arm) -> Option<usize> {
     let mut catalogs = fixture();
     let cgs = catalogs.get_mut("matrix").unwrap();

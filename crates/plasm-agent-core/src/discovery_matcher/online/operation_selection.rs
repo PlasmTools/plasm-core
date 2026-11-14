@@ -2,6 +2,23 @@
 use super::*;
 use crate::discovery_matcher::operations::{CandidateProgress, DecisionBatch, OperationMatrix};
 
+/// Planning limits must not erase a previously recorded uncertain judgment.
+pub(super) fn preserve_uncertain_judgments(
+    matrix: &OperationMatrix,
+    deferred: &mut BTreeMap<CapabilityRef, DeferredReason>,
+) {
+    for (reference, reason) in deferred.iter_mut() {
+        let uncertain = match matrix.progress(reference) {
+            Ok(CandidateProgress::Uncertain { .. }) => true,
+            Ok(CandidateProgress::Relevant { uncertain, .. }) => !uncertain.is_empty(),
+            _ => false,
+        };
+        if uncertain {
+            *reason = DeferredReason::OperationUncertain;
+        }
+    }
+}
+
 fn collect_wave(
     index: &CatalogueSearch,
     matrix: &OperationMatrix,
@@ -19,19 +36,23 @@ fn collect_wave(
             CandidateProgress::Relevant {
                 pending, uncertain, ..
             } => {
-                if !pending.is_empty() {
-                    deferred.insert(reference.clone(), DeferredReason::OperationPending);
-                } else if !uncertain.is_empty() {
+                if !uncertain.is_empty() {
                     deferred.insert(reference.clone(), DeferredReason::OperationUncertain);
+                } else if !pending.is_empty() {
+                    deferred.insert(reference.clone(), DeferredReason::OperationPending);
                 }
                 Some(MatchChoice::Relevant)
             }
             CandidateProgress::Unrelated => Some(MatchChoice::Unrelated),
             CandidateProgress::Incomplete { .. } => {
+                judged.remove(reference);
+                routes.remove(reference);
                 deferred.insert(reference.clone(), DeferredReason::OperationPending);
                 None
             }
             CandidateProgress::Uncertain { .. } => {
+                judged.remove(reference);
+                routes.remove(reference);
                 deferred.insert(reference.clone(), DeferredReason::OperationUncertain);
                 None
             }
@@ -94,9 +115,16 @@ where
         )?;
         for (reference, _) in &plan.wave {
             deferred.remove(reference);
+            if matches!(
+                matrix.progress(reference),
+                Ok(CandidateProgress::Uncertain { .. })
+            ) {
+                deferred.insert(reference.clone(), DeferredReason::OperationUncertain);
+            }
             pending.insert(reference.clone());
         }
         deferred.extend(plan.deferred);
+        preserve_uncertain_judgments(matrix, &mut deferred);
         let Some(batch) = batch else {
             collect_wave(
                 index,
@@ -289,6 +317,7 @@ where
             break;
         }
     }
+    preserve_uncertain_judgments(matrix, &mut deferred);
     deferred.retain(|reference, reason| {
         !judged.contains_key(reference)
             || matches!(

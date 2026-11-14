@@ -1,0 +1,50 @@
+version: 1
+entry_id: dispatch_fixture
+http_backend: http://127.0.0.1:9
+auth:
+  scheme: none
+values:
+  shipment_id:
+    type: string
+    description: Identifier of a shipment.
+entities:
+  Shipment:
+    id_field: id
+    description: A shipment.
+    fields:
+      id:
+        value_ref: shipment_id
+        required: true
+  Measurement:
+    id_field: id
+    description: A shipment measurement.
+    fields:
+      id:
+        value_ref: shipment_id
+        required: true
+capabilities:
+  shipment_list:
+    entity: Shipment
+    kind: query
+    description: List shipments.
+    receiver:
+      kind: none
+    output:
+      type: entity
+      entity_type: Shipment
+  shipment_weight:
+    entity: Measurement
+    kind: get
+    description: Read shipment weight. The measurement unit is undocumented.
+    receiver:
+      kind: none
+    output:
+      type: entity
+      entity_type: Measurement
+  shipment_delete:
+    entity: Shipment
+    kind: action
+    description: Delete a shipment.
+    output:
+      type: side_effect
+      description: Deletes a shipment.

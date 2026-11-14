@@ -114,6 +114,7 @@ pub(super) struct DecisionState<'a> {
 #[derive(Serialize)]
 pub(super) struct GraphDecisionState<'a> {
     intent: &'a str,
+    guidance: &'static str,
     operations: BTreeMap<String, &'a str>,
     question_evidence: BTreeMap<String, GraphWitness>,
 }
@@ -292,27 +293,17 @@ impl DecisionBatch {
             };
             let is_fragment = question.operation != operations.operations[0].id;
             let mut criteria = BTreeMap::from([
-                (
-                    "relevant",
-                    "The documented capability contributes to the active requested operation or selection condition.",
-                ),
-                (
-                    "unrelated",
-                    "The documented capability does not contribute to this active request fragment.",
-                ),
-                (
-                    "uncertain",
-                    "The contract or the fragment's status as an active requirement is uncertain.",
-                ),
+                ("relevant", "Contributes to the active requirement."),
+                ("unrelated", "Does not contribute."),
+                ("uncertain", "Contract or active status is uncertain."),
             ]);
-            let mut instructions = format!(
-                "Classify whether `question_evidence.{witness_label}.capabilities.{target}` contributes to operation `{}`. A capability may contribute one necessary component of a composition or establish a requested relationship, membership, ownership, or target-selection condition. Respect the complete ordered request, its revisions, constraints, and effect direction. Do not invent a relationship. Authentication and transport prerequisites alone are not business contributions.",
+            let instructions = format!(
+                "Classify `question_evidence.{witness_label}.capabilities.{target}` for operation `{}` using state.guidance.",
                 operation_labels[&question.operation]
             );
             if is_fragment {
                 contextual_questions.insert(key.clone());
-                criteria.insert("contextual", "The fragment is only discovery commentary, a superseded requirement, or other context; it does not independently request a currently applicable action or selection condition. When uncertain, choose uncertain.");
-                instructions.push_str(" First determine whether this fragment expresses an active task requirement. Choose contextual only when it clearly does not; do not discard an applicable condition. The complete request remains authoritative.");
+                criteria.insert("contextual", "Clearly not an active requirement.");
             }
             wire_questions.insert(
                 key.clone(),
@@ -325,6 +316,7 @@ impl DecisionBatch {
         }
         let state = GraphDecisionState {
             intent,
+            guidance: "Classify each capability against the complete ordered request and named operation. Respect revisions, constraints and effect direction. A component of a composition or a requested relationship, membership, ownership or target-selection condition may contribute. Do not invent relationships; authentication and transport prerequisites alone are not business contributions. For fragments, choose contextual only for commentary, superseded requirements or other text that clearly does not independently request a current action or selection condition; when unsure, choose uncertain. The complete request remains authoritative.",
             operations: wire_operations,
             question_evidence: evidence,
         };
@@ -796,9 +788,16 @@ impl OperationMatrix {
             .skip(1)
             .filter(|op| op.text == text)
             .any(|op| {
-                self.answers.iter().any(|((id, _), value)| {
-                    id == &op.id && *value == DirectContribution::Contextual
-                })
+                let mut contextual = false;
+                for ((id, _), value) in &self.answers {
+                    if id == &op.id {
+                        if *value != DirectContribution::Contextual {
+                            return false;
+                        }
+                        contextual = true;
+                    }
+                }
+                contextual
             })
     }
     pub(crate) fn has_contextual_fragments(&self) -> bool {
@@ -1019,9 +1018,6 @@ impl OperationMatrix {
             }
         }
         for (_, operation) in fragments {
-            if self.contextual_fragment(&operation.text) {
-                continue;
-            }
             if selected.len() == limit {
                 break;
             }
@@ -1121,6 +1117,46 @@ impl OperationMatrix {
         }
         let operation = &self.operations.operations[0].id;
         let relevant = BTreeSet::from([operation.clone()]);
+        let uncertain_fragments: BTreeSet<_> = self
+            .operations
+            .operations
+            .iter()
+            .skip(1)
+            .filter(|fragment| {
+                self.answers.get(&(fragment.id.clone(), candidate.clone()))
+                    == Some(&DirectContribution::Uncertain)
+            })
+            .map(|fragment| fragment.id.clone())
+            .collect();
+        if !uncertain_fragments.is_empty()
+            && self.answers.get(&(operation.clone(), candidate.clone()))
+                == Some(&DirectContribution::Relevant)
+        {
+            return Ok(CandidateProgress::Uncertain {
+                operations: uncertain_fragments,
+            });
+        }
+        let contradictory: BTreeSet<_> = self
+            .operations
+            .operations
+            .iter()
+            .skip(1)
+            .filter(|fragment| {
+                self.answers.get(&(fragment.id.clone(), candidate.clone()))
+                    == Some(&DirectContribution::Relevant)
+            })
+            .map(|fragment| fragment.id.clone())
+            .collect();
+        if !contradictory.is_empty()
+            && matches!(
+                self.answers.get(&(operation.clone(), candidate.clone())),
+                Some(DirectContribution::Unrelated | DirectContribution::Uncertain)
+            )
+        {
+            return Ok(CandidateProgress::Uncertain {
+                operations: contradictory,
+            });
+        }
         Ok(
             match self.answers.get(&(operation.clone(), candidate.clone())) {
                 Some(DirectContribution::Relevant) => CandidateProgress::Relevant {
@@ -1150,10 +1186,10 @@ impl OperationMatrix {
         self.candidates
             .iter()
             .filter(|candidate| {
-                self.answers.get(&(
-                    self.operations.operations[0].id.clone(),
-                    (*candidate).clone(),
-                )) == Some(&DirectContribution::Relevant)
+                matches!(
+                    self.progress(candidate),
+                    Ok(CandidateProgress::Relevant { .. })
+                )
             })
             .cloned()
             .collect()

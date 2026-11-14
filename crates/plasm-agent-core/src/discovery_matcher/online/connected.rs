@@ -238,13 +238,20 @@ pub(super) fn plan_recalled_with_deferred(
     // must eventually get a turn, rather than accumulating deferrals forever.
     let blocked = order
         .iter()
-        .find(|key| {
+        .enumerate()
+        .filter(|(_, key)| {
             recalled.contains(*key)
                 && deferred.get(*key).copied().unwrap_or(0) >= DEFERRED_PRIORITY_LIMIT
                 && matches!(plan.deferred.get(*key), Some(DeferredReason::InputBytes))
                 && !plan.wave.iter().any(|(member, _)| member == *key)
         })
-        .cloned();
+        .max_by_key(|(rank, key)| {
+            (
+                deferred.get(*key).copied().unwrap_or(0),
+                std::cmp::Reverse(*rank),
+            )
+        })
+        .map(|(_, key)| key.clone());
     let Some(blocked) = blocked else {
         return Ok(plan);
     };

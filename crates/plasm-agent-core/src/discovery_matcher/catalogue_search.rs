@@ -109,6 +109,9 @@ fn embedded_observations(cap: &CapabilitySchema, cgs: &CGS) -> String {
 }
 
 impl CatalogueSearch {
+    pub(crate) fn candidate(&self, reference: &CapabilityRef) -> Option<&RetrievedCapability> {
+        self.candidates.get(reference)
+    }
     pub(crate) fn authorized_capabilities(
         &self,
         authorization: &DiscoveryAuthorization,

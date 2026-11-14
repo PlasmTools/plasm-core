@@ -1,5 +1,5 @@
 //! Low-cardinality discovery stage wall-time metrics.
-use opentelemetry::{KeyValue, global, metrics::Histogram};
+use opentelemetry::{global, metrics::Histogram, KeyValue};
 use std::{sync::OnceLock, time::Duration};
 
 #[derive(Clone, Copy)]

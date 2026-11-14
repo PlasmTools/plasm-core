@@ -1,0 +1,5 @@
+[
+  {"id":"photo_item_forecast","intent":"Read the GraphQLZero photo identified by the supplied ID and the Hacker News item identified by its supplied ID; also retrieve an Open-Meteo forecast for the given coordinates. Leave all records untouched.","expected":["graphqlzero/photo_get","hackernews/item_get","openmeteo/weather_forecast"]},
+  {"id":"post_movie_weather","intent":"Fetch the GraphQLZero post using the given ID, find OMDb movies matching the supplied title words, and obtain an Open-Meteo forecast at the supplied coordinates. This is a read-only request.","expected":["graphqlzero/post_get","omdb/movie_search","openmeteo/weather_forecast"]},
+  {"id":"weight_album_user","intent":"List shipments and determine their weight in kilograms, then retrieve the GraphQLZero album by the supplied ID and the Hacker News user by the supplied username. Do not mutate anything.","expected":["dispatch_fixture/shipment_list","graphqlzero/album_get","hackernews/user_get"],"unresolved":"weight"}
+]

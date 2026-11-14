@@ -10,6 +10,7 @@ mod search_budget;
 mod search_graph;
 #[cfg(test)]
 mod search_rank;
+pub(crate) mod whole_intent;
 mod witnesses;
 use crate::discovery_store::RetrievalReceipt;
 use crate::intent_provenance::IntentProvenance;
@@ -109,6 +110,7 @@ impl From<plasm_core::catalog_discovery::CatalogDiscoveryError> for DiscoveryMat
 }
 
 pub const RELEVANCE_MODEL: &str = "openai/gpt-6-luna-decisions";
+pub const WHOLE_INTENT_MODEL: &str = "google/gemini-2.5-pro";
 // Local requests include the complete target and direct compact witnesses.
 #[cfg(test)]
 const TARGET_PAGE_BYTES: usize = witnesses::MAX_BYTES;

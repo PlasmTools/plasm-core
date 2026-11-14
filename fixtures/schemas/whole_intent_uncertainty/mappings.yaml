@@ -1,0 +1,12 @@
+shipment_list:
+  method: GET
+  path:
+    - { type: literal, value: shipments }
+shipment_weight:
+  method: GET
+  path:
+    - { type: literal, value: weight }
+shipment_delete:
+  method: POST
+  path:
+    - { type: literal, value: delete }

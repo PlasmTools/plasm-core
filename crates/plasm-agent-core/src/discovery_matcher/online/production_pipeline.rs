@@ -114,6 +114,419 @@ struct PublishedPipeline<'a> {
     service: &'a DiscoveryService,
 }
 
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+#[ignore = "paid real-provider MCP discovery evaluation"]
+async fn whole_intent_multivendor_mcp_live() {
+    use crate::http::{build_plasm_host_state, PlasmHostBootstrap};
+    use crate::server_state::CatalogBootstrap;
+    use plasm_runtime::{ExecutionConfig, ExecutionEngine, ExecutionMode};
+    use std::sync::Arc;
+
+    let out = PathBuf::from(std::env::var("PLASM_WHOLE_INTENT_REPORT").unwrap());
+    assert!(!out.exists(), "report must be fresh");
+    std::fs::create_dir_all(&out).unwrap();
+    let root = PathBuf::from(crate::test_manifest_dir()).join("../..");
+    let cases_path = std::env::var_os("PLASM_WHOLE_INTENT_CASES")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| root.join("fixtures/discovery/whole-intent-mcp-v1/cases.json"));
+    let cases: Vec<serde_json::Value> =
+        serde_json::from_slice(&std::fs::read(cases_path).unwrap()).unwrap();
+    let names = [
+        "hackernews",
+        "omdb",
+        "openmeteo",
+        "graphqlzero",
+        "dispatch_fixture",
+    ];
+    let mut catalogs = BTreeMap::new();
+    for name in names {
+        let path = if name == "dispatch_fixture" {
+            root.join("fixtures/schemas/whole_intent_uncertainty")
+        } else {
+            root.join("apis").join(name)
+        };
+        let mut cgs = plasm_core::loader::load_schema_dir(&path).unwrap();
+        cgs.bind_registry_entry_id(name);
+        catalogs.insert(name.to_owned(), cgs);
+    }
+    let store = DiscoveryStore::connect(&std::env::var("PLASM_DISCOVERY_DATABASE_URL").unwrap())
+        .await
+        .unwrap();
+    store.migrate().await.unwrap();
+    let catalog_dir = out.join("catalogs");
+    publish(&catalog_dir, &catalogs, &store).await;
+    for name in names {
+        let source = catalog_dir.join(name);
+        let mut manifest: CatalogManifest =
+            serde_json::from_slice(&std::fs::read(source.join("manifest.json")).unwrap()).unwrap();
+        for (old, new) in [
+            (&mut manifest.cgs_json, format!("{name}.cgs.json")),
+            (&mut manifest.recipes_json, format!("{name}.recipes.json")),
+            (
+                &mut manifest.discovery_json,
+                format!("{name}.discovery.json"),
+            ),
+        ] {
+            std::fs::copy(source.join(&*old), catalog_dir.join(&new)).unwrap();
+            *old = new;
+        }
+        write(
+            &catalog_dir.join(format!("{name}.manifest.json")),
+            &manifest,
+        );
+    }
+    write(
+        &catalog_dir.join("catalog-set.json"),
+        &json!({
+            "format_version": 3,
+            "manifests": names.iter().map(|n| format!("{n}.manifest.json")).collect::<Vec<_>>()
+        }),
+    );
+    write(
+        &catalog_dir.join("deployment-bindings.json"),
+        &DeploymentBindings::default(),
+    );
+    let registry = Arc::new(plasm_core::discovery::CgsRegistry::from_pairs(
+        catalogs
+            .iter()
+            .map(|(id, cgs)| (id.clone(), id.clone(), vec![], Arc::new(cgs.clone())))
+            .collect(),
+    ));
+    let engine = ExecutionEngine::new(ExecutionConfig {
+        hydrate: false,
+        ..Default::default()
+    })
+    .unwrap();
+    let host = build_plasm_host_state(PlasmHostBootstrap {
+        engine,
+        mode: ExecutionMode::Live,
+        registry,
+        catalog_bootstrap: CatalogBootstrap::CatalogDir { path: catalog_dir },
+        incoming_auth: None,
+        run_artifacts: Arc::new(crate::run_artifacts::RunArtifactStore::memory()),
+        session_graph_persistence: None,
+        oss_local_filesystem_defaults: false,
+    })
+    .unwrap();
+    let generation = host.catalog.activate_discovery().await.unwrap();
+    let router = crate::mcp_server::build_mcp_router_for_transport(
+        Arc::new(host),
+        crate::mcp_server::McpHttpTransport::StreamableHttp,
+    )
+    .await
+    .unwrap();
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let url = format!("http://{}/mcp", listener.local_addr().unwrap());
+    let server = tokio::spawn(async move { axum::serve(listener, router).await.unwrap() });
+    let http = reqwest::Client::builder()
+        .no_proxy()
+        .timeout(std::time::Duration::from_secs(90))
+        .build()
+        .unwrap();
+    let init = http.post(&url).header("Accept", "application/json, text/event-stream")
+        .json(&json!({"jsonrpc":"2.0","id":0,"method":"initialize","params":{"protocolVersion":"2025-11-25","capabilities":{},"clientInfo":{"name":"whole-intent-eval","version":"1"}}}))
+        .send().await.unwrap().error_for_status().unwrap();
+    let session = init.headers()["mcp-session-id"]
+        .to_str()
+        .unwrap()
+        .to_owned();
+    http.post(&url)
+        .header("Accept", "application/json, text/event-stream")
+        .header("MCP-Protocol-Version", "2025-11-25")
+        .header("Mcp-Session-Id", &session)
+        .json(&json!({"jsonrpc":"2.0","method":"notifications/initialized","params":{}}))
+        .send()
+        .await
+        .unwrap()
+        .error_for_status()
+        .unwrap();
+    let pool = sqlx::PgPool::connect(&std::env::var("PLASM_DISCOVERY_DATABASE_URL").unwrap())
+        .await
+        .unwrap();
+    let mut results = Vec::new();
+    let mut failures = Vec::new();
+    for (i, case) in cases.iter().enumerate() {
+        let started = std::time::Instant::now();
+        let response = http.post(&url).header("Accept", "application/json, text/event-stream")
+            .header("MCP-Protocol-Version", "2025-11-25").header("Mcp-Session-Id", &session)
+            .json(&json!({"jsonrpc":"2.0","id":i+1,"method":"tools/call","params":{"name":"plasm_context","arguments":{"session_mode":"new","intent":case["intent"]}}}))
+            .send().await.unwrap().error_for_status().unwrap().text().await.unwrap();
+        let message: serde_json::Value = if response.trim_start().starts_with('{') {
+            serde_json::from_str(&response).unwrap()
+        } else {
+            response
+                .replace("\r\n", "\n")
+                .split("\n\n")
+                .filter_map(|event| event.lines().find_map(|line| line.strip_prefix("data:")))
+                .filter_map(|data| serde_json::from_str::<serde_json::Value>(data.trim()).ok())
+                .find(|message| message["id"] == json!(i + 1))
+                .unwrap()
+        };
+        let intent = case["intent"].as_str().unwrap();
+        let envelopes: Vec<String> = sqlx::query_scalar(
+            "SELECT envelope FROM discovery_selector_cache WHERE position($1 in envelope) > 0",
+        )
+        .bind(intent)
+        .fetch_all(&pool)
+        .await
+        .unwrap();
+        let receipts: Vec<serde_json::Value> = envelopes
+            .iter()
+            .filter_map(|v| serde_json::from_str::<serde_json::Value>(v).ok())
+            .filter(|v| {
+                v["intent"].as_str() == Some(intent)
+                    && v["search"]["policy"].as_str()
+                        == Some(crate::discovery_matcher::whole_intent::POLICY)
+                    && v["retrieval"]["generation"].as_str() == Some(generation.as_str())
+            })
+            .collect();
+        let selected: BTreeSet<_> = receipts
+            .iter()
+            .filter_map(|v| {
+                serde_json::from_value::<crate::discovery_service::RoutingReceipt>(v.clone()).ok()
+            })
+            .flat_map(|receipt| {
+                receipt
+                    .matching
+                    .selected(&receipt.retrieval)
+                    .into_iter()
+                    .map(|r| format!("{}/{}", r.catalog, r.capability))
+                    .collect::<Vec<_>>()
+            })
+            .collect();
+        let expected: BTreeSet<_> = case["expected"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|v| v.as_str().unwrap().to_owned())
+            .collect();
+        let mut errors = Vec::new();
+        if !message["error"].is_null() || message["result"]["isError"] == true {
+            errors.push("MCP returned an error");
+        }
+        if message
+            .pointer("/result/_meta/plasm/logical_session_ref")
+            .is_none()
+        {
+            errors.push("missing logical session");
+        }
+        if receipts.is_empty() {
+            errors.push("missing persisted routing receipt");
+        }
+        if selected != expected {
+            errors.push("selection differs from expected");
+        }
+        if let Some(unresolved) = case.get("unresolved").and_then(|v| v.as_str()) {
+            if !receipts
+                .iter()
+                .filter_map(|r| r["intent_analysis"].as_str())
+                .flat_map(str::lines)
+                .any(|line| {
+                    line.to_lowercase().contains(unresolved)
+                        && line.to_lowercase().contains("unresolved")
+                })
+            {
+                errors.push("uncertainty missing from receipt");
+            }
+            let mcp_text = serde_json::to_string(&message["result"])
+                .unwrap()
+                .to_lowercase();
+            if !mcp_text.contains(unresolved) || !mcp_text.contains("unresolved") {
+                errors.push("uncertainty missing from MCP response");
+            }
+        }
+        if !errors.is_empty() {
+            failures.push(case["id"].as_str().unwrap().to_owned());
+        }
+        results.push(json!({"case":case,"seconds":started.elapsed().as_secs_f64(),"mcp":message,"receipts":receipts,"selected":selected,"errors":errors}));
+        write(&out.join("RESULTS.json"), &results);
+    }
+    server.abort();
+    assert!(
+        failures.is_empty(),
+        "MCP discovery failed cases: {failures:?}"
+    );
+}
+
+#[tokio::test]
+#[ignore = "paid whole-intent discovery service evaluation"]
+async fn whole_intent_multivendor_service_live() {
+    let out = PathBuf::from(std::env::var("PLASM_WHOLE_INTENT_REPORT").unwrap());
+    assert!(!out.exists(), "report must be fresh");
+    std::fs::create_dir_all(&out).unwrap();
+    let store = DiscoveryStore::connect(&std::env::var("PLASM_TEST_POSTGRES_URL").unwrap())
+        .await
+        .unwrap();
+    store.migrate().await.unwrap();
+    let root = PathBuf::from(crate::test_manifest_dir()).join("../..");
+    let cases_path = std::env::var_os("PLASM_WHOLE_INTENT_CASES")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| root.join("fixtures/discovery/whole-intent-live-v1/cases.json"));
+    let cases: Vec<serde_json::Value> =
+        serde_json::from_slice(&std::fs::read(cases_path).unwrap()).unwrap();
+    let entries: BTreeSet<_> = cases
+        .iter()
+        .flat_map(|case| {
+            case["catalogs"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(|v| v.as_str().unwrap().to_owned())
+        })
+        .collect();
+    let mut catalogs = BTreeMap::new();
+    for name in entries {
+        let path = if name == "dispatch_fixture" {
+            root.join("fixtures/schemas/whole_intent_uncertainty")
+        } else {
+            root.join("apis").join(&name)
+        };
+        let mut cgs = plasm_core::loader::load_schema_dir(&path).unwrap();
+        cgs.bind_registry_entry_id(&name);
+        catalogs.insert(name, cgs);
+    }
+    let generation = publish(&out.join("catalogs"), &catalogs, &store).await;
+    let service = DiscoveryService::from_env(
+        DiscoveryStore::connect(&std::env::var("PLASM_TEST_POSTGRES_URL").unwrap())
+            .await
+            .unwrap(),
+    )
+    .unwrap();
+    let mut results = Vec::new();
+    for case in cases {
+        let allowed = DiscoveryAuthorization::catalogs(
+            case["catalogs"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(|v| v.as_str().unwrap().to_owned())
+                .collect(),
+        );
+        let intent =
+            IntentProvenance::from_turns([case["intent"].as_str().unwrap().to_owned()]).unwrap();
+        let started = std::time::Instant::now();
+        let receipt = service
+            .route_turn(RouteTurn {
+                new_generation: &generation,
+                intent_provenance: &intent,
+                logical_session: None,
+                allowed: &allowed,
+                exposed: &[],
+                expires_at: std::time::SystemTime::now() + std::time::Duration::from_secs(3600),
+            })
+            .await
+            .unwrap();
+        let selected: BTreeSet<_> = receipt
+            .matching
+            .selected(&receipt.retrieval)
+            .into_iter()
+            .map(|r| format!("{}/{}", r.catalog, r.capability))
+            .collect();
+        let seconds = started.elapsed().as_secs_f64();
+        let replay = if results.is_empty() {
+            let replay = service
+                .route_turn(RouteTurn {
+                    new_generation: &generation,
+                    intent_provenance: &intent,
+                    logical_session: None,
+                    allowed: &allowed,
+                    exposed: &[],
+                    expires_at: std::time::SystemTime::now() + std::time::Duration::from_secs(3600),
+                })
+                .await
+                .unwrap();
+            let replay_selected: BTreeSet<_> = replay
+                .matching
+                .selected(&replay.retrieval)
+                .into_iter()
+                .map(|r| format!("{}/{}", r.catalog, r.capability))
+                .collect();
+            Some(
+                json!({"selected":replay_selected,"requests":replay.search.requests,"input_bytes":replay.search.input_bytes,"reported_input_tokens":replay.search.reported_input_tokens}),
+            )
+        } else {
+            None
+        };
+        let expected: Vec<_> = case["expected"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|v| v.as_str().unwrap())
+            .collect();
+        let forbidden: Vec<_> = case["forbidden"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|v| v.as_str().unwrap())
+            .collect();
+        let missing: Vec<_> = expected
+            .into_iter()
+            .filter(|name| !selected.contains(*name))
+            .collect();
+        let unexpected: Vec<_> = selected
+            .iter()
+            .filter(|name| {
+                !case["expected"]
+                    .as_array()
+                    .unwrap()
+                    .iter()
+                    .any(|v| v.as_str() == Some(name.as_str()))
+            })
+            .cloned()
+            .collect();
+        let forbidden_exposed: Vec<_> = forbidden
+            .into_iter()
+            .filter(|name| selected.contains(*name))
+            .collect();
+        let expected_gap = case.get("unresolved").and_then(|v| v.as_str());
+        let gaps: Vec<_> = receipt
+            .intent_analysis
+            .lines()
+            .filter(|line| line.contains(": unresolved — "))
+            .collect();
+        let unresolved_ok = match expected_gap {
+            Some(needle) => {
+                gaps.len() == 1 && gaps[0].to_lowercase().contains(&needle.to_lowercase())
+            }
+            None => gaps.is_empty(),
+        };
+        let constraints_ok = !case["intent"].as_str().unwrap().contains("Do not ")
+            || receipt.intent_analysis.contains("- Constraint:");
+        let unauthorized: Vec<_> = receipt
+            .retrieval
+            .candidates
+            .iter()
+            .filter(|candidate| !allowed.permits(&candidate.reference))
+            .map(|candidate| {
+                format!(
+                    "{}/{}",
+                    candidate.reference.catalog, candidate.reference.capability
+                )
+            })
+            .collect();
+        let cache_ok = replay.as_ref().is_none_or(|value| {
+            value["requests"] == 0
+                && value["input_bytes"] == 0
+                && value["reported_input_tokens"] == 0
+                && value["selected"] == json!(selected)
+        });
+        results.push(json!({"case":case,"seconds":seconds,"missing":missing,"unexpected":unexpected,"forbidden_exposed":forbidden_exposed,"unresolved_ok":unresolved_ok,"constraints_ok":constraints_ok,"cache_ok":cache_ok,"replay":replay,"unauthorized":unauthorized,"selected":selected,"receipt":receipt}));
+        write(&out.join("RESULTS.json"), &results);
+    }
+    assert!(
+        results
+            .iter()
+            .all(|r| r["missing"].as_array().unwrap().is_empty()
+                && r["unexpected"].as_array().unwrap().is_empty()
+                && r["forbidden_exposed"].as_array().unwrap().is_empty()
+                && r["unauthorized"].as_array().unwrap().is_empty()
+                && r["unresolved_ok"] == true
+                && r["constraints_ok"] == true
+                && r["cache_ok"] == true),
+        "whole-intent service evaluation failed; inspect RESULTS.json"
+    );
+}
+
 async fn measure_live(
     out: &std::path::Path,
     fixture: &Fixture,

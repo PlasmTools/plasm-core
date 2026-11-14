@@ -1,0 +1,5 @@
+[
+  {"id":"forecast_profile_film","catalogs":["openmeteo","hackernews","omdb"],"intent":"Fetch the weather forecast for the supplied coordinates, read the Hacker News user for the supplied username, and retrieve the movie identified by the supplied IMDb ID.","expected":["openmeteo/weather_forecast","hackernews/user_get","omdb/movie_get"],"forbidden":[]},
+  {"id":"story_title_forecast","catalogs":["hackernews","omdb","openmeteo"],"intent":"Read the Hacker News item by its supplied ID, search movies by the supplied title text, and get the forecast for the supplied coordinates. Do not change any records.","expected":["hackernews/item_get","omdb/movie_search","openmeteo/weather_forecast"],"forbidden":[]},
+  {"id":"dispatch_movie_uncertainty","catalogs":["dispatch_fixture","omdb"],"intent":"List shipments, read the specified shipment weight in kilograms, and retrieve the movie by the supplied IMDb ID. Do not delete shipments.","expected":["dispatch_fixture/shipment_list","omdb/movie_get"],"forbidden":["dispatch_fixture/shipment_weight","dispatch_fixture/shipment_delete"],"unresolved":"weight"}
+]

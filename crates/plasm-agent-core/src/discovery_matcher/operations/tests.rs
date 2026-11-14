@@ -395,6 +395,14 @@ fn operation_packet_carries_the_connected_catalogue_witness() {
     assert_eq!(batch.body(), repeated.body());
     assert_eq!(witness_cache.len(), 1);
     let wire: serde_json::Value = serde_json::from_str(batch.body()).unwrap();
+    assert!(wire["state"]["guidance"]
+        .as_str()
+        .unwrap()
+        .contains("effect direction"));
+    assert!(wire["questions"]["q1"]["instructions"]
+        .as_str()
+        .unwrap()
+        .contains("state.guidance"));
     let witness = &wire["state"]["question_evidence"]["w1"];
     assert!(witness["capabilities"].as_object().unwrap().len() >= 2);
     assert!(!witness["bindings"].as_array().unwrap().is_empty());
@@ -563,6 +571,139 @@ fn direct_coverage_keeps_uncertain_candidates_and_fragments_unresolved() {
     ));
     assert!(matrix.directly_supported().is_empty());
     assert!(!matrix.uncovered_operations().collect::<Vec<_>>().is_empty());
+}
+
+#[test]
+fn contextual_candidate_cannot_erase_supported_outcome() {
+    let (mut matrix, _, _) = direct_fixture();
+    let first = matrix.candidates[0].clone();
+    let second = matrix.candidates[1].clone();
+    let fragment = matrix.operations.operations[1].clone();
+    let pairs = BTreeSet::from([
+        (fragment.id.clone(), first.clone()),
+        (fragment.id.clone(), second.clone()),
+    ]);
+    matrix
+        .record_packet(
+            &issued(&matrix, pairs),
+            &[
+                OperationJudgment {
+                    operation: fragment.id.clone(),
+                    capability: first,
+                    contribution: DirectContribution::Relevant,
+                },
+                OperationJudgment {
+                    operation: fragment.id.clone(),
+                    capability: second,
+                    contribution: DirectContribution::Contextual,
+                },
+            ],
+        )
+        .unwrap();
+    assert!(
+        !matrix.contextual_fragment(&fragment.text),
+        "a per-candidate contextual answer must not erase supported request coverage"
+    );
+}
+
+#[test]
+fn contextual_answer_does_not_block_other_candidate_assessment() {
+    let (mut matrix, _, _) = direct_fixture();
+    let first = matrix.candidates[0].clone();
+    let second = matrix.candidates[1].clone();
+    let primary = matrix.operations.operations[0].id.clone();
+    let fragment = matrix.operations.operations[1].id.clone();
+    let pairs = BTreeSet::from([
+        (fragment.clone(), first.clone()),
+        (primary.clone(), second.clone()),
+    ]);
+    matrix
+        .record_packet(
+            &issued(&matrix, pairs),
+            &[
+                OperationJudgment {
+                    operation: fragment.clone(),
+                    capability: first,
+                    contribution: DirectContribution::Contextual,
+                },
+                OperationJudgment {
+                    operation: primary,
+                    capability: second.clone(),
+                    contribution: DirectContribution::Relevant,
+                },
+            ],
+        )
+        .unwrap();
+    assert!(
+        matrix.next_packet(4).unwrap().contains(&(fragment, second)),
+        "one candidate must not suppress evaluation of another"
+    );
+}
+
+#[test]
+fn conflicting_whole_and_fragment_judgments_remain_uncertain() {
+    let (mut matrix, _, _) = direct_fixture();
+    let candidate = matrix.candidates[0].clone();
+    let whole = matrix.operations.operations[0].id.clone();
+    let fragment = matrix.operations.operations[1].id.clone();
+    let pairs = BTreeSet::from([
+        (whole.clone(), candidate.clone()),
+        (fragment.clone(), candidate.clone()),
+    ]);
+    matrix
+        .record_packet(
+            &issued(&matrix, pairs),
+            &[
+                OperationJudgment {
+                    operation: whole,
+                    capability: candidate.clone(),
+                    contribution: DirectContribution::Unrelated,
+                },
+                OperationJudgment {
+                    operation: fragment.clone(),
+                    capability: candidate.clone(),
+                    contribution: DirectContribution::Relevant,
+                },
+            ],
+        )
+        .unwrap();
+    assert!(
+        matches!(matrix.progress(&candidate), Ok(CandidateProgress::Uncertain { operations }) if operations.contains(&fragment))
+    );
+    assert!(!matrix.directly_supported().contains(&candidate));
+}
+
+#[test]
+fn broad_positive_does_not_hide_narrow_uncertainty() {
+    let (mut matrix, _, _) = direct_fixture();
+    let candidate = matrix.candidates[0].clone();
+    let whole = matrix.operations.operations[0].id.clone();
+    let fragment = matrix.operations.operations[1].id.clone();
+    let pairs = BTreeSet::from([
+        (whole.clone(), candidate.clone()),
+        (fragment.clone(), candidate.clone()),
+    ]);
+    matrix
+        .record_packet(
+            &issued(&matrix, pairs),
+            &[
+                OperationJudgment {
+                    operation: whole,
+                    capability: candidate.clone(),
+                    contribution: DirectContribution::Relevant,
+                },
+                OperationJudgment {
+                    operation: fragment.clone(),
+                    capability: candidate.clone(),
+                    contribution: DirectContribution::Uncertain,
+                },
+            ],
+        )
+        .unwrap();
+    assert!(
+        matches!(matrix.progress(&candidate), Ok(CandidateProgress::Uncertain { operations }) if operations.contains(&fragment))
+    );
+    assert!(!matrix.directly_supported().contains(&candidate));
 }
 
 fn direct_fixture() -> (
@@ -734,11 +875,9 @@ fn direct_coverage_prioritizes_current_request_without_dropping_history() {
         .find(|operation| operation.id == coverage.0)
         .unwrap();
     assert!(selected.text.contains("Read the device"));
-    assert!(
-        matrix
-            .uncovered_operations()
-            .any(|text| text.contains("Check ownership"))
-    );
+    assert!(matrix
+        .uncovered_operations()
+        .any(|text| text.contains("Check ownership")));
 }
 
 #[test]
@@ -877,10 +1016,28 @@ fn contextual_choice_is_accepted_only_for_an_issued_fragment_question() {
     let operations = OperationSet::from_excerpts(intent, &[intent.into()]).unwrap();
     let (index, authorization) = decision_fixture();
     let scope = decision_scope(intent, &index, &authorization);
-    let question = DecisionQuestion { operation: operations.operations()[0].id().clone(), capability: CapabilityRef { catalog: "matrix".into(), capability: "inspect".into() } };
-    let mut batch = DecisionBatch::new(super::super::RELEVANCE_MODEL, intent, &operations, &scope, &authorization, &index, &[question]).unwrap();
+    let question = DecisionQuestion {
+        operation: operations.operations()[0].id().clone(),
+        capability: CapabilityRef {
+            catalog: "matrix".into(),
+            capability: "inspect".into(),
+        },
+    };
+    let mut batch = DecisionBatch::new(
+        super::super::RELEVANCE_MODEL,
+        intent,
+        &operations,
+        &scope,
+        &authorization,
+        &index,
+        &[question],
+    )
+    .unwrap();
     let raw = serde_json::json!({"model":super::super::RELEVANCE_MODEL,"provider":"OpenAI","answers":{"q1":{"type":"choice","choice":"contextual","confidence":1.0,"probabilities":{"relevant":0.0,"unrelated":0.0,"uncertain":0.0,"contextual":1.0}}}}).to_string();
     assert!(batch.decode(&raw).is_err());
     batch.contextual_questions.insert("q1".into());
-    assert_eq!(batch.decode(&raw).unwrap()[0].contribution, DirectContribution::Contextual);
+    assert_eq!(
+        batch.decode(&raw).unwrap()[0].contribution,
+        DirectContribution::Contextual
+    );
 }

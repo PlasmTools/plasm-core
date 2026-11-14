@@ -1,0 +1,5 @@
+[
+  {"id":"forecast_profile_movie","intent":"Retrieve a forecast for the given coordinates, find the supplied Hacker News username, and search OMDb for the given movie title. Leave all records unchanged.","expected":["openmeteo/weather_forecast","hackernews/user_get","omdb/movie_search"]},
+  {"id":"post_forecast_item","intent":"Create a GraphQLZero post with the supplied title and body, look up the Hacker News item using its ID, and fetch the forecast at the supplied coordinates. Do not delete posts.","expected":["graphqlzero/post_create","hackernews/item_get","openmeteo/weather_forecast"]},
+  {"id":"uncertain_shipment_album","intent":"List shipments, find shipment weight in kilograms, and retrieve the specified GraphQLZero album. Do not delete shipments.","expected":["dispatch_fixture/shipment_list","graphqlzero/album_get"],"unresolved":"weight"}
+]

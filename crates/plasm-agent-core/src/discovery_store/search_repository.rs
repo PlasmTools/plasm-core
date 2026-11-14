@@ -6,9 +6,7 @@
 
 use super::{DiscoveryStore, DiscoveryStoreError};
 use crate::discovery_matcher::online::SearchProgress;
-use crate::discovery_service::{
-    DeferredBacklog, OperationFrontier, RoutingReceipt, SearchFrontier,
-};
+use crate::discovery_service::{DeferredBacklog, RoutingReceipt, SearchFrontier};
 use serde::{de::DeserializeOwned, Serialize};
 use std::future::Future;
 
@@ -139,19 +137,6 @@ impl SearchRepository<'_> {
         progress: &SearchProgress,
     ) -> Result<(), DiscoveryStoreError> {
         self.replace(&format!("{}:progress", key.0), progress).await
-    }
-    pub(crate) async fn operations(
-        &self,
-        key: SearchKey<'_>,
-    ) -> Result<Option<OperationFrontier>, DiscoveryStoreError> {
-        self.load(&format!("{}:operations", key.0)).await
-    }
-    pub(crate) async fn checkpoint_operations(
-        &self,
-        key: SearchKey<'_>,
-        state: &OperationFrontier,
-    ) -> Result<(), DiscoveryStoreError> {
-        self.replace(&format!("{}:operations", key.0), state).await
     }
     pub(crate) async fn frontier(
         &self,

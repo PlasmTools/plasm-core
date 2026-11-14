@@ -396,32 +396,39 @@ impl RetrievalReceipt {
         let mut first_round = true;
         loop {
             let mut advanced = false;
-            for (source_index, source) in sources.iter_mut().enumerate() {
-                let quota = if first_round && source_index == 0 {
-                    2
-                } else {
-                    1
+            // The first source is the current request. Give it a turn alongside
+            // every historical fragment so a long history cannot consume the
+            // candidate limit after only the first two current candidates.
+            let mut schedule = Vec::with_capacity(sources.len().saturating_mul(2));
+            if !sources.is_empty() {
+                schedule.push(0);
+                if first_round {
+                    schedule.push(0);
+                }
+                for source_index in 1..sources.len() {
+                    schedule.push(source_index);
+                    schedule.push(0);
+                }
+            }
+            for source_index in schedule {
+                let Some(candidate) = sources[source_index].next() else {
+                    continue;
                 };
-                for _ in 0..quota {
-                    let Some(candidate) = source.next() else {
-                        break;
-                    };
-                    advanced = true;
-                    if let Some(&position) = seen.get(&candidate.id) {
-                        let existing: &mut RetrievedCapability = &mut candidates[position];
-                        if existing.reference != candidate.reference
-                            || existing.document != candidate.document
-                        {
-                            return Err(RetrievalValidationError::ChannelDocumentMismatch);
-                        }
-                        existing.admissions.extend(candidate.admissions);
-                    } else if candidates.len() < CANDIDATE_LIMIT {
-                        seen.insert(candidate.id.clone(), candidates.len());
-                        candidates.push(candidate);
-                    } else {
-                        lexical_truncated = true;
-                        vector_truncated = true;
+                advanced = true;
+                if let Some(&position) = seen.get(&candidate.id) {
+                    let existing: &mut RetrievedCapability = &mut candidates[position];
+                    if existing.reference != candidate.reference
+                        || existing.document != candidate.document
+                    {
+                        return Err(RetrievalValidationError::ChannelDocumentMismatch);
                     }
+                    existing.admissions.extend(candidate.admissions);
+                } else if candidates.len() < CANDIDATE_LIMIT {
+                    seen.insert(candidate.id.clone(), candidates.len());
+                    candidates.push(candidate);
+                } else {
+                    lexical_truncated = true;
+                    vector_truncated = true;
                 }
             }
             if !advanced {
@@ -1052,6 +1059,29 @@ pub(crate) mod tests {
             RetrievalReceipt::interleave("generation", vec![receipt(vec![specific])], &denied),
             Err(RetrievalValidationError::UnauthorizedCandidate)
         ));
+    }
+
+    #[test]
+    fn many_historical_fragments_do_not_crowd_out_current_request_candidates() {
+        let current: Vec<_> = (0..8).map(union_fixture).collect();
+        let target = current[4].reference.clone();
+        let allowed = DiscoveryAuthorization::catalogs(BTreeSet::from([target.catalog.clone()]));
+        let receipt = |candidates| RetrievalReceipt {
+            generation: "generation".into(),
+            candidates,
+            lexical_count: 0,
+            vector_count: 0,
+            lexical_truncated: false,
+            vector_truncated: false,
+        };
+        let mut sources = vec![receipt(current)];
+        sources.extend((0..CANDIDATE_LIMIT).map(|i| receipt(vec![union_fixture(1000 + i)])));
+        let result = RetrievalReceipt::interleave("generation", sources, &allowed).unwrap();
+        assert!(result
+            .candidates
+            .iter()
+            .any(|candidate| candidate.reference == target));
+        assert_eq!(result.candidates.len(), CANDIDATE_LIMIT);
     }
 
     #[test]
