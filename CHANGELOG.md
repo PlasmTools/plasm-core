@@ -9,6 +9,12 @@ Entries before **0.4.35** live in [`CHANGELOG-ARCHIVE.md`](CHANGELOG-ARCHIVE.md)
 
 ## [Unreleased]
 
+## [0.7.0] - 2026-11-18
+
+- Discovery selects operations across a whole multi-vendor intent with Luna decisions and reports the limits of its assessment.
+- Keyed record reads use compact, catalogue-scoped evidence. The MCP discovery app shows the capabilities taught and supports workflow training.
+- Fresh federated sessions stage teaching in catalogue order and persist the complete exposure in one write. Session timing now distinguishes routing, teaching and publication.
+
 ## [0.6.1] - 2026-11-12
 
 ### Fixed
