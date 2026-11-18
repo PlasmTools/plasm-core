@@ -308,7 +308,9 @@ async fn mcp_apply_capability_seeds_federates_multi_catalog_and_dry_runs_distinc
     assert!(distinct_catalogs.contains("langmatrix_b"));
 
     // Exercise the first published descriptor as another replica would.
-    st.sessions.remove_by_strs(&out.prompt_hash, &out.session_id).await;
+    st.sessions
+        .remove_by_strs(&out.prompt_hash, &out.session_id)
+        .await;
     let es = st
         .get_execute_session(&out.prompt_hash, &out.session_id)
         .await
