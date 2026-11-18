@@ -1,4 +1,4 @@
-version: 3
+version: 4
 auth:
   scheme: none
 http_backend: https://pokeapi.co
@@ -242,7 +242,7 @@ entities:
         cardinality: one
   EvolutionChain:
     id_field: url
-    description: A chain of Pokémon evolution stages.
+    description: A chain of Pokémon evolution stages, including species, branching evolutions and their conditions.
     fields:
       id:
         required: false
@@ -250,6 +250,9 @@ entities:
       url:
         required: true
         value_ref: nv_evolution_chain_url
+      chain:
+        required: false
+        value_ref: nv_evolution_chain_stages
     relations:
       baby_trigger_item:
         description: Item that triggers baby Pokémon breeding.
@@ -1294,12 +1297,13 @@ capabilities:
     kind: query
     entity: EvolutionChain
   evolutionchain_get:
-    description: Get an evolution chain.
+    description: Get an evolution chain including its species, branching evolution stages and conditions.
     kind: get
     entity: EvolutionChain
     provides:
     - url
     - id
+    - chain
   evolutiontrigger_query:
     description: List all evolution triggers.
     kind: query
@@ -1916,6 +1920,9 @@ values:
   nv_evolution_chain_url:
     type: string
     description: API resource URL (unique key).
+  nv_evolution_chain_stages:
+    type: json
+    description: Recursive evolution tree with species, evolution branches and evolution conditions.
   nv_evolution_trigger_id:
     type: integer
     description: Numeric trigger identifier.

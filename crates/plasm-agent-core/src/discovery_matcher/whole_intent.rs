@@ -139,8 +139,7 @@ impl QualifiedSubjects {
     }
 }
 
-/// Preserve unique contract roles and the highest recalled read of a catalogue
-/// when it describes a complementary record for a named collection.
+/// Reserve the highest-ranked complementary read for a named collection in each catalogue.
 fn admission_preferences(
     intent: &str,
     candidates: &[RetrievedCapability],
@@ -151,7 +150,7 @@ fn admission_preferences(
     let terms = intent_terms(intent);
     let mut roles = BTreeMap::<_, Vec<_>>::new();
     let mut named_collections = BTreeMap::<_, BTreeSet<_>>::new();
-    let mut first_reads = BTreeMap::new();
+    let mut reads = Vec::new();
     for candidate in candidates {
         // An explicit search names its catalogue before supplying the query.
         // Prioritise its Search contracts for assessment, never for teaching.
@@ -184,9 +183,7 @@ fn admission_preferences(
         let Some(key) = record_identity(candidate, catalogs) else {
             continue;
         };
-        first_reads
-            .entry(&candidate.reference.catalog)
-            .or_insert((candidate, key.clone()));
+        reads.push((candidate, key.clone()));
         if candidate.document.operation.kind == plasm_core::CapabilityKind::Query
             && names_entity(&terms, &candidate.document.entity)
         {
@@ -203,12 +200,33 @@ fn admission_preferences(
             }
         }
     }
-    for (candidate, key) in first_reads.into_values() {
+    // A domain reused by several other entities cannot identify which of
+    // their reads complements this collection. Leave those in recall order.
+    named_collections.retain(|(catalog, domain), collections| {
+        catalogs[catalog]
+            .entities
+            .values()
+            .filter(|entity| {
+                !collections
+                    .iter()
+                    .any(|name| name.as_str() == entity.name.as_str())
+                    && entity
+                        .fields
+                        .get(&entity.id_field)
+                        .is_some_and(|field| field.kind.registry_key().as_str() == domain)
+            })
+            .take(2)
+            .count()
+            == 1
+    });
+    let mut represented = BTreeSet::new();
+    for (candidate, key) in reads {
         if named_collections.get(&key).is_some_and(|entities| {
             entities
                 .iter()
                 .any(|entity| *entity != &candidate.document.entity)
-        }) {
+        }) && represented.insert(&candidate.reference.catalog)
+        {
             preferred.insert(candidate.reference.clone());
         }
     }

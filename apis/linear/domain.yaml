@@ -1,4 +1,4 @@
-version: 16
+version: 17
 http_backend: https://api.linear.app
 data_classes:
   untrusted:
@@ -156,6 +156,14 @@ entities:
         required: false
         path: team.key
         value_ref: nv_team_key
+      state_name:
+        required: false
+        path: state.name
+        value_ref: nv_state_name
+      state_type:
+        required: false
+        path: state.type
+        value_ref: nv_workflow_state_type
     relations:
       team:
         target: Team
@@ -390,7 +398,7 @@ capabilities:
       required: false
     selection:
     - name: q
-      selection_effect: other
+      selection_effect: filter
       value_ref: nv_issue_search_q
       required: false
     - name: team_key
@@ -426,6 +434,8 @@ capabilities:
     - title
     - priority
     - team_key
+    - state_name
+    - state_type
   issue_get:
     kind: get
     entity: Issue
@@ -437,6 +447,8 @@ capabilities:
     - priority
     - estimate
     - dueDate
+    - state_name
+    - state_type
     - team
     - project
     - assignee
@@ -1459,7 +1471,7 @@ auth:
 values:
   nv_issue_search_q:
     type: string
-    description: Title/description text filter.
+    description: Filter issues to titles containing this text.
   nv_team_key:
     type: string
     description: Team short key.
@@ -1513,6 +1525,7 @@ values:
     type: uuid
   nv_workflow_state_type:
     type: string
+    description: Linear workflow category, such as triage, backlog, unstarted, started, completed, or canceled.
   nv_document_id:
     type: uuid
   nv_initiative_id:

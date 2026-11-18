@@ -527,6 +527,51 @@ fn qualified_subjects_distinguish_catalogue_role_and_numbered_entity() {
 }
 
 #[test]
+fn complementary_read_admission_survives_collection_ranking_first() {
+    let cgs = plasm_core::loader::load_schema_dir(
+        &std::path::Path::new(crate::test_manifest_dir())
+            .join("../../fixtures/schemas/whole_intent_uncertainty"),
+    )
+    .unwrap();
+    let catalogs = BTreeMap::from([("dispatch_fixture".into(), cgs)]);
+    let mut collection = packet().candidates[0].clone();
+    collection.reference = CapabilityRef {
+        catalog: "dispatch_fixture".into(),
+        capability: "shipment_list".into(),
+    };
+    collection.document.entity = "Shipment".into();
+    collection.document.operation.kind = plasm_core::CapabilityKind::Query;
+    let mut detail = collection.clone();
+    detail.reference.capability = "shipment_weight".into();
+    detail.document.entity = "Measurement".into();
+    detail.document.operation.kind = plasm_core::CapabilityKind::Get;
+    for candidates in [
+        [collection.clone(), detail.clone()],
+        [detail.clone(), collection.clone()],
+    ] {
+        let priorities = admission_preferences(
+            "List shipments and their weights",
+            &candidates,
+            &catalogs,
+            BTreeSet::new(),
+        );
+        assert_eq!(priorities, BTreeSet::from([detail.reference.clone()]));
+    }
+    let mut ambiguous = catalogs;
+    let catalog = ambiguous.get_mut("dispatch_fixture").unwrap();
+    let mut other = catalog.entities["Measurement"].clone();
+    other.name = "OtherRecord".into();
+    catalog.entities.insert(other.name.clone(), other);
+    let priorities = admission_preferences(
+        "List shipments and their weights",
+        &[collection, detail],
+        &ambiguous,
+        BTreeSet::new(),
+    );
+    assert!(priorities.is_empty());
+}
+
+#[test]
 fn read_family_promotion_preserves_catalogue_and_priority_boundaries() {
     let base = packet().candidates[0].clone();
     let mut query = base.clone();

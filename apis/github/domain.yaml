@@ -1836,7 +1836,7 @@ capabilities:
       value_ref: nv_wire_sel_1b3907e07c1297e8
       required: false
   issue_search:
-    description: Search issue and pull request conversations across GitHub.
+    description: Search issue and pull request conversations across GitHub using text and search qualifiers for repository, issue or pull request type, and open or closed state.
     kind: search
     entity: Issue
     discovery:
@@ -1850,7 +1850,7 @@ capabilities:
     selection:
     - name: q
       selection_effect: other
-      value_ref: nv_wire_str_short
+      value_ref: nv_github_issue_search_query
       required: true
     controls:
     - name: sort
@@ -1897,16 +1897,20 @@ capabilities:
     - name: repository
       value_ref: nv_github_scope_repository
       required: true
-    controls:
+    selection:
     - name: state
+      selection_effect: filter
       value_ref: nv_wire_sel_c5a1665707ce30ae
       required: false
     - name: head
+      selection_effect: filter
       value_ref: nv_wire_str_short
       required: false
     - name: base
+      selection_effect: filter
       value_ref: nv_wire_str_short
       required: false
+    controls:
     - name: sort
       value_ref: nv_pr_query_sort
       required: false
@@ -2827,7 +2831,7 @@ capabilities:
     kind: delete
     entity: Milestone
   release_query:
-    description: List releases for a repository.
+    description: List releases for a repository with their tags, release notes, draft and prerelease status, creation and publication times, and URLs.
     kind: query
     entity: Release
     scope_aggregate_key_policy: omit_when_redundant
@@ -2835,6 +2839,16 @@ capabilities:
     - name: repository
       value_ref: nv_github_scope_repository
       required: true
+    provides:
+    - id
+    - tag_name
+    - name
+    - body
+    - draft
+    - prerelease
+    - created_at
+    - published_at
+    - html_url
     selection:
   release_get:
     description: Resolve one release.
@@ -5106,6 +5120,9 @@ values:
     type: markdown
   nv_wire_str_short:
     type: string
+  nv_github_issue_search_query:
+    type: string
+    description: GitHub issue search expression. Combine text with repo:OWNER/REPOSITORY, is:issue or is:pr, and is:open or is:closed qualifiers. Quote search terms containing whitespace. GitHub search does not guarantee exact matching.
   nv_github_commit_path_filter:
     type: string
     description: Limit commits to those touching this repository path.

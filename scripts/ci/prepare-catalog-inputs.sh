@@ -2,9 +2,9 @@
 # Fetch a pinned data artifact; catalog packing itself remains network-free.
 set -euo pipefail
 root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
-tag=v0.5.5
-asset=catalog-embedding-inputs-v0.5.5.tgz
-sha256=94d33a2b67bb1a7fa2bc5959c5415ef21516af35cd1ad68cc8677493dfa93749
+tag=v0.6.1
+asset=catalog-embedding-inputs-discovery-v34.tgz
+sha256=caf38b2cffe386985ab9e4c90bd47bc9f11a4abd5f6912de41a5acc6552c1b47
 cache="${PLASM_BUILD_INPUT_CACHE:-$HOME/.cache/plasm-build-inputs}"
 archive="$cache/$sha256.tgz"
 mkdir -p "$cache"
