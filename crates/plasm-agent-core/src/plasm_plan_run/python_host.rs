@@ -46,7 +46,7 @@ pub(super) async fn materialize(
                 &mut on_print_sync(|_, _| {}),
             )
             .await
-            .map_err(crate::python_pool::pool_failure)
+            .map_err(crate::python_pool::pool_failure("host_feed"))
     })
     .await?;
     let call_id = reviewed_host_call_id(event).ok_or_else(|| {
@@ -143,7 +143,7 @@ pub(super) async fn materialize(
                     &mut on_print_sync(|_, _| {}),
                 )
                 .await
-                .map_err(crate::python_pool::pool_failure)
+                .map_err(crate::python_pool::pool_failure("host_resume"))
         })
         .await?;
         match event {
@@ -158,7 +158,7 @@ pub(super) async fn materialize(
             session
                 .finish()
                 .await
-                .map_err(crate::python_pool::pool_failure)
+                .map_err(crate::python_pool::pool_failure("finish"))
         })
         .await?;
         Ok(())

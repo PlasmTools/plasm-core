@@ -263,6 +263,10 @@ async fn concurrent_mcp_plasm_dry_two_commits() {
 
 #[tokio::test]
 async fn concurrent_disjoint_plasm_run() {
+    let _ = tracing_subscriber::fmt()
+        .with_max_level(tracing::Level::ERROR)
+        .with_test_writer()
+        .try_init();
     let st = matrix_federated_host();
     let out = open_matrix_session(
         st.as_ref(),

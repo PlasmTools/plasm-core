@@ -162,16 +162,19 @@ impl PythonPool {
                     None => match std::env::var_os("PLASM_MONTY_BINARY") {
                         Some(path) => PathBuf::from(path),
                         None => std::env::current_exe()
-                            .map_err(|e| infrastructure_failure(e.to_string()))?
+                            .map_err(|e| infrastructure_failure("resolve_binary", e.to_string()))?
                             .with_file_name("monty"),
                     },
                 };
                 if !binary.is_absolute() {
                     return Err(infrastructure_failure(
+                        "resolve_binary",
                         "PLASM_MONTY_BINARY must be an absolute path",
                     ));
                 }
-                Pool::new(pool_config(binary)).await.map_err(pool_failure)
+                Pool::new(pool_config(binary))
+                    .await
+                    .map_err(pool_failure("initialize"))
             })
             .await
     }
@@ -181,8 +184,8 @@ impl PythonPool {
     pub(crate) async fn suspend_host_call(
         mut session: Checkout,
     ) -> Result<SuspendedPythonHostCall, ExecutionFailure> {
-        let state = session.dump().await.map_err(pool_failure)?;
-        session.finish().await.map_err(pool_failure)?;
+        let state = session.dump().await.map_err(pool_failure("dump"))?;
+        session.finish().await.map_err(pool_failure("finish"))?;
         Ok(SuspendedPythonHostCall { state })
     }
     pub(crate) async fn restore_host_call(
@@ -193,7 +196,7 @@ impl PythonPool {
         let (event, _) = session
             .restore(suspended.state, vec![], &mut on_print_sync(|_, _| {}))
             .await
-            .map_err(pool_failure)?;
+            .map_err(pool_failure("restore"))?;
         Ok((session, event))
     }
     async fn checkout_with_suspensions(
@@ -210,7 +213,7 @@ impl PythonPool {
             config.os_policy.datetime = clock;
         } else if std::env::var("PLASM_TEMPORAL_NOW").is_ok_and(|raw| !raw.trim().is_empty()) {
             let now = plasm_core::temporal::temporal_reference_now()
-                .map_err(|error| infrastructure_failure(error.to_string()))?;
+                .map_err(|error| infrastructure_failure("session_clock", error.to_string()))?;
             config.os_policy.datetime = monty_types::DateTimeSource::Fixed {
                 unix_seconds: now.timestamp(),
                 microsecond: now.timestamp_subsec_micros(),
@@ -220,7 +223,7 @@ impl PythonPool {
             .await?
             .checkout(&config)
             .await
-            .map_err(pool_failure)
+            .map_err(pool_failure("checkout"))
     }
     #[cfg(test)]
     pub(crate) async fn compute(
@@ -406,7 +409,7 @@ impl PythonPool {
         })?;
         // Only successful, validated executions return a reset worker to the pool.
         // Every error/cancellation drops the checkout and upstream kills its worker.
-        session.finish().await.map_err(pool_failure)?;
+        session.finish().await.map_err(pool_failure("finish"))?;
         Ok(ComputeOutput {
             value: result,
             occurrences,
@@ -419,11 +422,13 @@ impl PythonPool {
     }
 }
 /// Pool lifecycle failures belong to infrastructure, including exceptions from host-owned code.
-pub(crate) fn pool_failure(error: monty_pool::PoolError) -> ExecutionFailure {
-    infrastructure_failure(error.to_string())
+pub(crate) fn pool_failure(
+    phase: &'static str,
+) -> impl FnOnce(monty_pool::PoolError) -> ExecutionFailure {
+    move |error| infrastructure_failure(phase, error.to_string())
 }
-fn infrastructure_failure(detail: impl Into<String>) -> ExecutionFailure {
-    tracing::error!(detail = %detail.into(), "Python compute worker infrastructure failed");
+fn infrastructure_failure(phase: &'static str, detail: impl Into<String>) -> ExecutionFailure {
+    tracing::error!(phase, detail = %detail.into(), "Python compute worker infrastructure failed");
     ExecutionFailure::new(
         FailureCause::Runtime,
         "python_pool_failure",
@@ -442,7 +447,7 @@ fn program_failure(error: monty_pool::PoolError) -> ExecutionFailure {
             "python_type_error",
             error.to_string(),
         ),
-        error => pool_failure(error),
+        error => pool_failure("execute")(error),
     }
 }
 
@@ -467,7 +472,10 @@ mod failure_tests {
             let user = program_failure(error());
             assert_eq!(user.cause, FailureCause::Program);
             assert_eq!(user.recovery, RecoveryDisposition::RepairProgram);
-            assert_eq!(pool_failure(error()).recovery, RecoveryDisposition::Stop);
+            assert_eq!(
+                pool_failure("host_feed")(error()).recovery,
+                RecoveryDisposition::Stop
+            );
         }
         for error in [
             monty_pool::PoolError::Exhausted,
