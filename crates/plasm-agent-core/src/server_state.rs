@@ -800,7 +800,7 @@ mod tests {
     #[tokio::test]
     async fn routed_pin_failure_is_operational_and_preserves_hot_session() {
         let st = test_host_state();
-        let created = execute_session_create_response_inner(
+        let (created, _) = execute_session_create_response_inner(
             &st,
             None,
             CreateExecuteSessionBody {
@@ -931,7 +931,7 @@ mod tests {
     #[tokio::test]
     async fn get_execute_session_none_after_in_memory_catalog_stale() {
         let st = test_host_state();
-        let created = execute_session_create_response_inner(
+        let (created, _) = execute_session_create_response_inner(
             &st,
             None,
             CreateExecuteSessionBody {
@@ -977,7 +977,7 @@ mod tests {
         let st = test_host_state();
         let mut hosted = std::collections::HashMap::new();
         hosted.insert("overshow".to_string(), "tenant/test/oauth".to_string());
-        let created = execute_session_create_response_inner(
+        let (created, _) = execute_session_create_response_inner(
             &st,
             None,
             CreateExecuteSessionBody {
@@ -1045,7 +1045,7 @@ mod tests {
             )
             .expect("bindings"),
         );
-        let created = execute_session_create_response_inner(
+        let (created, _) = execute_session_create_response_inner(
             &st,
             None,
             CreateExecuteSessionBody {
@@ -1097,7 +1097,7 @@ mod tests {
         let st = test_host_state();
         let mut hosted = std::collections::HashMap::new();
         hosted.insert("overshow".to_string(), "tenant/test/oauth".to_string());
-        let created = execute_session_create_response_inner(
+        let (created, _) = execute_session_create_response_inner(
             &st,
             None,
             CreateExecuteSessionBody {
@@ -1142,7 +1142,7 @@ mod tests {
 
         let mut hosted = std::collections::HashMap::new();
         hosted.insert("overshow".to_string(), "tenant/test/oauth".to_string());
-        let created = execute_session_create_response_inner(
+        let (created, _) = execute_session_create_response_inner(
             &host_a,
             None,
             CreateExecuteSessionBody {

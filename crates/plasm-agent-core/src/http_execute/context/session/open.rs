@@ -7,12 +7,6 @@ use super::super::seeds::{
     build_capability_exposure_plan, dedup_preserve_arrival_order, process_order_for_expand_group,
     seeds_fully_exposed, sorted_entity_set_for_reuse_key, STALE_EXECUTE_BINDING_NOTICE,
 };
-/// New federated sessions publish the primary and additional teaching waves together.
-pub(crate) struct OpeningFederation<'a> {
-    pub plan: &'a super::super::seeds::CapabilityExposurePlan,
-    pub waves: &'a mut Vec<CapabilityWaveOutcome>,
-}
-
 #[allow(clippy::too_many_arguments)]
 pub(crate) async fn execute_session_create_response_inner(
     st: &PlasmHostState,
@@ -24,8 +18,8 @@ pub(crate) async fn execute_session_create_response_inner(
     restored_teaching_exposure: Option<plasm_core::TeachingExposureSession>,
     symbol_space_reset: bool,
     flow_policy_scope: Option<(&str, &str, &str)>,
-    federation: Option<OpeningFederation<'_>>,
-) -> Result<CreateExecuteSessionResponse, super::SessionMutateError> {
+    federation: Option<&super::super::seeds::CapabilityExposurePlan>,
+) -> Result<(CreateExecuteSessionResponse, Vec<CapabilityWaveOutcome>), super::SessionMutateError> {
     if body.entities.is_empty() {
         crate::metrics::record_execute_session_outcome("error", "empty_entities");
         return Err(super::SessionMutateError::EmptyEntities);
@@ -104,11 +98,14 @@ pub(crate) async fn execute_session_create_response_inner(
                     "reusing execute session (same entry_id + entities + catalog hash)"
                 );
                 crate::metrics::record_execute_session_outcome("reuse", "");
-                return Ok(create_execute_session_response(
-                    &reused,
-                    session_id_str,
-                    reused.prompt_text.clone(),
-                    true,
+                return Ok((
+                    create_execute_session_response(
+                        &reused,
+                        session_id_str,
+                        reused.prompt_text.clone(),
+                        true,
+                    ),
+                    Vec::new(),
                 ));
             }
         }
@@ -247,12 +244,13 @@ pub(crate) async fn execute_session_create_response_inner(
             .materialized_outbound_hosted_kv_by_entry
             .insert(body.entry_id.clone(), kv.to_string());
     }
-    if let Some(federation) = federation {
-        for entry in federation.plan.process_order.iter().skip(1) {
+    let mut waves = Vec::new();
+    if let Some(plan) = federation {
+        for entry in plan.process_order.iter().skip(1) {
             let prepared = super::federate::prepare_federate_wave(
                 st,
                 entry.clone(),
-                federation.plan.seeds_by_entry[entry].clone(),
+                plan.seeds_by_entry[entry].clone(),
                 body.principal.clone(),
                 outbound_hosted_kv_by_entry,
                 bindings_by_entry,
@@ -260,7 +258,7 @@ pub(crate) async fn execute_session_create_response_inner(
             .await?;
             let (next, wave) = super::federate::stage_federate_wave(st, session, prepared)?;
             session = next;
-            federation.waves.push(wave);
+            waves.push(wave);
         }
     }
     st.store_execute_session(
@@ -273,16 +271,19 @@ pub(crate) async fn execute_session_create_response_inner(
     .await?;
 
     crate::metrics::record_execute_session_outcome("create", "");
-    Ok(CreateExecuteSessionResponse {
-        prompt_hash: prompt_hash_str,
-        session: session_id_str,
-        prompt,
-        context_prompt,
-        entry_id: body.entry_id,
-        entities: session_entity_names,
-        reused: false,
-        principal: principal_stored,
-    })
+    Ok((
+        CreateExecuteSessionResponse {
+            prompt_hash: prompt_hash_str,
+            session: session_id_str,
+            prompt,
+            context_prompt,
+            entry_id: body.entry_id,
+            entities: session_entity_names,
+            reused: false,
+            principal: principal_stored,
+        },
+        waves,
+    ))
 }
 
 pub async fn execute_session_create_response(
@@ -294,4 +295,5 @@ pub async fn execute_session_create_response(
         st, principal, body, true, None, None, None, false, None, None,
     )
     .await
+    .map(|(response, _)| response)
 }

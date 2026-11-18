@@ -380,67 +380,47 @@ async fn apply_capability_seeds_with_presentation(
         symbol_space_reset = ledger_reset;
         let had_restored_ledger = restored_exposure.is_some();
 
-        let federation = (!had_restored_ledger && plan.process_order.len() > 1).then_some(
-            super::open::OpeningFederation {
-                plan: &plan,
-                waves: &mut opening_waves,
-            },
+        let open = execute_session_create_response_inner(
+            st,
+            principal_incoming,
+            open_body,
+            plan.seeds_by_entry.len() <= 1,
+            outbound_ref,
+            bindings_ref,
+            restored_exposure,
+            symbol_space_reset,
+            flow_policy_scope,
+            (!had_restored_ledger && plan.process_order.len() > 1).then_some(&plan),
         );
-        let created = if let Some(uuid) = logical_session_id {
+        let (created, staged) = if let Some(uuid) = logical_session_id {
             st.session_coordination
                 .with_logical_open(uuid, || async {
                     if let Some(pair) = st.logical_execute_bindings.get(&uuid).await {
                         if let Some(sess_arc) = st.try_get_execute_session(&pair.0, &pair.1).await?
                         {
-                            return Ok::<CreateExecuteSessionResponse, super::SessionMutateError>(
-                                CreateExecuteSessionResponse {
-                                    prompt_hash: pair.0,
-                                    session: pair.1,
-                                    entry_id: sess_arc.entry_id.clone(),
-                                    prompt: sess_arc.prompt_text.clone(),
-                                    context_prompt: String::new(),
-                                    entities: sess_arc.entities.clone(),
-                                    reused: true,
-                                    principal: sess_arc.principal.clone(),
-                                },
-                            );
+                            return Ok::<_, super::SessionMutateError>((
+                                create_execute_session_response(
+                                    &sess_arc,
+                                    pair.1,
+                                    sess_arc.prompt_text.clone(),
+                                    true,
+                                ),
+                                Vec::new(),
+                            ));
                         }
                     }
-                    let created = execute_session_create_response_inner(
-                        st,
-                        principal_incoming,
-                        open_body,
-                        plan.seeds_by_entry.len() <= 1,
-                        outbound_ref,
-                        bindings_ref,
-                        restored_exposure,
-                        symbol_space_reset,
-                        flow_policy_scope,
-                        federation,
-                    )
-                    .await?;
+                    let (created, waves) = open.await?;
                     st.logical_execute_bindings
                         .insert(uuid, created.prompt_hash.clone(), created.session.clone())
                         .await;
-                    Ok(created)
+                    Ok((created, waves))
                 })
                 .await?
         } else {
-            execute_session_create_response_inner(
-                st,
-                principal_incoming,
-                open_body,
-                plan.seeds_by_entry.len() <= 1,
-                outbound_ref,
-                bindings_ref,
-                restored_exposure,
-                symbol_space_reset,
-                flow_policy_scope,
-                federation,
-            )
-            .await?
+            open.await?
         };
 
+        opening_waves = staged;
         new_symbol_space = !created.reused && !had_restored_ledger;
         if symbol_space_reset {
             new_symbol_space = true;
