@@ -12,6 +12,7 @@ npm_package(
         "index.js",
         "napi.json",
         "runtime.cjs",
+        "scripts/workflow-archive.mjs",
     ],
     manifest = "package.json",
     visibility = ["//visibility:public"],

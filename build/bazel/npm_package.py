@@ -62,6 +62,12 @@ def main():
                 if not (fnmatch.fnmatchcase(name, pattern) or name.startswith(pattern + "/")
                         or ("/" not in pattern and any(fnmatch.fnmatchcase(part, pattern) for part in Path(name).parts)))
             }
+    binaries = package.get("bin", {})
+    targets = [binaries] if isinstance(binaries, str) else binaries.values()
+    executable_paths = {Path(target).as_posix() for target in targets}
+    missing = executable_paths.difference(entries)
+    if missing:
+        raise ValueError(f"Missing declared npm executables: {sorted(missing)}")
     payloads = {name: Path(path).read_bytes() for name, path in entries.items()}
     if not platform and package["name"] == "@plasm_lang/engine":
         loader = payloads["index.js"].decode()
@@ -77,7 +83,7 @@ def main():
                     if path.is_absolute() or ".." in path.parts:
                         raise ValueError(f"Package path escapes archive: {name}")
                     info = tarfile.TarInfo("package/" + name)
-                    info.mode = 0o755 if name == "monty" or name.startswith("bin/") else 0o644
+                    info.mode = 0o755 if name == "monty" or name in executable_paths or name.startswith("bin/") else 0o644
                     info.size = len(data)
                     archive.addfile(info, io.BytesIO(data))
     digest = hashlib.sha256(Path(spec["output"]).read_bytes()).hexdigest()
