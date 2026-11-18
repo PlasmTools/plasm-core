@@ -196,6 +196,7 @@ impl PlasmMcpHandler {
         supplemental_only: bool,
     ) -> Result<CallToolResult, ToolFailure> {
         let tname = "plasm_context";
+        let started = std::time::Instant::now();
         let principal_incoming = self.ensure_mcp_principal(key, runtime).await?;
         let intent = v.get("intent").and_then(|x| x.as_str()).ok_or_else(|| {
             ToolFailure::invalid_arguments(tname, Some("missing `intent`".into()))
@@ -293,12 +294,14 @@ impl PlasmMcpHandler {
                 .discovery_generation()
                 .map_err(|e| ToolFailure::rejected(e.to_string()))?,
         };
+        let pin_started = std::time::Instant::now();
         let current = self
             .plasm
             .catalog
             .pinned_view(&generation)
             .await
             .map_err(|e| ToolFailure::rejected(e.to_string()))?;
+        let pin_elapsed = pin_started.elapsed();
         let allowed = tcfg
             .as_ref()
             .map(|cfg| cfg.allowed_entry_ids.iter().cloned().collect())
@@ -479,6 +482,7 @@ impl PlasmMcpHandler {
                 }
             }
         };
+        let routing_started = std::time::Instant::now();
         let receipt = if let Some(claim) = supplemental_claim.as_ref() {
             let mut receipt: crate::discovery_service::RoutingReceipt =
                 serde_json::from_str(&claim.result().receipt_json)
@@ -508,6 +512,7 @@ impl PlasmMcpHandler {
                 .await
                 .map_err(|e| ToolFailure::rejected(format!("routing error: {e}")))?
         };
+        let routing_elapsed = routing_started.elapsed();
         if let Some(ticket) = recall_ticket {
             learning.deferred_recalls.bind(ticket, &receipt.pin_id);
         }
@@ -581,11 +586,13 @@ impl PlasmMcpHandler {
             }
             .into_call_tool_result());
         }
+        let route_view_started = std::time::Instant::now();
         let routed_host = self
             .plasm
             .with_discovery_route(receipt)
             .await
             .map_err(|e| ToolFailure::rejected(e.to_string()))?;
+        let route_view_elapsed = route_view_started.elapsed();
         let route = routed_host
             .discovery_route
             .as_ref()
@@ -1150,6 +1157,16 @@ impl PlasmMcpHandler {
                     .collect::<Vec<_>>()),
             );
         }
+        tracing::info!(
+            target: "plasm_agent::mcp",
+            session = %logical_uuid,
+            first_catalog_ms = pin_elapsed.as_millis() as u64,
+            routing_ms = routing_elapsed.as_millis() as u64,
+            routed_catalog_ms = route_view_elapsed.as_millis() as u64,
+            teaching_and_session_ms = (route_view_started.elapsed() - route_view_elapsed).as_millis() as u64,
+            total_ms = started.elapsed().as_millis() as u64,
+            "discovery context served"
+        );
         let text = crate::mcp_agent_present::AgentContent::context(
             &crate::mcp_agent_present::ContextTokenRefs {
                 logical_session_ref: logical_session_ref.as_str(),
