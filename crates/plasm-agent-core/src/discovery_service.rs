@@ -888,8 +888,18 @@ impl DiscoveryService {
         let retrieval_text = matcher::whole_intent::IntentText::parse(&selection_request);
         let operations = matcher::operations::OperationSet::from_request(&retrieval_text.outer)?;
         let stage_started = std::time::Instant::now();
-        let mut recall = match self.lane {
-            DiscoveryLane::Ordinary => {
+        let keyed = if matches!(self.lane, DiscoveryLane::Ordinary)
+            && exposed.is_empty()
+            && deferred_priorities.is_empty()
+        {
+            matcher::whole_intent::References::record_reads(&selection_request, &catalogs)
+                .filter(|refs| refs.iter().all(|r| allowed.permits(r)))
+        } else {
+            None
+        };
+        let mut recall = match (self.lane, keyed) {
+            (DiscoveryLane::Ordinary, Some(refs)) => index.recall(generation, &refs)?,
+            (DiscoveryLane::Ordinary, None) => {
                 let frontier = crate::discovery_store::RecallFrontier::from_state(exposed, visits);
                 let current = matcher::whole_intent::IntentText::parse(provenance.current());
                 let ordered = ordered_recall_queries(
@@ -906,7 +916,7 @@ impl DiscoveryService {
                 crate::discovery_store::RetrievalReceipt::interleave(generation, receipts, allowed)
                     .map_err(crate::discovery_store::DiscoveryStoreError::from)?
             }
-            DiscoveryLane::Supplemental => {
+            (DiscoveryLane::Supplemental, _) => {
                 index
                     .evidence(generation, &references, &catalogs, &bindings, allowed)?
                     .0

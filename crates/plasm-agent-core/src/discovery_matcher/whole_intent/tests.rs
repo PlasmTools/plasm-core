@@ -459,6 +459,31 @@ fn parallel_text_keys_preserve_uncertainty_and_require_unambiguous_catalogue_rea
         selection.assessments[&target].clone()
     };
     let supported = "Read first territory east-2, and second zone west_1.";
+    let lookup = References::record_reads(supported, &catalogs).unwrap();
+    assert!(packet
+        .candidates
+        .iter()
+        .all(|c| lookup.contains(&c.reference)));
+    assert!(lookup.iter().all(|r| {
+        let cap = &catalogs[&r.catalog].capabilities[r.capability.as_str()];
+        cap.domain.as_str() == "Zone"
+            && matches!(
+                cap.kind,
+                plasm_core::CapabilityKind::Get
+                    | plasm_core::CapabilityKind::Query
+                    | plasm_core::CapabilityKind::Search
+            )
+    }));
+    let key = &catalogs["second"].entities["Zone"].id_field;
+    assert_eq!(Some(lookup), References::record_reads(
+        &format!("Fetch first territory east and get second zone west by {key}. Return their records."),
+        &catalogs
+    ));
+    assert!(References::record_reads(
+        "Read first zone east and second zone west by unknown.",
+        &catalogs
+    )
+    .is_none());
     let result = assess(supported, &catalogs);
     assert_eq!(result.verdict, selection::Verdict::Exclude);
     assert_eq!(
@@ -474,6 +499,10 @@ fn parallel_text_keys_preserve_uncertainty_and_require_unambiguous_catalogue_rea
         "Read first zone east and second territory west.",
         "Read first zone east. Second zone west.",
     ] {
+        assert!(
+            References::record_reads(intent, &catalogs).is_none(),
+            "{intent}"
+        );
         assert_eq!(
             assess(intent, &catalogs).disposition,
             Disposition::Exclude,
@@ -487,6 +516,7 @@ fn parallel_text_keys_preserve_uncertainty_and_require_unambiguous_catalogue_rea
     second
         .capabilities
         .insert(alternate.name.clone(), alternate);
+    assert!(References::record_reads(supported, &catalogs).is_none());
     assert_eq!(
         assess(supported, &catalogs).disposition,
         Disposition::Exclude

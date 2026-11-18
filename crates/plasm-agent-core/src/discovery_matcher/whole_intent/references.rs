@@ -3,8 +3,10 @@
 use super::{CapabilityRef, CGS};
 use std::collections::{BTreeMap, BTreeSet};
 
-pub(super) struct References {
+pub(crate) struct References {
     pub plain: String,
+    complete: bool,
+    keys: BTreeSet<CapabilityRef>,
     pub lists: Vec<BTreeSet<CapabilityRef>>,
 }
 
@@ -95,11 +97,19 @@ impl References {
         }) {
             return Self {
                 plain: String::new(),
+                complete: false,
+                keys: BTreeSet::new(),
                 lists: Vec::new(),
             };
         }
         let mut lists = Vec::new();
-        for sentence in plain.split(['.', ';', '!', '?', '\n']) {
+        let mut complete = true;
+        let mut keys = BTreeSet::new();
+        let lookup_text = plain.trim_end_matches(['.', ' ']);
+        let lookup_text = lookup_text
+            .strip_suffix(". return their records")
+            .unwrap_or(lookup_text);
+        for sentence in lookup_text.split(['.', ';', '!', '?', '\n']) {
             let mut list = BTreeSet::new();
             let mut active = false;
             for clause in sentence
@@ -119,17 +129,56 @@ impl References {
                     if let Some(reference) =
                         bind_key(phrase.strip_prefix("the ").unwrap_or(phrase), catalogs)
                     {
+                        keys.insert(reference.clone());
                         list.insert(reference);
                         active = true;
                         continue;
                     }
                 }
+                complete = false;
                 finish_list(&mut list, &mut lists);
                 active = false;
             }
             finish_list(&mut list, &mut lists);
         }
-        Self { plain, lists }
+        Self {
+            plain,
+            lists,
+            complete,
+            keys,
+        }
+    }
+
+    /// Only constrain recall when every clause binds a catalogue identity.
+    /// Keep alternative reads for the same record type available to the selector.
+    pub(crate) fn record_reads(
+        intent: &str,
+        catalogs: &BTreeMap<String, CGS>,
+    ) -> Option<BTreeSet<CapabilityRef>> {
+        let bound = Self::bind(intent, catalogs);
+        if !bound.complete || bound.keys.is_empty() {
+            return None;
+        }
+        let mut reads = BTreeSet::new();
+        for reference in &bound.keys {
+            let cgs = &catalogs[&reference.catalog];
+            let domain = &cgs.capabilities[reference.capability.as_str()].domain;
+            for cap in cgs.capabilities.values().filter(|cap| {
+                &cap.domain == domain
+                    && matches!(
+                        cap.kind,
+                        plasm_core::CapabilityKind::Get
+                            | plasm_core::CapabilityKind::Query
+                            | plasm_core::CapabilityKind::Search
+                    )
+            }) {
+                reads.insert(CapabilityRef {
+                    catalog: reference.catalog.clone(),
+                    capability: cap.name.to_string(),
+                });
+            }
+        }
+        Some(reads)
     }
 }
 
@@ -166,6 +215,9 @@ pub(super) fn consumes_record_key(
 /// Resolve the complete catalogue and noun phrase against authored names.
 /// Exactly one pinned identity-consuming Get must match the clause.
 fn bind_key(phrase: &str, catalogs: &BTreeMap<String, CGS>) -> Option<CapabilityRef> {
+    let (phrase, key_field) = phrase
+        .rsplit_once(" by ")
+        .map_or((phrase, None), |(s, f)| (s, Some(f)));
     let (prefix, key) = phrase.rsplit_once(char::is_whitespace)?;
     if !key.starts_with(char::is_alphanumeric)
         || !key
@@ -203,6 +255,11 @@ fn bind_key(phrase: &str, catalogs: &BTreeMap<String, CGS>) -> Option<Capability
                     .fields
                     .get(&entity.id_field)
                     .and_then(|f| catalog.named_value_for_slot(f).ok())?;
+                if key_field
+                    .is_some_and(|field| !entity.id_field.as_str().eq_ignore_ascii_case(field))
+                {
+                    continue;
+                }
                 if slot.field_type != plasm_core::FieldType::String {
                     continue;
                 }

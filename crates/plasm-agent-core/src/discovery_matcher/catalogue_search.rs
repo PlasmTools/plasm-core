@@ -275,14 +275,11 @@ impl CatalogueSearch {
 
     /// Project only an admitted path. No catalogue-wide object is serialized into
     /// the classifier request. The existing projector owns complete contracts.
-    pub fn evidence(
+    pub fn recall(
         &self,
         generation: &str,
         references: &BTreeSet<CapabilityRef>,
-        catalogs: &BTreeMap<String, CGS>,
-        deployments: &DeploymentBindings,
-        allowed: &DiscoveryAuthorization,
-    ) -> Result<(RetrievalReceipt, CatalogEvidence), DiscoveryMatcherError> {
+    ) -> Result<RetrievalReceipt, DiscoveryMatcherError> {
         let candidates = references
             .iter()
             .map(|reference| {
@@ -291,14 +288,25 @@ impl CatalogueSearch {
                 })
             })
             .collect::<Result<Vec<_>, _>>()?;
-        let retrieval = RetrievalReceipt {
+        Ok(RetrievalReceipt {
             generation: generation.into(),
             candidates,
             lexical_count: 0,
             vector_count: 0,
             lexical_truncated: false,
             vector_truncated: false,
-        };
+        })
+    }
+
+    pub fn evidence(
+        &self,
+        generation: &str,
+        references: &BTreeSet<CapabilityRef>,
+        catalogs: &BTreeMap<String, CGS>,
+        deployments: &DeploymentBindings,
+        allowed: &DiscoveryAuthorization,
+    ) -> Result<(RetrievalReceipt, CatalogEvidence), DiscoveryMatcherError> {
+        let retrieval = self.recall(generation, references)?;
         let evidence = CatalogEvidence::from_catalogs(&retrieval, catalogs, deployments, &|r| {
             allowed.permits(r)
         })?;
