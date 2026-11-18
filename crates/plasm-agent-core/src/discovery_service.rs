@@ -10,6 +10,7 @@ use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
 use crate::discovery_matcher::{self as matcher, CapabilityMatchReceipt};
+
 use crate::discovery_store::{
     BacklogKey, DiscoveryAuthorization, DiscoverySessionPin, DiscoveryStore, FrontierKey,
     RetrievalReceipt, SearchAdmission, SearchKey,
@@ -224,7 +225,7 @@ fn search_key(
 ) -> Result<String> {
     Ok(plasm_core::catalog_discovery::content_hash(
         &serde_json::to_vec(&(
-            matcher::online::SEARCH_POLICY,
+            matcher::whole_intent::POLICY,
             generation,
             provenance,
             allowed,
@@ -884,13 +885,15 @@ impl DiscoveryService {
             .collect();
         let authorized = index.authorized_capabilities(allowed);
         let selection_request = provenance.selection_request();
-        let operations = matcher::operations::OperationSet::from_request(&selection_request)?;
+        let retrieval_text = matcher::whole_intent::IntentText::parse(&selection_request);
+        let operations = matcher::operations::OperationSet::from_request(&retrieval_text.outer)?;
         let stage_started = std::time::Instant::now();
         let mut recall = match self.lane {
             DiscoveryLane::Ordinary => {
                 let frontier = crate::discovery_store::RecallFrontier::from_state(exposed, visits);
+                let current = matcher::whole_intent::IntentText::parse(provenance.current());
                 let ordered = ordered_recall_queries(
-                    provenance.current(),
+                    &current.outer,
                     operations
                         .operations()
                         .iter()
@@ -927,6 +930,7 @@ impl DiscoveryService {
         metrics::record(metrics::Stage::Recall, stage_started.elapsed());
         let stage_started = std::time::Instant::now();
         let mut whole_analysis = None;
+        let mut business = Vec::new();
         let (retrieval, matching, mut search) = if recall.candidates.is_empty() {
             let search = matcher::online::SearchReceipt {
                 policy: matcher::whole_intent::POLICY.into(),
@@ -957,372 +961,128 @@ impl DiscoveryService {
             {
                 return Err(matcher::whole_intent::WholeIntentError::InvalidInput.into());
             }
-            let nomination = matcher::semantic_nomination::SemanticNomination::new(
+            let packet = matcher::whole_intent::WholeIntentPacket::new_with_limit(
                 &self.match_model,
                 &selection_request,
                 &recall,
                 &catalogs,
+                allowed,
+                &index,
+                &bindings,
+                deferred_priorities,
+                exposed,
+                &std::collections::BTreeSet::new(),
+                matcher::whole_intent::MAX_SELECTION_BYTES,
             )?;
-            let nomination_checkpoint = decision_checkpoint::DecisionCheckpoint::new(
+            let checkpoint = decision_checkpoint::DecisionCheckpoint::new(
                 &self.store,
                 &self.store.pending_decisions,
             );
-            let nomination_dispatched = std::sync::atomic::AtomicBool::new(false);
-            let nominated_raw = nomination_checkpoint
-                .receive(nomination.clone(), || async {
-                    nomination_dispatched.store(true, std::sync::atomic::Ordering::Relaxed);
+            let dispatched = std::sync::atomic::AtomicBool::new(false);
+            let mut selection = checkpoint
+                .receive(packet.clone(), || async {
+                    dispatched.store(true, std::sync::atomic::Ordering::Relaxed);
                     let started = std::time::Instant::now();
                     let result = self
-                        .contribution_response(nomination.body(), 1, "semantic-nomination-v1")
+                        .contribution_response(packet.body(), 1, "whole-intent-selection-v1")
                         .await;
                     metrics::record(metrics::Stage::DecisionProvider, started.elapsed());
                     result.map_err(|error| Box::new(error) as matcher::DecisionProviderError)
                 })
                 .await
                 .map_err(|error| matcher::DiscoveryMatcherError::Provider(error))?;
-            let (mut nominated, nomination_usage) = nomination.decode(&nominated_raw)?;
-            for (index, candidate) in recall.candidates.iter().enumerate() {
-                if exposed.contains(&candidate.reference) {
-                    nominated.insert(index);
-                }
-            }
-            // A summary can conflate a list, search and keyed read on one entity.
-            // Review the recalled read family together; nomination grants no exposure.
-            let is_read = |candidate: &crate::discovery_store::RetrievedCapability| {
-                matches!(
-                    candidate.document.operation.kind,
-                    plasm_core::schema::CapabilityKind::Get
-                        | plasm_core::schema::CapabilityKind::Query
-                        | plasm_core::schema::CapabilityKind::Search
-                )
-            };
-            let read_families: std::collections::BTreeSet<_> = nominated
+            selection.apply(
+                packet.candidates(),
+                &selection_request,
+                &catalogs,
+                &bindings,
+            );
+            let usage = selection.tokens;
+            let candidate_uncertainties = selection.gaps();
+            let uncertain: std::collections::BTreeSet<_> = selection
+                .assessments
                 .iter()
-                .filter_map(|i| {
-                    let candidate = &recall.candidates[*i];
-                    is_read(candidate).then(|| {
-                        (
-                            candidate.reference.catalog.clone(),
-                            candidate.document.entity.clone(),
-                        )
-                    })
-                })
+                .filter(|(_, a)| a.disposition.uncertain())
+                .map(|(r, _)| r.clone())
                 .collect();
-            for (index, candidate) in recall.candidates.iter().enumerate() {
-                if is_read(candidate)
-                    && read_families.contains(&(
-                        candidate.reference.catalog.clone(),
-                        candidate.document.entity.clone(),
-                    ))
-                {
-                    nominated.insert(index);
-                }
-            }
-            nomination_checkpoint
+            business = recall
+                .candidates
+                .iter()
+                .filter(|c| {
+                    selection
+                        .assessments
+                        .get(&c.reference)
+                        .is_some_and(|a| a.disposition.teaches())
+                })
+                .map(|c| c.reference.clone())
+                .collect();
+            checkpoint
                 .persist()
                 .await
                 .map_err(matcher::DiscoveryMatcherError::Checkpoint)?;
-            if nominated.is_empty() {
-                let sent = nomination_dispatched.load(std::sync::atomic::Ordering::Relaxed);
-                whole_analysis = Some("**Whole-intent discovery:** no candidates were nominated for contract assessment. All recalled candidates remain unassessed; the requested outcomes are unresolved.".into());
-                let search = matcher::online::SearchReceipt {
-                    policy: matcher::whole_intent::POLICY.into(),
-                    exposed: exposed.iter().cloned().collect(),
-                    unexplored: authorized
-                        .iter()
-                        .filter(|r| !exposed.contains(r))
-                        .cloned()
-                        .collect(),
-                    deferred: recall
-                        .candidates
-                        .iter()
-                        .map(|candidate| matcher::online::DeferredCandidate {
-                            reference: candidate.reference.clone(),
-                            reason: matcher::online::DeferredReason::NotNominated,
-                        })
-                        .collect(),
-                    requests: usize::from(sent),
-                    input_bytes: if sent { nomination.body().len() } else { 0 },
-                    reported_input_tokens: if sent {
-                        nomination_usage.unwrap_or(0)
-                    } else {
-                        0
-                    },
-                    missing_usage: usize::from(sent && nomination_usage.is_none()),
-                    ..Default::default()
-                };
-                (
-                    recall,
-                    CapabilityMatchReceipt {
-                        matches: Vec::new(),
-                        budget_retained: Vec::new(),
-                    },
-                    search,
-                )
-            } else {
-                let nomination_recall = RetrievalReceipt {
-                    generation: recall.generation.clone(),
-                    candidates: recall
-                        .candidates
-                        .iter()
-                        .enumerate()
-                        .filter(|(i, _)| nominated.contains(i))
-                        .map(|(_, c)| c.clone())
-                        .collect(),
-                    lexical_count: recall.lexical_count,
-                    vector_count: recall.vector_count,
-                    lexical_truncated: recall.lexical_truncated,
-                    vector_truncated: recall.vector_truncated,
-                };
-                let packet = matcher::whole_intent::WholeIntentPacket::new_with_limit(
-                    &self.match_model,
-                    &selection_request,
-                    &nomination_recall,
-                    &catalogs,
-                    allowed,
-                    &index,
-                    &bindings,
-                    deferred_priorities,
-                    exposed,
-                    matcher::whole_intent::MAX_BODY_BYTES.saturating_sub(nomination.body().len()),
-                    false,
-                )?;
-                let checkpoint = decision_checkpoint::DecisionCheckpoint::new(
-                    &self.store,
-                    &self.store.pending_decisions,
+            let mut analysis = String::from("**Whole-intent discovery:** selected operations are model judgments over bounded, authorized catalogue evidence. Whole-request completeness is unverified; program admission validates actual bindings.");
+            if !candidate_uncertainties.is_empty() {
+                analysis.push_str(
+                    "\nModel-reported candidate uncertainties (not proof of a missing capability):",
                 );
-                let dispatched = std::sync::atomic::AtomicBool::new(false);
-                let raw = checkpoint
-                    .receive(packet.clone(), || async {
-                        dispatched.store(true, std::sync::atomic::Ordering::Relaxed);
-                        let started = std::time::Instant::now();
-                        let result = self
-                            .contribution_response(packet.body(), 1, "whole-intent-selection-v1")
-                            .await;
-                        metrics::record(metrics::Stage::DecisionProvider, started.elapsed());
-                        result.map_err(|error| Box::new(error) as matcher::DecisionProviderError)
-                    })
-                    .await
-                    .map_err(|error| matcher::DiscoveryMatcherError::Provider(error))?;
-                let (mut selection, selected, usage) = packet.decode(&raw)?;
-                let uncertain = packet.uncertain(&raw)?;
-                checkpoint
-                    .persist()
-                    .await
-                    .map_err(matcher::DiscoveryMatcherError::Checkpoint)?;
-                let mut coverage_sent = false;
-                let mut coverage_usage = None;
-                let mut coverage_bytes = 0;
-                let mut coverage_assessment = matcher::whole_intent::CoverageAssessment::Uncertain;
-                if !selected.is_empty() {
-                    let selected_recall = RetrievalReceipt {
-                        generation: recall.generation.clone(),
-                        candidates: packet
-                            .candidates()
-                            .iter()
-                            .filter(|c| selected.contains(&c.reference))
-                            .cloned()
-                            .collect(),
-                        lexical_count: recall.lexical_count,
-                        vector_count: recall.vector_count,
-                        lexical_truncated: recall.lexical_truncated,
-                        vector_truncated: recall.vector_truncated,
-                    };
-                    let remaining = matcher::whole_intent::MAX_BODY_BYTES
-                        .saturating_sub(nomination.body().len() + packet.body().len());
-                    let selected_packet = matcher::whole_intent::WholeIntentPacket::new_with_limit(
-                        &self.match_model,
-                        &selection_request,
-                        &selected_recall,
-                        &catalogs,
-                        allowed,
-                        &index,
-                        &bindings,
-                        deferred_priorities,
-                        exposed,
-                        remaining,
-                        true,
-                    );
-                    match selected_packet {
-                        Ok(selected_packet) if selected_packet.omitted().is_empty() => {
-                            let coverage =
-                                matcher::whole_intent::CoveragePacket::new(&selected_packet)?;
-                            if coverage.body().len() > remaining {
-                                return Err(matcher::whole_intent::WholeIntentError::Budget.into());
-                            }
-                            let coverage_checkpoint = decision_checkpoint::DecisionCheckpoint::new(
-                                &self.store,
-                                &self.store.pending_decisions,
-                            );
-                            let dispatched = std::sync::atomic::AtomicBool::new(false);
-                            let raw = coverage_checkpoint
-                                .receive(coverage.clone(), || async {
-                                    dispatched.store(true, std::sync::atomic::Ordering::Relaxed);
-                                    let started = std::time::Instant::now();
-                                    let result = self
-                                        .contribution_response(
-                                            coverage.body(),
-                                            1,
-                                            "selected-coverage-v1",
-                                        )
-                                        .await;
-                                    metrics::record(
-                                        metrics::Stage::DecisionProvider,
-                                        started.elapsed(),
-                                    );
-                                    result.map_err(|error| {
-                                        Box::new(error) as matcher::DecisionProviderError
-                                    })
-                                })
-                                .await
-                                .map_err(|error| matcher::DiscoveryMatcherError::Provider(error))?;
-                            (coverage_assessment, coverage_usage) = coverage.decode(&raw)?;
-                            coverage_checkpoint
-                                .persist()
-                                .await
-                                .map_err(matcher::DiscoveryMatcherError::Checkpoint)?;
-                            coverage_sent = dispatched.load(std::sync::atomic::Ordering::Relaxed);
-                            if coverage_sent {
-                                coverage_bytes = coverage.body().len();
-                            }
-                        }
-                        Ok(_) | Err(matcher::whole_intent::WholeIntentError::Budget) => {}
-                        Err(error) => return Err(error.into()),
-                    }
-                }
-                selection.requirements.retain(|r| {
-                    matches!(
-                        &r.assessment,
-                        matcher::whole_intent::Assessment::Supported { .. }
-                    )
-                });
-                let coverage_result = match coverage_assessment {
-                    matcher::whole_intent::CoverageAssessment::Supported => None,
-                    matcher::whole_intent::CoverageAssessment::Unresolved => Some(matcher::whole_intent::Assessment::Gap { gap: "The selected contracts do not establish every requested outcome and constraint.".into() }),
-                    matcher::whole_intent::CoverageAssessment::Uncertain => Some(matcher::whole_intent::Assessment::Uncertain { uncertainty: "The selected contracts could not be verified to cover every requested outcome and constraint.".into() }),
-                };
-                if let Some(assessment) = coverage_result {
-                    selection
-                        .requirements
-                        .push(matcher::whole_intent::Requirement {
-                            requirement: selection_request.clone(),
-                            assessment,
-                        });
-                }
-                let mut analysis = String::from("**Whole-intent discovery:** assessments are bounded by the presented authorized evidence.");
-                for constraint in &selection.constraints {
-                    analysis.push_str("\n- Constraint: ");
-                    analysis.push_str(constraint);
-                }
-                for requirement in &selection.requirements {
+                for uncertainty in &candidate_uncertainties {
                     analysis.push_str("\n- ");
-                    analysis.push_str(&requirement.requirement);
-                    match &requirement.assessment {
-                        matcher::whole_intent::Assessment::Supported { .. } => {
-                            analysis.push_str(": supported")
-                        }
-                        matcher::whole_intent::Assessment::Gap { gap } => {
-                            analysis.push_str(": unresolved — ");
-                            analysis.push_str(gap);
-                        }
-                        matcher::whole_intent::Assessment::Uncertain { uncertainty } => {
-                            analysis.push_str(": uncertain — ");
-                            analysis.push_str(uncertainty);
-                        }
-                    }
+                    analysis.push_str(uncertainty);
+                    analysis.push_str(
+                        ": uncertain — candidate evidence may not establish this requirement.",
+                    );
                 }
-                if !packet.omitted().is_empty() || nominated.len() < recall.candidates.len() {
-                    analysis.push_str("\nSome candidates were not assessed within the evidence budget; restate or extend the intent if the unresolved outcomes need further discovery.");
-                }
-                whole_analysis = Some(analysis);
-                let matching = CapabilityMatchReceipt {
-                    matches: packet
-                        .candidates()
-                        .iter()
-                        .filter(|candidate| selected.contains(&candidate.reference))
-                        .map(|candidate| matcher::CapabilityIntentMatch {
-                            capability_id: candidate.id.clone(),
-                            choice: matcher::MatchChoice::Relevant,
-                        })
-                        .collect(),
-                    budget_retained: Vec::new(),
-                };
-                let considered: std::collections::BTreeSet<_> = packet
-                    .candidates()
-                    .iter()
-                    .map(|candidate| candidate.reference.clone())
-                    .collect();
-                let sent = dispatched.load(std::sync::atomic::Ordering::Relaxed);
-                let search = matcher::online::SearchReceipt {
-                    policy: matcher::whole_intent::POLICY.into(),
-                    exposed: exposed.iter().cloned().collect(),
-                    unexplored: authorized
-                        .iter()
-                        .filter(|reference| {
-                            !exposed.contains(reference) && !considered.contains(*reference)
-                        })
-                        .cloned()
-                        .collect(),
-                    considered,
-                    deferred: uncertain
-                        .iter()
-                        .cloned()
-                        .map(|reference| matcher::online::DeferredCandidate {
-                            reference,
-                            reason: matcher::online::DeferredReason::OperationUncertain,
-                        })
-                        .chain(
-                            recall
-                                .candidates
-                                .iter()
-                                .enumerate()
-                                .filter(|(i, _)| !nominated.contains(i))
-                                .map(|(_, candidate)| matcher::online::DeferredCandidate {
-                                    reference: candidate.reference.clone(),
-                                    reason: matcher::online::DeferredReason::NotNominated,
-                                })
-                                .chain(packet.omitted().iter().cloned().map(|reference| {
-                                    let reason = if packet.was_projected(&reference) {
-                                        matcher::online::DeferredReason::InputBytes
-                                    } else {
-                                        matcher::online::DeferredReason::ProjectionLimit
-                                    };
-                                    matcher::online::DeferredCandidate { reference, reason }
-                                })),
-                        )
-                        .collect(),
-                    requests: usize::from(sent)
-                        + usize::from(
-                            nomination_dispatched.load(std::sync::atomic::Ordering::Relaxed),
-                        )
-                        + usize::from(coverage_sent),
-                    input_bytes: if sent { packet.body().len() } else { 0 }
-                        + if nomination_dispatched.load(std::sync::atomic::Ordering::Relaxed) {
-                            nomination.body().len()
-                        } else {
-                            0
-                        }
-                        + coverage_bytes,
-                    reported_input_tokens: if sent { usage.unwrap_or(0) } else { 0 }
-                        + if nomination_dispatched.load(std::sync::atomic::Ordering::Relaxed) {
-                            nomination_usage.unwrap_or(0)
-                        } else {
-                            0
-                        }
-                        + if coverage_sent {
-                            coverage_usage.unwrap_or(0)
-                        } else {
-                            0
-                        },
-                    missing_usage: usize::from(sent && usage.is_none())
-                        + usize::from(
-                            nomination_dispatched.load(std::sync::atomic::Ordering::Relaxed)
-                                && nomination_usage.is_none(),
-                        )
-                        + usize::from(coverage_sent && coverage_usage.is_none()),
-                };
-                (recall, matching, search)
             }
+            if !uncertain.is_empty() {
+                analysis.push_str(" Some assessed operations are uncertain.");
+            }
+            if !packet.omitted().is_empty() {
+                analysis.push_str(" Some candidates were not assessed within the evidence budget; restate or extend the intent if needed.");
+            }
+            whole_analysis = Some(analysis);
+            let matching = CapabilityMatchReceipt {
+                matches: selection.matches(packet.candidates()),
+                budget_retained: Vec::new(),
+            };
+            let considered: std::collections::BTreeSet<_> = packet
+                .candidates()
+                .iter()
+                .map(|candidate| candidate.reference.clone())
+                .collect();
+            let sent = dispatched.load(std::sync::atomic::Ordering::Relaxed);
+            let search = matcher::online::SearchReceipt {
+                policy: matcher::whole_intent::POLICY.into(),
+                exposed: exposed.iter().cloned().collect(),
+                unexplored: authorized
+                    .iter()
+                    .filter(|reference| {
+                        !exposed.contains(reference) && !considered.contains(*reference)
+                    })
+                    .cloned()
+                    .collect(),
+                considered,
+                deferred: uncertain
+                    .iter()
+                    .cloned()
+                    .map(|reference| matcher::online::DeferredCandidate {
+                        reference,
+                        reason: matcher::online::DeferredReason::OperationUncertain,
+                    })
+                    .chain(packet.omitted().iter().cloned().map(|reference| {
+                        let reason = if packet.was_projected(&reference) {
+                            matcher::online::DeferredReason::InputBytes
+                        } else {
+                            matcher::online::DeferredReason::ProjectionLimit
+                        };
+                        matcher::online::DeferredCandidate { reference, reason }
+                    }))
+                    .collect(),
+                requests: usize::from(sent),
+                input_bytes: if sent { packet.body().len() } else { 0 },
+                reported_input_tokens: if sent { usage.unwrap_or(0) } else { 0 },
+                missing_usage: usize::from(sent && usage.is_none()),
+            };
+            (recall, matching, search)
         };
         metrics::record(
             metrics::Stage::SelectionIncludingProviderAndCheckpoints,
@@ -1341,7 +1101,6 @@ impl DiscoveryService {
             });
             tracing::debug!(target: "plasm_agent::workflow_learning", catalog = %reference.catalog, capability = %reference.capability, already_exposed = exposed.contains(reference), retrieved = candidate.is_some(), considered = search.considered.contains(reference), deferred = ?search.deferred.iter().find(|item| &item.reference == reference).map(|item| &item.reason), decision = ?decision.map(|item| &item.choice), "supplemental capability discovery decision");
         }
-        let business = matching.selected(&retrieval);
         let closure = if !business.is_empty() || !exposed.is_empty() {
             let references = catalogs.iter().map(|(id, cgs)| (id.clone(), cgs)).collect();
             Some(prerequisite_closure(
@@ -1355,18 +1114,20 @@ impl DiscoveryService {
         };
         validate_closure_authorization(closure.as_ref(), allowed)?;
         if let Some(closure) = &closure {
-            for reference in closure
+            let resolved: std::collections::BTreeSet<_> = closure
                 .business
                 .iter()
                 .chain(&closure.input_sources)
                 .chain(&closure.prerequisites)
-            {
+                .cloned()
+                .collect();
+            for reference in &resolved {
                 search.considered.insert(reference.clone());
                 search.unexplored.remove(reference);
             }
             search
                 .deferred
-                .retain(|candidate| !search.considered.contains(&candidate.reference));
+                .retain(|candidate| !resolved.contains(&candidate.reference));
         }
         // No additions to an existing surface is not an unmatched workflow.
         let recovery = if business.is_empty()
@@ -1374,12 +1135,7 @@ impl DiscoveryService {
             && search.deferred.is_empty()
             && whole_analysis.is_none()
         {
-            Some(DiscoveryRecovery::from_unmatched(
-                &matching,
-                &retrieval,
-                &catalogs,
-                allowed.catalogs.iter(),
-            ))
+            Some(DiscoveryRecovery::from_unmatched(&matching, &retrieval))
         } else {
             None
         };
@@ -1427,6 +1183,8 @@ impl DiscoveryService {
     }
 }
 
+/// Preserve model exclusions in the receipt without mislabeling model-included
+/// candidates that deterministic subsumption removed as redundant.
 fn discovery_intent_analysis(
     search: &matcher::online::SearchReceipt,
     uncovered: &[&str],
@@ -1583,6 +1341,7 @@ mod tests {
         let candidate = &routing.retrieval.candidates[0];
         let mut decision = CapabilityMatchReceipt {
             matches: vec![matcher::CapabilityIntentMatch {
+                assessment: None,
                 capability_id: candidate.id.clone(),
                 choice: matcher::MatchChoice::Unrelated,
             }],

@@ -1063,7 +1063,7 @@ mod routed_terminal_tests {
                             reply["routing"]["retrieval"]["generation"] = json!("generation-two");
                         }
                         if insufficient {
-                            reply["routing"]["recovery"] = json!({"candidates":[],"available_catalogs":[],"guidance":"No relevant capability selected from this bounded packet."});
+                            reply["routing"]["recovery"] = json!({"candidates":[],"guidance":"No relevant capability selected from this bounded packet."});
                         }
                         if !missing {
                             reply["routing"]["closure"] = json!({"business":[{"catalog":"matrix","capability":"read"}],"input_sources":[],"prerequisites":[],"acquisitions":[],"edges":[]});

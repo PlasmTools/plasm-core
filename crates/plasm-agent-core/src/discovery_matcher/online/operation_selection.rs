@@ -67,6 +67,7 @@ fn collect_wave(
             judged.insert(
                 reference.clone(),
                 CapabilityIntentMatch {
+                    assessment: None,
                     capability_id: index.candidates[reference].id.clone(),
                     choice,
                 },

@@ -169,6 +169,11 @@ fn python_card_initial_extension_and_retry() {
     );
     assert!(initial.capabilities.iter().all(|c| c.unavailable.is_none()));
     assert_eq!(initial.capabilities.len(), 5);
+    for capability in &initial.capabilities {
+        let target = capability.target.as_deref().expect("available capability target");
+        assert!(initial.declarations.contains(&format!("{target}(")), "renderer target {target} not in emitted declarations");
+        assert_eq!(capability.entity_symbol, "e1");
+    }
     assert_eq!(
         initial,
         prepare_python_teaching_wave(&exposure, &PythonTeachingState::default()).unwrap()
@@ -177,6 +182,7 @@ fn python_card_initial_extension_and_retry() {
     assert_eq!(replay.language, None);
     assert!(replay.declarations.is_empty());
     assert_eq!(replay.revision, initial.revision);
+    assert_eq!(replay.capabilities, initial.capabilities);
     exposure.expose_entities(
         &[&cgs],
         std::sync::Arc::new(cgs.clone()),
@@ -198,10 +204,9 @@ fn python_card_initial_extension_and_retry() {
     assert!(replay.declarations.is_empty());
     let restored: PythonTeachingState =
         serde_json::from_str(&serde_json::to_string(&extension.next_state).unwrap()).unwrap();
-    assert!(prepare_python_teaching_wave(&exposure, &restored)
-        .unwrap()
-        .declarations
-        .is_empty());
+    let restored_wave = prepare_python_teaching_wave(&exposure, &restored).unwrap();
+    assert!(restored_wave.declarations.is_empty());
+    assert_eq!(restored_wave.capabilities, extension.capabilities);
     assert_eq!(extension.capabilities.len(), 6);
     assert!(extension
         .capabilities
@@ -304,6 +309,61 @@ fn python_card_federation_and_catalog_comments() {
             .get(&("b".into(), "item_id".into()))
     );
     assert_eq!(wave.capabilities.len(), 12);
+    for capability in &wave.capabilities {
+        if let Some(target) = &capability.target {
+            assert!(capability.signature.is_some());
+            assert!(capability.unavailable.is_none());
+            assert!(wave.declarations.contains(&format!("{target}(")), "qualified {:?}/{} target {target} is absent", capability.entry_id, capability.capability);
+        } else {
+            assert!(capability.signature.is_none());
+            assert!(capability.unavailable.is_some());
+        }
+    }
+    let first = wave.capabilities.iter().find(|c| c.entry_id == "a" && c.capability == "item_get").unwrap();
+    let second = wave.capabilities.iter().find(|c| c.entry_id == "b" && c.capability == "item_get").unwrap();
+    assert_ne!(first.entity_symbol, second.entity_symbol);
+    assert_ne!(first.target, second.target);
+    for cap in [first, second] {
+        assert!(wave.declarations.contains(&format!("{}(", cap.target.as_deref().unwrap())));
+    }
+}
+
+#[test]
+fn capability_coverage_uses_exact_targets_for_overloaded_queries() {
+    let mut cgs = fixture();
+    let mut second = cgs.capabilities.get("item_query").unwrap().clone();
+    second.name = "item_query_other".into();
+    cgs.capabilities.insert(second.name.clone(), second);
+    let cgs = cgs.fresh_catalog_digest();
+    let exposure = TeachingExposureSession::new(&cgs, "fixture", &["Item"]);
+    let symbols = exposure.to_symbol_map();
+    let wave = prepare_python_teaching_wave(&exposure, &PythonTeachingState::default()).unwrap();
+    let mut targets = Vec::new();
+    for name in ["item_query", "item_query_other"] {
+        let cap = &cgs.capabilities[name];
+        let row = wave.capabilities.iter().find(|c| c.entry_id == "fixture" && c.capability == name).unwrap();
+        let target = row.target.as_ref().expect("query target");
+        assert_eq!(*target, format!("e1.{}", capability_method_name(&cgs, &symbols, "fixture", cap)));
+        assert!(wave.declarations.contains(&format!("{target}(")));
+        targets.push(target.clone());
+    }
+    assert_ne!(targets[0], targets[1]);
+    assert!(targets.iter().all(|t| t.starts_with("e1.m")));
+}
+
+#[test]
+fn capability_coverage_does_not_confuse_domain_and_receiver() {
+    let mut cgs = fixture();
+    cgs.capabilities.get_mut("item_touch").unwrap().inputs.receiver = Some(crate::CapabilityReceiver::Entity { entity: "Tag".into() });
+    let cgs = cgs.fresh_catalog_digest();
+    let exposure = TeachingExposureSession::new(&cgs, "fixture", &["Item", "Tag"]);
+    let wave = prepare_python_teaching_wave(&exposure, &PythonTeachingState::default()).unwrap();
+    let coverage = wave.capabilities.iter().find(|c| c.entry_id == "fixture" && c.capability == "item_touch").unwrap();
+    let target = coverage.target.as_ref().expect("receiver method target");
+    assert!(target.starts_with("row.m"));
+    assert!(wave.declarations.contains(&format!("{target}(")));
+    assert_eq!(coverage.entity_symbol, "e1");
+    assert_ne!(cgs.capabilities["item_touch"].receiver_entity().unwrap().as_str(), "Item");
 }
 
 #[test]
@@ -346,7 +406,7 @@ fn python_card_rejects_revision_drift_and_records_unavailable() {
     assert!(wave
         .capabilities
         .iter()
-        .any(|c| c.capability == "item_query" && c.unavailable.is_some()));
+        .any(|c| c.capability == "item_query" && c.unavailable.is_some() && c.target.is_none() && c.signature.is_none()));
     assert!(wave
         .declarations
         .contains("custom/status output requires a typed return witness"));

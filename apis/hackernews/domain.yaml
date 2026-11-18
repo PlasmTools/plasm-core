@@ -1,4 +1,4 @@
-version: 6
+version: 7
 auth:
   scheme: none
 http_backend: https://hacker-news.firebaseio.com
@@ -84,6 +84,8 @@ entities:
           - key: parts
           - wildcard: true
   User:
+    discovery:
+      names: [profile]
     id_field: id
     description: A Hacker News user profile keyed by username. The submitted list holds item ids only; fetch each via item_get.
       when you need titles or comment bodies.

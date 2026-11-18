@@ -118,6 +118,10 @@ pub struct PythonTeachingWave {
 pub struct PythonCapabilityCoverage {
     pub entry_id: String,
     pub capability: String,
+    /// Session-local entity that owns this capability.
+    pub entity_symbol: String,
+    /// Exact executable target emitted by this renderer; absent when unavailable.
+    pub target: Option<String>,
     pub unavailable: Option<String>,
     pub signature: Option<String>,
 }
@@ -623,6 +627,7 @@ impl Renderer<'_> {
             }
             let result = self.signature(cgs, entry, symbol, cap);
             let signature = result.as_ref().ok().cloned();
+            let mut emitted_target = None;
             let unavailable = match result {
                 Ok(signature) => {
                     let seat = if matches!(
@@ -636,6 +641,7 @@ impl Renderer<'_> {
                     };
                     let method = capability_method_name(cgs, self.symbols, entry, cap);
                     let target = format!("{seat}.{method}");
+                    emitted_target = Some(target.clone());
                     let notes: Vec<String> = meaning
                         .lines()
                         .chain(
@@ -691,6 +697,8 @@ impl Renderer<'_> {
                 self.coverage.push(PythonCapabilityCoverage {
                     entry_id: entry.into(),
                     capability: cap.name.to_string(),
+                    entity_symbol: symbol.to_owned(),
+                    target: emitted_target,
                     unavailable,
                     signature,
                 });

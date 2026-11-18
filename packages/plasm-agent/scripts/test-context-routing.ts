@@ -137,6 +137,8 @@ for (const mixed of [false, true]) {
   }
   const decision = retained.routing.matching.matches.at(-1)!;
   decision.choice = "uncertain";
+  assert.throws(() => decodeRoutingPacket(JSON.stringify(retained)), AgentExecutionFailure);
+  decision.assessment = {verdict:"exclude", confidence:0.49, disposition:{warn:"qualified_key"}};
   assert.deepEqual(decodeRoutingPacket(JSON.stringify(retained)), retained);
   assert.deepEqual(routingExplanationLines(retained.routing.matching), []);
   const excluded = structuredClone(retained);
@@ -177,10 +179,18 @@ for (const corrupt of [
  (p:typeof packet)=>{p.routing.authorization.capabilities.matrix=[];},
  (p:typeof packet)=>{p.routing.closure!.business=[];},
 ]) { const changed=structuredClone(packet);corrupt(changed);assert.equal(routingPacketSchema.safeParse(changed).success,false); }
+const deferred = structuredClone(packet);
+deferred.routing.matching.matches[0]!.choice = "uncertain";
+deferred.routing.matching.matches[0]!.assessment = { verdict:"exclude", confidence:0.42, disposition:"defer" };
+assert.equal(routingPacketSchema.safeParse(deferred).success, false);
+deferred.routing.closure = null;
+deferred.teaching = null;
+assert.ok(routingPacketSchema.safeParse(deferred).success);
 const missing=structuredClone(packet);
 missing.routing.matching.matches[0]!.choice="unrelated";
+missing.routing.matching.matches[0]!.assessment = {verdict:"exclude", confidence:1, disposition:"exclude"};
 missing.routing.closure=null;missing.teaching=null;
-missing.routing.recovery={candidates:[{reference:missing.routing.retrieval.candidates[0]!.reference,choice:"unrelated"}],available_catalogs:[],guidance:"No relevant capabilities in this bounded packet."};
+missing.routing.recovery={candidates:[{reference:missing.routing.retrieval.candidates[0]!.reference,choice:"unrelated"}],guidance:"No relevant capabilities in this bounded packet."};
 assert.ok(routingPacketSchema.safeParse(missing).success);
 missing.routing.matching.matches[0]!.capability_id="unknown";
 assert.equal(routingPacketSchema.safeParse(missing).success,false,"malformed diagnostics fail validation without throwing");

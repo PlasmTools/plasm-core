@@ -72,7 +72,7 @@ impl<'a, C: DecisionCache> DecisionCheckpoint<'a, C> {
         &self,
         issued: P,
         fetch: F,
-    ) -> Result<String, DecisionProviderError>
+    ) -> Result<P::Response, DecisionProviderError>
     where
         P: DecisionPacket,
         F: FnOnce() -> Fut,
@@ -84,22 +84,21 @@ impl<'a, C: DecisionCache> DecisionCheckpoint<'a, C> {
         let owner = self.locks.claim(issued.cache_key()).await;
         let durable_owner = self.cache.claim(issued.cache_key()).await?;
         if let Some(raw) = self.cache.load(issued.cache_key()).await? {
-            issued
-                .validate_response(&raw)
-                .map_err(|error| matcher::online::ReceivedResponseFailure::new(&raw, error))?;
-            return Ok(raw);
+            return issued.validate_response(&raw).map_err(|error| {
+                matcher::online::ReceivedResponseFailure::new(&raw, error).into()
+            });
         }
         let raw = fetch().await?;
-        issued
+        let response = issued
             .validate_response(&raw)
             .map_err(|error| matcher::online::ReceivedResponseFailure::new(&raw, error))?;
         *pending = Some(PendingEnvelope {
             key: issued.cache_key().into(),
-            raw: raw.clone(),
+            raw,
             _owner: owner,
             durable_owner,
         });
-        Ok(raw)
+        Ok(response)
     }
 
     async fn vacant_slot(

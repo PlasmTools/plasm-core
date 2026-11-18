@@ -52,12 +52,13 @@
       "matches": [
         {
           "capability_id": "matrix/record_read",
-          "choice": "relevant"
+          "choice": "relevant",
+          "assessment": {"verdict": "include", "confidence": 0.95, "disposition": "teach"}
         }
       ]
     },
     "search": {
-      "policy": "whole-intent-luna-decisions-contract-assessment-v10",
+      "policy": "whole-intent-luna-selector-v34",
       "exposed": [],
       "considered": [{"catalog":"matrix","capability":"record_read"}],
       "unexplored": [],

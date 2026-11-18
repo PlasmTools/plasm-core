@@ -13,6 +13,41 @@ fn write(path: &std::path::Path, value: &impl Serialize) {
     std::fs::write(path, serde_json::to_vec(value).unwrap()).unwrap();
 }
 
+/// A whole-intent repetition cannot prove which requirement is unsupported.
+fn specifically_unresolved(text: &str, intent: &str, expected: &str) -> bool {
+    text.lines().any(|line| {
+        let Some((excerpt, _)) = line.trim().strip_prefix("- ").and_then(|v| {
+            v.split_once(": uncertain")
+                .or_else(|| v.split_once(": unresolved"))
+        }) else {
+            return false;
+        };
+        let excerpt = excerpt.trim();
+        !excerpt.eq_ignore_ascii_case(intent.trim())
+            && excerpt.to_lowercase().contains(&expected.to_lowercase())
+    })
+}
+
+#[test]
+fn specific_uncertainty_rejects_whole_intent_echo() {
+    let intent = "List shipments in nanograms and get an ability.";
+    assert!(!specifically_unresolved(
+        &format!("- {intent}: uncertain — no selection"),
+        intent,
+        "nanograms"
+    ));
+    assert!(specifically_unresolved(
+        "- shipments in nanograms: uncertain — no documented unit",
+        intent,
+        "nanograms"
+    ));
+    assert!(!specifically_unresolved(
+        "- an ability: uncertain — not established",
+        intent,
+        "nanograms"
+    ));
+}
+
 fn pipeline_deployments() -> DeploymentBindings {
     match std::env::var_os("PLASM_TEST_DEPLOYMENT_BINDINGS") {
         Some(path) => serde_json::from_slice(&std::fs::read(path).unwrap()).unwrap(),
@@ -267,7 +302,7 @@ async fn whole_intent_multivendor_mcp_live() {
         };
         let intent = case["intent"].as_str().unwrap();
         let envelopes: Vec<String> = sqlx::query_scalar(
-            "SELECT envelope FROM discovery_selector_cache WHERE position($1 in envelope) > 0",
+            "SELECT envelope FROM discovery_selector_cache WHERE envelope::jsonb ->> 'intent' = $1",
         )
         .bind(intent)
         .fetch_all(&pool)
@@ -290,9 +325,9 @@ async fn whole_intent_multivendor_mcp_live() {
             })
             .flat_map(|receipt| {
                 receipt
-                    .matching
-                    .selected(&receipt.retrieval)
+                    .closure
                     .into_iter()
+                    .flat_map(|closure| closure.business)
                     .map(|r| format!("{}/{}", r.catalog, r.capability))
                     .collect::<Vec<_>>()
             })
@@ -323,27 +358,28 @@ async fn whole_intent_multivendor_mcp_live() {
             if !receipts
                 .iter()
                 .filter_map(|r| r["intent_analysis"].as_str())
-                .flat_map(str::lines)
-                .any(|line| {
-                    line.to_lowercase().contains(unresolved)
-                        && line.to_lowercase().contains("unresolved")
-                })
+                .any(|analysis| specifically_unresolved(analysis, intent, unresolved))
             {
-                errors.push("uncertainty missing from receipt");
+                errors.push("specific uncertainty missing from receipt");
             }
-            let mcp_text = serde_json::to_string(&message["result"])
-                .unwrap()
-                .to_lowercase();
-            if !mcp_text.contains(unresolved) || !mcp_text.contains("unresolved") {
-                errors.push("uncertainty missing from MCP response");
+            let mcp_text = message
+                .pointer("/result/content")
+                .and_then(|v| v.as_array())
+                .into_iter()
+                .flatten()
+                .filter_map(|v| v.get("text").and_then(|v| v.as_str()))
+                .collect::<Vec<_>>()
+                .join("\n");
+            if !specifically_unresolved(&mcp_text, intent, unresolved) {
+                errors.push("specific uncertainty missing from MCP response");
             }
         } else if receipts
             .iter()
             .filter_map(|r| r["intent_analysis"].as_str())
             .flat_map(str::lines)
-            .any(|line| line.contains(": unresolved"))
+            .any(|line| line.contains(": unresolved") || line.contains(": uncertain"))
         {
-            errors.push("supported request falsely marked unresolved");
+            errors.push("complete request contains an unresolved or uncertain outcome");
         }
         if !errors.is_empty() {
             failures.push(case["id"].as_str().unwrap().to_owned());

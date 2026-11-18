@@ -55,7 +55,7 @@ function packetFor(id: Case): RoutingPacket {
       packet.teaching = null;
     }
     if (id === "native_recovery") routing.recovery = {
-      candidates: [{ reference: other, choice: "unrelated" }], available_catalogs: [],
+      candidates: [{ reference: other, choice: "unrelated" }],
       guidance: "No contribution was retained in this packet. Other candidates remain unexamined.",
     };
   }

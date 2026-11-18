@@ -16,10 +16,24 @@ export const prerequisiteClosureSchema = z.object({
   }).passthrough()),
 });
 
+const assessment = z.object({
+  verdict: z.enum(["include", "exclude", "uncertain", "uncertain_unit", "uncertain_output", "uncertain_constraint", "uncertain_input"]),
+  confidence: z.number().min(0).max(1),
+  disposition: z.union([
+    z.enum(["teach", "defer", "exclude"]),
+    z.object({ warn: z.enum(["model", "qualified_key", "parallel_key", "collection"]) }).strict(),
+  ]),
+}).strict();
+
 const match = z.object({
   capability_id: z.string().min(1),
   choice: z.enum(["relevant", "unrelated", "uncertain"]),
-}).strict();
+  assessment: assessment.optional(),
+}).strict().refine(({ choice, assessment }) => {
+  if (!assessment) return true;
+  const disposition = assessment.disposition;
+  return choice === (disposition === "teach" ? "relevant" : disposition === "exclude" ? "unrelated" : "uncertain");
+}, { message: "match choice disagrees with teaching disposition" });
 
 const scopeBudgetRetention = z.object({
   capability_id: z.string().min(1),
@@ -59,7 +73,7 @@ const routingSchema = z.object({
     budget_retained: z.array(scopeBudgetRetention).max(0).optional(),
   }).strict(),
   search: z.object({
-    policy: z.literal("whole-intent-luna-decisions-contract-assessment-v10"),
+    policy: z.literal("whole-intent-luna-selector-v34"),
     exposed: z.array(capability),
     considered: z.array(capability),
     unexplored: z.array(capability),
@@ -75,10 +89,6 @@ const routingSchema = z.object({
   closure: prerequisiteClosureSchema.nullable(),
   recovery: z.object({
     candidates: z.array(z.object({ reference: capability, choice: z.enum(["relevant", "unrelated", "uncertain"]) }).strict()),
-    available_catalogs: z.array(z.object({
-      entry_id: z.string().min(1),
-      description: z.string().min(1),
-    }).strict()),
     guidance: z.string().min(1),
   }).strict().optional().nullable(),
 }).strict().superRefine((routing, ctx) => {
@@ -94,7 +104,7 @@ const routingSchema = z.object({
     ctx.addIssue({code: "custom", path: ["matching", "budget_retained"],
       message: "budget outcomes must uniquely identify retained uncertain candidates"});
   }
-  const selected = matches.filter(m => m.choice !== "unrelated").flatMap(m => {
+  const selected = matches.filter(m => m.choice !== "unrelated" && m.assessment?.disposition !== "defer").flatMap(m => {
     const c = candidates.get(m.capability_id); return c ? [capabilityKey(c.reference)] : [];
   });
   if (candidates.size !== routing.retrieval.candidates.length
@@ -189,5 +199,5 @@ export function routingExplanationLines(matching: RoutingPacket["routing"]["matc
 export function routingRecoveryMarkdown(routing: RoutingPacket["routing"]): string | null {
   const recovery=routing.recovery;
   if (!recovery) return null;
-  return [recovery.guidance,...[...recovery.candidates].sort((a,b)=>capabilityKey(a.reference).localeCompare(capabilityKey(b.reference))).slice(0,3).map(c=>`- \`${c.reference.catalog}/${c.reference.capability}\`: ${c.choice}`),...recovery.available_catalogs.map(c=>`- \`${c.entry_id}\`: ${c.description}`)].join("\n\n");
+  return [recovery.guidance,...[...recovery.candidates].sort((a,b)=>capabilityKey(a.reference).localeCompare(capabilityKey(b.reference))).slice(0,3).map(c=>`- \`${c.reference.catalog}/${c.reference.capability}\`: ${c.choice}`)].join("\n\n");
 }

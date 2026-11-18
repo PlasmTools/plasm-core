@@ -1,4 +1,4 @@
-version: 38
+version: 39
 http_backend: https://api.github.com
 data_classes:
   untrusted:
@@ -694,6 +694,8 @@ entities:
         required: false
         value_ref: nv_wire_str_markdown
   User:
+    discovery:
+      names: [profile]
     id_field: login
     primary_read: user_get
     primary_query: repo_collaborators_query

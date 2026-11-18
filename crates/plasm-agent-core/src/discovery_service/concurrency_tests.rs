@@ -791,7 +791,7 @@ async fn hybrid_service_admits_vector_only_candidate() {
         .matches
         .iter()
         .any(|m| m.capability_id == candidate.id));
-    assert_eq!(transport.0.load(Ordering::SeqCst), 3);
+    assert_eq!(transport.0.load(Ordering::SeqCst), 1);
     let other = DiscoveryService::cached_test_service(DiscoveryStore::connect(&url).await.unwrap());
     let reused = other
         .route_cached(&key, &[], || async {

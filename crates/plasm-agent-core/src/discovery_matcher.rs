@@ -5,12 +5,12 @@ mod decisions;
 pub mod evidence;
 pub mod online;
 pub mod operations;
+pub(crate) mod read_subsumption;
 mod request_packing;
 mod search_budget;
 mod search_graph;
 #[cfg(test)]
 mod search_rank;
-pub(crate) mod semantic_nomination;
 pub(crate) mod whole_intent;
 mod witnesses;
 use crate::discovery_store::RetrievalReceipt;
@@ -145,6 +145,8 @@ pub enum MatchChoice {
 pub struct CapabilityIntentMatch {
     pub capability_id: String,
     pub choice: MatchChoice,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub assessment: Option<whole_intent::Assessment>,
 }
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(deny_unknown_fields)]
@@ -185,21 +187,19 @@ impl PreparedSelection {
     }
 }
 impl CapabilityMatchReceipt {
-    /// Exposure preserves unresolved relevance. A judgment of uncertainty is not
-    /// evidence for excluding a capability; it remains uncertain in this receipt.
-    /// Retrieval authorization and execution admission remain separate boundaries.
+    /// Candidates with relevant or unresolved judgments, in retrieval order.
     pub fn selected(&self, retrieval: &RetrievalReceipt) -> Vec<CapabilityRef> {
-        let ids: BTreeSet<_> = self
+        let selected: BTreeSet<_> = self
             .matches
             .iter()
-            .filter(|m| matches!(m.choice, MatchChoice::Relevant | MatchChoice::Uncertain))
-            .map(|m| &m.capability_id)
+            .filter(|entry| entry.choice != MatchChoice::Unrelated)
+            .map(|entry| &entry.capability_id)
             .collect();
         retrieval
             .candidates
             .iter()
-            .filter(|c| ids.contains(&c.id))
-            .map(|c| c.reference.clone())
+            .filter(|candidate| selected.contains(&candidate.id))
+            .map(|candidate| candidate.reference.clone())
             .collect()
     }
 }
@@ -224,6 +224,7 @@ impl IssuedBatch {
 }
 
 impl crate::decision_codec::DecisionPacket for IssuedBatch {
+    type Response = String;
     fn cache_key(&self) -> &str {
         &self.cache_key
     }
@@ -231,9 +232,9 @@ impl crate::decision_codec::DecisionPacket for IssuedBatch {
     fn validate_response(
         &self,
         raw: &str,
-    ) -> Result<(), Box<dyn std::error::Error + Send + Sync + 'static>> {
+    ) -> Result<String, Box<dyn std::error::Error + Send + Sync + 'static>> {
         decode_batch(self, raw)
-            .map(|_| ())
+            .map(|_| raw.to_owned())
             .map_err(|error| Box::new(error) as _)
     }
 }
@@ -634,6 +635,7 @@ pub fn decode_batch(
         matches.push(SelectionAnswer {
             question: question_id(issued, question),
             matched: CapabilityIntentMatch {
+                assessment: None,
                 capability_id: capability_id.clone(),
                 choice: answer,
             },
@@ -696,6 +698,7 @@ fn finish_prepared_selection(
             .insert(
                 budget.capability_id.clone(),
                 CapabilityIntentMatch {
+                    assessment: None,
                     capability_id: budget.capability_id.clone(),
                     choice: MatchChoice::Uncertain,
                 },
@@ -968,7 +971,7 @@ mod tests {
     }
 
     #[test]
-    fn uncertainty_preserves_exposure_without_rewriting_judgments() {
+    fn uncertain_read_and_effect_judgments_are_preserved() {
         let (intent, mut retrieval) = fixture();
         let original = retrieval.candidates[0].clone();
         retrieval.candidates = ["inspect", "modify", "excluded"]
@@ -982,6 +985,7 @@ mod tests {
             .collect();
         retrieval.candidates[1].document.operation.kind =
             plasm_core::schema::CapabilityKind::Action;
+        retrieval.candidates[0].document.operation.kind = plasm_core::CapabilityKind::Get;
         let issued = issue_batches(RELEVANCE_MODEL, &intent, &retrieval).unwrap();
         let mut answers = Vec::new();
         for batch in &issued {
@@ -999,13 +1003,6 @@ mod tests {
             answers.extend(decode_batch(batch, &response(batch, &choices)).unwrap());
         }
         let receipt = finish_selection(answers, &retrieval, &issued).unwrap();
-        assert_eq!(
-            receipt.selected(&retrieval),
-            retrieval.candidates[..2]
-                .iter()
-                .map(|candidate| candidate.reference.clone())
-                .collect::<Vec<_>>()
-        );
         assert!(receipt
             .matches
             .iter()

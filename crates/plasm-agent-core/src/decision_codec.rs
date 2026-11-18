@@ -7,11 +7,12 @@ use thiserror::Error;
 /// A provider packet owns both its cache identity and its response binding.
 /// The checkpoint layer never interprets semantic choices or candidate IDs.
 pub(crate) trait DecisionPacket {
+    type Response;
     fn cache_key(&self) -> &str;
     fn validate_response(
         &self,
         raw: &str,
-    ) -> Result<(), Box<dyn std::error::Error + Send + Sync + 'static>>;
+    ) -> Result<Self::Response, Box<dyn std::error::Error + Send + Sync + 'static>>;
 }
 
 #[derive(Debug, Error)]
@@ -48,6 +49,8 @@ const MAX_ROUNDED_PROBABILITY_DRIFT: f64 = 0.011;
 
 #[derive(Deserialize)]
 struct ChoiceEnvelope {
+    #[serde(default)]
+    usage: Option<serde_json::Value>,
     model: String,
     provider: String,
     #[serde(deserialize_with = "unique_map")]
@@ -65,10 +68,11 @@ struct ChoiceAnswer {
     probabilities: BTreeMap<String, f64>,
 }
 
-/// Validated provider choice. Auxiliary scores are validated, but only the choice
-/// participates in contribution classification; raw provider evidence is retained.
+/// Validated provider choice and confidence. Raw provider evidence is retained.
 pub(crate) struct ValidatedChoice {
     pub choice: String,
+    pub confidence: f64,
+    pub probabilities: BTreeMap<String, f64>,
 }
 
 /// Match an issued model alias or its eight-digit dated revision.
@@ -104,6 +108,14 @@ pub(crate) fn decode_choice_sets(
     questions: &BTreeMap<String, Vec<&str>>,
     raw: &str,
 ) -> Result<BTreeMap<String, ValidatedChoice>, ProviderResponseError> {
+    Ok(decode_with_usage(model, questions, raw)?.0)
+}
+
+pub(crate) fn decode_with_usage(
+    model: &str,
+    questions: &BTreeMap<String, Vec<&str>>,
+    raw: &str,
+) -> Result<(BTreeMap<String, ValidatedChoice>, Option<u64>), ProviderResponseError> {
     let envelope: ChoiceEnvelope =
         serde_json::from_str(raw).map_err(ProviderResponseError::MalformedEnvelope)?;
     if !model_matches(model, &envelope.model) {
@@ -120,7 +132,7 @@ pub(crate) fn decode_choice_sets(
     {
         return Err(ProviderResponseError::AnswerSetMismatch);
     }
-    envelope
+    let answers = envelope
         .answers
         .into_iter()
         .map(|(question, answer)| {
@@ -155,10 +167,16 @@ pub(crate) fn decode_choice_sets(
                 question,
                 ValidatedChoice {
                     choice: answer.choice,
+                    confidence: answer.confidence,
+                    probabilities: answer.probabilities,
                 },
             ))
         })
-        .collect()
+        .collect::<Result<_, _>>()?;
+    let tokens = envelope
+        .usage
+        .and_then(|v| v.get("input_tokens").and_then(serde_json::Value::as_u64));
+    Ok((answers, tokens))
 }
 
 pub(crate) trait DecisionCodec {

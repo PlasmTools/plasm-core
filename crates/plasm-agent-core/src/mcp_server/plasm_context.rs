@@ -897,10 +897,27 @@ impl PlasmMcpHandler {
         if learning_pending {
             text.push_str("\nOptional teaching is being prepared and will appear on a later session response when ready.\n");
         }
-        if let Some(session) = routed_host
-            .get_execute_session(&out.prompt_hash, &out.session_id)
+        let current_session = routed_host
+            .try_get_execute_session(&out.prompt_hash, &out.session_id)
             .await
+            .map_err(|error| {
+                ToolFailure::rejected(format!("cannot load committed teaching session: {error}"))
+            })?;
+        if route
+            .matching
+            .matches
+            .iter()
+            .any(|m| m.choice == crate::discovery_matcher::MatchChoice::Uncertain)
+            && current_session
+                .as_ref()
+                .and_then(|s| s.teaching_exposure.as_ref())
+                .is_none()
         {
+            return Err(ToolFailure::rejected(
+                "uncertain capabilities cannot be verified without committed teaching state",
+            ));
+        }
+        if let Some(session) = current_session {
             if let Some(exposure) = &session.teaching_exposure {
                 let catalogs = session
                     .contexts_by_entry
@@ -908,6 +925,93 @@ impl PlasmMcpHandler {
                     .map(|(id, ctx)| (id.clone(), ctx.cgs.as_ref()))
                     .collect();
                 let symbols = exposure.to_symbol_map();
+                if route
+                    .matching
+                    .matches
+                    .iter()
+                    .any(|m| m.choice == crate::discovery_matcher::MatchChoice::Uncertain)
+                {
+                    let snapshot = plasm_core::prompt_render::python::prepare_python_teaching_wave(
+                        exposure,
+                        &session.python_teaching,
+                    )
+                    .map_err(|error| {
+                        ToolFailure::rejected(format!(
+                            "cannot verify uncertain capability teaching: {error}"
+                        ))
+                    })?;
+                    if snapshot.language.is_some() || !snapshot.declarations.trim().is_empty() {
+                        return Err(ToolFailure::rejected(
+                            "uncertain capability teaching does not match the committed session",
+                        ));
+                    }
+                    let mut warnings = Vec::new();
+                    for item in
+                        route.matching.matches.iter().filter(|m| {
+                            m.choice == crate::discovery_matcher::MatchChoice::Uncertain
+                        })
+                    {
+                        let candidate = route
+                            .retrieval
+                            .candidates
+                            .iter()
+                            .find(|c| c.id == item.capability_id)
+                            .ok_or_else(|| {
+                                ToolFailure::rejected(
+                                    "uncertain match is missing from pinned retrieval",
+                                )
+                            })?;
+                        let reference = &candidate.reference;
+                        let mut matches = snapshot.capabilities.iter().filter(|c| {
+                            c.entry_id == reference.catalog && c.capability == reference.capability
+                        });
+                        let Some(coverage) = matches.next() else {
+                            // Deferred judgments do not require a declaration. If the
+                            // capability was taught in this or an earlier wave, verify it.
+                            if !closure.business.contains(reference)
+                                && !closure.input_sources.contains(reference)
+                                && !closure.prerequisites.contains(reference)
+                                && !route.search.exposed.contains(reference)
+                                && route
+                                    .search
+                                    .deferred
+                                    .iter()
+                                    .any(|d| &d.reference == reference)
+                            {
+                                continue;
+                            }
+                            return Err(ToolFailure::rejected(format!(
+                                "uncertain capability {}/{} has no teaching coverage",
+                                reference.catalog, reference.capability
+                            )));
+                        };
+                        if matches.next().is_some() {
+                            return Err(ToolFailure::rejected(
+                                "duplicate uncertain capability teaching coverage",
+                            ));
+                        }
+                        let seat =
+                            match (&coverage.target, &coverage.signature, &coverage.unavailable) {
+                                (Some(target), Some(_), None) => target.clone(),
+                                (None, None, Some(_)) => {
+                                    "not available in the teaching surface".to_owned()
+                                }
+                                _ => {
+                                    return Err(ToolFailure::rejected(
+                                        "uncertain capability teaching coverage is inconsistent",
+                                    ))
+                                }
+                            };
+                        warnings.push(format!(
+                            "- {}/{} — {}: uncertain",
+                            reference.catalog, reference.capability, seat
+                        ));
+                    }
+                    if !warnings.is_empty() {
+                        text.push_str("\n\nUncertain discovered capabilities (not confirmed relevant; normal execution safeguards apply):\n");
+                        text.push_str(&warnings.join("\n"));
+                    }
+                }
                 let guidance = plasm_core::prompt_render::render_prerequisite_bindings(
                     closure,
                     &catalogs,

@@ -5,6 +5,8 @@ use serde::Serialize;
 use std::collections::BTreeMap;
 
 pub(crate) const ENDPOINT: &str = "https://openrouter.ai/api/alpha/decisions";
+/// Luna Decisions accepts at most 200 questions in one request.
+pub(super) const MAX_QUESTIONS: usize = 200;
 
 #[derive(Serialize)]
 pub(super) struct Request<'a> {

@@ -41,11 +41,11 @@ export async function checkSessionExtension(observe: (intent: string) => Promise
             }]
           },
           matching: {matches},
-          search: {policy: "whole-intent-luna-decisions-contract-assessment-v10",
+          search: {policy: "whole-intent-luna-selector-v34",
             exposed: [],
             considered: [{catalog:"matrix",capability:"read"}], unexplored: [], deferred: [],
             requests: 1, input_bytes: 1000, reported_input_tokens: 200, missing_usage: 0},
-          recovery: insufficient ? {candidates:[{reference:{catalog:"matrix",capability:"read"},choice:"unrelated"}],available_catalogs:[],guidance:"No relevant capability in this bounded packet."}:null,
+          recovery: insufficient ? {candidates:[{reference:{catalog:"matrix",capability:"read"},choice:"unrelated"}],guidance:"No relevant capability in this bounded packet."}:null,
           closure: insufficient ? (sessionId ? { business: [], input_sources: [], prerequisites: [], acquisitions: [], edges: [] } : null) : { business: [{ catalog: "matrix", capability: "read" }], input_sources: [], prerequisites: [], acquisitions: [], edges: [] },
         },
         teaching: insufficient ? (sessionId ? { prompt: "", declarations_changed: false, delta_refs: [] } : null) : { prompt: "e1\tRecord", declarations_changed: true, delta_refs: ["matrix:Record"] },

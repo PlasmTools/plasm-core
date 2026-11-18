@@ -1,0 +1,103 @@
+[
+  {
+    "expected": [
+      "github/user_get",
+      "graphqlzero/album_get"
+    ],
+    "id": "excluded",
+    "intent": "Read the GitHub user antirez and GraphQLZero album 11. Do not fetch Hacker News user sctb."
+  },
+  {
+    "expected": [
+      "graphqlzero/album_get",
+      "github/user_get"
+    ],
+    "id": "negative_reference",
+    "intent": "Get the GraphQLZero album 26 and GitHub user yyx990803. Skip the Hacker News user pg."
+  },
+  {
+    "expected": [
+      "hackernews/user_get",
+      "github/user_get"
+    ],
+    "id": "keyed",
+    "intent": "Read the Hacker News profile of tptacek and the GitHub profile of mojombo."
+  },
+  {
+    "expected": [
+      "graphqlzero/album_query",
+      "github/user_get"
+    ],
+    "id": "collection",
+    "intent": "List GraphQLZero albums and get the GitHub profile of octocat."
+  },
+  {
+    "expected": [
+      "graphqlzero/album_query",
+      "graphqlzero/album_get",
+      "hackernews/user_get"
+    ],
+    "id": "both",
+    "intent": "List GraphQLZero albums, read GraphQLZero album 17 by ID, and read the Hacker News user dang."
+  },
+  {
+    "expected": [
+      "dispatch_fixture/shipment_list",
+      "dispatch_fixture/shipment_weight",
+      "github/user_get"
+    ],
+    "id": "unit",
+    "intent": "List shipments and fetch their weights in ounces; also get the GitHub user torvalds.",
+    "unresolved": "measurement unit"
+  },
+  {
+    "expected": [
+      "graphqlzero/photo_get",
+      "github/user_get"
+    ],
+    "id": "fresh_number",
+    "intent": "Fetch GraphQLZero photo 91 and the GitHub user tj. Omit Hacker News user pg."
+  },
+  {
+    "expected": [
+      "graphqlzero/post_query",
+      "hackernews/user_get"
+    ],
+    "id": "fresh_collection",
+    "intent": "List GraphQLZero posts and read the Hacker News user dang."
+  },
+  {
+    "expected": [
+      "dispatch_fixture/shipment_list",
+      "dispatch_fixture/shipment_weight",
+      "hackernews/user_get"
+    ],
+    "id": "fresh_partial",
+    "intent": "Show shipments and their weights in carats, and fetch the Hacker News user sctb.",
+    "unresolved": "measurement unit"
+  },
+  {
+    "expected": [
+      "github/user_get",
+      "hackernews/user_get"
+    ],
+    "id": "paired_profiles",
+    "intent": "Fetch the GitHub profile of sindresorhus and the Hacker News profile of dang."
+  },
+  {
+    "expected": [
+      "graphqlzero/photo_query",
+      "github/user_get"
+    ],
+    "id": "enumerate_photos",
+    "intent": "List GraphQLZero photos and read the GitHub user matz."
+  },
+  {
+    "expected": [
+      "omdb/movie_get",
+      "graphqlzero/album_get"
+    ],
+    "id": "specific_movie",
+    "intent": "Retrieve the OMDb film with IMDb ID tt0068646 and GraphQLZero album 54."
+  }
+]

@@ -503,6 +503,7 @@ impl DecisionBatch {
 }
 
 impl crate::decision_codec::DecisionPacket for DecisionBatch {
+    type Response = String;
     fn cache_key(&self) -> &str {
         &self.cache_key
     }
@@ -510,9 +511,9 @@ impl crate::decision_codec::DecisionPacket for DecisionBatch {
     fn validate_response(
         &self,
         raw: &str,
-    ) -> Result<(), Box<dyn std::error::Error + Send + Sync + 'static>> {
+    ) -> Result<String, Box<dyn std::error::Error + Send + Sync + 'static>> {
         self.decode(raw)
-            .map(|_| ())
+            .map(|_| raw.to_owned())
             .map_err(|error| Box::new(error) as _)
     }
 }
