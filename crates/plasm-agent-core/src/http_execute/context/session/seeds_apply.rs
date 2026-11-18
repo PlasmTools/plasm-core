@@ -243,6 +243,7 @@ async fn apply_capability_seeds_with_presentation(
     plasm_context_intent: &str,
     declarations_only_context: bool,
 ) -> Result<ApplyCapabilitySeedsOutcome, super::SessionMutateError> {
+    let started = std::time::Instant::now();
     let seeds = normalize_capability_seeds(seeds);
 
     let ResolvedExecuteBinding {
@@ -352,6 +353,7 @@ async fn apply_capability_seeds_with_presentation(
         }
     });
 
+    let config_done = std::time::Instant::now();
     let mut waves = Vec::new();
     let mut new_symbol_space = false;
     let mut symbol_space_reset = false;
@@ -523,6 +525,7 @@ async fn apply_capability_seeds_with_presentation(
         }
     }
 
+    let primary_done = std::time::Instant::now();
     let skip_primary_open = binding.is_none() && waves.iter().any(|w| w.mode == "open");
     // Isolate the commit/materialization future from the context orchestration frame.
     let federate_expand_waves = Box::pin(commit_federate_and_expand_waves(
@@ -537,6 +540,13 @@ async fn apply_capability_seeds_with_presentation(
         bindings_ref,
     ))
     .await?;
+    tracing::info!(
+        session = ?logical_session_id,
+        seed_config_ms = (config_done - started).as_millis() as u64,
+        primary_ms = (primary_done - config_done).as_millis() as u64,
+        federate_ms = primary_done.elapsed().as_millis() as u64,
+        "capability waves committed"
+    );
     waves.extend(federate_expand_waves);
 
     if waves.len() > 1

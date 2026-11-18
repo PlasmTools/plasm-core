@@ -687,6 +687,7 @@ impl PlasmMcpHandler {
             "MCP plasm_context: Plasm execute binding before apply_capability_seeds (false means open path; true means expand/federate against existing prompt_hash/session)"
         );
         let context_span = crate::spans::mcp_tool_plasm_context(logical_session_ref.as_str());
+        let churn_start = std::time::Instant::now();
         let mut session_churn: Option<crate::http_execute::SessionChurnAdvisory> = None;
         if session_mode == PlasmContextSessionMode::New {
             if let Some(adv) = crate::http_execute::format_session_churn_advisory(
@@ -701,6 +702,7 @@ impl PlasmMcpHandler {
                 session_churn = Some(adv);
             }
         }
+        let churn_end = std::time::Instant::now();
         if supplemental_only {
             let latest = store
                 .intent_provenance(&ls_key)
@@ -746,6 +748,7 @@ impl PlasmMcpHandler {
                 ));
             }
         }
+        let waves_start = std::time::Instant::now();
         let out: ApplyCapabilitySeedsOutcome = apply_capability_seeds_for_mcp(
             &routed_host,
             principal_incoming.as_ref(),
@@ -762,6 +765,7 @@ impl PlasmMcpHandler {
         .await
         .map_err(|err| ToolFailure::cause(std::io::Error::other(err.to_string())))?;
 
+        let waves_end = std::time::Instant::now();
         if out.stale_execute_binding_recovered {
             self.plasm.trace_hub.finalize_mcp_session(&ls_key).await;
         }
@@ -904,12 +908,14 @@ impl PlasmMcpHandler {
         if learning_pending {
             text.push_str("\nOptional teaching is being prepared and will appear on a later session response when ready.\n");
         }
+        let metadata_start = std::time::Instant::now();
         let current_session = routed_host
             .try_get_execute_session(&out.prompt_hash, &out.session_id)
             .await
             .map_err(|error| {
                 ToolFailure::rejected(format!("cannot load committed teaching session: {error}"))
             })?;
+        let session_read_end = std::time::Instant::now();
         if route
             .matching
             .matches
@@ -1164,6 +1170,11 @@ impl PlasmMcpHandler {
             routing_ms = routing_elapsed.as_millis() as u64,
             routed_catalog_ms = route_view_elapsed.as_millis() as u64,
             teaching_and_session_ms = (route_view_started.elapsed() - route_view_elapsed).as_millis() as u64,
+            peer_lookup_ms = (churn_end - churn_start).as_millis() as u64,
+            waves_ms = (waves_end - waves_start).as_millis() as u64,
+            bind_and_trace_ms = (metadata_start - waves_end).as_millis() as u64,
+            committed_read_ms = (session_read_end - metadata_start).as_millis() as u64,
+            metadata_ms = session_read_end.elapsed().as_millis() as u64,
             total_ms = started.elapsed().as_millis() as u64,
             "discovery context served"
         );
