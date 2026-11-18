@@ -224,6 +224,23 @@ pub(crate) async fn build_durable_exposure_snapshot(
     encode_durable_exposure_snapshot(session, catalog_cgs_hashes_by_entry).await
 }
 
+/// Pin the exact materializations in the session being published.
+pub(crate) async fn snapshot_materialized_exposure(
+    session: &ExecuteSession,
+) -> Result<DurableExposureSnapshot, ExecuteSessionPersistError> {
+    let pins = session
+        .contexts_by_entry
+        .iter()
+        .map(|(entry, context)| {
+            (
+                entry.clone(),
+                EffectiveCatalogHash::from_effective_cgs(&context.cgs),
+            )
+        })
+        .collect();
+    encode_durable_exposure_snapshot(session, pins).await
+}
+
 /// Encode ledger bytes using existing effective pins (no per-entry rematerialize).
 pub(crate) async fn build_durable_exposure_snapshot_reusing_pins(
     session: &ExecuteSession,

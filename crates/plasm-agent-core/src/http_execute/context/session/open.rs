@@ -7,6 +7,12 @@ use super::super::seeds::{
     build_capability_exposure_plan, dedup_preserve_arrival_order, process_order_for_expand_group,
     seeds_fully_exposed, sorted_entity_set_for_reuse_key, STALE_EXECUTE_BINDING_NOTICE,
 };
+/// New federated sessions publish the primary and additional teaching waves together.
+pub(crate) struct OpeningFederation<'a> {
+    pub plan: &'a super::super::seeds::CapabilityExposurePlan,
+    pub waves: &'a mut Vec<CapabilityWaveOutcome>,
+}
+
 #[allow(clippy::too_many_arguments)]
 pub(crate) async fn execute_session_create_response_inner(
     st: &PlasmHostState,
@@ -18,6 +24,7 @@ pub(crate) async fn execute_session_create_response_inner(
     restored_teaching_exposure: Option<plasm_core::TeachingExposureSession>,
     symbol_space_reset: bool,
     flow_policy_scope: Option<(&str, &str, &str)>,
+    federation: Option<OpeningFederation<'_>>,
 ) -> Result<CreateExecuteSessionResponse, super::SessionMutateError> {
     if body.entities.is_empty() {
         crate::metrics::record_execute_session_outcome("error", "empty_entities");
@@ -135,8 +142,8 @@ pub(crate) async fn execute_session_create_response_inner(
             }
             let refs: Vec<&str> = names.iter().map(|s| s.as_str()).collect();
             let delta = st.capability_surface_for_wave(cgs.as_ref(), &body.entry_id, &names)?;
-            let built = plasm_core::TeachingExposureSession::new_with_intent_delta(
-                cgs.as_ref(),
+            let built = plasm_core::TeachingExposureSession::from_shared_intent_delta(
+                &cgs,
                 &body.entry_id,
                 &refs,
                 delta,
@@ -240,6 +247,22 @@ pub(crate) async fn execute_session_create_response_inner(
             .materialized_outbound_hosted_kv_by_entry
             .insert(body.entry_id.clone(), kv.to_string());
     }
+    if let Some(federation) = federation {
+        for entry in federation.plan.process_order.iter().skip(1) {
+            let prepared = super::federate::prepare_federate_wave(
+                st,
+                entry.clone(),
+                federation.plan.seeds_by_entry[entry].clone(),
+                body.principal.clone(),
+                outbound_hosted_kv_by_entry,
+                bindings_by_entry,
+            )
+            .await?;
+            let (next, wave) = super::federate::stage_federate_wave(st, session, prepared)?;
+            session = next;
+            federation.waves.push(wave);
+        }
+    }
     st.store_execute_session(
         reuse_key,
         prompt_hash_str.clone(),
@@ -267,6 +290,8 @@ pub async fn execute_session_create_response(
     principal: Option<&crate::incoming_auth::TenantPrincipal>,
     body: CreateExecuteSessionBody,
 ) -> Result<CreateExecuteSessionResponse, super::SessionMutateError> {
-    execute_session_create_response_inner(st, principal, body, true, None, None, None, false, None)
-        .await
+    execute_session_create_response_inner(
+        st, principal, body, true, None, None, None, false, None, None,
+    )
+    .await
 }

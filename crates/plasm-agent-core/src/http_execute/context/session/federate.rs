@@ -95,15 +95,6 @@ async fn commit_federate_wave_inner(
     session_id: &str,
     prepared: PreparedFederateWave,
 ) -> Result<CapabilityWaveOutcome, super::SessionMutateError> {
-    let PreparedFederateWave {
-        ctx_arc,
-        registry_pin,
-        new_entry_id,
-        names,
-        entry_bindings,
-        materialized_outbound_hosted_kv,
-    } = prepared;
-
     let prompt_hash_p: PromptHashHex = prompt_hash
         .parse()
         .map_err(|_| super::SessionMutateError::InvalidPromptHash)?;
@@ -117,7 +108,25 @@ async fn commit_federate_wave_inner(
     else {
         return Err(super::SessionMutateError::UnknownOrExpiredSession);
     };
-    let mut sess = (*sess_arc).clone();
+    let (session, wave) = stage_federate_wave(st, (*sess_arc).clone(), prepared)?;
+    st.replace_execute_session(prompt_hash_p.as_str(), session_id_p.as_str(), session)
+        .await?;
+    Ok(wave)
+}
+
+pub(super) fn stage_federate_wave(
+    st: &PlasmHostState,
+    mut sess: ExecuteSession,
+    prepared: PreparedFederateWave,
+) -> Result<(ExecuteSession, CapabilityWaveOutcome), super::SessionMutateError> {
+    let PreparedFederateWave {
+        ctx_arc,
+        registry_pin,
+        new_entry_id,
+        names,
+        entry_bindings,
+        materialized_outbound_hosted_kv,
+    } = prepared;
 
     if sess.contexts_by_entry.contains_key(&new_entry_id) {
         return Err(super::SessionMutateError::CatalogAlreadyIncluded {
@@ -164,10 +173,7 @@ async fn commit_federate_wave_inner(
     );
 
     let relation_keys = exp.relation_endpoint_keys_for_wave(new_entry_id.as_str(), &names);
-    let committed = super::commit::commit_exposure_wave_delta(
-        st,
-        &prompt_hash_p,
-        &session_id_p,
+    let (session, committed) = super::commit::stage_exposure_wave_delta(
         sess,
         exp,
         super::commit::ExposureWaveSnapshot {
@@ -176,20 +182,22 @@ async fn commit_federate_wave_inner(
             entity_count_before: n0,
             relation_keys,
         },
-    )
-    .await?;
+    )?;
 
     let teaching_prompt_chars_added = committed.markdown.chars().count() as u64;
     let reused_session = committed.surface_unchanged && committed.markdown.trim().is_empty();
-    Ok(CapabilityWaveOutcome {
-        mode: "federate".to_string(),
-        entry_id: new_entry_id,
-        entities: names,
-        markdown_delta: committed.markdown,
-        reused_session,
-        teaching_prompt_chars_added,
-        relations_delta: committed.relations_delta,
-    })
+    Ok((
+        session,
+        CapabilityWaveOutcome {
+            mode: "federate".to_string(),
+            entry_id: new_entry_id,
+            entities: names,
+            markdown_delta: committed.markdown,
+            reused_session,
+            teaching_prompt_chars_added,
+            relations_delta: committed.relations_delta,
+        },
+    ))
 }
 
 /// Append another registry row’s [`plasm_core::CgsContext`] to an existing execute session (same

@@ -355,6 +355,7 @@ async fn apply_capability_seeds_with_presentation(
 
     let config_done = std::time::Instant::now();
     let mut waves = Vec::new();
+    let mut opening_waves = Vec::new();
     let mut new_symbol_space = false;
     let mut symbol_space_reset = false;
     let (prompt_hash, session_id, binding_updated) = if let Some((ph, sid)) = &binding {
@@ -379,6 +380,12 @@ async fn apply_capability_seeds_with_presentation(
         symbol_space_reset = ledger_reset;
         let had_restored_ledger = restored_exposure.is_some();
 
+        let federation = (!had_restored_ledger && plan.process_order.len() > 1).then_some(
+            super::open::OpeningFederation {
+                plan: &plan,
+                waves: &mut opening_waves,
+            },
+        );
         let created = if let Some(uuid) = logical_session_id {
             st.session_coordination
                 .with_logical_open(uuid, || async {
@@ -409,6 +416,7 @@ async fn apply_capability_seeds_with_presentation(
                         restored_exposure,
                         symbol_space_reset,
                         flow_policy_scope,
+                        federation,
                     )
                     .await?;
                     st.logical_execute_bindings
@@ -428,6 +436,7 @@ async fn apply_capability_seeds_with_presentation(
                 restored_exposure,
                 symbol_space_reset,
                 flow_policy_scope,
+                federation,
             )
             .await?
         };
@@ -528,18 +537,22 @@ async fn apply_capability_seeds_with_presentation(
     let primary_done = std::time::Instant::now();
     let skip_primary_open = binding.is_none() && waves.iter().any(|w| w.mode == "open");
     // Isolate the commit/materialization future from the context orchestration frame.
-    let federate_expand_waves = Box::pin(commit_federate_and_expand_waves(
-        st,
-        principal_incoming,
-        prompt_hash.as_str(),
-        session_id.as_str(),
-        &plan,
-        skip_primary_open,
-        principal.clone(),
-        outbound_ref,
-        bindings_ref,
-    ))
-    .await?;
+    let federate_expand_waves = if opening_waves.is_empty() {
+        Box::pin(commit_federate_and_expand_waves(
+            st,
+            principal_incoming,
+            prompt_hash.as_str(),
+            session_id.as_str(),
+            &plan,
+            skip_primary_open,
+            principal.clone(),
+            outbound_ref,
+            bindings_ref,
+        ))
+        .await?
+    } else {
+        opening_waves
+    };
     tracing::info!(
         session = ?logical_session_id,
         seed_config_ms = (config_done - started).as_millis() as u64,

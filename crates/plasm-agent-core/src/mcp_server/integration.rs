@@ -270,7 +270,10 @@ impl MatrixPcNFixture {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn mcp_apply_capability_seeds_federates_multi_catalog_and_dry_runs_distinct_e_symbols() {
-    let st = Arc::new(matrix_federated_host());
+    let mut host = matrix_federated_host();
+    host.oss.execute_session_registry =
+        crate::mcp_transport_store::ExecuteSessionRegistry::with_test_json_store().0;
+    let st = Arc::new(host);
     let seeds = vec![
         CapabilitySeed {
             entry_id: "langmatrix_a".into(),
@@ -304,6 +307,8 @@ async fn mcp_apply_capability_seeds_federates_multi_catalog_and_dry_runs_distinc
     assert!(distinct_catalogs.contains("langmatrix_a"));
     assert!(distinct_catalogs.contains("langmatrix_b"));
 
+    // Exercise the first published descriptor as another replica would.
+    st.sessions.remove_by_strs(&out.prompt_hash, &out.session_id).await;
     let es = st
         .get_execute_session(&out.prompt_hash, &out.session_id)
         .await

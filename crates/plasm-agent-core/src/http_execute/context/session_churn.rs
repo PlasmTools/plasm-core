@@ -56,9 +56,12 @@ pub(crate) async fn format_session_churn_advisory(
     }
     let recent = st
         .logical_sessions
-        .recent_sessions_for_tenant(tenant_scope, except)
+        .recent_session_ids_for_tenant(tenant_scope, except)
         .await;
-    for rec in recent.into_iter().rev() {
+    for id in recent {
+        let Some(rec) = st.logical_sessions.get(id).await else {
+            continue;
+        };
         let Some(pair) = st
             .logical_execute_bindings
             .get(&rec.logical_session_id.as_uuid())

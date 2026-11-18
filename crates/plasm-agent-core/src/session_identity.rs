@@ -336,30 +336,22 @@ impl LogicalSessionRegistry {
         self.load_session_from_redis(id.0).await
     }
 
-    /// Recent logical sessions for this tenant (newest last), excluding `except`.
-    pub async fn recent_sessions_for_tenant(
+    /// Candidate peers, newest first. Inspecting the index does not renew unrelated sessions.
+    pub(crate) async fn recent_session_ids_for_tenant(
         &self,
         tenant_scope: &str,
         except: Option<LogicalSessionId>,
-    ) -> Vec<LogicalSessionRecord> {
-        let ids: Vec<Uuid> = {
-            let g = self.inner.read().await;
-            g.recent_by_tenant
-                .get(tenant_scope)
-                .map(|q| q.iter().copied().collect())
-                .unwrap_or_default()
-        };
-        let except_uuid = except.map(|x| x.0);
-        let mut out = Vec::new();
-        for id in ids {
-            if except_uuid == Some(id) {
-                continue;
-            }
-            if let Some(rec) = self.get(LogicalSessionId(id)).await {
-                out.push(rec);
-            }
-        }
-        out
+    ) -> Vec<LogicalSessionId> {
+        let g = self.inner.read().await;
+        g.recent_by_tenant
+            .get(tenant_scope)
+            .into_iter()
+            .flatten()
+            .rev()
+            .copied()
+            .map(LogicalSessionId)
+            .filter(|id| Some(*id) != except)
+            .collect()
     }
 
     /// Verify the logical session exists and belongs to this tenant scope.

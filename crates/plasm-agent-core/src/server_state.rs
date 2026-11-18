@@ -548,21 +548,8 @@ impl PlasmHostState {
             .reuse_key_for_execute_pair(prompt_hash, session_id)
             .await
             .ok_or(ExecuteSessionPersistError::MissingReuseKey)?;
-        let pins = session
-            .contexts_by_entry
-            .iter()
-            .map(|(entry, context)| {
-                (
-                    entry.clone(),
-                    crate::catalog_hash::EffectiveCatalogHash::from_effective_cgs(&context.cgs),
-                )
-            })
-            .collect();
         let exposure =
-            crate::execute_session_materialize::build_durable_exposure_snapshot_reusing_pins(
-                &session, pins,
-            )
-            .await?;
+            crate::execute_session_materialize::snapshot_materialized_exposure(&session).await?;
         self.execute_session_registry
             .persist_example_fetch(&session, session_id, &reuse_key, &exposure, receipt)
             .await?;
@@ -603,9 +590,15 @@ impl PlasmHostState {
             ExecuteSessionPersistError, ExecuteSessionPersistOutcome,
         };
 
-        let exposure =
-            crate::execute_session_materialize::build_durable_exposure_snapshot(self, session)
-                .await?;
+        let exposure = match kind {
+            DurableSessionWriteKind::Insert => {
+                crate::execute_session_materialize::snapshot_materialized_exposure(session).await?
+            }
+            DurableSessionWriteKind::Update => {
+                crate::execute_session_materialize::build_durable_exposure_snapshot(self, session)
+                    .await?
+            }
+        };
         let durable_configured = self
             .execute_session_registry
             .durable_backend_configured()
@@ -626,13 +619,17 @@ impl PlasmHostState {
         if durable_configured && outcome == ExecuteSessionPersistOutcome::InMemoryOnly {
             return Err(ExecuteSessionPersistError::MissingSymbolLedger);
         }
-        let logical_id = reuse_key
-            .and_then(|key| key.logical_session_id.as_ref())
-            .and_then(|id| Uuid::parse_str(id).ok())
-            .or(self
-                .logical_execute_bindings
-                .find_by_execute(prompt_hash, session_id)
-                .await);
+        let known_id = reuse_key
+            .and_then(|key| key.logical_session_id.as_deref())
+            .and_then(|id| Uuid::parse_str(id).ok());
+        let logical_id = match known_id {
+            Some(id) => Some(id),
+            None => {
+                self.logical_execute_bindings
+                    .find_by_execute(prompt_hash, session_id)
+                    .await
+            }
+        };
         if let (Some(logical_id), Some(teaching)) = (logical_id, session.teaching_exposure.as_ref())
         {
             self.logical_symbol_ledgers
@@ -819,6 +816,7 @@ mod tests {
             None,
             false,
             None,
+            None,
         )
         .await
         .unwrap();
@@ -949,6 +947,7 @@ mod tests {
             None,
             false,
             None,
+            None,
         )
         .await
         .expect("open session");
@@ -993,6 +992,7 @@ mod tests {
             None,
             None,
             false,
+            None,
             None,
         )
         .await
@@ -1061,6 +1061,7 @@ mod tests {
             None,
             false,
             None,
+            None,
         )
         .await
         .expect("open fibery session with resolved backend");
@@ -1112,6 +1113,7 @@ mod tests {
             None,
             false,
             None,
+            None,
         )
         .await
         .expect("open session");
@@ -1155,6 +1157,7 @@ mod tests {
             None,
             None,
             false,
+            None,
             None,
         )
         .await

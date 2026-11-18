@@ -2952,6 +2952,21 @@ impl TeachingExposureSession {
         entity_names_in_order: &[&str],
         delta: ExposureSurfaceDelta,
     ) -> Self {
+        Self::from_shared_intent_delta(
+            &Arc::new(cgs.clone()),
+            catalog_entry_id,
+            entity_names_in_order,
+            delta,
+        )
+    }
+
+    /// Open a teaching surface over the same immutable graph used for execution.
+    pub fn from_shared_intent_delta(
+        cgs: &Arc<CGS>,
+        catalog_entry_id: &str,
+        entity_names_in_order: &[&str],
+        delta: ExposureSurfaceDelta,
+    ) -> Self {
         let mut s = Self {
             surface: ExposureSurface::default(),
             entities: Vec::new(),
@@ -2961,8 +2976,13 @@ impl TeachingExposureSession {
             ledger: SymbolLedger::default(),
             ident_meta_by_entity: HashMap::new(),
         };
-        let arc = Arc::new(cgs.clone());
-        let _ = s.expose_surface(&[cgs], arc, catalog_entry_id, entity_names_in_order, delta);
+        let _ = s.expose_surface(
+            &[cgs],
+            Arc::clone(cgs),
+            catalog_entry_id,
+            entity_names_in_order,
+            delta,
+        );
         s
     }
 

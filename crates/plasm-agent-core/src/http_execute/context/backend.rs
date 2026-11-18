@@ -89,6 +89,15 @@ pub(crate) async fn resolve_http_backend_for_entry(
     outbound_hosted_kv_key: Option<&str>,
 ) -> Result<crate::http_backend::ResolvedHttpOrigin, crate::binding_slots::HttpBackendResolutionError>
 {
+    let resolved = crate::binding_slots::resolve_catalog_http_backend(
+        entry_id,
+        catalog_backend,
+        bindings,
+        None,
+    );
+    if resolved.is_ok() || outbound_hosted_kv_key.is_none() {
+        return resolved;
+    }
     let legacy = if let Some(key) = outbound_hosted_kv_key {
         migration_legacy_http_backend_from_outbound_key(st, key).await
     } else {
