@@ -79,11 +79,11 @@ pub struct CatalogRuntime {
     pub bootstrap: CatalogBootstrap,
     reload_generation: Arc<AtomicU64>,
     discovery: Arc<tokio::sync::OnceCell<crate::discovery_store::DiscoveryStore>>,
-    generation: Arc<arc_swap::ArcSwapOption<String>>,
 }
 
 #[derive(Clone)]
 struct CatalogGeneration {
+    discovery_id: Option<Arc<String>>,
     registry: Arc<CgsRegistry>,
     compiled_by_entry: Arc<HashMap<String, Arc<plasm_compile::CompiledCatalog>>>,
     prerequisite_deployments: plasm_core::prerequisites::DeploymentBindings,
@@ -102,6 +102,7 @@ fn compile_fixed_generation(
         })
         .collect::<Result<HashMap<_, _>, CatalogRuntimeError>>()?;
     Ok(CatalogGeneration {
+        discovery_id: None,
         registry,
         compiled_by_entry: Arc::new(compiled_by_entry),
         prerequisite_deployments: plasm_core::prerequisites::DeploymentBindings::default(),
@@ -120,6 +121,7 @@ impl CatalogRuntime {
                     &mut |_: &str| {},
                 )?;
                 CatalogGeneration {
+                    discovery_id: None,
                     registry: loaded.registry,
                     compiled_by_entry: loaded.compiled_by_entry,
                     prerequisite_deployments: read_optional_deployment_bindings(path)?,
@@ -132,7 +134,6 @@ impl CatalogRuntime {
             bootstrap,
             reload_generation: Arc::new(AtomicU64::new(0)),
             discovery: Arc::new(tokio::sync::OnceCell::new()),
-            generation: Arc::new(arc_swap::ArcSwapOption::empty()),
         })
     }
 
@@ -173,14 +174,30 @@ impl CatalogRuntime {
             .await?
             .import(&deployment, prepared, &bindings)
             .await?;
-        let view = self.pinned_view(&generation).await?;
-        self.swap.store(view.swap.load_full());
-        self.generation.store(Some(Arc::new(generation.clone())));
+        self.swap
+            .store(self.load_verified_generation(&generation).await?);
         Ok(generation)
     }
 
     /// Request-local catalog view. Shared execution stores stay attached to the host.
     pub async fn pinned_view(&self, generation: &str) -> Result<Self, CatalogRuntimeError> {
+        let active = self.swap.load_full();
+        let pinned = if active.discovery_id.as_deref().map(String::as_str) == Some(generation) {
+            active
+        } else {
+            self.load_verified_generation(generation).await?
+        };
+        // Detach the pointer so a later activation cannot change this request's view.
+        Ok(Self {
+            swap: Arc::new(ArcSwap::new(pinned)),
+            ..self.clone()
+        })
+    }
+
+    async fn load_verified_generation(
+        &self,
+        generation: &str,
+    ) -> Result<Arc<CatalogGeneration>, CatalogRuntimeError> {
         let (catalogs, compiled_catalogs, prerequisite_deployments) = self
             .discovery_store()
             .await?
@@ -191,22 +208,19 @@ impl CatalogRuntime {
             .map(|(id, cgs)| (id.clone(), id, Vec::new(), Arc::new(cgs)))
             .collect();
         let compiled_by_entry = compiled_catalogs.into_iter().collect();
-        let generation_view = CatalogGeneration {
+        Ok(Arc::new(CatalogGeneration {
+            discovery_id: Some(Arc::new(generation.to_owned())),
             registry: Arc::new(CgsRegistry::from_pairs(pairs)),
             compiled_by_entry: Arc::new(compiled_by_entry),
             prerequisite_deployments,
-        };
-        let mut view = self.clone();
-        view.swap = Arc::new(ArcSwap::new(Arc::new(generation_view)));
-        view.generation = Arc::new(arc_swap::ArcSwapOption::from(Some(Arc::new(
-            generation.to_owned(),
-        ))));
-        Ok(view)
+        }))
     }
 
     pub fn discovery_generation(&self) -> Result<Arc<String>, CatalogRuntimeError> {
-        self.generation
-            .load_full()
+        self.swap
+            .load()
+            .discovery_id
+            .clone()
             .ok_or(CatalogRuntimeError::NoActivatedGeneration)
     }
 
@@ -266,4 +280,33 @@ fn read_optional_deployment_bindings(
     let bytes = std::fs::read(&path)?;
     serde_json::from_slice(&bytes)
         .map_err(|source| CatalogRuntimeError::DeploymentBindingsJson { path, source })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn matching_pin_shares_verified_data_and_survives_publication() {
+        let registry = Arc::new(CgsRegistry::from_pairs(Vec::new()));
+        let runtime = CatalogRuntime::new(registry.clone(), CatalogBootstrap::Fixed).unwrap();
+        let mut verified = (*runtime.swap.load_full()).clone();
+        verified.discovery_id = Some(Arc::new("first".into()));
+        runtime.swap.store(Arc::new(verified));
+        let pinned = runtime.pinned_view("first").await.unwrap();
+        assert!(Arc::ptr_eq(
+            &runtime.swap.load_full(),
+            &pinned.swap.load_full()
+        ));
+        runtime.publish_catalog(registry).unwrap();
+        assert!(matches!(
+            runtime.discovery_generation(),
+            Err(CatalogRuntimeError::NoActivatedGeneration)
+        ));
+        assert_eq!(pinned.discovery_generation().unwrap().as_str(), "first");
+        assert!(!Arc::ptr_eq(
+            &runtime.swap.load_full(),
+            &pinned.swap.load_full()
+        ));
+    }
 }
