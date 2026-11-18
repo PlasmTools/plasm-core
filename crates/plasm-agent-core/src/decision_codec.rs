@@ -72,7 +72,6 @@ struct ChoiceAnswer {
 pub(crate) struct ValidatedChoice {
     pub choice: String,
     pub confidence: f64,
-    pub probabilities: BTreeMap<String, f64>,
 }
 
 /// Match an issued model alias or its eight-digit dated revision.
@@ -168,7 +167,6 @@ pub(crate) fn decode_with_usage(
                 ValidatedChoice {
                     choice: answer.choice,
                     confidence: answer.confidence,
-                    probabilities: answer.probabilities,
                 },
             ))
         })

@@ -680,7 +680,6 @@ pub struct OperationMatrix {
     candidates: Vec<plasm_core::prerequisites::CapabilityRef>,
     answers: BTreeMap<(OperationId, plasm_core::prerequisites::CapabilityRef), DirectContribution>,
     /// Request-local retrieval ranks guide scheduling; they are not judgments.
-    recall_ranks: BTreeMap<(OperationId, plasm_core::prerequisites::CapabilityRef), usize>,
     /// Current-turn priority does not change historical obligations or judgments.
     current_operations: BTreeSet<OperationId>,
 }
@@ -715,14 +714,6 @@ impl MatrixScope {
             request,
         })
     }
-
-    /// A changed request identity is an ordinary intent revision;
-    /// session, generation and authorization changes are different scopes.
-    pub(crate) fn same_host_scope(&self, other: &Self) -> bool {
-        self.session == other.session
-            && self.generation == other.generation
-            && self.authorization_digest == other.authorization_digest
-    }
 }
 
 fn authorization_digest(authorized: &BTreeSet<plasm_core::prerequisites::CapabilityRef>) -> String {
@@ -740,21 +731,6 @@ pub struct MatrixCheckpoint {
     operations: OperationSet,
     candidates: Vec<plasm_core::prerequisites::CapabilityRef>,
     answers: Vec<OperationJudgment>,
-}
-
-impl MatrixCheckpoint {
-    pub(crate) fn scope(&self) -> &MatrixScope {
-        &self.scope
-    }
-
-    pub(crate) fn answered_pairs(
-        &self,
-    ) -> BTreeSet<(OperationId, plasm_core::prerequisites::CapabilityRef)> {
-        self.answers
-            .iter()
-            .map(|answer| (answer.operation.clone(), answer.capability.clone()))
-            .collect()
-    }
 }
 
 impl OperationMatrix {
@@ -801,13 +777,6 @@ impl OperationMatrix {
                 contextual
             })
     }
-    pub(crate) fn has_contextual_fragments(&self) -> bool {
-        self.operations
-            .operations
-            .iter()
-            .skip(1)
-            .any(|op| self.contextual_fragment(&op.text))
-    }
     pub(super) fn scope(&self) -> &MatrixScope {
         &self.scope
     }
@@ -847,7 +816,6 @@ impl OperationMatrix {
             operations,
             candidates,
             answers: BTreeMap::new(),
-            recall_ranks: BTreeMap::new(),
             current_operations: BTreeSet::new(),
         })
     }
@@ -862,30 +830,6 @@ impl OperationMatrix {
             })
             .map(|operation| operation.id.clone())
             .collect();
-    }
-
-    /// Install authorized, revision-bound operation recall ranks. These ranks
-    /// nominate questions only; they cannot authorize or select a capability.
-    pub(crate) fn set_recall_ranks(
-        &mut self,
-        authorized: &BTreeSet<plasm_core::prerequisites::CapabilityRef>,
-        ranks: BTreeMap<(OperationId, plasm_core::prerequisites::CapabilityRef), usize>,
-    ) -> Result<(), OperationError> {
-        if self.scope.authorization_digest != authorization_digest(authorized) {
-            return Err(OperationError::ScopeMismatch);
-        }
-        if ranks.keys().any(|(operation, capability)| {
-            !authorized.contains(capability)
-                || !self
-                    .operations
-                    .operations
-                    .iter()
-                    .any(|item| &item.id == operation)
-        }) {
-            return Err(OperationError::InvalidCandidates);
-        }
-        self.recall_ranks = ranks;
-        Ok(())
     }
 
     pub fn checkpoint(&self) -> MatrixCheckpoint {
@@ -1030,23 +974,15 @@ impl OperationMatrix {
             }) {
                 continue;
             }
-            let best = admitted
-                .iter()
-                .filter(|candidate| {
-                    let primary_pair = (primary.clone(), (*candidate).clone());
-                    (self.answers.get(&primary_pair) == Some(&DirectContribution::Relevant)
-                        || selected.contains(&primary_pair))
-                        && !self
-                            .answers
-                            .contains_key(&(operation.id.clone(), (*candidate).clone()))
-                        && !selected.contains(&(operation.id.clone(), (*candidate).clone()))
-                })
-                .min_by_key(|candidate| {
-                    self.recall_ranks
-                        .get(&(operation.id.clone(), (*candidate).clone()))
-                        .copied()
-                        .unwrap_or(usize::MAX)
-                });
+            let best = admitted.iter().find(|candidate| {
+                let primary_pair = (primary.clone(), (*candidate).clone());
+                (self.answers.get(&primary_pair) == Some(&DirectContribution::Relevant)
+                    || selected.contains(&primary_pair))
+                    && !self
+                        .answers
+                        .contains_key(&(operation.id.clone(), (*candidate).clone()))
+                    && !selected.contains(&(operation.id.clone(), (*candidate).clone()))
+            });
             if let Some(candidate) = best {
                 selected.push((operation.id.clone(), candidate.clone()));
                 if selected.len() == limit {
