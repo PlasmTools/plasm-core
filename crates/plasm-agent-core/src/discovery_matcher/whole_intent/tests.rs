@@ -340,6 +340,7 @@ fn batch_admission_matches_individual_greedy_admission() {
     let values = Map::from_iter([("shared".into(), json!({"description":"shared"}))]);
     let records = BTreeMap::new();
     let make_assembly = || PacketAssembly {
+        scope: EvidenceScope::WholeIntent,
         byte_limit: MAX_BODY_BYTES,
         model: DEFAULT_MODEL,
         intent: "Read records.",
@@ -752,6 +753,7 @@ fn candidate_question_preserves_selection_contract() {
     let records = Map::from_iter([("fixture/Record".into(), json!({"description":"A record."}))]);
     let evidence = super::super::evidence::CatalogEvidence::default();
     let (body, count) = request_body(
+        EvidenceScope::WholeIntent,
         DEFAULT_MODEL,
         "Find records.",
         &cards,
@@ -948,4 +950,44 @@ fn rejects_unbound_provider_and_duplicate_response_fields() {
     assert!(packet.decode(&value.to_string()).is_err());
     let duplicate = response.replacen("\"model\":", "\"model\":\"other\",\"model\":", 1);
     assert!(packet.decode(&duplicate).is_err());
+}
+
+#[test]
+fn keyed_packet_retains_contract_domains_and_uncertainty_choices_once() {
+    let declaration = json!({"scope":[{"name":"shelf","required":true,"value_ref":"shelf_type"}],"provides":["name"]});
+    let cards = [
+        json!({"id":"c0","catalog":"matrix","entity":"Entry","capability":"entry_get","operation":{"kind":"get"},"declaration":declaration}),
+    ];
+    let record = json!({"description":"Catalogue entry","id_field":"name","fields":{"history":"irrelevant output schema"}});
+    let domain = json!({"allowed_values":["current","archive"]});
+    let (body, _) = request_body(
+        EvidenceScope::KeyedRecords,
+        DEFAULT_MODEL,
+        "Get Matrix entry acme.",
+        &cards,
+        &["Is this lookup needed?"],
+        &Map::from_iter([("matrix/shelf_type".into(), domain.clone())]),
+        &Map::from_iter([("matrix/Entry".into(), record)]),
+        &BTreeMap::new(),
+        &Default::default(),
+        &mut [],
+    )
+    .unwrap();
+    let packet: Value = serde_json::from_str(&body).unwrap();
+    let question = &packet["questions"]["c0"];
+    let (_, evidence) = question["instructions"]
+        .as_str()
+        .unwrap()
+        .split_once(" Catalogue data: ")
+        .unwrap();
+    let evidence: Value = serde_json::from_str(evidence).unwrap();
+    assert_eq!(evidence["declaration"], declaration);
+    assert_eq!(evidence["id_field"], "name");
+    assert_eq!(question["criteria"].as_object().unwrap().len(), 7);
+    assert_eq!(
+        packet["state"]["input_domains"]["matrix/shelf_type"],
+        domain
+    );
+    assert!(packet["state"].get("candidates").is_none());
+    assert!(!body.contains("irrelevant output schema"));
 }

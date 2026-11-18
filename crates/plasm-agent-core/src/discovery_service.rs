@@ -897,6 +897,12 @@ impl DiscoveryService {
         } else {
             None
         };
+        use matcher::whole_intent::EvidenceScope;
+        let evidence_scope = if keyed.is_some() {
+            EvidenceScope::KeyedRecords
+        } else {
+            EvidenceScope::WholeIntent
+        };
         let mut recall = match (self.lane, keyed) {
             (DiscoveryLane::Ordinary, Some(refs)) => index.recall(generation, &refs)?,
             (DiscoveryLane::Ordinary, None) => {
@@ -982,6 +988,7 @@ impl DiscoveryService {
                 deferred_priorities,
                 exposed,
                 &std::collections::BTreeSet::new(),
+                evidence_scope,
                 matcher::whole_intent::MAX_SELECTION_BYTES,
             )?;
             let checkpoint = decision_checkpoint::DecisionCheckpoint::new(
