@@ -39,6 +39,7 @@ pub(crate) fn project(intent: &str, receipt: &crate::discovery_service::RoutingR
     json!({
         "intent": intent,
         "capabilities": capabilities,
+        "provider_unavailable": receipt.search.has_unavailable_provider(),
         "judged": receipt.matching.matches.len(),
         "unexplored": receipt.search.unexplored.len(),
         "deferred": receipt.search.deferred.len(),
@@ -89,6 +90,24 @@ mod tests {
         assert_eq!(value["unexplored"], 1);
         assert_eq!(value["deferred_reasons"]["input_bytes"], 1);
         assert!(value.get("authorization").is_none());
+    }
+
+    #[test]
+    fn provider_outage_is_independent_of_selection_and_budget() {
+        for (reason, unavailable) in [
+            (DeferredReason::InputBytes, false),
+            (DeferredReason::OperationUncertain, false),
+            (DeferredReason::ProviderUnavailable, true),
+        ] {
+            let mut route = receipt();
+            route.search.deferred = vec![DeferredCandidate {
+                reference: route.closure.as_ref().unwrap().business[0].clone(),
+                reason,
+            }];
+            let view = project("Read records.", &route);
+            assert_eq!(view["provider_unavailable"], unavailable);
+            assert_eq!(view["capabilities"].as_array().unwrap().len(), 1);
+        }
     }
 
     #[test]

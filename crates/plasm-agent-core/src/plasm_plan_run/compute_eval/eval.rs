@@ -7,6 +7,8 @@ use std::collections::BTreeMap;
 #[derive(Debug, thiserror::Error)]
 pub(crate) enum RuntimeOperandError {
     #[error(transparent)]
+    EntityReference(#[from] plasm_core::EntityRefValueError),
+    #[error(transparent)]
     Codec(#[from] plasm_core::ValueCodecError),
     #[error(transparent)]
     Identity(#[from] plasm_core::operand_binding::IdentityCodecError),
@@ -307,20 +309,10 @@ pub(crate) fn node_input_hole_from_identity(
         }
     };
     if path.is_empty() {
-        if let plasm_core::EntityKey::Compound(parts) = &identity.reference.key {
-            let fields = parts
-                .iter()
-                .map(|(name, slot)| {
-                    let literal = slot.as_lit_str().ok_or(RuntimeOperandError::OperandValue)?;
-                    Ok((name.clone(), decode(name, literal)?))
-                })
-                .collect::<Result<_, RuntimeOperandError>>()?;
-            return Ok(Some(plasm_core::Value::Object(fields)));
-        }
-        let field = ctx
-            .and_then(|ctx| ctx.source_entity.key_vars.first())
-            .map_or(id_field, |key| key.as_str());
-        return decode(field, &identity.reference.primary_slot_str()).map(Some);
+        return Ok(Some(plasm_core::entity_ref_value::reference_payload(
+            &identity.reference,
+            ctx.map(|ctx| (ctx.cgs, ctx.source_entity)),
+        )?));
     }
     if path.len() == 1 {
         if let Some(slot) = identity.ambient.get(key) {
@@ -331,10 +323,15 @@ pub(crate) fn node_input_hole_from_identity(
                 return decode(key, slot).map(Some);
             }
         }
-        if (key == "id" || key == id_field)
-            && matches!(identity.reference.key, plasm_core::EntityKey::Simple(_))
-        {
-            return decode(id_field, &identity.reference.primary_slot_str()).map(Some);
+        if key == "id" || key == id_field {
+            if let plasm_core::EntityKey::Simple(slot) = &identity.reference.key {
+                return decode(
+                    id_field,
+                    slot.as_lit_str()
+                        .ok_or(plasm_core::EntityRefValueError::UnresolvedSlot)?,
+                )
+                .map(Some);
+            }
         }
     }
     value_at_segments(row, path)

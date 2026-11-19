@@ -59,3 +59,12 @@ member_query:
     fields:
       - [cohort_id, {type: if, condition: {type: exists, var: cohort_id},
           then_expr: {type: var, name: cohort_id}, else_expr: {type: const, value: null}}]
+partition_get:
+  method: GET
+  path: [{type: literal, value: partitions}, {type: var, name: tenant}, {type: var, name: code}]
+  response: single
+entry_query:
+  method: POST
+  path: [{type: literal, value: entries}]
+  body: {type: object, fields: [[partition, {type: var, name: partition}]]}
+  response: bare_list

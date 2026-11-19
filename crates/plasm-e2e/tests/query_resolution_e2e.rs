@@ -224,3 +224,76 @@ async fn homonymous_scope_is_not_applied_as_a_row_predicate() {
     assert_eq!(&*paths.lock().unwrap(), &["/parents/parent-one/children"]);
     server.abort();
 }
+
+#[tokio::test]
+async fn fetched_compound_identity_retains_slot_types_at_query_dispatch() {
+    use serde_json::{json, Value};
+    let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
+    let app = axum::Router::new()
+        .route(
+            "/partitions/21/007",
+            axum::routing::get(|| async { axum::Json(json!({"id":98,"tenant":21,"code":"007"})) }),
+        )
+        .route(
+            "/entries",
+            axum::routing::post(move |axum::Json(body): axum::Json<Value>| {
+                tx.send(body).unwrap();
+                async { axum::Json(json!([{"id":"entry"}])) }
+            }),
+        );
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let base = format!("http://{}", listener.local_addr().unwrap());
+    let server = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+    let mut cgs = plasm_core::load_schema_dir(
+        &std::path::Path::new(plasm_e2e::test_manifest_dir())
+            .join("../../fixtures/schemas/scoped_query_matrix"),
+    )
+    .unwrap();
+    let entry = language_matrix_views::VIEWS_MATRIX_ENTRY_ID;
+    cgs.bind_registry_entry_id(entry);
+    let cgs = Arc::new(cgs);
+    let session =
+        language_matrix_views::execute_session_for_entities(cgs.clone(), &["Partition", "Entry"]);
+    let symbols = session.teaching_exposure.as_ref().unwrap().to_symbol_map();
+    let parent = symbols.entity_sym_for(entry, "Partition");
+    let child = symbols.entity_sym_for(entry, "Entry");
+    let scope = symbols.ident_sym_cap_param_for(entry, "Entry", "entry_query", "partition");
+    let program = format!("class Lookup(Program):\n    def build(self):\n        part = {parent}.get(tenant=21, code='007')\n        return {child}.query({scope}=part)\n");
+    let bundle = plasm_agent::plasm_compile::compile_python_program(&session, &program)
+        .await
+        .unwrap();
+    let host = language_matrix_views::views_matrix_host_state(
+        ExecutionEngine::new(ExecutionConfig {
+            base_url: Some(base),
+            hydrate: false,
+            ..Default::default()
+        })
+        .unwrap(),
+        cgs,
+    );
+    let result = plasm_agent::plasm_plan_run::run_plasm_comp_python(
+        &session,
+        &host,
+        &session.prompt_hash,
+        "compound-scope",
+        &bundle,
+        true,
+        None,
+        None,
+        None,
+        None,
+    )
+    .await
+    .unwrap();
+    assert_eq!(
+        rx.try_recv().unwrap(),
+        json!({"partition":{"tenant":21,"code":"007"}})
+    );
+    assert_eq!(
+        result.return_steps.last().unwrap().result.entities()[0]
+            .reference
+            .primary_slot_str(),
+        "entry"
+    );
+    server.abort();
+}

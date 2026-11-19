@@ -15,7 +15,65 @@ function trainingCall(action){if(!trainingRef||trainingPending)return;const args
 function renderTraining(result){try{if(result.isError)throw new Error(result.content?.find(c=>c.type==='text')?.text||'Training request failed.');const v=result.structuredContent||JSON.parse(result.content?.find(c=>c.type==='text')?.text||'{}');if(trainingKind==='executions'){const select=$('training-execution');select.replaceChildren(new Option('Choose an execution',''));for(const execution of v.executions||[])select.add(new Option(`Session revision ${execution.session_revision} — ${execution.execution_id}`,execution.execution_id));$('training-review-status').textContent=v.executions?.length?'Choose an execution to inspect.':'No completed executions are available.';return}if(trainingKind==='execution'){inspectedExecution=v.execution_id;$('training-source').textContent=v.source||'Source unavailable';$('training-submit').disabled=!v.source;return}if(trainingKind==='review'){$('training-review-status').textContent=`Review queued: ${v.review_ref}. Publication requires a separate decision.`;$('training-submit').disabled=true;return}trainingState=v;const state=v.training_state?.state;$('training-review').hidden=state!=='active';approvalUrl=v.approval_url||'';$('training-status').textContent=state?`Training: ${state.replaceAll('_',' ')}`:'Training status unavailable';if(state==='awaiting_authorization')$('training-status').textContent=approvalUrl?'Authorization is pending.':'Authorization is pending, but no approval URL is configured for this host.';$('training-approve').hidden=!approvalUrl;const action=state==='active'?'stop':state==='stopped'?'resume':state==='ordinary'?'request':null;$('training-action').hidden=!action;if(action){$('training-action').dataset.action=action;$('training-action').textContent=action==='stop'?'Turn training off':'Turn training on'}$('training-error').hidden=true}catch(e){$('training-error').hidden=false;$('training-error').textContent=e.message}}
 $('training-list').onclick=()=>{inspectedExecution='';$('training-submit').disabled=true;trainingCall('executions')};$('training-execution').onchange=()=>{inspectedExecution='';$('training-submit').disabled=true;$('training-source').textContent='';const id=$('training-execution').value;if(!id||trainingPending)return;trainingKind='execution';trainingPending='training-'+trainingId++;window.parent.postMessage({jsonrpc:'2.0',id:trainingPending,method:'tools/call',params:{name:'plasm_training',arguments:{logical_session_ref:trainingRef,action:'execution',execution_id:id}}},'*')};$('training-submit').onclick=()=>{const intent=$('training-purpose').value.trim(),outcome=$('training-outcome').value.trim();if(!intent||!outcome||!inspectedExecution||inspectedExecution!==$('training-execution').value||trainingPending){$('training-review-status').textContent='Select and inspect an execution, then enter its purpose and observed outcome.';return}const signature=JSON.stringify([trainingRef,trainingState.revision,inspectedExecution,intent,outcome]);if(reviewAttempt?.signature!==signature)reviewAttempt={signature,key:crypto.randomUUID()};trainingKind='review';trainingPending='training-'+trainingId++;window.parent.postMessage({jsonrpc:'2.0',id:trainingPending,method:'tools/call',params:{name:'plasm_review',arguments:{logical_session_ref:trainingRef,expected_revision:trainingState.revision,idempotency_key:reviewAttempt.key,subtasks:[{intent,observed_outcome:outcome,execution_ids:[inspectedExecution]}]}}},'*')};
 $('training-refresh').onclick=()=>trainingCall('status');$('training-action').onclick=()=>trainingCall($('training-action').dataset.action);$('training-approve').onclick=()=>{try{const url=new URL(approvalUrl,location.href);if(['http:','https:'].includes(url.protocol))window.parent.postMessage({jsonrpc:'2.0',id:'training-open-'+trainingId++,method:'ui/open-link',params:{url:url.href}},'*')}catch{}};
-function render(value){if(!value||typeof value!=='object')return;const caps=Array.isArray(value.capabilities)?value.capabilities:[];const deferred=Number.isInteger(value.deferred)?value.deferred:null;const unexplored=Number.isInteger(value.unexplored)?value.unexplored:null;const incomplete=(deferred!==null&&deferred>0)||(unexplored!==null&&unexplored>0)||value.lexical_truncated===true||value.vector_truncated===true;$('intent').textContent=value.intent||requestIntent||'Request not supplied by host';$('intent').classList.remove('muted');$('status').textContent=caps.length?'Capabilities selected':value.has_closure?'No additions':'No capabilities selected';$('status').classList.toggle('partial',!caps.length&&!value.has_closure);$('summary').textContent=caps.length?`${caps.length} selected ${caps.length===1?'capability':'capabilities'} available for the agent.`:value.has_closure?'No new capabilities were selected in this response.':'No capabilities were selected in this response.';$('capabilities').replaceChildren();for(const cap of caps){const li=document.createElement('li'),title=document.createElement('strong'),tag=document.createElement('span');tag.className='catalog';tag.textContent=cap.catalog||'Unknown integration';title.textContent=cap.capability||'Unnamed capability';li.append(tag,title);if(cap.description){const p=document.createElement('p');p.textContent=cap.description;li.append(p)}$('capabilities').append(li)}for(const key of ['judged','deferred','unexplored'])$(key).textContent=Number.isInteger(value[key])?String(value[key]):'—';$('coverage').textContent=incomplete?'Counts describe catalogue search. Deferred and unexplored candidates can overlap.':'No deferred or unexplored candidates were reported. Selection alone does not confirm every requirement is covered.';const uncertain=value.deferred_reasons?.operation_uncertain;if(Number.isInteger(uncertain)&&uncertain>0)$('summary').textContent+=' '+uncertain+' candidate judgment'+(uncertain===1?' remains':'s remain')+' uncertain.';const reasons=value.deferred_reasons&&typeof value.deferred_reasons==='object'?Object.entries(value.deferred_reasons):[];$('limits').hidden=!incomplete;$('reasons').textContent=reasons.map(([key,count])=>`${count} · ${reasonLabels[key]||key.replaceAll('_',' ')}`).join('\n')||'Some candidates were not assessed, or retrieval was truncated.';}
+function render(value) {
+  if (!value || typeof value !== 'object') return;
+  const caps = Array.isArray(value.capabilities) ? value.capabilities : [];
+  const reasons = value.deferred_reasons || {};
+  const limited = value.deferred > 0 || value.unexplored > 0 ||
+    value.lexical_truncated === true || value.vector_truncated === true;
+
+  $('intent').textContent = value.intent || requestIntent || 'Request not supplied by host';
+  $('intent').classList.remove('muted');
+  $('error').hidden = true;
+  const selected = caps.length > 0;
+  let status = 'No capabilities selected';
+  if (value.has_closure) status = 'No additions';
+  if (selected) status = 'Capabilities selected';
+  if (value.provider_unavailable) status = 'Assessment interrupted';
+  $('status').textContent = status;
+  $('status').classList.toggle('partial', value.provider_unavailable || (!selected && !value.has_closure));
+
+  const summary = [];
+  if (selected) {
+    summary.push(`${caps.length} selected ${caps.length === 1 ? 'capability' : 'capabilities'} available for the agent.`);
+  } else {
+    summary.push(value.has_closure ? 'No new capabilities were selected in this response.' : 'No capabilities were selected in this response.');
+  }
+  if (value.provider_unavailable) summary.push('The assessment provider was unavailable.');
+  const uncertain = reasons.operation_uncertain;
+  if (Number.isInteger(uncertain) && uncertain > 0) {
+    summary.push(`${uncertain} candidate judgment${uncertain === 1 ? ' remains' : 's remain'} uncertain.`);
+  }
+  $('summary').textContent = summary.join(' ');
+
+  $('capabilities').replaceChildren();
+  for (const cap of caps) {
+    const li = document.createElement('li');
+    const title = document.createElement('strong');
+    const tag = document.createElement('span');
+    tag.className = 'catalog';
+    tag.textContent = cap.catalog || 'Unknown integration';
+    title.textContent = cap.capability || 'Unnamed capability';
+    li.append(tag, title);
+    if (cap.description) {
+      const p = document.createElement('p');
+      p.textContent = cap.description;
+      li.append(p);
+    }
+    $('capabilities').append(li);
+  }
+  for (const key of ['judged', 'deferred', 'unexplored']) {
+    $(key).textContent = Number.isInteger(value[key]) ? String(value[key]) : '—';
+  }
+  $('coverage').textContent = limited
+    ? 'Counts describe catalogue search. Deferred and unexplored candidates can overlap.'
+    : 'No deferred or unexplored candidates were reported. Selection alone does not confirm every requirement is covered.';
+  $('limits').hidden = !limited;
+  $('reasons').textContent = Object.entries(reasons)
+    .map(([key, count]) => `${count} · ${reasonLabels[key] || key.replaceAll('_', ' ')}`).join('\n')
+    || 'Some candidates were not assessed, or retrieval was truncated.';
+}
+
 window.addEventListener('message',event=>{if(event.source!==window.parent)return;const msg=event.data;if(!msg||typeof msg!=='object')return;if(trainingPending&&msg.id===trainingPending){trainingPending=null;if(msg.result)renderTraining(msg.result);else{ $('training-error').hidden=false;$('training-error').textContent='Training request failed.'}return}if(msg.method==='ui/notifications/tool-input'){requestIntent=msg.params?.arguments?.intent||'';if(requestIntent)$('intent').textContent=requestIntent}if(msg.method==='ui/notifications/tool-result'){const result=msg.params||{};if(result.isError){$('status').textContent='Discovery failed';$('status').classList.add('partial');$('error').hidden=false;$('error').textContent=(result.content||[]).find(x=>x.type==='text')?.text||'The host reported a discovery error.';return}const payload=result.structuredContent?.ui?.discovery||result.structured_content?.ui?.discovery||result._meta?.plasm?.discovery;if(payload){render(payload);$('training').hidden=!result._meta?.plasm?.training;if(result._meta?.plasm?.training){trainingRef=result._meta.plasm.logical_session_ref||'';trainingCall('status')}}else{$('status').textContent='Details unavailable';$('status').classList.add('partial');$('summary').textContent='The host did not forward discovery details to this view.'}}if((msg.method==='ui/resource-teardown'||msg.method==='ping')&&msg.id!==undefined)window.parent.postMessage({jsonrpc:'2.0',id:msg.id,result:{}},'*');if(msg.id==='plasm-discovery-init'&&msg.result){window.parent.postMessage({jsonrpc:'2.0',method:'ui/notifications/initialized'},'*')}});
 if(window.parent!==window)window.parent.postMessage({jsonrpc:'2.0',id:'plasm-discovery-init',method:'ui/initialize',params:{appInfo:{name:'plasm-discovery',version:'1.0.0'},appCapabilities:{},protocolVersion:'2026-01-26'}},'*');})();
 </script></body></html>

@@ -54,6 +54,7 @@ rust_integration_tests(
         "plasm_language_matrix": "tests/plasm_language_matrix/main.rs",
         "plasm_language_matrix_invoke": "tests/plasm_language_matrix_invoke.rs",
         "plasm_language_matrix_views": "tests/plasm_language_matrix_views.rs",
+        "query_resolution_e2e": "tests/query_resolution_e2e.rs",
         "ra11_unary_get_after_mutator": "tests/ra11_unary_get_after_mutator.rs",
         "relation_render_e2e": "tests/relation_render_e2e.rs",
         "semantic_receiver": "tests/semantic_receiver.rs",

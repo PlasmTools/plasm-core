@@ -6,7 +6,21 @@ values:
   identifier: {type: string, description: A row identifier}
   parent_reference: {type: entity_ref, target: Parent, description: The owning parent}
   cohort_id_scalar: {type: integer, description: A scalar identifier that is not an entity_ref}
+  partition_ref: {type: entity_ref, target: Partition, description: The selected partition}
 entities:
+  Partition:
+    description: A named partition within a numbered tenant
+    id_field: id
+    key_vars: [tenant, code]
+    fields:
+      id: {value_ref: cohort_id_scalar, required: true}
+      tenant: {value_ref: cohort_id_scalar, required: true}
+      code: {value_ref: identifier, required: true}
+  Entry:
+    description: A partition entry
+    id_field: id
+    fields:
+      id: {value_ref: identifier, required: true}
   Parent:
     description: An owning record
     id_field: id
@@ -39,6 +53,16 @@ entities:
     fields:
       id: {value_ref: identifier, required: true}
 capabilities:
+  partition_get:
+    kind: get
+    entity: Partition
+    provides: [id, tenant, code]
+  entry_query:
+    kind: query
+    entity: Entry
+    scope:
+      - {name: partition, value_ref: partition_ref, required: true}
+    provides: [id]
   parent_get:
     entity: Parent
     kind: get

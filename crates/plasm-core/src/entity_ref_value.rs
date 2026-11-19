@@ -42,6 +42,8 @@ pub enum EntityRefValueError {
     TargetMismatch,
     #[error("observed entity reference key shape does not match the declared identity")]
     KeyShapeMismatch,
+    #[error("entity reference contains an unresolved identity slot")]
+    UnresolvedSlot,
     #[error("entity_ref value cannot be null")]
     Null,
     #[error("entity_ref value cannot be an array")]
@@ -117,45 +119,58 @@ pub(crate) fn observed_reference_payload(
         .get("_ref")
         .and_then(crate::RefWire::from_value)
         .ok_or(EntityRefValueError::MissingStructuralReference)?;
-    match reference {
-        crate::RefWire::Simple { entity, id } => {
-            if entity != target_name {
-                return Err(EntityRefValueError::TargetMismatch);
-            }
-            if target.key_vars.len() > 1 {
-                return Err(EntityRefValueError::KeyShapeMismatch);
-            }
-            let key = target
-                .key_vars
-                .first()
-                .map(|key| key.as_str())
-                .unwrap_or(target.id_field.as_str());
-            crate::identity_slot_to_value(cgs, target, key, &id)
-                .map_err(|source| EntityRefValueError::Identity(Box::new(source)))
+    if target.name.as_str() != target_name {
+        return Err(EntityRefValueError::TargetMismatch);
+    }
+    reference_payload(&reference.into_ref(), Some((cgs, target)))
+}
+
+/// Bind a materialized identity. Synthetic rows have no catalogue and retain
+/// literal slots as strings. Catalogue rows must match the declared key exactly.
+pub fn reference_payload(
+    reference: &crate::Ref,
+    catalogue: Option<(&crate::CGS, &EntityDef)>,
+) -> Result<Value, EntityRefValueError> {
+    if let Some((_, target)) = catalogue {
+        if reference.entity_type != target.name {
+            return Err(EntityRefValueError::TargetMismatch);
         }
-        crate::RefWire::Compound { entity, parts } => {
-            if entity != target_name {
-                return Err(EntityRefValueError::TargetMismatch);
-            }
-            if target.key_vars.len() < 2
-                || parts.len() != target.key_vars.len()
-                || target
-                    .key_vars
-                    .iter()
-                    .any(|key| !parts.contains_key(key.as_str()))
-            {
+    }
+    let decode = |field: Option<&str>, slot: &crate::IdentitySlot| {
+        let literal = slot
+            .as_lit_str()
+            .ok_or(EntityRefValueError::UnresolvedSlot)?;
+        let Some((cgs, target)) = catalogue else {
+            return Ok(Value::String(literal.into()));
+        };
+        let field =
+            field.unwrap_or_else(|| target.key_vars.first().unwrap_or(&target.id_field).as_str());
+        crate::identity_slot_to_value(cgs, target, field, literal)
+            .map_err(|source| EntityRefValueError::Identity(Box::new(source)))
+    };
+    match &reference.key {
+        crate::EntityKey::Simple(slot) => {
+            if catalogue.is_some_and(|(_, target)| target.key_vars.len() > 1) {
                 return Err(EntityRefValueError::KeyShapeMismatch);
             }
-            Ok(Value::Object(
-                parts
-                    .into_iter()
-                    .map(|(k, v)| {
-                        crate::identity_slot_to_value(cgs, target, &k, &v)
-                            .map(|value| (k, value))
-                            .map_err(|source| EntityRefValueError::Identity(Box::new(source)))
-                    })
-                    .collect::<Result<_, _>>()?,
-            ))
+            decode(None, slot)
+        }
+        crate::EntityKey::Compound(parts) => {
+            if catalogue.is_some_and(|(_, target)| {
+                target.key_vars.len() < 2
+                    || parts.len() != target.key_vars.len()
+                    || target
+                        .key_vars
+                        .iter()
+                        .any(|key| !parts.contains_key(key.as_str()))
+            }) {
+                return Err(EntityRefValueError::KeyShapeMismatch);
+            }
+            parts
+                .iter()
+                .map(|(name, slot)| Ok((name.clone(), decode(Some(name), slot)?)))
+                .collect::<Result<_, _>>()
+                .map(Value::Object)
         }
     }
 }
@@ -501,6 +516,24 @@ mod tests {
             observed_reference_payload(&observed("Repo"), &target, "Repo", &crate::CGS::default()),
             Err(EntityRefValueError::KeyShapeMismatch)
         );
+    }
+
+    #[test]
+    fn unresolved_identity_slots_are_never_runtime_data() {
+        let binding = crate::PlasmInputRef::node_output("source", vec![]);
+        let simple = crate::Ref::simple_binding("Item", binding.clone());
+        let compound = crate::Ref {
+            entity_type: "Item".into(),
+            key: crate::EntityKey::Compound(
+                [("part".into(), crate::IdentitySlot::binding(binding))].into(),
+            ),
+        };
+        for reference in [simple, compound] {
+            assert_eq!(
+                reference_payload(&reference, None),
+                Err(EntityRefValueError::UnresolvedSlot)
+            );
+        }
     }
 
     #[test]
