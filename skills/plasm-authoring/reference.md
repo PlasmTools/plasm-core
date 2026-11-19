@@ -1513,6 +1513,7 @@ auth:
 Declare `access` in an existing capability input lane. Resolution checks session,
 pinned catalog revision, origin, slot, resource and expiry before delegating to the
 existing host resolver. Invalid references fail. Scoped requests reject redirects.
+Use `auth: {scheme: anonymous}` to omit host credentials on a public request.
 Use `auth: {scheme: host}` for direct configured authentication; a catalog can
 explicitly select between those sources with `scheme: when`. Business preconditions
 remain ordinary provider outputs bound into consumer inputs.

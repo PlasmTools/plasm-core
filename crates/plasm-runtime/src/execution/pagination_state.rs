@@ -650,6 +650,7 @@ mod page_index_overlap_regressions {
 
     fn empty_http_op() -> CompiledOperation {
         CompiledOperation::Http(CompiledRequest {
+            anonymous: false,
             credential: None,
             method: HttpMethod::Get,
             path: "/items".into(),

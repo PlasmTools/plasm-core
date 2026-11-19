@@ -412,6 +412,7 @@ mod tests {
     #[test]
     fn test_compiled_request_conversion() {
         let request = CompiledRequest {
+            anonymous: false,
             credential: None,
             method: HttpMethod::Post,
             path: "/query/Account".to_string(),

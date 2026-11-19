@@ -3,7 +3,7 @@ _document_auth_1: &document_auth_1
   condition:
     type: exists
     var: access
-  then_auth:
+  then_auth: &slug_scoped_credential
     scheme: credential
     slot: document_access
     resource:
@@ -816,7 +816,11 @@ document_get:
         value: application/json
   response:
     single: true
-  auth: *document_auth_1
+  auth: &document_read_auth
+    scheme: when
+    condition: {type: exists, var: access}
+    then_auth: *slug_scoped_credential
+    else_auth: {scheme: anonymous}
 document_get_markdown:
   method: GET
   path:
@@ -832,7 +836,7 @@ document_get_markdown:
         value: application/json
   response:
     single: true
-  auth: *document_auth_1
+  auth: *document_read_auth
 document_share_bind:
   transport: credential_bind
   lifetime_seconds: 86400

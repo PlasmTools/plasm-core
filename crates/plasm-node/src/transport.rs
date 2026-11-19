@@ -194,6 +194,7 @@ impl JsCallbackHttpTransport {
         JsTransportRequest {
             reject_redirects: false,
             require_host_auth: false,
+            anonymous: false,
             method: method.to_string(),
             url,
             headers: if headers.is_empty() {
@@ -327,6 +328,7 @@ impl HttpTransport for JsCallbackHttpTransport {
             });
         let mut req = self.build_request(method, url, auth, body, content_type, template_headers);
         req.reject_redirects = request.credential.is_some();
+        req.anonymous = request.anonymous;
         req.require_host_auth = require_host_auth;
         let authorization = req.headers.as_ref().and_then(|headers| {
             headers
@@ -368,6 +370,9 @@ fn callback_auth_scope(
     auth: Option<&ResolvedAuth>,
 ) -> std::result::Result<plasm_runtime::http_transport::TransportAuthScope, RuntimeError> {
     use plasm_runtime::http_transport::TransportAuthScope;
+    if request.anonymous {
+        return Ok(TransportAuthScope::EngineVisible);
+    }
     // The callback contract preserves explicit Authorization; the default host injects
     // only when absent. Query auth is not carried by this bridge, so cannot be attested.
     if auth.is_some_and(|auth| !auth.query_params.is_empty()) {
@@ -424,6 +429,7 @@ mod tests {
 
     fn base_request(format: HttpBodyFormat, body: Option<Value>) -> CompiledRequest {
         CompiledRequest {
+            anonymous: false,
             credential: None,
             method: HttpMethod::Post,
             path: "/auth/token".into(),

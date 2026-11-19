@@ -594,6 +594,7 @@ mod tests {
             Value::String(SHARED_BEARER.into()),
         )]));
         CompiledRequest {
+            anonymous: false,
             credential: None,
             method: HttpMethod::Get,
             path: "/records".into(),

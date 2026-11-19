@@ -522,7 +522,7 @@ impl ExecutionEngine {
                 let (response, link_next, http_live) =
                     match driver.prepare_request(&base_compiled)? {
                     super::pagination_driver::PageRequest::Absolute(url) => {
-                        if matches!(&base_compiled, CompiledOperation::Http(request) if request.credential.is_some()) {
+                        if matches!(&base_compiled, CompiledOperation::Http(request) if request.credential.is_some() || request.anonymous) {
                             Err::<(), RuntimeError>(crate::credentials::CredentialError::AbsoluteContinuationForbidden.into())?;
                         }
                         if mode != ExecutionMode::Live {

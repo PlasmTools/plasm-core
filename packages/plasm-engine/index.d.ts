@@ -96,6 +96,7 @@ export interface JsTeachingResult {
 export interface JsTransportRequest {
   /** Scoped credentials require the callback to reject HTTP redirects. */
   rejectRedirects: boolean
+  anonymous?: boolean;
   requireHostAuth: boolean
   method: string
   url: string

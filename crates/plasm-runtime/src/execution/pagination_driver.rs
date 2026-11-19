@@ -468,6 +468,7 @@ mod tests {
         .unwrap();
         let request = || {
             CompiledOperation::Http(plasm_compile::CompiledRequest {
+                anonymous: false,
                 credential: None,
                 method: plasm_compile::HttpMethod::Get,
                 path: "/logs".into(),
@@ -502,6 +503,7 @@ mod tests {
         .expect("driver");
         let request = || {
             CompiledOperation::Http(CompiledRequest {
+                anonymous: false,
                 credential: None,
                 method: HttpMethod::Get,
                 path: "/users".into(),

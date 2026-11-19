@@ -184,6 +184,7 @@ async fn response_cache_preserves_next_link() {
         None,
     );
     let request = CompiledOperation::Http(CompiledRequest {
+        anonymous: false,
         credential: None,
         method: plasm_compile::HttpMethod::Get,
         path: "/items".into(),
@@ -221,6 +222,7 @@ async fn replay_preserves_next_link() {
         None,
     );
     let request = CompiledOperation::Http(CompiledRequest {
+        anonymous: false,
         credential: None,
         method: plasm_compile::HttpMethod::Get,
         path: "/items".into(),

@@ -166,6 +166,11 @@ async fn exercise_scoped_injection() {
         assert_eq!(secrets.0.load(Ordering::SeqCst), 0, "binding must not resolve secrets");
         assert_eq!(transport.0.load(Ordering::SeqCst), 0);
         let reference = result.entities()[0].fields["reference"].to_value();
+        let public = serde_json::json!({"method":"GET","path":[{"type":"literal","value":"records"}],"auth":{"scheme":"anonymous"}});
+        let public = compile_operation_dispatch(&parse_capability_template(&public).unwrap(), &CmlEnv::new()).unwrap();
+        let CompiledOperation::Http(public) = public else { panic!() };
+        assert!(engine.resolve_compiled_http_auth(&public).await.unwrap().is_none());
+        assert_eq!(secrets.0.load(Ordering::SeqCst), 0);
         let request = serde_json::json!({"method":"GET","path":[{"type":"literal","value":"records"}],"auth":{"scheme":"credential","slot":"record_access","resource":{"type":"const","value":{"record":"a"}},"reference":{"type":"const","value":reference}}});
         let template = parse_capability_template(&request).unwrap();
         let mut operation = compile_operation_dispatch(&template, &CmlEnv::new()).unwrap();

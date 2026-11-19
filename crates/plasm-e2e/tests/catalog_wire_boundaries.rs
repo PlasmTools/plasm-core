@@ -46,6 +46,25 @@ fn template(api: &str, capability: &str) -> CmlRequest {
 }
 
 #[test]
+fn proof_document_reads_select_auth_by_document_access() {
+    for capability in ["document_get", "document_get_markdown"] {
+        let public = request("proof", capability, json!({"slug":"example"}));
+        assert!(public.anonymous);
+        assert!(public.credential.is_none());
+        let protected = request(
+            "proof",
+            capability,
+            json!({"slug":"example", "access":"reference"}),
+        );
+        assert!(!protected.anonymous);
+        let binding = protected.credential.unwrap();
+        assert_eq!(binding.resource, json!({"document":"example"}));
+        assert_eq!(binding.slot, "document_access");
+        assert_eq!(binding.reference, "reference");
+    }
+}
+
+#[test]
 fn owned_catalogs_have_no_duplicate_yaml_keys_and_compile() {
     // serde_yaml::Value rejects duplicate mapping keys rather than silently
     // accepting the final OAuth declaration as an IndexMap loader can do.

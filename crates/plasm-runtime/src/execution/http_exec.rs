@@ -54,6 +54,9 @@ impl ExecutionEngine {
         &self,
         request: &CompiledRequest,
     ) -> Result<Option<crate::auth::ResolvedAuth>, RuntimeError> {
+        if request.anonymous {
+            return Ok(None);
+        }
         match super::request_identity::pinned_auth() {
             super::request_identity::DispatchAuthScope::Authenticated(auth) => {
                 return Ok(Some(auth))

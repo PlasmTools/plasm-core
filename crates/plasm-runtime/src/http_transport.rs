@@ -1207,6 +1207,7 @@ mod compiled_http_url_tests {
             map.insert("per_page".to_string(), Value::Integer(5));
         }
         let request = CompiledRequest {
+            anonymous: false,
             credential: None,
             method: HttpMethod::Get,
             path: "https://hn.algolia.com/api/v1/search_by_date".to_string(),
@@ -1598,6 +1599,7 @@ mod json_wire_tests {
     #[test]
     fn invalid_nested_number_is_a_typed_failure_before_request_construction() {
         let request = CompiledRequest {
+            anonymous: false,
             credential: None,
             method: HttpMethod::Post,
             path: "/items".into(),
@@ -1632,6 +1634,7 @@ mod json_wire_tests {
             Value::String(markdown.into()),
         )]));
         let request = CompiledRequest {
+            anonymous: false,
             credential: None,
             method: HttpMethod::Post,
             path: "/v1/share".into(),
@@ -1668,6 +1671,7 @@ mod json_wire_tests {
     #[test]
     fn compiled_request_rejects_template_override_of_resolver_auth_header() {
         let request = CompiledRequest {
+            anonymous: false,
             credential: None,
             method: HttpMethod::Get,
             path: "/v1/items".into(),
@@ -1713,6 +1717,7 @@ mod json_wire_tests {
         assert!(encoded.contains("password=s3cret"), "{encoded}");
 
         let request = CompiledRequest {
+            anonymous: false,
             credential: None,
             method: HttpMethod::Post,
             path: "/auth/token".into(),
@@ -1747,6 +1752,7 @@ mod json_wire_tests {
             Value::String("Bearer tok-abc".into()),
         )]));
         let request = CompiledRequest {
+            anonymous: false,
             credential: None,
             method: HttpMethod::Get,
             path: "/friends".into(),

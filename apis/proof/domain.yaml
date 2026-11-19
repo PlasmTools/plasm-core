@@ -1,4 +1,4 @@
-version: 30
+version: 31
 http_backend: https://www.proofeditor.ai
 auth:
   scheme: bearer_token
@@ -243,7 +243,7 @@ capabilities:
         - name: access
           value_ref: nv_proof_access_ref
           required: false
-          description: DocumentAccess.reference for this document; omit to use configured host authentication.
+          description: DocumentAccess.reference for this document; omit for an anonymous public read.
     provides:
     - slug
     - markdown
@@ -261,7 +261,7 @@ capabilities:
         - name: access
           value_ref: nv_proof_access_ref
           required: false
-          description: DocumentAccess.reference for this document; omit to use configured host authentication.
+          description: DocumentAccess.reference for this document; omit for an anonymous public read.
     provides:
     - slug
     - markdown

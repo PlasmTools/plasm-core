@@ -61,7 +61,7 @@ export function createDefaultHostTransport(options?: HostTransportOptions): Host
       },
       async (span) => {
         const headers = new Headers(request.headers ?? {});
-        if (!headers.has("authorization")) {
+        if (!request.anonymous && !headers.has("authorization")) {
           const bearer = await resolveAuth({ entryId: request.entryId });
           if (bearer) {
             headers.set("authorization", bearer);

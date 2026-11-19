@@ -108,6 +108,9 @@ impl RequestFingerprint {
         let mut hasher = Hasher::new();
 
         if let CompiledOperation::Http(request) | CompiledOperation::GraphQl(request) = request {
+            if request.anonymous {
+                hasher.update(b"|anonymous|");
+            }
             if let Some(headers) = &request.headers {
                 hasher.update(b"|headers|");
                 hasher.update(normalize_json_for_fingerprint(headers)?.as_bytes());
@@ -461,6 +464,7 @@ mod tests {
 
     fn create_test_request() -> CompiledOperation {
         CompiledOperation::Http(CompiledRequest {
+            anonymous: false,
             credential: None,
             method: HttpMethod::Post,
             path: "/test/path".to_string(),
@@ -607,6 +611,7 @@ mod tests {
     #[test]
     fn test_different_requests_different_fingerprints() {
         let request1 = CompiledRequest {
+            anonymous: false,
             credential: None,
             method: HttpMethod::Get,
             path: "/path1".to_string(),
@@ -618,6 +623,7 @@ mod tests {
         };
 
         let request2 = CompiledRequest {
+            anonymous: false,
             credential: None,
             method: HttpMethod::Get,
             path: "/path2".to_string(),
@@ -783,6 +789,7 @@ mod tests {
 
         let mk = |body: Option<Value>| {
             CompiledOperation::Http(CompiledRequest {
+                anonymous: false,
                 credential: None,
                 method: HttpMethod::Post,
                 path: "/api".into(),
@@ -843,6 +850,7 @@ mod tests {
 
         let mk = |body: Option<Value>| {
             CompiledOperation::Http(CompiledRequest {
+                anonymous: false,
                 credential: None,
                 method: HttpMethod::Post,
                 path: "/typed-ir".into(),

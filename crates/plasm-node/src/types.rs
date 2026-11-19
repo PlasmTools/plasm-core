@@ -12,6 +12,7 @@ pub struct JsTransportRequest {
     /// Scoped credentials require the callback to reject HTTP redirects.
     pub reject_redirects: bool,
     pub require_host_auth: bool,
+    pub anonymous: bool,
     pub method: String,
     pub url: String,
     /// Callbacks and their HTTP clients must preserve supplied credentials.

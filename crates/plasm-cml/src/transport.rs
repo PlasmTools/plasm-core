@@ -363,7 +363,7 @@ pub(crate) fn collect_cond_vars(cond: &CmlCond, vars: &mut IndexSet<String>) {
 
 pub(crate) fn collect_auth_vars(auth: &crate::RequestAuthentication, vars: &mut IndexSet<String>) {
     match auth {
-        crate::RequestAuthentication::Host => {}
+        crate::RequestAuthentication::Anonymous | crate::RequestAuthentication::Host => {}
         crate::RequestAuthentication::Bearer { token } => collect_expr_vars(token, vars),
         crate::RequestAuthentication::Credential {
             resource,

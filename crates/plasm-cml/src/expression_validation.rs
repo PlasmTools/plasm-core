@@ -139,7 +139,7 @@ fn paths(path: &[PathSegment]) -> Result<(), CmlError> {
 
 fn authentication(auth: &RequestAuthentication) -> Result<(), CmlError> {
     match auth {
-        RequestAuthentication::Host => Ok(()),
+        RequestAuthentication::Anonymous | RequestAuthentication::Host => Ok(()),
         RequestAuthentication::Bearer { token } => expression(token),
         RequestAuthentication::Credential {
             slot,

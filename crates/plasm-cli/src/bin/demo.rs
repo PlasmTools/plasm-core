@@ -7,6 +7,7 @@ fn main() -> Result<(), plasm_runtime::RuntimeError> {
 
     // Create identical requests
     let request1 = CompiledRequest {
+        anonymous: false,
         credential: None,
         method: HttpMethod::Post,
         path: "/query/Account".to_string(),
@@ -20,6 +21,7 @@ fn main() -> Result<(), plasm_runtime::RuntimeError> {
     };
 
     let request2 = CompiledRequest {
+        anonymous: false,
         credential: None,
         method: HttpMethod::Post,
         path: "/query/Account".to_string(),
@@ -34,6 +36,7 @@ fn main() -> Result<(), plasm_runtime::RuntimeError> {
 
     // Different request
     let request3 = CompiledRequest {
+        anonymous: false,
         credential: None,
         method: HttpMethod::Post,
         path: "/query/Account".to_string(),

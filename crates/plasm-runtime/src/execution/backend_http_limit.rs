@@ -137,6 +137,7 @@ mod tests {
                     tasks.push(tokio::spawn(EXECUTION_COMPILED_CATALOG.scope(catalog, async move {
                         if i % 2 == 0 {
                             let request = CompiledRequest {
+                                anonymous: false,
                                 credential: None, method: plasm_compile::HttpMethod::Get,
                                 path: "/children".into(), query: None, body: None,
                                 body_format: plasm_compile::HttpBodyFormat::Json,

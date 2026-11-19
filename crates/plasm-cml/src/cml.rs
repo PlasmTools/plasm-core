@@ -715,6 +715,7 @@ pub struct CmlRequest {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "scheme", rename_all = "snake_case", deny_unknown_fields)]
 pub enum RequestAuthentication {
+    Anonymous,
     Host,
     Bearer {
         token: CmlExpr,
@@ -1314,7 +1315,14 @@ pub fn compile_request(request: &CmlRequest, env: &CmlEnv) -> Result<CompiledReq
         None
     };
 
+    let anonymous = matches!(auth, Some(RequestAuthentication::Anonymous));
+    if anonymous
+        && matches!(&headers, Some(Value::Object(fields)) if fields.keys().any(|key| key.eq_ignore_ascii_case("authorization")))
+    {
+        return Err(CmlEvaluationError::AuthorizationHeaderConflict.into());
+    }
     Ok(CompiledRequest {
+        anonymous,
         method: request.method.clone(),
         path,
         query,
@@ -1329,6 +1337,8 @@ pub fn compile_request(request: &CmlRequest, env: &CmlEnv) -> Result<CompiledReq
 /// A compiled HTTP request ready for execution
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct CompiledRequest {
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub anonymous: bool,
     pub method: HttpMethod,
     pub path: String,
     pub query: Option<Value>,

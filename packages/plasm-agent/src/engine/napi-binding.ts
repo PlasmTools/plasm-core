@@ -37,6 +37,7 @@ export interface ResolvedPlanPayload {
 export type HostTransportRequest = {
   rejectRedirects: boolean;
   /** Resolve configured injection or reject before dispatch when true. */
+  anonymous?: boolean;
   requireHostAuth: boolean;
   method: string;
   url: string;
