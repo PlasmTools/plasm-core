@@ -603,6 +603,33 @@ fn complementary_read_admission_survives_collection_ranking_first() {
 }
 
 #[test]
+fn exact_operation_admission_respects_qualification_and_literal_boundaries() {
+    let mut first = packet().candidates[0].clone();
+    first.reference.catalog = "alpha".into();
+    first.reference.capability = "record_create".into();
+    let mut second = first.clone();
+    second.reference.catalog = "beta".into();
+    let candidates = vec![first, second];
+    let exposed = [candidates[0].reference.clone()];
+    for (intent, expected) in [
+        ("use beta/record_create.", "beta"),
+        ("use record_create", "alpha"),
+        ("use beta/record_create_extra", "alpha"),
+        ("store \"beta/record_create\"", "alpha"),
+    ] {
+        let request = IntentText::parse(intent);
+        let ordered = order_candidates(
+            &candidates,
+            &request.outer,
+            &BTreeMap::new(),
+            &exposed,
+            &BTreeSet::new(),
+        );
+        assert_eq!(ordered[0].reference.catalog, expected, "{intent}");
+    }
+}
+
+#[test]
 fn read_family_promotion_preserves_catalogue_and_priority_boundaries() {
     let base = packet().candidates[0].clone();
     let mut query = base.clone();
