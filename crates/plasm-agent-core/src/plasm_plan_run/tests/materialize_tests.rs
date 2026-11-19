@@ -537,3 +537,37 @@ fn typed_fanout_delete_binds_numeric_identity_and_input() {
         Some("fixture-proof")
     );
 }
+
+#[test]
+fn whole_node_input_preserves_every_compound_identity_component() {
+    let cgs = plasm_core::loader::load_schema_dir(
+        &std::path::Path::new(crate::test_manifest_dir())
+            .join("../../fixtures/schemas/plasm_language_matrix"),
+    )
+    .unwrap();
+    let ctx = wire_coercion_ctx_for_source_entity(&cgs, "CompoundBranch").unwrap();
+    let parts = [("owner", "group"), ("item_id", "123"), ("name", "branch")]
+        .map(|(name, value)| (name.to_owned(), value.to_owned()))
+        .into();
+    let identity = plasm_core::RowIdentity::new(
+        plasm_core::QualifiedEntityKey {
+            entry_id: "matrix".into(),
+            entity: "CompoundBranch".into(),
+        },
+        plasm_core::Ref::compound("CompoundBranch", parts),
+        Default::default(),
+        plasm_core::IdEncoding::Compound,
+    );
+    let value = node_input_hole_from_identity(
+        Some(&ctx),
+        "name",
+        &Some(identity),
+        &[],
+        &plasm_core::Value::Null,
+    )
+    .unwrap();
+    assert_eq!(
+        value,
+        Some(crate::fixture_value!({"owner":"group","item_id":"123","name":"branch"}))
+    );
+}

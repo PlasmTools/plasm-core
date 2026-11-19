@@ -295,31 +295,46 @@ pub(crate) fn node_input_hole_from_identity(
         return Ok(None);
     };
     let key = path.first().map(String::as_str).unwrap_or(id_field);
-    let decode = |slot: &str| -> Result<_, RuntimeOperandError> {
+    let decode = |field: &str, slot: &str| -> Result<_, RuntimeOperandError> {
         match ctx {
             Some(ctx) => Ok(plasm_core::identity_slot_to_value(
                 ctx.cgs,
                 ctx.source_entity,
-                if key == "id" { id_field } else { key },
+                field,
                 slot,
             )?),
             None => Ok(plasm_core::Value::String(slot.into())),
         }
     };
     if path.is_empty() {
-        return decode(&identity.reference.primary_slot_str()).map(Some);
+        if let plasm_core::EntityKey::Compound(parts) = &identity.reference.key {
+            let fields = parts
+                .iter()
+                .map(|(name, slot)| {
+                    let literal = slot.as_lit_str().ok_or(RuntimeOperandError::OperandValue)?;
+                    Ok((name.clone(), decode(name, literal)?))
+                })
+                .collect::<Result<_, RuntimeOperandError>>()?;
+            return Ok(Some(plasm_core::Value::Object(fields)));
+        }
+        let field = ctx
+            .and_then(|ctx| ctx.source_entity.key_vars.first())
+            .map_or(id_field, |key| key.as_str());
+        return decode(field, &identity.reference.primary_slot_str()).map(Some);
     }
     if path.len() == 1 {
         if let Some(slot) = identity.ambient.get(key) {
-            return decode(slot).map(Some);
+            return decode(key, slot).map(Some);
         }
         if let plasm_core::EntityKey::Compound(parts) = &identity.reference.key {
             if let Some(slot) = parts.get(key).and_then(|slot| slot.as_lit_str()) {
-                return decode(slot).map(Some);
+                return decode(key, slot).map(Some);
             }
         }
-        if key == "id" || key == id_field {
-            return decode(&identity.reference.primary_slot_str()).map(Some);
+        if (key == "id" || key == id_field)
+            && matches!(identity.reference.key, plasm_core::EntityKey::Simple(_))
+        {
+            return decode(id_field, &identity.reference.primary_slot_str()).map(Some);
         }
     }
     value_at_segments(row, path)
