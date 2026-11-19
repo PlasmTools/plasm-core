@@ -1195,6 +1195,24 @@ async fn execute_mcp_live_run_page_handle_synthetic_continuation() {
     })
     .await
     .expect("page continuation live run");
+    let meta = &second.run_plasm_meta.as_ref().unwrap()["plasm"];
+    let (_, _, plan_id) = crate::run_artifacts::parse_plasm_execute_plan_uri(
+        meta["plan_uri"]
+            .as_str()
+            .expect("completed run plan archive"),
+    )
+    .unwrap();
+    let archive = fx
+        .st
+        .run_artifacts
+        .get_code_plan_payload_result(&fx.out.prompt_hash, &fx.out.session_id, plan_id)
+        .await
+        .unwrap()
+        .expect("completed run archive");
+    let doc: crate::run_artifacts::CodePlanArchiveDocument =
+        serde_json::from_slice(&archive.bytes).unwrap();
+    assert_eq!(doc.code, format!("page({handle})"));
+    assert!(doc.comp.is_object() && doc.plan_ux_reflection.is_some());
     let second_md = second.run_markdown.as_ref().expect("second page markdown");
     assert!(
         second_md.contains("```tsv") && second_md.contains("item-"),

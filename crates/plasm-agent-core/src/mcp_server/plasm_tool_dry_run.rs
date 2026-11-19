@@ -171,7 +171,7 @@ async fn execute_plasm_tool_dry_run_inner(
     let auto_execute = dry.fuse_clean_read();
     if auto_execute {
         phase = Instant::now();
-        let plan_refs = CodePlanTraceInput {
+        CodePlanTraceInput {
             hub: &ctx.host.trace_hub,
             store: Arc::clone(&ctx.host.run_artifacts),
             mcp_key: ctx.ls_key,
@@ -223,25 +223,6 @@ async fn execute_plasm_tool_dry_run_inner(
             comp: comp_val.expect("inline_fits implies comp_val"),
             plan_ux_reflection,
         });
-        if let Some(plasm) = result
-            .run_plasm_meta
-            .as_mut()
-            .and_then(|meta| meta.get_mut("plasm"))
-            .and_then(|value| value.as_object_mut())
-        {
-            plasm.insert(
-                "plan_uri".into(),
-                serde_json::Value::String(plan_refs.plan_uri),
-            );
-            plasm.insert(
-                "plan_http_path".into(),
-                serde_json::Value::String(plan_refs.plan_http_path),
-            );
-            plasm.insert(
-                "canonical_plan_uri".into(),
-                serde_json::Value::String(plan_refs.canonical_plan_uri),
-            );
-        }
         return Ok(result);
     }
 

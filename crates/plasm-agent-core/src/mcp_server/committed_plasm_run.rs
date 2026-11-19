@@ -351,7 +351,7 @@ async fn execute_mcp_live_run_inner(
             .emit_execute_started(plan_ux_reflection.clone())
             .await;
 
-    let await_out =
+    let mut await_out =
         match crate::mcp_plasm_run_phases::mcp_plasm_run_phase("async_live_await", || async {
             let accept_payload = build_run_explorer_accept_payload(&live.dry, Some(es.as_ref()));
             deliver_live_run_await(
@@ -396,9 +396,19 @@ async fn execute_mcp_live_run_inner(
         };
 
     crate::mcp_plasm_run_phases::mcp_plasm_run_phase("artifact_persist", || async {
-        code_plan_trace_input(&artifacts, es.as_ref(), &wire, Arc::clone(&comp_wire))
+        let refs = code_plan_trace_input(&artifacts, es.as_ref(), &wire, Arc::clone(&comp_wire))
             .emit_execute_completed(Some(execute_plan_id), plan_ux_reflection, &await_out)
             .await;
+        if let Some(plasm) = await_out
+            .run_plasm_meta
+            .as_mut()
+            .and_then(|meta| meta.get_mut("plasm"))
+            .and_then(|value| value.as_object_mut())
+        {
+            plasm.insert("plan_uri".into(), refs.plan_uri.into());
+            plasm.insert("plan_http_path".into(), refs.plan_http_path.into());
+            plasm.insert("canonical_plan_uri".into(), refs.canonical_plan_uri.into());
+        }
         Ok(await_out)
     })
     .await

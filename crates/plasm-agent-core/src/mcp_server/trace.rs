@@ -327,7 +327,7 @@ impl<'a> CodePlanTraceInput<'a> {
         execute_plan_id: Option<StartedPlan>,
         plan_ux_reflection: Option<serde_json::Value>,
         out: &PlasmPlanRunResult,
-    ) {
+    ) -> CodePlanEmitRefs {
         let archive_index_only = execute_plan_id
             .as_ref()
             .is_some_and(|p| p.archived && p.reflection == plan_ux_reflection);
@@ -341,7 +341,8 @@ impl<'a> CodePlanTraceInput<'a> {
                 archive_index_only,
             },
         )
-        .await;
+        .await
+        .refs
     }
 }
 
