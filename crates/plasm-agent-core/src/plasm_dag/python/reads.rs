@@ -323,15 +323,77 @@ impl Lower<'_> {
             super::body::ScopeMode::Filter,
         )?;
         let schema = crate::map_body_schema::output_schema(self.es, &body)?;
+        // Keep admission and refinement from the typed callback. Represent a proven
+        // scalar comparison as a filter so the planner can count matches across pages.
+        let node_source = match scalar_equality(expression, &schema)? {
+            Some(predicate) => super::super::types::DagNodeSource::Compute {
+                source: source.to_owned(),
+                op: ComputeOp::Filter {
+                    predicates: vec![predicate].into(),
+                },
+                schema,
+                collection_alias: None,
+            },
+            None => super::super::types::DagNodeSource::MapBody {
+                body: Box::new(body),
+                schema,
+            },
+        };
         self.insert(DagNode {
             id: id.into(),
             expr: String::new(),
             singleton: false,
             page_size: None,
-            source: super::super::types::DagNodeSource::MapBody {
-                body: Box::new(body),
-                schema,
-            },
+            source: node_source,
         })
     }
+}
+
+fn scalar_equality(
+    expression: &PyExpr,
+    schema: &SyntheticResultSchema,
+) -> Result<Option<PlanPredicate>, PythonLoweringError> {
+    let PyExpr::Lambda(lambda) = expression else {
+        return Ok(None);
+    };
+    let PyExpr::Compare(compare) = lambda.body.as_ref() else {
+        return Ok(None);
+    };
+    let ([ruff_python_ast::CmpOp::Eq], [lhs, rhs]) = (&*compare.ops, &*compare.operands) else {
+        return Ok(None);
+    };
+    let PyExpr::Attribute(field) = lhs else {
+        return Ok(None);
+    };
+    if name(&field.value) != Some(super::projection::projection_parameter(lambda)?) {
+        return Ok(None);
+    }
+    let field_type = schema
+        .fields
+        .iter()
+        .find(|f| f.name.as_str() == field.attr.as_str())
+        .and_then(|f| f.value_type.as_ref())
+        .map(|t| &t.shape);
+    use plasm_core::{value_contract::ValueShape, FieldType};
+    let Some(ValueShape::Scalar { field_type }) = field_type else {
+        return Ok(None);
+    };
+    let value = match (field_type, rhs) {
+        (FieldType::String | FieldType::Select, PyExpr::StringLiteral(s)) => {
+            plasm_core::Value::String(s.value.to_str().to_owned())
+        }
+        (FieldType::Boolean, PyExpr::BooleanLiteral(b)) => plasm_core::Value::Bool(b.value),
+        (FieldType::Integer, PyExpr::NumberLiteral(_)) => {
+            let Ok(n) = integer(rhs) else { return Ok(None) };
+            plasm_core::Value::Integer(n)
+        }
+        _ => return Ok(None),
+    };
+    Ok(Some(PlanPredicate {
+        field_path: FieldPath::new(vec![field.attr.to_string()])?,
+        op: PlanPredicateOp::Eq,
+        value: value.try_into().map_err(|_| {
+            crate::program_rejection::PythonLoweringInvariantError::InvalidResolvedLiteral
+        })?,
+    }))
 }

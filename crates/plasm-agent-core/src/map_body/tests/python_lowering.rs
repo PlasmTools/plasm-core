@@ -1,6 +1,32 @@
 use super::*;
 
 #[test]
+fn python_filter_take_pushes_a_matching_row_budget() {
+    on_runtime(async {
+        let (es, host, _) = fixture(5);
+        let item = es
+            .teaching_exposure
+            .as_ref()
+            .unwrap()
+            .to_symbol_map()
+            .entity_sym_for("fixture", "Item");
+        let source = format!("class P(Program):\n    def build(self):\n        return {item}.query().where(lambda row: row.title == 'Title 3').take(1).select('id')\n");
+        let bundle = compile_python_program(&es, &source).await.unwrap();
+        let plan = crate::plan_prepare::build_prepared_validated_plan(
+            &bundle.artifact().comp,
+            bundle.executable(),
+        )
+        .unwrap();
+        assert!(plan.nodes().iter().any(|node| matches!(node,
+            crate::plasm_plan::ValidatedPlanNode::Surface(surface) if matches!(&surface.pushed_read_budget,
+              Some(crate::plan_read_bounds::PushedReadBudget::FilterLimit { count: 1, predicates }) if predicates.len()==1))));
+        let actual = returned_fields(&execute(&es, &host, &bundle).await.unwrap());
+        assert_eq!(actual.len(), 1);
+        assert_eq!(actual[0]["id"], "i3");
+    });
+}
+
+#[test]
 fn python_filter_thousand_occurrences_prepare_once_per_execution() {
     on_runtime(async {
         let (es, host, calls) = fixture(1000);

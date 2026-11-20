@@ -1055,10 +1055,15 @@ fn row_algebra_reads_matches_beyond_the_first_backend_pages() {
                 use plasm_agent::plasm_compile::compile_plasm_program;
                 use plasm_agent::plasm_plan_run::run_plasm_comp;
                 use plasm_runtime::ResultCoverage;
-                for (program, expected) in [
-                    ("rows = Item\nrows | where n >= 40 | select id, n", 5),
-                    ("rows = Item\nrows | select id, n", 45),
-                    ("rows = Item | take 3\nrows | select id, n", 3),
+                for (program, expected, pages) in [
+                    ("rows = Item\nrows | where n >= 40 | select id, n", 5, 3),
+                    ("rows = Item\nrows | select id, n", 45, 3),
+                    ("rows = Item | take 3\nrows | select id, n", 3, 1),
+                    (
+                        "rows = Item\nrows | where n = 25 | take 1 | select id, n",
+                        1,
+                        2,
+                    ),
                 ] {
                     let (base, recorded) = spawn_stub().await;
                     let mut cgs = load_matrix_cgs();
@@ -1117,7 +1122,7 @@ fn row_algebra_reads_matches_beyond_the_first_backend_pages() {
                     let requests = recorded.requests.lock().unwrap();
                     assert_eq!(
                         requests.len(),
-                        if expected == 3 { 1 } else { 3 },
+                        pages,
                         "bounded take versus exhaustive algebra: {program}"
                     );
                 }
