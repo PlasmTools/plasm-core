@@ -14,6 +14,7 @@ pub(crate) struct ExposureWaveSnapshot {
 /// What changed during one exposure wave (after surface merge + relation admission).
 #[derive(Debug, Clone, Default)]
 pub(crate) struct ExposureWaveChanges {
+    slots_changed: bool,
     pub added_entities: Vec<plasm_core::ExposureEntityKey>,
     pub new_relation_slots: Vec<plasm_core::symbol_tuning::ExposureSlotKey>,
     pub new_capabilities:
@@ -23,6 +24,7 @@ pub(crate) struct ExposureWaveChanges {
 impl ExposureWaveChanges {
     pub(crate) fn surface_unchanged(&self) -> bool {
         self.added_entities.is_empty()
+            && !self.slots_changed
             && self.new_relation_slots.is_empty()
             && self.new_capabilities.is_empty()
     }
@@ -54,6 +56,7 @@ fn compute_exposure_wave_changes(
         .cloned()
         .collect();
     ExposureWaveChanges {
+        slots_changed: exp.surface.slots != snapshot.slots_before,
         added_entities,
         new_relation_slots,
         new_capabilities,
@@ -141,8 +144,11 @@ pub(crate) async fn commit_exposure_wave_delta(
     snapshot: ExposureWaveSnapshot,
 ) -> Result<CommittedWaveDelta, super::SessionMutateError> {
     let (sess, delta) = stage_exposure_wave_delta(sess, exp, snapshot)?;
-    st.replace_execute_session(prompt_hash_p.as_str(), session_id_p.as_str(), sess)
-        .await?;
+    // Re-observing the same surface must preserve its committed symbol bytes.
+    if !delta.surface_unchanged {
+        st.replace_execute_session(prompt_hash_p.as_str(), session_id_p.as_str(), sess)
+            .await?;
+    }
     Ok(delta)
 }
 
@@ -269,15 +275,12 @@ mod tests {
         .await
         .expect("store session");
 
+        let before = host.get_execute_session(&ph, &sid).await.expect("session");
         let committed = commit_exposure_wave_delta(
             &host,
             &prompt_hash,
             &session_id,
-            host.get_execute_session(ph.as_str(), sid.as_str())
-                .await
-                .expect("session")
-                .as_ref()
-                .clone(),
+            before.as_ref().clone(),
             exp,
             snapshot,
         )
@@ -285,6 +288,8 @@ mod tests {
         .expect("commit wave");
 
         assert!(committed.surface_unchanged);
+        let after = host.get_execute_session(&ph, &sid).await.expect("session");
+        assert!(Arc::ptr_eq(&before, &after));
         let md = committed.markdown;
         assert!(
             md.is_empty(),
