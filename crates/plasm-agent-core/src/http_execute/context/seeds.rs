@@ -272,9 +272,13 @@ pub(super) async fn apply_context_intent_session_update(
     let mut sess = (*sess_arc).clone();
     let changed = sess.context_intent != normalized;
     if changed {
-        sess.context_intent = normalized;
-        st.replace_execute_session(prompt_hash_p.as_str(), session_id_p.as_str(), sess)
+        st.execute_session_registry
+            .update_context_intent(&sess, session_id_p.as_str(), &normalized)
             .await?;
+        sess.context_intent = normalized;
+        st.sessions
+            .replace_session(&prompt_hash_p, &session_id_p, sess)
+            .await;
     }
     Ok(changed)
 }

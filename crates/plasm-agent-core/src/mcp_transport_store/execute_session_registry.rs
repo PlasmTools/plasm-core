@@ -769,6 +769,65 @@ impl ExecuteSessionRegistry {
             .await
     }
 
+    /// An intent amendment owns one metadata field. Retain the committed symbol
+    /// bytes and all independent updates, including receipts and plan commits.
+    pub(crate) async fn update_context_intent(
+        &self,
+        session: &ExecuteSession,
+        session_id: &str,
+        next: &Option<String>,
+    ) -> Result<(), ExecuteSessionPersistError> {
+        let key = session_key(&session.prompt_hash, session_id);
+        let update = |desc: &mut PersistedExecuteSessionDescriptor| {
+            if desc.domain_revision != session.domain_revision
+                || (desc.context_intent != session.context_intent && &desc.context_intent != next)
+            {
+                return Err(ExecuteSessionPersistError::ExposureConflict);
+            }
+            desc.context_intent.clone_from(next);
+            Ok(())
+        };
+        let patch_json = |raw: &str| {
+            let mut desc = serde_json::from_str(raw)
+                .map_err(|e| ExecuteSessionPersistError::Encoding(Arc::new(e)))?;
+            update(&mut desc)?;
+            serde_json::to_string(&desc)
+                .map_err(|e| ExecuteSessionPersistError::Encoding(Arc::new(e)))
+        };
+        if let Some(map) = self.test_json().await {
+            let mut rows = map.write().await;
+            let raw = rows
+                .get_mut(&key)
+                .ok_or(ExecuteSessionPersistError::SessionUnavailable)?;
+            *raw = patch_json(raw)?;
+            return Ok(());
+        }
+        if let Some(redis) = self.redis().await {
+            let storage_error = |e| ExecuteSessionPersistError::DurableWrite(Arc::new(e));
+            for _ in 0..3 {
+                let previous = redis
+                    .get_string_strict(&key)
+                    .await
+                    .map_err(storage_error)?
+                    .ok_or(ExecuteSessionPersistError::SessionUnavailable)?;
+                let payload = patch_json(&previous)?;
+                if redis
+                    .replace_if_unchanged(&key, &previous, &payload)
+                    .await
+                    .map_err(storage_error)?
+                {
+                    return Ok(());
+                }
+            }
+            return Err(ExecuteSessionPersistError::ExposureConflict);
+        }
+        let mut rows = self.memory_descriptors.write().await;
+        update(
+            rows.get_mut(&key)
+                .ok_or(ExecuteSessionPersistError::SessionUnavailable)?,
+        )
+    }
+
     /// Refresh descriptor after in-session mutation (federate/expand/plan commit).
     /// When no durable row exists yet, `reuse_key_fallback` seeds the first upsert.
     pub(crate) async fn persist_or_update(

@@ -221,6 +221,19 @@ return 1
 
     /// Publish exposure and its logical ledger together. Equal revisions may
     /// only refresh metadata when their symbol ledger is identical.
+    /// Preserve the TTL and fail if any concurrent descriptor writer won.
+    pub(crate) async fn replace_if_unchanged(
+        &self,
+        key: &str,
+        previous: &str,
+        next: &str,
+    ) -> redis::RedisResult<bool> {
+        redis::cmd("EVAL")
+            .arg("if redis.call('GET', KEYS[1]) ~= ARGV[1] then return 0 end; redis.call('SET', KEYS[1], ARGV[2], 'KEEPTTL'); return 1")
+            .arg(1).arg(key).arg(previous).arg(next)
+            .query_async(&mut self.conn.clone()).await
+    }
+
     pub(crate) async fn commit_session_exposure(
         &self,
         session_key: &str,
