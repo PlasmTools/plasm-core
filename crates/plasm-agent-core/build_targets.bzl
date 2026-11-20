@@ -8,7 +8,7 @@ def build_targets():
         name = "build_script",
         srcs = ["build.rs"],
         build_script_env = {"PLASM_RELEASE_VERSION": "0.6.1"},
-        data = native.glob(["src/assets/**"]),
+        data = native.glob(["src/assets/**"]) + ["//:public_catalog_domains"],
         edition = "2021",
         version = "0.7.0",
     )

@@ -181,6 +181,12 @@ filegroup(
 )
 
 filegroup(
+    name = "public_catalog_domains",
+    srcs = glob(["apis/*/domain.yaml"]),
+    visibility = ["//visibility:public"],
+)
+
+filegroup(
     name = "catalog_sources",
     srcs = glob(["apis/**"]),
     visibility = ["//visibility:public"],

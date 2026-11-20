@@ -1035,7 +1035,7 @@ impl WholeIntentPacket {
     }
 }
 
-mod references;
+pub(crate) mod references;
 pub(crate) use references::{IntentText, References};
 mod selection;
 pub(crate) use selection::{Assessment, Disposition};

@@ -327,6 +327,17 @@ impl PlasmMcpHandler {
         if let Some(pin) = &session_pin {
             allowed = pin.authorization.intersection(&allowed);
         }
+        let missing = crate::discovery_sources::unavailable(
+            intent,
+            &current.snapshot().list_entries(),
+            &allowed,
+        );
+        if !missing.is_empty() {
+            return Err(ToolFailure::rejected(format!(
+                "Requested catalogue unavailable in this session: {}. This request taught no operations. Existing declarations remain usable for supported parts.",
+                missing.join(", ")
+            )));
+        }
         if ["routing_ref", "clarify_choices", "clarify_choice"]
             .iter()
             .any(|key| v.get(*key).is_some())

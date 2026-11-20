@@ -93,7 +93,25 @@ fn stamp_release_version() {
     println!("cargo:rustc-env=PLASM_RELEASE_VERSION={version}");
 }
 
+/// Public names identify a requested service even when its contract is absent locally.
+fn write_public_catalog_names() {
+    let apis = Path::new("../../apis");
+    println!("cargo:rerun-if-changed={}", apis.display());
+    let mut names = Vec::new();
+    for entry in std::fs::read_dir(apis).expect("public catalogue directory") {
+        let dir = entry.expect("catalogue directory entry").path();
+        if dir.join("domain.yaml").is_file() {
+            names.push(dir.file_name().unwrap().to_str().unwrap().to_owned());
+        }
+    }
+    names.sort();
+    assert!(!names.is_empty(), "public catalogue directory is empty");
+    let out = PathBuf::from(std::env::var_os("OUT_DIR").unwrap());
+    std::fs::write(out.join("public_catalog_names.txt"), names.join("\n")).unwrap();
+}
+
 fn main() {
+    write_public_catalog_names();
     stamp_release_version();
     for path in EMBEDDED_UI_ASSETS {
         println!("cargo:rerun-if-changed={path}");

@@ -28,6 +28,7 @@ pub mod discovery_matcher;
 pub mod discovery_recovery;
 mod discovery_scheduling;
 pub mod discovery_service;
+mod discovery_sources;
 pub mod discovery_store;
 pub mod dispatch;
 pub mod domain_revision;
