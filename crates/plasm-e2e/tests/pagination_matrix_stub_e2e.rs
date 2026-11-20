@@ -1182,6 +1182,22 @@ async fn expression_take_hydrates_only_retained_prefix() {
 #[tokio::test]
 async fn hydration_prefix_preserves_selection_and_page_boundaries() {
     use plasm_runtime::{ConsumeBoundKind, RowMatchBudget, TopKSpec};
+    let filtered_prefix = |target| StreamConsumeOpts {
+        fetch_all: true,
+        row_match_budget: Some(RowMatchBudget {
+            count: 1,
+            predicates: vec![plasm_runtime::BoundRowPredicate {
+                field_path: plasm_core::FieldPath::from_dotted("n").unwrap(),
+                op: plasm_core::PlanPredicateOp::Eq,
+                value: plasm_core::operand_binding::ResolvedValue::new(plasm_core::Value::Integer(
+                    target,
+                ))
+                .unwrap(),
+            }],
+        }),
+        bound_kind: ConsumeBoundKind::ExpressionTake,
+        ..Default::default()
+    };
     for (name, consume, expected_ids, details, pages) in [
         (
             "zero",
@@ -1231,24 +1247,17 @@ async fn hydration_prefix_preserves_selection_and_page_boundaries() {
             20,
             1,
         ),
+        ("first_match", filtered_prefix(0), vec![0], 1, 1),
         (
-            "filtered_prefix",
-            StreamConsumeOpts {
-                fetch_all: true,
-                row_match_budget: Some(RowMatchBudget {
-                    count: 1,
-                    predicates: vec![plasm_runtime::BoundRowPredicate {
-                        field_path: plasm_core::FieldPath::from_dotted("n").unwrap(),
-                        op: plasm_core::PlanPredicateOp::Eq,
-                        value: plasm_core::operand_binding::ResolvedValue::new(
-                            plasm_core::Value::Integer(21),
-                        )
-                        .unwrap(),
-                    }],
-                }),
-                bound_kind: ConsumeBoundKind::ExpressionTake,
-                ..Default::default()
-            },
+            "first_match_on_second_page",
+            filtered_prefix(20),
+            vec![20],
+            21,
+            2,
+        ),
+        (
+            "match_after_second_page_probe",
+            filtered_prefix(21),
             vec![21],
             40,
             2,

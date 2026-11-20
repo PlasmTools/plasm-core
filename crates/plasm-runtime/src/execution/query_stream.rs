@@ -554,49 +554,58 @@ impl ExecutionEngine {
                     let completeness = response_coverage.classify(&row);
                     super::embed_cache::prepare_decoded_entity_tree(row, timestamp, completeness)
                 }).collect();
-                let page_cached: Vec<CachedEntity> = observations.iter().map(|row| row.entity.clone()).collect();
-                let page_ids = page_cached.iter().map(|row| serde_json::to_string(&row.reference)).collect::<Result<Vec<_>, _>>()?;
+                let page_ids = observations.iter().map(|row| serde_json::to_string(&row.entity.reference)).collect::<Result<Vec<_>, _>>()?;
                 let transition = driver.observe_page(super::pagination_driver::PageObservation {
                     ordinal: pages as u32, entity_ids: &page_ids, returned_rows: full_page_len as u32,
-                    accepted_rows: page_cached.len() as u32, response: &response, next_link: link_next.as_deref(),
+                    accepted_rows: full_page_len as u32, response: &response, next_link: link_next.as_deref(),
                 })?;
                 crate::record_live_page_audit(transition.audit);
                 let inherit = CapabilityParamEnv::from_cml_env(&env, &capability);
-                // A plain expression prefix selects source occurrences before detail IO.
-                // Filters and top-k need their candidates; host paging must retain the
-                // backend page because its continuation starts at the next page.
-                let hydration_input = if predicate.is_none()
-                    && consume.row_match_budget.as_ref().is_none_or(|budget| budget.predicates.is_empty())
-                {
-                    match prefix {
-                        Some(bound) => &page_cached[..page_cached.len().min(bound.saturating_sub(retained_total))],
-                        None => &page_cached[..],
+                // Probe the required prefix first. Hydrate the remainder concurrently only if
+                // some candidates fail selection; never advance the driver's page coordinates early.
+                let remaining = prefix.map(|n| n.saturating_sub(retained_total));
+                let mut pending = observations.into_iter();
+                let mut batch_len = remaining.unwrap_or(full_page_len);
+                let mut retained = Vec::new();
+                let mut extra_net = 0;
+                let mut progress_rows = 0;
+                let mut top_k_input = Vec::new();
+                let matched_budget = loop {
+                    let batch = pending.by_ref().take(batch_len).collect();
+                    let (hydrated, requests) = self.hydrate_page_observations(
+                        batch, cgs, mat, mode, query.hydrate.unwrap_or(self.config.hydrate), &env,
+                    ).await?;
+                    extra_net += requests;
+                    let mut eligible = Vec::with_capacity(hydrated.len());
+                    for row in hydrated {
+                        if let Some(pred) = &predicate {
+                            if !pred.matches(&row.entity)? { continue; }
+                        }
+                        if top_k { top_k_input.push(row.entity.reference.clone()); }
+                        eligible.push(row);
                     }
-                } else { &page_cached[..] };
-                let omitted_prefix_rows = page_cached.len() - hydration_input.len();
-                let (hydrated, extra_net) = self.hydrate_page_observations(
-                    observations.into_iter().take(hydration_input.len()).collect(), cgs, mat, mode,
-                    query.hydrate.unwrap_or(self.config.hydrate), &env,
-                ).await?;
-                let mut entities = Vec::with_capacity(hydrated.len());
-                for observed in hydrated {
-                    if let Some(pred) = &predicate {
-                        if !pred.matches(&observed.entity)? { continue; }
+                    let part = collector.ingest_page(eligible)?;
+                    progress_rows += part.progress_rows;
+                    retained.extend(part.yield_entities);
+                    if pending.len() == 0 || remaining.is_some_and(|n| retained.len() >= n) {
+                        break part.row_match_budget_satisfied;
                     }
-                    entities.push(observed);
-                }
-                let top_k_input = if top_k { entities.iter().map(|row| row.entity.reference.clone()).collect::<Vec<_>>() } else { vec![] };
-                let mut ingest = collector.ingest_page(entities)?;
-                let decoded_members = if top_k { top_k_input.len() } else { ingest.yield_entities.len() + omitted_prefix_rows };
+                    batch_len = pending.len();
+                };
+                let untested_tail = pending.len() > 0 && (predicate.is_some()
+                    || consume.row_match_budget.as_ref().is_some_and(|b| !b.predicates.is_empty()));
+                let decoded_members = if top_k { top_k_input.len() } else {
+                    retained.len() + if untested_tail { 0 } else { pending.len() }
+                };
                 if !top_k && consume.bound_kind != ConsumeBoundKind::HostPage {
                     if let Some(cap) = prefix.or(consume.max_items) {
-                        ingest.yield_entities.truncate(cap.saturating_sub(retained_total));
+                        retained.truncate(cap.saturating_sub(retained_total));
                     }
                 }
-                for observation in &ingest.yield_entities { super::embed_cache::publish_observation(mat, observation)?; }
-                stamp_entities_and_mat(&ingest.yield_entities.iter().map(|row| row.entity.clone()).collect::<Vec<_>>(), mat, &inherit);
-                report_rows_materialized(ingest.progress_rows);
-                let references = if top_k { top_k_input } else { ingest.yield_entities.iter().map(|row| row.entity.reference.clone()).collect() };
+                for observation in &retained { super::embed_cache::publish_observation(mat, observation)?; }
+                stamp_entities_and_mat(&retained.iter().map(|row| row.entity.clone()).collect::<Vec<_>>(), mat, &inherit);
+                report_rows_materialized(progress_rows);
+                let references = if top_k { top_k_input } else { retained.iter().map(|row| row.entity.reference.clone()).collect() };
                 retained_total += references.len();
                 let more = transition.continuation.has_more();
                 let more = match &capability_template {
@@ -608,10 +617,10 @@ impl ExecutionEngine {
                 };
                 let hit_bound = prefix.or(consume.max_items).is_some_and(|cap| retained_total >= cap);
                 let empty_unproven = more && full_page_len == 0 && !matches!(pconf.location, plasm_compile::PaginationLocation::BlockRange);
-                let done = !more || single_http_roundtrip || hit_bound || ingest.row_match_budget_satisfied || empty_unproven;
+                let done = !more || single_http_roundtrip || hit_bound || matched_budget || empty_unproven;
                 // A continuation after a local filter does not prove another match exists.
                 let source_incomplete = matches!(&capability_template, CapabilityTemplate::Mcp(mapping) if !mapping.response.exhaustive);
-                let termination = if !more && source_incomplete { PageTermination::Unproven }
+                let termination = if untested_tail || (!more && source_incomplete) { PageTermination::Unproven }
                     else if !more { PageTermination::Exhausted }
                     else if done && (predicate.is_some() || consume.row_match_budget.is_some() || empty_unproven) { PageTermination::Unproven }
                     else { PageTermination::More };
@@ -619,7 +628,7 @@ impl ExecutionEngine {
                 let page_net = usize::from(http_live) + extra_net;
                 total_network += page_net;
                 any_live |= http_live || extra_net > 0;
-                let rows: SharedRows<CachedEntity> = ingest.yield_entities.into_iter().map(|row| row.entity).collect::<Vec<_>>().into();
+                let rows: SharedRows<CachedEntity> = retained.into_iter().map(|row| row.entity).collect::<Vec<_>>().into();
                 if graph_backed {
                     if let Some(ref spill) = graph_page_spill {
                         // Spill precisely the retained output occurrences, never a raw pre-filter page.
