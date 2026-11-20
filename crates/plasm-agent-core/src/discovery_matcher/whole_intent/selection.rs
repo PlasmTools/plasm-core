@@ -246,7 +246,7 @@ impl Selection {
                 Disposition::Exclude if corroborated.contains(r) => {
                     Disposition::Warn(Warning::ParallelKey)
                 }
-                Disposition::Defer if numbered.contains(r) => {
+                Disposition::Defer if numbered.contains(r) || references.keys.contains(r) => {
                     Disposition::Warn(Warning::QualifiedKey)
                 }
                 disposition => disposition,

@@ -6,7 +6,7 @@ use std::collections::{BTreeMap, BTreeSet};
 pub(crate) struct References {
     pub plain: String,
     complete: bool,
-    keys: BTreeSet<CapabilityRef>,
+    pub(super) keys: BTreeSet<CapabilityRef>,
     pub lists: Vec<BTreeSet<CapabilityRef>>,
 }
 
@@ -262,6 +262,88 @@ pub(super) fn consumes_record_key(
 /// Resolve the complete catalogue and noun phrase against authored names.
 /// Exactly one pinned identity-consuming Get must match the clause.
 fn bind_key(phrase: &str, catalogs: &BTreeMap<String, CGS>) -> Option<CapabilityRef> {
+    if let Some((child, scope)) = phrase.split_once(" in ") {
+        let scope = scope.strip_prefix("the ").unwrap_or(scope);
+        return bind_scoped_key(child, bind_catalog_key(scope, catalogs)?, catalogs);
+    }
+    bind_catalog_key(phrase, catalogs)
+}
+
+fn names_record(entity: &plasm_core::schema::EntityDef, noun: &str) -> bool {
+    entity.name.as_str().eq_ignore_ascii_case(noun)
+        || entity
+            .discovery
+            .iter()
+            .flat_map(|h| &h.names)
+            .any(|n| n.eq_ignore_ascii_case(noun))
+}
+
+/// A parent's supplied key binds the prefix of a child's compound identity
+/// only when both catalogued field names and value domains agree.
+fn bind_scoped_key(
+    child: &str,
+    parent: CapabilityRef,
+    catalogs: &BTreeMap<String, CGS>,
+) -> Option<CapabilityRef> {
+    let (noun, literal) = child.rsplit_once(char::is_whitespace)?;
+    let catalog = &catalogs[&parent.catalog];
+    let parent_entity = &catalog.entities[&catalog.capabilities[parent.capability.as_str()].domain];
+    let scope = if parent_entity.key_vars.is_empty() {
+        std::slice::from_ref(&parent_entity.id_field)
+    } else {
+        &parent_entity.key_vars[..]
+    };
+    let mut matches = catalog
+        .entities
+        .values()
+        .filter(|entity| names_record(entity, noun))
+        .filter_map(|entity| {
+            let (key, prefix) = entity.key_vars.split_last()?;
+            if prefix != scope
+                || !prefix.iter().all(|field| {
+                    parent_entity
+                        .fields
+                        .get(field)
+                        .zip(entity.fields.get(field))
+                        .is_some_and(|(a, b)| a.kind.registry_key() == b.kind.registry_key())
+                })
+            {
+                return None;
+            }
+            let ty = &catalog
+                .named_value_for_slot(entity.fields.get(key)?)
+                .ok()?
+                .field_type;
+            let valid = match ty {
+                plasm_core::FieldType::Integer => literal
+                    .strip_prefix('#')
+                    .unwrap_or(literal)
+                    .parse::<i64>()
+                    .is_ok(),
+                plasm_core::FieldType::String => {
+                    literal.starts_with(char::is_alphanumeric)
+                        && literal
+                            .chars()
+                            .all(|c| c.is_alphanumeric() || matches!(c, '-' | '_'))
+                }
+                _ => false,
+            };
+            valid.then_some(entity)
+        })
+        .flat_map(|entity| {
+            catalog
+                .capabilities
+                .values()
+                .filter(move |cap| consumes_record_key(cap, entity))
+        });
+    let cap = matches.next()?;
+    matches.next().is_none().then(|| CapabilityRef {
+        catalog: parent.catalog,
+        capability: cap.name.to_string(),
+    })
+}
+
+fn bind_catalog_key(phrase: &str, catalogs: &BTreeMap<String, CGS>) -> Option<CapabilityRef> {
     let (phrase, key_field) = phrase
         .rsplit_once(" by ")
         .map_or((phrase, None), |(s, f)| (s, Some(f)));
@@ -293,13 +375,7 @@ fn bind_key(phrase: &str, catalogs: &BTreeMap<String, CGS>) -> Option<Capability
             }
             let noun = prefix[offset..].trim_start();
             for entity in catalog.entities.values() {
-                if !entity.name.as_str().eq_ignore_ascii_case(noun)
-                    && !entity
-                        .discovery
-                        .iter()
-                        .flat_map(|h| &h.names)
-                        .any(|n| n.eq_ignore_ascii_case(noun))
-                {
+                if !names_record(entity, noun) {
                     continue;
                 }
                 let is_text_key = |name: &str| {

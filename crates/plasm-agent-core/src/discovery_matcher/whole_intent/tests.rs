@@ -1,6 +1,47 @@
 use super::*;
 
 #[test]
+fn scoped_record_returns_the_child_and_checks_both_key_domains() {
+    let path = std::path::Path::new(crate::test_manifest_dir())
+        .join("../../fixtures/schemas/plasm_prompt_matrix");
+    let mut cgs = plasm_core::loader::load_schema_dir(&path).unwrap();
+    let zone = cgs.entities.get_mut("Zone").unwrap();
+    let mut id = zone.fields.shift_remove("id").unwrap();
+    id.name = "zone_id".into();
+    zone.id_field = id.name.clone();
+    zone.fields.insert(id.name.clone(), id);
+    cgs.entities
+        .get_mut("Ruleset")
+        .unwrap()
+        .discovery
+        .get_or_insert_with(Default::default)
+        .names
+        .push("rule set".into());
+    let mut catalogs = BTreeMap::from([("matrix".into(), cgs)]);
+    let intent = "Read rule set sample in the matrix zone west and return its name.";
+    let expected = BTreeSet::from([CapabilityRef {
+        catalog: "matrix".into(),
+        capability: "ruleset_get".into(),
+    }]);
+    assert_eq!(References::record_reads(intent, &catalogs), Some(expected));
+    assert!(References::record_reads(
+        "Read rule set #42 in the matrix zone west and return its name.",
+        &catalogs
+    )
+    .is_none());
+    let cgs = catalogs.get_mut("matrix").unwrap();
+    let different = cgs.entities["Ruleset"].fields["description"].kind.clone();
+    cgs.entities
+        .get_mut("Ruleset")
+        .unwrap()
+        .fields
+        .get_mut("zone_id")
+        .unwrap()
+        .kind = different;
+    assert!(References::record_reads(intent, &catalogs).is_none());
+}
+
+#[test]
 fn natural_collection_names_nominate_only_authorized_unquoted_queries() {
     let path = std::path::Path::new(crate::test_manifest_dir())
         .join("../../fixtures/schemas/plasm_language_matrix");
