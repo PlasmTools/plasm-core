@@ -148,6 +148,7 @@ mod tests {
             uses_result: vec![],
             approval: None,
             page_size: None,
+            demanded_fields: Vec::new(),
             pushed_read_budget: None,
         }
     }

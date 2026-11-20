@@ -171,7 +171,7 @@ pub(crate) async fn run_parsed_plasm_line(
     trace: Option<&PlasmTraceContext>,
     line_index: i64,
     host_page_size: Option<usize>,
-    surface_read_budget: Option<crate::plan_read_bounds::PushedReadBudget>,
+    surface_read: Option<&crate::plasm_plan::ValidatedSurfaceNode>,
     rows_progress: Option<plasm_runtime::RowsProgressFn>,
     preflight: Option<plasm_core::PreflightToken>,
     plan_shared: Option<&crate::plan_execute_shared::PlanLineExecuteShared>,
@@ -346,7 +346,7 @@ pub(crate) async fn run_parsed_plasm_line(
         exec_opts: exec_opts.clone(),
         graph_spill_active,
         host_page_size,
-        surface_read_budget: surface_read_budget.clone(),
+        surface_read,
         expr_span: expr_span.clone(),
         observed_relation_source: match compile_source {
             crate::execute_pipeline::CompileSource::Authored => None,

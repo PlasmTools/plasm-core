@@ -158,6 +158,7 @@ pub fn apply_read_budgets(plan: &mut ValidatedPlanArtifact) {
         .collect();
     let reachable = crate::plan_node_graph::nodes_reachable_from_return(plan.artifact());
     let shared = shared_collection_bindings(plan);
+    apply_projection_demands(plan, &by_id, &shared);
     for compute_idx in 0..plan.nodes().len() {
         if !reachable.contains(plan.nodes()[compute_idx].id().as_str()) {
             continue;
@@ -184,6 +185,56 @@ pub fn apply_read_budgets(plan: &mut ValidatedPlanArtifact) {
         }
     }
     apply_complete_demands(plan);
+}
+
+/// Projections close field demand. Cross only single-consumer operations whose
+/// field reads can be enumerated exactly.
+fn apply_projection_demands(
+    plan: &mut ValidatedPlanArtifact,
+    by_id: &HashMap<String, usize>,
+    shared: &HashSet<String>,
+) {
+    for idx in 0..plan.nodes().len() {
+        let ValidatedPlanNode::Compute(project) = &plan.nodes()[idx] else {
+            continue;
+        };
+        let ComputeOp::Project { fields } = &project.compute.op else {
+            continue;
+        };
+        let mut paths: Vec<_> = fields.values().cloned().collect();
+        let mut source = project.compute.source.clone();
+        while !shared.contains(&source) {
+            let Some(&upstream) = by_id.get(&source) else {
+                break;
+            };
+            match &plan.nodes()[upstream] {
+                ValidatedPlanNode::Compute(node) => {
+                    match &node.compute.op {
+                        ComputeOp::Limit { .. } => {}
+                        ComputeOp::Filter { predicates } => {
+                            paths.extend(predicates.iter().map(|p| p.field_path.clone()));
+                        }
+                        ComputeOp::Sort { key, .. } => paths.push(key.clone()),
+                        _ => break,
+                    }
+                    source = node.compute.source.clone();
+                }
+                ValidatedPlanNode::Surface(node)
+                    if matches!(node.kind, PlanNodeKind::Query | PlanNodeKind::Search)
+                        && paths.iter().all(|p| p.segments().len() == 1) =>
+                {
+                    let mut demand: Vec<_> = paths.iter().map(|p| p.dotted()).collect();
+                    demand.sort();
+                    demand.dedup();
+                    if let ValidatedPlanNode::Surface(node) = &mut plan.nodes_mut()[upstream] {
+                        node.demanded_fields = demand;
+                    }
+                    break;
+                }
+                _ => break,
+            }
+        }
+    }
 }
 
 /// A pushed budget belongs to one consumer chain. A shared binding is a semantic

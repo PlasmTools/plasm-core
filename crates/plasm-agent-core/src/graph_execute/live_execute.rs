@@ -30,7 +30,7 @@ pub struct LiveBranchExecuteInput<'a> {
     pub exec_opts: ExecuteOptions,
     pub graph_spill_active: bool,
     pub host_page_size: Option<usize>,
-    pub surface_read_budget: Option<crate::plan_read_bounds::PushedReadBudget>,
+    pub surface_read: Option<&'a crate::plasm_plan::ValidatedSurfaceNode>,
     pub expr_span: tracing::Span,
     pub observed_relation_source: Option<&'a ExecutionResult>,
 }
@@ -52,7 +52,7 @@ async fn execute_on_branch(
         exec_opts,
         graph_spill_active,
         host_page_size,
-        surface_read_budget,
+        surface_read,
         expr_span,
         observed_relation_source,
     } = input;
@@ -84,13 +84,16 @@ async fn execute_on_branch(
                 .await
         }
         _ => {
-            let consume = crate::stream_consume::stream_consume_for_surface_read(
+            let mut consume = crate::stream_consume::stream_consume_for_surface_read(
                 exec_cgs,
                 &parsed.expr,
                 *host_page_size,
-                surface_read_budget.as_ref(),
+                surface_read.and_then(|surface| surface.pushed_read_budget.as_ref()),
                 *graph_spill_active,
             );
+            if let (Expr::Query(_), Some(surface)) = (&parsed.expr, surface_read) {
+                consume.demanded_fields.clone_from(&surface.demanded_fields);
+            }
             if let (Expr::Chain(chain), Some(source)) = (&parsed.expr, observed_relation_source) {
                 st.engine
                     .execute_relation_from_observed(

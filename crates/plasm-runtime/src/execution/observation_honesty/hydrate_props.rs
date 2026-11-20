@@ -157,6 +157,7 @@ fn run_hydrate_wave(
                 &mut mat,
                 ExecutionMode::Live,
                 true,
+                &[],
                 &env,
             );
             let release = async {

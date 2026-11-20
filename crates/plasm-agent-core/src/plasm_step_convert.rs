@@ -403,6 +403,7 @@ fn step_payload_to_validated_node(
             uses_result,
             approval: p.approval.clone(),
             page_size: p.page_size,
+            demanded_fields: Vec::new(),
             pushed_read_budget: None,
         })),
         PlasmStepPayload::Pure(p) => Ok(ValidatedPlanNode::Data(ValidatedDataNode {

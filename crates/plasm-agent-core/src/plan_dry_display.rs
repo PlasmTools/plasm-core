@@ -1778,6 +1778,7 @@ mod tests {
             uses_result: Vec::new(),
             approval: None,
             page_size: None,
+            demanded_fields: Vec::new(),
             pushed_read_budget: None,
         };
         assert_eq!(

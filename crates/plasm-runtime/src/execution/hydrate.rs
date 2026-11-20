@@ -322,6 +322,7 @@ impl ExecutionEngine {
         mat: &mut SessionMaterialization,
         mode: ExecutionMode,
         hydrate_enabled: bool,
+        demanded_fields: &[String],
         parent_env: &CmlEnv,
     ) -> Result<(Vec<CachedEntity>, usize), RuntimeError> {
         let mut result = Vec::with_capacity(ordered_entities.len());
@@ -339,6 +340,7 @@ impl ExecutionEngine {
                     mat,
                     mode,
                     hydrate_enabled,
+                    demanded_fields,
                     parent_env,
                 )
                 .await?;
@@ -357,6 +359,7 @@ impl ExecutionEngine {
         mat: &mut SessionMaterialization,
         mode: ExecutionMode,
         hydrate_enabled: bool,
+        demanded_fields: &[String],
         parent_env: &CmlEnv,
     ) -> Result<(Vec<CachedEntity>, usize), RuntimeError> {
         if !hydrate_enabled {
@@ -408,7 +411,13 @@ impl ExecutionEngine {
         // Completeness, which would treat a stale Complete row as fresh.
         let to_fetch: Vec<Ref> = ordered_entities
             .iter()
-            .filter(|e| e.completeness != EntityCompleteness::Complete)
+            .filter(|e| {
+                e.completeness != EntityCompleteness::Complete
+                    && (demanded_fields.is_empty()
+                        || demanded_fields.iter().any(|field| {
+                            !e.fields.contains_key(field) || e.unavailable_fields.contains(field)
+                        }))
+            })
             .map(|e| e.reference.clone())
             .collect();
 
@@ -2402,6 +2411,7 @@ mod tests {
                 &mut mat,
                 ExecutionMode::Live,
                 true,
+                &[],
                 &env,
             )
             .await
@@ -2519,6 +2529,7 @@ mod tests {
                 &mut mat,
                 ExecutionMode::Live,
                 true,
+                &[],
                 &env,
             ),
         )
@@ -2744,6 +2755,7 @@ mod tests {
                 &mut mat,
                 ExecutionMode::Live,
                 true,
+                &[],
                 &env,
             )
             .await
@@ -2853,6 +2865,7 @@ mod tests {
                         &mut mat,
                         ExecutionMode::Live,
                         true,
+                        &[],
                         &env,
                     )
                     .await
@@ -3057,6 +3070,7 @@ mod tests {
                     &mut mat,
                     ExecutionMode::Live,
                     true,
+                    &[],
                     &env,
                 );
                 let (out, _) = if let Some(sched) = schedule {

@@ -18,7 +18,7 @@ fn python_filter_take_pushes_a_matching_row_budget() {
         )
         .unwrap();
         assert!(plan.nodes().iter().any(|node| matches!(node,
-            crate::plasm_plan::ValidatedPlanNode::Surface(surface) if matches!(&surface.pushed_read_budget,
+            crate::plasm_plan::ValidatedPlanNode::Surface(surface) if surface.demanded_fields == ["id", "title"] && matches!(&surface.pushed_read_budget,
               Some(crate::plan_read_bounds::PushedReadBudget::FilterLimit { count: 1, predicates }) if predicates.len()==1))));
         let actual = returned_fields(&execute(&es, &host, &bundle).await.unwrap());
         assert_eq!(actual.len(), 1);

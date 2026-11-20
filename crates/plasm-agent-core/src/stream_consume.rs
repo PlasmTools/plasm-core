@@ -23,6 +23,7 @@ pub(crate) fn stream_consume_for_surface_read(
                 row_match_budget: None,
                 top_k: None,
                 bound_kind: plasm_runtime::ConsumeBoundKind::None,
+                ..Default::default()
             };
         }
         let (row_match_budget, top_k) = pushed_budget_to_stream_fields(budget);
@@ -35,6 +36,7 @@ pub(crate) fn stream_consume_for_surface_read(
                 row_match_budget,
                 top_k,
                 bound_kind: plasm_runtime::ConsumeBoundKind::ExpressionTake,
+                ..Default::default()
             };
         }
         if let Some(row_match_budget) = row_match_budget {
@@ -46,6 +48,7 @@ pub(crate) fn stream_consume_for_surface_read(
                 row_match_budget: Some(row_match_budget),
                 top_k: None,
                 bound_kind: plasm_runtime::ConsumeBoundKind::ExpressionTake,
+                ..Default::default()
             };
         }
         if let PushedReadBudget::Limit(n) = budget {
@@ -58,6 +61,7 @@ pub(crate) fn stream_consume_for_surface_read(
                     row_match_budget: None,
                     top_k: None,
                     bound_kind: plasm_runtime::ConsumeBoundKind::ExpressionTake,
+                    ..Default::default()
                 };
             }
         }

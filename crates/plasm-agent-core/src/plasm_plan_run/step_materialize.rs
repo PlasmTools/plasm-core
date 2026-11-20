@@ -737,7 +737,7 @@ pub(super) async fn live_materialize_io(
                 ctx.trace,
                 step_idx as i64,
                 host_page,
-                surface.pushed_read_budget.clone(),
+                Some(&surface),
                 ctx.rows_progress.clone(),
                 Some(ctx.plan_shared.as_ref()),
             ))

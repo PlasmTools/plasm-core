@@ -840,6 +840,7 @@ fn validated_node_from_raw(
                 uses_result,
                 approval: node.approval.clone(),
                 page_size: node.page_size,
+                demanded_fields: Vec::new(),
                 pushed_read_budget: None,
             }))
         }

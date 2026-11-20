@@ -244,7 +244,7 @@ pub async fn execute_plasm_parsed_expr(
     trace: Option<&PlasmTraceContext>,
     line_index: i64,
     host_page_size: Option<usize>,
-    surface_read_budget: Option<crate::plan_read_bounds::PushedReadBudget>,
+    surface_read: Option<&crate::plasm_plan::ValidatedSurfaceNode>,
     rows_progress: Option<plasm_runtime::RowsProgressFn>,
     plan_shared: Option<&crate::plan_execute_shared::PlanLineExecuteShared>,
 ) -> Result<(ParsedExpr, ExecutionResult, Option<RunArtifactHandle>), plasm_runtime::ExecutionFailure>
@@ -260,7 +260,7 @@ pub async fn execute_plasm_parsed_expr(
         trace,
         line_index,
         host_page_size,
-        surface_read_budget,
+        surface_read,
         rows_progress,
         Some(plasm_core::PreflightToken::VERIFIED),
         plan_shared,

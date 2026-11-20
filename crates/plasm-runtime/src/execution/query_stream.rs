@@ -52,6 +52,28 @@ impl QueryResponseCoverage {
     }
 }
 
+/// Only list-declared fields can satisfy a closed projection from this response.
+fn list_field_demand(
+    fields: Vec<String>,
+    query: &QueryExpr,
+    residual: Option<&Predicate>,
+    cgs: &CGS,
+    capability: &CapabilitySchema,
+) -> Vec<String> {
+    if fields.is_empty()
+        || query.hydrate.is_some()
+        || !matches!(residual, None | Some(Predicate::True))
+    {
+        return Vec::new();
+    }
+    let provided = cgs.effective_provides(capability);
+    if fields.iter().all(|field| provided.contains(field)) {
+        fields
+    } else {
+        Vec::new()
+    }
+}
+
 impl ExecutionEngine {
     /// Hydrate one page in a private branch so scanned-only observations cannot
     /// escape before the collector chooses which occurrences to retain.
@@ -62,6 +84,7 @@ impl ExecutionEngine {
         mat: &mut SessionMaterialization,
         mode: ExecutionMode,
         hydrate: bool,
+        demanded_fields: &[String],
         env: &CmlEnv,
     ) -> Result<(Vec<crate::paginated_collect::RetainedObservation>, usize), RuntimeError> {
         if !hydrate || observations.is_empty() {
@@ -76,7 +99,7 @@ impl ExecutionEngine {
             .map(|observation| observation.entity.clone())
             .collect();
         let (hydrated, requests) = self
-            .hydrate_output_summaries(&roots, cgs, &mut branch, mode, true, env)
+            .hydrate_output_summaries(&roots, cgs, &mut branch, mode, true, demanded_fields, env)
             .await?;
         if hydrated.len() != observations.len()
             || hydrated
@@ -149,6 +172,8 @@ impl ExecutionEngine {
             if let Some(source_entity) = cgs.get_entity(&query.entity) {
                 let crosses = extract_cross_entity_predicates(pred, source_entity, cgs);
                 if !crosses.is_empty() {
+                    let mut consume = consume;
+                    consume.demanded_fields.clear();
                     return self.cross_entity_query_stream(
                         query, &crosses, cgs, mat, mode, consume, ambient,
                     );
@@ -233,6 +258,7 @@ impl ExecutionEngine {
             capability_template,
             env,
             residual,
+            consume.demanded_fields,
         )
     }
     #[allow(clippy::too_many_arguments)]
@@ -269,7 +295,10 @@ impl ExecutionEngine {
         capability_template: CapabilityTemplate,
         env: CmlEnv,
         residual: Option<Predicate>,
+        demanded_fields: Vec<String>,
     ) -> Result<QueryStream<'a>, RuntimeError> {
+        let demanded_fields =
+            list_field_demand(demanded_fields, query, residual.as_ref(), cgs, capability);
         let compiled = compile_operation_dispatch(&capability_template, &env)?;
         let query = query.clone();
         let capability = capability.clone();
@@ -296,13 +325,17 @@ impl ExecutionEngine {
                 None
             };
             if let Some((membership, cached_entities)) = cached_query {
+                let (cached_entities, detail_calls) = self.hydrate_output_summaries(
+                    &cached_entities, cgs, mat, mode, query.hydrate.unwrap_or(self.config.hydrate),
+                    &demanded_fields, &env,
+                ).await?;
                 let count = cached_entities.len();
-                let mut stats = ExecutionStats::from_telemetry(consult, 0);
+                let mut stats = ExecutionStats::from_telemetry(consult, detail_calls);
                 stats.record_rows_materialized(count);
                 yield ExecutionEvent::Complete(Box::new(ExecutionResult {
                     collection: ExecutionCollection::materialized(membership, cached_entities.into())?,
                     has_more: false, pagination_resume: None, paging_handle: None,
-                    source: ExecutionSource::Cache, stats, request_fingerprints: vec![],
+                    source: if detail_calls == 0 { ExecutionSource::Cache } else { ExecutionSource::Live }, stats, request_fingerprints: vec![],
                     operations: OperationLedger::empty(),
                 }));
                 return;
@@ -365,6 +398,7 @@ impl ExecutionEngine {
                     mat,
                     mode,
                     hydrate_run,
+                    &demanded_fields,
                     &env,
                 )
                 .await?;
@@ -491,6 +525,13 @@ impl ExecutionEngine {
             ),
             mat.graph.stats().version,
         )?;
+        let demanded_fields = list_field_demand(
+            consume.demanded_fields.clone(),
+            &query,
+            residual.as_ref(),
+            cgs,
+            &capability,
+        );
         let collector =
             crate::paginated_collect::PageCollector::new(&consume, cgs, query.entity.as_str())?;
         let predicate = residual
@@ -573,7 +614,7 @@ impl ExecutionEngine {
                 let matched_budget = loop {
                     let batch = pending.by_ref().take(batch_len).collect();
                     let (hydrated, requests) = self.hydrate_page_observations(
-                        batch, cgs, mat, mode, query.hydrate.unwrap_or(self.config.hydrate), &env,
+                        batch, cgs, mat, mode, query.hydrate.unwrap_or(self.config.hydrate), &demanded_fields, &env,
                     ).await?;
                     extra_net += requests;
                     let mut eligible = Vec::with_capacity(hydrated.len());

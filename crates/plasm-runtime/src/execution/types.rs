@@ -176,6 +176,8 @@ pub struct RowMatchBudget {
 /// Out-of-band consumption controls: how many pages / entities to pull (not part of the IR).
 #[derive(Debug, Clone, Default)]
 pub struct StreamConsumeOpts {
+    /// Closed scalar demand from the downstream plan. Empty requests whole entities.
+    pub demanded_fields: Vec<String>,
     /// Fetch every page until the API reports completion (bounded by a runtime safety cap).
     pub fetch_all: bool,
     /// Item budget across pages. Expression takes are exact; host paging retains

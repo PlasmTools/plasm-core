@@ -1247,6 +1247,30 @@ async fn hydration_prefix_preserves_selection_and_page_boundaries() {
             20,
             1,
         ),
+        (
+            "observed_projected_field",
+            StreamConsumeOpts {
+                demanded_fields: vec!["id".into()],
+                max_items: Some(2),
+                bound_kind: ConsumeBoundKind::ExpressionTake,
+                ..Default::default()
+            },
+            vec![0, 1],
+            0,
+            1,
+        ),
+        (
+            "missing_projected_field",
+            StreamConsumeOpts {
+                demanded_fields: vec!["n".into()],
+                max_items: Some(2),
+                bound_kind: ConsumeBoundKind::ExpressionTake,
+                ..Default::default()
+            },
+            vec![0, 1],
+            2,
+            1,
+        ),
         ("first_match", filtered_prefix(0), vec![0], 1, 1),
         (
             "first_match_on_second_page",

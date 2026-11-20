@@ -452,6 +452,8 @@ pub struct ValidatedSurfaceNode {
     pub(crate) uses_result: Vec<PlanResultUse>,
     pub(crate) approval: Option<String>,
     pub(crate) page_size: Option<usize>,
+    #[serde(skip)]
+    pub(crate) demanded_fields: Vec<String>,
     pub(crate) pushed_read_budget: Option<crate::plan_read_bounds::PushedReadBudget>,
 }
 
