@@ -903,9 +903,15 @@ impl DiscoveryService {
         } else {
             EvidenceScope::WholeIntent
         };
+        let mut named_collections = std::collections::BTreeSet::new();
         let mut recall = match (self.lane, keyed) {
             (DiscoveryLane::Ordinary, Some(refs)) => index.recall(generation, &refs)?,
             (DiscoveryLane::Ordinary, None) => {
+                named_collections = matcher::whole_intent::named_collection_queries(
+                    provenance.current(),
+                    &catalogs,
+                    allowed,
+                );
                 let frontier = crate::discovery_store::RecallFrontier::from_state(exposed, visits);
                 let current = matcher::whole_intent::IntentText::parse(provenance.current());
                 let ordered = ordered_recall_queries(
@@ -928,7 +934,7 @@ impl DiscoveryService {
                     .0
             }
         };
-        for reference in exposed.iter().rev() {
+        for reference in named_collections.iter().chain(exposed.iter().rev()) {
             let candidate = if let Some(position) = recall
                 .candidates
                 .iter()
@@ -987,7 +993,7 @@ impl DiscoveryService {
                 &bindings,
                 deferred_priorities,
                 exposed,
-                &std::collections::BTreeSet::new(),
+                &named_collections,
                 evidence_scope,
                 matcher::whole_intent::MAX_SELECTION_BYTES,
             )?;

@@ -1,6 +1,37 @@
 use super::*;
 
 #[test]
+fn natural_collection_names_nominate_only_authorized_unquoted_queries() {
+    let path = std::path::Path::new(crate::test_manifest_dir())
+        .join("../../fixtures/schemas/plasm_language_matrix");
+    let catalogs = BTreeMap::from([(
+        "matrix".into(),
+        plasm_core::loader::load_schema_dir(&path).unwrap(),
+    )]);
+    let allowed = DiscoveryAuthorization::catalogs(BTreeSet::from(["matrix".into()]));
+    let request = "List query only requests and return their numbers.";
+    assert_eq!(
+        named_collection_queries(request, &catalogs, &allowed),
+        BTreeSet::from([CapabilityRef {
+            catalog: "matrix".into(),
+            capability: "queryonly_request_received_query".into()
+        }])
+    );
+    assert!(named_collection_queries(
+        "Find text matching 'query only requests'",
+        &catalogs,
+        &allowed
+    )
+    .is_empty());
+    assert!(named_collection_queries(
+        request,
+        &catalogs,
+        &DiscoveryAuthorization::catalogs(BTreeSet::new())
+    )
+    .is_empty());
+}
+
+#[test]
 #[ignore = "diagnostic replay of an explicitly supplied production receipt and catalog snapshot"]
 fn production_packet_profile() {
     let receipt: Value = serde_json::from_slice(

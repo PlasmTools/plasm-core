@@ -243,7 +243,8 @@ impl DomainLexicon {
     }
 }
 
-fn raw_words(input: &str) -> Vec<String> {
+/// Identifier words in source order, without stemming or removal of stop words.
+pub fn raw_words(input: &str) -> Vec<String> {
     let mut words: Vec<String> = Vec::new();
 
     // Split on non-alphabetic/non-digit runs, then split camelCase
