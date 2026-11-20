@@ -485,6 +485,36 @@ async fn merge_restores_plans_from_prior_exposure_revisions() {
     verify_plan_commit_id(&live, &pc_new, id_new).expect("newer plan kept");
 }
 
+#[tokio::test]
+async fn intent_amendment_preserves_durable_exposure_and_rejects_stale_metadata() {
+    let (host, created, live) = open_overshow_profile_host().await;
+    let registry = &host.execute_session_registry;
+    let mut expected = registry
+        .load(&created.prompt_hash, &created.session)
+        .await
+        .unwrap();
+    let next = Some("inspect another record".to_owned());
+    registry
+        .update_context_intent(&live, &created.session, &next)
+        .await
+        .unwrap();
+    expected.context_intent = next;
+    let actual = registry
+        .load(&created.prompt_hash, &created.session)
+        .await
+        .unwrap();
+    assert_eq!(
+        serde_json::to_value(actual).unwrap(),
+        serde_json::to_value(expected).unwrap()
+    );
+    assert!(matches!(
+        registry
+            .update_context_intent(&live, &created.session, &Some("stale amendment".into()))
+            .await,
+        Err(ExecuteSessionPersistError::ExposureConflict)
+    ));
+}
+
 /// Fail-closed replace: durable write runs before hot is advanced (ordering lock).
 #[tokio::test]
 async fn replace_execute_session_persists_before_hot_advance() {
