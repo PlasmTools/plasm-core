@@ -155,14 +155,47 @@ impl References {
         intent: &str,
         catalogs: &BTreeMap<String, CGS>,
     ) -> Option<BTreeSet<CapabilityRef>> {
-        let bound = Self::bind(intent, catalogs);
+        // A final projection adds no operation when the bound lookups already
+        // provide every field. Keep an unrecognized clause in whole-intent discovery.
+        let plain = intent.trim().trim_end_matches('.').to_lowercase();
+        let projection = plain
+            .rsplit_once(" and return ")
+            .or_else(|| plain.rsplit_once(". return "));
+        let (lookup, fields) = match projection {
+            Some((lookup, fields)) if fields != "their records" => {
+                let fields = fields
+                    .strip_prefix("its ")
+                    .or_else(|| fields.strip_prefix("their "))
+                    .unwrap_or(fields);
+                (lookup, Some(fields))
+            }
+            _ => (intent, None),
+        };
+        let bound = Self::bind(lookup, catalogs);
         if !bound.complete || bound.keys.is_empty() {
             return None;
         }
         let mut reads = BTreeSet::new();
         for reference in &bound.keys {
             let cgs = &catalogs[&reference.catalog];
-            let domain = &cgs.capabilities[reference.capability.as_str()].domain;
+            let getter = &cgs.capabilities[reference.capability.as_str()];
+            let domain = &getter.domain;
+            if let Some(fields) = fields {
+                let entity = &cgs.entities[domain.as_str()];
+                let supplied = fields
+                    .split(',')
+                    .flat_map(|s| s.split(" and "))
+                    .map(str::trim)
+                    .all(|field| {
+                        entity.fields.contains_key(field)
+                            && getter.provides.iter().any(|p| p == field)
+                    });
+                if !supplied {
+                    return None;
+                }
+                reads.insert(reference.clone());
+                continue;
+            }
             for cap in cgs.capabilities.values().filter(|cap| {
                 &cap.domain == domain
                     && matches!(
@@ -208,6 +241,20 @@ pub(super) fn consumes_record_key(
         return false;
     };
     let vars = plasm_core::path_env::identity_env_var_names(&mapping.template.0);
+    if cap
+        .input_fields()
+        .filter(|field| field.required)
+        .any(|field| !vars.as_slice().iter().any(|var| var == &field.name))
+    {
+        return false;
+    }
+    if entity.key_vars.len() > 1 {
+        return vars.len() == entity.key_vars.len()
+            && entity
+                .key_vars
+                .iter()
+                .all(|k| vars.as_slice().iter().any(|v| v == k.as_str()));
+    }
     matches!(vars.as_slice(), [var] if plasm_core::path_env::is_identity_projectable(
         entity, &vars, var, plasm_core::path_env::SoleAliasPolicy::AllowedOnSimpleKey))
 }
@@ -219,10 +266,14 @@ fn bind_key(phrase: &str, catalogs: &BTreeMap<String, CGS>) -> Option<Capability
         .rsplit_once(" by ")
         .map_or((phrase, None), |(s, f)| (s, Some(f)));
     let (prefix, key) = phrase.rsplit_once(char::is_whitespace)?;
-    if !key.starts_with(char::is_alphanumeric)
-        || !key
-            .chars()
-            .all(|c| c.is_alphanumeric() || matches!(c, '-' | '_'))
+    let components: Vec<_> = key.split('/').collect();
+    if components.len() > 2
+        || !components.iter().all(|part| {
+            part.starts_with(char::is_alphanumeric)
+                && part
+                    .chars()
+                    .all(|c| c.is_alphanumeric() || matches!(c, '-' | '_'))
+        })
     {
         return None;
     }
@@ -251,16 +302,34 @@ fn bind_key(phrase: &str, catalogs: &BTreeMap<String, CGS>) -> Option<Capability
                 {
                     continue;
                 }
-                let slot = entity
-                    .fields
-                    .get(&entity.id_field)
-                    .and_then(|f| catalog.named_value_for_slot(f).ok())?;
-                if key_field
-                    .is_some_and(|field| !entity.id_field.as_str().eq_ignore_ascii_case(field))
-                {
-                    continue;
-                }
-                if slot.field_type != plasm_core::FieldType::String {
+                let is_text_key = |name: &str| {
+                    entity
+                        .fields
+                        .get(name)
+                        .and_then(|f| catalog.named_value_for_slot(f).ok())
+                        .is_some_and(|slot| slot.field_type == plasm_core::FieldType::String)
+                };
+                // Match the language's two-part slash identity only for a
+                // catalogue declaring both components. Its display ID may be numeric.
+                let bound = match components.as_slice() {
+                    [_, _] => {
+                        key_field.is_none()
+                            && entity.key_vars.len() == 2
+                            && entity
+                                .key_vars
+                                .iter()
+                                .all(|field| is_text_key(field.as_str()))
+                    }
+                    [_] => {
+                        entity.key_vars.len() <= 1
+                            && is_text_key(entity.id_field.as_str())
+                            && key_field.is_none_or(|field| {
+                                entity.id_field.as_str().eq_ignore_ascii_case(field)
+                            })
+                    }
+                    _ => false,
+                };
+                if !bound {
                     continue;
                 }
                 for cap in catalog

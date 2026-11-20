@@ -1018,3 +1018,36 @@ fn keyed_packet_retains_contract_domains_and_uncertainty_choices_once() {
     assert!(packet["state"].get("candidates").is_none());
     assert!(!body.contains("irrelevant output schema"));
 }
+
+#[test]
+fn projected_composite_lookup_constrains_selection_only_for_complete_reads() {
+    let schema = plasm_core::loader::load_schema_dir(
+        &std::path::Path::new(crate::test_manifest_dir())
+            .join("../../fixtures/schemas/plasm_prompt_matrix"),
+    )
+    .unwrap();
+    let catalogs = BTreeMap::from([("matrix".into(), schema)]);
+    let reads = |intent| References::record_reads(intent, &catalogs);
+    let expected = BTreeSet::from([CapabilityRef {
+        catalog: "matrix".into(),
+        capability: "ruleset_get".into(),
+    }]);
+    assert_eq!(
+        reads("Read matrix ruleset east/primary and return its name."),
+        Some(expected.clone())
+    );
+    assert_eq!(
+        reads("Read matrix ruleset east/primary. Return name and description."),
+        Some(expected)
+    );
+    for request in [
+        "Read matrix ruleset east/primary and return missing.",
+        "Read matrix ruleset east/primary and return name and then update it.",
+        "Read matrix ruleset east/primary and replace it. Return name.",
+        "Read matrix zone east/primary and return name.",
+        "Read matrix ruleset east/primary/extra and return name.",
+        "Read matrix ruleset east/ and return name.",
+    ] {
+        assert!(reads(request).is_none(), "{request}");
+    }
+}
