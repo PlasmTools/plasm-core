@@ -385,7 +385,7 @@ mod tests {
                 session.cgs.clone(),
             )),
         );
-        let source = "class Example(Program):\n    def build(self):\n        rows = e1.query().take(2)\n        return rows.where(lambda row: row.title == \"fixture\")\n";
+        let source = "class Example(Program):\n    def build(self):\n        rows = e1.query().take(2)\n        return rows.where(lambda row: row.title != \"fixture\")\n";
         let bundle = crate::plasm_compile::compile_program(
             &Default::default(),
             None,
