@@ -325,7 +325,7 @@ impl Lower<'_> {
         let schema = crate::map_body_schema::output_schema(self.es, &body)?;
         // Keep admission and refinement from the typed callback. Represent a proven
         // scalar comparison as a filter so the planner can count matches across pages.
-        let node_source = match scalar_equality(expression, &schema)? {
+        let node_source = match scalar_equality(expression, body.parent.contract.schema())? {
             Some(predicate) => super::super::types::DagNodeSource::Compute {
                 source: source.to_owned(),
                 op: ComputeOp::Filter {
@@ -351,7 +351,7 @@ impl Lower<'_> {
 
 fn scalar_equality(
     expression: &PyExpr,
-    schema: &SyntheticResultSchema,
+    schema: Option<&SyntheticResultSchema>,
 ) -> Result<Option<PlanPredicate>, PythonLoweringError> {
     let PyExpr::Lambda(lambda) = expression else {
         return Ok(None);
@@ -369,9 +369,12 @@ fn scalar_equality(
         return Ok(None);
     }
     let field_type = schema
-        .fields
-        .iter()
-        .find(|f| f.name.as_str() == field.attr.as_str())
+        .and_then(|input| {
+            input
+                .fields
+                .iter()
+                .find(|f| f.name.as_str() == field.attr.as_str())
+        })
         .and_then(|f| f.value_type.as_ref())
         .map(|t| &t.shape);
     use plasm_core::{value_contract::ValueShape, FieldType};
