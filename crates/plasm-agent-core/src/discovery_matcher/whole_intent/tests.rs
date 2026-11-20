@@ -329,7 +329,7 @@ fn batch_admission_matches_individual_greedy_admission() {
         let mut candidate = original.candidates[0].clone();
         candidate.reference.capability = format!("candidate_{i}");
         candidates.push(PreparedCandidate {
-            question: "Is this operation needed?",
+            question: AccessQuestion::Read("Is this operation needed?"),
             candidate,
             card: json!({"id":"c0", "catalog":"matrix", "entity":"Record", "capability":format!("candidate_{i}"), "operation":{"contract":"Read records."}, "payload":"x".repeat(size)}),
             values: vec!["shared".into()],
@@ -476,10 +476,15 @@ fn parallel_text_keys_preserve_uncertainty_and_require_unambiguous_catalogue_rea
             )
     }));
     let key = &catalogs["second"].entities["Zone"].id_field;
-    assert_eq!(Some(lookup), References::record_reads(
-        &format!("Fetch first territory east and get second zone west by {key}. Return their records."),
-        &catalogs
-    ));
+    assert_eq!(
+        Some(lookup),
+        References::record_reads(
+            &format!(
+                "Fetch first territory east and get second zone west by {key}. Return their records."
+            ),
+            &catalogs
+        )
+    );
     assert!(References::record_reads(
         "Read first zone east and second zone west by unknown.",
         &catalogs
@@ -774,9 +779,12 @@ fn response(a: &str, b: &str, _coverage: &str) -> String {
 }
 #[test]
 fn candidate_question_preserves_selection_contract() {
-    let cards = vec![json!({"id":"c0","catalog":"fixture","entity":"Record",
+    let mut cards = vec![json!({"id":"c0","catalog":"fixture","entity":"Record",
         "capability":"records_query","operation":{"kind":"query","contract":"Find records."},
         "declaration":{"selection":[{"name":"owner","description":"Filter by owner.","required":false,"selection_effect":"filter"}],"provides":["id"]}})];
+    cards.push(json!({"id":"c1","catalog":"fixture","entity":"Record",
+        "capability":"record_edit","operation":{"kind":"update","contract":"Change a record."},
+        "declaration":{"provides":["id"]}}));
     let records = Map::from_iter([("fixture/Record".into(), json!({"description":"A record."}))]);
     let evidence = super::super::evidence::CatalogEvidence::default();
     let (body, count) = request_body(
@@ -784,7 +792,10 @@ fn candidate_question_preserves_selection_contract() {
         DEFAULT_MODEL,
         "Find records.",
         &cards,
-        &["Does the request need this collection?"],
+        &[
+            AccessQuestion::Read("Does the request need this collection?"),
+            AccessQuestion::Effect,
+        ],
         &Map::new(),
         &records,
         &BTreeMap::new(),
@@ -793,7 +804,17 @@ fn candidate_question_preserves_selection_contract() {
     )
     .unwrap();
     let packet: Value = serde_json::from_str(&body).unwrap();
-    assert_eq!(count, 1);
+    assert_eq!(count, 2);
+    let questions = &packet["questions"];
+    assert_eq!(questions["c0"]["criteria"]["include"], "d.include");
+    assert!(questions["c1"]["criteria"]["include"]
+        .as_str()
+        .unwrap()
+        .contains("requests this state change"));
+    assert!(questions["c1"]["criteria"]["exclude"]
+        .as_str()
+        .unwrap()
+        .contains("only wants to observe"));
     let instructions = packet["questions"]["c0"]["instructions"].as_str().unwrap();
     assert!(instructions.contains("Does the request need this collection?"));
     assert!(instructions.contains("selection:owner;optional;filter: Filter by owner."));
@@ -992,7 +1013,7 @@ fn keyed_packet_retains_contract_domains_and_uncertainty_choices_once() {
         DEFAULT_MODEL,
         "Get Matrix entry acme.",
         &cards,
-        &["Is this lookup needed?"],
+        &[AccessQuestion::Read("Is this lookup needed?")],
         &Map::from_iter([("matrix/shelf_type".into(), domain.clone())]),
         &Map::from_iter([("matrix/Entry".into(), record)]),
         &BTreeMap::new(),
