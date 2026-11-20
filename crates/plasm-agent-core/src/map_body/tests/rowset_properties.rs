@@ -62,6 +62,10 @@ fn result_headings_keep_named_projections_and_do_not_type_arbitrary_computations
             ),
             (
                 "available.where(lambda row: row.id == \"i0\").take(1).select(\"title\")",
+                Some("named — projection from available: fixture::Item"),
+            ),
+            (
+                "available.where(lambda row: row.id.startswith(\"i\")).take(1).select(\"title\")",
                 None,
             ),
             (

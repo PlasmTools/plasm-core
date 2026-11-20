@@ -1608,7 +1608,7 @@ fn python_map_can_return_alongside_its_derived_document() {
                 .as_array()
                 .unwrap()
                 .len(),
-            3 // Filter, mapped values, and final projection each retain their scope.
+            2 // The native filter needs no scope. The map and projection retain theirs.
         );
     });
 }
