@@ -41,7 +41,7 @@ export async function checkSessionExtension(observe: (intent: string) => Promise
             }]
           },
           matching: {matches},
-          search: {policy: "whole-intent-luna-selector-v50",
+          search: {policy: "whole-intent-luna-selector-v51",
             exposed: [],
             considered: [{catalog:"matrix",capability:"read"}], unexplored: [], deferred: [],
             requests: 1, input_bytes: 1000, reported_input_tokens: 200, missing_usage: 0},
