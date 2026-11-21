@@ -1244,6 +1244,46 @@ fn rejects_unbound_provider_and_duplicate_response_fields() {
 }
 
 #[test]
+fn source_query_judges_requested_content_and_preserves_input_uncertainty() {
+    let cards = [
+        json!({"id":"c0","catalog":"matrix","entity":"Entry","capability":"entry_query",
+        "operation":{"kind":"query"},"declaration":{"selection":[{"name":"shelf","selection_effect":"source","description":"current or archive"}]}}),
+    ];
+    let records = Map::from_iter([(
+        "matrix/Entry".into(),
+        json!({"description":"Archived entries."}),
+    )]);
+    for (request, expected) in [
+        (
+            "Read the entry at 'https://example.org/page'.",
+            "Available sources: current or archive",
+        ),
+        ("Read the linked entry.", "A link in an upstream record"),
+    ] {
+        let (body, _) = request_body(
+            EvidenceScope::WholeIntent,
+            DEFAULT_MODEL,
+            request,
+            &cards,
+            &[AccessQuestion::Read("Does the query contribute?")],
+            &Map::new(),
+            &records,
+            &BTreeMap::new(),
+            &Default::default(),
+            &mut [],
+        )
+        .unwrap();
+        let packet: Value = serde_json::from_str(&body).unwrap();
+        let question = &packet["questions"]["c0"];
+        assert!(question["instructions"]
+            .as_str()
+            .unwrap()
+            .contains(expected));
+        assert_eq!(question["criteria"]["uncertain_input"], "d.uncertain_input");
+    }
+}
+
+#[test]
 fn keyed_packet_retains_contract_domains_and_uncertainty_choices_once() {
     let declaration = json!({"scope":[{"name":"shelf","required":true,"value_ref":"shelf_type"}],"provides":["name"]});
     let cards = [

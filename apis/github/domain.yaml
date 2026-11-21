@@ -1,4 +1,4 @@
-version: 41
+version: 42
 http_backend: https://api.github.com
 data_classes:
   untrusted:
@@ -1864,7 +1864,7 @@ capabilities:
       value_ref: nv_wire_sel_1b3907e07c1297e8
       required: false
   pr_get:
-    description: Read a pull request by repository and number for its author, review details and merge state.
+    description: Read one pull request for review or merge decisions.
     kind: get
     entity: PullRequest
     scope:
@@ -1878,7 +1878,6 @@ capabilities:
       value_ref: nv_pull_request_number
       required: true
     provides:
-    - author_login
     - id
     - owner
     - repo
@@ -1895,6 +1894,7 @@ capabilities:
     - updated_at
     - closed_at
     - html_url
+    - author_login
   pr_query:
     description: Find pull requests in a repository by state or branch.
     kind: query

@@ -1,4 +1,4 @@
-version: 7
+version: 6
 http_backend: https://api.tavily.com
 data_classes:
   untrusted:
@@ -159,17 +159,13 @@ capabilities:
   url_extract:
     kind: query
     entity: ExtractResult
-    description: Read page content at specified URLs, or crawl a site from its starting URL. Each result identifies its source URL and can contain the extracted text.
-    provides:
-    - url
-    - raw_content
-    - favicon
+    description: List ExtractResult by shelf (url_extract | site_crawl).
     selection:
     - name: shelf
       selection_effect: source
       value_ref: nv_extractresult_query_shelf
       required: true
-      description: Use url_extract with urls to read the specified pages. Use site_crawl with url to traverse a site.
+      description: url_extract | site_crawl
     - name: urls
       selection_effect: filter
       value_ref: nv_url_extract_urls

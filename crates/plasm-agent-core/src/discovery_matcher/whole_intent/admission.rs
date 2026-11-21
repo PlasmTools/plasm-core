@@ -55,10 +55,18 @@ pub(crate) fn named_collection_queries(
                 .iter()
                 .filter_map(|word| word.chars().next())
                 .collect();
-            if subjects.subjects(catalog).any(|(name, key)| {
-                (name.eq_ignore_ascii_case(entity.name.as_str())
-                    || (phrase.len() > 1 && name == initials))
-                    && key.is_some_and(|s| s.bytes().all(|b| b.is_ascii_digit()))
+            if subjects.after_catalog(catalog).any(|tail| {
+                let key = tail
+                    .strip_prefix(phrase.as_slice())
+                    .and_then(|rest| rest.first())
+                    .or_else(|| {
+                        let name = tail.first()?;
+                        (name.eq_ignore_ascii_case(entity.name.as_str())
+                            || (phrase.len() > 1 && *name == initials))
+                            .then(|| tail.get(1))
+                            .flatten()
+                    });
+                key.is_some_and(|s| s.bytes().all(|b| b.is_ascii_digit()))
             }) {
                 use plasm_core::schema::RelationMaterialization::{
                     QueryScoped, QueryScopedBindings,
@@ -143,7 +151,7 @@ impl QualifiedSubjects {
         }
     }
 
-    fn subjects<'a>(&'a self, catalog: &str) -> impl Iterator<Item = (&'a str, Option<&'a str>)> {
+    fn after_catalog<'a>(&'a self, catalog: &str) -> impl Iterator<Item = &'a [String]> {
         let catalog = catalog
             .chars()
             .filter(|c| c.is_alphanumeric())
@@ -154,14 +162,16 @@ impl QualifiedSubjects {
             for (i, word) in self.words.iter().enumerate().skip(start) {
                 remaining = remaining.strip_prefix(word.as_str())?;
                 if remaining.is_empty() {
-                    return Some((
-                        self.words.get(i + 1)?.as_str(),
-                        self.words.get(i + 2).map(String::as_str),
-                    ));
+                    return Some(&self.words[i + 1..]);
                 }
             }
             None
         })
+    }
+
+    fn subjects<'a>(&'a self, catalog: &str) -> impl Iterator<Item = (&'a str, Option<&'a str>)> {
+        self.after_catalog(catalog)
+            .filter_map(|tail| Some((tail.first()?.as_str(), tail.get(1).map(String::as_str))))
     }
 
     pub(super) fn qualified_roles<'a>(
