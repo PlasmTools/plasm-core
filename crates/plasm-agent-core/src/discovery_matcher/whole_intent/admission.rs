@@ -344,19 +344,35 @@ pub(super) fn order_candidates<'a>(
         let subjects = QualifiedSubjects::new(intent);
         let mut kinds = BTreeMap::new();
         let mut opportunities = BTreeMap::new();
+        let mut searches = BTreeMap::new();
+        for c in candidates
+            .iter()
+            .filter(|c| c.document.operation.kind == plasm_core::CapabilityKind::Search)
+        {
+            *searches.entry(&c.reference.catalog).or_insert(0usize) += 1;
+        }
         for (rank, c) in candidates.iter().enumerate() {
             if !named.contains(&c.reference.catalog) {
                 continue;
             }
             let words = plasm_core::domain_lexicon::raw_words(&c.document.entity);
+            let numbered = c.document.operation.kind == plasm_core::CapabilityKind::Get
+                && words.len() > 1
+                && subjects.words.windows(2).any(|span| {
+                    span[0]
+                        .chars()
+                        .eq(words.iter().filter_map(|w| w.chars().next()))
+                        && span[1].bytes().all(|b| b.is_ascii_digit())
+                });
             // A keyed lookup needs an identified subject. Words scattered
             // across the request can describe a related collection instead.
             let mentioned = if c.document.operation.kind == plasm_core::CapabilityKind::Get {
-                !words.is_empty()
-                    && subjects
-                        .words
-                        .windows(words.len())
-                        .any(|span| span == words)
+                numbered
+                    || !words.is_empty()
+                        && subjects
+                            .words
+                            .windows(words.len())
+                            .any(|span| span == words)
             } else if c.document.operation.kind == plasm_core::CapabilityKind::Query {
                 mentions_collection(&terms, &words)
             } else {
@@ -407,19 +423,22 @@ pub(super) fn order_candidates<'a>(
             } else {
                 0
             };
-            if rank >= CATALOG_OPPORTUNITY_WINDOW && specificity == 0 {
+            let sole_search = c.document.operation.kind == plasm_core::CapabilityKind::Search
+                && searches.get(&c.reference.catalog) == Some(&1);
+            if rank >= CATALOG_OPPORTUNITY_WINDOW && specificity == 0 && !sole_search {
                 continue;
             }
             let slot = kinds
                 .entry((&c.reference.catalog, c.document.operation.kind.as_str()))
-                .or_insert((specificity, rank, &c.reference));
+                .or_insert((specificity, rank, &c.reference, numbered || sole_search));
             if specificity > slot.0 {
-                *slot = (specificity, slot.1, &c.reference);
+                *slot = (specificity, slot.1, &c.reference, numbered || sole_search);
             }
         }
-        for ((_, kind), (specificity, rank, reference)) in kinds {
-            let primary =
-                (kind == "query" && specificity > 0) || (kind == "create" && specificity >= 2);
+        for ((_, kind), (specificity, rank, reference, distinct_access)) in kinds {
+            let primary = distinct_access
+                || (kind == "query" && specificity > 0)
+                || (kind == "create" && specificity >= 2);
             opportunities.insert(reference, (!primary, rank));
         }
         ordered.sort_by_key(|c| {

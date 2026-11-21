@@ -840,7 +840,7 @@ fn named_catalogues_get_distinct_access_paths_before_duplicate_operations() {
         .take(4)
         .map(|c| c.reference.capability.as_str())
         .collect();
-    assert_eq!(ids, ["op_0", "op_2", "op_3", "op_4"]);
+    assert_eq!(ids, ["op_4", "op_0", "op_2", "op_3"]);
     assert_eq!(ordered.len(), candidates.len());
 }
 
