@@ -1,3 +1,4 @@
+use super::admission::{record_identity, QualifiedSubjects};
 use super::*;
 
 #[test]
@@ -525,7 +526,7 @@ fn parallel_text_keys_preserve_uncertainty_and_require_unambiguous_catalogue_rea
             .unwrap();
         selection.apply(
             packet.candidates(),
-            intent,
+            &References::bind(intent, catalogs),
             catalogs,
             &DeploymentBindings::default(),
         );
@@ -964,7 +965,7 @@ fn shared_record_identity_cannot_promote_a_deferred_sibling() {
     let mut selection = packet.decode(&value.to_string()).unwrap();
     selection.apply(
         packet.candidates(),
-        "Read the zone.",
+        &References::bind("Read the zone.", &catalogs),
         &catalogs,
         &DeploymentBindings::default(),
     );
@@ -988,7 +989,7 @@ fn weak_read_exclusions_do_not_promote_effects() {
     let mut decoded = packet.decode(&value.to_string()).unwrap();
     decoded.apply(
         packet.candidates(),
-        "",
+        &References::bind("", &BTreeMap::new()),
         &BTreeMap::new(),
         &DeploymentBindings::default(),
     );
@@ -1026,7 +1027,7 @@ fn only_unique_uncertain_keyed_reads_are_taught_for_a_numbered_record() {
         let mut selection = packet.decode(&raw).unwrap();
         selection.apply(
             packet.candidates(),
-            &request,
+            &References::bind(&request, &BTreeMap::new()),
             &BTreeMap::new(),
             &DeploymentBindings::default(),
         );

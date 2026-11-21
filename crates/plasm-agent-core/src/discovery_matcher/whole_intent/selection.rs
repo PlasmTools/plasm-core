@@ -1,5 +1,6 @@
 //! Decode once at the durable checkpoint. Each assessment carries the provider
 //! answer and the host's disposition through receipt and teaching projection.
+use super::admission::{intent_terms, names_entity, record_identity, QualifiedSubjects};
 use super::references::References;
 use super::*;
 use crate::discovery_matcher::{CapabilityIntentMatch, MatchChoice};
@@ -158,11 +159,10 @@ impl Selection {
     pub(crate) fn apply(
         &mut self,
         candidates: &[RetrievedCapability],
-        intent: &str,
+        references: &References,
         catalogs: &BTreeMap<String, CGS>,
         bindings: &DeploymentBindings,
     ) {
-        let references = References::bind(intent, catalogs);
         let qualified = QualifiedSubjects::new(&references.plain);
         let terms = intent_terms(&references.plain);
         let positive: BTreeSet<_> = self
@@ -226,11 +226,11 @@ impl Selection {
             .collect();
         let mut parallel = BTreeSet::new();
         let mut corroborated = BTreeSet::new();
-        for list in references.lists {
+        for list in &references.lists {
             if list.iter().any(|r| positive.contains(r)) {
                 corroborated.extend(list.iter().cloned());
             }
-            parallel.extend(list);
+            parallel.extend(list.iter().cloned());
         }
         for c in candidates {
             let r = &c.reference;

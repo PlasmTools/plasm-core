@@ -1016,7 +1016,7 @@ impl DiscoveryService {
                 .map_err(|error| matcher::DiscoveryMatcherError::Provider(error))?;
             selection.apply(
                 packet.candidates(),
-                &selection_request,
+                packet.references(),
                 &catalogs,
                 &bindings,
             );
