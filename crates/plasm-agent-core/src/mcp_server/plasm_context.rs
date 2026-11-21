@@ -942,6 +942,7 @@ impl PlasmMcpHandler {
             ));
         }
         let mut uncertain_calls = Vec::new();
+        let mut display_methods = serde_json::Map::new();
         if let Some(session) = current_session {
             if let Some(exposure) = &session.teaching_exposure {
                 let catalogs = session
@@ -950,6 +951,37 @@ impl PlasmMcpHandler {
                     .map(|(id, ctx)| (id.clone(), ctx.cgs.as_ref()))
                     .collect();
                 let symbols = exposure.to_symbol_map();
+                if ui_apps_enabled {
+                    for key in &exposure.surface.capabilities {
+                        let Some(ctx) = session.contexts_by_entry.get(&key.entry_id) else {
+                            continue;
+                        };
+                        let Some(cap) = ctx.cgs.get_capability(key.capability.as_str()) else {
+                            continue;
+                        };
+                        let Some(owner) =
+                            exposure.qualified_entity_symbol(&key.entry_id, key.domain.as_str())
+                        else {
+                            continue;
+                        };
+                        let method = plasm_core::prompt_render::python::capability_method_name(
+                            &ctx.cgs,
+                            &symbols,
+                            &key.entry_id,
+                            cap,
+                        );
+                        let mut info = serde_json::json!({"kind": cap.kind.as_str()});
+                        if !matches!(
+                            cap.kind,
+                            plasm_core::CapabilityKind::Query
+                                | plasm_core::CapabilityKind::Get
+                                | plasm_core::CapabilityKind::Search
+                        ) {
+                            info["name"] = format!("{}/{}", key.entry_id, cap.name).into();
+                        }
+                        display_methods.insert(format!("{owner}.{method}"), info);
+                    }
+                }
                 if route
                     .matching
                     .matches
@@ -1141,10 +1173,10 @@ impl PlasmMcpHandler {
             },
         );
         if ui_apps_enabled {
-            plasm.insert(
-                "discovery".into(),
-                crate::discovery_ui::project(intent, route, &out.waves, &uncertain_calls),
-            );
+            let mut view =
+                crate::discovery_ui::project(intent, route, &out.waves, &uncertain_calls);
+            view["methods"] = display_methods.into();
+            plasm.insert("discovery".into(), view);
         }
         if let Some(training) = training {
             let actor = crate::workflow_training_mcp::caller_actor(

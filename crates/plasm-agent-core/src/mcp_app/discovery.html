@@ -4,6 +4,7 @@
 <style>
 :root{color-scheme:light dark;--ink:var(--color-text-primary,#e7edf0);--muted:var(--color-text-secondary,#a6b2bf);--bg:var(--color-background-primary,#0b1119);--panel:var(--color-background-secondary,#141e29);--line:var(--color-border-primary,#344453);--accent:#76d2b2;--warn:#f1c37a}
 *{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--ink);font:14px/1.45 system-ui,sans-serif}main{max-width:980px;margin:auto;padding:22px 24px 28px}header{display:flex;align-items:start;justify-content:space-between;gap:16px;border-bottom:1px solid var(--line);padding-bottom:16px}.eyebrow{color:var(--muted);font-size:11px;letter-spacing:.13em;font-weight:700;text-transform:uppercase}h1{font-size:22px;line-height:1.15;margin:6px 0 0;font-weight:650}h2{font-size:15px;margin:0 0 8px}.badge{color:var(--accent);border:1px solid currentColor;border-radius:99px;padding:4px 10px;white-space:nowrap;font-size:12px}.badge.partial{color:var(--warn)}.intent{padding:19px 0;border-bottom:1px solid var(--line)}.intent p{font-size:16px;margin:6px 0 0;overflow-wrap:anywhere}.grid{display:grid;grid-template-columns:minmax(0,1fr);gap:6px;padding-top:20px}.muted{color:var(--muted)}.summary{margin:0 0 16px}.teaching{min-width:0}.teaching pre{margin:8px 0 14px;padding:12px;border:1px solid var(--line);border-radius:6px;background:var(--panel);color:var(--ink);font-size:13px}.uncertainty{color:var(--warn);overflow-wrap:anywhere}.facts{background:var(--panel);padding:16px;border:1px solid var(--line);border-radius:8px}.fact{display:flex;justify-content:space-between;gap:16px;padding:8px 0;border-bottom:1px solid var(--line)}.fact:last-child{border:0}.fact b{font-variant-numeric:tabular-nums}.note{font-size:12px;margin:12px 0 0;color:var(--muted)}details{margin-top:16px}summary{cursor:pointer;color:var(--muted)}pre{white-space:pre-wrap;overflow-wrap:anywhere;font:12px/1.5 ui-monospace,monospace;color:var(--muted)}#error{color:var(--warn)}@media(max-width:620px){main{padding:18px}.grid{grid-template-columns:1fr;gap:20px}.badge{white-space:normal}}
+.grid>section{min-width:0}.entity{padding:16px 0;border-top:1px solid var(--line);overflow-wrap:anywhere}.entity h3{font-size:18px;margin:0;display:flex;gap:10px;align-items:baseline;flex-wrap:wrap}.entity h3 code{color:var(--muted);font-size:12px;font-weight:400}.entity-desc{margin:4px 0 12px;color:var(--muted)}.operation{border-inline-start:2px solid var(--accent);padding:4px 12px;margin:12px 0;background:var(--panel)}.kind{font-size:12px;font-weight:650;text-transform:capitalize;margin-inline-end:10px}.operation p{margin:3px 0}.entity details{margin:6px 0}.field{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:8px;padding:5px 0;border-bottom:1px solid var(--line)}summary:focus-visible{outline:2px solid currentColor;outline-offset:2px}
 </style></head><body><main>
 <header><div><div class="eyebrow">Plasm</div><h1>Discovery</h1></div><span id="status" class="badge">Waiting for host</span></header>
 <section class="intent"><div class="eyebrow">Your request</div><p id="intent" class="muted">Waiting for the discovery request…</p></section>
@@ -15,6 +16,80 @@ function trainingCall(action){if(!trainingRef||trainingPending)return;const args
 function renderTraining(result){try{if(result.isError)throw new Error(result.content?.find(c=>c.type==='text')?.text||'Training request failed.');const v=result.structuredContent||JSON.parse(result.content?.find(c=>c.type==='text')?.text||'{}');if(trainingKind==='executions'){const select=$('training-execution');select.replaceChildren(new Option('Choose an execution',''));for(const execution of v.executions||[])select.add(new Option(`Session revision ${execution.session_revision} — ${execution.execution_id}`,execution.execution_id));$('training-review-status').textContent=v.executions?.length?'Choose an execution to inspect.':'No completed executions are available.';return}if(trainingKind==='execution'){inspectedExecution=v.execution_id;$('training-source').textContent=v.source||'Source unavailable';$('training-submit').disabled=!v.source;return}if(trainingKind==='review'){$('training-review-status').textContent=`Review queued: ${v.review_ref}. Publication requires a separate decision.`;$('training-submit').disabled=true;return}trainingState=v;const state=v.training_state?.state;$('training-review').hidden=state!=='active';approvalUrl=v.approval_url||'';$('training-status').textContent=state?`Training: ${state.replaceAll('_',' ')}`:'Training status unavailable';if(state==='awaiting_authorization')$('training-status').textContent=approvalUrl?'Authorization is pending.':'Authorization is pending, but no approval URL is configured for this host.';$('training-approve').hidden=!approvalUrl;const action=state==='active'?'stop':state==='stopped'?'resume':state==='ordinary'?'request':null;$('training-action').hidden=!action;if(action){$('training-action').dataset.action=action;$('training-action').textContent=action==='stop'?'Turn training off':'Turn training on'}$('training-error').hidden=true}catch(e){$('training-error').hidden=false;$('training-error').textContent=e.message}}
 $('training-list').onclick=()=>{inspectedExecution='';$('training-submit').disabled=true;trainingCall('executions')};$('training-execution').onchange=()=>{inspectedExecution='';$('training-submit').disabled=true;$('training-source').textContent='';const id=$('training-execution').value;if(!id||trainingPending)return;trainingKind='execution';trainingPending='training-'+trainingId++;window.parent.postMessage({jsonrpc:'2.0',id:trainingPending,method:'tools/call',params:{name:'plasm_training',arguments:{logical_session_ref:trainingRef,action:'execution',execution_id:id}}},'*')};$('training-submit').onclick=()=>{const intent=$('training-purpose').value.trim(),outcome=$('training-outcome').value.trim();if(!intent||!outcome||!inspectedExecution||inspectedExecution!==$('training-execution').value||trainingPending){$('training-review-status').textContent='Select and inspect an execution, then enter its purpose and observed outcome.';return}const signature=JSON.stringify([trainingRef,trainingState.revision,inspectedExecution,intent,outcome]);if(reviewAttempt?.signature!==signature)reviewAttempt={signature,key:crypto.randomUUID()};trainingKind='review';trainingPending='training-'+trainingId++;window.parent.postMessage({jsonrpc:'2.0',id:trainingPending,method:'tools/call',params:{name:'plasm_review',arguments:{logical_session_ref:trainingRef,expected_revision:trainingState.revision,idempotency_key:reviewAttempt.key,subtasks:[{intent,observed_outcome:outcome,execution_ids:[inspectedExecution]}]}}},'*')};
 $('training-refresh').onclick=()=>trainingCall('status');$('training-action').onclick=()=>trainingCall($('training-action').dataset.action);$('training-approve').onclick=()=>{try{const url=new URL(approvalUrl,location.href);if(['http:','https:'].includes(url.protocol))window.parent.postMessage({jsonrpc:'2.0',id:'training-open-'+trainingId++,method:'ui/open-link',params:{url:url.href}},'*')}catch{}};
+function node(tag, text, cls) {
+  const el = document.createElement(tag);
+  if (text) el.textContent = text;
+  if (cls) el.className = cls;
+  return el;
+}
+function fold(label, body) {
+  const el = node('details');
+  el.append(node('summary', label), body);
+  return el;
+}
+function showDeclarations(blocks, methods) {
+  const host = $('declarations');
+  host.replaceChildren();
+  if (!blocks.length) return;
+  const source = blocks.join('\n\n');
+  const types = new Map();
+  for (const match of source.matchAll(/^(\bv\d+): ([^\n]+)/gm)) {
+    types.set(match[1], match[2].split(' # ')[0]);
+  }
+  let card, fields, heading, description, symbol, notes = [];
+  function addField(name, type) {
+    const row = node('div', '', 'field');
+    row.append(node('code', name), node('span', type.replace(/\bv\d+\b/g, v => types.get(v) || v)));
+    fields.append(row);
+  }
+  function finish() {
+    if (fields?.childElementCount) card.append(fold('Fields (' + fields.childElementCount + ')', fields));
+  }
+  for (const line of source.split('\n')) {
+    const entity = /^# ([^\s:]+)::(\w+)(?: — (.*))?$/.exec(line);
+    if (entity) { heading = entity[1] + ' / ' + entity[2]; description = entity[3]; continue; }
+    if (/^e\d+:$/.test(line)) {
+      finish();
+      symbol = line.slice(0, -1);
+      card = node('article', '', 'entity');
+      const title = node('h3', heading || 'Additional declarations');
+      title.append(node('code', symbol));
+      card.append(title);
+      if (description) card.append(node('p', description, 'entity-desc'));
+      host.append(card);
+      fields = node('div', '', 'fields');
+      heading = description = ''; notes = [];
+      continue;
+    }
+    if (!card) continue;
+    const comment = /^\s+# (.*)/.exec(line);
+    if (comment) { notes.push(comment[1]); continue; }
+    const call = /^\s*((?:row|e\d+)\.(\w+))\((.*)\) -> (.+)$/.exec(line);
+    const relation = /^\s+(r\d+): ((?:Singleton|Many)\[.+\])$/.exec(line);
+    if (call || relation) {
+      const method = call && methods[symbol + '.' + call[2]];
+      const target = call ? call[1] : 'row.' + relation[1];
+      const kind = relation ? 'Relation' : method?.kind || call[2];
+      const op = node('div', '', 'operation');
+      const inputs = call ? Array.from(call[3].matchAll(/(?:^|, )([a-zA-Z_]\w*): /g), m => m[1]) : [];
+      const shortArgs = inputs.slice(0, 3).concat(inputs.length > 3 ? ['…'] : []).join(', ');
+      op.append(node('span', kind, 'kind'), node('code', method?.name || (call ? target + '(' + shortArgs + ')' : target)));
+      if (notes.length) op.append(node('p', notes[0]));
+      const signature = call ? line.trim() : target + ' → ' + relation[2];
+      op.append(fold('Signature', node('pre', signature)));
+      card.append(op);
+      notes = [];
+    } else if (/^\s+\w+: v\d+/.test(line)) {
+      for (const field of line.trim().split('; ')) {
+        const split = field.indexOf(': ');
+        if (split > 0) addField(field.slice(0, split), field.slice(split + 2));
+      }
+      notes = [];
+    } else notes = [];
+  }
+  finish();
+  host.append(fold('Exact Plasm declarations', node('pre', source)));
+}
 function render(value) {
   if (!value || typeof value !== 'object') return;
   const blocks = value.declarations || [];
@@ -37,30 +112,7 @@ function render(value) {
     : value.has_closure ? 'No new declarations in this response. Reuse the earlier session declarations.'
     : 'Discovery returned no declarations for this request.';
 
-  const declarations = $('declarations');
-  declarations.replaceChildren();
-  for (const block of blocks) {
-    // Domain aliases precede their consumers on the wire. Fold those lines
-    // below the entity declarations; keep every original line available.
-    const aliases = [], entities = [];
-    for (const line of block.split('\n')) {
-      (/^v\d+: /.test(line) ? aliases : entities).push(line);
-    }
-    if (entities.length) {
-      const pre = document.createElement('pre');
-      pre.textContent = entities.join('\n');
-      declarations.append(pre);
-    }
-    if (aliases.length) {
-      const details = document.createElement('details');
-      const label = document.createElement('summary');
-      label.textContent = 'Value types';
-      const pre = document.createElement('pre');
-      pre.textContent = aliases.join('\n');
-      details.append(label, pre);
-      declarations.append(details);
-    }
-  }
+  showDeclarations(blocks, value.methods || {});
   const uncertain = value.uncertain_calls || [];
   const warning = $('uncertainty');
   warning.hidden = !uncertain.length;
