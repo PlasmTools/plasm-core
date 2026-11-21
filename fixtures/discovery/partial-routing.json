@@ -58,7 +58,7 @@
       ]
     },
     "search": {
-      "policy": "whole-intent-luna-selector-v41",
+      "policy": "whole-intent-luna-selector-v42",
       "exposed": [],
       "considered": [{"catalog":"matrix","capability":"record_read"}],
       "unexplored": [],

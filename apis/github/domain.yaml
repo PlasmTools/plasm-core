@@ -1,4 +1,4 @@
-version: 39
+version: 40
 http_backend: https://api.github.com
 data_classes:
   untrusted:
@@ -1883,6 +1883,8 @@ capabilities:
     - state
     - locked
     - draft
+    - mergeable
+    - mergeable_state
     - merged_at
     - created_at
     - updated_at

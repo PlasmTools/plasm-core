@@ -3,12 +3,12 @@
 <title>Plasm discovery</title>
 <style>
 :root{color-scheme:light dark;--ink:var(--color-text-primary,#e7edf0);--muted:var(--color-text-secondary,#a6b2bf);--bg:var(--color-background-primary,#0b1119);--panel:var(--color-background-secondary,#141e29);--line:var(--color-border-primary,#344453);--accent:#76d2b2;--warn:#f1c37a}
-*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--ink);font:14px/1.45 system-ui,sans-serif}main{max-width:980px;margin:auto;padding:22px 24px 28px}header{display:flex;align-items:start;justify-content:space-between;gap:16px;border-bottom:1px solid var(--line);padding-bottom:16px}.eyebrow{color:var(--muted);font-size:11px;letter-spacing:.13em;font-weight:700;text-transform:uppercase}h1{font-size:22px;line-height:1.15;margin:6px 0 0;font-weight:650}h2{font-size:15px;margin:0 0 8px}.badge{color:var(--accent);border:1px solid currentColor;border-radius:99px;padding:4px 10px;white-space:nowrap;font-size:12px}.badge.partial{color:var(--warn)}.intent{padding:19px 0;border-bottom:1px solid var(--line)}.intent p{font-size:16px;margin:6px 0 0;overflow-wrap:anywhere}.grid{display:grid;grid-template-columns:minmax(0,1.5fr) minmax(220px,1fr);gap:28px;padding-top:20px}.muted{color:var(--muted)}.summary{margin:0 0 16px}.capabilities{list-style:none;padding:0;margin:0}.capabilities li{border-top:1px solid var(--line);padding:12px 0}.capabilities strong{font-weight:650;overflow-wrap:anywhere}.capabilities p{color:var(--muted);margin:4px 0 0;line-height:1.45;overflow-wrap:anywhere}.catalog{font-size:11px;text-transform:uppercase;letter-spacing:.08em;color:var(--accent);margin-right:8px}.facts{background:var(--panel);padding:16px;border:1px solid var(--line);border-radius:8px}.fact{display:flex;justify-content:space-between;gap:16px;padding:8px 0;border-bottom:1px solid var(--line)}.fact:last-child{border:0}.fact b{font-variant-numeric:tabular-nums}.note{font-size:12px;margin:12px 0 0;color:var(--muted)}details{margin-top:16px}summary{cursor:pointer;color:var(--muted)}pre{white-space:pre-wrap;overflow-wrap:anywhere;font:12px/1.5 ui-monospace,monospace;color:var(--muted)}#error{color:var(--warn)}@media(max-width:620px){main{padding:18px}.grid{grid-template-columns:1fr;gap:20px}.badge{white-space:normal}}
+*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--ink);font:14px/1.45 system-ui,sans-serif}main{max-width:980px;margin:auto;padding:22px 24px 28px}header{display:flex;align-items:start;justify-content:space-between;gap:16px;border-bottom:1px solid var(--line);padding-bottom:16px}.eyebrow{color:var(--muted);font-size:11px;letter-spacing:.13em;font-weight:700;text-transform:uppercase}h1{font-size:22px;line-height:1.15;margin:6px 0 0;font-weight:650}h2{font-size:15px;margin:0 0 8px}.badge{color:var(--accent);border:1px solid currentColor;border-radius:99px;padding:4px 10px;white-space:nowrap;font-size:12px}.badge.partial{color:var(--warn)}.intent{padding:19px 0;border-bottom:1px solid var(--line)}.intent p{font-size:16px;margin:6px 0 0;overflow-wrap:anywhere}.grid{display:grid;grid-template-columns:minmax(0,1fr);gap:6px;padding-top:20px}.muted{color:var(--muted)}.summary{margin:0 0 16px}.teaching{min-width:0}.teaching pre{margin:8px 0 14px;padding:12px;border:1px solid var(--line);border-radius:6px;background:var(--panel);color:var(--ink);font-size:13px}.uncertainty{color:var(--warn);overflow-wrap:anywhere}.facts{background:var(--panel);padding:16px;border:1px solid var(--line);border-radius:8px}.fact{display:flex;justify-content:space-between;gap:16px;padding:8px 0;border-bottom:1px solid var(--line)}.fact:last-child{border:0}.fact b{font-variant-numeric:tabular-nums}.note{font-size:12px;margin:12px 0 0;color:var(--muted)}details{margin-top:16px}summary{cursor:pointer;color:var(--muted)}pre{white-space:pre-wrap;overflow-wrap:anywhere;font:12px/1.5 ui-monospace,monospace;color:var(--muted)}#error{color:var(--warn)}@media(max-width:620px){main{padding:18px}.grid{grid-template-columns:1fr;gap:20px}.badge{white-space:normal}}
 </style></head><body><main>
-<header><div><div class="eyebrow">Plasm · capability discovery</div><h1>Discovery</h1></div><span id="status" class="badge">Waiting for host</span></header>
+<header><div><div class="eyebrow">Plasm</div><h1>Discovery</h1></div><span id="status" class="badge">Waiting for host</span></header>
 <section class="intent"><div class="eyebrow">Your request</div><p id="intent" class="muted">Waiting for the discovery request…</p></section>
-<div class="grid"><section><h2>Selected capabilities</h2><p id="summary" class="summary muted">Waiting for discovery results.</p><ul id="capabilities" class="capabilities"></ul><p id="error" role="status" hidden></p><section id="training" hidden><h2>Training</h2><p id="training-status" class="note">Loading training status…</p><p id="training-error" role="status" class="note" hidden></p><button id="training-refresh" type="button">Refresh status</button> <button id="training-action" type="button" hidden></button> <button id="training-approve" type="button" hidden>Review authorization</button><p class="note">Training is prospective. Publication requires a separate decision.</p><div id="training-review" hidden><h2>Submit an execution for review</h2><p class="note">Inspect a completed execution and describe its outcome. Submission does not publish an example.</p><button id="training-list" type="button">Find completed executions</button> <label>Execution <select id="training-execution"></select></label><pre id="training-source"></pre><label>Purpose <input id="training-purpose" maxlength="4096"></label><label>Observed outcome <input id="training-outcome" maxlength="4096"></label><button id="training-submit" type="button" disabled>Submit for review</button><p id="training-review-status" role="status"></p></div></section></section>
-<aside><h2>Catalogue search</h2><div class="facts"><div class="fact"><span>Judged</span><b id="judged">—</b></div><div class="fact"><span>Deferred</span><b id="deferred">—</b></div><div class="fact"><span>Unexplored</span><b id="unexplored">—</b></div><p id="coverage" class="note">Assessment details appear when discovery completes.</p></div><details id="limits" hidden><summary>Search limits and uncertainty</summary><pre id="reasons"></pre></details></aside></div>
+<div class="grid"><section><h2>Plasm declarations</h2><p id="summary" class="summary muted">Waiting for discovery results.</p><div id="declarations" class="teaching"></div><p id="uncertainty" class="uncertainty" hidden></p><p id="error" role="status" hidden></p><section id="training" hidden><h2>Training</h2><p id="training-status" class="note">Loading training status…</p><p id="training-error" role="status" class="note" hidden></p><button id="training-refresh" type="button">Refresh status</button> <button id="training-action" type="button" hidden></button> <button id="training-approve" type="button" hidden>Review authorization</button><p class="note">Training is prospective. Publication requires a separate decision.</p><div id="training-review" hidden><h2>Submit an execution for review</h2><p class="note">Inspect a completed execution and describe its outcome. Submission does not publish an example.</p><button id="training-list" type="button">Find completed executions</button> <label>Execution <select id="training-execution"></select></label><pre id="training-source"></pre><label>Purpose <input id="training-purpose" maxlength="4096"></label><label>Observed outcome <input id="training-outcome" maxlength="4096"></label><button id="training-submit" type="button" disabled>Submit for review</button><p id="training-review-status" role="status"></p></div></section></section>
+<aside><details><summary>Catalogue search</summary><div class="facts"><div class="fact"><span>Judged</span><b id="judged">—</b></div><div class="fact"><span>Deferred</span><b id="deferred">—</b></div><div class="fact"><span>Unexplored</span><b id="unexplored">—</b></div><p id="coverage" class="note">Assessment details appear when discovery completes.</p></div><details id="limits" hidden><summary>Search limits and uncertainty</summary><pre id="reasons"></pre></details></details></aside></div>
 </main><script>
 (()=>{'use strict';const $=id=>document.getElementById(id);let requestIntent='',trainingRef='',trainingState=null,trainingPending=null,trainingId=1,approvalUrl='',trainingKind='',inspectedExecution='',reviewAttempt=null;const reasonLabels={input_bytes:'Evidence exceeded the packet or total-byte budget.',projection_limit:'Candidate was not projected within the bounded candidate limit.',requests:'The request limit was reached.',reported_input_tokens:'The token budget was reached.',operation_pending:'A contribution is still awaiting assessment.',operation_uncertain:'A contribution was uncertain.',provider_unavailable:'The assessment provider was unavailable.'};
 function trainingCall(action){if(!trainingRef||trainingPending)return;const args={logical_session_ref:trainingRef,action};if(['request','stop','resume'].includes(action)){args.expected_revision=trainingState.revision;args.idempotency_key=crypto.randomUUID()}trainingKind=action;trainingPending='training-'+trainingId++;window.parent.postMessage({jsonrpc:'2.0',id:trainingPending,method:'tools/call',params:{name:'plasm_training',arguments:args}},'*')}
@@ -17,7 +17,7 @@ $('training-list').onclick=()=>{inspectedExecution='';$('training-submit').disab
 $('training-refresh').onclick=()=>trainingCall('status');$('training-action').onclick=()=>trainingCall($('training-action').dataset.action);$('training-approve').onclick=()=>{try{const url=new URL(approvalUrl,location.href);if(['http:','https:'].includes(url.protocol))window.parent.postMessage({jsonrpc:'2.0',id:'training-open-'+trainingId++,method:'ui/open-link',params:{url:url.href}},'*')}catch{}};
 function render(value) {
   if (!value || typeof value !== 'object') return;
-  const caps = Array.isArray(value.capabilities) ? value.capabilities : [];
+  const blocks = value.declarations || [];
   const reasons = value.deferred_reasons || {};
   const limited = value.deferred > 0 || value.unexplored > 0 ||
     value.lexical_truncated === true || value.vector_truncated === true;
@@ -25,43 +25,46 @@ function render(value) {
   $('intent').textContent = value.intent || requestIntent || 'Request not supplied by host';
   $('intent').classList.remove('muted');
   $('error').hidden = true;
-  const selected = caps.length > 0;
-  let status = 'No capabilities selected';
-  if (value.has_closure) status = 'No additions';
-  if (selected) status = 'Capabilities selected';
-  if (value.provider_unavailable) status = 'Assessment interrupted';
+  const hasTeaching = blocks.length > 0;
+  const status = value.provider_unavailable ? 'Assessment interrupted'
+    : hasTeaching ? 'Declarations ready'
+    : value.has_closure ? 'Session reused' : 'No declarations';
   $('status').textContent = status;
-  $('status').classList.toggle('partial', value.provider_unavailable || (!selected && !value.has_closure));
+  $('status').classList.toggle('partial', value.provider_unavailable || !value.has_closure);
+  const summary = $('summary');
+  summary.hidden = hasTeaching && !value.provider_unavailable;
+  summary.textContent = value.provider_unavailable ? 'The assessment provider was unavailable.'
+    : value.has_closure ? 'No new declarations in this response. Reuse the earlier session declarations.'
+    : 'Discovery returned no declarations for this request.';
 
-  const summary = [];
-  if (selected) {
-    summary.push(`${caps.length} selected ${caps.length === 1 ? 'capability' : 'capabilities'} available for the agent.`);
-  } else {
-    summary.push(value.has_closure ? 'No new capabilities were selected in this response.' : 'No capabilities were selected in this response.');
-  }
-  if (value.provider_unavailable) summary.push('The assessment provider was unavailable.');
-  const uncertain = reasons.operation_uncertain;
-  if (Number.isInteger(uncertain) && uncertain > 0) {
-    summary.push(`${uncertain} candidate judgment${uncertain === 1 ? ' remains' : 's remain'} uncertain.`);
-  }
-  $('summary').textContent = summary.join(' ');
-
-  $('capabilities').replaceChildren();
-  for (const cap of caps) {
-    const li = document.createElement('li');
-    const title = document.createElement('strong');
-    const tag = document.createElement('span');
-    tag.className = 'catalog';
-    tag.textContent = cap.catalog || 'Unknown integration';
-    title.textContent = cap.capability || 'Unnamed capability';
-    li.append(tag, title);
-    if (cap.description) {
-      const p = document.createElement('p');
-      p.textContent = cap.description;
-      li.append(p);
+  const declarations = $('declarations');
+  declarations.replaceChildren();
+  for (const block of blocks) {
+    // Domain aliases precede their consumers on the wire. Fold those lines
+    // below the entity declarations; keep every original line available.
+    const aliases = [], entities = [];
+    for (const line of block.split('\n')) {
+      (/^v\d+: /.test(line) ? aliases : entities).push(line);
     }
-    $('capabilities').append(li);
+    if (entities.length) {
+      const pre = document.createElement('pre');
+      pre.textContent = entities.join('\n');
+      declarations.append(pre);
+    }
+    if (aliases.length) {
+      const details = document.createElement('details');
+      const label = document.createElement('summary');
+      label.textContent = 'Value types';
+      const pre = document.createElement('pre');
+      pre.textContent = aliases.join('\n');
+      details.append(label, pre);
+      declarations.append(details);
+    }
   }
+  const uncertain = value.uncertain_calls || [];
+  const warning = $('uncertainty');
+  warning.hidden = !uncertain.length;
+  warning.textContent = uncertain.length ? 'Uncertain relevance: ' + uncertain.join(', ') : '';
   for (const key of ['judged', 'deferred', 'unexplored']) {
     $(key).textContent = Number.isInteger(value[key]) ? String(value[key]) : '—';
   }
@@ -74,6 +77,6 @@ function render(value) {
     || 'Some candidates were not assessed, or retrieval was truncated.';
 }
 
-window.addEventListener('message',event=>{if(event.source!==window.parent)return;const msg=event.data;if(!msg||typeof msg!=='object')return;if(trainingPending&&msg.id===trainingPending){trainingPending=null;if(msg.result)renderTraining(msg.result);else{ $('training-error').hidden=false;$('training-error').textContent='Training request failed.'}return}if(msg.method==='ui/notifications/tool-input'){requestIntent=msg.params?.arguments?.intent||'';if(requestIntent)$('intent').textContent=requestIntent}if(msg.method==='ui/notifications/tool-result'){const result=msg.params||{};if(result.isError){$('status').textContent='Discovery failed';$('status').classList.add('partial');$('error').hidden=false;$('error').textContent=(result.content||[]).find(x=>x.type==='text')?.text||'The host reported a discovery error.';return}const payload=result.structuredContent?.ui?.discovery||result.structured_content?.ui?.discovery||result._meta?.plasm?.discovery;if(payload){render(payload);$('training').hidden=!result._meta?.plasm?.training;if(result._meta?.plasm?.training){trainingRef=result._meta.plasm.logical_session_ref||'';trainingCall('status')}}else{$('status').textContent='Details unavailable';$('status').classList.add('partial');$('summary').textContent='The host did not forward discovery details to this view.'}}if((msg.method==='ui/resource-teardown'||msg.method==='ping')&&msg.id!==undefined)window.parent.postMessage({jsonrpc:'2.0',id:msg.id,result:{}},'*');if(msg.id==='plasm-discovery-init'&&msg.result){window.parent.postMessage({jsonrpc:'2.0',method:'ui/notifications/initialized'},'*')}});
+window.addEventListener('message',event=>{if(event.source!==window.parent)return;const msg=event.data;if(!msg||typeof msg!=='object')return;if(trainingPending&&msg.id===trainingPending){trainingPending=null;if(msg.result)renderTraining(msg.result);else{ $('training-error').hidden=false;$('training-error').textContent='Training request failed.'}return}if(msg.method==='ui/notifications/tool-input'){requestIntent=msg.params?.arguments?.intent||'';if(requestIntent)$('intent').textContent=requestIntent}if(msg.method==='ui/notifications/tool-result'){const result=msg.params||{};if(result.isError){$('status').textContent='Discovery failed';$('status').classList.add('partial');$('error').hidden=false;$('error').textContent=(result.content||[]).find(x=>x.type==='text')?.text||'The host reported a discovery error.';return}const payload=result.structuredContent?.ui?.discovery||result.structured_content?.ui?.discovery||result._meta?.plasm?.discovery;if(payload){render(payload,result.content);$('training').hidden=!result._meta?.plasm?.training;if(result._meta?.plasm?.training){trainingRef=result._meta.plasm.logical_session_ref||'';trainingCall('status')}}else{$('status').textContent='Details unavailable';$('status').classList.add('partial');$('summary').textContent='The host did not forward discovery details to this view.'}}if((msg.method==='ui/resource-teardown'||msg.method==='ping')&&msg.id!==undefined)window.parent.postMessage({jsonrpc:'2.0',id:msg.id,result:{}},'*');if(msg.id==='plasm-discovery-init'&&msg.result){window.parent.postMessage({jsonrpc:'2.0',method:'ui/notifications/initialized'},'*')}});
 if(window.parent!==window)window.parent.postMessage({jsonrpc:'2.0',id:'plasm-discovery-init',method:'ui/initialize',params:{appInfo:{name:'plasm-discovery',version:'1.0.0'},appCapabilities:{},protocolVersion:'2026-01-26'}},'*');})();
 </script></body></html>

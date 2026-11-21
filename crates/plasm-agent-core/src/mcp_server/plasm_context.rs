@@ -582,7 +582,7 @@ impl PlasmMcpHandler {
             if ui_apps_enabled {
                 meta.insert(
                     "discovery".into(),
-                    crate::discovery_ui::project(intent, &receipt),
+                    crate::discovery_ui::project(intent, &receipt, &[], &[]),
                 );
             }
             meta.insert(
@@ -941,6 +941,7 @@ impl PlasmMcpHandler {
                 "uncertain capabilities cannot be verified without committed teaching state",
             ));
         }
+        let mut uncertain_calls = Vec::new();
         if let Some(session) = current_session {
             if let Some(exposure) = &session.teaching_exposure {
                 let catalogs = session
@@ -1016,7 +1017,15 @@ impl PlasmMcpHandler {
                         }
                         let seat =
                             match (&coverage.target, &coverage.signature, &coverage.unavailable) {
-                                (Some(target), Some(_), None) => target.clone(),
+                                (Some(target), Some(_), None) => {
+                                    let call = if target.starts_with("row.") {
+                                        format!("{target} (row: {})", coverage.entity_symbol)
+                                    } else {
+                                        target.clone()
+                                    };
+                                    uncertain_calls.push(call.clone());
+                                    call
+                                }
                                 (None, None, Some(_)) => {
                                     "not available in the teaching surface".to_owned()
                                 }
@@ -1134,7 +1143,7 @@ impl PlasmMcpHandler {
         if ui_apps_enabled {
             plasm.insert(
                 "discovery".into(),
-                crate::discovery_ui::project(intent, route),
+                crate::discovery_ui::project(intent, route, &out.waves, &uncertain_calls),
             );
         }
         if let Some(training) = training {

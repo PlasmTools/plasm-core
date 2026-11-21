@@ -24,7 +24,19 @@ fn scoped_record_returns_the_child_and_checks_both_key_domains() {
         catalog: "matrix".into(),
         capability: "ruleset_get".into(),
     }]);
-    assert_eq!(References::record_reads(intent, &catalogs), Some(expected));
+    assert_eq!(
+        References::record_selection(intent, &catalogs),
+        Some((expected, true))
+    );
+    assert!(References::record_selection(
+        "Read rule set sample in the matrix zone west and return its imaginary_field.",
+        &catalogs
+    )
+    .is_none());
+    assert!(matches!(
+        References::record_selection("Read rule set sample in the matrix zone west.", &catalogs),
+        Some((_, false))
+    ));
     assert!(References::record_reads(
         "Read rule set #42 in the matrix zone west and return its name.",
         &catalogs

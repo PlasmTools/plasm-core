@@ -151,10 +151,20 @@ impl References {
 
     /// Only constrain recall when every clause binds a catalogue identity.
     /// Keep alternative reads for the same record type available to the selector.
+    #[cfg(test)]
     pub(crate) fn record_reads(
         intent: &str,
         catalogs: &BTreeMap<String, CGS>,
     ) -> Option<BTreeSet<CapabilityRef>> {
+        Self::record_selection(intent, catalogs).map(|selection| selection.0)
+    }
+
+    /// The second value is true only when every requested output is provided
+    /// by its fully bound Get. Unprojected lookups still need assessment.
+    pub(crate) fn record_selection(
+        intent: &str,
+        catalogs: &BTreeMap<String, CGS>,
+    ) -> Option<(BTreeSet<CapabilityRef>, bool)> {
         // A final projection adds no operation when the bound lookups already
         // provide every field. Keep an unrecognized clause in whole-intent discovery.
         let plain = intent.trim().trim_end_matches('.').to_lowercase();
@@ -211,7 +221,7 @@ impl References {
                 });
             }
         }
-        Some(reads)
+        Some((reads, fields.is_some()))
     }
 }
 

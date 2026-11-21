@@ -892,8 +892,8 @@ impl DiscoveryService {
             && exposed.is_empty()
             && deferred_priorities.is_empty()
         {
-            matcher::whole_intent::References::record_reads(&selection_request, &catalogs)
-                .filter(|refs| refs.iter().all(|r| allowed.permits(r)))
+            matcher::whole_intent::References::record_selection(&selection_request, &catalogs)
+                .filter(|(refs, _)| refs.iter().all(|r| allowed.permits(r)))
         } else {
             None
         };
@@ -904,8 +904,9 @@ impl DiscoveryService {
             EvidenceScope::WholeIntent
         };
         let mut named_collections = std::collections::BTreeSet::new();
+        let proven_projection = keyed.as_ref().is_some_and(|(_, proven)| *proven);
         let mut recall = match (self.lane, keyed) {
-            (DiscoveryLane::Ordinary, Some(refs)) => index.recall(generation, &refs)?,
+            (DiscoveryLane::Ordinary, Some((refs, _))) => index.recall(generation, &refs)?,
             (DiscoveryLane::Ordinary, None) => {
                 named_collections = matcher::whole_intent::named_collection_queries(
                     provenance.current(),
@@ -953,6 +954,16 @@ impl DiscoveryService {
         let stage_started = std::time::Instant::now();
         let mut whole_analysis = None;
         let mut business = Vec::new();
+        if recall.generation != generation
+            || recall.candidates.iter().any(|candidate| {
+                !allowed.permits(&candidate.reference)
+                    || index
+                        .candidate(&candidate.reference)
+                        .is_none_or(|canonical| canonical.document != candidate.document)
+            })
+        {
+            return Err(matcher::whole_intent::WholeIntentError::InvalidInput.into());
+        }
         let (retrieval, matching, mut search) = if recall.candidates.is_empty() {
             let search = matcher::online::SearchReceipt {
                 policy: matcher::whole_intent::POLICY.into(),
@@ -972,17 +983,37 @@ impl DiscoveryService {
                 },
                 search,
             )
+        } else if proven_projection {
+            business = recall
+                .candidates
+                .iter()
+                .map(|c| c.reference.clone())
+                .collect();
+            let matching = CapabilityMatchReceipt {
+                matches: recall
+                    .candidates
+                    .iter()
+                    .map(|c| matcher::CapabilityIntentMatch {
+                        capability_id: c.id.clone(),
+                        choice: matcher::MatchChoice::Relevant,
+                        assessment: None,
+                    })
+                    .collect(),
+                budget_retained: Vec::new(),
+            };
+            let search = matcher::online::SearchReceipt {
+                policy: matcher::whole_intent::POLICY.into(),
+                considered: business.iter().cloned().collect(),
+                unexplored: authorized
+                    .iter()
+                    .filter(|r| !business.contains(r))
+                    .cloned()
+                    .collect(),
+                ..Default::default()
+            };
+            whole_analysis = Some("The catalogue binds the supplied keys and declares the requested fields. Actual values are read at execution.".into());
+            (recall, matching, search)
         } else {
-            if recall.generation != generation
-                || recall.candidates.iter().any(|candidate| {
-                    !allowed.permits(&candidate.reference)
-                        || index
-                            .candidate(&candidate.reference)
-                            .is_none_or(|canonical| canonical.document != candidate.document)
-                })
-            {
-                return Err(matcher::whole_intent::WholeIntentError::InvalidInput.into());
-            }
             let packet = matcher::whole_intent::WholeIntentPacket::new_with_limit(
                 &self.match_model,
                 &selection_request,
