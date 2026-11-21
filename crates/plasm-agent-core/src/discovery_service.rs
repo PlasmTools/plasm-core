@@ -933,21 +933,8 @@ impl DiscoveryService {
                     .0
             }
         };
-        let paths = if matches!(self.lane, DiscoveryLane::Ordinary)
-            && evidence_scope == EvidenceScope::WholeIntent
-        {
-            matcher::whole_intent::path_reads(
-                provenance.current(),
-                &recall.candidates,
-                &catalogs,
-                allowed,
-            )
-        } else {
-            Default::default()
-        };
-        named_collections.extend(paths.keys().cloned());
         for reference in named_collections.iter().chain(exposed.iter().rev()) {
-            let mut candidate = if let Some(position) = recall
+            let candidate = if let Some(position) = recall
                 .candidates
                 .iter()
                 .position(|candidate| &candidate.reference == reference)
@@ -959,9 +946,6 @@ impl DiscoveryService {
                     .ok_or(DiscoveryServiceError::ExposedCapabilityMissing)?
                     .clone()
             };
-            if let Some(role) = paths.get(reference) {
-                candidate.admissions.insert((*role).into());
-            }
             recall.candidates.insert(0, candidate);
         }
         metrics::record(metrics::Stage::Recall, stage_started.elapsed());
