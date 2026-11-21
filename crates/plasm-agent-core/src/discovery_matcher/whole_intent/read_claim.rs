@@ -153,6 +153,7 @@ pub(super) fn question(
                     wider.get_or_insert(description);
                 }
             }
+            let non_key_fields = fields.iter().filter(|field| !keys.contains(field)).copied().collect::<Vec<_>>();
             let keys = keys.join(", ");
             if let Some(broader) = wider {
                 (format!("User request: {intent}\nDoes the user need an existing {catalog} {entity} as an input and specifically request the narrower representation from this operation: {meaning}? Available broader read for the same record key: {broader}"),
@@ -163,7 +164,8 @@ pub(super) fn question(
                 "An independently identified record is requested, or a separate retrieval of individual records is explicitly required.".into(),
                 "The request identifies members by their membership, ordering or filtering within a collection, or does not need this record.".into())
             } else if alternatives.supplies_key_fields {
-                (format!("Premise: {intent}\nHypothesis: Information from an existing {catalog} {entity} record is required, beyond its key ({keys}). Using a supplied key to scope other records requires no lookup of the scope itself. Operation: {meaning}"),
+                let properties = if non_key_fields.is_empty() { String::new() } else {format!(" Returned properties: {}.", non_key_fields.join(", "))};
+                (format!("Premise: {intent}\nHypothesis: Information from an existing {catalog} {entity} record is required, beyond its key ({keys}). Using a supplied key to scope other records requires no lookup of the scope itself. Operation: {meaning}{properties}"),
                 "This operation obtains a requested record, a requested property, or an input not already supplied.".into(),
                 "The entity merely provides scope, is a destination, or its data is outside the request.".into())
             } else if alternatives.used_as_scope_record {
@@ -209,6 +211,28 @@ mod tests {
             scope_records(&cards, &values),
             BTreeSet::from([("b", "Group")])
         );
+    }
+
+    #[test]
+    fn scope_supplier_question_distinguishes_returned_properties_from_keys() {
+        let card = json!({"id":"c0","catalog":"matrix","entity":"Group",
+            "operation":{"kind":"get"},"declaration":{"record_key":["id"],"provides":["id","owner","title"]}});
+        let rendered = question(
+            AccessQuestion::Lookup,
+            "Find the group owner and list its members.",
+            "matrix",
+            "Group",
+            &card,
+            std::slice::from_ref(&card),
+            ReadAlternatives {
+                supplies_key_fields: true,
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        let hypothesis = rendered["instructions"].as_str().unwrap();
+        assert!(hypothesis.contains("key (id)"));
+        assert!(hypothesis.contains("Returned properties: owner, title."));
     }
 
     #[test]
