@@ -9,6 +9,10 @@ Entries before **0.4.35** live in [`CHANGELOG-ARCHIVE.md`](CHANGELOG-ARCHIVE.md)
 
 ## [Unreleased]
 
+## [0.7.2] - 2026-11-21
+
+- Discovery can teach reads from independent sources when a user is undecided about a subsequent action. It preserves uncertain record bindings and exposes catalogue relations with their receivers.
+
 ## [0.7.1] - 2026-11-21
 
 - Discovery distinguishes a supplied parent key from a requested parent record and recognizes scoped child lookups through catalogue aliases. Reads retain capability-specific uncertainty.

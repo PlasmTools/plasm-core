@@ -3,14 +3,16 @@ load("@rules_rust//cargo:defs.bzl", "cargo_build_script")
 load("@rules_rust//rust:defs.bzl", "rust_library")
 load("//build/bazel:native_test.bzl", rust_test = "rust_test_with_monty")
 
+_VERSION = "0.7.2"
+
 def build_targets():
     cargo_build_script(
         name = "build_script",
         srcs = ["build.rs"],
-        build_script_env = {"PLASM_RELEASE_VERSION": "0.6.1"},
+        build_script_env = {"PLASM_RELEASE_VERSION": _VERSION},
         data = native.glob(["src/assets/**"]) + ["//:public_catalog_domains"],
         edition = "2021",
-        version = "0.7.1",
+        version = _VERSION,
     )
 
     _COMMON = dict(
@@ -30,7 +32,7 @@ def build_targets():
         }),
         edition = "2021",
         proc_macro_deps = all_crate_deps(proc_macro = True),
-        version = "0.7.1",
+        version = _VERSION,
         visibility = ["//visibility:public"],
         deps = [
             ":build_script",
