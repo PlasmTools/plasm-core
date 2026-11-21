@@ -986,6 +986,78 @@ pub fn prerequisite_closure(
     prerequisite_closure_with_input_sources(catalogs, bindings, capabilities, &[], allowed)
 }
 
+/// Acquire a typed receiver for a selected method if the current surface
+/// contains no read of that entity. Only a permitted canonical lookup with
+/// a projected identity can serve as the new producer.
+pub fn discovery_receiver_closure(
+    catalogs: &BTreeMap<String, &CGS>,
+    bindings: &DeploymentBindings,
+    business: &[CapabilityRef],
+    exposed: &[CapabilityRef],
+    allowed: &BTreeSet<String>,
+    permitted: impl Fn(&CapabilityRef) -> bool,
+) -> Result<PrerequisiteClosure, PrerequisiteError> {
+    let mut sources = BTreeSet::new();
+    for selected in business {
+        let cgs = *catalogs
+            .get(&selected.catalog)
+            .ok_or(PrerequisiteError::MissingConsumerCatalog)?;
+        let method = capability(cgs, &selected.capability)?;
+        if matches!(
+            method.kind,
+            CapabilityKind::Get | CapabilityKind::Query | CapabilityKind::Search
+        ) {
+            continue;
+        }
+        let Some(receiver) = method.receiver_entity() else {
+            continue;
+        };
+        let entity = &cgs.entities[receiver];
+        let witnessed = |read: &crate::CapabilitySchema| {
+            cgs.entity_read_projection(read, |cap| {
+                permitted(&CapabilityRef {
+                    catalog: selected.catalog.clone(),
+                    capability: cap.name.to_string(),
+                })
+            })
+            .available_fields()
+            .any(|f| f == entity.id_field.as_str())
+        };
+        if business
+            .iter()
+            .chain(exposed)
+            .filter(|r| r.catalog == selected.catalog && permitted(r))
+            .filter_map(|r| cgs.capabilities.get(r.capability.as_str()))
+            .any(|read| {
+                read.domain == *receiver
+                    && matches!(
+                        read.kind,
+                        CapabilityKind::Get | CapabilityKind::Query | CapabilityKind::Search
+                    )
+                    && witnessed(read)
+            })
+        {
+            continue;
+        }
+        if let Some(read) = cgs.resolved_primary_get_for_projection(receiver.as_str(), entity) {
+            let source = CapabilityRef {
+                catalog: selected.catalog.clone(),
+                capability: read.name.to_string(),
+            };
+            if permitted(&source) && witnessed(read) {
+                sources.insert(source);
+            }
+        }
+    }
+    prerequisite_closure_with_input_sources(
+        catalogs,
+        bindings,
+        business,
+        &sources.into_iter().collect::<Vec<_>>(),
+        allowed,
+    )
+}
+
 /// Close infrastructure prerequisites around direct business work and the
 /// input producers selected from [`project_input_source_candidates`]. The
 /// caller may only select projected read capabilities with input or membership
@@ -2807,6 +2879,39 @@ mod tests {
         )
         .unwrap();
         assert_eq!(closure.input_sources, vec![read]);
+    }
+
+    #[test]
+    fn discovery_adds_only_permitted_missing_receiver_lookups() {
+        let mut cgs = fixture();
+        let mut lookup = cgs.capabilities["read"].clone();
+        lookup.name = "lookup".into();
+        lookup.kind = CapabilityKind::Get;
+        cgs.capabilities.insert("lookup".into(), lookup);
+        let method = cgs.capabilities.get_mut("operate").unwrap();
+        cgs.prerequisites.requirements.clear();
+        method.inputs.receiver = Some(crate::CapabilityReceiver::Entity {
+            entity: "BusinessRecord".into(),
+        });
+        let cgs: CGS = serde_json::from_value(serde_json::to_value(cgs).unwrap()).unwrap();
+        let reference = |name: &str| CapabilityRef {
+            catalog: "matrix".into(),
+            capability: name.into(),
+        };
+        let run = |exposed: &[CapabilityRef], permit: bool| {
+            discovery_receiver_closure(
+                &BTreeMap::from([("matrix".into(), &cgs)]),
+                &DeploymentBindings::default(),
+                &[reference("operate")],
+                exposed,
+                &BTreeSet::from(["matrix".into()]),
+                |r| permit || r.capability != "lookup",
+            )
+            .unwrap()
+        };
+        assert_eq!(run(&[], true).input_sources, [reference("lookup")]);
+        assert!(run(&[], false).input_sources.is_empty());
+        assert!(run(&[reference("lookup")], true).input_sources.is_empty());
     }
 
     #[test]

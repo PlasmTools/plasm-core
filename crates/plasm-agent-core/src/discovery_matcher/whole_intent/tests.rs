@@ -132,7 +132,18 @@ fn production_packet_profile() {
         );
     }
     let intent = receipt["intent"].as_str().unwrap();
-    let nominations = named_collection_queries(intent, &catalogs, &allowed);
+    let mut nominations = named_collection_queries(intent, &catalogs, &allowed);
+    let paths = path_reads(intent, &recall.candidates, &catalogs, &allowed);
+    nominations.extend(paths.keys().cloned());
+    let mut recall = recall;
+    for reference in &nominations {
+        recall.candidates.retain(|c| c.reference != *reference);
+        let mut candidate = index.candidate(reference).unwrap().clone();
+        if let Some(role) = paths.get(reference) {
+            candidate.admissions.insert((*role).into());
+        }
+        recall.candidates.insert(0, candidate);
+    }
     let packet = WholeIntentPacket::new_with_limit(
         DEFAULT_MODEL,
         intent,
