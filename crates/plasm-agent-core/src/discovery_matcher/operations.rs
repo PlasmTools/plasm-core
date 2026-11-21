@@ -758,6 +758,7 @@ impl OperationMatrix {
             })
             .map(|(_, operation)| operation.text.as_str())
     }
+    #[cfg(test)]
     pub(crate) fn contextual_fragment(&self, text: &str) -> bool {
         self.operations
             .operations
@@ -820,6 +821,7 @@ impl OperationMatrix {
         })
     }
 
+    #[cfg(test)]
     pub(crate) fn prioritize_current_request(&mut self, current: &str) {
         self.current_operations = self
             .operations

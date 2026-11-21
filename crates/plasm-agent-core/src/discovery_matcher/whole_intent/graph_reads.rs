@@ -19,6 +19,20 @@ struct Group {
     options: BTreeMap<String, Route>,
 }
 
+struct ReadMenu {
+    wording: String,
+    options: BTreeMap<String, (Value, Vec<CapabilityRef>)>,
+}
+
+impl ReadMenu {
+    fn new(wording: String) -> Self {
+        Self {
+            wording,
+            options: BTreeMap::new(),
+        }
+    }
+}
+
 struct Route {
     meaning: String,
     ends: Vec<CapabilityRef>,
@@ -189,8 +203,7 @@ impl ReadRoutes {
         let mut included: BTreeSet<_> = candidates.iter().map(|c| c.reference.clone()).collect();
         let base = included.clone();
         let scoped: BTreeSet<_> = base.iter().map(|r| &r.catalog).collect();
-        let mut menus: BTreeMap<String, (String, BTreeMap<String, (Value, Vec<CapabilityRef>)>)> =
-            BTreeMap::new();
+        let mut menus = BTreeMap::new();
         for g in &self.groups {
             if !scoped.contains(&g.catalog) {
                 continue;
@@ -217,9 +230,7 @@ impl ReadRoutes {
                         ("collection".into(),"Which collection contains the evidence against which the user wants to check something, or the items the user wants listed?".into())
                     }
                 };
-                let entry = menus
-                    .entry(menu)
-                    .or_insert_with(|| (wording, BTreeMap::new()));
+                let entry = menus.entry(menu).or_insert_with(|| ReadMenu::new(wording));
                 let name = format!("{}_{}", g.catalog, label);
                 let description = if r.ends.len() > 1 {
                     r.meaning.clone()
@@ -230,10 +241,21 @@ impl ReadRoutes {
                     )
                 };
                 entry
-                    .1
+                    .options
                     .insert(name.clone(), (json!(description), r.ends.clone()));
                 if r.ends.len() > 1 {
-                    menus.entry(format!("target_{}_{}",g.catalog,g.entity)).or_insert_with(||(format!("Is {} {} a result the user wants? If so, choose the relationship from the identified source. If the result is incidental, choose unrelated.",g.catalog,g.entity),BTreeMap::new())).1.insert(name,(json!(format!("{} {} leads to {}",g.catalog,label,g.entity)),r.ends.clone()));
+                    let target_menu = menus.entry(format!("target_{}_{}", g.catalog, g.entity))
+                        .or_insert_with(|| ReadMenu::new(format!(
+                            "Is {} {} a result the user wants? If so, choose the relationship from the identified source. If the result is incidental, choose unrelated.",
+                            g.catalog, g.entity
+                        )));
+                    target_menu.options.insert(
+                        name,
+                        (
+                            json!(format!("{} {} leads to {}", g.catalog, label, g.entity)),
+                            r.ends.clone(),
+                        ),
+                    );
                 }
             }
         }
@@ -252,16 +274,24 @@ impl ReadRoutes {
             Ok(())
         };
         let mut menus: Vec<_> = menus.into_iter().collect();
-        menus.sort_by_key(|(id, (_, opts))| {
+        menus.sort_by_key(|(id, menu)| {
             (
                 id.starts_with("path_") || id.starts_with("target_"),
-                opts.values()
+                menu.options
+                    .values()
                     .filter_map(|(_, ends)| rank.get(&ends[0]))
                     .min()
                     .copied(),
             )
         });
-        for (id, (wording, items)) in menus {
+        for (
+            id,
+            ReadMenu {
+                wording,
+                options: items,
+            },
+        ) in menus
+        {
             let mut choices = BTreeMap::new();
             let mut criteria = Map::new();
             criteria.insert("unrelated".into(), json!("No such read is needed."));

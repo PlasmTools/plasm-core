@@ -61,8 +61,8 @@ pub(crate) struct WholeIntentPacket {
 
 mod admission;
 pub(crate) mod graph_reads;
-mod source_reads;
 mod read_claim;
+mod source_reads;
 pub(crate) use admission::named_collection_queries;
 use admission::{admission_preferences, order_candidates};
 
@@ -960,7 +960,9 @@ impl WholeIntentPacket {
 pub(crate) mod references;
 pub(crate) use references::{IntentText, References};
 mod selection;
-pub(crate) use selection::{Assessment, Disposition};
+pub(crate) use selection::Assessment;
+#[cfg(test)]
+use selection::Disposition;
 
 #[cfg(test)]
 mod tests;

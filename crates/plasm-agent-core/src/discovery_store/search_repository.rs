@@ -131,6 +131,7 @@ impl SearchRepository<'_> {
             ))
         }
     }
+    #[cfg(test)]
     pub(crate) async fn checkpoint(
         &self,
         key: SearchKey<'_>,

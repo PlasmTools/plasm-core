@@ -1,6 +1,6 @@
 //! Durable sequencing and usage accounting for one whole-intent selection wave.
 use super::decision_checkpoint::DecisionCheckpoint;
-use super::{DiscoveryService, DiscoveryStore, Result, matcher, metrics};
+use super::{matcher, metrics, DiscoveryService, DiscoveryStore, Result};
 use crate::decision_codec::DecisionPacket;
 
 pub(super) struct SelectionWave<'a> {

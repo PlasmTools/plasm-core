@@ -1266,6 +1266,7 @@ impl DiscoveryService {
 
 /// Preserve model exclusions in the receipt without mislabeling model-included
 /// candidates that deterministic subsumption removed as redundant.
+#[cfg(test)]
 fn discovery_intent_analysis(
     search: &matcher::online::SearchReceipt,
     uncovered: &[&str],
@@ -1288,6 +1289,7 @@ fn discovery_intent_analysis(
     analysis
 }
 
+#[cfg(test)]
 fn discovery_assessment_summary(search: &matcher::online::SearchReceipt) -> String {
     let mut summary = if search.has_unavailable_provider() {
         "**Capability discovery:** a later assessment was unavailable; earlier verified contributions remain available."

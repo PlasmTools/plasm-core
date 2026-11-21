@@ -421,14 +421,12 @@ mod tests {
         assert!(!packet.issued.questions.contains_key("read"));
         assert!(packet.issued.questions.contains_key("facts"));
         answers.insert("locator".into(), answer("scoped"));
-        assert!(
-            graph
-                .material_packet(&answers)
-                .unwrap()
-                .issued
-                .questions
-                .contains_key("read")
-        );
+        assert!(graph
+            .material_packet(&answers)
+            .unwrap()
+            .issued
+            .questions
+            .contains_key("read"));
         answers.insert("source_library".into(), answer("absent"));
         answers.insert("fact_monitor".into(), answer("absent"));
         assert!(graph.material_packet(&answers).is_none());
