@@ -244,15 +244,16 @@ fn scoped_lookup_question_names_the_complete_record_key() {
     )
     .unwrap();
     let body: Value = serde_json::from_str(packet.body()).unwrap();
-    let (_, contract) = body["questions"]["c0"]["instructions"]
-        .as_str()
-        .unwrap()
-        .rsplit_once(" Catalogue data: ")
-        .unwrap();
     assert_eq!(
-        serde_json::from_str::<Value>(contract).unwrap()["record_key"],
+        body["state"]["candidates"][0]["declaration"]["record_key"],
         keys
     );
+    let question = &body["questions"]["c0"];
+    assert!(question["instructions"]
+        .as_str()
+        .unwrap()
+        .contains("zone_id, ruleset_id"));
+    assert!(question["criteria"].get("supported").is_some());
 }
 
 #[test]
@@ -588,7 +589,7 @@ fn parallel_text_keys_preserve_uncertainty_and_require_unambiguous_catalogue_rea
     let target = packet.candidates[1].reference.clone();
     let assess = |intent: &str, catalogs: &BTreeMap<String, CGS>| {
         let mut selection = packet
-            .decode(&response("relevant", "unrelated", ""))
+            .decode(&response(&packet, "relevant", "unrelated"))
             .unwrap();
         selection.apply(
             packet.candidates(),
@@ -981,29 +982,40 @@ fn overdue_recalled_candidate_advances_without_granting_selection() {
         initial.candidates[1].reference
     );
     assert!(advanced
-        .decode(&response("unrelated", "unrelated", "unresolved"))
+        .decode(&response(&advanced, "unrelated", "unrelated"))
         .unwrap()
         .assessments
         .values()
         .all(|a| a.disposition == Disposition::Exclude));
 }
 
-fn response(a: &str, b: &str, _coverage: &str) -> String {
-    let answer = |choice: &str, choices: &[&str]| {
-        let probabilities: Map<String, Value> = choices
-            .iter()
-            .map(|k| (k.to_string(), json!(if *k == choice { 1.0 } else { 0.0 })))
+fn response(packet: &WholeIntentPacket, a: &str, b: &str) -> String {
+    let body: Value = serde_json::from_str(packet.body()).unwrap();
+    let mut answers = Map::new();
+    for (i, requested) in [a, b].iter().enumerate() {
+        let id = format!("c{i}");
+        let criteria = body["questions"][&id]["criteria"].as_object().unwrap();
+        let claim = criteria.contains_key("supported");
+        let choice = match (*requested, claim) {
+            ("relevant", true) => "supported",
+            ("relevant", false) => "include",
+            ("unrelated", true) => "unsupported",
+            ("unrelated", false) => "exclude",
+            _ => "uncertain",
+        };
+        let probabilities: Map<_, _> = criteria
+            .keys()
+            .map(|k| (k.clone(), json!(if k == choice { 1.0 } else { 0.0 })))
             .collect();
-        json!({"type":"choice","choice":choice,"confidence":1.0,"probabilities":probabilities})
-    };
-    let map = |s| match s {
-        "relevant" => "include",
-        "unrelated" => "exclude",
-        _ => "uncertain",
-    };
-    let value = json!({"model":DEFAULT_MODEL,"provider":"OpenAI","answers":{"c0":answer(map(a), &["include","exclude","uncertain","uncertain_unit","uncertain_output","uncertain_constraint","uncertain_input"]),"c1":answer(map(b), &["include","exclude","uncertain","uncertain_unit","uncertain_output","uncertain_constraint","uncertain_input"])},"usage":{"input_tokens":42}});
-    value.to_string()
+        answers.insert(
+            id,
+            json!({"type":"choice","choice":choice,"confidence":1.0,"probabilities":probabilities}),
+        );
+    }
+    json!({"model":DEFAULT_MODEL,"provider":"OpenAI","answers":answers,"usage":{"input_tokens":42}})
+        .to_string()
 }
+
 #[test]
 fn candidate_question_preserves_selection_contract() {
     let mut cards = vec![json!({"id":"c0","catalog":"fixture","entity":"Record",
@@ -1072,7 +1084,7 @@ fn request_contains_exactly_one_bound_decision_per_candidate() {
 #[test]
 fn composable_choices_preserve_each_candidates_uncertainty() {
     let packet = packet();
-    let raw = response("relevant", "uncertain", "unresolved");
+    let raw = response(&packet, "relevant", "uncertain");
     let decoded = packet.decode(&raw).unwrap();
     assert_eq!(
         decoded.assessments[&packet.candidates[0].reference].disposition,
@@ -1114,7 +1126,8 @@ fn shared_record_identity_cannot_promote_a_deferred_sibling() {
     packet.candidates[0].document.operation.kind = plasm_core::CapabilityKind::Get;
     packet.candidates[1].document.operation.kind = plasm_core::CapabilityKind::Query;
     assert!(record_identity(&packet.candidates[0], &catalogs).is_some());
-    let mut value: Value = serde_json::from_str(&response("uncertain", "unrelated", "")).unwrap();
+    let mut value: Value =
+        serde_json::from_str(&response(&packet, "uncertain", "unrelated")).unwrap();
     value["answers"]["c0"]["choice"] = json!("uncertain_input");
     value["answers"]["c0"]["probabilities"]["uncertain_input"] = json!(1.0);
     value["answers"]["c0"]["probabilities"]["uncertain"] = json!(0.0);
@@ -1139,7 +1152,7 @@ fn weak_read_exclusions_do_not_promote_effects() {
     packet.candidates[0].document.operation.kind = CapabilityKind::Get;
     packet.candidates[1].document.operation.kind = CapabilityKind::Create;
     let mut value: Value =
-        serde_json::from_str(&response("unrelated", "unrelated", "unresolved")).unwrap();
+        serde_json::from_str(&response(&packet, "unrelated", "unrelated")).unwrap();
     for id in ["c0", "c1"] {
         value["answers"][id]["confidence"] = json!(0.59);
     }
@@ -1170,7 +1183,7 @@ fn weak_read_exclusions_do_not_promote_effects() {
 #[test]
 fn only_unique_uncertain_keyed_reads_are_taught_for_a_numbered_record() {
     let mut packet = packet();
-    let raw = response("unrelated", "unrelated", "unresolved");
+    let raw = response(&packet, "unrelated", "unrelated");
     let mut value: Value = serde_json::from_str(&raw).unwrap();
     value["answers"]["c0"]["confidence"] = json!(0.51);
     for candidate in &mut packet.candidates {
@@ -1202,7 +1215,7 @@ fn only_unique_uncertain_keyed_reads_are_taught_for_a_numbered_record() {
 fn specific_uncertainty_is_bound_to_issued_candidate() {
     let packet = packet();
     let mut value: Value =
-        serde_json::from_str(&response("relevant", "uncertain", "unresolved")).unwrap();
+        serde_json::from_str(&response(&packet, "relevant", "uncertain")).unwrap();
     value["answers"]["c1"]["choice"] = json!("uncertain_unit");
     value["answers"]["c1"]["probabilities"]["uncertain"] = json!(0.0);
     value["answers"]["c1"]["probabilities"]["uncertain_unit"] = json!(1.0);
@@ -1219,7 +1232,7 @@ fn specific_uncertainty_is_bound_to_issued_candidate() {
 #[test]
 fn rejects_unbound_provider_and_duplicate_response_fields() {
     let packet = packet();
-    let response = response("relevant", "unrelated", "supported");
+    let response = response(&packet, "relevant", "unrelated");
     let mut value: Value = serde_json::from_str(&response).unwrap();
     value["model"] = json!("unrelated/model");
     assert!(packet.decode(&value.to_string()).is_err());

@@ -381,12 +381,16 @@ pub(super) fn order_candidates<'a>(
         let subjects = QualifiedSubjects::new(intent);
         let mut kinds = BTreeMap::new();
         let mut opportunities = BTreeMap::new();
-        let mut searches = BTreeMap::new();
-        for c in candidates
-            .iter()
-            .filter(|c| c.document.operation.kind == plasm_core::CapabilityKind::Search)
-        {
-            *searches.entry(&c.reference.catalog).or_insert(0usize) += 1;
+        let mut read_counts = BTreeMap::new();
+        for c in candidates.iter().filter(|c| {
+            matches!(
+                c.document.operation.kind,
+                plasm_core::CapabilityKind::Search | plasm_core::CapabilityKind::Query
+            )
+        }) {
+            *read_counts
+                .entry((&c.reference.catalog, c.document.operation.kind.as_str()))
+                .or_insert(0usize) += 1;
         }
         for (rank, c) in candidates.iter().enumerate() {
             if !named.contains(&c.reference.catalog) {
@@ -460,16 +464,20 @@ pub(super) fn order_candidates<'a>(
             } else {
                 0
             };
-            let sole_search = c.document.operation.kind == plasm_core::CapabilityKind::Search
-                && searches.get(&c.reference.catalog) == Some(&1);
-            if rank >= CATALOG_OPPORTUNITY_WINDOW && specificity == 0 && !sole_search {
+            let sole_read = read_counts
+                .get(&(&c.reference.catalog, c.document.operation.kind.as_str()))
+                == Some(&1);
+            let reserve = sole_read
+                && (c.document.operation.kind == plasm_core::CapabilityKind::Search
+                    || rank >= CATALOG_OPPORTUNITY_WINDOW);
+            if rank >= CATALOG_OPPORTUNITY_WINDOW && specificity == 0 && !reserve {
                 continue;
             }
             let slot = kinds
                 .entry((&c.reference.catalog, c.document.operation.kind.as_str()))
-                .or_insert((specificity, rank, &c.reference, numbered || sole_search));
+                .or_insert((specificity, rank, &c.reference, numbered || reserve));
             if specificity > slot.0 {
-                *slot = (specificity, slot.1, &c.reference, numbered || sole_search);
+                *slot = (specificity, slot.1, &c.reference, numbered || reserve);
             }
         }
         for ((_, kind), (specificity, rank, reference, distinct_access)) in kinds {

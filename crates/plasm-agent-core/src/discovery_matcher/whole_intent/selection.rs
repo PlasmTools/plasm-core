@@ -90,13 +90,17 @@ fn is_read(candidate: &RetrievedCapability) -> bool {
 
 impl WholeIntentPacket {
     pub(crate) fn decode(&self, raw: &str) -> Result<Selection, WholeIntentError> {
-        let questions = (0..self.candidates.len())
-            .map(|i| {
+        let questions = self
+            .prompts
+            .iter()
+            .enumerate()
+            .map(|(i, prompt)| {
+                let (yes, no) = prompt.verdict_labels();
                 (
                     format!("c{i}"),
                     vec![
-                        "include",
-                        "exclude",
+                        yes,
+                        no,
                         "uncertain",
                         "uncertain_unit",
                         "uncertain_output",
@@ -114,7 +118,13 @@ impl WholeIntentPacket {
             let answer = &answers[&format!("c{i}")];
             let verdict: Verdict = Verdict::deserialize(serde::de::value::StrDeserializer::<
                 serde::de::value::Error,
-            >::new(&answer.choice))
+            >::new(
+                match answer.choice.as_str() {
+                    "supported" => "include",
+                    "unsupported" => "exclude",
+                    other => other,
+                },
+            ))
             .map_err(|_| WholeIntentError::InvalidResponse)?;
             let confidence = answer.confidence;
             let disposition = match verdict {
