@@ -385,7 +385,7 @@ pub(crate) fn assert_planning_federated_ra(
             }
         }
         "lang_ra4_pipe_monolith" | "lang_ra4_pipe_bind_cut" => {
-            require_python_filter(comp)?;
+            require_literal_equality(computes, "owner", "alice")?;
             if !computes
                 .iter()
                 .any(|c| matches!(c.op, ComputeOp::Limit { .. }))

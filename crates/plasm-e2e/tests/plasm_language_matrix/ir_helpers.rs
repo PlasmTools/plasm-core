@@ -290,6 +290,29 @@ pub(crate) fn has_scoped_filter(comp: &serde_json::Value) -> bool {
         .any(|step| step["kind"] == "map_body" && step["output"] == "Filter")
 }
 
+pub(crate) fn require_literal_equality(
+    computes: &[ComputeTemplate],
+    field: &str,
+    expected: &str,
+) -> Result<(), String> {
+    use plasm_core::plasm_monad::{ComputeOp, PlanPredicateOp, PlasmDataValue};
+    for compute in computes {
+        if let ComputeOp::Filter { predicates } = &compute.op {
+            if let Some(terms) = predicates.conjunction() {
+                if matches!(terms.as_slice(), [p] if p.op == PlanPredicateOp::Eq
+                    && p.field_path.dotted() == field
+                    && matches!(&p.value, PlasmDataValue::Literal { value } if value.as_str() == Some(expected)))
+                {
+                    return Ok(());
+                }
+            }
+        }
+    }
+    Err(format!(
+        "expected native filter comparing {field} to {expected:?}"
+    ))
+}
+
 pub(crate) fn require_python_filter(comp: &serde_json::Value) -> Result<(), String> {
     if !has_scoped_filter(comp) {
         return Err("expected reviewed filter scope".into());

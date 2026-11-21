@@ -343,7 +343,7 @@ pub(crate) fn assert_planning_query_pipe(
             }
         }
         "lang_row_filter_brace" | "lang_row_filter_paren" => {
-            require_python_filter(comp)?;
+            require_literal_equality(computes, "owner", "alice")?;
         }
         "lang_with_mul" | "lang_with_div" | "lang_with_concat" | "lang_with_when_len" => {
             if !comp_steps_values(comp).iter().any(|step| {
@@ -413,10 +413,7 @@ pub(crate) fn assert_planning_query_pipe(
             require_membership(comp, "title", true)?;
         }
         "lang_quoted_binding_literal" => {
-            require_python_filter(comp)?;
-            if !json_value_contains_substring(comp, "item") {
-                return Err("quoted item literal must remain in the reviewed computation".into());
-            }
+            require_literal_equality(computes, "title", "item")?;
         }
         "lang_select_alias_where" => {
             if !comp_steps_values(comp).iter().any(|step| {
@@ -425,10 +422,7 @@ pub(crate) fn assert_planning_query_pipe(
             }) {
                 return Err("expected recursive value derivation".into());
             }
-            require_python_filter(comp)?;
-            if !json_value_contains_substring(comp, "handle") {
-                return Err("filter must retain the projected handle field".into());
-            }
+            require_literal_equality(computes, "handle", "alice")?;
         }
         "lang_group_by" => {
             let Some(ComputeTemplate {

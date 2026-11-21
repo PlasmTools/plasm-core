@@ -255,10 +255,16 @@ pub(crate) fn classify_source_field_kind(
                         Err(PythonSchemaError::SourceFieldMissing)
                     }
                 }
-                ComputeOp::Filter { .. }
-                | ComputeOp::Sort { .. }
-                | ComputeOp::Limit { .. }
-                | ComputeOp::DedupeBy { .. } => next(field),
+                ComputeOp::Filter { predicates } => {
+                    let mut contract = next(field)?;
+                    if contract.nullable && filter_requires_value(predicates, field) {
+                        contract.nullable = false;
+                    }
+                    Ok(contract)
+                }
+                ComputeOp::Sort { .. } | ComputeOp::Limit { .. } | ComputeOp::DedupeBy { .. } => {
+                    next(field)
+                }
                 ComputeOp::MergeBranches { other } => {
                     Ok(plasm_core::value_contract::ValueContract::join(
                         next(field)?,
@@ -294,6 +300,28 @@ pub(crate) fn classify_source_field_kind(
         }
     };
     catalog_source_field_kind(es, &owner.entry_id, &owner.entity, field)
+}
+
+/// Equality with a non-null literal proves presence on each surviving row.
+/// A disjunction supplies that proof only when every alternative supplies it.
+fn filter_requires_value(
+    predicates: &plasm_core::BooleanExpr<plasm_core::plasm_monad::PlanPredicate>,
+    field: &str,
+) -> bool {
+    use plasm_core::plasm_monad::{PlanPredicateOp, PlasmDataValue};
+    use plasm_core::BooleanExpr;
+    match predicates {
+        BooleanExpr::Atom(predicate) => {
+            predicate.op == PlanPredicateOp::Eq
+                && matches!(predicate.field_path.segments(), [key] if key == field)
+                && matches!(&predicate.value, PlasmDataValue::Literal { value } if !matches!(value.value(), plasm_core::Value::Null))
+        }
+        BooleanExpr::And(terms) => terms.iter().any(|p| filter_requires_value(p, field)),
+        BooleanExpr::Or(terms) => {
+            !terms.is_empty() && terms.iter().all(|p| filter_requires_value(p, field))
+        }
+        BooleanExpr::Not(_) => false,
+    }
 }
 
 fn catalog_source_field_kind(
@@ -505,6 +533,28 @@ pub(super) fn validate_source_owner(
 mod tests {
     use super::*;
     use crate::fixture_row as json;
+
+    #[test]
+    fn nullable_field_requires_evidence_on_every_surviving_branch() {
+        use plasm_core::plasm_monad::{FieldPath, PlanPredicate, PlanPredicateOp};
+        use plasm_core::BooleanExpr::{And, Atom, Not, Or};
+        let eq = |field: &str, value: plasm_core::Value| {
+            Atom(PlanPredicate {
+                field_path: FieldPath::from_dotted(field).unwrap(),
+                op: PlanPredicateOp::Eq,
+                value: value.try_into().unwrap(),
+            })
+        };
+        let x = eq("x", plasm_core::Value::Integer(1));
+        let y = eq("y", plasm_core::Value::Integer(2));
+        assert!(filter_requires_value(&And(vec![x.clone(), y.clone()]), "x"));
+        assert!(!filter_requires_value(&Or(vec![x.clone(), y]), "x"));
+        assert!(!filter_requires_value(&Not(Box::new(x)), "x"));
+        assert!(!filter_requires_value(
+            &eq("x", plasm_core::Value::Null),
+            "x"
+        ));
+    }
 
     #[tokio::test]
     async fn observed_relation_values_preserve_types_without_traversal_or_coverage_promotion() {

@@ -176,8 +176,8 @@ pub enum ScopeContractError {
     UnionAuthorityMismatch,
     #[error("capture requires identity-preserving catalog reads")]
     IdentityNotPreserved,
-    #[error("scope port schema differs from enclosing source")]
-    PortSchemaMismatch,
+    #[error("scope port schema differs from enclosing source {source_node} at field {field}")]
+    PortSchemaMismatch { field: String, source_node: String },
     #[error("scope output schema differs from catalog")]
     OutputSchemaMismatch,
 }
@@ -690,7 +690,11 @@ fn validate_port_schema(
         let actual =
             crate::python_compute::source_field_kind(es, nodes, source, field.name.as_str())?;
         if field.value_type.as_ref() != Some(&actual) {
-            return Err(ScopeContractError::PortSchemaMismatch.into());
+            return Err(ScopeContractError::PortSchemaMismatch {
+                field: field.name.to_string(),
+                source_node: source.to_owned(),
+            }
+            .into());
         }
     }
     Ok(())
