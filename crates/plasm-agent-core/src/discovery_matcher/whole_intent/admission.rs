@@ -328,11 +328,7 @@ pub(super) fn order_candidates<'a>(
         let subjects = QualifiedSubjects::new(intent);
         let mut kinds = BTreeMap::new();
         let mut opportunities = BTreeMap::new();
-        for (rank, c) in candidates
-            .iter()
-            .take(super::PROJECTED_CANDIDATE_LIMIT)
-            .enumerate()
-        {
+        for (rank, c) in candidates.iter().enumerate() {
             if !named.contains(&c.reference.catalog) {
                 continue;
             }
@@ -348,7 +344,51 @@ pub(super) fn order_candidates<'a>(
             } else {
                 words.iter().all(|w| names_entity(&terms, w))
             };
-            let specificity = if mentioned { words.len() } else { 0 };
+            let read = matches!(
+                c.document.operation.kind,
+                plasm_core::CapabilityKind::Get
+                    | plasm_core::CapabilityKind::Query
+                    | plasm_core::CapabilityKind::Search
+            );
+            let specificity = if read {
+                if mentioned {
+                    words.len()
+                } else {
+                    0
+                }
+            } else if rank < CATALOG_OPPORTUNITY_WINDOW {
+                // Result types of writes can be receipts. Rank those seats by
+                // the authored change rather than the name of its return type.
+                let meaning = c
+                    .document
+                    .operation
+                    .contract
+                    .split(". ")
+                    .next()
+                    .unwrap_or_default();
+                intent_terms(meaning)
+                    .intersection(&terms)
+                    .filter(|w| {
+                        w.len() >= 3
+                            && w.as_str() != c.reference.catalog
+                            && !matches!(
+                                w.as_str(),
+                                "the"
+                                    | "and"
+                                    | "for"
+                                    | "from"
+                                    | "with"
+                                    | "this"
+                                    | "that"
+                                    | "its"
+                                    | "using"
+                                    | "into"
+                            )
+                    })
+                    .count()
+            } else {
+                0
+            };
             if rank >= CATALOG_OPPORTUNITY_WINDOW && specificity == 0 {
                 continue;
             }
@@ -359,14 +399,16 @@ pub(super) fn order_candidates<'a>(
                 *slot = (specificity, slot.1, &c.reference);
             }
         }
-        for (_, rank, reference) in kinds.into_values() {
-            opportunities.insert(reference, rank);
+        for ((_, kind), (specificity, rank, reference)) in kinds {
+            let primary =
+                (kind == "query" && specificity > 0) || (kind == "create" && specificity >= 2);
+            opportunities.insert(reference, (!primary, rank));
         }
         ordered.sort_by_key(|c| {
             opportunities
                 .get(&c.reference)
                 .copied()
-                .unwrap_or(usize::MAX)
+                .unwrap_or((true, usize::MAX))
         });
     }
     // A named operation deserves assessment before heuristic catalogue diversity.

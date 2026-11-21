@@ -845,6 +845,45 @@ fn named_catalogues_get_distinct_access_paths_before_duplicate_operations() {
 }
 
 #[test]
+fn matching_collection_and_receipt_returning_create_survive_projection_cutoff() {
+    use plasm_core::CapabilityKind::{Create, Query};
+    let base = packet().candidates[0].clone();
+    let mut candidates: Vec<_> = (0..80)
+        .map(|i| {
+            let mut c = base.clone();
+            c.reference.catalog = "alpha".into();
+            c.reference.capability = format!("other_{i}");
+            c.document.entity = "Other".into();
+            c.document.operation.kind = Query;
+            c
+        })
+        .collect();
+    for (i, meaning) in [
+        (0, "Create a support ticket."),
+        (8, "Create a shared itinerary."),
+    ] {
+        candidates[i].reference.catalog = "beta".into();
+        candidates[i].document.entity = "Receipt".into();
+        candidates[i].document.operation.kind = Create;
+        candidates[i].document.operation.contract = meaning.into();
+    }
+    candidates[79].document.entity = "Station".into();
+    let ordered = order_candidates(
+        &candidates,
+        "Find stations in Alpha and create a shared itinerary in Beta.",
+        &BTreeMap::new(),
+        &[],
+        &BTreeSet::new(),
+    );
+    let first: BTreeSet<_> = ordered
+        .iter()
+        .take(2)
+        .map(|c| c.reference.capability.as_str())
+        .collect();
+    assert_eq!(first, BTreeSet::from(["other_8", "other_79"]));
+}
+
+#[test]
 fn weak_catalogue_match_does_not_jump_ahead_of_stronger_ranked_candidates() {
     let base = packet().candidates[0].clone();
     let mut candidates: Vec<_> = (0..CATALOG_OPPORTUNITY_WINDOW)
