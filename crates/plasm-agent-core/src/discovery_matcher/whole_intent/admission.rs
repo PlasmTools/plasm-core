@@ -42,11 +42,48 @@ pub(crate) fn named_collection_queries(
     allowed: &DiscoveryAuthorization,
 ) -> BTreeSet<CapabilityRef> {
     let outer = IntentText::parse(request);
-    let words = QualifiedSubjects::new(&outer.outer).words;
+    let subjects = QualifiedSubjects::new(&outer.outer);
+    let words = &subjects.words;
+    let terms = intent_terms(&outer.outer);
     let mut queries = BTreeSet::new();
     for (catalog, cgs) in catalogs {
         for entity in cgs.entities.values() {
             let mut phrase = plasm_core::domain_lexicon::raw_words(entity.name.as_str());
+            // A named parent can identify its child collection by a relation
+            // qualifier even when the request never names the target entity.
+            let initials: String = phrase
+                .iter()
+                .filter_map(|word| word.chars().next())
+                .collect();
+            if subjects.subjects(catalog).any(|(name, key)| {
+                (name.eq_ignore_ascii_case(entity.name.as_str())
+                    || (phrase.len() > 1 && name == initials))
+                    && key.is_some_and(|s| s.bytes().all(|b| b.is_ascii_digit()))
+            }) {
+                use plasm_core::schema::RelationMaterialization::{
+                    QueryScoped, QueryScopedBindings,
+                };
+                for relation in entity.relations.values() {
+                    if !plasm_core::domain_lexicon::raw_words(relation.name.as_str())
+                        .iter()
+                        .any(|word| names_entity(&terms, word))
+                    {
+                        continue;
+                    }
+                    if let Some(
+                        QueryScoped { capability, .. } | QueryScopedBindings { capability, .. },
+                    ) = &relation.materialize
+                    {
+                        let reference = CapabilityRef {
+                            catalog: catalog.clone(),
+                            capability: capability.to_string(),
+                        };
+                        if allowed.permits(&reference) {
+                            queries.insert(reference);
+                        }
+                    }
+                }
+            }
             let Some(noun) = phrase.last_mut() else {
                 continue;
             };

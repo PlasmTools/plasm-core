@@ -131,9 +131,11 @@ fn production_packet_profile() {
             serde_json::to_value(&candidate.document).unwrap()
         );
     }
-    let packet = WholeIntentPacket::new(
+    let intent = receipt["intent"].as_str().unwrap();
+    let nominations = named_collection_queries(intent, &catalogs, &allowed);
+    let packet = WholeIntentPacket::new_with_limit(
         DEFAULT_MODEL,
-        receipt["intent"].as_str().unwrap(),
+        intent,
         &recall,
         &catalogs,
         &allowed,
@@ -141,6 +143,9 @@ fn production_packet_profile() {
         &deployments,
         &BTreeMap::new(),
         &[],
+        &nominations,
+        EvidenceScope::WholeIntent,
+        MAX_SELECTION_BYTES,
     )
     .unwrap();
     println!(
@@ -199,6 +204,55 @@ fn packet_with_priority(prioritize: bool) -> WholeIntentPacket {
 
 fn packet() -> WholeIntentPacket {
     packet_with_priority(false)
+}
+
+#[test]
+fn scoped_lookup_question_names_the_complete_record_key() {
+    let path = std::path::Path::new(crate::test_manifest_dir())
+        .join("../../fixtures/schemas/plasm_prompt_matrix");
+    let mut cgs = plasm_core::loader::load_schema_dir(&path).unwrap();
+    cgs.bind_registry_entry_id("matrix");
+    let keys = json!(cgs.entities["Ruleset"].key_vars);
+    assert!(keys.as_array().unwrap().len() > 1);
+    let catalogs = BTreeMap::from([("matrix".to_owned(), cgs)]);
+    let allowed = DiscoveryAuthorization::catalogs(BTreeSet::from(["matrix".to_owned()]));
+    let nominations =
+        named_collection_queries("For matrix zone #42 list rulesets.", &catalogs, &allowed);
+    assert!(nominations.contains(&CapabilityRef {
+        catalog: "matrix".into(),
+        capability: "ruleset_query".into()
+    }));
+    let bindings = DeploymentBindings::default();
+    let index = CatalogueSearch::new(&catalogs, &bindings, &allowed).unwrap();
+    let refs = BTreeSet::from([CapabilityRef {
+        catalog: "matrix".into(),
+        capability: "ruleset_get".into(),
+    }]);
+    let (recall, _) = index
+        .evidence("g", &refs, &catalogs, &bindings, &allowed)
+        .unwrap();
+    let packet = WholeIntentPacket::new(
+        DEFAULT_MODEL,
+        "Compare records.",
+        &recall,
+        &catalogs,
+        &allowed,
+        &index,
+        &bindings,
+        &BTreeMap::new(),
+        &[],
+    )
+    .unwrap();
+    let body: Value = serde_json::from_str(packet.body()).unwrap();
+    let (_, contract) = body["questions"]["c0"]["instructions"]
+        .as_str()
+        .unwrap()
+        .rsplit_once(" Catalogue data: ")
+        .unwrap();
+    assert_eq!(
+        serde_json::from_str::<Value>(contract).unwrap()["record_key"],
+        keys
+    );
 }
 
 #[test]
