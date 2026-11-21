@@ -929,7 +929,10 @@ fn candidate_question_preserves_selection_contract() {
     let packet: Value = serde_json::from_str(&body).unwrap();
     assert_eq!(count, 2);
     let questions = &packet["questions"];
-    assert_eq!(questions["c0"]["criteria"]["include"], "d.include");
+    assert!(questions["c0"]["criteria"]["include"]
+        .as_str()
+        .unwrap()
+        .contains("supplies an input"));
     assert!(questions["c1"]["criteria"]["include"]
         .as_str()
         .unwrap()

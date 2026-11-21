@@ -325,18 +325,42 @@ pub(super) fn order_candidates<'a>(
         .filter(|name| terms.contains(&name.to_lowercase()))
         .collect();
     if named.len() > 1 {
-        let mut kinds = BTreeSet::new();
+        let subjects = QualifiedSubjects::new(intent);
+        let mut kinds = BTreeMap::new();
         let mut opportunities = BTreeMap::new();
         for (rank, c) in candidates
             .iter()
-            .take(CATALOG_OPPORTUNITY_WINDOW)
+            .take(super::PROJECTED_CANDIDATE_LIMIT)
             .enumerate()
         {
-            if named.contains(&c.reference.catalog)
-                && kinds.insert((&c.reference.catalog, c.document.operation.kind.as_str()))
-            {
-                opportunities.insert(&c.reference, rank);
+            if !named.contains(&c.reference.catalog) {
+                continue;
             }
+            let words = plasm_core::domain_lexicon::raw_words(&c.document.entity);
+            // A keyed lookup needs an identified subject. Words scattered
+            // across the request can describe a related collection instead.
+            let mentioned = if c.document.operation.kind == plasm_core::CapabilityKind::Get {
+                !words.is_empty()
+                    && subjects
+                        .words
+                        .windows(words.len())
+                        .any(|span| span == words)
+            } else {
+                words.iter().all(|w| names_entity(&terms, w))
+            };
+            let specificity = if mentioned { words.len() } else { 0 };
+            if rank >= CATALOG_OPPORTUNITY_WINDOW && specificity == 0 {
+                continue;
+            }
+            let slot = kinds
+                .entry((&c.reference.catalog, c.document.operation.kind.as_str()))
+                .or_insert((specificity, rank, &c.reference));
+            if specificity > slot.0 {
+                *slot = (specificity, slot.1, &c.reference);
+            }
+        }
+        for (_, rank, reference) in kinds.into_values() {
+            opportunities.insert(reference, rank);
         }
         ordered.sort_by_key(|c| {
             opportunities
