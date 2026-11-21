@@ -9,6 +9,12 @@ Entries before **0.4.35** live in [`CHANGELOG-ARCHIVE.md`](CHANGELOG-ARCHIVE.md)
 
 ## [Unreleased]
 
+## [0.7.1] - 2026-11-21
+
+- Discovery distinguishes a supplied parent key from a requested parent record and recognizes scoped child lookups through catalogue aliases. Reads retain capability-specific uncertainty.
+- Filtered queries stop after finding the requested rows. List reads fetch individual details only for missing fields.
+- Completed MCP runs show their results, Python and branching plan. Repeating an unchanged discovery wave preserves session symbols.
+
 ## [0.7.0] - 2026-11-18
 
 - Discovery selects operations across a whole multi-vendor intent with Luna decisions and reports the limits of its assessment.
