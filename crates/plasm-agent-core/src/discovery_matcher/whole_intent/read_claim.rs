@@ -109,8 +109,8 @@ pub(super) fn question(
             }
             let keys = keys.join(", ");
             if let Some(broader) = wider {
-                (format!("User request: {intent}\nDoes it specifically require the narrower representation from this operation: {meaning}? Available broader read for the same record key: {broader}"),
-                "The request specifically needs the narrower representation, its access constraints, or another distinct property of this read.".into(),
+                (format!("User request: {intent}\nDoes the user need an existing {catalog} {entity} as an input and specifically request the narrower representation from this operation: {meaning}? Available broader read for the same record key: {broader}"),
+                "The request identifies an existing source record and specifically needs this representation, its access constraints, or another distinct property of this read.".into(),
                 "The broader read already supplies the requested information, or the user does not need either read.".into())
             } else if let Some(alternative) = collection {
                 (format!("Read this request: {intent}\nDoes the user supply or independently identify a particular {catalog} {entity} for lookup by {keys}? A record picked from the result of this collection would already contain the same data: {alternative}"),

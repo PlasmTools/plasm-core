@@ -431,7 +431,9 @@ pub(super) fn order_candidates<'a>(
                 } else {
                     0
                 }
-            } else if rank < CATALOG_OPPORTUNITY_WINDOW {
+            } else if rank < CATALOG_OPPORTUNITY_WINDOW
+                || c.document.operation.kind == plasm_core::CapabilityKind::Create
+            {
                 // Result types of writes can be receipts. Rank those seats by
                 // the authored change rather than the name of its return type.
                 let meaning = c
@@ -470,7 +472,12 @@ pub(super) fn order_candidates<'a>(
             let reserve = sole_read
                 && (c.document.operation.kind == plasm_core::CapabilityKind::Search
                     || rank >= CATALOG_OPPORTUNITY_WINDOW);
-            if rank >= CATALOG_OPPORTUNITY_WINDOW && specificity == 0 && !reserve {
+            let strong_create =
+                c.document.operation.kind == plasm_core::CapabilityKind::Create && specificity >= 2;
+            if rank >= CATALOG_OPPORTUNITY_WINDOW
+                && !reserve
+                && (specificity == 0 || (!read && !strong_create))
+            {
                 continue;
             }
             let slot = kinds
