@@ -315,6 +315,36 @@ pub(super) fn order_candidates<'a>(
         first.extend(others);
         ordered.extend(first);
     }
+    // In a federated request, reserve packet space for distinct access paths
+    // in the named catalogues. Use the original retrieval rank within each
+    // (catalogue, kind), before the keyed-sibling preference above can turn
+    // several opportunities into variants of the same lookup.
+    let named: BTreeSet<_> = candidates
+        .iter()
+        .map(|c| &c.reference.catalog)
+        .filter(|name| terms.contains(&name.to_lowercase()))
+        .collect();
+    if named.len() > 1 {
+        let mut kinds = BTreeSet::new();
+        let mut opportunities = BTreeMap::new();
+        for (rank, c) in candidates
+            .iter()
+            .take(CATALOG_OPPORTUNITY_WINDOW)
+            .enumerate()
+        {
+            if named.contains(&c.reference.catalog)
+                && kinds.insert((&c.reference.catalog, c.document.operation.kind.as_str()))
+            {
+                opportunities.insert(&c.reference, rank);
+            }
+        }
+        ordered.sort_by_key(|c| {
+            opportunities
+                .get(&c.reference)
+                .copied()
+                .unwrap_or(usize::MAX)
+        });
+    }
     // A named operation deserves assessment before heuristic catalogue diversity.
     // Use only the outer request. Quoted payloads can contain catalogue identifiers.
     let identifiers: BTreeSet<_> = intent

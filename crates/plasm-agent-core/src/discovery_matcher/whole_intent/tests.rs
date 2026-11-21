@@ -807,6 +807,44 @@ fn allocation_keeps_catalogue_opportunity_then_recall_order() {
 }
 
 #[test]
+fn named_catalogues_get_distinct_access_paths_before_duplicate_operations() {
+    use plasm_core::CapabilityKind::{Create, Get, Query, Search};
+    let base = packet().candidates[0].clone();
+    let candidates: Vec<_> = [
+        ("alpha", Get),
+        ("alpha", Get),
+        ("alpha", Query),
+        ("beta", Create),
+        ("beta", Search),
+        ("other", Get),
+    ]
+    .into_iter()
+    .enumerate()
+    .map(|(i, (catalog, kind))| {
+        let mut candidate = base.clone();
+        candidate.reference.catalog = catalog.into();
+        candidate.reference.capability = format!("op_{i}");
+        candidate.document.operation.kind = kind;
+        candidate
+    })
+    .collect();
+    let ordered = order_candidates(
+        &candidates,
+        "compare Alpha and Beta",
+        &BTreeMap::new(),
+        &[],
+        &BTreeSet::new(),
+    );
+    let ids: Vec<_> = ordered
+        .iter()
+        .take(4)
+        .map(|c| c.reference.capability.as_str())
+        .collect();
+    assert_eq!(ids, ["op_0", "op_2", "op_3", "op_4"]);
+    assert_eq!(ordered.len(), candidates.len());
+}
+
+#[test]
 fn weak_catalogue_match_does_not_jump_ahead_of_stronger_ranked_candidates() {
     let base = packet().candidates[0].clone();
     let mut candidates: Vec<_> = (0..CATALOG_OPPORTUNITY_WINDOW)
