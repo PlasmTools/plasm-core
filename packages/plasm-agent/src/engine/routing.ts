@@ -73,7 +73,7 @@ const routingSchema = z.object({
     budget_retained: z.array(scopeBudgetRetention).max(0).optional(),
   }).strict(),
   search: z.object({
-    policy: z.literal("whole-intent-luna-selector-v57"),
+    policy: z.literal("whole-intent-luna-selector-v58"),
     exposed: z.array(capability),
     considered: z.array(capability),
     unexplored: z.array(capability),

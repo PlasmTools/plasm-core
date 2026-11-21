@@ -132,6 +132,8 @@ fn production_packet_profile() {
         );
     }
     let intent = receipt["intent"].as_str().unwrap();
+    let mut recall = recall;
+    let routes = graph_reads::expand(&mut recall, &catalogs, &allowed, &index);
     let nominations = named_collection_queries(intent, &catalogs, &allowed);
     let packet = WholeIntentPacket::new_with_limit(
         DEFAULT_MODEL,
@@ -144,6 +146,7 @@ fn production_packet_profile() {
         &BTreeMap::new(),
         &[],
         &nominations,
+        &routes,
         EvidenceScope::WholeIntent,
         MAX_SELECTION_BYTES,
     )
@@ -1359,4 +1362,34 @@ fn projected_composite_lookup_constrains_selection_only_for_complete_reads() {
     ] {
         assert!(reads(request).is_none(), "{request}");
     }
+}
+
+#[test]
+fn traversal_nomination_checks_both_endpoints_without_needing_request_text() {
+    let path = std::path::Path::new(crate::test_manifest_dir())
+        .join("../../fixtures/schemas/plasm_prompt_matrix");
+    let mut cgs = plasm_core::loader::load_schema_dir(&path).unwrap();
+    cgs.bind_registry_entry_id("matrix");
+    let catalogs = BTreeMap::from([("matrix".to_owned(), cgs)]);
+    let allowed = DiscoveryAuthorization::catalogs(BTreeSet::from(["matrix".into()]));
+    let index = CatalogueSearch::new(&catalogs, &DeploymentBindings::default(), &allowed).unwrap();
+    let reference = |capability: &str| CapabilityRef {
+        catalog: "matrix".into(),
+        capability: capability.into(),
+    };
+    let zone = reference("zone_get");
+    let rules = reference("ruleset_query");
+    let recall = index.recall("g", &BTreeSet::from([zone.clone()])).unwrap();
+    let mut full = index.recall("g", &BTreeSet::from([zone.clone()])).unwrap();
+    let routes = graph_reads::expand(&mut full, &catalogs, &allowed, &index);
+    assert!(full.candidates.iter().any(|c| c.reference == rules));
+    assert!(routes.initial_count == Some(1));
+    let mut restricted = allowed;
+    restricted
+        .capabilities
+        .insert("matrix".into(), BTreeSet::from([zone.capability.clone()]));
+    let mut limited = recall;
+    let routes = graph_reads::expand(&mut limited, &catalogs, &restricted, &index);
+    assert_eq!(routes.initial_count, Some(1));
+    assert_eq!(limited.candidates.len(), 1);
 }

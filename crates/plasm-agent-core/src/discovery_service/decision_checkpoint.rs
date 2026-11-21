@@ -70,7 +70,7 @@ impl<'a, C: DecisionCache> DecisionCheckpoint<'a, C> {
 
     pub(crate) async fn receive<P, F, Fut>(
         &self,
-        issued: P,
+        issued: &P,
         fetch: F,
     ) -> Result<P::Response, DecisionProviderError>
     where

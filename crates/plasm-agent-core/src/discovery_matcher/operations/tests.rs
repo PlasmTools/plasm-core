@@ -120,13 +120,13 @@ async fn operation_decisions_use_the_shared_validated_checkpoint() {
     let locks = crate::discovery_scheduling::DecisionLocks::default();
     let checkpoint = DecisionCheckpoint::new(&cache, &locks);
     let received = checkpoint
-        .receive(packet(), || async { Ok(response.clone()) })
+        .receive(&packet(), || async { Ok(response.clone()) })
         .await
         .unwrap();
     assert_eq!(received, response);
     checkpoint.persist().await.unwrap();
     let reused = checkpoint
-        .receive(packet(), || async {
+        .receive(&packet(), || async {
             panic!("validated cached decision must not call the provider again")
         })
         .await
@@ -141,7 +141,7 @@ async fn operation_decisions_use_the_shared_validated_checkpoint() {
         .insert(bad_packet.cache_key().into(), "{}".into());
     let checkpoint = DecisionCheckpoint::new(&poisoned, &locks);
     assert!(checkpoint
-        .receive(bad_packet, || async {
+        .receive(&bad_packet, || async {
             panic!("corrupt cache must not trigger implicit replay")
         })
         .await

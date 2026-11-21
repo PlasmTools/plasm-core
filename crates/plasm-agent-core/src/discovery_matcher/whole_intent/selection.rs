@@ -34,6 +34,7 @@ impl Verdict {
 #[serde(rename_all = "snake_case")]
 pub enum Warning {
     Model,
+    ReadPath,
     QualifiedKey,
     ParallelKey,
     /// Recorded by v33. Persisted receipts retain their original explanation.
@@ -90,7 +91,7 @@ fn is_read(candidate: &RetrievedCapability) -> bool {
 
 impl WholeIntentPacket {
     pub(crate) fn decode(&self, raw: &str) -> Result<Selection, WholeIntentError> {
-        let questions = self
+        let questions: BTreeMap<_, _> = self
             .prompts
             .iter()
             .enumerate()
@@ -114,7 +115,7 @@ impl WholeIntentPacket {
             crate::decision_codec::decode_with_usage(&self.model, &questions, raw)
                 .map_err(|_| WholeIntentError::InvalidResponse)?;
         let mut assessments = BTreeMap::new();
-        for (i, candidate) in self.candidates.iter().enumerate() {
+        for (i, candidate) in self.candidates.iter().take(self.prompts.len()).enumerate() {
             let answer = &answers[&format!("c{i}")];
             let verdict: Verdict = Verdict::deserialize(serde::de::value::StrDeserializer::<
                 serde::de::value::Error,
@@ -268,7 +269,7 @@ impl Selection {
         candidates
             .iter()
             .filter_map(|c| {
-                let a = &self.assessments[&c.reference];
+                let a = self.assessments.get(&c.reference)?;
                 Some(CapabilityIntentMatch {
                     capability_id: c.id.clone(),
                     choice: a.disposition.choice()?,

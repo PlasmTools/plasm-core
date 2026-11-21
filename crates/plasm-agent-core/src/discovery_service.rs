@@ -3,6 +3,7 @@
 use crate::discovery_scheduling as scheduling;
 pub(crate) mod decision_checkpoint;
 mod metrics;
+mod selection_wave;
 use plasm_core::prerequisites::{CapabilityRef, PrerequisiteClosure, PrerequisiteError};
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
@@ -948,6 +949,13 @@ impl DiscoveryService {
             };
             recall.candidates.insert(0, candidate);
         }
+        let routes = if matches!(self.lane, DiscoveryLane::Ordinary)
+            && evidence_scope == EvidenceScope::WholeIntent
+        {
+            matcher::whole_intent::graph_reads::expand(&mut recall, &catalogs, allowed, &index)
+        } else {
+            Default::default()
+        };
         metrics::record(metrics::Stage::Recall, stage_started.elapsed());
         let stage_started = std::time::Instant::now();
         let mut whole_analysis = None;
@@ -1023,6 +1031,7 @@ impl DiscoveryService {
                 deferred_priorities,
                 exposed,
                 &named_collections,
+                &routes,
                 evidence_scope,
                 matcher::whole_intent::MAX_SELECTION_BYTES,
             )?;
@@ -1030,26 +1039,35 @@ impl DiscoveryService {
                 &self.store,
                 &self.store.pending_decisions,
             );
-            let dispatched = std::sync::atomic::AtomicBool::new(false);
-            let mut selection = checkpoint
-                .receive(packet.clone(), || async {
-                    dispatched.store(true, std::sync::atomic::Ordering::Relaxed);
-                    let started = std::time::Instant::now();
-                    let result = self
-                        .contribution_response(packet.body(), 1, "whole-intent-selection-v1")
-                        .await;
-                    metrics::record(metrics::Stage::DecisionProvider, started.elapsed());
-                    result.map_err(|error| Box::new(error) as matcher::DecisionProviderError)
+            let mut wave = selection_wave::SelectionWave::new(self, &checkpoint);
+            let mut selection = wave
+                .receive(&packet, packet.body(), "whole-intent-selection-v1", |s| {
+                    s.tokens
                 })
-                .await
-                .map_err(|error| matcher::DiscoveryMatcherError::Provider(error))?;
+                .await?;
             selection.apply(
-                packet.candidates(),
+                packet.operation_candidates(),
                 packet.references(),
                 &catalogs,
                 &bindings,
             );
-            let usage = selection.tokens;
+            if let Some(graph) = &packet.graph {
+                let (answers, _) = wave
+                    .receive(graph, &graph.body, "whole-intent-graph-reads", |r| r.1)
+                    .await?;
+                if let Some(material) = graph.material_packet(&answers) {
+                    let (ranked, _) = wave
+                        .receive(
+                            &material,
+                            &material.body,
+                            "whole-intent-source-selection",
+                            |r| r.1,
+                        )
+                        .await?;
+                    material.issued.apply(&ranked, &mut selection.assessments);
+                }
+                graph.issued.apply(&answers, &mut selection.assessments);
+            }
             let candidate_uncertainties = selection.gaps();
             let uncertain: std::collections::BTreeSet<_> = selection
                 .assessments
@@ -1072,7 +1090,9 @@ impl DiscoveryService {
                 .persist()
                 .await
                 .map_err(matcher::DiscoveryMatcherError::Checkpoint)?;
-            let mut analysis = String::from("**Whole-intent discovery:** selected operations are model judgments over bounded, authorized catalogue evidence. Whole-request completeness is unverified; program admission validates actual bindings.");
+            let mut analysis = String::from(
+                "**Whole-intent discovery:** selected operations are model judgments over bounded, authorized catalogue evidence. Whole-request completeness is unverified; program admission validates actual bindings.",
+            );
             if !candidate_uncertainties.is_empty() {
                 analysis.push_str(
                     "\nModel-reported candidate uncertainties (not proof of a missing capability):",
@@ -1096,12 +1116,18 @@ impl DiscoveryService {
                 matches: selection.matches(packet.candidates()),
                 budget_retained: Vec::new(),
             };
-            let considered: std::collections::BTreeSet<_> = packet
+            let considered: std::collections::BTreeSet<_> =
+                selection.assessments.keys().cloned().collect();
+            let non_nominated = packet
                 .candidates()
                 .iter()
-                .map(|candidate| candidate.reference.clone())
-                .collect();
-            let sent = dispatched.load(std::sync::atomic::Ordering::Relaxed);
+                .map(|c| &c.reference)
+                .filter(|r| !considered.contains(*r))
+                .map(|r| matcher::online::DeferredCandidate {
+                    reference: r.clone(),
+                    reason: matcher::online::DeferredReason::NotNominated,
+                })
+                .collect::<Vec<_>>();
             let search = matcher::online::SearchReceipt {
                 policy: matcher::whole_intent::POLICY.into(),
                 exposed: exposed.iter().cloned().collect(),
@@ -1120,6 +1146,7 @@ impl DiscoveryService {
                         reference,
                         reason: matcher::online::DeferredReason::OperationUncertain,
                     })
+                    .chain(non_nominated)
                     .chain(packet.omitted().iter().cloned().map(|reference| {
                         let reason = if packet.was_projected(&reference) {
                             matcher::online::DeferredReason::InputBytes
@@ -1129,10 +1156,10 @@ impl DiscoveryService {
                         matcher::online::DeferredCandidate { reference, reason }
                     }))
                     .collect(),
-                requests: usize::from(sent),
-                input_bytes: if sent { packet.body().len() } else { 0 },
-                reported_input_tokens: if sent { usage.unwrap_or(0) } else { 0 },
-                missing_usage: usize::from(sent && usage.is_none()),
+                requests: wave.requests,
+                input_bytes: wave.input_bytes,
+                reported_input_tokens: wave.tokens,
+                missing_usage: wave.missing_usage,
             };
             (recall, matching, search)
         };

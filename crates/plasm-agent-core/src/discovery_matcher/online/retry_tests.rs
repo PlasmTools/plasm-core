@@ -124,7 +124,7 @@ async fn exercise_response_checkpoint(fail_first: bool, fail_write: bool, delay_
             async move {
                 let raw = answer(&request, "relevant");
                 checkpoint
-                    .receive(request, || async {
+                    .receive(&request, || async {
                         if fail {
                             Err(rejected(503, None))
                         } else {
