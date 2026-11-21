@@ -134,6 +134,50 @@ fn related_record_question(
     Some(format!("Premise: {intent}\nHypothesis: In addition to any related {children} rows, the user requests this separate {entity} operation: {meaning}"))
 }
 
+/// Prefer the first wider lookup on the same key, then the first collection
+/// that returns all requested properties. Catalogue order breaks ties.
+enum CoveringRead<'a> {
+    Lookup(&'a str),
+    Collection(&'a str),
+}
+
+fn covering_read<'a>(
+    peers: impl Iterator<Item = &'a Value>,
+    declaration: &Value,
+    keys: &[&str],
+    fields: &[&str],
+) -> Option<CoveringRead<'a>> {
+    if fields.is_empty() {
+        return None;
+    }
+    let mut collection = None;
+    for peer in peers {
+        let other = &peer["declaration"];
+        let provided = names(&other["provides"]);
+        let meaning = peer["meaning"].as_str().unwrap_or_default();
+        match peer["operation"]["kind"].as_str() {
+            Some("get")
+                if other["record_key"] == declaration["record_key"]
+                    && provided.len() > fields.len()
+                    && fields.iter().all(|f| provided.contains(f)) =>
+            {
+                return Some(CoveringRead::Lookup(meaning));
+            }
+            Some("query")
+                if collection.is_none()
+                    && !provided.is_empty()
+                    && fields
+                        .iter()
+                        .all(|f| keys.contains(f) || provided.contains(f)) =>
+            {
+                collection = Some(CoveringRead::Collection(meaning));
+            }
+            _ => {}
+        }
+    }
+    collection
+}
+
 pub(super) fn question(
     access: AccessQuestion,
     intent: &str,
@@ -168,28 +212,15 @@ pub(super) fn question(
             let declaration = &card["declaration"];
             let keys = names(&declaration["record_key"]);
             let fields = names(&declaration["provides"]);
-            let mut collection = None;
-            let mut wider = None;
-            for peer in peers {
-                let other = &peer["declaration"];
-                let provided = names(&other["provides"]);
-                if fields.is_empty() || provided.is_empty() { continue; }
-                let description = peer["meaning"].as_str().unwrap_or_default();
-                if peer["operation"]["kind"] == "query" && fields.iter().all(|f| provided.contains(f) || keys.contains(f)) {
-                    collection.get_or_insert(description);
-                }
-                if peer["operation"]["kind"] == "get" && other["record_key"] == declaration["record_key"] && provided.len() > fields.len() && fields.iter().all(|f|provided.contains(f)) {
-                    wider.get_or_insert(description);
-                }
-            }
+            let alternative = covering_read(peers, declaration, &keys, &fields);
             let non_key_fields = fields.iter().filter(|field| !keys.contains(field)).copied().collect::<Vec<_>>();
             let keys = keys.join(", ");
-            let relation_question = related_record_question(alternatives.scoped_queries, &non_key_fields, intent, entity, meaning);
-            if let Some(broader) = wider {
-                (relation_question.unwrap_or_else(|| format!("User request: {intent}\nDoes the user need an existing {catalog} {entity} as an input and specifically request the narrower representation from this operation: {meaning}? Available broader read for the same record key: {broader}")),
+            let relation_question = || related_record_question(alternatives.scoped_queries, &non_key_fields, intent, entity, meaning);
+            if let Some(CoveringRead::Lookup(broader)) = alternative {
+                (relation_question().unwrap_or_else(|| format!("User request: {intent}\nDoes the user need an existing {catalog} {entity} as an input and specifically request the narrower representation from this operation: {meaning}? Available broader read for the same record key: {broader}")),
                 "The request identifies an existing source record and specifically needs this representation, its access constraints, or another distinct property of this read.".into(),
                 "The broader read already supplies the requested information, or the user does not need either read.".into())
-            } else if let Some(alternative) = collection {
+            } else if let Some(CoveringRead::Collection(alternative)) = alternative {
                 (format!("Read this request: {intent}\nDoes the user supply or independently identify a particular {catalog} {entity} for lookup by {keys}? A record picked from the result of this collection would already contain the same data: {alternative}"),
                 "An independently identified record is requested, or a separate retrieval of individual records is explicitly required.".into(),
                 "The request identifies members by their membership, ordering or filtering within a collection, or does not need this record.".into())
@@ -199,7 +230,7 @@ pub(super) fn question(
                 "This operation obtains a requested record, a requested property, or an input not already supplied.".into(),
                 "The entity merely provides scope, is a destination, or its data is outside the request.".into())
             } else if !alternatives.scoped_queries.is_empty() {
-                let instructions = relation_question.unwrap_or_else(|| format!("Request: {intent}\nIs the {catalog} {entity} itself the object to read? A user-supplied identifier can locate related records directly. Fetch this record only for its own requested data or to obtain a value the workflow otherwise lacks."));
+                let instructions = relation_question().unwrap_or_else(|| format!("Request: {intent}\nIs the {catalog} {entity} itself the object to read? A user-supplied identifier can locate related records directly. Fetch this record only for its own requested data or to obtain a value the workflow otherwise lacks."));
                 (instructions,
                 format!("The workflow identifies a particular existing {entity} as a source of requested data."), format!("The workflow has no such existing source record. Mentioning or creating a destination does not designate a record for this lookup."))
             } else {
