@@ -64,6 +64,47 @@ pub(super) fn scope_sources<'a>(
         .collect()
 }
 
+#[derive(Default)]
+pub(super) struct ReadAlternatives {
+    pub supplies_key_fields: bool,
+    pub used_as_scope_record: bool,
+    pub has_collection: bool,
+}
+
+/// A query may take an entity reference as a single scope argument, rather than
+/// consuming the individual key fields through separate graph edges.
+pub(super) fn scope_records<'a>(
+    cards: &[Value],
+    values: &'a Map<String, Value>,
+) -> BTreeSet<(&'a str, &'a str)> {
+    let mut targets = BTreeSet::new();
+    for card in cards.iter().filter(|c| c["operation"]["kind"] == "query") {
+        for input in card["declaration"]["scope"]
+            .as_array()
+            .into_iter()
+            .flatten()
+        {
+            let (Some(catalog), Some(value)) =
+                (card["catalog"].as_str(), input["value_ref"].as_str())
+            else {
+                continue;
+            };
+            let Some(target) = values
+                .get(&super::super::evidence::key(catalog, value))
+                .and_then(|v| v.pointer("/field_type/entity_ref"))
+            else {
+                continue;
+            };
+            if let (Some(entry), Some(entity)) =
+                (target["entry_id"].as_str(), target["target"].as_str())
+            {
+                targets.insert((entry, entity));
+            }
+        }
+    }
+    targets
+}
+
 pub(super) fn question(
     access: AccessQuestion,
     intent: &str,
@@ -71,7 +112,7 @@ pub(super) fn question(
     entity: &str,
     card: &Value,
     cards: &[Value],
-    supplies_scope: bool,
+    alternatives: ReadAlternatives,
 ) -> Option<Value> {
     let peers = cards
         .iter()
@@ -85,9 +126,14 @@ pub(super) fn question(
             format!("The requested matches are {entity} records and {catalog} is their requested search source."),
             format!("The request identifies the {entity} to read, concerns its related data, or asks another source to search.")
         ),
+        AccessQuestion::Search if alternatives.has_collection => (
+            format!("User request: {intent}\nDoes the user request a search for matching {entity} records in {catalog} itself? Using an identified {entity} as scope for other records, or searching another source for information about it, does not request {entity} matches."),
+            format!("The requested matches are {entity} records and {catalog} is their requested search source."),
+            "The premise does not request or imply this access path.".into()
+        ),
         AccessQuestion::Search => (
             format!("Premise: {intent}\nHypothesis: The user wants {catalog} to find additional sources or matching {entity} records. Merely retrieving material at a known or linked address would not satisfy that part of the request."),
-            "The premise entails the hypothesis.".into(), "The premise does not request or imply this access path.".into()
+            format!("The request asks {catalog} to find additional matches. The query topic may be supplied by another outcome."), "The premise does not request or imply this access path.".into()
         ),
         AccessQuestion::Lookup => {
             let declaration = &card["declaration"];
@@ -116,10 +162,13 @@ pub(super) fn question(
                 (format!("Read this request: {intent}\nDoes the user supply or independently identify a particular {catalog} {entity} for lookup by {keys}? A record picked from the result of this collection would already contain the same data: {alternative}"),
                 "An independently identified record is requested, or a separate retrieval of individual records is explicitly required.".into(),
                 "The request identifies members by their membership, ordering or filtering within a collection, or does not need this record.".into())
-            } else if supplies_scope {
+            } else if alternatives.supplies_key_fields {
                 (format!("Premise: {intent}\nHypothesis: Information from an existing {catalog} {entity} record is required, beyond its key ({keys}). Using a supplied key to scope other records requires no lookup of the scope itself. Operation: {meaning}"),
                 "This operation obtains a requested record, a requested property, or an input not already supplied.".into(),
                 "The entity merely provides scope, is a destination, or its data is outside the request.".into())
+            } else if alternatives.used_as_scope_record {
+                (format!("Request: {intent}\nIs the {catalog} {entity} itself the object to read? A user-supplied identifier can locate related records directly. Fetch this record only for its own requested data or to obtain a value the workflow otherwise lacks."),
+                format!("The workflow identifies a particular existing {entity} as a source of requested data."), format!("The workflow has no such existing source record. Mentioning or creating a destination does not designate a record for this lookup."))
             } else {
                 (format!("Does the request designate an existing {catalog} {entity} to retrieve by {keys}, either directly or through an upstream reference? Determine whether this is a source record in the workflow. User request: {intent}."),
                 format!("The workflow identifies a particular existing {entity} as a source of requested data."), format!("The workflow has no such existing source record. Mentioning or creating a destination does not designate a record for this lookup."))
@@ -142,6 +191,27 @@ mod tests {
     use serde_json::json;
 
     #[test]
+    fn aggregate_scope_uses_the_declared_reference_target() {
+        let cards = [
+            json!({"catalog":"a","operation":{"kind":"query"},"declaration":{"scope":[{"value_ref":"parent"}]}}),
+        ];
+        let values = Map::from_iter([
+            (
+                "a/parent".into(),
+                json!({"field_type":{"entity_ref":{"entry_id":"b","target":"Group"}}}),
+            ),
+            (
+                "b/parent".into(),
+                json!({"field_type":{"entity_ref":{"entry_id":"a","target":"Other"}}}),
+            ),
+        ]);
+        assert_eq!(
+            scope_records(&cards, &values),
+            BTreeSet::from([("b", "Group")])
+        );
+    }
+
+    #[test]
     fn alternative_requires_same_catalog_and_coverage_of_non_key_fields() {
         let lookup = json!({"id":"c0","catalog":"alpha","entity":"Item","meaning":"Read one item.",
             "operation":{"kind":"get"},"declaration":{"record_key":["scope","id"],"provides":["scope","id","title","detail"]}});
@@ -155,7 +225,7 @@ mod tests {
                 "Item",
                 &lookup,
                 &[lookup.clone(), peer],
-                false,
+                ReadAlternatives::default(),
             )
             .unwrap()
         };

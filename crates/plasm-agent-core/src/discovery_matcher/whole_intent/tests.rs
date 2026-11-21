@@ -1279,7 +1279,12 @@ fn source_query_judges_requested_content_and_preserves_input_uncertainty() {
             .as_str()
             .unwrap()
             .contains(expected));
-        assert_eq!(question["criteria"]["uncertain_input"], "d.uncertain_input");
+        let input_gap = question["criteria"]["uncertain_input"].as_str().unwrap();
+        if request.contains("linked") {
+            assert!(input_gap.contains("no identified source"));
+        } else {
+            assert_eq!(input_gap, "d.uncertain_input");
+        }
     }
 }
 

@@ -51,23 +51,7 @@ pub(crate) fn named_collection_queries(
             let mut phrase = plasm_core::domain_lexicon::raw_words(entity.name.as_str());
             // A named parent can identify its child collection by a relation
             // qualifier even when the request never names the target entity.
-            let initials: String = phrase
-                .iter()
-                .filter_map(|word| word.chars().next())
-                .collect();
-            if subjects.after_catalog(catalog).any(|tail| {
-                let key = tail
-                    .strip_prefix(phrase.as_slice())
-                    .and_then(|rest| rest.first())
-                    .or_else(|| {
-                        let name = tail.first()?;
-                        (name.eq_ignore_ascii_case(entity.name.as_str())
-                            || (phrase.len() > 1 && *name == initials))
-                            .then(|| tail.get(1))
-                            .flatten()
-                    });
-                key.is_some_and(|s| s.bytes().all(|b| b.is_ascii_digit()))
-            }) {
+            if subjects.identifies_numbered_subject(catalog, entity.name.as_str(), &phrase) {
                 use plasm_core::schema::RelationMaterialization::{
                     QueryScoped, QueryScopedBindings,
                 };
@@ -172,6 +156,30 @@ impl QualifiedSubjects {
     fn subjects<'a>(&'a self, catalog: &str) -> impl Iterator<Item = (&'a str, Option<&'a str>)> {
         self.after_catalog(catalog)
             .filter_map(|tail| Some((tail.first()?.as_str(), tail.get(1).map(String::as_str))))
+    }
+
+    pub(super) fn identifies_numbered_subject(
+        &self,
+        catalog: &str,
+        entity: &str,
+        phrase: &[String],
+    ) -> bool {
+        let initials: String = phrase
+            .iter()
+            .filter_map(|word| word.chars().next())
+            .collect();
+        self.after_catalog(catalog).any(|tail| {
+            let key = tail
+                .strip_prefix(phrase)
+                .and_then(|rest| rest.first())
+                .or_else(|| {
+                    let name = tail.first()?;
+                    (name.eq_ignore_ascii_case(entity) || (phrase.len() > 1 && *name == initials))
+                        .then(|| tail.get(1))
+                        .flatten()
+                });
+            key.is_some_and(|s| s.bytes().all(|b| b.is_ascii_digit()))
+        })
     }
 
     pub(super) fn qualified_roles<'a>(
