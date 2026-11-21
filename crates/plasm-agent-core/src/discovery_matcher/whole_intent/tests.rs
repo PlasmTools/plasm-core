@@ -845,6 +845,17 @@ fn named_catalogues_get_distinct_access_paths_before_duplicate_operations() {
 }
 
 #[test]
+fn abbreviated_parent_still_needs_the_child_noun_for_collection_admission() {
+    let words = plasm_core::domain_lexicon::raw_words("WorkOrderAttachment");
+    let mentions = |intent| {
+        super::admission::mentions_collection(&super::admission::intent_terms(intent), &words)
+    };
+    assert!(mentions("enumerate attachments on WO 8"));
+    assert!(!mentions("inspect WO 8"));
+    assert!(!mentions("list all attachments"));
+}
+
+#[test]
 fn matching_collection_and_receipt_returning_create_survive_projection_cutoff() {
     use plasm_core::CapabilityKind::{Create, Query};
     let base = packet().candidates[0].clone();

@@ -18,6 +18,22 @@ pub(super) fn names_entity(terms: &BTreeSet<String>, name: &str) -> bool {
     terms.contains(&name) || terms.contains(&format!("{name}s"))
 }
 
+/// Match a collection subject including a compound parent written as initials.
+/// Require every remaining noun, so an abbreviated parent alone does not
+/// nominate each of its child collections.
+pub(super) fn mentions_collection(terms: &BTreeSet<String>, words: &[String]) -> bool {
+    if words.iter().all(|word| names_entity(terms, word)) {
+        return !words.is_empty();
+    }
+    (2..words.len()).any(|end| {
+        let initials: String = words[..end]
+            .iter()
+            .filter_map(|w| w.chars().next())
+            .collect();
+        terms.contains(&initials) && words[end..].iter().all(|w| names_entity(terms, w))
+    })
+}
+
 /// Nominate a catalogue collection for assessment when the current request
 /// names its plural subject. Quoted arguments cannot nominate operations.
 pub(crate) fn named_collection_queries(
@@ -341,6 +357,8 @@ pub(super) fn order_candidates<'a>(
                         .words
                         .windows(words.len())
                         .any(|span| span == words)
+            } else if c.document.operation.kind == plasm_core::CapabilityKind::Query {
+                mentions_collection(&terms, &words)
             } else {
                 words.iter().all(|w| names_entity(&terms, w))
             };
